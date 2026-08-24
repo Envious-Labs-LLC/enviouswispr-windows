@@ -1,8 +1,7 @@
 # EnviousWispr — Windows Edition
 
 Windows-native voice-to-text: record, transcribe, polish, paste into the focused app.
-Sister project to macOS [EnviousWispr](https://github.com/saurabhav88/EnviousWispr) and to
-[enviouswispr-mobile](https://github.com/saurabhav88/enviouswispr-mobile).
+Sister project to macOS [EnviousWispr](https://github.com/saurabhav88/EnviousWispr).
 
 **Status: research. No code yet, and no decision yet on what to write it in.**
 
