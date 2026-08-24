@@ -1,0 +1,48 @@
+# The macOS reference snapshot lives beside this checkout on the rig and is
+# deliberately NOT tracked: it belongs to the macOS repo, it is 175 MB, and one
+# artifact in two places drifts. See AGENTS.md.
+macos-source/
+macos-knowledge/
+SNAPSHOT.txt
+
+# Build output
+build/
+dist/
+out/
+target/
+bin/
+obj/
+*.o
+*.obj
+*.exe
+*.dll
+*.pdb
+.build/
+.swiftpm/
+DerivedData/
+
+# Toolchain and dependency trees
+node_modules/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Models and other large binaries: keep them out of git history
+*.gguf
+*.safetensors
+*.onnx
+*.mlmodel*
+*.bin
+
+# Editor and OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Scratch
+tmp/
+scratch/
+*.log
