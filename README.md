@@ -9,9 +9,9 @@ Maintained by [Envious Labs](https://github.com/Envious-Labs-LLC).
 
 ## What this repo is for
 
-The macOS app is 308,321 lines of Swift across 17 modules, shipping to real users. This repo works out
-what a Windows version costs, what carries over, and what has to be rebuilt — and then becomes the place
-it gets built.
+The macOS app is 139,085 lines of Swift across 17 modules, with a 164,289-line test suite, shipping to
+real users. This repo works out what a Windows version costs, what carries over, and what has to be
+rebuilt — and then becomes the place it gets built.
 
 The first deliverable is a map, not code: which parts port as-is, which need a Windows counterpart, and
 which are a rewrite. See [`AGENTS.md`](AGENTS.md).
