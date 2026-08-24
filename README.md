@@ -5,6 +5,8 @@ Sister project to macOS [EnviousWispr](https://github.com/saurabhav88/EnviousWis
 
 **Status: research. No code yet, and no decision yet on what to write it in.**
 
+Maintained by [Envious Labs](https://github.com/Envious-Labs-LLC).
+
 ## What this repo is for
 
 The macOS app is 308,321 lines of Swift across 17 modules, shipping to real users. This repo works out
