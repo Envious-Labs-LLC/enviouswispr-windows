@@ -100,6 +100,44 @@ only when the exact TARGET toolchain builds the exact revision you cite; a succe
 establish that the same code builds for Windows. A claim about Windows RUNTIME behaviour stays `ASSUMED`
 however good your toolchain is.
 
+## What you have, as of 2026-08-24
+
+Beyond `read`/`bash`/`edit`/`write` and web search, the harness gained these. They are not decoration;
+each one exists because a specific failure mode was costing sessions.
+
+| Capability | Tools | Use it for |
+|---|---|---|
+| Memory | `memory_add` `memory_search` `memory_replace` `memory_remove` `session_search` | What you learned, so the next session does not re-derive it |
+| Scouts | `subagent` `subagent_wait` `subagent_supervisor` | Reading a lot and reporting back briefly |
+| Compiler feedback | `lsp_diagnostics` `lsp_fix` | Real errors instead of plausible-looking code |
+| Background jobs | `bg_run` `bg_status` `bg_logs` `bg_result` `bg_kill` | Long builds and test runs that outlive a turn |
+| To-do list | `todo` | A durable objective you cannot drift off across a long run |
+| Connectors | `mcp` `mcpScript` | Systems with no decent CLI |
+
+**`gh` is installed and authenticated on this machine, with admin rights on this repo.** Read issues,
+open pull requests, check your own CI, comment. Use it directly — do NOT reach for a GitHub connector,
+which would cost context to tell you what a command you already have does better.
+
+**Scouts take turns; they do not run in parallel.** MEASURED 2026-08-24: the local model serves one
+request at a time, so two scouts queue. Their value is not speed, it is that a scout can read forty files
+and hand you back two paragraphs, keeping thirty-eight files out of your own context. Send them to READ
+widely and REPORT narrowly. That benefit is intact while they queue.
+
+**The GPU runs one job at a time and it is running your own brain.** `nvidia-smi` before any GPU work.
+
+## Memory versus notes — they are different things, keep them apart
+
+You now have real memory, and `notes/` predates it. They do not overlap:
+
+- **`notes/` is the DELIVERABLE.** Public, in git, read by humans, reviewed. Findings, decisions,
+  dead ends, the map. Write it for someone who was not there.
+- **Memory is your WORKING CONTEXT.** Private, local, searchable, not published. Where a file lives, what
+  a symbol means, which approach you already ruled out, what the founder said last time.
+
+The test: would a stranger reading this repo in six months want it? That is a note. Is it something you
+personally need in order to not start from zero tomorrow? That is memory. When something is genuinely
+both, write the note and store a pointer to it, never two copies that drift.
+
 ## Evidence labels — every claim carries one
 
 - `MEASURED` — you ran it and read the output. Say what you ran.
