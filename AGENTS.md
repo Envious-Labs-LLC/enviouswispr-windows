@@ -10,6 +10,18 @@ shipping to real users. The Windows version does not exist. Your job is to make 
 Treat any COMPARATIVE speed claim as unverified unless you can cite the benchmark behind it; the product
 promise is not a measurement you may repeat as one.
 
+## This repo is PUBLIC
+
+Everything you push is visible to anyone the moment it lands, including `notes/`. That is deliberate —
+building in the open is the strategy, not an accident — and it changes two things about how you write:
+
+- **Notes are still terse working notes, not marketing.** Do not soften a dead end or dress up a result
+  because someone might read it. An honest "tried X, it does not work, here is why" is worth more in
+  public than in private.
+- **Nothing about the private side goes in.** No credentials, no internal infrastructure detail beyond
+  what the macOS repo already publishes, no unreleased business plan. The macOS source is public, so
+  measurements taken from it are fine to publish.
+
 ## Nothing here is a permission gate
 
 Install toolchains, build, run, throw away and start again. Use `sudo`. Use the GPU. Push branches, open
