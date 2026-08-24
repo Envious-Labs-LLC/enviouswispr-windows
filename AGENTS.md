@@ -53,7 +53,14 @@ the Mac's current state.
 
 ## The shape of the problem, measured
 
-308,321 lines of Swift across 17 modules:
+**139,085 lines of Swift to port, across 17 modules, plus a 164,289-line test suite.** Both MEASURED
+2026-08-24 at `f9b70283` (`git ls-files 'Sources/*.swift' | xargs wc -l`, same for `Tests/`). An earlier
+version of this file quoted 308,321, which is the whole tree including tests and manifests — it overstated
+the thing being ported by more than double. Corrected by the rig's own first pass; the per-module figures
+below were always Sources-only and are unchanged.
+
+The test suite is not overhead in this project, it is the **specification**: 164K lines describing what
+the behaviour must be, in a form you can read without running macOS.
 
 | Module | Lines | Note |
 |---|---|---|
