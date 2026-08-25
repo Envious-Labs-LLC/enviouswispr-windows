@@ -4,6 +4,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms> <!-- tray icon only; no WinForms UI -->
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>EnviousWispr</AssemblyName>
@@ -14,6 +15,10 @@
     <!-- WindowsDesktop SDK drops System.IO + System.Net.Http from implicit usings; restore them -->
     <Using Include="System.IO" />
     <Using Include="System.Net.Http" />
+    <!-- WinForms is tray-only: drop its project-wide implicit usings (they collide
+         with WPF types: Application, Color). TrayIcon.cs imports them explicitly. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
 
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.22.0" />
     <PackageReference Include="NAudio" Version="2.2.1" />

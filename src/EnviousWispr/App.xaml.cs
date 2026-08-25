@@ -14,6 +14,7 @@ public partial class App : Application
     private OverlayWindow? _overlay;
     private DictationPipeline? _pipeline;
     private GlobalHotkey? _hotkey;
+    private Tray.TrayIcon? _tray;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -84,6 +85,20 @@ public partial class App : Application
         _hotkey.KeyDown += () => _pipeline.HotKeyDown();
         _hotkey.KeyUp += () => _pipeline.HotKeyUp();
         Log($"hotkey {cfg.Hotkey} (vk {vk}) active");
+
+        // 5. Tray: presence + status + the only quit path. Autostart defaults ON
+        //    (dictation must be resident at login, like the Mac's menu-bar app);
+        //    the tray menu item toggles it.
+        var autostart = Tray.TrayIcon.AutostartEnabled();
+        if (!autostart)
+        {
+            Tray.TrayIcon.SetAutostart(true);
+            autostart = true;
+            Log("autostart: enabled (HKCU Run)");
+        }
+        _tray = new Tray.TrayIcon($"{cfg.Hotkey} ready", autostart,
+            toggle => { Tray.TrayIcon.SetAutostart(toggle); Log($"autostart: {(toggle ? "enabled" : "disabled")} (tray)"); },
+            () => { Log("quit requested from tray"); Shutdown(); });
     }
 
     // The polisher is created on the EG-1 load task; the pipeline reads it
@@ -108,6 +123,7 @@ public partial class App : Application
             _ => ("?", Color.FromRgb(0x88, 0x88, 0x88)),
         };
         _overlay?.SetState(label, detail, color);
+        _tray?.SetStatus(label, detail);
     }
 
     private string DetailFor(PipelineState s)
@@ -137,6 +153,7 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         _hotkey?.Dispose();
+        _tray?.Dispose();
         _ = _pipeline?.DisposeAsync();
         base.OnExit(e);
     }
