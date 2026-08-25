@@ -52,3 +52,9 @@ scratch/
 
 # Task briefs live in the working tree, never in the repo (rig-rules #13)
 BRIEF-*.md
+
+# Spike scratch: Python venvs, downloaded models, test audio
+spikes/**/venv-*/
+spikes/s1/models/
+spikes/s1/audio/*.wav
+spikes/s1/audio/*.flac
