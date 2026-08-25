@@ -60,3 +60,5 @@ spikes/s1/audio/*.wav
 spikes/s1/audio/*.flac
 *.tar.bz2
 *.tar.gz
+# Local llama.cpp toolchain (prebuilt, ~61 MB — not repo content)
+tools/llama.cpp/
