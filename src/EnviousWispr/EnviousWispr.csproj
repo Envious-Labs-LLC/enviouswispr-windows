@@ -12,6 +12,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- contract-layer unit tests reach the internal pure functions -->
+    <InternalsVisibleTo Include="EnviousWispr.Tests" />
+
     <!-- WindowsDesktop SDK drops System.IO + System.Net.Http from implicit usings; restore them -->
     <Using Include="System.IO" />
     <Using Include="System.Net.Http" />
