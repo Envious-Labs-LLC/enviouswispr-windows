@@ -43,12 +43,14 @@ def providers_for(tier: str):
         return ["CPUExecutionProvider"]
     if tier == "dml":
         return ["DmlExecutionProvider", "CPUExecutionProvider"]
+    if tier == "cuda":
+        return ["CUDAExecutionProvider", "CPUExecutionProvider"]
     raise SystemExit(f"unknown tier {tier}")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tier", required=True, choices=["cpu", "dml"])
+    ap.add_argument("--tier", required=True, choices=["cpu", "dml", "cuda"])
     # int8 = QDQ graphs (matches the Mac's shipped int8 tier; needs only the
     # files on disk). fp32 = unquantized encoder, requires the 2.3 GB
     # encoder-model.onnx.data which is not downloaded by default.

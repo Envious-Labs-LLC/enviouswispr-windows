@@ -1,0 +1,30 @@
+{
+  "tier": "dml",
+  "decoder": "int8",
+  "providers": [
+    "DmlExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "model_load_s": 5.0,
+  "runs_per_clip": 7,
+  "clips": [
+    {
+      "clip": "clip10.wav",
+      "duration_s": 10.0,
+      "median_s": 12.394,
+      "min_s": 10.995,
+      "max_s": 12.522,
+      "rtfx": 0.8,
+      "text_head": "Tell me honestly if this new telemetry will truly answer the questions we need o"
+    },
+    {
+      "clip": "clip20.wav",
+      "duration_s": 20.0,
+      "median_s": 31.195,
+      "min_s": 19.11,
+      "max_s": 36.735,
+      "rtfx": 0.6,
+      "text_head": "I've gone through this headache with their team before. As long as it's not ment"
+    }
+  ]
+}
