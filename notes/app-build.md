@@ -1,6 +1,38 @@
 # App build — EnviousWispr for Windows (WPF + ONNX C#)
 
-Autopilot goal: viable push-to-talk app (hotkey → 16 kHz capture → Parakeet int8 → EG-1 polish → paste).
+Autopilot goal: viable push-to-talk app (hotkey → 16 kHz capture → Parakeet → EG-1 polish → paste).
+
+## 2026-08-25: founder-test hardening and GPU validation (MEASURED)
+
+- Updated to `Microsoft.ML.OnnxRuntime.Gpu` 1.29.0 so the app can use the rig's CUDA 13
+  runtime. Removed the competing CPU ONNX Runtime package, which had allowed the CPU native
+  DLL to win package resolution and hide the CUDA entry point.
+- The configured CUDA runtime directory is added to the process path before ONNX sessions
+  are created. If CUDA still cannot load, startup falls back to CPU and labels the actual mode.
+- GPU smoke PASS: ASR 346/183/485 ms on the 10/20/91.5 s clips; EG-1 probe GREEN in 72 ms;
+  full 10 s transcript plus polish in 332 ms.
+- All ONNX result collections are disposed after each stage instead of retaining native GPU
+  allocations across dictations.
+- Clipboard operations now run on the WPF STA thread, verify `SendInput`, preserve every format
+  of the current clipboard item, and only restore when no other app changed the clipboard.
+  Failed automatic paste leaves the transcript available for manual Ctrl+V.
+- Added a named single-instance mutex, persistent autostart opt-out, stable-path refresh,
+  startup help balloon, tray how-to, and a persistent F9 instruction in the ready pill.
+- Replaced the synthetic test's false-positive check. App-log text can no longer make a paste
+  test pass; the expected phrase must be present in the focused target control.
+- Two adversarial review rounds found nine user-path and validation defects, all fixed before
+  handoff. F9 is consumed instead of also triggering the focused app, empty ASR never pastes over
+  selected text, status labels reflect the real ASR mode, and every EG-1 failure path tears down its
+  process tree. The smoke harness now fails when fixtures, probe quality, or real-clip polish are
+  missing instead of printing a false pass.
+- A final native-path review caught the Win64 `INPUT` ABI mismatch that had forced every automatic
+  paste into clipboard-only fallback. The union is now the required 32 bytes, the complete structure
+  is test-locked at 40 bytes, dictated text and the local API key are redacted from support logs, and
+  microphone callback errors are carried back to the recoverable pipeline path instead of thrown on
+  NAudio's capture thread.
+- Interactive proof: published app launched in Windows session 1 and the 280 by 64 overlay
+  rendered with real content. Synthetic keyboard injection was blocked by the locked Windows
+  desktop with Win32 access denied, so physical F9, microphone, and paste remain the founder UAT.
 
 ## 2026-08-25 — C# ASR port verified (MEASURED)
 

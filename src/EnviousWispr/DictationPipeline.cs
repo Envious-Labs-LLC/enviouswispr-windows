@@ -8,7 +8,8 @@ namespace EnviousWispr;
 /// never to an error state (EG-1 connector contract).
 public enum PipelineState { Idle, Recording, Transcribing, Polishing, Done, Error }
 
-public sealed record StageTimings(long? AsrMs, long? PolishMs, long TotalMs, bool Polished);
+public sealed record StageTimings(long? AsrMs, long? PolishMs, long TotalMs, bool Polished,
+    Input.PasteResult Delivery);
 
 public sealed class DictationPipeline : IAsyncDisposable
 {
@@ -16,6 +17,7 @@ public sealed class DictationPipeline : IAsyncDisposable
     private readonly Asr.ParakeetEngine _asr;
     private readonly Polish.EgOneServer? _server;
     private readonly Func<Polish.EgOnePolisher?> _polisherProvider; // lazy: EG-1 loads after the app starts
+    private readonly Func<string, Input.PasteResult> _paste;
     private readonly SemaphoreSlim _runGate = new(1, 1);
     private PipelineState _state = PipelineState.Idle;
     private string _lastText = "";
@@ -32,27 +34,47 @@ public sealed class DictationPipeline : IAsyncDisposable
     public event Action<string>? Log;
 
     public DictationPipeline(Audio.CaptureService capture, Asr.ParakeetEngine asr,
-        Polish.EgOneServer? server, Func<Polish.EgOnePolisher?> polisherProvider)
+        Polish.EgOneServer? server, Func<Polish.EgOnePolisher?> polisherProvider,
+        Func<string, Input.PasteResult> paste)
     {
         _capture = capture;
         _asr = asr;
         _server = server;
         _polisherProvider = polisherProvider;
+        _paste = paste;
     }
 
     public void HotKeyDown()
     {
         if (_state != PipelineState.Idle) return;
-        _capture.Start();
-        State = PipelineState.Recording;
-        Log?.Invoke("recording started");
+        try
+        {
+            _capture.Start();
+            State = PipelineState.Recording;
+            Log?.Invoke("recording started");
+        }
+        catch (Exception ex)
+        {
+            State = PipelineState.Error;
+            Log?.Invoke($"microphone unavailable: {ex.Message}");
+            _ = ResetErrorAsync();
+        }
     }
 
     public void HotKeyUp()
     {
         if (_state != PipelineState.Recording) return;
-        var samples = _capture.Stop();
-        _ = Task.Run(() => RunTranscriptionAsync(samples));
+        try
+        {
+            var samples = _capture.Stop();
+            _ = Task.Run(() => RunTranscriptionAsync(samples));
+        }
+        catch (Exception ex)
+        {
+            State = PipelineState.Error;
+            Log?.Invoke($"recording could not finish: {ex.Message}");
+            _ = ResetErrorAsync();
+        }
     }
 
     private async Task RunTranscriptionAsync(float[] samples)
@@ -70,7 +92,19 @@ public sealed class DictationPipeline : IAsyncDisposable
 
             State = PipelineState.Transcribing;
             var asr = _asr.Recognize(samples);
-            Log?.Invoke($"asr: {asr.Text.Length} chars in {asr.ElapsedMs} ms: {Truncate(asr.Text, 80)}");
+            Log?.Invoke($"asr: {asr.Text.Length} chars in {asr.ElapsedMs} ms");
+
+            if (string.IsNullOrWhiteSpace(asr.Text))
+            {
+                _lastText = "";
+                LastTimings = new StageTimings(asr.ElapsedMs, null,
+                    Environment.TickCount64 - started, false, Input.PasteResult.NotAttempted);
+                State = PipelineState.Done;
+                Log?.Invoke("no speech recognized; nothing pasted");
+                await Task.Delay(900);
+                if (State == PipelineState.Done) State = PipelineState.Idle;
+                return;
+            }
 
             string finalText = asr.Text;
             long? polishMs = null;
@@ -86,7 +120,7 @@ public sealed class DictationPipeline : IAsyncDisposable
                 {
                     finalText = polishedText;
                     polished = true;
-                    Log?.Invoke($"polish: {polishMs} ms: {Truncate(finalText, 80)}");
+                    Log?.Invoke($"polish: {polishMs} ms, {finalText.Length} chars");
                 }
                 else
                 {
@@ -95,10 +129,13 @@ public sealed class DictationPipeline : IAsyncDisposable
             }
 
             _lastText = finalText;
-            Input.TextInserter.Paste(finalText);
-            LastTimings = new StageTimings(asr.ElapsedMs, polishMs, Environment.TickCount64 - started, polished);
+            var delivery = _paste(finalText);
+            if (delivery == Input.PasteResult.Failed)
+                throw new InvalidOperationException("Windows clipboard was unavailable");
+            LastTimings = new StageTimings(asr.ElapsedMs, polishMs,
+                Environment.TickCount64 - started, polished, delivery);
             State = PipelineState.Done;
-            Log?.Invoke($"done in {Environment.TickCount64 - started} ms (asr {asr.ElapsedMs} ms, polish {polishMs?.ToString() ?? "n/a"} ms){(polished ? "" : ", raw")}");
+            Log?.Invoke($"done in {Environment.TickCount64 - started} ms (asr {asr.ElapsedMs} ms, polish {polishMs?.ToString() ?? "n/a"} ms, delivery {delivery}){(polished ? "" : ", raw")}");
             // Back to idle so the next dictation can start; the overlay
             // shows the Done state briefly before it flips.
             await Task.Delay(900);
@@ -117,7 +154,11 @@ public sealed class DictationPipeline : IAsyncDisposable
         }
     }
 
-    private static string Truncate(string s, int n) => s.Length <= n ? s : s[..n] + "…";
+    private async Task ResetErrorAsync()
+    {
+        await Task.Delay(1500);
+        if (State == PipelineState.Error) State = PipelineState.Idle;
+    }
 
     public async ValueTask DisposeAsync()
     {

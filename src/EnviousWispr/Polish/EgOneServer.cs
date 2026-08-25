@@ -81,51 +81,92 @@ public sealed class EgOneServer : IAsyncDisposable
             psi.ArgumentList.Add("--gpu-layers"); psi.ArgumentList.Add(gpuLayers);
         }
 
-        // Log the exact argv so launch failures are debuggable from the app log.
-        Log?.Invoke($"llama-server argv: {string.Join(" ", psi.ArgumentList)}");
+        // Keep launch configuration debuggable without writing the live
+        // localhost credential into the persistent support log.
+        Log?.Invoke($"llama-server argv: {FormatArgumentsForLog(psi.ArgumentList)}");
 
-        _proc = new Process { StartInfo = psi };
-        _proc.ErrorDataReceived += (_, e) => { if (e.Data != null) Log?.Invoke($"[llama] {e.Data}"); };
-        _proc.OutputDataReceived += (_, e) => { if (e.Data != null && e.Data.Contains("error", StringComparison.OrdinalIgnoreCase)) Log?.Invoke($"[llama] {e.Data}"); };
-        _proc.Start();
-        _proc.BeginErrorReadLine();
-        _proc.BeginOutputReadLine();
+        var process = new Process { StartInfo = psi };
+        _proc = process;
+        process.ErrorDataReceived += (_, e) => { if (e.Data != null) Log?.Invoke($"[llama] {e.Data}"); };
+        process.OutputDataReceived += (_, e) => { if (e.Data != null && e.Data.Contains("error", StringComparison.OrdinalIgnoreCase)) Log?.Invoke($"[llama] {e.Data}"); };
+        try
+        {
+            process.Start();
+            process.BeginErrorReadLine();
+            process.BeginOutputReadLine();
+        }
+        catch (Exception ex)
+        {
+            Log?.Invoke($"llama-server could not start: {ex.Message}");
+            await StopProcessAsync();
+            return false;
+        }
 
         Log?.Invoke($"EG-1 server starting on 127.0.0.1:{port}");
         Endpoint = new EgOneEndpoint($"http://127.0.0.1:{port}/v1/chat/completions", token, port);
 
-        var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-        while (DateTime.UtcNow < deadline && !_proc.HasExited)
+        try
         {
-            try
+            var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            while (DateTime.UtcNow < deadline && !process.HasExited)
             {
-                var resp = await http.GetAsync($"http://127.0.0.1:{port}/health", ct);
-                if (resp.IsSuccessStatusCode)
+                try
                 {
-                    Log?.Invoke("EG-1 server ready");
-                    return true;
+                    var resp = await http.GetAsync($"http://127.0.0.1:{port}/health", ct);
+                    if (resp.IsSuccessStatusCode)
+                    {
+                        Log?.Invoke("EG-1 server ready");
+                        return true;
+                    }
                 }
+                catch (HttpRequestException) { /* not up yet */ }
+                catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    // Per-request timeout while the model is still loading.
+                }
+                await Task.Delay(500, ct);
             }
-            catch (HttpRequestException) { /* not up yet */ }
-            catch (TaskCanceledException) { /* per-request timeout while loading */ }
-            await Task.Delay(500, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await StopProcessAsync();
+            throw;
         }
 
-        Log?.Invoke(_proc.HasExited
-            ? $"EG-1 server exited early (code {_proc.ExitCode})"
+        var exited = process.HasExited;
+        Log?.Invoke(exited
+            ? $"EG-1 server exited early (code {process.ExitCode})"
             : "EG-1 server did not become healthy in time");
+        await StopProcessAsync();
         return false;
     }
 
-    public async ValueTask DisposeAsync()
+    internal static string FormatArgumentsForLog(IEnumerable<string> arguments)
     {
-        if (_proc is not { HasExited: false }) return;
+        var loggedArgs = arguments.ToArray();
+        var apiKeyIndex = Array.IndexOf(loggedArgs, "--api-key");
+        if (apiKeyIndex >= 0 && apiKeyIndex + 1 < loggedArgs.Length)
+            loggedArgs[apiKeyIndex + 1] = "<redacted>";
+        return string.Join(" ", loggedArgs);
+    }
+
+    private async Task StopProcessAsync()
+    {
+        var process = Interlocked.Exchange(ref _proc, null);
+        Endpoint = null;
+        if (process is null) return;
         try
         {
-            _proc.Kill(entireProcessTree: true);
-            await _proc.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            }
         }
         catch { /* already gone */ }
+        finally { process.Dispose(); }
     }
+
+    public async ValueTask DisposeAsync() => await StopProcessAsync();
 }

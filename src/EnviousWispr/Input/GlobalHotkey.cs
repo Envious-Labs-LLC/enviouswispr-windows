@@ -67,7 +67,6 @@ public sealed class GlobalHotkey : IDisposable
             if (kb.vkCode == _targetVk)
             {
                 var isDown = wParam.ToInt32() is WmKeydown or WmSyskeydown;
-                var isRepeat = (kb.flags & 0x80) != 0; // KBDLLHOOKF_INJECTED... no: bit7 of flags is the extended-key flag; repeats arrive as extra WM_KEYDOWNs — track via _held.
                 if (isDown && !_held)
                 {
                     _held = true;
@@ -78,6 +77,9 @@ public sealed class GlobalHotkey : IDisposable
                     _held = false;
                     KeyUp?.Invoke();
                 }
+                // F9 belongs to push-to-talk while EnviousWispr is running.
+                // Do not also trigger the focused app's F9 command.
+                return (IntPtr)1;
             }
         }
         return CallNextHookEx(_hook, nCode, wParam, lParam);

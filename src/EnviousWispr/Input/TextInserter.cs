@@ -1,7 +1,8 @@
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace EnviousWispr.Input;
+
+public enum PasteResult { NotAttempted, Pasted, ClipboardOnly, Failed }
 
 /// Inserts text into the focused application the way dictation apps do:
 /// clipboard + synthetic Ctrl+V, with best-effort clipboard restore.
@@ -19,7 +20,10 @@ public static class TextInserter
         public InputUnion U;
     }
 
-    [StructLayout(LayoutKind.Explicit)]
+    // INPUT's native union is 32 bytes on 64-bit Windows because MOUSEINPUT
+    // is larger than KEYBDINPUT. Without the explicit size, INPUT marshals as
+    // 32 bytes instead of 40 and SendInput rejects every Ctrl+V batch.
+    [StructLayout(LayoutKind.Explicit, Size = 32)]
     private struct InputUnion
     {
         [FieldOffset(0)] public int Mi;
@@ -42,8 +46,13 @@ public static class TextInserter
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, Input[] pInputs, int cbSize);
 
+    [DllImport("user32.dll")]
+    private static extern uint GetClipboardSequenceNumber();
+
+    internal static int NativeInputSize => Marshal.SizeOf<Input>();
+
     /// One atomic SendInput batch: Ctrl down, V down, V up, Ctrl up.
-    private static void SendCtrlV()
+    private static bool SendCtrlV()
     {
         var inputs = new[]
         {
@@ -52,7 +61,7 @@ public static class TextInserter
             MakeInput(VkV, true),
             MakeInput(VkControl, true),
         };
-        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>());
+        return SendInput((uint)inputs.Length, inputs, NativeInputSize) == inputs.Length;
     }
 
     private static Input MakeInput(uint vk, bool up) => new()
@@ -71,9 +80,9 @@ public static class TextInserter
         },
     };
 
-    public static void Paste(string text)
+    public static PasteResult Paste(string text)
     {
-        var previous = TryGetClipboardText();
+        var previous = TrySnapshotClipboard();
 
         var set = false;
         for (var attempt = 0; attempt < 3 && !set; attempt++)
@@ -89,22 +98,46 @@ public static class TextInserter
                 System.Threading.Thread.Sleep(50);
             }
         }
-        if (!set) return; // no text inserted; the caller logs it
+        if (!set) return PasteResult.Failed;
 
-        SendCtrlV();
+        var ourSequence = GetClipboardSequenceNumber();
+        if (!SendCtrlV())
+            return PasteResult.ClipboardOnly; // payload stays available for a manual Ctrl+V
 
         // Give the target app a beat to consume the paste, then restore.
-        System.Threading.Thread.Sleep(120);
-        if (previous is not null && set)
+        System.Threading.Thread.Sleep(200);
+        if (previous.Captured && GetClipboardSequenceNumber() == ourSequence)
         {
-            try { System.Windows.Clipboard.SetDataObject(previous, true); }
+            try
+            {
+                if (previous.Data is null) System.Windows.Clipboard.Clear();
+                else System.Windows.Clipboard.SetDataObject(previous.Data, true);
+            }
             catch { /* best effort */ }
         }
+        return PasteResult.Pasted;
     }
 
-    private static string? TryGetClipboardText()
+    private sealed record ClipboardSnapshot(bool Captured, System.Windows.DataObject? Data);
+
+    private static ClipboardSnapshot TrySnapshotClipboard()
     {
-        try { return System.Windows.Clipboard.ContainsText() ? System.Windows.Clipboard.GetText() : null; }
-        catch { return null; }
+        try
+        {
+            var source = System.Windows.Clipboard.GetDataObject();
+            if (source is null) return new ClipboardSnapshot(true, null);
+
+            var copy = new System.Windows.DataObject();
+            foreach (var format in source.GetFormats(autoConvert: false))
+            {
+                var value = source.GetData(format, autoConvert: false);
+                if (value is not null) copy.SetData(format, value);
+            }
+            return new ClipboardSnapshot(true, copy);
+        }
+        catch
+        {
+            return new ClipboardSnapshot(false, null);
+        }
     }
 }

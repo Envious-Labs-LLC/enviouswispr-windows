@@ -15,6 +15,7 @@ public sealed class AppConfig
         public string ModelDir { get; set; } = "";
         public string Pack { get; set; } = "int8";
         public string Provider { get; set; } = "cpu";
+        public string CudaRuntimeDir { get; set; } = "";
         public int IntraOpThreads { get; set; } = 8;
         public int InterOpThreads { get; set; } = 1;
         public int MaxTokensPerStep { get; set; } = 10;
@@ -35,7 +36,9 @@ public sealed class AppConfig
     }
 
     public string Resolve(string? relative) =>
-        string.IsNullOrEmpty(relative) ? BaseDir : Path.GetFullPath(Path.Combine(BaseDir, relative));
+        string.IsNullOrEmpty(relative)
+            ? BaseDir
+            : Path.GetFullPath(Path.Combine(BaseDir, Environment.ExpandEnvironmentVariables(relative)));
 }
 
 public static class ConfigLoader

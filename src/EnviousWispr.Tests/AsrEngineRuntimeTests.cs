@@ -83,6 +83,8 @@ public class AsrEngineRuntimeTests : IClassFixture<AsrEngineRuntimeTests.EngineF
             if (id.SequenceEqual("fmt "u8)) { fmt = b.AsSpan(p, size).ToArray(); p += size; }
             else if (id.SequenceEqual("data"u8))
             {
+                if (fmt is null || fmt.Length < 16)
+                    throw new InvalidDataException($"missing or incomplete fmt chunk in {path}");
                 var audioFormat = BitConverter.ToInt16(fmt, 0);
                 var channels = BitConverter.ToInt16(fmt, 2);
                 var sr = BitConverter.ToInt32(fmt, 4);
