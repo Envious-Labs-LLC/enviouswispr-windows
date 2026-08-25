@@ -77,8 +77,8 @@ public sealed class GlobalHotkey : IDisposable
                     _held = false;
                     KeyUp?.Invoke();
                 }
-                // F9 belongs to push-to-talk while EnviousWispr is running.
-                // Do not also trigger the focused app's F9 command.
+                // The configured key belongs to push-to-talk while EnviousWispr
+                // is running. Do not also trigger the focused app's command.
                 return (IntPtr)1;
             }
         }
