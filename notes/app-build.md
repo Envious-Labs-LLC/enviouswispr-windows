@@ -27,9 +27,10 @@ Autopilot goal: viable push-to-talk app (hotkey → 16 kHz capture → Parakeet 
   missing instead of printing a false pass.
 - A final native-path review caught the Win64 `INPUT` ABI mismatch that had forced every automatic
   paste into clipboard-only fallback. The union is now the required 32 bytes, the complete structure
-  is test-locked at 40 bytes, dictated text and the local API key are redacted from support logs, and
-  microphone callback errors are carried back to the recoverable pipeline path instead of thrown on
-  NAudio's capture thread.
+  is test-locked at 40 bytes, and `KEYBDINPUT` uses native 16-bit key fields so key-up flags remain at
+  offset 4 instead of becoming duplicate key-downs. Dictated text and the local API key are redacted
+  from support logs, and microphone callback errors are carried back to the recoverable pipeline path
+  instead of thrown on NAudio's capture thread.
 - Interactive proof: published app launched in Windows session 1 and the 280 by 64 overlay
   rendered with real content. Synthetic keyboard injection was blocked by the locked Windows
   desktop with Win32 access denied, so physical F9, microphone, and paste remain the founder UAT.
