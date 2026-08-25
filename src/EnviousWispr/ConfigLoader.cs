@@ -26,6 +26,9 @@ public sealed class AppConfig
         public string ModelDir { get; set; } = "";
         public string EntrypointShard { get; set; } = "";
         public string ServerExe { get; set; } = "";
+        // "0" = CPU (default). "all" or an int offloads GPU layers — requires a
+        // CUDA build of llama-server as ServerExe (e.g. C:\AI\llama-cuda-b10615\bin).
+        public string GpuLayers { get; set; } = "0";
         public int ContextTokens { get; set; } = 16384;
         public int StartTimeoutSeconds { get; set; } = 240;
         public int RequestTimeoutSeconds { get; set; } = 20;

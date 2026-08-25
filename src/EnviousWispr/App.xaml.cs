@@ -49,7 +49,9 @@ public partial class App : Application
             _ = Task.Run(async () =>
             {
                 var ok = await server.StartAsync(cfg.Resolve(cfg.Eg1.ServerExe), shardPath,
-                    cfg.Eg1.ContextTokens, cfg.Eg1.StartTimeoutSeconds);
+                    cfg.Eg1.ContextTokens, cfg.Eg1.StartTimeoutSeconds, cfg.Eg1.GpuLayers);
+                if (cfg.Eg1.GpuLayers != "0")
+                    Log($"EG-1 gpuLayers={cfg.Eg1.GpuLayers} (requires a CUDA llama-server as eg1.serverExe)");
                 if (ok && server.Endpoint is not null)
                 {
                     var polisher = new EgOnePolisher(server.Endpoint, cfg.Eg1.RequestTimeoutSeconds);
