@@ -23,10 +23,11 @@
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
 
-    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.22.0" />
-    <!-- CUDA EP for asr.provider=cuda; bundles cudart/cublas/cudnn. CPU EP stays
-         the default and the automatic fallback when the GPU is unavailable. -->
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.22.0" />
+    <!-- The GPU package includes the managed API, CPU execution provider, and CUDA
+         provider. Do not also reference Microsoft.ML.OnnxRuntime: both packages ship
+         an onnxruntime.dll and NuGet can select the CPU-only native library, which
+         makes AppendExecutionProvider_CUDA fail at runtime. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.29.0" />
     <PackageReference Include="NAudio" Version="2.2.1" />
   </ItemGroup>
 

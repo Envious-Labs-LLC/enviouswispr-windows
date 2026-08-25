@@ -21,6 +21,11 @@ var skipEg1 = args.Contains("--skip-eg1");
 // started and every probe GREEN.
 if (args.Length > 0 && args[0] == "--ab")
 {
+    if (args.Length < 2)
+    {
+        Console.WriteLine("AB FAIL: provide at least one EG-1 model path");
+        return 1;
+    }
     var cfgAb = ConfigLoader.Load();
     var spikeDir = Path.GetFullPath(Path.Combine(cfgAb.BaseDir, "spikes", "s1", "audio"));
     var asrAb = new ParakeetEngine(cfgAb.Resolve(cfgAb.Asr.ModelDir), cfgAb.Asr.IntraOpThreads,
@@ -55,6 +60,7 @@ if (args.Length > 0 && args[0] == "--ab")
             Console.WriteLine($"[{label}] {pw.ElapsedMilliseconds} ms");
             Console.WriteLine($"  in : {text}");
             Console.WriteLine($"  out: {outText ?? "<skipped>"}");
+            if (outText is null) abFailures++;
         }
         await srv.DisposeAsync();
     }
@@ -69,7 +75,10 @@ Console.WriteLine($"[cfg] base={cfg.BaseDir}");
 var modelDir = cfg.Resolve(cfg.Asr.ModelDir);
 var sw = Stopwatch.StartNew();
 var asr = new ParakeetEngine(modelDir, cfg.Asr.IntraOpThreads, cfg.Asr.InterOpThreads,
-    cfg.Asr.MaxTokensPerStep, cfg.Asr.Pack, useCuda: cfg.Asr.Provider == "cuda");
+    cfg.Asr.MaxTokensPerStep, cfg.Asr.Pack, useCuda: cfg.Asr.Provider == "cuda",
+    cudaRuntimeDir: string.IsNullOrWhiteSpace(cfg.Asr.CudaRuntimeDir)
+        ? null
+        : cfg.Resolve(cfg.Asr.CudaRuntimeDir));
 Console.WriteLine($"[asr] engine loaded in {sw.ElapsedMilliseconds} ms");
 
 var spikeAudio = Path.GetFullPath(Path.Combine(cfg.BaseDir, "spikes", "s1", "audio"));
@@ -77,7 +86,12 @@ var failures = 0;
 foreach (var clip in new[] { "clip10.wav", "clip20.wav", "clip94.wav" })
 {
     var path = Path.Combine(spikeAudio, clip);
-    if (!File.Exists(path)) { Console.WriteLine($"[asr] SKIP {clip} (missing)"); continue; }
+    if (!File.Exists(path))
+    {
+        failures++;
+        Console.WriteLine($"[asr] FAIL {clip} (required fixture missing)");
+        continue;
+    }
     var samples = ReadWav16kMono(path);
     var t0 = Stopwatch.StartNew();
     var result = asr.Recognize(samples);
@@ -121,7 +135,8 @@ else if (cfg.Eg1.Enabled)
 }
 else
 {
-    Console.WriteLine("[eg1] disabled in config");
+    failures++;
+    Console.WriteLine("[eg1] FAIL: disabled in config (use --skip-eg1 for an ASR-only run)");
 }
 
 // ---------- 3. Full pipeline on a real clip ----------
@@ -137,8 +152,14 @@ else if (File.Exists(clip10) && polisher is not null)
     var t0 = Stopwatch.StartNew();
     var polished = await polisher.PolishAsync(raw.Text);
     Console.WriteLine($"[pipeline] asr ({raw.ElapsedMs} ms): {raw.Text}");
-    Console.WriteLine($"[pipeline] polish ({t0.ElapsedMilliseconds} ms): {polished ?? "<skipped — raw used>"}");
+    Console.WriteLine($"[pipeline] polish ({t0.ElapsedMilliseconds} ms): {polished ?? "<FAIL: skipped>"}");
     Console.WriteLine($"[pipeline] total {(raw.ElapsedMs + t0.ElapsedMilliseconds)} ms");
+    if (polished is null) failures++;
+}
+else
+{
+    failures++;
+    Console.WriteLine("[pipeline] FAIL: required clip or ready EG-1 polisher unavailable");
 }
 
 if (server is not null) await server.DisposeAsync();
@@ -158,7 +179,6 @@ static float[] ReadWav16kMono(string path)
             throw new InvalidDataException($"bad wav header at {p} in {path}");
         p += sig.Length;
     }
-    short S16() { var v = BitConverter.ToInt16(b, p); p += 2; return v; }
     int S32() { var v = BitConverter.ToInt32(b, p); p += 4; return v; }
 
     Chk("RIFF"u8); S32();
@@ -171,6 +191,8 @@ static float[] ReadWav16kMono(string path)
         if (id.SequenceEqual("fmt "u8)) { fmt = b.AsSpan(p, size).ToArray(); p += size; }
         else if (id.SequenceEqual("data"u8))
         {
+            if (fmt is null || fmt.Length < 16)
+                throw new InvalidDataException($"missing or incomplete fmt chunk in {path}");
             var audioFormat = BitConverter.ToInt16(fmt, 0);
             var channels = BitConverter.ToInt16(fmt, 2);
             var sr = BitConverter.ToInt32(fmt, 4);

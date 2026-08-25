@@ -35,10 +35,25 @@ public sealed class ParakeetEngine : IDisposable
     public string ModelDir { get; }
 
     public ParakeetEngine(string modelDir, int intraOpThreads, int interOpThreads,
-        int maxTokensPerStep, string pack, bool useCuda)
+        int maxTokensPerStep, string pack, bool useCuda, string? cudaRuntimeDir = null)
     {
         ModelDir = modelDir;
         _maxTokensPerStep = maxTokensPerStep;
+
+        // The ORT GPU package ships the provider, not NVIDIA's CUDA/cuDNN DLLs.
+        // Make the configured runtime folder discoverable before ORT loads the
+        // provider. The founder rig points this at its existing CUDA 13 runtime.
+        if (useCuda && !string.IsNullOrWhiteSpace(cudaRuntimeDir))
+        {
+            if (!Directory.Exists(cudaRuntimeDir))
+                throw new DirectoryNotFoundException($"CUDA runtime directory not found: {cudaRuntimeDir}");
+            var currentPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+            if (!currentPath.Split(Path.PathSeparator).Contains(cudaRuntimeDir,
+                    StringComparer.OrdinalIgnoreCase))
+            {
+                Environment.SetEnvironmentVariable("PATH", cudaRuntimeDir + Path.PathSeparator + currentPath);
+            }
+        }
 
         // S1 (MEASURED): the int8 QDQ pack is the CPU tier; the fp32 QDQ-free pack
         // is the GPU tier — CUDA EP on the QDQ graph injects ~742 Memcpy nodes and
@@ -84,7 +99,7 @@ public sealed class ParakeetEngine : IDisposable
         // 1. Mel features (nemo128 preprocessor ONNX session).
         var wave = samples16k.ToArray();
         var waveLens = new long[] { wave.Length };
-        var pre = _preprocessor.Run(new[]
+        using var pre = _preprocessor.Run(new[]
         {
             NamedOnnxValue.CreateFromTensor("waveforms", new DenseTensor<float>(wave.AsMemory(), new int[] { 1, wave.Length })),
             NamedOnnxValue.CreateFromTensor("waveforms_lens", new DenseTensor<long>(waveLens.AsMemory(), new int[] { 1 })),
@@ -94,7 +109,7 @@ public sealed class ParakeetEngine : IDisposable
         var tFeats = (int)featureLens;
 
         // 2. Encoder (single call; the dominant stage — S1: 96% of CPU time).
-        var enc = _encoder.Run(new[]
+        using var enc = _encoder.Run(new[]
         {
             NamedOnnxValue.CreateFromTensor("audio_signal", new DenseTensor<float>(features.AsMemory(), new int[] { 1, 128, tFeats })),
             NamedOnnxValue.CreateFromTensor("length", new DenseTensor<long>(new long[] { featureLens }, new int[] { 1 })),
@@ -136,7 +151,7 @@ public sealed class ParakeetEngine : IDisposable
                 _encFrame[d] = encOut[t * _encoderDim + d];
             _targets[0] = tokens.Count > 0 ? tokens[^1] : _vocab.BlankIdx;
 
-            var res = _decoder.Run(new[]
+            using var res = _decoder.Run(new[]
             {
                 NamedOnnxValue.CreateFromTensor("encoder_outputs", new DenseTensor<float>(_encFrame.AsMemory(), new int[] { 1, _encoderDim, 1 })),
                 NamedOnnxValue.CreateFromTensor("targets", new DenseTensor<int>(_targets.AsMemory(), new int[] { 1, 1 })),
