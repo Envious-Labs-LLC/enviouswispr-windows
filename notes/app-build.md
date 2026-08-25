@@ -153,3 +153,15 @@ branch `rig/app-build` (pushed, clean tree) were intact; only runtime state was 
 - MEASURED 12:48: boot clean — F9 active, "autostart: enabled (HKCU Run)" logged, probe
   GREEN; `reg query HKCU\...\Run` shows the exe path. Quit/toggle CLICK paths are READ
   (headless rig) — the founder's first right-click is the runtime check.
+
+## 2026-08-25 — EG-1 A/B: v3-en vs v4-twins vs v5 (MEASURED)
+
+- Added `--ab` mode to `EnviousWispr.Smoke`: transcribes clip10/20/94 once (deterministic
+  int8 ASR → identical inputs), then starts a server per model, probes, and polishes the
+  same transcripts. One invocation takes all model paths.
+- Result: three Jul 16 Q5_K_M builds are effectively equivalent on this corpus —
+  probe GREEN on all (v3 prefixes "So"), clip10/clip20 outputs byte-identical, clip94
+  stylistic micro-splits only, latency <1% apart (v3-en marginally fastest: 13738 vs
+  14038 ms on clip94). Keep v5 (newest). The real open comparison is local v5 vs the
+  Mac's eg-1-v2 distribution build — founder's ears decide.
+- Table + verdict: notes/founder-test.md ("EG-1 build A/B" section).

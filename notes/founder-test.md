@@ -61,13 +61,26 @@ Full corpus (453 clips): int8 median 274 ms / p95 2.2 s; fp32 median 326 ms / p9
 - Mic = default input device, 16 kHz mono (WASAPI shared mode).
 - Quiet-clip guard: <100 ms of audio is discarded (no accidental blanks).
 
-## Open question for you
+## EG-1 build A/B — answered with data (2026-08-25, MEASURED)
 
-Mac ships "eg-1-v2" (8 shards, ~3.2 GB, from models.enviouslabs.co). This box has three
-Q5_K_M builds from the Jul 16 training runs: `eg1-v3-en`, `eg1-v4-twins`, `eg1-v5`
-(all byte-identical size 2,889,511,680). I'm running **eg1-v5** (newest by mtime).
-The prompt contract is byte-verified identical. If polish quality feels off vs the Mac,
-say so — we can A/B the three builds (probe is green on v5; output quality is your call).
+You asked which of the three local Jul 16 Q5_K_M builds to run. `EnviousWispr.Smoke.exe --ab`
+ran all three on identical ASR transcripts (clip10/20/94 + activation probe), CPU server:
+
+| Build | Probe | clip10 10s | clip20 20s | clip94 91.5s |
+|---|---|---|---|---|
+| v3-en | GREEN 1035 ms ("So move the meeting to Friday.") | 1662 ms | 4133 ms | 13738 ms |
+| v4-twins | GREEN 978 ms | 1664 ms | 4146 ms | 13988 ms |
+| v5 (running) | GREEN 991 ms | 1663 ms | 4156 ms | 14038 ms |
+
+**Verdict: on this corpus they are effectively equivalent.** clip10/clip20 outputs are
+byte-identical across all three (same comma insertion, same filler repair
+"They don't they don't they're" → "They're not concerned"); clip94 differs only in
+stylistic micro-splits (comma/"like" placement). Latency deltas <1%. v3's probe prefixes
+"So" (cosmetic). **Keeping v5 (newest); switching is not justified by this data.**
+
+Remaining quality question: v5 (local Q5_K_M) vs the Mac's "eg-1-v2" (8 shards, different
+quantization, models.enviouslabs.co). That is your ears on real dictation — if polish feels
+off vs the Mac, say so and we compare against the Mac build, not the other local ones.
 
 ## What's NOT built yet
 
