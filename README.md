@@ -21,14 +21,17 @@ which are a rewrite. See [`AGENTS.md`](AGENTS.md).
 Primarily **Qwen3.8-27B** running locally on the Envious Labs rig, driven by the `pi` agent. Its brief,
 its evidence rules, and its notes discipline are in [`AGENTS.md`](AGENTS.md), which it reads automatically.
 
-That machine is Linux, so it can cross-compile and unit-test portable logic but cannot exercise real
-Windows audio, tray, clipboard or UI Automation. Claims are labelled `MEASURED`, `READ` or `ASSUMED`
-accordingly, and that labelling is load-bearing rather than decoration.
+That machine is native Windows (Windows 11, i9-14900KF, 64 GB, RTX 4090 24 GB — MEASURED
+2026-08-24), so it can exercise real Windows audio, tray, clipboard and UI Automation and
+build the C#/.NET stack; it cannot run the macOS app or Apple silicon. Claims are labelled
+`MEASURED`, `READ` or `ASSUMED` accordingly, and that labelling is load-bearing rather than
+decoration. (The rig moved from Linux/WSL to native Windows on 2026-08-24; Linux-era rig
+facts in the notes are superseded history.)
 
 ## Reference material lives on the rig, not in this repo
 
 A verbatim snapshot of the macOS source at commit `f9b70283` (2026-08-24), plus the internal engineering
-knowledge, sits at `/home/saura/agent-workspace/enviouswispr-windows/` on the rig. It is deliberately NOT
+knowledge, sits at `C:\Users\saura\agent-workspace\enviouswispr-windows\` on the rig. It is deliberately NOT
 committed here: it belongs to the macOS repo, it is 175 MB, and a copy in two places drifts.
 
 Anything learned FROM that snapshot belongs here, in `notes/`, with the source path cited.

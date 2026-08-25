@@ -46,3 +46,6 @@ Thumbs.db
 tmp/
 scratch/
 *.log
+
+# Local agent state (pi tasks/fusion data)
+.pi/
