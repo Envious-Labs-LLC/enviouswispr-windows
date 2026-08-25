@@ -1,0 +1,25 @@
+<Window x:Class="EnviousWispr.OverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="EnviousWispr"
+        Width="280" Height="64"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Topmost="True" ShowInTaskbar="False"
+        WindowStartupLocation="Manual"
+        Focusable="False">
+    <Border CornerRadius="14" Background="#E61E1E2E" Padding="14,8" Margin="6">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="14" ShadowDepth="1" Opacity="0.5"/>
+        </Border.Effect>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <Ellipse x:Name="StateDot" Width="12" Height="12" Fill="#FF5555"
+                     VerticalAlignment="Center" Margin="0,0,10,0"/>
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock x:Name="StateText" Text="starting…" Foreground="#FFE6E6F0"
+                           FontSize="13" FontFamily="Segoe UI"/>
+                <TextBlock x:Name="DetailText" Text="" Foreground="#FF9A9AB0"
+                           FontSize="10" FontFamily="Segoe UI"/>
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>

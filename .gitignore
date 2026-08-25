@@ -58,3 +58,5 @@ spikes/**/venv-*/
 spikes/s1/models/
 spikes/s1/audio/*.wav
 spikes/s1/audio/*.flac
+*.tar.bz2
+*.tar.gz
