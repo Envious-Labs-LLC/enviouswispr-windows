@@ -17,11 +17,11 @@ Autopilot goal: viable push-to-talk app (hotkey → 16 kHz capture → Parakeet 
   of the current clipboard item, and only restore when no other app changed the clipboard.
   Failed automatic paste leaves the transcript available for manual Ctrl+V.
 - Added a named single-instance mutex, persistent autostart opt-out, stable-path refresh,
-  startup help balloon, tray how-to, and a persistent F9 instruction in the ready pill.
+  startup help balloon, tray how-to, and a persistent configured-key instruction in the ready pill.
 - Replaced the synthetic test's false-positive check. App-log text can no longer make a paste
   test pass; the expected phrase must be present in the focused target control.
 - Two adversarial review rounds found nine user-path and validation defects, all fixed before
-  handoff. F9 is consumed instead of also triggering the focused app, empty ASR never pastes over
+  handoff. The push-to-talk key is consumed instead of also triggering the focused app, empty ASR never pastes over
   selected text, status labels reflect the real ASR mode, and every EG-1 failure path tears down its
   process tree. The smoke harness now fails when fixtures, probe quality, or real-clip polish are
   missing instead of printing a false pass.
@@ -33,7 +33,7 @@ Autopilot goal: viable push-to-talk app (hotkey → 16 kHz capture → Parakeet 
   instead of thrown on NAudio's capture thread.
 - Interactive proof: published app launched in Windows session 1 and the 280 by 64 overlay
   rendered with real content. Synthetic keyboard injection was blocked by the locked Windows
-  desktop with Win32 access denied, so physical F9, microphone, and paste remain the founder UAT.
+  desktop with Win32 access denied, so physical push-to-talk, microphone, and paste remain the founder UAT.
 
 ## 2026-08-25 — C# ASR port verified (MEASURED)
 

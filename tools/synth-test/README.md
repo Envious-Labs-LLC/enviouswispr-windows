@@ -7,7 +7,7 @@ real pasted text.
 - `setup-founder-test.ps1` creates the desktop shortcut and launches the UAT in interactive
   Windows session 1 through Task Scheduler.
 - `run-interactive-uat.ps1` waits for GPU ASR, a green EG-1 probe, and a real overlay render.
-- `e2e-synthetic.ps1` holds F9 around synthetic speech and only passes when the expected phrase
+- `e2e-synthetic.ps1` holds F8 around synthetic speech and only passes when the expected phrase
   appears in `SynthTarget`.
 - `capture-overlay.ps1` renders the WPF overlay by its owning process for visual inspection.
 

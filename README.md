@@ -1,17 +1,17 @@
 # EnviousWispr — Windows Edition
 
-Windows-native voice-to-text: hold **F9**, speak, release — polished text is typed into your
+Windows-native voice-to-text: hold **F8**, speak, release — polished text is typed into your
 focused app. Sister project to macOS [EnviousWispr](https://github.com/saurabhav88/EnviousWispr).
 
 **Status: founder test build ready.** GPU transcription, GPU polish, the visible overlay,
 tray controls, and startup behavior are verified on the Envious Labs rig (2026-08-25).
-The final physical F9 and paste check is intentionally left for the founder on the unlocked PC.
+The final physical F8 and paste check is intentionally left for the founder on the unlocked PC.
 
 Maintained by [Envious Labs](https://github.com/Envious-Labs-LLC).
 
 ## What it does
 
-- Push-to-talk on **F9** (changeable in config). A small pill shows recording state.
+- Push-to-talk on **F8** (changeable in config). A small pill shows recording state.
 - 16 kHz mono capture → **Parakeet TDT 0.6B v3** (ONNX Runtime, C#) → raw transcript.
 - **EG-1** (a 2B fine-tuned Qwen, GGUF) polishes the transcript via a llama-server the app
   **launches itself** on an ephemeral loopback port with a random API key. The model and the
@@ -64,7 +64,7 @@ Model packs (ASR ~670 MB int8 / ~2.5 GB fp32) and the EG-1 GGUF are **not in git
 |---|---|
 | GPU ASR + EG-1 model pipeline | ✅ measured smoke pass on the RTX 4090 |
 | Visible overlay, tray, startup, single-instance behavior | ✅ verified in interactive Windows session 1 |
-| Physical F9, live mic, paste into founder-selected apps | 🧪 ready for founder test on the unlocked PC |
+| Physical F8, live mic, paste into founder-selected apps | 🧪 ready for founder test on the unlocked PC |
 | Clipboard-safe delivery fallback | ✅ keeps text on clipboard when automatic paste is blocked |
 | CPU fallback | ✅ app falls back automatically if CUDA cannot load |
 | Contract tests plus runtime ASR and native-input tests | ✅ 39/39 locally, CI on every push |

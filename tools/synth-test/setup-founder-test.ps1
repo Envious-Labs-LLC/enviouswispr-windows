@@ -13,7 +13,7 @@ $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $AppExe
 $shortcut.WorkingDirectory = [System.IO.Path]::GetDirectoryName($AppExe)
-$shortcut.Description = "EnviousWispr Windows test build. Hold F9 to dictate."
+$shortcut.Description = "EnviousWispr Windows test build. Hold F8 to dictate."
 $shortcut.Save()
 
 $uatScript = Join-Path $RepoRoot "tools\synth-test\run-interactive-uat.ps1"

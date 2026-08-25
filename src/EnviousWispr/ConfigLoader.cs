@@ -6,7 +6,7 @@ namespace EnviousWispr;
 public sealed class AppConfig
 {
     public string BaseDir { get; set; } = "";
-    public string Hotkey { get; set; } = "F9";
+    public string Hotkey { get; set; } = "F8";
     public AsrSection Asr { get; set; } = new();
     public Eg1Section Eg1 { get; set; } = new();
 

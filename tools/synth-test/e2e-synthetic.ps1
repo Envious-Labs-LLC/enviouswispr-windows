@@ -31,13 +31,13 @@ public class EnviousWisprTestKeys {
   [StructLayout(LayoutKind.Sequential)] struct KEYBDINPUT {
     public ushort virtualKey; public ushort scanCode; public uint flags; public uint time; public UIntPtr extraInfo;
   }
-  public static void SendF9(bool keyUp) {
-    var keyboard = new KEYBDINPUT { virtualKey = 0x78, flags = keyUp ? 2u : 0u };
+  public static void SendHotkey(bool keyUp) {
+    var keyboard = new KEYBDINPUT { virtualKey = 0x77, flags = keyUp ? 2u : 0u };
     var input = new INPUT { type = 1, data = new INPUTUNION { keyboard = keyboard } };
     var size = Marshal.SizeOf(typeof(INPUT));
     if (SendInput(1, new [] { input }, size) != 1) {
       var error = Marshal.GetLastWin32Error();
-      throw new InvalidOperationException("SendInput F9 failed (INPUT size=" + size + ", Win32=" + error + ")");
+      throw new InvalidOperationException("SendInput F8 failed (INPUT size=" + size + ", Win32=" + error + ")");
     }
   }
 }
@@ -61,9 +61,9 @@ try {
     Start-Sleep -Milliseconds 500
     Write-Output ("synthtarget pid: {0}" -f $target.Id)
 
-    [EnviousWisprTestKeys]::SendF9($false)
+    [EnviousWisprTestKeys]::SendHotkey($false)
     $keyIsDown = $true
-    Write-Output "F9 down (capture started)"
+    Write-Output "F8 down (capture started)"
     Start-Sleep -Milliseconds 800
 
     $voice = New-Object -ComObject SAPI.SpVoice
@@ -72,9 +72,9 @@ try {
     Write-Output ("speech playback took {0:N1} s" -f $sw.Elapsed.TotalSeconds)
     Start-Sleep -Milliseconds 600
 
-    [EnviousWisprTestKeys]::SendF9($true)
+    [EnviousWisprTestKeys]::SendHotkey($true)
     $keyIsDown = $false
-    Write-Output "F9 up (capture stopped)"
+    Write-Output "F8 up (capture stopped)"
 
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     $text = ""
@@ -110,11 +110,11 @@ try {
     if (-not ($quickFox -and $lazyDog)) {
         throw "End-to-end paste failed: the expected phrase did not reach the target text box."
     }
-    Write-Output "E2E PASS: speech reached the focused target through F9, ASR, polish, and paste."
+    Write-Output "E2E PASS: speech reached the focused target through F8, ASR, polish, and paste."
 }
 finally {
     if ($keyIsDown) {
-        [EnviousWisprTestKeys]::SendF9($true)
+        [EnviousWisprTestKeys]::SendHotkey($true)
     }
     if ($target -and -not $target.HasExited) {
         try { $target.Kill(); $target.WaitForExit(3000) | Out-Null } catch { }

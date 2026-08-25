@@ -40,9 +40,9 @@ try {
                 }
             }
         }
-    } while ((-not $logText.Contains("hotkey F9") -or -not $logText.Contains("EG-1 probe: GREEN")) -and
+    } while ((-not $logText.Contains("hotkey F8") -or -not $logText.Contains("EG-1 probe: GREEN")) -and
              [DateTime]::UtcNow -lt $deadline)
-    if (-not $logText.Contains("hotkey F9")) { throw "App did not register F9 before timeout" }
+    if (-not $logText.Contains("hotkey F8")) { throw "App did not register F8 before timeout" }
     if (-not $logText.Contains("EG-1 probe: GREEN")) { throw "EG-1 did not become green before timeout" }
 
     $overlayPath = Join-Path $RepoRoot "tools\synth-test\overlay.png"
