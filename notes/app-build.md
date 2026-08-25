@@ -123,3 +123,33 @@ EG-1 was trained AND runs on this PC:
   Both selectable via asr.pack in appsettings.
 - EG-1 model in use: `C:\Users\saura\eg1-v5-Q5_K_M.gguf` (Jul 16 20:02, newest local build).
   serverExe: tools\llama.cpp CPU build (keeps the 4090 free for the control plane).
+
+## 2026-08-25 (second recovery) — session lost, app relaunched
+
+Prior session's processes (app PID 38816, its llama-server child) died with it. Workspace and
+branch `rig/app-build` (pushed, clean tree) were intact; only runtime state was lost.
+
+- Relaunched app detached via `Start-Process` (new PID 50100). Boot: Parakeet ready ~1 s,
+  llama-server (ephemeral port 58352) ready in ~2.1 s, probe GREEN ("Move the meeting to
+  Friday."), F9 active. MEASURED 12:41.
+- Re-ran full smoke (`EnviousWispr.Smoke.exe`): SMOKE PASS, EXIT=0. ASR 215/387/4974 ms on
+  10/20/91.5 s clips; EG-1 start 1592 ms, probe 1007 ms; full pipeline 2100 ms. All match
+  checkpoint numbers in founder-test.md.
+
+## 2026-08-25 — tray icon + autostart + quit path (MEASURED)
+
+- Gap: the app (WinExe, no console, OnExplicitShutdown) had no quit path and no presence
+  beyond the overlay pill; founder-test.md's "exits when its console host dies" was stale.
+- Added `Tray/TrayIcon.cs`: WinForms NotifyIcon, no NuGet dep. Icon drawn in memory
+  (dark pill + green dot, no .ico asset). Right-click menu: status line (mirrors overlay
+  state, dispatcher-marshalled), "Start with Windows" checkbox (HKCU Run key),
+  "Quit EnviousWispr" → Application.Shutdown() → OnExit disposes hotkey/tray/pipeline,
+  which kills the llama-server child (Kill entireProcessTree, pre-existing path).
+- Autostart defaults ON on first launch (dictation must be resident at login, like the
+  Mac's menu-bar app); tray item toggles it. Registry value: exe path in quotes.
+- Build gotcha (MEASURED): UseWindowsForms adds project-wide implicit usings that collide
+  with WPF (Application, Color ambiguous). Fix: `<Using Remove>` both, explicit usings in
+  TrayIcon.cs only; Application fully qualified there (both namespaces imported).
+- MEASURED 12:48: boot clean — F9 active, "autostart: enabled (HKCU Run)" logged, probe
+  GREEN; `reg query HKCU\...\Run` shows the exe path. Quit/toggle CLICK paths are READ
+  (headless rig) — the founder's first right-click is the runtime check.

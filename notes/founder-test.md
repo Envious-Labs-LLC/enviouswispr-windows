@@ -12,11 +12,19 @@ The app is RUNNING on this machine right now (PID 38816, overlay pill top-right,
    ASR ~0.4 s + EG-1 polish ~1.5-2 s on CPU).
 4. If it goes silent → check `enviouswispr.log` next to the exe (see paths below) and send it over.
 
-## Restart / stop (only these PIDs, never by name)
+## Restart / stop
+
+- **Quit (normal path):** tray icon (notification area, green dot on dark pill) →
+  right-click → **Quit EnviousWispr**. This disposes the pipeline and kills the EG-1
+  llama-server child (no orphans).
+- Tray menu also has **Start with Windows** (checkbox; on by default since 2026-08-25 —
+  it wrote `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\EnviousWispr` pointing at
+  the exe) and a live status line mirroring the pill.
+- From a shell, exact PID only, never by name:
 
 ```
 tasklist | findstr EnviousWispr      :: find the PID
-taskkill /PID <pid> /F               :: exact PID only
+taskkill /PID <pid> /F               :: exact PID only (add /T to take the llama-server child)
 :: relaunch:
 src\EnviousWispr\bin\Debug\net8.0-windows\EnviousWispr.exe
 ```
@@ -63,7 +71,6 @@ say so — we can A/B the three builds (probe is green on v5; output quality is 
 
 ## What's NOT built yet
 
-- Auto-start with Windows / tray menu (app exits when its console host dies — fine for now)
 - xUnit test suite (smoke exe stands in for it)
 - GPU tier for ASR (CUDA fp32 encoder: RTFx 84-145 measured in S1, not plumbed)
 - Official EG-1 distribution story (currently: local weights on this box)
