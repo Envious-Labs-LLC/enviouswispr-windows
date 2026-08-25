@@ -10,8 +10,8 @@ public enum PasteResult { NotAttempted, Pasted, ClipboardOnly, Failed }
 /// family ships and how the Mac's paste contract behaves for rich apps.)
 public static class TextInserter
 {
-    private const uint VkControl = 0x11;
-    private const uint VkV = 0x56;
+    private const ushort VkControl = 0x11;
+    private const ushort VkV = 0x56;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Input
@@ -33,8 +33,11 @@ public static class TextInserter
     [StructLayout(LayoutKind.Sequential)]
     private struct KEYBDINPUT
     {
-        public uint wVk;
-        public uint wScan;
+        // Win32 WORD fields. Using uint here keeps the total size plausible
+        // but moves dwFlags from native offset 4 to offset 8, turning every
+        // intended key-up into another key-down (and pasting twice).
+        public ushort wVk;
+        public ushort wScan;
         public uint dwFlags;
         public uint time;
         public IntPtr dwExtraInfo;
@@ -50,6 +53,9 @@ public static class TextInserter
     private static extern uint GetClipboardSequenceNumber();
 
     internal static int NativeInputSize => Marshal.SizeOf<Input>();
+    internal static int NativeKeyboardInputSize => Marshal.SizeOf<KEYBDINPUT>();
+    internal static int NativeKeyboardFlagsOffset =>
+        Marshal.OffsetOf<KEYBDINPUT>(nameof(KEYBDINPUT.dwFlags)).ToInt32();
 
     /// One atomic SendInput batch: Ctrl down, V down, V up, Ctrl up.
     private static bool SendCtrlV()
@@ -64,7 +70,7 @@ public static class TextInserter
         return SendInput((uint)inputs.Length, inputs, NativeInputSize) == inputs.Length;
     }
 
-    private static Input MakeInput(uint vk, bool up) => new()
+    private static Input MakeInput(ushort vk, bool up) => new()
     {
         type = InputKeyboard,
         U = new InputUnion
