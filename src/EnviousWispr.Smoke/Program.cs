@@ -24,7 +24,7 @@ if (args.Length > 0 && args[0] == "--ab")
     var cfgAb = ConfigLoader.Load();
     var spikeDir = Path.GetFullPath(Path.Combine(cfgAb.BaseDir, "spikes", "s1", "audio"));
     var asrAb = new ParakeetEngine(cfgAb.Resolve(cfgAb.Asr.ModelDir), cfgAb.Asr.IntraOpThreads,
-        cfgAb.Asr.InterOpThreads, cfgAb.Asr.MaxTokensPerStep, useCuda: false);
+        cfgAb.Asr.InterOpThreads, cfgAb.Asr.MaxTokensPerStep, cfgAb.Asr.Pack, useCuda: false);
     var corpus = new (string Label, string Text)[]
     {
         ("clip10 10s", asrAb.Recognize(ReadWav16kMono(Path.Combine(spikeDir, "clip10.wav"))).Text),
@@ -69,7 +69,7 @@ Console.WriteLine($"[cfg] base={cfg.BaseDir}");
 var modelDir = cfg.Resolve(cfg.Asr.ModelDir);
 var sw = Stopwatch.StartNew();
 var asr = new ParakeetEngine(modelDir, cfg.Asr.IntraOpThreads, cfg.Asr.InterOpThreads,
-    cfg.Asr.MaxTokensPerStep, useCuda: cfg.Asr.Provider == "cuda");
+    cfg.Asr.MaxTokensPerStep, cfg.Asr.Pack, useCuda: cfg.Asr.Provider == "cuda");
 Console.WriteLine($"[asr] engine loaded in {sw.ElapsedMilliseconds} ms");
 
 var spikeAudio = Path.GetFullPath(Path.Combine(cfg.BaseDir, "spikes", "s1", "audio"));

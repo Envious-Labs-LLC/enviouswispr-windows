@@ -24,6 +24,9 @@
     <Using Remove="System.Drawing" />
 
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.22.0" />
+    <!-- CUDA EP for asr.provider=cuda; bundles cudart/cublas/cudnn. CPU EP stays
+         the default and the automatic fallback when the GPU is unavailable. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.22.0" />
     <PackageReference Include="NAudio" Version="2.2.1" />
   </ItemGroup>
 

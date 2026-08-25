@@ -35,10 +35,17 @@ public sealed class ParakeetEngine : IDisposable
     public string ModelDir { get; }
 
     public ParakeetEngine(string modelDir, int intraOpThreads, int interOpThreads,
-        int maxTokensPerStep, bool useCuda)
+        int maxTokensPerStep, string pack, bool useCuda)
     {
         ModelDir = modelDir;
         _maxTokensPerStep = maxTokensPerStep;
+
+        // S1 (MEASURED): the int8 QDQ pack is the CPU tier; the fp32 QDQ-free pack
+        // is the GPU tier — CUDA EP on the QDQ graph injects ~742 Memcpy nodes and
+        // is ~2x SLOWER than pinned CPU (notes/spike-s1.md). fp32 encoder carries
+        // a .onnx.data sidecar that ORT loads automatically.
+        var encoderFile = pack == "fp32" ? "encoder-model.onnx" : "encoder-model.int8.onnx";
+        var decoderFile = pack == "fp32" ? "decoder_joint-model.onnx" : "decoder_joint-model.int8.onnx";
 
         var so = new SessionOptions
         {
@@ -51,8 +58,8 @@ public sealed class ParakeetEngine : IDisposable
         if (useCuda) so.AppendExecutionProvider_CUDA(0);
 
         _preprocessor = new InferenceSession(Path.Combine(modelDir, "nemo128.onnx"), so);
-        _encoder = new InferenceSession(Path.Combine(modelDir, "encoder-model.int8.onnx"), so);
-        _decoder = new InferenceSession(Path.Combine(modelDir, "decoder_joint-model.int8.onnx"), so);
+        _encoder = new InferenceSession(Path.Combine(modelDir, encoderFile), so);
+        _decoder = new InferenceSession(Path.Combine(modelDir, decoderFile), so);
         _vocab = Vocab.Load(Path.Combine(modelDir, "vocab.txt"));
 
         // Probe decoder geometry once from the graph metadata (MEASURED):
