@@ -165,3 +165,26 @@ branch `rig/app-build` (pushed, clean tree) were intact; only runtime state was 
   14038 ms on clip94). Keep v5 (newest). The real open comparison is local v5 vs the
   Mac's eg-1-v2 distribution build — founder's ears decide.
 - Table + verdict: notes/founder-test.md ("EG-1 build A/B" section).
+
+## 2026-08-25 — xUnit contract suite (32 tests) + CleanPolishedText port bug (MEASURED)
+
+- New `src/EnviousWispr.Tests` (xunit 2.5.3, net8.0-windows, InternalsVisibleTo): 32
+  tests over the deterministic layer — EgOnePrompt (frozen 265-byte training contract,
+  wrapper + ZWSP neutralization), EgOneProbe (GREEN semantics incl. the v3 "So" prefix
+  and whole-word "um"), EgOnePolisher.ParseSuccess/CleanPolishedText (silent-bypass
+  contract, sandwich stripping), Vocab.Load (id ordering, <blk>, U+2581, malformed
+  lines). `dotnet test` → 32/32. Mutation-proved per gotchas #7: the prompt guard goes
+  RED on a one-char drift, GREEN on restore.
+- PORT BUG found by the suite: CleanPolishedText's ZWSP opener list had
+  `"<\u200Ctranscript"` (missing the closing '>'), so an echoed lowercase neutralized
+  opener left a stray '>' in polished output. One-character fix, test-locked.
+- Fidelity note (READ from macos-source, LLMProtocol.swift:145-150): the Mac's actual
+  strip is a GLOBAL case-insensitive regex `</?transcript>` with no ZWSP awareness.
+  The port's sandwich+ZWSP list diverges deliberately-ish (it strips the neutralized
+  tags the Mac regex cannot) but does not port the Mac's preamble/ack stripping —
+  v1-acceptable: probe + A/B outputs show EG-1 emits no preambles.
+- TOOL QUIRK (MEASURED behaviour, ASSUMED mechanism): xunit's
+  Assert.DoesNotContain(string, string) reported "found at pos 0" for a U+200C search
+  against a string ordinal Contains() proves does not contain it — consistent with
+  culture-sensitive comparison treating ZWSP as ignorable. For zero-width/format
+  characters, assert with ordinal Contains, not xunit string assertions.

@@ -84,6 +84,8 @@ off vs the Mac, say so and we compare against the Mac build, not the other local
 
 ## What's NOT built yet
 
-- xUnit test suite (smoke exe stands in for it)
+- xUnit suite for the runtime legs (the deterministic contract layer has 32 tests
+  since 2026-08-25 — `dotnet test src/EnviousWispr.Tests`; the live mic→paste path is
+  still verified by the smoke exe + your own dictation)
 - GPU tier for ASR (CUDA fp32 encoder: RTFx 84-145 measured in S1, not plumbed)
 - Official EG-1 distribution story (currently: local weights on this box)

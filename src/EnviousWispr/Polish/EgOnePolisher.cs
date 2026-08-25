@@ -104,7 +104,7 @@ public sealed class EgOnePolisher
     internal static string CleanPolishedText(string content)
     {
         var s = content.Trim();
-        foreach (var open in new[] { "<TRANSCRIPT>", "<transcript>", "<\u200CTRANSCRIPT>", "<\u200Ctranscript" })
+        foreach (var open in new[] { "<TRANSCRIPT>", "<transcript>", "<\u200CTRANSCRIPT>", "<\u200Ctranscript>" })
         {
             if (s.StartsWith(open, StringComparison.Ordinal)) s = s[open.Length..].TrimStart();
         }
