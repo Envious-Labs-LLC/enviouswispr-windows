@@ -49,3 +49,6 @@ scratch/
 
 # Local agent state (pi tasks/fusion data)
 .pi/
+
+# Task briefs live in the working tree, never in the repo (rig-rules #13)
+BRIEF-*.md
