@@ -30,7 +30,7 @@ pull requests. This file is craft and objective, not a fence. Machine-level guid
 
 ## Reference material — on the rig, not in this repo
 
-At `/home/saura/agent-workspace/enviouswispr-windows/`:
+At `C:\Users\saura\agent-workspace\enviouswispr-windows\`:
 
 | Path | What it is |
 |---|---|
@@ -91,9 +91,13 @@ Third-party: `argmax-oss-swift` (WhisperKit), `fluidaudio` (Parakeet), `sparkle`
 
 ## What the rig can and cannot prove
 
-Linux, not Windows; not a Mac. Cross-compiling and unit-testing portable logic works. Exercising real
-Windows audio, tray, clipboard or UI Automation does not — though Wine, a container, or a run on the
-Windows host across the WSL boundary are all fair game if you want to close that gap.
+**Windows 11, native (not WSL)** — MEASURED 2026-08-24: build 26200, i9-14900KF, 64 GB RAM,
+RTX 4090 24 GB, no NPU, .NET 8 SDK, local Qwen at 127.0.0.1:8081. It CAN exercise real Windows
+audio (WASAPI), tray, clipboard, UI Automation and SendInput, and build/run C#/.NET, llama.cpp
+and ONNX. It CANNOT run the macOS app, CoreML or Apple silicon — macOS claims stay `READ`
+from the snapshot, never `MEASURED`. The rig moved from Linux/WSL to native Windows on
+2026-08-24; the Linux-era rig facts in `notes/toolchain.md` are superseded history, and we
+do not work in Linux again.
 
 Be precise about what a toolchain buys, because it is less than it feels like. Compilation is `MEASURED`
 only when the exact TARGET toolchain builds the exact revision you cite; a successful Linux build does not
@@ -118,12 +122,17 @@ each one exists because a specific failure mode was costing sessions.
 open pull requests, check your own CI, comment. Use it directly — do NOT reach for a GitHub connector,
 which would cost context to tell you what a command you already have does better.
 
-**Scouts take turns; they do not run in parallel.** MEASURED 2026-08-24: the local model serves one
+**Scouts take turns; they do not run in parallel.** MEASURED 2026-08-24 (Linux-rig era —
+re-verify before relying on it: the local Qwen server is up on the Windows rig too, at
+127.0.0.1:8081, MEASURED 2026-08-24, but the one-request-at-a-time behaviour has not been
+re-measured here): the local model serves one
 request at a time, so two scouts queue. Their value is not speed, it is that a scout can read forty files
 and hand you back two paragraphs, keeping thirty-eight files out of your own context. Send them to READ
 widely and REPORT narrowly. That benefit is intact while they queue.
 
-**The GPU runs one job at a time and it is running your own brain.** `nvidia-smi` before any GPU work.
+**The GPU runs one job at a time and it is running your own brain.** (Still true: the
+RTX 4090 is on the Windows rig and the local Qwen model runs on it — MEASURED 2026-08-24.)
+`nvidia-smi` before any GPU work.
 
 ## Memory versus notes — they are different things, keep them apart
 

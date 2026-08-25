@@ -41,7 +41,9 @@ equivalent of what CoreML gave us on the Mac.
    Dictation = all-day, background, low-watt workload; Copilot+ NPU is the "fast, silent,
    battery-neutral" story transplanted. Risk: NPU paths want INT8 ONNX in a constrained opset,
    so the sherpa-onnx int8 export may need Olive re-quantization per vendor. Needs a real
-   Copilot+ test machine — the rig (gaming PC, WSL host) can answer dGPU/CPU, not NPU.
+   Copilot+ test machine — the rig (now native Windows: i9-14900KF + RTX 4090 24 GB,
+   MEASURED 2026-08-24) can answer dGPU/CPU; it has **no NPU** (MEASURED device
+   enumeration), so the NPU tier is out of reach from this machine entirely.
 3. **EG-1 keeps the llama.cpp architecture** (task-tuned moat, already cross-platform).
    llama.cpp has NO NPU backend (CPU/CUDA/Metal/Vulkan/SYCL) → on Copilot+ it runs dGPU/CPU.
    EG-1 → ONNX for NPU routing = Phase 3+ experiment, not v1. Phi Silica / Foundry Local Qwen
@@ -71,7 +73,7 @@ equivalent of what CoreML gave us on the Mac.
 ## Spike S1 update (supersedes the S1 line in `Windows Port Research.md`)
 
 S1 now prices THREE tiers, not two: Parakeet v3 int8 finalize latency via
-- dGPU (host GPU — model still unknown, confirm it),
+- dGPU (RTX 4090 24 GB — confirmed MEASURED 2026-08-24 evening),
 - CPU int8 (rig CPU),
 - NPU — only if a Copilot+ machine becomes available; otherwise stays ASSUMED and the
   marketing claim is scoped to dGPU/CPU tiers until measured.
@@ -79,4 +81,6 @@ S1 now prices THREE tiers, not two: Parakeet v3 int8 finalize latency via
 ## Open questions (added to founder list)
 
 - Do we have/plan a Copilot+ test machine? If not, NPU stays out of the v1 promise.
-- Host GPU model for the rig (NVIDIA? which?) — needed before S1.
+- ~~Host GPU model for the rig (NVIDIA? which?)~~ — **RESOLVED 2026-08-24
+  (evening):** RTX 4090 24 GB (nvidia-smi). NPU tier: the rig has no NPU
+  (i9-14900KF, MEASURED), so a Copilot+ machine is the only path for that tier.

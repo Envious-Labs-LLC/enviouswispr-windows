@@ -6,6 +6,12 @@ verified, what was concluded, and what is still open. Future sessions: read this
 the legwork. Companion detail lives in `portability-map.md`, `api-equivalents.md`, and
 `language-options.md` (same directory, same date).
 
+**Addendum 2026-08-24 (evening):** the rig moved from Linux/WSL to **native
+Windows** (Windows 11 build 26200, i9-14900KF, 64 GB, RTX 4090 24 GB, no NPU —
+MEASURED; see `toolchain.md`). Everything below that refers to "the Windows
+host" as a separate machine now means **this rig**; S1/S2 and the EG-1 contract
+spike are locally runnable.
+
 ## What was done
 
 1. Read the project brief (`AGENTS.md`) and the macOS knowledge base at
@@ -96,8 +102,8 @@ Honest cost: ~77K lines of logic rewritten, not compiled.
 2. **Runnable on this rig today (not yet done):** EG-1 quality contract off-Metal —
    `llama-server` on rig CPU + the Python polish eval harness vs the shipped GGUF shards, to
    confirm the 93.7% bar holds before committing to a stack.
-3. **Spikes on the Windows host** (the machine this WSL runs on; no host access pattern
-   established yet):
+3. **Spikes on this rig** (it IS the Windows host since the 2026-08-24 move; GPU
+   confirmed RTX 4090 24 GB — MEASURED):
    - S1: WASAPI → Parakeet v3 int8 batch (DirectML/CPU) → finalization latency vs the
      sub-second promise. The load-bearing number.
    - S2: UIA TextPattern support matrix across the top ~10 target apps (Word, Outlook, Chrome,
@@ -117,7 +123,8 @@ Honest cost: ~77K lines of logic rewritten, not compiled.
 - No Windows runtime behaviour was measured — everything Windows-side is ASSUMED or external
   (sherpa-onnx artifacts/limitation) until S1/S2 run.
 - UIA coverage claims are ASSUMED.
-- DirectML performance on the host GPU is unknown — GPU model not yet confirmed.
+- DirectML performance is unknown until S1 runs. (GPU model IS now confirmed:
+  RTX 4090 24 GB, MEASURED 2026-08-24 evening.)
 - The Mac knowledge base is a 2026-08-24 snapshot at `f9b70283`; anything it says about
   decisions is dated. Re-verify against the snapshot source before citing, and never present
   it as the Mac's live state.
@@ -127,4 +134,7 @@ Honest cost: ~77K lines of logic rewritten, not compiled.
 
 1. Confirm C#/.NET + WPF (or push back with a reason).
 2. Confirm: Windows v1 ships without live transcription.
-3. Windows host access pattern (RDP/console?) and host GPU (DirectML vs CPU call for S1).
+3. ~~Windows host access pattern (RDP/console?) and host GPU (DirectML vs CPU call for S1)~~
+   — **RESOLVED 2026-08-24 (evening):** the rig is now native Windows (spikes run
+   locally); GPU is RTX 4090 24 GB (MEASURED). DirectML vs CUDA for S1 is an
+   engineering call, not an access question.

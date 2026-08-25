@@ -1,6 +1,40 @@
 # Toolchain — what the rig has, installed for this project
 
+## 2026-08-24 (evening) — the rig moved to native Windows
+
+The rig this project runs on is now **Windows 11, not Linux**. The Linux sections in
+this file are superseded history. We do not work in Linux again. Verified on the
+new rig today:
+
+| Fact | Value | Evidence |
+|---|---|---|
+| OS | Windows 11, build 10.0.26200, hostname `AlienSV` | `MEASURED` (`uname -a`, `cmd //c ver`) |
+| CPU | Intel Core i9-14900KF, 32 logical processors | `MEASURED` (Win32_Processor, nproc) |
+| RAM | 63.7 GB visible (64 GB hardware) | `MEASURED` (Win32_OperatingSystem) |
+| Disk | C: 1.9 TB, 805 GB free | `MEASURED` (df) |
+| GPU | NVIDIA RTX 4090, 24 GB | `MEASURED` (nvidia-smi) |
+| NPU | none (no NPU device in PnP enumeration; 14900KF has none) | `MEASURED` (Win32_PnPEntity) + `READ` (CPU spec) |
+| .NET | SDK 8.0.424; runtimes 6.0.32 / 8.x / **10.0.11** (runtime only, no .NET 10 SDK); `csharp-ls.exe` in `C:\Users\saura\.dotnet\tools` | `MEASURED` (dotnet --list-sdks/--list-runtimes, where csharp-ls) |
+| Swift | not installed | `MEASURED` (`swift: command not found`) |
+| `/home/saura/...` | does not exist on this machine | `MEASURED` (ls) |
+| Agent model / server | qwen3.8-27b (PI_MODEL env); local server answering at 127.0.0.1:8081 | `MEASURED` (env, curl /v1/models) |
+
+Hardware (i9-14900KF + 4090 + 64 GB + ~2 TB) matches the Linux-era rig facts in the
+machine notes — `ASSUMED` same physical machine, reinstalled; identity not proven.
+
+Consequences for the project:
+- The **Swift-for-Linux portability spike was abandoned mid-install with no
+  result** (version output never recorded, no build attempted — see the SUPERSEDED
+  marker below). The `PORTABILITY CANDIDATE` verdicts in `portability-map.md`
+  therefore remain `ASSUMED`-portable, not MEASURED.
+- "The Windows host" in the notes is now **this rig**: spikes S1/S2 and the EG-1
+  off-Metal contract spike run locally; none has run yet.
+
 ## 2026-08-24 — Swift for Linux (for the portability spike)
+
+**SUPERSEDED 2026-08-24 (evening):** the rig moved to native Windows before this
+spike produced a result. The install was in progress; `swift --version` was never
+recorded and no build was attempted. Nothing below is evidence; keep as history.
 
 **Why:** `BRIEF-map.md` deliverable — stop calling files "portable" without
 compiling them. `EnviousWisprCore` and `EnviousWisprPostProcessing` get built
@@ -37,6 +71,9 @@ SwiftPM requires one platform and Linux ignores it). Nothing in
 `macos-source/` is modified.
 
 ## Rig facts observed this session (differs from the machine notes)
+
+**SUPERSEDED 2026-08-24 (evening):** these are the LINUX rig's facts. The current
+rig is native Windows — see the section above.
 
 - `nproc` = **32** (CLAUDE.md says 24), `free -h` = **31 GiB** (says 64),
   disk free **741 GB** on `/dev/sdd`, GPU **RTX 4090 24 GB** (unchanged),

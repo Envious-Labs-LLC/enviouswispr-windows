@@ -15,6 +15,10 @@ knowledge base. Every claim labelled. The two promises:
 These are the only two numbers the product is judged on. Everything below is what could
 break each one on Windows.
 
+**Addendum 2026-08-24 (evening):** "the Windows host" in this file is now **this
+rig** — it moved from Linux/WSL to native Windows (see `toolchain.md`). S1/S2 are
+locally runnable; neither has run yet, so nothing here has become MEASURED.
+
 ## How the Mac achieves promise 1 (READ — snapshot at `f9b70283`)
 
 The budget, in order, per `architecture.md` FACT `data-flow` + `pipeline-mechanics.md`:
@@ -39,8 +43,9 @@ Pinning with `xpc_transaction_begin()` was researched and REJECTED (#1906).
 The 0.61 s median was produced by CoreML on Apple Silicon (ANE/Metal). A 0.6 B int8
 model on a modern x86 CPU or a dGPU is very likely sub-second (ASSUMED — the model is
 small and int8; no measurement on this workload exists anywhere). It must be MEASURED
-before the promise is repeated for Windows: **spike S1** on the Windows host
-(WASAPI → Parakeet v3 int8 batch → finalize, via ONNX Runtime, CPU + GPU tiers).
+before the promise is repeated for Windows: **spike S1** on this rig (WASAPI →
+Parakeet v3 int8 batch → finalize, via ONNX Runtime; CPU + RTX 4090 tiers — GPU
+confirmed MEASURED 2026-08-24).
 Anything that fails S1 with >1 s median changes the product, not the benchmark.
 
 **Windows threat T1.2: cold/warm model lifecycle — but this one FAVOURS Windows.**
@@ -144,9 +149,10 @@ per-app capability, not a global grant.
 
 - 0.61 s / 1.65 s are **Mac fleet medians** (PostHog, 2026-08-21). They define the bar;
   they are not a Windows expectation. No Windows number exists yet.
-- Every Windows runtime claim above is **ASSUMED** until S1/S2 run on the Windows host.
-  Nothing in this file was measured on Windows; the Mac-side mechanics are READ from
-  the snapshot and its knowledge base (dated 2026-08-24).
+- Every Windows runtime claim above is **ASSUMED** until S1/S2 run on this rig
+  (it became the Windows host on 2026-08-24 evening; neither spike has run yet).
+  The Mac-side mechanics are READ from the snapshot and its knowledge base
+  (dated 2026-08-24).
 - The snapshot is a photograph: `f9b70283`, 2026-08-24. Re-verify before citing as live.
 
 ## The two decisions this section forces
