@@ -216,3 +216,23 @@ branch `rig/app-build` (pushed, clean tree) were intact; only runtime state was 
 - Remaining open item for both GPU tiers (ASR + EG-1): runtime validation in a
   free-GPU window — the qwen38 control plane occupies the 4090, rig rules say
   don't fight my own brain.
+
+## 2026-08-25 — runtime ASR tests + CI + chunking measured (rejected)
+
+- Runtime engine tests (5, local-only): real engine on real S1 clips — clip10 contains
+  "telemetry", clip20 contains "sentiment analysis" (REAL corpus text — my remembered
+  "deadline" was wrong, the meta.json files carry no transcripts), clip10 latency <3 s
+  budget, 0.5 s silence no-throw, fp32 pack end-to-end. 37/37 local; CI excludes the
+  file via -p:ExcludeLocalOnlyTests=true (32/32 contract subset).
+- xUnit v2 has NO runtime skip: Assert.Skip is a v3-only API (not in 2.9.3 — measured by
+  reflection) and Xunit.Sdk.SkipException has no public ctor (measured). Hence the
+  compile-exclusion gate instead of a skip.
+- CI: .github/workflows/ci.yml — windows-latest, builds app + smoke, runs the contract
+  subset. First real run: on the next push (PR #1).
+- Long-dictation chunking MEASURED and REJECTED for v1 (spikes/rms-scan.ps1):
+  clip94 has 36 silence gaps >=400 ms → 37 chunks, max 8.4 s. The three latency points
+  fit cost ≈ 158 + 0.57*T^2 ms (linear term ≈ 0 — the per-frame decode loop scales
+  super-linearly). Per-chunk fixed cost (158 ms x 37 ≈ 5.8 s) CANCELS the quadratic
+  attention savings → chunking ≈ single-pass (~5 s). The CPU long-clip floor is the
+  decode loop = model-side fix (fused/batched decoder export) or the GPU tier (plumbed,
+  validation pending).

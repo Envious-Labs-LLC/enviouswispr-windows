@@ -9,6 +9,12 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
 
+  <!-- Local-only tests (need the gitignored model packs): excluded in CI via
+       -p:ExcludeLocalOnlyTests=true; included in every local `dotnet test`. -->
+  <ItemGroup Condition="'$(ExcludeLocalOnlyTests)' == 'true'">
+    <Compile Remove="AsrEngineRuntimeTests.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
