@@ -49,6 +49,8 @@ src\EnviousWispr\bin\Debug\net8.0-windows\EnviousWispr.exe
 Full corpus (453 clips): int8 median 274 ms / p95 2.2 s; fp32 median 326 ms / p95 2.1 s.
 **int8 emits empty text on ~4% of clips; fp32 on <0.5%.** If you hear blanks, flip
 `asr.pack` to `fp32` in appsettings and restart (slower median, fewer blanks).
+Note: that knob was a NO-OP until 2026-08-25 (the engine hardcoded the int8 encoder) —
+it is real now and was verified on this box (fp32 CPU: 223 ms / 10 s clip).
 
 ## Known limitations (v1)
 
@@ -87,5 +89,8 @@ off vs the Mac, say so and we compare against the Mac build, not the other local
 - xUnit suite for the runtime legs (the deterministic contract layer has 32 tests
   since 2026-08-25 — `dotnet test src/EnviousWispr.Tests`; the live mic→paste path is
   still verified by the smoke exe + your own dictation)
-- GPU tier for ASR (CUDA fp32 encoder: RTFx 84-145 measured in S1, not plumbed)
+- ASR GPU tier: plumbed (CUDA EP ships with the app, `asr.provider: "cuda"` +
+  `asr.pack: "fp32"`), but not yet validated on this box — the 4090 is occupied by the
+  Qwen control plane. Expect ~10x faster ASR than CPU once validated (S1: 10 s clip →
+  0.119 s)
 - Official EG-1 distribution story (currently: local weights on this box)

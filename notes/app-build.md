@@ -188,3 +188,21 @@ branch `rig/app-build` (pushed, clean tree) were intact; only runtime state was 
   against a string ordinal Contains() proves does not contain it — consistent with
   culture-sensitive comparison treating ZWSP as ignorable. For zero-width/format
   characters, assert with ordinal Contains, not xunit string assertions.
+
+## 2026-08-25 — asr.pack was a NO-OP; now real. GPU tier shipped (MEASURED)
+
+- FINDING: `asr.pack` in appsettings was read and logged but was a NO-OP —
+  ParakeetEngine hardcoded `encoder-model.int8.onnx` + `decoder_joint-model.int8.onnx`.
+  The fp32 corpus numbers in founder-test.md came from the S1 spike harness, so the
+  "flip pack to fp32 to fix int8 blanks" advice was not executable in the app.
+- Fixed: the `pack` parameter selects BOTH files (int8 pack 670 MB / fp32 QDQ-free
+  pack 2.5 GB). fp32 assets copied into models\parakeet-tdt-0.6b-v3 from the S1 spike
+  dir (same files, HF-cache origin). Default stays int8.
+- MEASURED 13:30: fp32 CPU smoke PASS (clip10 223 ms / clip20 398 ms / clip94 5010 ms —
+  fp32 slightly slower than int8's 215/387/4974; matches S1's 453-clip trend).
+- GPU: Microsoft.ML.OnnxRuntime.Gpu 1.22.0 added — onnxruntime_providers_cuda.dll in
+  the output (850 MB native payload). provider=cuda + pack=int8 now logs a loud
+  warning (S1's 742-Memcpy disaster case). CUDA RUNTIME NOT VERIFIED here: the 4090
+  is occupied by the qwen38 control plane (~97% util) and rig rules say don't fight
+  my own brain. Bar to beat, from S1: RTFx 84-145 on the fp32 pack (10 s → 0.119 s,
+  95 s → 0.654 s). Validation deferred to a free-GPU window.

@@ -31,8 +31,12 @@ public partial class App : Application
         // 1. ASR engine (fast path: int8 QDQ, threads pinned per S1).
         var asrModelDir = cfg.Resolve(cfg.Asr.ModelDir);
         Log($"loading Parakeet from {asrModelDir} (pack={cfg.Asr.Pack}, provider={cfg.Asr.Provider}, threads={cfg.Asr.IntraOpThreads})");
+        if (cfg.Asr.Provider == "cuda" && cfg.Asr.Pack != "fp32")
+            Log("WARNING: provider=cuda with the int8 QDQ pack is the measured disaster case " +
+                "(742 Memcpy nodes, ~2x slower than pinned CPU — notes/spike-s1.md). " +
+                "Use pack=fp32 for the GPU tier.");
         var asr = new ParakeetEngine(asrModelDir, cfg.Asr.IntraOpThreads, cfg.Asr.InterOpThreads,
-            cfg.Asr.MaxTokensPerStep, useCuda: cfg.Asr.Provider == "cuda");
+            cfg.Asr.MaxTokensPerStep, cfg.Asr.Pack, useCuda: cfg.Asr.Provider == "cuda");
         Log("Parakeet engine ready");
 
         // 2. EG-1 polish server (background; the app is usable while it loads).
