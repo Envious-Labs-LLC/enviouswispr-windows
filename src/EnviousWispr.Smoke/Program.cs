@@ -101,7 +101,7 @@ else if (cfg.Eg1.Enabled)
     var shard = Path.Combine(cfg.Resolve(cfg.Eg1.ModelDir), cfg.Eg1.EntrypointShard);
     var loadSw = Stopwatch.StartNew();
     var ok = await server.StartAsync(cfg.Resolve(cfg.Eg1.ServerExe), shard, cfg.Eg1.ContextTokens,
-        cfg.Eg1.StartTimeoutSeconds);
+        cfg.Eg1.StartTimeoutSeconds, cfg.Eg1.GpuLayers);
     Console.WriteLine($"[eg1] server start: {ok} in {loadSw.ElapsedMilliseconds} ms");
     if (ok && server.Endpoint is not null)
     {

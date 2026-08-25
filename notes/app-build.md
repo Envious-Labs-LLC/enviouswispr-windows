@@ -206,3 +206,13 @@ branch `rig/app-build` (pushed, clean tree) were intact; only runtime state was 
   is occupied by the qwen38 control plane (~97% util) and rig rules say don't fight
   my own brain. Bar to beat, from S1: RTFx 84-145 on the fp32 pack (10 s → 0.119 s,
   95 s → 0.654 s). Validation deferred to a free-GPU window.
+
+## 2026-08-25 — EG-1 gpuLayers knob plumbed (MEASURED)
+
+- `eg1.gpuLayers` ("0" default = CPU / "all" / int) now reaches llama-server as
+  `--gpu-layers`; GPU polish requires a CUDA llama-server as `eg1.serverExe`
+  (e.g. C:\AI\llama-cuda-b10615\bin). App + smoke plumbed; default argv verified
+  unchanged in the app log (13:28, no --gpu-layers).
+- Remaining open item for both GPU tiers (ASR + EG-1): runtime validation in a
+  free-GPU window — the qwen38 control plane occupies the 4090, rig rules say
+  don't fight my own brain.

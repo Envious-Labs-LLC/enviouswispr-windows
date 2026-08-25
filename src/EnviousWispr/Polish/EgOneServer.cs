@@ -36,8 +36,10 @@ public sealed class EgOneServer : IAsyncDisposable
     }
 
     /// Waits until the server answers /health (model load takes 10-60 s).
+    /// gpuLayers: "0" (default, CPU) or "all"/an int for GPU offload — only
+    /// meaningful with a CUDA build of llama-server as serverExe.
     public async Task<bool> StartAsync(string serverExe, string modelShardPath, int contextTokens,
-        int timeoutSeconds, CancellationToken ct = default)
+        int timeoutSeconds, string gpuLayers = "0", CancellationToken ct = default)
     {
         if (!File.Exists(serverExe))
         {
@@ -74,6 +76,10 @@ public sealed class EgOneServer : IAsyncDisposable
         psi.ArgumentList.Add("-fa"); psi.ArgumentList.Add("on");
         psi.ArgumentList.Add("--cache-type-k"); psi.ArgumentList.Add("q8_0");
         psi.ArgumentList.Add("--cache-type-v"); psi.ArgumentList.Add("q8_0");
+        if (!string.IsNullOrWhiteSpace(gpuLayers) && gpuLayers != "0")
+        {
+            psi.ArgumentList.Add("--gpu-layers"); psi.ArgumentList.Add(gpuLayers);
+        }
 
         // Log the exact argv so launch failures are debuggable from the app log.
         Log?.Invoke($"llama-server argv: {string.Join(" ", psi.ArgumentList)}");
