@@ -13,6 +13,55 @@ using EnviousWispr.Polish;
 // --skip-eg1 : verify only the ASR leg (while model downloads are in flight)
 
 var skipEg1 = args.Contains("--skip-eg1");
+
+// ---------- A/B mode: identical real transcripts through multiple EG-1 builds ----------
+//   EnviousWispr.Smoke.exe --ab <model.gguf> [<model.gguf> ...]
+// ASR runs once (deterministic int8) and every build polishes the same raw
+// transcripts, so the outputs are directly comparable. Exit 0 = every server
+// started and every probe GREEN.
+if (args.Length > 0 && args[0] == "--ab")
+{
+    var cfgAb = ConfigLoader.Load();
+    var spikeDir = Path.GetFullPath(Path.Combine(cfgAb.BaseDir, "spikes", "s1", "audio"));
+    var asrAb = new ParakeetEngine(cfgAb.Resolve(cfgAb.Asr.ModelDir), cfgAb.Asr.IntraOpThreads,
+        cfgAb.Asr.InterOpThreads, cfgAb.Asr.MaxTokensPerStep, useCuda: false);
+    var corpus = new (string Label, string Text)[]
+    {
+        ("clip10 10s", asrAb.Recognize(ReadWav16kMono(Path.Combine(spikeDir, "clip10.wav"))).Text),
+        ("clip20 20s", asrAb.Recognize(ReadWav16kMono(Path.Combine(spikeDir, "clip20.wav"))).Text),
+        ("clip94 91.5s", asrAb.Recognize(ReadWav16kMono(Path.Combine(spikeDir, "clip94.wav"))).Text),
+    };
+    asrAb.Dispose();
+
+    var abFailures = 0;
+    foreach (var model in args[1..])
+    {
+        Console.WriteLine($"=== AB {Path.GetFileName(model)} ===");
+        var srv = new EgOneServer();
+        var t0 = Stopwatch.StartNew();
+        var ok = await srv.StartAsync(cfgAb.Resolve(cfgAb.Eg1.ServerExe), model,
+            cfgAb.Eg1.ContextTokens, cfgAb.Eg1.StartTimeoutSeconds);
+        Console.WriteLine($"start: {(ok ? "ok" : "FAIL")} in {t0.ElapsedMilliseconds} ms");
+        if (!ok || srv.Endpoint is null) { abFailures++; await srv.DisposeAsync(); continue; }
+        var pol = new EgOnePolisher(srv.Endpoint, cfgAb.Eg1.RequestTimeoutSeconds);
+        var probeSw = Stopwatch.StartNew();
+        var (green, probeOut) = EgOneProbe.Evaluate(await pol.PolishAsync(EgOneProbe.ProbeTranscript));
+        Console.WriteLine($"probe: {(green ? "GREEN" : "FAIL")} ({probeSw.ElapsedMilliseconds} ms)\u2192 {probeOut}");
+        if (!green) abFailures++;
+        foreach (var (label, text) in corpus)
+        {
+            var pw = Stopwatch.StartNew();
+            var outText = await pol.PolishAsync(text);
+            Console.WriteLine($"[{label}] {pw.ElapsedMilliseconds} ms");
+            Console.WriteLine($"  in : {text}");
+            Console.WriteLine($"  out: {outText ?? "<skipped>"}");
+        }
+        await srv.DisposeAsync();
+    }
+    Console.WriteLine(abFailures == 0 ? "AB PASS" : $"AB FAIL ({abFailures})");
+    return abFailures == 0 ? 0 : 1;
+}
+
 var cfg = ConfigLoader.Load();
 Console.WriteLine($"[cfg] base={cfg.BaseDir}");
 
