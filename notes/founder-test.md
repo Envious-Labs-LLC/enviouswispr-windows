@@ -43,11 +43,13 @@ new text on the clipboard.
 - Full ASR plus polish smoke: 332 ms on the 10 s clip.
 - Interactive app: running in Windows session 1, not the invisible SSH session 0.
 - Overlay: rendered and visually inspected at 280 by 64 pixels.
+- Founder live UAT: passed with physical F8, the Logitech BRIO microphone, GPU ASR,
+  EG-1 polish, and automatic paste into the focused desktop app.
 
 The strict synthetic F8 and paste test was correctly blocked while Windows was locked:
 Windows returned access denied for injected keyboard input. The old test incorrectly counted
 app-log text as pasted text; the replacement only passes when the focused target actually
-contains the expected phrase. The founder steps above are the remaining real user-path check.
+contains the expected phrase. The real founder path was subsequently completed and confirmed.
 
 ## Known v1 limits
 
