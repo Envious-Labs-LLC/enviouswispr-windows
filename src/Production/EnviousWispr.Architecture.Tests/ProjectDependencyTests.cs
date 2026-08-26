@@ -32,6 +32,7 @@ public sealed class ProjectDependencyTests
             [
                 "EnviousWispr.ASR",
                 "EnviousWispr.Audio",
+                "EnviousWispr.LLM",
                 "EnviousWispr.ModelDelivery",
                 "EnviousWispr.Pipeline",
                 "EnviousWispr.PostProcessing",

@@ -21,6 +21,7 @@
     <Project Path="tools/asr-uat/EnviousWispr.Asr.Uat.csproj" />
     <Project Path="tools/audio-uat/EnviousWispr.Audio.Uat.csproj" />
     <Project Path="tools/hotkey-uat/EnviousWispr.Hotkey.Uat.csproj" />
+    <Project Path="tools/polish-uat/EnviousWispr.Polish.Uat.csproj" />
     <Project Path="tools/runtime-uat/EnviousWispr.Runtime.Uat.csproj" />
   </Folder>
 </Solution>

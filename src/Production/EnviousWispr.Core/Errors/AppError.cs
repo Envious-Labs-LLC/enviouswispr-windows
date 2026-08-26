@@ -23,6 +23,10 @@ public enum AppErrorCode
     RuntimeWorkerFailed,
     RuntimeResourceBusy,
     TranscriptionFailed,
+    PolishProviderUnavailable,
+    PolishInputTooLarge,
+    PolishTimedOut,
+    PolishFailed,
 }
 
 public enum AppErrorStage
@@ -43,6 +47,7 @@ public enum AppErrorStage
     RuntimeWorker,
     RuntimeResource,
     FinalAsr,
+    LocalPolish,
 }
 
 public sealed record AppError(AppErrorCode Code, AppErrorStage Stage, bool CanRetry);

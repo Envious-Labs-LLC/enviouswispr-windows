@@ -52,11 +52,36 @@ public interface IDeterministicTextProcessor
     ProcessedText Process(Transcript transcript);
 }
 
-public interface IPolishProvider
+public enum PolishAttemptStatus
+{
+    Polished,
+    Unchanged,
+    Unavailable,
+    InputTooLarge,
+    TimedOut,
+    Failed,
+}
+
+public sealed record PolishRequest(
+    ProcessedText Input,
+    string? DetectedLanguage = null);
+
+public sealed record PolishResult(
+    ProcessedText Output,
+    PolishAttemptStatus Status,
+    AppError? Error = null,
+    long ElapsedMilliseconds = 0)
+{
+    public bool UsedFallback => Status is not (PolishAttemptStatus.Polished or PolishAttemptStatus.Unchanged);
+}
+
+public interface IPolishProvider : IAsyncDisposable
 {
     string ProviderId { get; }
 
-    Task<ProcessedText?> TryPolishAsync(ProcessedText input, CancellationToken cancellationToken = default);
+    Task<PolishResult> TryPolishAsync(
+        PolishRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public interface ITextDelivery

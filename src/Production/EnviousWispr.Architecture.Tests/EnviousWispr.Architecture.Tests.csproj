@@ -18,6 +18,7 @@
     <ProjectReference Include="..\EnviousWispr.ASR\EnviousWispr.ASR.csproj" />
     <ProjectReference Include="..\EnviousWispr.Audio\EnviousWispr.Audio.csproj" />
     <ProjectReference Include="..\EnviousWispr.ModelDelivery\EnviousWispr.ModelDelivery.csproj" />
+    <ProjectReference Include="..\EnviousWispr.LLM\EnviousWispr.LLM.csproj" />
     <ProjectReference Include="..\EnviousWispr.Pipeline\EnviousWispr.Pipeline.csproj" />
     <ProjectReference Include="..\EnviousWispr.PostProcessing\EnviousWispr.PostProcessing.csproj" />
     <ProjectReference Include="..\EnviousWispr.RuntimeWorker\EnviousWispr.RuntimeWorker.csproj" ReferenceOutputAssembly="false" />

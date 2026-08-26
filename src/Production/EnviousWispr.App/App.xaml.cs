@@ -7,6 +7,7 @@ using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.ASR;
 using EnviousWispr.ModelDelivery;
+using EnviousWispr.LLM;
 using EnviousWispr.Pipeline;
 using EnviousWispr.Services.Diagnostics;
 using EnviousWispr.Services.Input;
@@ -33,6 +34,10 @@ public partial class App : Application, IAsyncDisposable
     private WasapiAudioCapture? _audioCapture;
     private RuntimeWorkerTranscriptionEngine? _transcriptionEngine;
     private RuntimeWorkerLivePreviewEngine? _previewEngine;
+    private EgOnePolishProvider? _polishProvider;
+    private RuntimeResourceKind _polishResource = RuntimeResourceKind.Cpu;
+    private readonly CancellationTokenSource _polishLifetime = new();
+    private Task? _polishWarmup;
     private CancellationTokenSource? _previewCancellation;
     private Task? _previewLoop;
     private long _previewSequence;
@@ -86,6 +91,7 @@ public partial class App : Application, IAsyncDisposable
         };
         _customWords = settings.UserData.CustomWords;
         _deterministicTextOptions = DeterministicTextOptions.From(settings.Preferences.Dictation);
+        ConfigurePolish(settings.Preferences.Polish);
 
         try
         {
@@ -129,12 +135,18 @@ public partial class App : Application, IAsyncDisposable
         _window.Activate();
         _window.SetSessionStatus("Preparing local transcription...");
         await ConfigureTranscriptionAsync(settings.Preferences.Dictation.FinalEngine).ConfigureAwait(true);
+        if (_polishProvider is { } polishProvider)
+        {
+            _polishWarmup = WarmPolishRuntimeAsync(polishProvider, _polishLifetime.Token);
+        }
+
         ConfigurePushToTalk(settings.Preferences.Dictation.PushToTalkGesture);
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellShown));
     }
 
     private async void OnWindowClosed(object sender, WindowEventArgs args)
     {
+        _polishProvider?.TerminateRuntimeImmediately();
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellClosed));
         await DisposeAsync().ConfigureAwait(true);
         _window = null;
@@ -176,9 +188,31 @@ public partial class App : Application, IAsyncDisposable
             _transcriptionEngine = null;
         }
 
+        if (_polishProvider is not null)
+        {
+            _polishLifetime.Cancel();
+            if (_polishWarmup is not null)
+            {
+                try
+                {
+                    await _polishWarmup.ConfigureAwait(true);
+                }
+                catch (OperationCanceledException)
+                {
+                    // App shutdown cancels an in-flight fixed semantic readiness probe.
+                }
+
+                _polishWarmup = null;
+            }
+
+            await _polishProvider.DisposeAsync().ConfigureAwait(true);
+            _polishProvider = null;
+        }
+
         _singleInstanceLock?.Dispose();
         _singleInstanceLock = null;
         _resourceArbiter.Dispose();
+        _polishLifetime.Dispose();
         _previewGate.Dispose();
         GC.SuppressFinalize(this);
     }
@@ -206,6 +240,75 @@ public partial class App : Application, IAsyncDisposable
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
         _window?.SetHotkeyReady(_pushToTalkHook.Gesture.ToString());
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.HotkeyReady));
+    }
+
+    private void ConfigurePolish(PolishPreferences preferences)
+    {
+        var provider = preferences.Provider;
+        var environmentProvider = Environment.GetEnvironmentVariable(
+            "ENVIOUSWISPR_POLISH_PROVIDER");
+        if (Enum.TryParse<PolishProvider>(environmentProvider, ignoreCase: true, out var parsedProvider))
+        {
+            provider = parsedProvider;
+        }
+
+        if (provider != PolishProvider.EgOne)
+        {
+            return;
+        }
+
+        var serverExecutable = Environment.GetEnvironmentVariable(
+            "ENVIOUSWISPR_EG1_SERVER_EXE");
+        if (string.IsNullOrWhiteSpace(serverExecutable))
+        {
+            serverExecutable = Path.Combine(AppContext.BaseDirectory, "runtime", "llama-server.exe");
+        }
+
+        var modelFile = Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH");
+        if (string.IsNullOrWhiteSpace(modelFile))
+        {
+            modelFile = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Envious Labs",
+                "EnviousWispr",
+                "models",
+                "eg-1",
+                "eg-1-v2-q5_k_m-00001-of-00008.gguf");
+        }
+
+        int? gpuLayers = null;
+        if (int.TryParse(
+                Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_GPU_LAYERS"),
+                System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var parsedGpuLayers))
+        {
+            gpuLayers = parsedGpuLayers;
+            _polishResource = RuntimeResourceKind.Accelerator;
+        }
+
+        _polishProvider = new EgOnePolishProvider(new EgOnePolishOptions(
+            new EgOneServerOptions(serverExecutable, modelFile, GpuLayers: gpuLayers),
+            preferences.ModelId ?? "eg-1"));
+    }
+
+    private async Task WarmPolishRuntimeAsync(
+        EgOnePolishProvider provider,
+        CancellationToken cancellationToken)
+    {
+        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.PolishRuntimeStarted));
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var health = await provider.ProbeHealthAsync(cancellationToken).ConfigureAwait(false);
+        timer.Stop();
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            health.Health == EgOneHealth.Green
+                ? AppEventCode.PolishRuntimeReady
+                : AppEventCode.PolishRuntimeDegraded,
+            health.Health == EgOneHealth.Green
+                ? AppFailureCategory.None
+                : AppFailureCategory.LocalPolish,
+            timer.ElapsedMilliseconds));
     }
 
     private async Task ConfigureTranscriptionAsync(FinalAsrEngine configuredEngine)
@@ -636,11 +739,12 @@ public partial class App : Application, IAsyncDisposable
                 DateTimeOffset.UtcNow,
                 AppEventCode.DeterministicProcessingStarted));
             var processingTimer = System.Diagnostics.Stopwatch.StartNew();
+            var deterministicRequest = new DeterministicTextRequest(
+                transcript,
+                _customWords,
+                _deterministicTextOptions);
             var processed = await _deterministicTextPipeline.ProcessAsync(
-                new DeterministicTextRequest(
-                    transcript,
-                    _customWords,
-                    _deterministicTextOptions)).ConfigureAwait(false);
+                deterministicRequest).ConfigureAwait(false);
             processingTimer.Stop();
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
@@ -651,12 +755,24 @@ public partial class App : Application, IAsyncDisposable
                     ? AppFailureCategory.PostProcessing
                     : AppFailureCategory.None,
                 processingTimer.ElapsedMilliseconds));
+            var polishResult = await TryPolishAsync(processed.Output, transcript.DetectedLanguage)
+                .ConfigureAwait(false);
+            if (polishResult is not null && !polishResult.UsedFallback)
+            {
+                processed = await _deterministicTextPipeline.ApplyPolishedTextAsync(
+                    deterministicRequest,
+                    processed,
+                    polishResult.Output.Text).ConfigureAwait(false);
+            }
+
             await controller.CompleteAsync(sessionId).ConfigureAwait(false);
             await controller.ResetAsync().ConfigureAwait(false);
             var status = string.IsNullOrWhiteSpace(processed.Output.Text)
                 ? "No speech detected"
                 : processed.IsDegraded
                     ? "Transcribed and cleaned locally with a safe fallback — delivery comes next"
+                    : polishResult is { UsedFallback: false }
+                        ? "Transcribed and polished locally — delivery comes next"
                     : transcript.UsedFallback
                         ? "Transcribed and cleaned locally with CPU fallback — delivery comes next"
                         : "Transcribed and cleaned locally — delivery comes next";
@@ -675,6 +791,53 @@ public partial class App : Application, IAsyncDisposable
             _window?.DispatcherQueue.TryEnqueue(() =>
                 _window?.SetSessionStatus("Local transcription failed safely"));
         }
+    }
+
+    private async Task<PolishResult?> TryPolishAsync(
+        ProcessedText input,
+        string? detectedLanguage)
+    {
+        var provider = _polishProvider;
+        if (provider is null || string.IsNullOrWhiteSpace(input.Text))
+        {
+            return null;
+        }
+
+        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.PolishStarted));
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var acquired = await _resourceArbiter.AcquireAsync(
+            _polishResource,
+            RuntimeWorkloadKind.LocalPolish,
+            TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+        PolishResult result;
+        if (!acquired.Succeeded || acquired.Lease is null)
+        {
+            timer.Stop();
+            result = new PolishResult(
+                input,
+                PolishAttemptStatus.Unavailable,
+                acquired.Error ?? new AppError(
+                    AppErrorCode.RuntimeResourceBusy,
+                    AppErrorStage.RuntimeResource,
+                    CanRetry: true),
+                timer.ElapsedMilliseconds);
+        }
+        else
+        {
+            await using (acquired.Lease.ConfigureAwait(false))
+            {
+                result = await provider.TryPolishAsync(
+                    new PolishRequest(input, detectedLanguage)).ConfigureAwait(false);
+            }
+        }
+
+        timer.Stop();
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            result.UsedFallback ? AppEventCode.PolishDegraded : AppEventCode.PolishCompleted,
+            result.UsedFallback ? AppFailureCategory.LocalPolish : AppFailureCategory.None,
+            timer.ElapsedMilliseconds));
+        return result;
     }
 
     private void WriteSessionEvent(SessionTransitionResult result)

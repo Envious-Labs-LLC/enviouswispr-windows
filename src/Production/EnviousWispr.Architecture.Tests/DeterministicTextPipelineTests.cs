@@ -101,6 +101,33 @@ public sealed class DeterministicTextPipelineTests
     }
 
     [Fact]
+    public async Task PolishRunsAfterDeterministicWorkAndBeforeEmojiRestoration()
+    {
+        var pipeline = new DeterministicTextPipeline();
+        var request = new DeterministicTextRequest(
+            new Transcript(
+                DictationSessionId.Create(),
+                "thumbs up emoji we shipped it",
+                "test",
+                DetectedLanguage: "en"),
+            [],
+            new DeterministicTextOptions(false, false, true, false));
+        var deterministic = await pipeline.ProcessAsync(request);
+
+        var completed = await pipeline.ApplyPolishedTextAsync(
+            request,
+            deterministic,
+            "We shipped it.");
+
+        Assert.Equal("👍 We shipped it.", completed.Output.Text);
+        Assert.Equal("👍 we shipped it", completed.DeterministicText);
+        Assert.Equal(
+            DeterministicStageStatus.Completed,
+            completed.Receipts.Single(receipt =>
+                receipt.Stage == DeterministicTextStage.EmojiRestoration).Status);
+    }
+
+    [Fact]
     public async Task FailedStageReturnsLastValidTextAndContinues()
     {
         IDeterministicTextStep[] steps =
