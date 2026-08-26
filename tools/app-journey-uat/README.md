@@ -27,6 +27,24 @@ dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.
   -c Release -- --escape-recovery
 ```
 
+Three mutually exclusive failure journeys exercise the required native fail-safe paths:
+
+```powershell
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --failure microphone-unavailable
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --failure worker-startup
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --failure target-unavailable
+```
+
+The microphone mode injects a strongly allowlisted `AccessDenied` capture result and drives the installed global
+hook through the normal session controller. The worker mode launches an isolated copy of the production payload
+with only the owned worker executable omitted. The target mode closes the controlled edit window after recording
+starts and requires clipboard-only refusal rather than unintended delivery. It snapshots every supported
+clipboard format before that test, refuses to proceed when a format cannot be cloned safely, and restores the
+original clipboard during cleanup. None of these modes changes the normal app path or records content.
+
 The separate live-audio mode keeps the production WASAPI capture and global hook. It synthesizes F8 edges,
 plays the reviewed public French MINDS-14 fixture through the default speakers, and requires the known word
 `adresse` to travel back through the default capture device and appear in the controlled target. The harness

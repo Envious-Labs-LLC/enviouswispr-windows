@@ -955,10 +955,12 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        _audioCapture = TryCreatePublicFixtureAudioCapture(out var fixtureCapture) &&
-            fixtureCapture is not null
-            ? fixtureCapture
-            : new WasapiAudioCapture();
+        _audioCapture = TryCreateJourneyAudioFailure(out var failureCapture) &&
+            failureCapture is not null
+            ? failureCapture
+            : TryCreatePublicFixtureAudioCapture(out var fixtureCapture) && fixtureCapture is not null
+                ? fixtureCapture
+                : new WasapiAudioCapture();
         var audioCapture = _audioCapture;
         audioCapture.LevelChanged += OnAudioLevelChanged;
         _textTargetAdapter = new WindowsTextTargetAdapter();
@@ -1502,6 +1504,22 @@ public partial class App : Application, IAsyncDisposable
                 out capture);
     }
 
+    private static bool TryCreateJourneyAudioFailure(out IAudioCapture? capture)
+    {
+        capture = null;
+        if (!HasValidFailureJourneyUatConfiguration() ||
+            !string.Equals(
+                Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_AUDIO_FAILURE"),
+                "access-denied",
+                StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        capture = new AccessDeniedAudioCapture();
+        return true;
+    }
+
     private void StartPublicFixtureJourneyUat()
     {
         if (!HasValidPublicFixtureJourneyUatConfiguration())
@@ -1544,12 +1562,7 @@ public partial class App : Application, IAsyncDisposable
                 return;
             }
 
-            var fixtureHold = string.Equals(
-                    Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_LIVE_PREVIEW"),
-                    "1",
-                    StringComparison.Ordinal)
-                ? TimeSpan.FromSeconds(5)
-                : TimeSpan.FromMilliseconds(150);
+            var fixtureHold = ResolveJourneyUatHoldDuration();
             await Task.Delay(fixtureHold).ConfigureAwait(false);
             var stopSignal = string.Equals(
                     Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_JOURNEY_CANCEL"),
@@ -1609,19 +1622,61 @@ public partial class App : Application, IAsyncDisposable
 
     private static bool HasValidPublicFixtureJourneyUatConfiguration()
     {
-        var credentialSuffix = Environment.GetEnvironmentVariable(
-            "ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX");
         return string.Equals(
                 Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_JOURNEY"),
                 "public-fixture-v1",
                 StringComparison.Ordinal) &&
-            credentialSuffix is { Length: 40 } &&
-            credentialSuffix.StartsWith("journey-", StringComparison.Ordinal) &&
-            Guid.TryParseExact(credentialSuffix[8..], "N", out _) &&
+            HasValidJourneyUatCredentialSuffix() &&
             IsJourneyUatEventName(Environment.GetEnvironmentVariable(
                 "ENVIOUSWISPR_UAT_JOURNEY_START_EVENT")) &&
             IsJourneyUatEventName(Environment.GetEnvironmentVariable(
                 "ENVIOUSWISPR_UAT_JOURNEY_COMPLETE_EVENT"));
+    }
+
+    private static bool HasValidFailureJourneyUatConfiguration() =>
+        string.Equals(
+            Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_JOURNEY"),
+            "failure-v1",
+            StringComparison.Ordinal) &&
+        HasValidJourneyUatCredentialSuffix() &&
+        IsPerformanceUatEventName(Environment.GetEnvironmentVariable(
+            "ENVIOUSWISPR_UAT_READY_EVENT")) &&
+        IsPerformanceUatEventName(Environment.GetEnvironmentVariable(
+            "ENVIOUSWISPR_UAT_RUNTIME_READY_EVENT"));
+
+    private static bool HasValidJourneyUatCredentialSuffix()
+    {
+        var credentialSuffix = Environment.GetEnvironmentVariable(
+            "ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX");
+        return credentialSuffix is { Length: 40 } &&
+            credentialSuffix.StartsWith("journey-", StringComparison.Ordinal) &&
+            Guid.TryParseExact(credentialSuffix[8..], "N", out _);
+    }
+
+    private static bool IsPerformanceUatEventName(string? eventName)
+    {
+        const string allowedPrefix = @"Local\EnviousLabs.EnviousWispr.PerformanceUat.";
+        return !string.IsNullOrWhiteSpace(eventName) &&
+            eventName.Length <= 200 &&
+            eventName.StartsWith(allowedPrefix, StringComparison.Ordinal);
+    }
+
+    private static TimeSpan ResolveJourneyUatHoldDuration()
+    {
+        if (string.Equals(
+                Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_LIVE_PREVIEW"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            return TimeSpan.FromSeconds(5);
+        }
+
+        var requested = Environment.GetEnvironmentVariable(
+            "ENVIOUSWISPR_UAT_JOURNEY_HOLD_MILLISECONDS");
+        return int.TryParse(requested, out var milliseconds) &&
+            milliseconds is >= 100 and <= 5_000
+                ? TimeSpan.FromMilliseconds(milliseconds)
+                : TimeSpan.FromMilliseconds(150);
     }
 
     private static bool IsJourneyUatEventName(string? eventName)
@@ -2522,7 +2577,8 @@ public partial class App : Application, IAsyncDisposable
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 eventCode.Value,
-                FailureFor(result.Error)));
+                FailureFor(result.Error),
+                ErrorCode: result.Error?.Code));
         }
     }
 
@@ -2640,6 +2696,8 @@ public partial class App : Application, IAsyncDisposable
         AppErrorCode.HotkeyInvalid or AppErrorCode.HotkeyUnavailable =>
             AppFailureCategory.HotkeyUnavailable,
         AppErrorCode.TargetUnavailable => AppFailureCategory.TargetUnavailable,
+        AppErrorCode.AccessDenied when error?.Stage == AppErrorStage.AudioCapture =>
+            AppFailureCategory.AudioUnavailable,
         AppErrorCode.AudioDeviceUnavailable or AppErrorCode.AudioDeviceLost =>
             AppFailureCategory.AudioUnavailable,
         AppErrorCode.RuntimeProviderUnavailable or AppErrorCode.RuntimeProviderIncompatible =>
@@ -2713,4 +2771,51 @@ public partial class App : Application, IAsyncDisposable
         SettingsLoadStatus.Unavailable => AppFailureCategory.StorageUnavailable,
         _ => AppFailureCategory.None,
     };
+}
+
+internal sealed class AccessDeniedAudioCapture : IAudioCapture
+{
+    public event EventHandler<AudioLevel>? LevelChanged
+    {
+        add { }
+        remove { }
+    }
+
+    public bool IsCapturing => false;
+
+    public Task<AudioOperationResult> StartAsync(
+        AudioCaptureRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(new AudioOperationResult(
+            Succeeded: false,
+            new AppError(
+                AppErrorCode.AccessDenied,
+                AppErrorStage.AudioCapture,
+                CanRetry: true)));
+    }
+
+    public Task<CapturedAudio> StopAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(new CapturedAudio(
+            new DictationSessionId(Guid.Empty),
+            ReadOnlyMemory<float>.Empty,
+            SampleRate: 16_000,
+            Channels: 1,
+            Outcome: AudioCaptureOutcome.Interrupted,
+            Error: new AppError(
+                AppErrorCode.InvalidTransition,
+                AppErrorStage.AudioCapture,
+                CanRetry: false)));
+    }
+
+    public Task<AudioOperationResult> CancelAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(new AudioOperationResult(Succeeded: true));
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
