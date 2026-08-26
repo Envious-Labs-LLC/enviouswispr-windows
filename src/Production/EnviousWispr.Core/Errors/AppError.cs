@@ -27,6 +27,18 @@ public enum AppErrorCode
     PolishInputTooLarge,
     PolishTimedOut,
     PolishFailed,
+    PolishCredentialMissing,
+    PolishCredentialUnreadable,
+    PolishApiKeyRejected,
+    PolishAccessDenied,
+    PolishQuotaExceeded,
+    PolishRateLimited,
+    PolishModelUnavailable,
+    PolishContentBlocked,
+    PolishProviderServerError,
+    PolishBadRequest,
+    PolishEmptyResponse,
+    PolishOutputTruncated,
 }
 
 public enum AppErrorStage
@@ -48,6 +60,8 @@ public enum AppErrorStage
     RuntimeResource,
     FinalAsr,
     LocalPolish,
+    CloudPolish,
+    CredentialStore,
 }
 
 public sealed record AppError(AppErrorCode Code, AppErrorStage Stage, bool CanRetry);

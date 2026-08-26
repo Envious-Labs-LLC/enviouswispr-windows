@@ -10,6 +10,7 @@ using EnviousWispr.ModelDelivery;
 using EnviousWispr.LLM;
 using EnviousWispr.Pipeline;
 using EnviousWispr.Services.Diagnostics;
+using EnviousWispr.Services.Credentials;
 using EnviousWispr.Services.Input;
 using EnviousWispr.Services.Lifecycle;
 using EnviousWispr.Services.Runtime;
@@ -34,8 +35,10 @@ public partial class App : Application, IAsyncDisposable
     private WasapiAudioCapture? _audioCapture;
     private RuntimeWorkerTranscriptionEngine? _transcriptionEngine;
     private RuntimeWorkerLivePreviewEngine? _previewEngine;
-    private EgOnePolishProvider? _polishProvider;
+    private IPolishProvider? _polishProvider;
     private RuntimeResourceKind _polishResource = RuntimeResourceKind.Cpu;
+    private bool _polishUsesLocalRuntime;
+    private CloudPolishConsent? _cloudPolishConsent;
     private readonly CancellationTokenSource _polishLifetime = new();
     private Task? _polishWarmup;
     private CancellationTokenSource? _previewCancellation;
@@ -133,9 +136,10 @@ public partial class App : Application, IAsyncDisposable
         _window = new MainWindow(settings, loadResult.Status);
         _window.Closed += OnWindowClosed;
         _window.Activate();
+        _window.SetCloudPolishNotice(_cloudPolishConsent?.Notice);
         _window.SetSessionStatus("Preparing local transcription...");
         await ConfigureTranscriptionAsync(settings.Preferences.Dictation.FinalEngine).ConfigureAwait(true);
-        if (_polishProvider is { } polishProvider)
+        if (_polishProvider is EgOnePolishProvider polishProvider)
         {
             _polishWarmup = WarmPolishRuntimeAsync(polishProvider, _polishLifetime.Token);
         }
@@ -146,7 +150,7 @@ public partial class App : Application, IAsyncDisposable
 
     private async void OnWindowClosed(object sender, WindowEventArgs args)
     {
-        _polishProvider?.TerminateRuntimeImmediately();
+        (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately();
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellClosed));
         await DisposeAsync().ConfigureAwait(true);
         _window = null;
@@ -252,6 +256,25 @@ public partial class App : Application, IAsyncDisposable
             provider = parsedProvider;
         }
 
+        if (provider is PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini)
+        {
+            var credentialStore = new WindowsCredentialApiKeyStore();
+            var configuredModel = CloudPolishOptions.ModelIdLooksLikeProvider(
+                preferences.ModelId,
+                provider)
+                ? preferences.ModelId!
+                : CloudPolishOptions.DefaultModel(provider);
+            _polishProvider = provider switch
+            {
+                PolishProvider.OpenAI => new OpenAiPolishProvider(credentialStore, configuredModel),
+                PolishProvider.Anthropic => new AnthropicPolishProvider(credentialStore, configuredModel),
+                PolishProvider.Gemini => new GeminiPolishProvider(credentialStore, configuredModel),
+                _ => null,
+            };
+            _cloudPolishConsent = CloudPolishConsent.For(provider);
+            return;
+        }
+
         if (provider != PolishProvider.EgOne)
         {
             return;
@@ -290,6 +313,7 @@ public partial class App : Application, IAsyncDisposable
         _polishProvider = new EgOnePolishProvider(new EgOnePolishOptions(
             new EgOneServerOptions(serverExecutable, modelFile, GpuLayers: gpuLayers),
             preferences.ModelId ?? "eg-1"));
+        _polishUsesLocalRuntime = true;
     }
 
     private async Task WarmPolishRuntimeAsync(
@@ -772,7 +796,9 @@ public partial class App : Application, IAsyncDisposable
                 : processed.IsDegraded
                     ? "Transcribed and cleaned locally with a safe fallback — delivery comes next"
                     : polishResult is { UsedFallback: false }
-                        ? "Transcribed and polished locally — delivery comes next"
+                        ? _cloudPolishConsent is null
+                            ? "Transcribed and polished locally — delivery comes next"
+                            : $"Transcribed and polished directly with {_cloudPolishConsent.ProviderName} — delivery comes next"
                     : transcript.UsedFallback
                         ? "Transcribed and cleaned locally with CPU fallback — delivery comes next"
                         : "Transcribed and cleaned locally — delivery comes next";
@@ -803,31 +829,42 @@ public partial class App : Application, IAsyncDisposable
             return null;
         }
 
-        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.PolishStarted));
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.PolishStarted,
+            Provider: provider.ProviderId));
         var timer = System.Diagnostics.Stopwatch.StartNew();
-        var acquired = await _resourceArbiter.AcquireAsync(
-            _polishResource,
-            RuntimeWorkloadKind.LocalPolish,
-            TimeSpan.FromSeconds(2)).ConfigureAwait(false);
         PolishResult result;
-        if (!acquired.Succeeded || acquired.Lease is null)
+        if (!_polishUsesLocalRuntime)
         {
-            timer.Stop();
-            result = new PolishResult(
-                input,
-                PolishAttemptStatus.Unavailable,
-                acquired.Error ?? new AppError(
-                    AppErrorCode.RuntimeResourceBusy,
-                    AppErrorStage.RuntimeResource,
-                    CanRetry: true),
-                timer.ElapsedMilliseconds);
+            result = await provider.TryPolishAsync(
+                new PolishRequest(input, detectedLanguage)).ConfigureAwait(false);
         }
         else
         {
-            await using (acquired.Lease.ConfigureAwait(false))
+            var acquired = await _resourceArbiter.AcquireAsync(
+                _polishResource,
+                RuntimeWorkloadKind.LocalPolish,
+                TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            if (!acquired.Succeeded || acquired.Lease is null)
             {
-                result = await provider.TryPolishAsync(
-                    new PolishRequest(input, detectedLanguage)).ConfigureAwait(false);
+                timer.Stop();
+                result = new PolishResult(
+                    input,
+                    PolishAttemptStatus.Unavailable,
+                    acquired.Error ?? new AppError(
+                        AppErrorCode.RuntimeResourceBusy,
+                        AppErrorStage.RuntimeResource,
+                        CanRetry: true),
+                    timer.ElapsedMilliseconds);
+            }
+            else
+            {
+                await using (acquired.Lease.ConfigureAwait(false))
+                {
+                    result = await provider.TryPolishAsync(
+                        new PolishRequest(input, detectedLanguage)).ConfigureAwait(false);
+                }
             }
         }
 
@@ -835,8 +872,14 @@ public partial class App : Application, IAsyncDisposable
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
             result.UsedFallback ? AppEventCode.PolishDegraded : AppEventCode.PolishCompleted,
-            result.UsedFallback ? AppFailureCategory.LocalPolish : AppFailureCategory.None,
-            timer.ElapsedMilliseconds));
+            result.UsedFallback
+                ? _polishUsesLocalRuntime
+                    ? AppFailureCategory.LocalPolish
+                    : AppFailureCategory.CloudPolish
+                : AppFailureCategory.None,
+            timer.ElapsedMilliseconds,
+            provider.ProviderId,
+            result.Error?.Code));
         return result;
     }
 
