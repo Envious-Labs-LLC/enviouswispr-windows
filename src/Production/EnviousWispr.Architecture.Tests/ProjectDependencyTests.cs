@@ -13,7 +13,7 @@ public sealed class ProjectDependencyTests
             ["EnviousWispr.PostProcessing"] = ["EnviousWispr.Core"],
             ["EnviousWispr.LLM"] = ["EnviousWispr.Core"],
             ["EnviousWispr.Pipeline"] = ["EnviousWispr.Core"],
-            ["EnviousWispr.RuntimeWorker"] = [],
+            ["EnviousWispr.RuntimeWorker"] = ["EnviousWispr.ASR", "EnviousWispr.Core"],
             ["EnviousWispr.Services"] = ["EnviousWispr.Core"],
             ["EnviousWispr.ModelDelivery"] = ["EnviousWispr.Core"],
             ["EnviousWispr.App"] =
@@ -25,6 +25,7 @@ public sealed class ProjectDependencyTests
                 "EnviousWispr.ModelDelivery",
                 "EnviousWispr.Pipeline",
                 "EnviousWispr.PostProcessing",
+                "EnviousWispr.RuntimeWorker",
                 "EnviousWispr.Services",
             ],
             ["EnviousWispr.Architecture.Tests"] =

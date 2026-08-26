@@ -10,5 +10,8 @@ public enum AppFailureCategory
     HotkeyConflict,
     HotkeyUnavailable,
     TargetUnavailable,
+    AsrUnavailable,
+    RuntimeProvider,
+    RuntimeWorker,
     Unknown,
 }
