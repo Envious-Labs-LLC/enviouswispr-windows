@@ -2,11 +2,24 @@ using EnviousWispr.ASR;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.ModelDelivery;
 using EnviousWispr.Services.Runtime;
+using NAudio.Codecs;
+using NAudio.CoreAudioApi;
+using NAudio.Wave;
 using System.Diagnostics;
 using System.Management;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 
+const byte F8 = 0x77;
+const int AcousticPlaybackGain = 2;
+const int AcousticPlaybackRepetitions = 2;
+const string ReviewedFrenchFixtureHash =
+    "84DEFDC828EF59CEC10364354FBC284BC2CC683FDD4A5EDD5863B7BB2C6123A8";
+var liveMicrophone = args.Any(argument => string.Equals(
+    argument,
+    "--live-microphone",
+    StringComparison.OrdinalIgnoreCase));
 var repositoryRoot = FindRepositoryRoot(AppContext.BaseDirectory);
 var appExecutable = Path.Combine(
     repositoryRoot,
@@ -38,6 +51,7 @@ var fixturePath = Path.Combine(
 RequireFile(appExecutable, "Build the Release/x64 production WinUI app before journey UAT.");
 RequireFile(targetExecutable, "Build the controlled delivery target before journey UAT.");
 RequireFile(fixturePath, "The reviewed public French fixture is missing.");
+RequireReviewedFixture(fixturePath, ReviewedFrenchFixtureHash);
 if (!new LocalWhisperModelProbe().Probe(modelDirectory).QuantizedComplete)
 {
     throw new DirectoryNotFoundException(
@@ -50,6 +64,7 @@ var runId = Guid.NewGuid().ToString("N");
 var uatDirectory = Path.Combine(Path.GetTempPath(), $"EnviousWispr-AppJourney-Uat-{runId}");
 Directory.CreateDirectory(uatDirectory);
 Directory.CreateDirectory(Path.Combine(uatDirectory, "no-preview-model"));
+var diagnosticPath = Path.Combine(uatDirectory, "profile", "diagnostics", "app.jsonl");
 var targetResultPath = Path.Combine(uatDirectory, "target-result.json");
 var readyEventName = $@"Local\EnviousLabs.EnviousWispr.PerformanceUat.{runId}.ready";
 var runtimeEventName = $@"Local\EnviousLabs.EnviousWispr.PerformanceUat.{runId}.runtime";
@@ -103,11 +118,18 @@ try
     appStart.Environment["ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY"] =
         Path.Combine(uatDirectory, "no-preview-model");
     appStart.Environment["ENVIOUSWISPR_POLISH_PROVIDER"] = "None";
-    appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY"] = "public-fixture-v1";
-    appStart.Environment["ENVIOUSWISPR_UAT_AUDIO_FIXTURE"] = fixturePath;
-    appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_START_EVENT"] = startEventName;
-    appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_COMPLETE_EVENT"] = completeEventName;
-    appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_EXIT_AFTER_COMPLETION"] = "1";
+    if (liveMicrophone)
+    {
+        appStart.Environment["ENVIOUSWISPR_UAT_EXIT_AFTER_MILLISECONDS"] = "30000";
+    }
+    else
+    {
+        appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY"] = "public-fixture-v1";
+        appStart.Environment["ENVIOUSWISPR_UAT_AUDIO_FIXTURE"] = fixturePath;
+        appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_START_EVENT"] = startEventName;
+        appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_COMPLETE_EVENT"] = completeEventName;
+        appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_EXIT_AFTER_COMPLETION"] = "1";
+    }
     app = Process.Start(appStart) ?? throw new InvalidOperationException(
         "The production WinUI app did not start.");
 
@@ -128,23 +150,58 @@ try
 
     BringToForeground(target.MainWindowHandle);
     Thread.Sleep(250);
-    startEvent.Set();
-    journeyCompleted = completeEvent.WaitOne(TimeSpan.FromSeconds(60));
-    if (!journeyCompleted)
+    if (liveMicrophone)
     {
-        throw new TimeoutException("The production journey did not complete within 60 seconds.");
+        SendKey(F8, keyDown: true);
+        try
+        {
+            Thread.Sleep(500);
+            await PlayPublicFixtureAsync(fixturePath);
+            Thread.Sleep(500);
+        }
+        finally
+        {
+            SendKey(F8, keyDown: false);
+        }
+
+        targetObserved = WaitForExpectedTargetResult(
+            targetResultPath,
+            TimeSpan.FromSeconds(20));
+        journeyCompleted = targetObserved;
+    }
+    else
+    {
+        startEvent.Set();
+        journeyCompleted = completeEvent.WaitOne(TimeSpan.FromSeconds(60));
+        if (!journeyCompleted)
+        {
+            throw new TimeoutException("The production journey did not complete within 60 seconds.");
+        }
+
+        targetObserved = WaitForExpectedTargetResult(
+            targetResultPath,
+            TimeSpan.FromSeconds(5));
     }
 
-    targetObserved = WaitForExpectedTargetResult(
-        targetResultPath,
-        TimeSpan.FromSeconds(5));
     if (!targetObserved)
     {
+        if (liveMicrophone)
+        {
+            _ = app.WaitForExit(35_000);
+            Console.Error.WriteLine(JsonSerializer.Serialize(new
+            {
+                liveMicrophoneDiagnosticEvents = ReadDiagnosticEvents(diagnosticPath),
+                targetCharacterCount = ReadTargetCharacterCount(targetResultPath),
+            }));
+        }
+
         throw new InvalidOperationException(
-            "The controlled target did not observe the expected public-fixture text.");
+            liveMicrophone
+                ? "The controlled target did not observe the expected public microphone phrase."
+                : "The controlled target did not observe the expected public-fixture text.");
     }
 
-    appExitedCleanly = app.WaitForExit(15_000);
+    appExitedCleanly = app.WaitForExit(liveMicrophone ? 35_000 : 15_000);
     if (!appExitedCleanly)
     {
         throw new TimeoutException("The production app did not exit cleanly after journey completion.");
@@ -154,6 +211,10 @@ try
     {
         throw new InvalidOperationException("The production app returned a non-zero exit code.");
     }
+
+    var diagnosticEvents = ReadDiagnosticEvents(diagnosticPath);
+    RequireProductionJourneyEvents(diagnosticEvents);
+    var productionStagesObserved = true;
 
     ownedWorkerCount = ownedWorkerIds.Count(IsProcessRunning);
     if (ownedWorkerCount != 0)
@@ -173,6 +234,7 @@ try
         runtimeReady,
         journeyCompleted,
         targetObserved,
+        productionStagesObserved,
         appExitedCleanly,
         ownedWorkerStartedCount = ownedWorkerIds.Length,
         ownedWorkerCount,
@@ -184,7 +246,13 @@ try
         provider = selection.Provider?.ToString() ?? "Unavailable",
         modelPack = selection.ModelPack?.ToString() ?? "Unavailable",
         polish = "None",
-        fixture = "PolyAI-minds14-fr-FR-row0",
+        inputKind = liveMicrophone
+            ? "SyntheticF8-ReviewedFixturePlayback-ProductionWasapi"
+            : "NamedEvents-ReviewedFixtureAudioCapture",
+        audioCapture = liveMicrophone ? "ProductionWasapi" : "ReviewedFixture",
+        fixture = liveMicrophone
+            ? "PolyAI-minds14-fr-FR-row0-acoustic-playback"
+            : "PolyAI-minds14-fr-FR-row0",
         deliveryTarget = "ControlledWinFormsEdit",
     }));
     return 0;
@@ -217,6 +285,22 @@ static void RequireFile(string path, string message)
     if (!File.Exists(path))
     {
         throw new FileNotFoundException(message, path);
+    }
+}
+
+static void RequireReviewedFixture(string path, string expectedHash)
+{
+    var file = new FileInfo(path);
+    if (file.Length is <= 0 or > 1_000_000)
+    {
+        throw new InvalidDataException("The reviewed public fixture has an unexpected size.");
+    }
+
+    using var stream = file.OpenRead();
+    var actualHash = Convert.ToHexString(SHA256.HashData(stream));
+    if (!string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidDataException("The reviewed public fixture hash does not match.");
     }
 }
 
@@ -290,6 +374,94 @@ static bool WaitForExpectedTargetResult(string path, TimeSpan timeout)
     return false;
 }
 
+static IReadOnlyList<string> ReadDiagnosticEvents(string path)
+{
+    if (!File.Exists(path))
+    {
+        return ["DiagnosticsUnavailable"];
+    }
+
+    var events = new List<string>();
+    foreach (var line in File.ReadLines(path))
+    {
+        using var document = JsonDocument.Parse(line);
+        var root = document.RootElement;
+        var eventName = root.TryGetProperty("event", out var eventElement)
+            ? eventElement.GetString()
+            : "UnknownEvent";
+        var failure = root.TryGetProperty("failure", out var failureElement)
+            ? failureElement.GetString()
+            : null;
+        var error = root.TryGetProperty("errorCode", out var errorElement)
+            ? errorElement.GetString()
+            : null;
+        events.Add(string.Join(
+            '/',
+            new[] { eventName, failure, error }.Where(value => !string.IsNullOrWhiteSpace(value))));
+    }
+
+    return events;
+}
+
+static int? ReadTargetCharacterCount(string path)
+{
+    try
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        return document.RootElement.GetProperty("characterCount").GetInt32();
+    }
+    catch (Exception exception) when (
+        exception is IOException or JsonException or InvalidOperationException)
+    {
+        return null;
+    }
+}
+
+static void RequireProductionJourneyEvents(IReadOnlyList<string> events)
+{
+    var requiredEvents = new[]
+    {
+        "HotkeyReady",
+        "DictationRecordingStarted",
+        "DictationCaptureFinalized",
+        "DictationTranscriptionStarted",
+        "DeterministicProcessingStarted",
+        "TextDeliveryStarted",
+        "TextDeliveryCompleted",
+        "ApplicationCleanShutdown",
+    };
+    var missing = requiredEvents
+        .Where(required => !events.Any(value => value.StartsWith(
+            required + '/',
+            StringComparison.Ordinal)))
+        .ToList();
+    if (!events.Any(value => value.StartsWith(
+            "DictationTranscriptionCompleted/",
+            StringComparison.Ordinal)) &&
+        !events.Any(value => value.StartsWith(
+            "DictationTranscriptionDegraded/",
+            StringComparison.Ordinal)))
+    {
+        missing.Add("DictationTranscriptionCompletedOrDegraded");
+    }
+
+    if (!events.Any(value => value.StartsWith(
+            "DeterministicProcessingCompleted/",
+            StringComparison.Ordinal)) &&
+        !events.Any(value => value.StartsWith(
+            "DeterministicProcessingDegraded/",
+            StringComparison.Ordinal)))
+    {
+        missing.Add("DeterministicProcessingCompletedOrDegraded");
+    }
+
+    if (missing.Count > 0)
+    {
+        throw new InvalidOperationException(
+            $"The production journey omitted required content-free stages: {string.Join(", ", missing)}.");
+    }
+}
+
 static IReadOnlyList<int> ChildProcessIds(int parentProcessId, string processName)
 {
     using var searcher = new ManagementObjectSearcher(
@@ -317,6 +489,130 @@ static bool IsProcessRunning(int processId)
     catch (ArgumentException)
     {
         return false;
+    }
+}
+
+static async Task PlayPublicFixtureAsync(string fixturePath)
+{
+    var (pcmBytes, sampleRate) = ReadReviewedMuLawFixture(
+        fixturePath,
+        AcousticPlaybackGain);
+    pcmBytes = RepeatPcm(pcmBytes, sampleRate, AcousticPlaybackRepetitions);
+    using var stream = new MemoryStream(pcmBytes, writable: false);
+    using var source = new RawSourceWaveStream(stream, new WaveFormat(sampleRate, 16, 1));
+    await using var output = await new WasapiPlayerBuilder()
+        .WithDefaultDeviceStreamRouting()
+        .BuildAsync();
+    var completed = new TaskCompletionSource<Exception?>(
+        TaskCreationOptions.RunContinuationsAsynchronously);
+    output.PlaybackStopped += (_, args) => completed.TrySetResult(args.Exception);
+    output.Init(source);
+    output.Volume = 1f;
+    output.Play();
+    var failure = await completed.Task.WaitAsync(TimeSpan.FromSeconds(15));
+    if (failure is not null)
+    {
+        throw new InvalidOperationException("The reviewed public fixture could not be played.", failure);
+    }
+}
+
+static (byte[] PcmBytes, int SampleRate) ReadReviewedMuLawFixture(string path, int gain)
+{
+    ArgumentOutOfRangeException.ThrowIfLessThan(gain, 1);
+    ArgumentOutOfRangeException.ThrowIfGreaterThan(gain, 8);
+    var bytes = File.ReadAllBytes(path);
+    if (bytes.Length < 12 ||
+        !bytes.AsSpan(0, 4).SequenceEqual("RIFF"u8) ||
+        !bytes.AsSpan(8, 4).SequenceEqual("WAVE"u8))
+    {
+        throw new InvalidDataException("The reviewed fixture is not a RIFF WAVE file.");
+    }
+
+    byte[]? format = null;
+    var position = 12;
+    while (position + 8 <= bytes.Length)
+    {
+        var chunkId = bytes.AsSpan(position, 4);
+        var chunkSize = BitConverter.ToInt32(bytes, position + 4);
+        position += 8;
+        if (chunkSize < 0 || position + chunkSize > bytes.Length)
+        {
+            throw new InvalidDataException("The reviewed fixture has an invalid chunk.");
+        }
+
+        if (chunkId.SequenceEqual("fmt "u8))
+        {
+            format = bytes.AsSpan(position, chunkSize).ToArray();
+        }
+        else if (chunkId.SequenceEqual("data"u8) && format is { Length: >= 16 })
+        {
+            var audioFormat = BitConverter.ToInt16(format, 0);
+            var channels = BitConverter.ToInt16(format, 2);
+            var sampleRate = BitConverter.ToInt32(format, 4);
+            var bitsPerSample = BitConverter.ToInt16(format, 14);
+            if (audioFormat != 7 || channels != 1 || sampleRate <= 0 || bitsPerSample != 8)
+            {
+                throw new InvalidDataException("The reviewed fixture is not mono 8-bit mu-law audio.");
+            }
+
+            var pcmBytes = new byte[checked(chunkSize * sizeof(short))];
+            for (var index = 0; index < chunkSize; index++)
+            {
+                var decoded = MuLawDecoder.MuLawToLinearSample(bytes[position + index]);
+                var sample = checked((short)Math.Clamp(
+                    decoded * gain,
+                    short.MinValue,
+                    short.MaxValue));
+                BitConverter.TryWriteBytes(pcmBytes.AsSpan(index * sizeof(short)), sample);
+            }
+
+            return (pcmBytes, sampleRate);
+        }
+
+        position += chunkSize + (chunkSize % 2);
+    }
+
+    throw new InvalidDataException("The reviewed fixture has no supported audio data.");
+}
+
+static byte[] RepeatPcm(byte[] pcmBytes, int sampleRate, int repetitions)
+{
+    ArgumentOutOfRangeException.ThrowIfLessThan(repetitions, 1);
+    ArgumentOutOfRangeException.ThrowIfGreaterThan(repetitions, 3);
+    var silenceBytes = checked(sampleRate / 4 * sizeof(short));
+    var repeated = new byte[checked(
+        (pcmBytes.Length * repetitions) + (silenceBytes * (repetitions - 1)))];
+    for (var repetition = 0; repetition < repetitions; repetition++)
+    {
+        var offset = checked(repetition * (pcmBytes.Length + silenceBytes));
+        pcmBytes.CopyTo(repeated, offset);
+    }
+
+    return repeated;
+}
+
+static void SendKey(byte virtualKey, bool keyDown)
+{
+    if (Marshal.SizeOf<Input>() != 40)
+    {
+        throw new InvalidOperationException("The synthetic keyboard input does not match the Win64 ABI.");
+    }
+
+    var input = new Input
+    {
+        Type = 1,
+        Data = new InputUnion
+        {
+            Keyboard = new KeyboardInput
+            {
+                VirtualKey = virtualKey,
+                Flags = keyDown ? 0u : 0x0002u,
+            },
+        },
+    };
+    if (NativeMethods.SendInput(1, [input], Marshal.SizeOf<Input>()) != 1)
+    {
+        throw new InvalidOperationException("Synthetic keyboard input was rejected.");
     }
 }
 
@@ -380,8 +676,35 @@ static void BringToForeground(nint window)
     }
 }
 
+[StructLayout(LayoutKind.Sequential)]
+internal struct Input
+{
+    public uint Type;
+    public InputUnion Data;
+}
+
+[StructLayout(LayoutKind.Explicit, Size = 32)]
+internal struct InputUnion
+{
+    [FieldOffset(0)]
+    public KeyboardInput Keyboard;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct KeyboardInput
+{
+    public ushort VirtualKey;
+    public ushort ScanCode;
+    public uint Flags;
+    public uint Time;
+    public nuint ExtraInfo;
+}
+
 internal static class NativeMethods
 {
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern uint SendInput(uint inputCount, Input[] inputs, int inputSize);
+
     [DllImport("user32.dll")]
     internal static extern nint GetForegroundWindow();
 

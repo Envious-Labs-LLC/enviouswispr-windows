@@ -50,8 +50,28 @@ phrase appeared in the controlled native edit field. The app exited normally and
 remaining owned workers, app processes, or target processes. The result contained only typed fields and
 booleans; its isolated profile and temporary target observation were deleted.
 
-This automated result substitutes reviewed fixture capture and named press/release events. Physical WASAPI
-microphone capture and physical global-hotkey registration from a non-EnviousWispr app remain unobserved.
+The strengthened deterministic harness then passed again in 10,394 ms while also requiring the content-free
+recording, capture-finalized, transcription, deterministic-processing, delivery, and clean-shutdown event
+sequence.
+
+A separate strict acoustic mode exercised the installed global hook with synthetic F8 edges and used normal
+production WASAPI capture while the reviewed French fixture played through the default speakers. The harness
+verified the fixture SHA-256, decoded and amplified it only in memory, and deleted its isolated profile and
+temporary target observation. Independent privacy-safe audio measurements confirmed that the active physical
+microphone responded to speaker playback: average RMS rose from approximately 0.0029 at baseline to 0.0065
+during a public test phrase.
+
+The acoustic lexical gate did not pass on this hardware. In the strongest reviewed-fixture attempt, content-free
+diagnostics showed `HotkeyReady`, recording start, capture finalization, Whisper completion, deterministic
+processing completion, text-delivery completion, and clean shutdown; the controlled target grew from 5 to 150
+characters, but the known public word `adresse` was absent. The harness correctly returned non-zero. This is
+evidence that the production global-hook, WASAPI, worker, processing, and delivery stages ran, but it is not
+faithful microphone-dictation proof and is not recorded as a pass.
+
+The default automated result still substitutes reviewed fixture capture and named press/release events. The
+strict acoustic mode adds real WASAPI and the installed global hook, but its key edges and speaker source are
+synthetic and the lexical assertion failed on the tested speaker/webcam path. A person speaking into the
+physical microphone while holding the configured key from a non-EnviousWispr app remains unobserved.
 
 Phase 23 is not complete. The physical journey above, signed install, update, rollback, uninstall, SmartScreen,
 endpoint-security behavior, model and CUDA artifact licensing, accessibility review, representative hardware
