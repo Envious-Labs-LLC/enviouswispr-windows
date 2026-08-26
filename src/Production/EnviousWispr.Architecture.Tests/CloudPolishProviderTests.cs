@@ -25,6 +25,7 @@ public sealed class CloudPolishProviderTests
         Assert.Equal("cloud-fixed-v7", CloudPolishPrompt.TemplateId);
         Assert.Equal(5_080, CloudPolishPrompt.SystemPrompt.Length);
         Assert.Equal("1382f15841b3e1118f10f0c4603dcb5269551da9ab8cbe7845266ea703860cef", hash);
+        Assert.DoesNotContain('\r', CloudPolishPrompt.SystemPrompt);
         Assert.DoesNotContain("<transcript>", CloudPolishPrompt.BuildUserMessage(Input.Text));
     }
 
