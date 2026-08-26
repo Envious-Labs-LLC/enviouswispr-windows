@@ -7,7 +7,7 @@ and then verifies every Phase 23 evidence class below.
 | Evidence class | Required proof | Current state |
 | --- | --- | --- |
 | Product parity | Agreed feature matrix and native end-to-end UAT across the final pipeline | Incomplete |
-| Legal | GPL source notice plus reviewed notices for every NuGet, native runtime, model, and CUDA artifact | NuGet inventory automated; model/CUDA review open |
+| Legal | GPL source notice plus reviewed notices for every NuGet, native runtime, model, and CUDA artifact | NuGet inventory automated; model/native source inventory recorded; approval open |
 | Privacy | Approved user notice, telemetry server record, schema/redaction review, and deletion procedure | Engineering boundary implemented; approval open |
 | Security | Private reporting, secret scanning, dependency review, threat review, and signed artifact scan | Repository protections enabled; candidate review open |
 | Accessibility | Keyboard, screen reader, contrast, DPI, multi-monitor, locale, RTL, and IME evidence | Partial matrix only |
@@ -21,6 +21,13 @@ Run repository compliance first:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\audit-public-release.ps1 -VerifyGitHubSecurity
+```
+
+The audit validates the pending model/native source inventory without converting it into approval. Before
+admitting a public candidate, the exact artifact records must pass the separate strict gate:
+
+```powershell
+pwsh -NoProfile -File .\scripts\validate-artifact-license-inventory.ps1 -RequireApproved
 ```
 
 Then run the Phase 22 admission against the exact immutable signed founder/beta artifact and content-free

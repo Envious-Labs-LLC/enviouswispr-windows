@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "evidenceObservedAt": "2026-08-26",
+  "artifacts": [
+    {
+      "id": "parakeet-final-model",
+      "artifactClass": "model",
+      "plannedPayload": "Parakeet TDT 0.6B v3 ONNX model pack",
+      "upstreamIdentity": "nvidia/parakeet-tdt-0.6b-v3",
+      "observedLicense": "CC-BY-4.0",
+      "sourceUrl": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3",
+      "sourceRevision": "PENDING",
+      "shipDisposition": "pending-review",
+      "approvedBy": null,
+      "approvedAt": null,
+      "openRequirements": [
+        "Pin the exact ONNX conversion source and revision.",
+        "Record the exact file names, sizes, and hashes in the signed manifest.",
+        "Approve and preserve the required attribution notice."
+      ]
+    },
+    {
+      "id": "whisper-final-model",
+      "artifactClass": "model",
+      "plannedPayload": "Whisper large-v3-turbo GGML model pack",
+      "upstreamIdentity": "openai/whisper large-v3-turbo",
+      "observedLicense": "MIT",
+      "sourceUrl": "https://github.com/openai/whisper/blob/main/LICENSE",
+      "sourceRevision": "PENDING",
+      "shipDisposition": "pending-review",
+      "approvedBy": null,
+      "approvedAt": null,
+      "openRequirements": [
+        "Pin the exact GGML conversion source and revision.",
+        "Record the exact quantized and full-precision files, sizes, and hashes.",
+        "Approve and preserve the OpenAI MIT notice with the model pack."
+      ]
+    },
+    {
+      "id": "whisper-preview-model",
+      "artifactClass": "model",
+      "plannedPayload": "Whisper small GGML preview model pack",
+      "upstreamIdentity": "openai/whisper small",
+      "observedLicense": "MIT",
+      "sourceUrl": "https://github.com/openai/whisper/blob/main/LICENSE",
+      "sourceRevision": "PENDING",
+      "shipDisposition": "pending-review",
+      "approvedBy": null,
+      "approvedAt": null,
+      "openRequirements": [
+        "Pin the exact GGML conversion source and revision.",
+        "Record the exact preview file, size, and hash.",
+        "Approve and preserve the OpenAI MIT notice with the model pack."
+      ]
+    },
+    {
+      "id": "eg1-model",
+      "artifactClass": "model",
+      "plannedPayload": "Envious Labs EG-1 Qwen3-4B derivative GGUF model pack",
+      "upstreamIdentity": "Qwen/Qwen3-4B-Instruct-2507 plus Envious Labs fine-tune",
+      "observedLicense": "UPSTREAM-APACHE-2.0-DERIVATIVE-TERMS-PENDING",
+      "sourceUrl": "https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507",
+      "sourceRevision": "PENDING",
+      "shipDisposition": "pending-review",
+      "approvedBy": null,
+      "approvedAt": null,
+      "openRequirements": [
+        "Confirm the exact base revision, training inputs, and Envious Labs ownership chain.",
+        "Choose and approve the EG-1 derivative license and attribution notice.",
+        "Record every GGUF shard name, size, and hash in the signed manifest."
+      ]
+    },
+    {
+      "id": "llama-server-windows",
+      "artifactClass": "native-runtime",
+      "plannedPayload": "Pinned Windows llama.cpp server used only for local EG-1",
+      "upstreamIdentity": "ggml-org/llama.cpp",
+      "observedLicense": "MIT",
+      "sourceUrl": "https://github.com/ggml-org/llama.cpp/blob/master/LICENSE",
+      "sourceRevision": "PENDING",
+      "shipDisposition": "pending-review",
+      "approvedBy": null,
+      "approvedAt": null,
+      "openRequirements": [
+        "Pin the exact source commit and reproducible Windows build recipe.",
+        "Inventory licenses for every compiled or vendored component in that build.",
+        "Record binary hashes and approve the complete native notice bundle."
+      ]
+    },
+    {
+      "id": "nvidia-cuda-runtime",
+      "artifactClass": "native-runtime",
+      "plannedPayload": "Private app-local CUDA 13 runtime subset",
+      "upstreamIdentity": "NVIDIA CUDA Toolkit",
+      "observedLicense": "LicenseRef-NVIDIA-CUDA-EULA",
+      "sourceUrl": "https://docs.nvidia.com/cuda/eula/",
+      "sourceRevision": "PENDING",
+      "shipDisposition": "pending-review",
+      "approvedBy": null,
+      "approvedAt": null,
+      "openRequirements": [
+        "Select the exact CUDA release and only Attachment A redistributable files.",
+        "Record NVIDIA source manifests, file names, sizes, and hashes.",
+        "Approve required downstream terms, notices, and private-directory packaging."
+      ]
+    },
+    {
+      "id": "nvidia-cudnn-runtime",
+      "artifactClass": "native-runtime",
+      "plannedPayload": "Private app-local cuDNN 9 runtime DLL subset",
+      "upstreamIdentity": "NVIDIA cuDNN",
+      "observedLicense": "LicenseRef-NVIDIA-cuDNN-SLA",
+      "sourceUrl": "https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html",
+      "sourceRevision": "PENDING",
+      "shipDisposition": "pending-review",
+      "approvedBy": null,
+      "approvedAt": null,
+      "openRequirements": [
+        "Select the exact cuDNN release and official redistributable archive.",
+        "Record NVIDIA source manifests, runtime DLL names, sizes, and hashes.",
+        "Approve required downstream terms and notices for app-only access."
+      ]
+    },
+    {
+      "id": "minds14-public-uat-fixtures",
+      "artifactClass": "test-data",
+      "plannedPayload": "Three reviewed PolyAI MINDS-14 WAV fixtures and attribution manifest",
+      "upstreamIdentity": "PolyAI/minds14 revision 40ce77cb32a384e4d50a568e1ec39ac804019d33",
+      "observedLicense": "CC-BY-4.0",
+      "sourceUrl": "https://huggingface.co/datasets/PolyAI/minds14/tree/40ce77cb32a384e4d50a568e1ec39ac804019d33",
+      "sourceRevision": "40ce77cb32a384e4d50a568e1ec39ac804019d33",
+      "shipDisposition": "pending-review",
+      "approvedBy": null,
+      "approvedAt": null,
+      "openRequirements": [
+        "Approve the checked-in attribution and public-repository distribution decision."
+      ]
+    }
+  ]
+}

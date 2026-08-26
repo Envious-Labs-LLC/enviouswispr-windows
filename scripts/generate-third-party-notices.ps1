@@ -153,7 +153,8 @@ try {
     $lines.Add('Model packs, CUDA redistributables, and EG-1 are separately delivered artifacts. Their signed model')
     $lines.Add('manifests must carry the exact upstream license notice and acceptance requirements; this NuGet')
     $lines.Add('inventory does not approve or replace those notices. A public release remains blocked until every')
-    $lines.Add('shipped artifact has a reviewed license record.')
+    $lines.Add('shipped artifact has a reviewed license record. Source evidence and open decisions are tracked in')
+    $lines.Add('`docs/distribution/artifact-license-inventory.md`.')
     # Keep generated Markdown stable across Windows and Linux validation hosts.
     $content = ($lines -join "`n") + "`n"
 

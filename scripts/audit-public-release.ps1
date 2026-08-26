@@ -12,6 +12,8 @@ $requiredFiles = @(
     'SECURITY.md',
     'SUPPORT.md',
     'THIRD-PARTY-NOTICES.md',
+    'docs/distribution/artifact-license-inventory.json',
+    'docs/distribution/artifact-license-inventory.md',
     'docs/distribution/public-release.md'
 )
 foreach ($relative in $requiredFiles) {
@@ -34,6 +36,11 @@ try {
     & pwsh -NoProfile -File '.\scripts\generate-third-party-notices.ps1' -Verify
     if ($LASTEXITCODE -ne 0) {
         throw 'Production third-party notice verification failed.'
+    }
+
+    & pwsh -NoProfile -File '.\scripts\validate-artifact-license-inventory.ps1'
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Model/native artifact license inventory verification failed.'
     }
 
     $tracked = @(git ls-files)
