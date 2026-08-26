@@ -63,8 +63,13 @@ run. Required phrases were checked in memory for the 10 s and 20 s clips but not
 
 - CPU-only long dictation is 3.7-4.6 s after release on the observed rig, so Phase 6 cannot claim the master
   plan's long-clip latency exit. Prior batch chunking was measured and rejected because repeated encoder
-  setup erased the gain. Closing this likely requires capture-time incremental work, a fused/batched decoder
-  export, or a product decision that defines a separate CPU-only long-dictation bar.
+  setup erased the gain. Issue #16 also tested capture-time incremental work using independently decoded
+  8-second windows with 1-second overlap and word-anchor seam merging. It reduced simulated release work to
+  254 ms on the 20-second clip and 308 ms on the 91.467-second clip, but changed 20.97% of reference words
+  on the short smoke clip (the long clip changed 4.57%). That exceeds the experiment's 10% quality guardrail,
+  so this implementation is rejected and was not connected to capture or the runtime worker. Closing the
+  latency exit now requires a different streaming-capable export/decoder design, stronger seam alignment,
+  or a product decision that defines a separate CPU-only long-dictation bar.
 - The current corpus checks prove known phrases and non-empty long output, not full word-error-rate parity
   against a human reference corpus. The historical 453-clip outputs have no complete independent ground
   truth and therefore cannot honestly establish WER.
