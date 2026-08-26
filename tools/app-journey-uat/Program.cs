@@ -29,10 +29,20 @@ const string ReviewedFrenchFixtureHash =
     "84DEFDC828EF59CEC10364354FBC284BC2CC683FDD4A5EDD5863B7BB2C6123A8";
 const string ReviewedEnglishFixtureHash =
     "0F56F001F964D2288851A5E4063781CB5793D25F1B4FD9B55607E79873B4B20C";
-var liveMicrophone = args.Any(argument => string.Equals(
+var syntheticMicrophonePlayback = args.Any(argument => string.Equals(
     argument,
     "--live-microphone",
     StringComparison.OrdinalIgnoreCase));
+var manualMicrophone = args.Any(argument => string.Equals(
+    argument,
+    "--manual-microphone",
+    StringComparison.OrdinalIgnoreCase));
+if (syntheticMicrophonePlayback && manualMicrophone)
+{
+    throw new ArgumentException(
+        "--live-microphone and --manual-microphone are mutually exclusive.");
+}
+var liveMicrophone = syntheticMicrophonePlayback || manualMicrophone;
 var englishParakeet = args.Any(argument => string.Equals(
     argument,
     "--english-parakeet",
@@ -55,10 +65,20 @@ var synthesizedAcoustic = args.Any(argument => string.Equals(
     argument,
     "--synthesized-acoustic",
     StringComparison.OrdinalIgnoreCase));
-if (synthesizedAcoustic && (!liveMicrophone || !englishParakeet))
+if (synthesizedAcoustic && (!syntheticMicrophonePlayback || !englishParakeet))
 {
     throw new ArgumentException(
         "--synthesized-acoustic requires --english-parakeet --live-microphone.");
+}
+if (manualMicrophone && !englishParakeet)
+{
+    throw new ArgumentException(
+        "--manual-microphone requires --english-parakeet for the fixed English acceptance phrase.");
+}
+if (manualMicrophone && ArgumentValue(args, "--acoustic-gain") is not null)
+{
+    throw new ArgumentException(
+        "--acoustic-gain applies only to synthetic fixture playback, not --manual-microphone.");
 }
 var failureArgument = ArgumentValue(args, "--failure");
 var failureMode = failureArgument?.ToLowerInvariant() switch
@@ -105,18 +125,20 @@ var targetExecutable = Path.Combine(
 var finalEngine = englishParakeet ? FinalAsrEngine.Parakeet : FinalAsrEngine.Whisper;
 var engineName = finalEngine.ToString();
 var language = englishParakeet ? "en" : "fr";
-var expectedSubstring = synthesizedAcoustic
+var expectedSubstring = synthesizedAcoustic || manualMicrophone
     ? "microphone"
     : englishParakeet
         ? "account"
         : "adresse";
 var fixtureFileName = englishParakeet ? "en-US-row0.wav" : "fr-FR-row0.wav";
 var fixtureHash = englishParakeet ? ReviewedEnglishFixtureHash : ReviewedFrenchFixtureHash;
-var fixtureIdentity = synthesizedAcoustic
-    ? "Windows-SAPI-fixed-public-phrase"
-    : englishParakeet
-        ? "PolyAI-minds14-en-US-row0"
-        : "PolyAI-minds14-fr-FR-row0";
+var fixtureIdentity = manualMicrophone
+    ? "Founder-spoken-fixed-public-phrase"
+    : synthesizedAcoustic
+        ? "Windows-SAPI-fixed-public-phrase"
+        : englishParakeet
+            ? "PolyAI-minds14-en-US-row0"
+            : "PolyAI-minds14-fr-FR-row0";
 var modelDirectory = Path.Combine(
     repositoryRoot,
     "models",
@@ -159,7 +181,7 @@ Func<Task> acousticStimulus = synthesizedAcoustic
         fixturePath,
         acousticPlaybackGain,
         AcousticPlaybackRepetitions);
-var acousticProbe = liveMicrophone
+var acousticProbe = syntheticMicrophonePlayback
     ? await MeasureAcousticPlaybackAsync(acousticStimulus)
     : null;
 
@@ -229,7 +251,7 @@ try
         UseShellExecute = false,
     };
     targetStart.ArgumentList.Add("--mode");
-    targetStart.ArgumentList.Add("edit");
+    targetStart.ArgumentList.Add(manualMicrophone ? "manual-microphone" : "edit");
     targetStart.ArgumentList.Add("--hold-focus-ms");
     targetStart.ArgumentList.Add("30000");
     targetStart.ArgumentList.Add("--result");
@@ -339,6 +361,16 @@ try
                 targetResultPath,
                 TimeSpan.FromMilliseconds(500));
         }
+        else if (manualMicrophone)
+        {
+            Console.WriteLine(
+                "MANUAL ACTION: Keep the controlled target focused, hold F8, say the displayed " +
+                "fixed public phrase clearly into the microphone, then release F8.");
+            targetObserved = WaitForExpectedTargetResult(
+                targetResultPath,
+                TimeSpan.FromSeconds(25));
+            journeyCompleted = targetObserved;
+        }
         else if (liveMicrophone)
         {
             SendKey(F8, keyDown: true);
@@ -408,7 +440,11 @@ try
 
         Console.Error.WriteLine(JsonSerializer.Serialize(new
         {
-            failedJourney = liveMicrophone ? "acoustic-playback" : "reviewed-fixture",
+            failedJourney = manualMicrophone
+                ? "physical-hotkey-microphone"
+                : liveMicrophone
+                    ? "acoustic-playback"
+                    : "reviewed-fixture",
             engine = engineName,
             language,
             acousticProbe,
@@ -417,9 +453,11 @@ try
         }));
 
         throw new InvalidOperationException(
-            liveMicrophone
-                ? "The controlled target did not observe the expected public microphone phrase."
-                : "The controlled target did not observe the expected public-fixture text.");
+            manualMicrophone
+                ? "The controlled target did not observe the founder-spoken physical microphone phrase."
+                : liveMicrophone
+                    ? "The controlled target did not observe the expected public microphone phrase."
+                    : "The controlled target did not observe the expected public-fixture text.");
     }
 
     appExitedCleanly = app.WaitForExit(liveMicrophone ? 35_000 : 15_000);
@@ -522,6 +560,7 @@ try
         {
             JourneyFailureMode.MicrophoneUnavailable => "SyntheticF8-AllowlistedAccessDeniedAudioFault",
             JourneyFailureMode.WorkerStartup => "StartupFault-MissingOwnedWorkerExecutable",
+            _ when manualMicrophone => "PhysicalF8-FounderSpeech-ProductionWasapi",
             _ when synthesizedAcoustic => "SyntheticF8-WindowsSpeechPlayback-ProductionWasapi",
             _ when liveMicrophone => "SyntheticF8-ReviewedFixturePlayback-ProductionWasapi",
             _ => "NamedEvents-ReviewedFixtureAudioCapture",
@@ -535,9 +574,11 @@ try
         },
         fixture = failureMode is JourneyFailureMode.MicrophoneUnavailable or JourneyFailureMode.WorkerStartup
             ? "None"
-            : liveMicrophone
-                ? $"{fixtureIdentity}-acoustic-playback"
-                : fixtureIdentity,
+            : manualMicrophone
+                ? fixtureIdentity
+                : liveMicrophone
+                    ? $"{fixtureIdentity}-acoustic-playback"
+                    : fixtureIdentity,
         deliveryTarget = failureMode == JourneyFailureMode.TargetUnavailable
             ? "ControlledWinFormsEditClosedDuringRecording"
             : failureMode is JourneyFailureMode.MicrophoneUnavailable or JourneyFailureMode.WorkerStartup

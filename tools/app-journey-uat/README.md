@@ -85,6 +85,22 @@ and are discarded. The actual journey records only while F8 is held, never persi
 profile, and stores only a temporary phrase-match boolean and character count before cleanup. It refuses to run
 while an unowned EnviousWispr or controlled-target process exists.
 
+The remaining physical acceptance path is a separate guided mode. Exit any normally installed EnviousWispr
+instance first, run the command below, keep the controlled target focused, and follow the fixed public instruction
+shown in that window. The person must physically hold F8, speak the displayed sentence into the microphone, and
+release F8. This mode does not synthesize key edges or play audio through the speakers:
+
+```powershell
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --manual-microphone
+```
+
+Add `--live-preview` to the same command when the gitignored small preview model is installed. The guided mode
+passes only when the real global hook starts and stops recording, production WASAPI captures the spoken phrase,
+the real worker and deterministic pipeline complete, the known public word appears in the native edit target,
+the app exits cleanly, and no owned worker remains. It retains the same content-free boolean, character-count,
+stage, runtime, and cleanup evidence as the automated journey; it does not retain audio or transcript text.
+
 The default path requires the gitignored `models/whisper-large-v3-turbo` pack; the English path requires
 `models/parakeet-tdt-0.6b-v3`. The result is one content-free JSON object with
 shell/worker/journey/target/cleanup booleans and typed Windows, architecture, engine, provider, model-pack,
@@ -95,6 +111,5 @@ The default mode is real production pipeline proof, but not microphone or global
 mode adds production WASAPI, the installed global hook, and an acoustic speaker-to-microphone path, but its key
 edges and playback source are still synthetic. On the current webcam-microphone hardware, both the reviewed
 fixture and Windows-synthesized sentence were detected by the content-free probe but failed their lexical gates;
-speaker echo suppression is the likely boundary. Before Phase 23 can close, a person must hold
-the configured global key from a non-EnviousWispr target, speak through a physical microphone, release, observe
-insertion, and record only content-free pass/fail evidence for that exact build.
+speaker echo suppression is the likely boundary. The `--manual-microphone` mode makes the remaining requirement
+directly runnable, but it is not evidence until a person completes it successfully on the exact candidate build.
