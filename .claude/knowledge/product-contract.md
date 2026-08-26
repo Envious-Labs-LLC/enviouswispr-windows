@@ -33,6 +33,10 @@ without a dedicated GPU.
   ordered catalog is Dust Mote, Velvet Hush, Muted Confirm, Whisper Tick, Round Pebble, Paper Tap, Soft
   Hush, Low Nod, Cloud Pop, Velvet Tap, Satin Shift, and Air Glint. Settings can preview the selected
   start/stop pair even while the master switch is off, but never during an active recording.
+- AI Polish lists installed Ollama models locally. For direct OpenAI, Anthropic, and Gemini providers,
+  a stored BYOK credential may list the compatible model IDs available to that account without sending
+  transcript text or invoking a generation endpoint. The recommended model and a custom compatible ID
+  remain available when discovery cannot run.
 
 ## Privacy boundary
 

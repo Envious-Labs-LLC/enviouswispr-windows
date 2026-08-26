@@ -26,6 +26,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private readonly IPortableProfileService _profileService;
     private readonly IHistoryStore _historyStore;
     private readonly IApiKeyStore _apiKeyStore;
+    private readonly CloudPolishModelCatalog _cloudModelCatalog;
     private readonly IRecoveryTextStore _recoveryTextStore;
     private readonly IDiagnosticExportService _diagnosticExportService;
     private readonly bool _telemetryAvailable;
@@ -70,6 +71,7 @@ public sealed partial class MainWindow : Window, IDisposable
         _profileService = profileService;
         _historyStore = historyStore;
         _apiKeyStore = apiKeyStore;
+        _cloudModelCatalog = new CloudPolishModelCatalog(apiKeyStore);
         _recoveryTextStore = recoveryTextStore;
         _diagnosticExportService = diagnosticExportService;
         _telemetryAvailable = telemetryAvailable;
@@ -280,6 +282,7 @@ public sealed partial class MainWindow : Window, IDisposable
         _soundPreviewCancellation?.Dispose();
         _soundPreviewCancellation = null;
         _recordingSoundPlayer.Dispose();
+        _cloudModelCatalog.Dispose();
         if (_deviceCatalog is not null)
         {
             _deviceCatalog.DevicesChanged -= OnAudioDevicesChanged;
@@ -561,7 +564,7 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
-    private void SaveApiKeyButton_Click(object sender, RoutedEventArgs e)
+    private async void SaveApiKeyButton_Click(object sender, RoutedEventArgs e)
     {
         var provider = PolishProviderFromIndex(PolishProviderComboBox.SelectedIndex);
         if (!IsCloudProvider(provider))
@@ -590,6 +593,8 @@ public sealed partial class MainWindow : Window, IDisposable
                 $"{ProviderDisplayName(provider)} key saved",
                 "The key is stored in Windows Credential Manager. It is not part of settings, profiles, history, or diagnostics.",
                 InfoBarSeverity.Success);
+            await RefreshPolishModelChoicesAsync(provider, chooseDefault: true)
+                .ConfigureAwait(true);
         }
         catch (Exception exception) when (IsCredentialStorageFailure(exception))
         {
@@ -639,6 +644,8 @@ public sealed partial class MainWindow : Window, IDisposable
             _apiKeyStore.Delete(provider);
             ApiKeyPasswordBox.Password = string.Empty;
             RefreshApiKeyStatus();
+            await RefreshPolishModelChoicesAsync(provider, chooseDefault: false)
+                .ConfigureAwait(true);
             ShowMessage(
                 $"{ProviderDisplayName(provider)} key removed",
                 "The stored credential was removed from Windows Credential Manager.",
@@ -652,6 +659,18 @@ public sealed partial class MainWindow : Window, IDisposable
                 "Windows Credential Manager is unavailable. Existing settings were not changed.",
                 InfoBarSeverity.Error);
         }
+    }
+
+    private async void RefreshPolishModelsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var provider = PolishProviderFromIndex(PolishProviderComboBox.SelectedIndex);
+        if (provider is PolishProvider.None or PolishProvider.EgOne)
+        {
+            return;
+        }
+
+        await RefreshPolishModelChoicesAsync(provider, chooseDefault: false)
+            .ConfigureAwait(true);
     }
 
     private async void OpenMicrophonePrivacyButton_Click(object sender, RoutedEventArgs e)
@@ -1144,6 +1163,11 @@ public sealed partial class MainWindow : Window, IDisposable
         ApiKeyButtonPanel.Visibility = isCloudProvider
             ? Visibility.Visible
             : Visibility.Collapsed;
+        RefreshPolishModelsButton.Visibility = provider is PolishProvider.Ollama or
+            PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        RefreshPolishModelsButton.IsEnabled = false;
 
         IReadOnlyList<string> choices = provider switch
         {
@@ -1162,12 +1186,33 @@ public sealed partial class MainWindow : Window, IDisposable
                 ? $"{choices.Count.ToString(CultureInfo.CurrentCulture)} local Ollama model{(choices.Count == 1 ? string.Empty : "s")} available on this PC."
                 : "Ollama is not ready at this endpoint. Start Ollama or enter another loopback endpoint.";
         }
+        else if (isCloudProvider)
+        {
+            var discovery = await _cloudModelCatalog.DiscoverAsync(provider).ConfigureAwait(true);
+            if (discovery.Status == CloudModelCatalogStatus.Ready)
+            {
+                if (discovery.ModelIds.Count > 0)
+                {
+                    choices = discovery.ModelIds;
+                }
+
+                discoveryNotice = discovery.ModelIds.Count > 0
+                    ? $"{discovery.ModelIds.Count.ToString(CultureInfo.CurrentCulture)} compatible {ProviderDisplayName(provider)} model{(discovery.ModelIds.Count == 1 ? string.Empty : "s")} available to the stored key. No transcript or generation request was sent."
+                    : $"{ProviderDisplayName(provider)} returned no compatible transcript-polish models. The recommended model and custom-ID field remain available.";
+            }
+            else
+            {
+                discoveryNotice = CloudModelDiscoveryNotice(provider, discovery.Status);
+            }
+        }
 
         if (discoveryVersion != Volatile.Read(ref _polishModelDiscoveryVersion))
         {
             return;
         }
 
+        RefreshPolishModelsButton.IsEnabled = provider is PolishProvider.Ollama or
+            PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini;
         PolishModelPicker.ItemsSource = choices;
         PolishModelPicker.IsEnabled = choices.Count > 0;
         var current = PolishModelTextBox.Text.Trim();
@@ -1200,6 +1245,23 @@ public sealed partial class MainWindow : Window, IDisposable
             ApiKeyStatusText.Text = discoveryNotice;
         }
     }
+
+    private static string CloudModelDiscoveryNotice(
+        PolishProvider provider,
+        CloudModelCatalogStatus status) => status switch
+    {
+        CloudModelCatalogStatus.MissingCredential =>
+            $"Save a {ProviderDisplayName(provider)} API key to discover the compatible models available to that account. The recommended model and custom-ID field remain available.",
+        CloudModelCatalogStatus.CredentialUnavailable =>
+            "Windows Credential Manager could not provide the stored key. No provider request was sent.",
+        CloudModelCatalogStatus.KeyRejected =>
+            $"{ProviderDisplayName(provider)} rejected the stored key while listing models. Replace the key and try again.",
+        CloudModelCatalogStatus.ProviderUnavailable =>
+            $"{ProviderDisplayName(provider)} model discovery is temporarily unavailable. The recommended model and custom-ID field remain available.",
+        CloudModelCatalogStatus.InvalidResponse =>
+            $"{ProviderDisplayName(provider)} returned an unrecognized model catalog. The recommended model and custom-ID field remain available.",
+        _ => throw new ArgumentOutOfRangeException(nameof(status), status, null),
+    };
 
     private void RefreshApiKeyStatus()
     {
