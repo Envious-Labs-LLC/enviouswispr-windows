@@ -89,6 +89,46 @@ public sealed class JsonSettingsStoreTests
     }
 
     [Fact]
+    public async Task LoadMigratesPhaseTwoSettingsAndAddsMacParityDefaults()
+    {
+        await WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "settings.json");
+            const string legacyJson =
+                """
+                {
+                  "schemaVersion": 2,
+                  "launchCount": 12,
+                  "hasCompletedOnboarding": true,
+                  "preferences": {
+                    "dictation": { "finalEngine": "Whisper", "pushToTalkGesture": "Ctrl+F8" },
+                    "polish": { "provider": "None", "modelId": null },
+                    "history": { "isEnabled": true, "retentionDays": 30 },
+                    "theme": "Dark"
+                  },
+                  "userData": {
+                    "customWords": [{ "spokenForm": "envy wisper", "replacement": "EnviousWispr" }],
+                    "snippets": []
+                  }
+                }
+                """;
+            await File.WriteAllTextAsync(path, legacyJson);
+
+            var result = await new JsonSettingsStore(path).LoadAsync();
+
+            Assert.Equal(SettingsLoadStatus.Migrated, result.Status);
+            Assert.Equal(2, result.SourceSchemaVersion);
+            Assert.Equal(12, result.Settings.LaunchCount);
+            Assert.Equal(AppSettings.CurrentSchemaVersion, result.Settings.SchemaVersion);
+            Assert.True(result.Settings.Preferences.Dictation.WordCorrectionEnabled);
+            Assert.True(result.Settings.Preferences.Dictation.FillerRemovalEnabled);
+            Assert.True(result.Settings.Preferences.Dictation.EmojiFormatterEnabled);
+            Assert.False(result.Settings.Preferences.Dictation.SpokenPunctuationEnabled);
+            Assert.Single(result.Settings.UserData.CustomWords);
+        });
+    }
+
+    [Fact]
     public async Task LoadRejectsFutureSchemaWithoutChangingSource()
     {
         await WithTestDirectoryAsync(async directory =>
@@ -133,7 +173,13 @@ public sealed class JsonSettingsStoreTests
         HasCompletedOnboarding = true,
         Preferences = UserPreferences.Default with
         {
-            Dictation = new DictationPreferences(FinalAsrEngine.Whisper, "Ctrl+F8"),
+            Dictation = new DictationPreferences(
+                FinalAsrEngine.Whisper,
+                "Ctrl+F8",
+                WordCorrectionEnabled: false,
+                FillerRemovalEnabled: false,
+                EmojiFormatterEnabled: false,
+                SpokenPunctuationEnabled: true),
             Polish = new PolishPreferences(PolishProvider.Ollama, "qwen3:4b"),
             History = new HistoryPreferences(IsEnabled: false, RetentionDays: 14),
             Theme = AppTheme.Dark,

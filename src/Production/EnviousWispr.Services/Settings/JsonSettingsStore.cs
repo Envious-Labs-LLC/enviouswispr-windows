@@ -54,6 +54,7 @@ public sealed class JsonSettingsStore : ISettingsStore
             var settings = schemaVersion switch
             {
                 1 => MigrateFromV1(json),
+                2 => MigrateFromV2(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -169,6 +170,29 @@ public sealed class JsonSettingsStore : ISettingsStore
             };
     }
 
+    private static AppSettings? MigrateFromV2(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<LegacySettingsV2>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : new AppSettings(
+                AppSettings.CurrentSchemaVersion,
+                legacy.LaunchCount,
+                legacy.HasCompletedOnboarding,
+                new UserPreferences(
+                    new DictationPreferences(
+                        legacy.Preferences.Dictation.FinalEngine,
+                        legacy.Preferences.Dictation.PushToTalkGesture,
+                        WordCorrectionEnabled: true,
+                        FillerRemovalEnabled: true,
+                        EmojiFormatterEnabled: true,
+                        SpokenPunctuationEnabled: false),
+                    legacy.Preferences.Polish,
+                    legacy.Preferences.History,
+                    legacy.Preferences.Theme),
+                legacy.UserData);
+    }
+
     private static SettingsLoadResult Invalid(
         int? sourceSchemaVersion = null,
         AppError? error = null) => new(
@@ -207,4 +231,21 @@ public sealed class JsonSettingsStore : ISettingsStore
         int SchemaVersion,
         int LaunchCount,
         bool HasCompletedOnboarding);
+
+    private sealed record LegacyDictationPreferences(
+        FinalAsrEngine FinalEngine,
+        string PushToTalkGesture);
+
+    private sealed record LegacyUserPreferences(
+        LegacyDictationPreferences Dictation,
+        PolishPreferences Polish,
+        HistoryPreferences History,
+        AppTheme Theme);
+
+    private sealed record LegacySettingsV2(
+        int SchemaVersion,
+        int LaunchCount,
+        bool HasCompletedOnboarding,
+        LegacyUserPreferences Preferences,
+        ReusableUserData UserData);
 }

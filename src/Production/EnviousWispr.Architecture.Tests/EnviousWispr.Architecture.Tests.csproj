@@ -19,8 +19,15 @@
     <ProjectReference Include="..\EnviousWispr.Audio\EnviousWispr.Audio.csproj" />
     <ProjectReference Include="..\EnviousWispr.ModelDelivery\EnviousWispr.ModelDelivery.csproj" />
     <ProjectReference Include="..\EnviousWispr.Pipeline\EnviousWispr.Pipeline.csproj" />
+    <ProjectReference Include="..\EnviousWispr.PostProcessing\EnviousWispr.PostProcessing.csproj" />
     <ProjectReference Include="..\EnviousWispr.RuntimeWorker\EnviousWispr.RuntimeWorker.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\EnviousWispr.Services\EnviousWispr.Services.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Fixtures\deterministic-parity.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\macos-itn-parity.jsonl" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\macos-itn-parity-holdout.jsonl" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <Target Name="CopyRuntimeWorkerForTests" AfterTargets="Build">

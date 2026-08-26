@@ -61,6 +61,38 @@ public sealed class PortableProfileServiceTests
     }
 
     [Fact]
+    public async Task ImportMigratesPhaseTwoPortableProfileDefaults()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "profile.enviouswispr.json");
+            const string legacyJson =
+                """
+                {
+                  "schemaVersion": 1,
+                  "preferences": {
+                    "dictation": { "finalEngine": "Parakeet", "pushToTalkGesture": "F8" },
+                    "polish": { "provider": "None", "modelId": null },
+                    "history": { "isEnabled": true, "retentionDays": 30 },
+                    "theme": "System"
+                  },
+                  "userData": { "customWords": [], "snippets": [] }
+                }
+                """;
+            await File.WriteAllTextAsync(path, legacyJson);
+
+            var result = await new JsonPortableProfileService().ImportAsync(path);
+
+            Assert.Equal(PortableProfileImportStatus.Imported, result.Status);
+            Assert.Equal(PortableProfile.CurrentSchemaVersion, result.Profile?.SchemaVersion);
+            Assert.True(result.Profile?.Preferences.Dictation.WordCorrectionEnabled);
+            Assert.True(result.Profile?.Preferences.Dictation.FillerRemovalEnabled);
+            Assert.True(result.Profile?.Preferences.Dictation.EmojiFormatterEnabled);
+            Assert.False(result.Profile?.Preferences.Dictation.SpokenPunctuationEnabled);
+        });
+    }
+
+    [Fact]
     public void ApplyingImportedProfilePreservesMachineLocalLifecycleState()
     {
         var current = AppSettings.Default with { LaunchCount = 42, HasCompletedOnboarding = true };

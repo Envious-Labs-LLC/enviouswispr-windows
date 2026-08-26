@@ -26,6 +26,7 @@ public partial class App : Application, IAsyncDisposable
     private readonly JsonSettingsStore _settingsStore;
     private readonly RuntimeResourceArbiter _resourceArbiter = new();
     private readonly SemaphoreSlim _previewGate = new(1, 1);
+    private readonly DeterministicTextPipeline _deterministicTextPipeline = new();
     private SingleInstanceLock? _singleInstanceLock;
     private WindowsPushToTalkHook? _pushToTalkHook;
     private PushToTalkSessionController? _sessionController;
@@ -36,6 +37,9 @@ public partial class App : Application, IAsyncDisposable
     private Task? _previewLoop;
     private long _previewSequence;
     private MainWindow? _window;
+    private IReadOnlyList<CustomWordEntry> _customWords = [];
+    private DeterministicTextOptions _deterministicTextOptions =
+        DeterministicTextOptions.From(DictationPreferences.Default);
     private bool _disposed;
 
     public App()
@@ -80,6 +84,8 @@ public partial class App : Application, IAsyncDisposable
         {
             LaunchCount = checked(loadResult.Settings.LaunchCount + 1),
         };
+        _customWords = settings.UserData.CustomWords;
+        _deterministicTextOptions = DeterministicTextOptions.From(settings.Preferences.Dictation);
 
         try
         {
@@ -626,13 +632,34 @@ public partial class App : Application, IAsyncDisposable
                     ? FailureFor(transcript.DegradedError)
                     : AppFailureCategory.None,
                 timer.ElapsedMilliseconds));
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DeterministicProcessingStarted));
+            var processingTimer = System.Diagnostics.Stopwatch.StartNew();
+            var processed = await _deterministicTextPipeline.ProcessAsync(
+                new DeterministicTextRequest(
+                    transcript,
+                    _customWords,
+                    _deterministicTextOptions)).ConfigureAwait(false);
+            processingTimer.Stop();
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                processed.IsDegraded
+                    ? AppEventCode.DeterministicProcessingDegraded
+                    : AppEventCode.DeterministicProcessingCompleted,
+                processed.IsDegraded
+                    ? AppFailureCategory.PostProcessing
+                    : AppFailureCategory.None,
+                processingTimer.ElapsedMilliseconds));
             await controller.CompleteAsync(sessionId).ConfigureAwait(false);
             await controller.ResetAsync().ConfigureAwait(false);
-            var status = string.IsNullOrWhiteSpace(transcript.Text)
+            var status = string.IsNullOrWhiteSpace(processed.Output.Text)
                 ? "No speech detected"
-                : transcript.UsedFallback
-                    ? "Transcribed locally with CPU fallback — delivery comes next"
-                    : "Transcribed locally — delivery comes next";
+                : processed.IsDegraded
+                    ? "Transcribed and cleaned locally with a safe fallback — delivery comes next"
+                    : transcript.UsedFallback
+                        ? "Transcribed and cleaned locally with CPU fallback — delivery comes next"
+                        : "Transcribed and cleaned locally — delivery comes next";
             _window?.DispatcherQueue.TryEnqueue(() => _window?.SetSessionStatus(status));
         }
         catch (TranscriptionEngineException exception)

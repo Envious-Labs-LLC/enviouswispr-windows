@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="..\EnviousWispr.Core\EnviousWispr.Core.csproj" />
+    <ProjectReference Include="..\EnviousWispr.PostProcessing\EnviousWispr.PostProcessing.csproj" />
   </ItemGroup>
 </Project>

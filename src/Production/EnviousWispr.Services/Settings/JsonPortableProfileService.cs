@@ -71,9 +71,14 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                         CanRetry: false));
             }
 
-            var profile = JsonSerializer.Deserialize<PortableProfile>(
-                json,
-                JsonSettingsStore.SerializerOptions);
+            var profile = schemaVersion switch
+            {
+                1 => MigrateFromV1(json),
+                PortableProfile.CurrentSchemaVersion => JsonSerializer.Deserialize<PortableProfile>(
+                    json,
+                    JsonSettingsStore.SerializerOptions),
+                _ => null,
+            };
             var validationError = AppSettingsValidator.Validate(profile, AppErrorStage.ProfileImport);
             return validationError is null
                 ? new PortableProfileImportResult(PortableProfileImportStatus.Imported, profile)
@@ -111,4 +116,42 @@ public sealed class JsonPortableProfileService : IPortableProfileService
     private static PortableProfileImportResult Unavailable(AppErrorCode code) => new(
         PortableProfileImportStatus.Unavailable,
         Error: new AppError(code, AppErrorStage.ProfileImport, CanRetry: true));
+
+    private static PortableProfile? MigrateFromV1(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<LegacyPortableProfileV1>(
+            json,
+            JsonSettingsStore.SerializerOptions);
+        return legacy is null
+            ? null
+            : new PortableProfile(
+                PortableProfile.CurrentSchemaVersion,
+                new UserPreferences(
+                    new DictationPreferences(
+                        legacy.Preferences.Dictation.FinalEngine,
+                        legacy.Preferences.Dictation.PushToTalkGesture,
+                        WordCorrectionEnabled: true,
+                        FillerRemovalEnabled: true,
+                        EmojiFormatterEnabled: true,
+                        SpokenPunctuationEnabled: false),
+                    legacy.Preferences.Polish,
+                    legacy.Preferences.History,
+                    legacy.Preferences.Theme),
+                legacy.UserData);
+    }
+
+    private sealed record LegacyDictationPreferences(
+        FinalAsrEngine FinalEngine,
+        string PushToTalkGesture);
+
+    private sealed record LegacyUserPreferences(
+        LegacyDictationPreferences Dictation,
+        PolishPreferences Polish,
+        HistoryPreferences History,
+        AppTheme Theme);
+
+    private sealed record LegacyPortableProfileV1(
+        int SchemaVersion,
+        LegacyUserPreferences Preferences,
+        ReusableUserData UserData);
 }

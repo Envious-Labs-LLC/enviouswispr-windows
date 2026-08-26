@@ -1,0 +1,373 @@
+[
+  {
+    "name": "custom word exact casing",
+    "category": "custom-word",
+    "input": "I use chatgpt today",
+    "expected": "I use ChatGPT today",
+    "language": "fr",
+    "engineId": "whisper",
+    "customWords": [{ "spokenForm": "chatgpt", "replacement": "ChatGPT" }],
+    "options": { "wordCorrectionEnabled": true, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "custom word multiword",
+    "category": "custom-word",
+    "input": "open envy wisper",
+    "expected": "open EnviousWispr",
+    "language": "fr",
+    "engineId": "whisper",
+    "customWords": [{ "spokenForm": "envy wisper", "replacement": "EnviousWispr" }],
+    "options": { "wordCorrectionEnabled": true, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "emoji trigger is reserved from custom words",
+    "category": "custom-word",
+    "input": "thumbs up emoji",
+    "expected": "thumbs up emoji",
+    "language": "fr",
+    "engineId": "whisper",
+    "customWords": [{ "spokenForm": "emoji", "replacement": "Foo" }],
+    "options": { "wordCorrectionEnabled": true, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "english fillers and repeated start",
+    "category": "filler",
+    "input": "um I I think this works",
+    "expected": "I think this works",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": true, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "fragment restart cleanup",
+    "category": "false-start",
+    "input": "we should go- going tomorrow",
+    "expected": "we should going tomorrow",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": true, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false },
+    "difference": "Windows adds conservative adjacent stutter and prefix-fragment cleanup; macOS leaves semantic false starts to optional polish."
+  },
+  {
+    "name": "german protects er and um",
+    "category": "international-filler",
+    "input": "uh wir treffen uns um drei Uhr er kommt auch",
+    "expected": "wir treffen uns um drei Uhr er kommt auch",
+    "language": "de-DE",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": true, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "dutch protects er",
+    "category": "international-filler",
+    "input": "ah Er is een probleem",
+    "expected": "Er is een probleem",
+    "language": "nl",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": true, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "danish protects er",
+    "category": "international-filler",
+    "input": "um Han er glad",
+    "expected": "Han er glad",
+    "language": "da",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": true, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "norwegian locale protects er",
+    "category": "international-filler",
+    "input": "uh Han er glad",
+    "expected": "Han er glad",
+    "language": "nb-NO",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": true, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "spoken emoji canonical",
+    "category": "emoji",
+    "input": "send Mike a thumbs up emoji",
+    "expected": "send Mike a 👍",
+    "language": "fr",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": true, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "spoken emoji synonym",
+    "category": "emoji",
+    "input": "crying face emoji",
+    "expected": "😢",
+    "language": "fr",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": true, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "spoken emoji punctuation separator",
+    "category": "emoji",
+    "input": "THUMBS UP, EMOJI!",
+    "expected": "👍!",
+    "language": "fr",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": true, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "bare emoji noun does not convert",
+    "category": "emoji-negative",
+    "input": "I want a rocket ride to the moon",
+    "expected": "I want a rocket ride to the moon",
+    "language": "fr",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": true, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "literal emoji discussion does not convert",
+    "category": "emoji-negative",
+    "input": "thumbs up emoji name",
+    "expected": "thumbs up emoji name",
+    "language": "fr",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": true, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "digit read",
+    "category": "number",
+    "input": "the code is two zero three",
+    "expected": "the code is 203",
+    "language": "en",
+    "engineId": "parakeet",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "ten digit phone",
+    "category": "phone",
+    "input": "my number is o five five five one two three four five six",
+    "expected": "my number is 055-512-3456",
+    "language": "en-US",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "mixed phone",
+    "category": "phone",
+    "input": "call me at 203 nine five four eight eight seven nine",
+    "expected": "call me at 203-954-8879",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "spoken year",
+    "category": "year",
+    "input": "i was born in nineteen eighty seven",
+    "expected": "i was born in 1987",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "currency magnitude",
+    "category": "currency",
+    "input": "we raised eighty million dollars last year",
+    "expected": "we raised $80 million last year",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "currency and cents",
+    "category": "currency",
+    "input": "twenty dollars and five cents",
+    "expected": "$20.05",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "decimal percent",
+    "category": "decimal",
+    "input": "five point five percent",
+    "expected": "5.5%",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "spoken time",
+    "category": "time",
+    "input": "meet me at three thirty p m",
+    "expected": "meet me at 3:30 PM",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "spoken date",
+    "category": "date",
+    "input": "june second twenty twenty six",
+    "expected": "June 2, 2026",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "spoken email",
+    "category": "email",
+    "input": "email casey at proton dot me",
+    "expected": "email casey@proton.me",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "spoken url path",
+    "category": "url",
+    "input": "visit stackoverflow dot io slash blog",
+    "expected": "visit stackoverflow.io/blog",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "AP small prose number",
+    "category": "number",
+    "input": "I have two cats.",
+    "expected": "I have two cats.",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "AP large prose number",
+    "category": "number",
+    "input": "twenty three people came",
+    "expected": "23 people came",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "AP unit exception",
+    "category": "number",
+    "input": "walk five miles",
+    "expected": "walk 5 miles",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "ordinal",
+    "category": "ordinal",
+    "input": "the twentieth century",
+    "expected": "the 20th century",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "range",
+    "category": "range",
+    "input": "between three and seven",
+    "expected": "between 3-7",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "dimension",
+    "category": "dimension",
+    "input": "use a two by four board",
+    "expected": "use a 2 by 4 board",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "spoken punctuation off",
+    "category": "punctuation",
+    "input": "alpha comma beta",
+    "expected": "alpha comma beta",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "spoken punctuation on",
+    "category": "punctuation",
+    "input": "alpha comma beta period gamma",
+    "expected": "alpha, beta. Gamma",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": true }
+  },
+  {
+    "name": "recognizer punctuation casing always runs",
+    "category": "casing",
+    "input": "hello. world",
+    "expected": "hello. World",
+    "language": "en",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "non english ITN skip",
+    "category": "international-itn",
+    "input": "le code est two zero three",
+    "expected": "le code est two zero three",
+    "language": "fr-FR",
+    "engineId": "whisper",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": true }
+  },
+  {
+    "name": "unknown parakeet language runs English ITN",
+    "category": "language-gate",
+    "input": "the code is two zero three",
+    "expected": "the code is 203",
+    "language": null,
+    "engineId": "parakeet-v3",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  },
+  {
+    "name": "unknown whisper language skips ITN",
+    "category": "language-gate",
+    "input": "the code is two zero three",
+    "expected": "the code is two zero three",
+    "language": null,
+    "engineId": "whisper-small",
+    "customWords": [],
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": false, "spokenPunctuationEnabled": false }
+  }
+]
