@@ -26,8 +26,8 @@ Measured on the founder's Windows rig on 2026-08-26. Product claims are bounded 
 - `powershell -ExecutionPolicy Bypass -File scripts/validate.ps1` passed after the final changes: the
   preserved proof passed 34/34 tests, production passed 301/301 tests, and the Release x64 WinUI/module
   graph plus all native harnesses built with zero warnings and zero errors.
-- The current fixed-language CPU Whisper UAT used the pinned Q5 model and public MInDS-14 fixtures. It
-  emitted content-free metrics only:
+- An earlier three-row fixed-language CPU Whisper UAT used the pinned Q5 model and public MINDS-14 fixtures.
+  It emitted content-free metrics only; the expanded evidence below supersedes its single-row language view:
 
 | Language | Audio | Runtime | WER | Result |
 |---|---:|---:|---:|---|
@@ -46,13 +46,22 @@ Measured on the founder's Windows rig on 2026-08-26. Product claims are bounded 
 - A separate 30-second isolated lifecycle run wrote schema-6 settings with `whisperLanguage=Automatic`,
   reached `HotkeyReady` and `ShellShown`, exited through the built-in UAT seam, recorded `ShellClosed` and
   `ApplicationCleanShutdown`, and left `cleanShutdown=true` with no app or worker process.
+- A keyboard-only native run against the Release x64 production shell at `7c6a843` completed onboarding with
+  Control+Enter; opened Home, History, Dictionary, Snippets, Help and privacy, and Settings through arrow and
+  Enter navigation; opened and dismissed the engine, language, and provider selectors with Alt+Down and
+  Escape; changed and restored dictionary correction with Space; and tabbed through Settings to the final
+  Save settings button. The accessibility tree exposed meaningful page, control, status, and description
+  names throughout. No setting value remained changed. Alt+F4 hid the window to the tray as designed; because
+  the automation surface could not target the Windows notification area, the exact owned app and its direct
+  worker were then stopped and this run is not counted as graceful tray-exit evidence.
 
 ## Source evidence retained from earlier phases
 
-- Automatic French detection previously measured 0% WER on CPU and CUDA.
-- Automatic German previously detected the wrong language and measured 100-112.5% WER.
-- Automatic and fixed Spanish previously measured 52.38% WER. The current fixed CPU rerun reproduced that
-  limit, so the UI does not imply Spanish support.
+- Automatic French detection measured 0% WER on the one admitted row on CPU and CUDA.
+- The expanded five-row German slice passed 2/5 automatically at 39.42% aggregate WER on CPU and 40.38%
+  on CUDA; fixed-language CUDA passed 3/5 at 33.65%. Individual rows still fail the 35% guardrail.
+- The expanded five-row Spanish slice passed 4/5 automatically and with fixed-language CUDA at 20% aggregate
+  WER. Row zero remained at 52.38%, so the UI continues to label Spanish experimental and below the per-row bar.
 - Native light/dark presentation was previously observed at the host's 150% scale, and UI Automation names
   and live regions were inspected during Phase 14.
 
@@ -60,12 +69,13 @@ Measured on the founder's Windows rig on 2026-08-26. Product claims are bounded 
 
 - A physical native-speaker journey for French, German, Spanish, or mixed-language speech.
 - Japanese, Chinese, Korean, Arabic, or Indic IME composition through the full app and target-delivery path.
-- A complete keyboard-only journey. The accessibility surface and onboarding activation were exercised,
-  but not every page and command.
+- Keyboard activation of file-dialog commands, destructive history actions, the external source link, and
+  the Windows microphone-privacy command. The complete navigation path and representative form controls are
+  now observed, but these intentionally side-effecting commands were not invoked in the keyboard run.
 - A complete Narrator journey, native High Contrast run, separate live 100% and 200% scale runs, and a
   physical multi-monitor international-text journey.
-- Representative corpora for any language beyond the narrow trusted fixtures. One public fixture is not a
-  broad accuracy claim.
+- Representative language corpora. The current one-row French and five-row German/Spanish slices are not
+  broad accuracy claims.
 
 No real user text, credential, model weight, external provider, privacy setting, protected port 8081
 runtime, or unrelated model server was changed during this phase.

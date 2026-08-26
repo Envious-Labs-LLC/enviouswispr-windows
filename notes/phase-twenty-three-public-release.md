@@ -29,6 +29,9 @@ Date: 2026-08-26
   fixtures by size and SHA-256, rejected unlisted WAV files, and verified all 30 production NuGet packages.
 - The expanded public audit validates the eight-record model/native inventory without treating source evidence
   as legal approval.
+- Native keyboard UAT completed onboarding, every product page, representative selectors and toggles, and the
+  full Settings tab order through Save settings. File-dialog, destructive-history, external-link, Narrator,
+  High Contrast, and separate 100%/200% scale paths remain unobserved.
 - `git diff --cached --check`, PowerShell parsing for changed scripts, and Python AST parsing for changed spike
   helpers passed.
 - Canonical validation passed with zero build warnings or errors: 34 preserved-proof contract tests and 350
