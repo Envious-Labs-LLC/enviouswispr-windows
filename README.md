@@ -107,6 +107,7 @@ Start with [CLAUDE.md](CLAUDE.md), the [product contract](.claude/knowledge/prod
 - Use the bounded support and private-beta forms described in [SUPPORT.md](SUPPORT.md).
 - EnviousWispr source is licensed under GNU GPL version 3 only; see [LICENSE](LICENSE). Production NuGet
   notices are generated in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). Separate model and native
-  redistributable licenses remain mandatory release inputs.
+  redistributable source evidence and pending decisions are tracked in the
+  [artifact license inventory](docs/distribution/artifact-license-inventory.md).
 
 Copyright © 2026 Envious Labs LLC.

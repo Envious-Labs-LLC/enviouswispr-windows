@@ -11,6 +11,9 @@ Date: 2026-08-26
 - `scripts/generate-third-party-notices.ps1` resolves the exact production WinUI app and runtime-worker NuGet
   graphs. It rejects missing or unsafe license metadata and generated an inventory of 30 packages. Separately
   delivered models, CUDA components, and EG-1 still require reviewed license records in their signed manifests.
+- The separate model/native inventory records authoritative upstream source evidence for Parakeet, Whisper,
+  EG-1's Qwen base, llama.cpp, CUDA, cuDNN, and MINDS-14. Its structural gate passes with eight explicit pending
+  decisions, while `-RequireApproved` fails until exact provenance, payloads, notices, and legal approvals exist.
 - `scripts/audit-public-release.ps1` fails closed on missing public documents, notice drift, private machine
   paths, secret-shaped content, or tracked model, private audio, and key material. The only audio exception is
   the exact reviewed public Whisper UAT fixture directory.
@@ -22,7 +25,9 @@ Date: 2026-08-26
 
 ## Validation
 
-- The public audit passed over 356 tracked files and verified all 30 production NuGet packages.
+- The public audit passed over 364 tracked files and verified all 30 production NuGet packages.
+- The expanded public audit validates the eight-record model/native inventory without treating source evidence
+  as legal approval.
 - `git diff --cached --check`, PowerShell parsing for changed scripts, and Python AST parsing for changed spike
   helpers passed.
 - Canonical validation passed with zero build warnings or errors: 34 preserved-proof contract tests and 350

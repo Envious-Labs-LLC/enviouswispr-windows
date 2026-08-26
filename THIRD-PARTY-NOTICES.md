@@ -40,4 +40,5 @@ the result. Canonical validation rejects missing license metadata or notice drif
 Model packs, CUDA redistributables, and EG-1 are separately delivered artifacts. Their signed model
 manifests must carry the exact upstream license notice and acceptance requirements; this NuGet
 inventory does not approve or replace those notices. A public release remains blocked until every
-shipped artifact has a reviewed license record.
+shipped artifact has a reviewed license record. Source evidence and open decisions are tracked in
+`docs/distribution/artifact-license-inventory.md`.
