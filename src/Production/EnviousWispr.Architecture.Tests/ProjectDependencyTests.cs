@@ -13,6 +13,7 @@ public sealed class ProjectDependencyTests
             ["EnviousWispr.PostProcessing"] = ["EnviousWispr.Core"],
             ["EnviousWispr.LLM"] = ["EnviousWispr.Core"],
             ["EnviousWispr.Pipeline"] = ["EnviousWispr.Core"],
+            ["EnviousWispr.RuntimeWorker"] = [],
             ["EnviousWispr.Services"] = ["EnviousWispr.Core"],
             ["EnviousWispr.ModelDelivery"] = ["EnviousWispr.Core"],
             ["EnviousWispr.App"] =
@@ -28,8 +29,11 @@ public sealed class ProjectDependencyTests
             ],
             ["EnviousWispr.Architecture.Tests"] =
             [
+                "EnviousWispr.ASR",
                 "EnviousWispr.Audio",
+                "EnviousWispr.ModelDelivery",
                 "EnviousWispr.Pipeline",
+                "EnviousWispr.RuntimeWorker",
                 "EnviousWispr.Services",
             ],
         };
