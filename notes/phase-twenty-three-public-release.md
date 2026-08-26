@@ -77,6 +77,17 @@ strict acoustic mode adds real WASAPI and the installed global hook, but its key
 synthetic and the lexical assertion failed on the tested speaker/webcam path. A person speaking into the
 physical microphone while holding the configured key from a non-EnviousWispr app remains unobserved.
 
+A deterministic native failure matrix now exercises the remaining production-journey failure classes. An
+allowlisted `AccessDenied` audio fault traveled through the installed global hook and normal session controller;
+the app refused to enter recording, delivered nothing, retained the typed error code in content-free diagnostics,
+and shut down cleanly with no owned worker left behind. A separate isolated copy of the production payload with
+only its owned runtime-worker executable omitted kept the shell usable, reported the worker-startup failure, and
+exited cleanly with no child process. Finally, the controlled frozen target was closed after recording began;
+Whisper CUDA and deterministic processing completed, delivery was refused as `DeliveryTargetChanged`, no text
+reached the target, the pre-test clipboard was restored, and the app and worker exited cleanly. The normal
+successful production journey passed again after the fault instrumentation. This proves deterministic handling;
+it does not replace a clean-machine observation of the real Windows microphone privacy dialog or policy denial.
+
 Phase 23 is not complete. The physical journey above, signed install, update, rollback, uninstall, SmartScreen,
 endpoint-security behavior, model and CUDA artifact licensing, accessibility review, representative hardware
 coverage, private-beta daily use, public support operations, website claims, final release-candidate UAT, and

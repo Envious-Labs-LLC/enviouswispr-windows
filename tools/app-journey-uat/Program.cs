@@ -7,11 +7,14 @@ using EnviousWispr.Services.Settings;
 using NAudio.Codecs;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
+using System.Collections.Specialized;
 using System.Diagnostics;
+using System.Drawing;
 using System.Management;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Windows.Forms;
 
 const byte F8 = 0x77;
 const int AcousticPlaybackGain = 2;
@@ -30,9 +33,23 @@ var escapeRecovery = args.Any(argument => string.Equals(
     argument,
     "--escape-recovery",
     StringComparison.OrdinalIgnoreCase));
+var failureArgument = ArgumentValue(args, "--failure");
+var failureMode = failureArgument?.ToLowerInvariant() switch
+{
+    null => JourneyFailureMode.None,
+    "microphone-unavailable" => JourneyFailureMode.MicrophoneUnavailable,
+    "worker-startup" => JourneyFailureMode.WorkerStartup,
+    "target-unavailable" => JourneyFailureMode.TargetUnavailable,
+    _ => throw new ArgumentException(
+        "--failure must be microphone-unavailable, worker-startup, or target-unavailable."),
+};
 if (escapeRecovery && liveMicrophone)
 {
     throw new ArgumentException("Escape Recovery UAT uses the reviewed in-memory fixture, not live microphone mode.");
+}
+if (failureMode != JourneyFailureMode.None && (liveMicrophone || livePreview || escapeRecovery))
+{
+    throw new ArgumentException("Failure journeys cannot be combined with live microphone, Live Preview, or Escape Recovery modes.");
 }
 var repositoryRoot = FindRepositoryRoot(AppContext.BaseDirectory);
 var appExecutable = Path.Combine(
@@ -86,10 +103,20 @@ EnsureNoUnownedProcesses("EnviousWispr.App", "EnviousWispr.Delivery.Target.Uat")
 var runId = Guid.NewGuid().ToString("N");
 var uatDirectory = Path.Combine(Path.GetTempPath(), $"EnviousWispr-AppJourney-Uat-{runId}");
 Directory.CreateDirectory(uatDirectory);
+if (failureMode == JourneyFailureMode.WorkerStartup)
+{
+    var isolatedAppDirectory = Path.Combine(uatDirectory, "app-without-worker");
+    CopyDirectoryExcept(
+        Path.GetDirectoryName(appExecutable)!,
+        isolatedAppDirectory,
+        "EnviousWispr.RuntimeWorker.exe");
+    appExecutable = Path.Combine(isolatedAppDirectory, "EnviousWispr.App.exe");
+    RequireFile(appExecutable, "The isolated worker-failure app copy is incomplete.");
+}
 Directory.CreateDirectory(Path.Combine(uatDirectory, "no-preview-model"));
 var profileDirectory = Path.Combine(uatDirectory, "profile");
 Directory.CreateDirectory(profileDirectory);
-if (livePreview || escapeRecovery)
+if (livePreview || escapeRecovery || failureMode == JourneyFailureMode.MicrophoneUnavailable)
 {
     var journeySettings = AppSettings.Default with
     {
@@ -129,6 +156,9 @@ var targetObserved = false;
 var appExitedCleanly = false;
 var ownedWorkerIds = Array.Empty<int>();
 var ownedWorkerCount = 0;
+ClipboardGuard? clipboardGuard = null;
+var usesPublicFixtureJourney = !liveMicrophone &&
+    failureMode is JourneyFailureMode.None or JourneyFailureMode.TargetUnavailable;
 try
 {
     var targetStart = new ProcessStartInfo(targetExecutable)
@@ -171,24 +201,42 @@ try
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_CANCEL"] = "1";
     }
     appStart.Environment["ENVIOUSWISPR_POLISH_PROVIDER"] = "None";
-    if (liveMicrophone)
+    if (failureMode == JourneyFailureMode.MicrophoneUnavailable)
+    {
+        appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY"] = "failure-v1";
+        appStart.Environment["ENVIOUSWISPR_UAT_AUDIO_FAILURE"] = "access-denied";
+    }
+    if (failureMode is JourneyFailureMode.MicrophoneUnavailable or JourneyFailureMode.WorkerStartup)
+    {
+        appStart.Environment["ENVIOUSWISPR_UAT_EXIT_AFTER_MILLISECONDS"] = "5000";
+    }
+    else if (liveMicrophone)
     {
         appStart.Environment["ENVIOUSWISPR_UAT_EXIT_AFTER_MILLISECONDS"] = "30000";
     }
-    else
+    else if (usesPublicFixtureJourney)
     {
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY"] = "public-fixture-v1";
         appStart.Environment["ENVIOUSWISPR_UAT_AUDIO_FIXTURE"] = fixturePath;
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_START_EVENT"] = startEventName;
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_COMPLETE_EVENT"] = completeEventName;
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_EXIT_AFTER_COMPLETION"] = "1";
+        if (failureMode == JourneyFailureMode.TargetUnavailable)
+        {
+            appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_HOLD_MILLISECONDS"] = "2000";
+        }
     }
     app = Process.Start(appStart) ?? throw new InvalidOperationException(
         "The production WinUI app did not start.");
 
     shellReady = readyEvent.WaitOne(TimeSpan.FromSeconds(30));
-    runtimeReady = runtimeEvent.WaitOne(TimeSpan.FromSeconds(30));
-    if (!shellReady || !runtimeReady || app.HasExited)
+    runtimeReady = runtimeEvent.WaitOne(
+        failureMode == JourneyFailureMode.WorkerStartup
+            ? TimeSpan.FromMilliseconds(500)
+            : TimeSpan.FromSeconds(30));
+    var expectedRuntimeReady = failureMode != JourneyFailureMode.WorkerStartup;
+    if (!shellReady || runtimeReady != expectedRuntimeReady ||
+        app.HasExited && failureMode != JourneyFailureMode.WorkerStartup)
     {
         var startupEvents = string.Join(",", ReadDiagnosticEvents(diagnosticPath));
         throw new InvalidOperationException(
@@ -199,48 +247,96 @@ try
     }
 
     ownedWorkerIds = ChildProcessIds(app.Id, "EnviousWispr.RuntimeWorker").ToArray();
-    if (ownedWorkerIds.Length != 1)
+    var expectedWorkerCount = failureMode == JourneyFailureMode.WorkerStartup ? 0 : 1;
+    if (ownedWorkerIds.Length != expectedWorkerCount)
     {
         throw new InvalidOperationException(
-            "The production journey did not have exactly one owned final-ASR worker.");
+            $"The production journey started {ownedWorkerIds.Length} owned final-ASR workers; " +
+            $"expected {expectedWorkerCount}.");
     }
 
-    BringToForeground(target.MainWindowHandle);
-    Thread.Sleep(250);
-    if (liveMicrophone)
+    if (failureMode == JourneyFailureMode.WorkerStartup)
     {
-        SendKey(F8, keyDown: true);
-        try
-        {
-            Thread.Sleep(500);
-            await PlayPublicFixtureAsync(fixturePath);
-            Thread.Sleep(500);
-        }
-        finally
-        {
-            SendKey(F8, keyDown: false);
-        }
-
-        targetObserved = WaitForExpectedTargetResult(
-            targetResultPath,
-            TimeSpan.FromSeconds(20));
-        journeyCompleted = targetObserved;
+        journeyCompleted = true;
     }
     else
     {
-        startEvent.Set();
-        journeyCompleted = completeEvent.WaitOne(TimeSpan.FromSeconds(60));
-        if (!journeyCompleted)
+        BringToForeground(target.MainWindowHandle);
+        Thread.Sleep(250);
+        if (failureMode == JourneyFailureMode.MicrophoneUnavailable)
         {
-            throw new TimeoutException("The production journey did not complete within 60 seconds.");
+            SendKey(F8, keyDown: true);
+            Thread.Sleep(500);
+            SendKey(F8, keyDown: false);
+            journeyCompleted = WaitForDiagnosticEvent(
+                diagnosticPath,
+                "DictationSessionFailed/AudioUnavailable/AccessDenied",
+                TimeSpan.FromSeconds(5));
+            targetObserved = WaitForExpectedTargetResult(
+                targetResultPath,
+                TimeSpan.FromMilliseconds(500));
         }
+        else if (liveMicrophone)
+        {
+            SendKey(F8, keyDown: true);
+            try
+            {
+                Thread.Sleep(500);
+                await PlayPublicFixtureAsync(fixturePath);
+                Thread.Sleep(500);
+            }
+            finally
+            {
+                SendKey(F8, keyDown: false);
+            }
 
-        targetObserved = WaitForExpectedTargetResult(
-            targetResultPath,
-            escapeRecovery ? TimeSpan.FromMilliseconds(500) : TimeSpan.FromSeconds(5));
+            targetObserved = WaitForExpectedTargetResult(
+                targetResultPath,
+                TimeSpan.FromSeconds(20));
+            journeyCompleted = targetObserved;
+        }
+        else
+        {
+            if (failureMode == JourneyFailureMode.TargetUnavailable)
+            {
+                clipboardGuard = ClipboardGuard.CaptureOrThrow();
+            }
+
+            startEvent.Set();
+            if (failureMode == JourneyFailureMode.TargetUnavailable)
+            {
+                if (!WaitForDiagnosticEvent(
+                        diagnosticPath,
+                        "DictationRecordingStarted/",
+                        TimeSpan.FromSeconds(5)))
+                {
+                    throw new TimeoutException(
+                        "The target-unavailable journey did not reach recording before target teardown.");
+                }
+
+                target.CloseMainWindow();
+                if (!target.WaitForExit(5_000))
+                {
+                    target.Kill(entireProcessTree: true);
+                    target.WaitForExit(10_000);
+                }
+            }
+
+            journeyCompleted = completeEvent.WaitOne(TimeSpan.FromSeconds(60));
+            if (!journeyCompleted)
+            {
+                throw new TimeoutException("The production journey did not complete within 60 seconds.");
+            }
+
+            targetObserved = WaitForExpectedTargetResult(
+                targetResultPath,
+                escapeRecovery || failureMode == JourneyFailureMode.TargetUnavailable
+                    ? TimeSpan.FromMilliseconds(500)
+                    : TimeSpan.FromSeconds(5));
+        }
     }
 
-    if (!targetObserved && !escapeRecovery)
+    if (!targetObserved && !escapeRecovery && failureMode == JourneyFailureMode.None)
     {
         if (liveMicrophone)
         {
@@ -266,11 +362,21 @@ try
 
     if (app.ExitCode != 0)
     {
-        throw new InvalidOperationException("The production app returned a non-zero exit code.");
+        throw new InvalidOperationException(
+            $"The production app returned exit code {app.ExitCode}; " +
+            $"events={string.Join(',', ReadDiagnosticEvents(diagnosticPath))}.");
     }
 
     var diagnosticEvents = ReadDiagnosticEvents(diagnosticPath);
-    if (escapeRecovery)
+    if (failureMode != JourneyFailureMode.None)
+    {
+        RequireFailureJourneyEvents(failureMode, diagnosticEvents);
+        if (targetObserved)
+        {
+            throw new InvalidOperationException("A failure journey unexpectedly delivered text to the target.");
+        }
+    }
+    else if (escapeRecovery)
     {
         RequireEscapeRecoveryJourneyEvents(diagnosticEvents);
     }
@@ -282,7 +388,7 @@ try
     {
         RequireLivePreviewJourneyEvents(diagnosticEvents);
     }
-    var productionStagesObserved = true;
+    var productionStagesObserved = failureMode is JourneyFailureMode.None or JourneyFailureMode.TargetUnavailable;
     var recoveryHistoryObserved = escapeRecovery &&
         ReadEscapeRecoveryHistory(Path.Combine(profileDirectory, "history.json"));
     if (escapeRecovery && (!recoveryHistoryObserved || targetObserved))
@@ -309,6 +415,7 @@ try
         runtimeReady,
         journeyCompleted,
         targetObserved,
+        failureMode = failureMode == JourneyFailureMode.None ? null : FailureModeName(failureMode),
         escapeRecovery,
         recoveryHistoryObserved,
         productionStagesObserved,
@@ -327,14 +434,32 @@ try
         provider = selection.Provider?.ToString() ?? "Unavailable",
         modelPack = selection.ModelPack?.ToString() ?? "Unavailable",
         polish = "None",
-        inputKind = liveMicrophone
-            ? "SyntheticF8-ReviewedFixturePlayback-ProductionWasapi"
-            : "NamedEvents-ReviewedFixtureAudioCapture",
-        audioCapture = liveMicrophone ? "ProductionWasapi" : "ReviewedFixture",
-        fixture = liveMicrophone
-            ? "PolyAI-minds14-fr-FR-row0-acoustic-playback"
-            : "PolyAI-minds14-fr-FR-row0",
-        deliveryTarget = escapeRecovery ? "SuppressedForEscapeRecovery" : "ControlledWinFormsEdit",
+        inputKind = failureMode switch
+        {
+            JourneyFailureMode.MicrophoneUnavailable => "SyntheticF8-AllowlistedAccessDeniedAudioFault",
+            JourneyFailureMode.WorkerStartup => "StartupFault-MissingOwnedWorkerExecutable",
+            _ when liveMicrophone => "SyntheticF8-ReviewedFixturePlayback-ProductionWasapi",
+            _ => "NamedEvents-ReviewedFixtureAudioCapture",
+        },
+        audioCapture = failureMode switch
+        {
+            JourneyFailureMode.WorkerStartup => "NotStarted",
+            JourneyFailureMode.MicrophoneUnavailable => "AllowlistedAccessDeniedFault",
+            _ when liveMicrophone => "ProductionWasapi",
+            _ => "ReviewedFixture",
+        },
+        fixture = failureMode is JourneyFailureMode.MicrophoneUnavailable or JourneyFailureMode.WorkerStartup
+            ? "None"
+            : liveMicrophone
+                ? "PolyAI-minds14-fr-FR-row0-acoustic-playback"
+                : "PolyAI-minds14-fr-FR-row0",
+        deliveryTarget = failureMode == JourneyFailureMode.TargetUnavailable
+            ? "ControlledWinFormsEditClosedDuringRecording"
+            : failureMode is JourneyFailureMode.MicrophoneUnavailable or JourneyFailureMode.WorkerStartup
+                ? "NotReached"
+                : escapeRecovery
+                    ? "SuppressedForEscapeRecovery"
+                    : "ControlledWinFormsEdit",
     }));
     return 0;
 }
@@ -358,7 +483,14 @@ finally
 
     app?.Dispose();
     target?.Dispose();
-    RemoveUatDirectory(uatDirectory);
+    try
+    {
+        clipboardGuard?.Dispose();
+    }
+    finally
+    {
+        RemoveUatDirectory(uatDirectory);
+    }
 }
 
 static void RequireFile(string path, string message)
@@ -815,6 +947,158 @@ static void BringToForeground(nint window)
     }
 }
 
+static string? ArgumentValue(string[] arguments, string name)
+{
+    for (var index = 0; index < arguments.Length - 1; index++)
+    {
+        if (string.Equals(arguments[index], name, StringComparison.OrdinalIgnoreCase))
+        {
+            return arguments[index + 1];
+        }
+    }
+
+    return null;
+}
+
+static void CopyDirectoryExcept(string source, string destination, string excludedFileName)
+{
+    var sourceRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(source));
+    var destinationRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destination));
+    Directory.CreateDirectory(destinationRoot);
+    foreach (var directory in Directory.EnumerateDirectories(
+                 sourceRoot,
+                 "*",
+                 SearchOption.AllDirectories))
+    {
+        Directory.CreateDirectory(Path.Combine(
+            destinationRoot,
+            Path.GetRelativePath(sourceRoot, directory)));
+    }
+
+    foreach (var file in Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories))
+    {
+        if (string.Equals(Path.GetFileName(file), excludedFileName, StringComparison.OrdinalIgnoreCase))
+        {
+            continue;
+        }
+
+        var target = Path.Combine(destinationRoot, Path.GetRelativePath(sourceRoot, file));
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        File.Copy(file, target, overwrite: false);
+    }
+}
+
+static bool WaitForDiagnosticEvent(string path, string expectedPrefix, TimeSpan timeout)
+{
+    var timer = Stopwatch.StartNew();
+    while (timer.Elapsed < timeout)
+    {
+        try
+        {
+            if (ReadDiagnosticEvents(path).Any(value => value.StartsWith(
+                    expectedPrefix,
+                    StringComparison.Ordinal)))
+            {
+                return true;
+            }
+        }
+        catch (Exception exception) when (exception is IOException or JsonException)
+        {
+        }
+
+        Thread.Sleep(100);
+    }
+
+    return false;
+}
+
+static void RequireFailureJourneyEvents(
+    JourneyFailureMode failureMode,
+    IReadOnlyList<string> events)
+{
+    var required = failureMode switch
+    {
+        JourneyFailureMode.MicrophoneUnavailable => new[]
+        {
+            "HotkeyReady/",
+            "DictationSessionFailed/AudioUnavailable/AccessDenied",
+            "ApplicationCleanShutdown/",
+        },
+        JourneyFailureMode.WorkerStartup => new[]
+        {
+            "DictationTranscriptionFailed/RuntimeWorker",
+            "HotkeyReady/",
+            "ApplicationCleanShutdown/",
+        },
+        JourneyFailureMode.TargetUnavailable => new[]
+        {
+            "HotkeyReady/",
+            "DictationRecordingStarted/",
+            "DictationCaptureFinalized/",
+            "DictationTranscriptionStarted/",
+            "DeterministicProcessingStarted/",
+            "TextDeliveryStarted/",
+            "TextDeliveryRefused/TextDelivery/DeliveryTargetChanged",
+            "ApplicationCleanShutdown/",
+        },
+        _ => throw new ArgumentOutOfRangeException(nameof(failureMode)),
+    };
+    var missing = required.Where(expected => !events.Any(value => value.StartsWith(
+        expected,
+        StringComparison.Ordinal))).ToList();
+    if (failureMode == JourneyFailureMode.TargetUnavailable)
+    {
+        if (!events.Any(value => value.StartsWith(
+                "DictationTranscriptionCompleted/",
+                StringComparison.Ordinal)) &&
+            !events.Any(value => value.StartsWith(
+                "DictationTranscriptionDegraded/",
+                StringComparison.Ordinal)))
+        {
+            missing.Add("DictationTranscriptionCompletedOrDegraded");
+        }
+
+        if (!events.Any(value => value.StartsWith(
+                "DeterministicProcessingCompleted/",
+                StringComparison.Ordinal)) &&
+            !events.Any(value => value.StartsWith(
+                "DeterministicProcessingDegraded/",
+                StringComparison.Ordinal)))
+        {
+            missing.Add("DeterministicProcessingCompletedOrDegraded");
+        }
+    }
+
+    var forbiddenObserved = failureMode switch
+    {
+        JourneyFailureMode.MicrophoneUnavailable => events.Any(value => value.StartsWith(
+            "DictationRecordingStarted/",
+            StringComparison.Ordinal)),
+        JourneyFailureMode.WorkerStartup => events.Any(value => value.StartsWith(
+            "DictationRecordingStarted/",
+            StringComparison.Ordinal)),
+        JourneyFailureMode.TargetUnavailable => events.Any(value => value.StartsWith(
+            "TextDeliveryCompleted/",
+            StringComparison.Ordinal)),
+        _ => false,
+    };
+    if (missing.Count > 0 || forbiddenObserved)
+    {
+        throw new InvalidOperationException(
+            $"The {FailureModeName(failureMode)} journey evidence was invalid: " +
+            $"missing={string.Join(',', missing)}, forbiddenObserved={forbiddenObserved}, " +
+            $"events={string.Join(',', events)}.");
+    }
+}
+
+static string FailureModeName(JourneyFailureMode failureMode) => failureMode switch
+{
+    JourneyFailureMode.MicrophoneUnavailable => "microphone-unavailable",
+    JourneyFailureMode.WorkerStartup => "worker-startup",
+    JourneyFailureMode.TargetUnavailable => "target-unavailable",
+    _ => "none",
+};
+
 [StructLayout(LayoutKind.Sequential)]
 internal struct Input
 {
@@ -867,4 +1151,173 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool SetForegroundWindow(nint window);
+}
+
+internal enum JourneyFailureMode
+{
+    None,
+    MicrophoneUnavailable,
+    WorkerStartup,
+    TargetUnavailable,
+}
+
+internal sealed class ClipboardGuard : IDisposable
+{
+    private readonly ClipboardSnapshot _snapshot;
+    private bool _disposed;
+
+    private ClipboardGuard(ClipboardSnapshot snapshot)
+    {
+        _snapshot = snapshot;
+    }
+
+    internal static ClipboardGuard CaptureOrThrow()
+    {
+        var snapshot = RunSta(CaptureOnSta) ?? throw new InvalidOperationException(
+            "The target-unavailable UAT could not safely snapshot every clipboard format.");
+        return new ClipboardGuard(snapshot);
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        if (!RunSta(() => RestoreOnSta(_snapshot)))
+        {
+            throw new InvalidOperationException(
+                "The target-unavailable UAT could not restore the original clipboard.");
+        }
+    }
+
+    private static ClipboardSnapshot? CaptureOnSta()
+    {
+        try
+        {
+            var source = Clipboard.GetDataObject();
+            if (source is null)
+            {
+                return new ClipboardSnapshot(IsEmpty: true, Data: null);
+            }
+
+            var copy = new DataObject();
+            foreach (var format in source.GetFormats(autoConvert: false))
+            {
+                var value = source.GetData(format, autoConvert: false);
+                var cloned = value is null ? null : CloneClipboardValue(value);
+                if (cloned is null)
+                {
+                    return null;
+                }
+
+                copy.SetData(format, autoConvert: false, cloned);
+            }
+
+            return new ClipboardSnapshot(IsEmpty: false, copy);
+        }
+        catch (Exception exception) when (exception is ExternalException or
+                                           ThreadStateException or
+                                           InvalidOperationException or
+                                           ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private static bool RestoreOnSta(ClipboardSnapshot snapshot)
+    {
+        try
+        {
+            if (snapshot.IsEmpty)
+            {
+                Clipboard.Clear();
+            }
+            else
+            {
+                Clipboard.SetDataObject(
+                    snapshot.Data!,
+                    copy: true,
+                    retryTimes: 10,
+                    retryDelay: 50);
+            }
+
+            return true;
+        }
+        catch (Exception exception) when (exception is ExternalException or
+                                           ThreadStateException or
+                                           ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private static object? CloneClipboardValue(object value) => value switch
+    {
+        byte[] bytes => bytes.ToArray(),
+        MemoryStream memory => new MemoryStream(memory.ToArray(), writable: false),
+        Bitmap bitmap => bitmap.Clone(),
+        StringCollection strings => CloneStrings(strings),
+        ICloneable cloneable => cloneable.Clone(),
+        string or char or bool or byte or sbyte or short or ushort or int or uint or
+            long or ulong or float or double or decimal or DateTime or DateTimeOffset or
+            TimeSpan or Guid => value,
+        Stream stream => CloneStream(stream),
+        _ => null,
+    };
+
+    private static StringCollection CloneStrings(StringCollection strings)
+    {
+        var clone = new StringCollection();
+        clone.AddRange(strings.Cast<string>().ToArray());
+        return clone;
+    }
+
+    private static MemoryStream CloneStream(Stream stream)
+    {
+        var originalPosition = stream.CanSeek ? stream.Position : 0;
+        var copy = new MemoryStream();
+        stream.CopyTo(copy);
+        if (stream.CanSeek)
+        {
+            stream.Position = originalPosition;
+        }
+
+        copy.Position = 0;
+        return copy;
+    }
+
+    private static T RunSta<T>(Func<T> operation)
+    {
+        T? result = default;
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                result = operation();
+            }
+            catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+            {
+                failure = exception;
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "EnviousWispr journey clipboard guard",
+        };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        if (failure is not null)
+        {
+            throw new InvalidOperationException("The clipboard guard operation failed.", failure);
+        }
+
+        return result!;
+    }
+
+    private sealed record ClipboardSnapshot(bool IsEmpty, DataObject? Data);
 }
