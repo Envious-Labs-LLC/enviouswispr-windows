@@ -1,6 +1,7 @@
 using EnviousWispr.Audio;
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Diagnostics;
+using EnviousWispr.Core.Distribution;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
@@ -13,6 +14,7 @@ using EnviousWispr.ModelDelivery;
 using EnviousWispr.LLM;
 using EnviousWispr.Pipeline;
 using EnviousWispr.Services.Diagnostics;
+using EnviousWispr.Services.Distribution;
 using EnviousWispr.Services.Credentials;
 using EnviousWispr.Services.Input;
 using EnviousWispr.Services.History;
@@ -22,17 +24,19 @@ using EnviousWispr.Services.Reliability;
 using EnviousWispr.Services.Settings;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Windowing;
+using System.Reflection;
 using System.Security;
 
 namespace EnviousWispr.App;
 
 public partial class App : Application, IAsyncDisposable
 {
-    private const string SingleInstanceKey = "EnviousLabs.EnviousWispr.Production";
     private static readonly TimeSpan MaximumRecordingDuration = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan MaximumFinalProcessingDuration = TimeSpan.FromMinutes(3);
 
     private readonly PrivacySafeObservabilityLogger _logger;
+    private readonly ReleaseIdentity _releaseIdentity;
+    private readonly VelopackUpdateService _updateService;
     private readonly JsonDiagnosticExportService _diagnosticExportService;
     private readonly JsonSettingsStore _settingsStore;
     private readonly JsonPortableProfileService _profileService = new();
@@ -90,6 +94,8 @@ public partial class App : Application, IAsyncDisposable
     {
         InitializeComponent();
 
+        _releaseIdentity = ResolveReleaseIdentity();
+
         var uatCredentialSuffix = Environment.GetEnvironmentVariable(
             "ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX");
         _credentialStore = string.IsNullOrWhiteSpace(uatCredentialSuffix)
@@ -102,7 +108,7 @@ public partial class App : Application, IAsyncDisposable
             dataDirectory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "Envious Labs",
-                "EnviousWispr");
+                _releaseIdentity.DataDirectoryName);
         }
 
         dataDirectory = Path.GetFullPath(dataDirectory);
@@ -130,6 +136,19 @@ public partial class App : Application, IAsyncDisposable
         _recoveryTextStore = new WindowsRecoveryTextStore(Path.Combine(dataDirectory, "recovery.json"));
         _resourceProbe = new WindowsSystemResourceProbe(dataDirectory);
 
+        var allowLoopbackUpdates = string.Equals(
+            Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_ALLOW_LOOPBACK_UPDATES"),
+            "1",
+            StringComparison.Ordinal);
+        _ = UpdateEndpointPolicy.TryNormalize(
+            Environment.GetEnvironmentVariable("ENVIOUSWISPR_UPDATE_ENDPOINT"),
+            allowLoopbackUpdates,
+            out var updateEndpoint);
+        _updateService = new VelopackUpdateService(
+            _releaseIdentity,
+            updateEndpoint,
+            new WindowsUpdateArtifactValidator());
+
         UnhandledException += (_, eventArgs) =>
         {
             _logger.Write(new AppLogEntry(
@@ -142,10 +161,10 @@ public partial class App : Application, IAsyncDisposable
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
-        if (!SingleInstanceLock.TryAcquire(SingleInstanceKey, out _singleInstanceLock))
+        if (!SingleInstanceLock.TryAcquire(_releaseIdentity.SingleInstanceKey, out _singleInstanceLock))
         {
             var activated = await SingleInstanceActivationChannel.RequestActivationAsync(
-                SingleInstanceKey,
+                _releaseIdentity.SingleInstanceKey,
                 TimeSpan.FromSeconds(2)).ConfigureAwait(true);
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
@@ -156,7 +175,7 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        _activationChannel = new SingleInstanceActivationChannel(SingleInstanceKey);
+        _activationChannel = new SingleInstanceActivationChannel(_releaseIdentity.SingleInstanceKey);
         _activationChannel.ActivationRequested += OnDuplicateActivationRequested;
         _activationChannel.Start();
 
@@ -240,12 +259,17 @@ public partial class App : Application, IAsyncDisposable
             _credentialStore,
             _recoveryTextStore,
             _diagnosticExportService,
-            _logger.TelemetryAvailable);
+            _logger.TelemetryAvailable,
+            _releaseIdentity,
+            _updateService.IsConfigured,
+            _updateService.CurrentVersion);
         _window.SettingsChanged += OnSettingsChanged;
         _window.SessionStatusChanged += OnSessionStatusChanged;
         _window.AudioDevicesChanged += OnAudioDevicesChanged;
         _window.RecoveryCleared += OnRecoveryCleared;
         _window.DiagnosticsExportCompleted += OnDiagnosticsExportCompleted;
+        _window.UpdateCheckRequested += OnUpdateCheckRequested;
+        _window.UpdateApplyRequested += OnUpdateApplyRequested;
         _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosed;
         _window.Activate();
@@ -342,6 +366,8 @@ public partial class App : Application, IAsyncDisposable
             window.AudioDevicesChanged -= OnAudioDevicesChanged;
             window.RecoveryCleared -= OnRecoveryCleared;
             window.DiagnosticsExportCompleted -= OnDiagnosticsExportCompleted;
+            window.UpdateCheckRequested -= OnUpdateCheckRequested;
+            window.UpdateApplyRequested -= OnUpdateApplyRequested;
             window.AppWindow.Closing -= OnAppWindowClosing;
             window.Closed -= OnWindowClosed;
         }
@@ -480,6 +506,66 @@ public partial class App : Application, IAsyncDisposable
             succeeded ? AppEventCode.DiagnosticsExported : AppEventCode.DiagnosticsExportFailed,
             succeeded ? AppFailureCategory.None : AppFailureCategory.Observability,
             ElapsedMilliseconds: null));
+    }
+
+    private async void OnUpdateCheckRequested()
+    {
+        if (_exitRequested || _disposed)
+        {
+            return;
+        }
+
+        if (!await _sessionOperationGate.WaitAsync(0).ConfigureAwait(true))
+        {
+            _window?.SetUpdateStatus(new UpdateOperationResult(UpdateOperationStatus.BusyDictating));
+            return;
+        }
+
+        try
+        {
+            _window?.SetUpdateCheckInProgress();
+            var result = await _updateService.CheckDownloadAndVerifyAsync().ConfigureAwait(true);
+            _window?.SetUpdateStatus(result);
+        }
+        finally
+        {
+            _sessionOperationGate.Release();
+        }
+    }
+
+    private async void OnUpdateApplyRequested()
+    {
+        if (_exitRequested || _disposed)
+        {
+            return;
+        }
+
+        if (!await _sessionOperationGate.WaitAsync(0).ConfigureAwait(true))
+        {
+            _window?.SetUpdateStatus(new UpdateOperationResult(UpdateOperationStatus.BusyDictating));
+            return;
+        }
+
+        _exitRequested = true;
+        _sessionOperationGate.Release();
+        try
+        {
+            if (!_updateService.TryApplyPendingAndRestart())
+            {
+                _exitRequested = false;
+                _window?.SetUpdateStatus(new UpdateOperationResult(UpdateOperationStatus.Failed));
+                return;
+            }
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            _exitRequested = false;
+            _window?.SetUpdateStatus(new UpdateOperationResult(UpdateOperationStatus.Failed));
+            return;
+        }
+
+        await PrepareForExitAsync().ConfigureAwait(true);
+        Exit();
     }
 
     private void ApplyOverlayUatState()
@@ -1276,6 +1362,11 @@ public partial class App : Application, IAsyncDisposable
 
     private async Task HandlePushToTalkAsync(PushToTalkSignal signal)
     {
+        if (_exitRequested || _disposed)
+        {
+            return;
+        }
+
         var controller = _sessionController;
         if (controller is null)
         {
@@ -2256,6 +2347,23 @@ public partial class App : Application, IAsyncDisposable
         return hardware.Status == HardwareProbeStatus.Complete
             ? DiagnosticHardwareClass.CpuOnly
             : DiagnosticHardwareClass.Unknown;
+    }
+
+    private static ReleaseIdentity ResolveReleaseIdentity()
+    {
+        var configured = Assembly.GetExecutingAssembly()
+            .GetCustomAttributes<AssemblyMetadataAttribute>()
+            .SingleOrDefault(attribute => string.Equals(
+                attribute.Key,
+                "EnviousWisprReleaseChannel",
+                StringComparison.Ordinal))
+            ?.Value;
+        if (!ReleaseIdentity.TryParse(configured, out var identity))
+        {
+            throw new InvalidOperationException("The embedded release channel is invalid.");
+        }
+
+        return identity;
     }
 
     private static AppEventCode EventFor(SettingsLoadStatus status) => status switch

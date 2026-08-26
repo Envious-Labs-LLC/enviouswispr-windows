@@ -6,6 +6,7 @@ using EnviousWispr.Audio;
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Credentials;
 using EnviousWispr.Core.Diagnostics;
+using EnviousWispr.Core.Distribution;
 using EnviousWispr.Core.History;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Reliability;
@@ -44,7 +45,10 @@ public sealed partial class MainWindow : Window, IDisposable
         IApiKeyStore apiKeyStore,
         IRecoveryTextStore recoveryTextStore,
         IDiagnosticExportService diagnosticExportService,
-        bool telemetryAvailable)
+        bool telemetryAvailable,
+        ReleaseIdentity releaseIdentity,
+        bool updateConfigured,
+        string currentVersion)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(settingsStore);
@@ -53,6 +57,7 @@ public sealed partial class MainWindow : Window, IDisposable
         ArgumentNullException.ThrowIfNull(apiKeyStore);
         ArgumentNullException.ThrowIfNull(recoveryTextStore);
         ArgumentNullException.ThrowIfNull(diagnosticExportService);
+        ArgumentNullException.ThrowIfNull(releaseIdentity);
 
         _settings = settings;
         _settingsStore = settingsStore;
@@ -75,7 +80,11 @@ public sealed partial class MainWindow : Window, IDisposable
         ApplySettingsToControls();
         ShowOnboarding(!settings.HasCompletedOnboarding);
         ProductNavigation.SelectedItem = HomeNavItem;
-        BuildInfoText.Text = $"EnviousWispr {Assembly.GetExecutingAssembly().GetName().Version} · Windows 11 x64 development build";
+        BuildInfoText.Text = $"{releaseIdentity.DisplayName} {Assembly.GetExecutingAssembly().GetName().Version} · {releaseIdentity.ChannelName}";
+        UpdateStatusText.Text = updateConfigured
+            ? $"Installed {releaseIdentity.ChannelName} version {currentVersion}. Updates are downloaded only while dictation is idle and must pass SHA-256 plus Envious Labs publisher verification before apply."
+            : $"This {releaseIdentity.ChannelName} build has no update endpoint configured. It will not contact an update server.";
+        CheckForUpdatesButton.IsEnabled = updateConfigured;
         if (settingsLoadStatus is SettingsLoadStatus.Invalid or SettingsLoadStatus.Migrated)
         {
             FoundationInfoBar.Message += " Previous settings were recovered safely.";
@@ -91,6 +100,10 @@ public sealed partial class MainWindow : Window, IDisposable
     public event Action? RecoveryCleared;
 
     public event Action<bool, int>? DiagnosticsExportCompleted;
+
+    public event Action? UpdateCheckRequested;
+
+    public event Action? UpdateApplyRequested;
 
     public AppSettings CurrentSettings => _settings;
 
@@ -156,6 +169,39 @@ public sealed partial class MainWindow : Window, IDisposable
             EngineReadinessText.Text = status;
             OnboardingModelText.Text = status;
         }
+    }
+
+    public void SetUpdateCheckInProgress()
+    {
+        CheckForUpdatesButton.IsEnabled = false;
+        ApplyUpdateButton.IsEnabled = false;
+        UpdateStatusText.Text = "Checking the isolated signed update channel and staging any newer version…";
+    }
+
+    public void SetUpdateStatus(UpdateOperationResult result)
+    {
+        CheckForUpdatesButton.IsEnabled = result.Status is not UpdateOperationStatus.NotConfigured;
+        ApplyUpdateButton.IsEnabled = result.CanApply;
+        UpdateStatusText.Text = result.Status switch
+        {
+            UpdateOperationStatus.BusyDictating =>
+                "Finish or cancel the active dictation before checking or applying an update.",
+            UpdateOperationStatus.NoUpdate =>
+                $"Version {result.Version} is current on this isolated channel.",
+            UpdateOperationStatus.DownloadedAndVerified =>
+                $"Version {result.Version} is staged and verified. Apply it when you are ready to restart.",
+            UpdateOperationStatus.DevelopmentBuild =>
+                "Updates can only be checked from a Velopack-installed build.",
+            UpdateOperationStatus.NotConfigured =>
+                "No update endpoint is configured; no network request was made.",
+            UpdateOperationStatus.RejectedHash =>
+                "The update hash did not match. It was rejected and will not run.",
+            UpdateOperationStatus.RejectedSignature or UpdateOperationStatus.RejectedPublisher =>
+                "The update did not pass trusted Envious Labs publisher verification. It was rejected.",
+            UpdateOperationStatus.RejectedChannel =>
+                "The update identity did not match this release channel. It was rejected.",
+            _ => "The update could not be prepared safely. The installed version is unchanged.",
+        };
     }
 
     public void SetCloudPolishNotice(string? notice)
@@ -742,6 +788,12 @@ public sealed partial class MainWindow : Window, IDisposable
                 : "The destination was left untouched or replaced only with a valid content-free export.",
             result.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Error);
     }
+
+    private void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e) =>
+        UpdateCheckRequested?.Invoke();
+
+    private void ApplyUpdateButton_Click(object sender, RoutedEventArgs e) =>
+        UpdateApplyRequested?.Invoke();
 
     private async void ImportProfileButton_Click(object sender, RoutedEventArgs e)
     {
