@@ -6,7 +6,7 @@ namespace EnviousWispr.Architecture.Tests;
 public sealed class WhisperRuntimeSelectorTests
 {
     [Fact]
-    public void AutomaticNvidiaPrefersCudaAndFullPrecisionModel()
+    public void AutomaticNvidiaPrefersMeasuredQuantizedModel()
     {
         var result = WhisperRuntimeSelector.Select(
             Hardware(cuda: true),
@@ -14,8 +14,8 @@ public sealed class WhisperRuntimeSelectorTests
 
         Assert.True(result.Succeeded);
         Assert.Equal(RuntimeProviderKind.Cuda, result.Provider);
-        Assert.Equal(WhisperModelPack.FullPrecision, result.ModelPack);
-        Assert.Equal(WhisperRuntimeSelectionReason.NvidiaCudaWithFullPrecisionModel, result.Reason);
+        Assert.Equal(WhisperModelPack.Quantized, result.ModelPack);
+        Assert.Equal(WhisperRuntimeSelectionReason.NvidiaCudaWithQuantizedModel, result.Reason);
     }
 
     [Fact]

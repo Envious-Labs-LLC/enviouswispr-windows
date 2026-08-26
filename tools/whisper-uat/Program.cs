@@ -28,18 +28,48 @@ var multilingual = new Dictionary<string, MultilingualFixture>(StringComparer.Or
         "hola buenas a ver tengo un problema con vuestra aplicación resulta que quiero hacer una transferencia bancaria a una cuenta conocida"),
 };
 
-var requestedProvider = args.FirstOrDefault()?.ToLowerInvariant();
+var mode = args.FirstOrDefault()?.ToLowerInvariant();
+var requestedProvider = mode is "cpu" or "cuda" ? mode : null;
+var modelPack = args.Contains("--full-precision", StringComparer.OrdinalIgnoreCase)
+    ? WhisperModelPack.FullPrecision
+    : WhisperModelPack.Quantized;
+if (mode is "fixed-cpu" or "fixed-cuda")
+{
+    var provider = mode == "fixed-cpu" ? RuntimeProviderKind.Cpu : RuntimeProviderKind.Cuda;
+    var fixedLanguage = await RunFixedLanguageDiagnosticsAsync(
+        provider,
+        modelPack,
+        repositoryRoot,
+        modelDirectory,
+        multilingual);
+    Console.WriteLine(JsonSerializer.Serialize(new { fixedLanguage }));
+    return fixedLanguage.All(result => result.Passed) ? 0 : 9;
+}
+
 var cpu = requestedProvider is null or "cpu"
-    ? await RunProviderAsync(RuntimeProviderKind.Cpu, repositoryRoot, modelDirectory, clips, multilingual)
+    ? await RunProviderAsync(
+        RuntimeProviderKind.Cpu,
+        modelPack,
+        repositoryRoot,
+        modelDirectory,
+        clips,
+        multilingual)
     : null;
 var cuda = requestedProvider is null or "cuda"
-    ? await RunProviderAsync(RuntimeProviderKind.Cuda, repositoryRoot, modelDirectory, clips, multilingual)
+    ? await RunProviderAsync(
+        RuntimeProviderKind.Cuda,
+        modelPack,
+        repositoryRoot,
+        modelDirectory,
+        clips,
+        multilingual)
     : null;
 Console.WriteLine(JsonSerializer.Serialize(new { cpu, cuda }));
 return (cpu?.Passed ?? true) && (cuda?.Passed ?? true) ? 0 : 8;
 
 static async Task<ProviderResult> RunProviderAsync(
     RuntimeProviderKind provider,
+    WhisperModelPack modelPack,
     string repositoryRoot,
     string modelDirectory,
     IReadOnlyDictionary<string, float[]> clips,
@@ -62,7 +92,7 @@ static async Task<ProviderResult> RunProviderAsync(
         IntraOpThreads: provider == RuntimeProviderKind.Cpu ? 8 : 4,
         CpuFallbackThreads: 8,
         Engine: FinalAsrEngine.Whisper,
-        WhisperPack: WhisperModelPack.Quantized,
+        WhisperPack: modelPack,
         Language: "auto",
         CudaRuntimeDirectory: Environment.GetEnvironmentVariable(
             "ENVIOUSWISPR_CUDA_RUNTIME_DIR")));
@@ -125,6 +155,58 @@ static async Task<ProviderResult> RunProviderAsync(
         Passed: clip10.Passed && clip20.Passed && clip94.Passed &&
             multilingualResults.All(result => result.Passed) &&
             cancellationObserved && workerRemoved);
+}
+
+static async Task<IReadOnlyList<LanguageResult>> RunFixedLanguageDiagnosticsAsync(
+    RuntimeProviderKind provider,
+    WhisperModelPack modelPack,
+    string repositoryRoot,
+    string modelDirectory,
+    IReadOnlyDictionary<string, MultilingualFixture> multilingual)
+{
+    var results = new List<LanguageResult>();
+    foreach (var (language, fixture) in multilingual)
+    {
+        var worker = Path.Combine(
+            repositoryRoot,
+            "src",
+            "Production",
+            "EnviousWispr.RuntimeWorker",
+            "bin",
+            "Release",
+            "net10.0-windows10.0.26100.0",
+            "EnviousWispr.RuntimeWorker.exe");
+        await using var engine = new RuntimeWorkerTranscriptionEngine(new RuntimeWorkerTranscriptionOptions(
+            worker,
+            modelDirectory,
+            provider,
+            ParakeetModelPack.Quantized,
+            IntraOpThreads: provider == RuntimeProviderKind.Cpu ? 8 : 4,
+            CpuFallbackThreads: 8,
+            Engine: FinalAsrEngine.Whisper,
+            WhisperPack: modelPack,
+            Language: language,
+            CudaRuntimeDirectory: Environment.GetEnvironmentVariable(
+                "ENVIOUSWISPR_CUDA_RUNTIME_DIR")));
+        var started = await engine.StartAsync();
+        if (!started.Succeeded)
+        {
+            results.Add(new LanguageResult(
+                language,
+                fixture.Samples.Length * 1_000L / sampleRate,
+                0,
+                LanguageDetected: false,
+                Words(fixture.ExpectedText).Length,
+                ActualWordCount: 0,
+                WordErrorRate: 1,
+                Passed: false));
+            continue;
+        }
+
+        results.Add(await MeasureLanguageAsync(engine, language, fixture));
+    }
+
+    return results;
 }
 
 static async Task<LanguageResult> MeasureLanguageAsync(
