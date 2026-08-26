@@ -24,13 +24,51 @@ public enum AppTheme
     Dark,
 }
 
+public enum WhisperLanguagePreference
+{
+    Automatic,
+    English,
+    French,
+    German,
+    Spanish,
+}
+
+public static class WhisperLanguageCodes
+{
+    public static string For(WhisperLanguagePreference preference) => preference switch
+    {
+        WhisperLanguagePreference.Automatic => "auto",
+        WhisperLanguagePreference.English => "en",
+        WhisperLanguagePreference.French => "fr",
+        WhisperLanguagePreference.German => "de",
+        WhisperLanguagePreference.Spanish => "es",
+        _ => throw new ArgumentOutOfRangeException(nameof(preference)),
+    };
+
+    public static bool TryNormalize(string? value, out string code)
+    {
+        var normalized = value?.Trim().ToLowerInvariant();
+        code = normalized switch
+        {
+            "auto" => "auto",
+            "en" or "en-us" or "en-gb" => "en",
+            "fr" or "fr-fr" => "fr",
+            "de" or "de-de" => "de",
+            "es" or "es-es" => "es",
+            _ => string.Empty,
+        };
+        return code.Length > 0;
+    }
+}
+
 public sealed record DictationPreferences(
     FinalAsrEngine FinalEngine,
     string PushToTalkGesture,
     bool WordCorrectionEnabled,
     bool FillerRemovalEnabled,
     bool EmojiFormatterEnabled,
-    bool SpokenPunctuationEnabled)
+    bool SpokenPunctuationEnabled,
+    WhisperLanguagePreference WhisperLanguage = WhisperLanguagePreference.Automatic)
 {
     public static DictationPreferences Default { get; } = new(
         FinalAsrEngine.Automatic,
@@ -38,7 +76,8 @@ public sealed record DictationPreferences(
         WordCorrectionEnabled: true,
         FillerRemovalEnabled: true,
         EmojiFormatterEnabled: true,
-        SpokenPunctuationEnabled: false);
+        SpokenPunctuationEnabled: false,
+        WhisperLanguage: WhisperLanguagePreference.Automatic);
 }
 
 public sealed record PolishPreferences(

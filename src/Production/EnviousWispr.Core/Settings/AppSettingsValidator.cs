@@ -44,6 +44,7 @@ public static class AppSettingsValidator
         preferences.Polish is not null &&
         preferences.History is not null &&
         Enum.IsDefined(preferences.Dictation.FinalEngine) &&
+        Enum.IsDefined(preferences.Dictation.WhisperLanguage) &&
         HotkeyGestureParser.Parse(preferences.Dictation.PushToTalkGesture).Succeeded &&
         Enum.IsDefined(preferences.Polish.Provider) &&
         (preferences.Polish.ModelId is null ||

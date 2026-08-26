@@ -34,6 +34,21 @@ public sealed class JsonHistoryStoreTests
     }
 
     [Fact]
+    public async Task UnicodeCombiningEmojiAndRightToLeftTextRoundTripExactly()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            const string international = "مرحبا ١٢٣ | שלום | Cafe\u0301 | 👨‍👩‍👧‍👦 | 東京";
+            using var store = new JsonHistoryStore(Path.Combine(directory, "history.json"));
+
+            Assert.True((await store.AddAsync(CreateEntry(Now, international), 30, Now)).Succeeded);
+
+            var loaded = await store.LoadAsync(30, Now);
+            Assert.Equal(international, Assert.Single(loaded.Entries).Text);
+        });
+    }
+
+    [Fact]
     public async Task LoadPrunesExpiredEntriesAndZeroRetentionKeepsEntries()
     {
         await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>

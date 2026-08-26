@@ -21,7 +21,9 @@ var (text, language) = fixture.ToLowerInvariant() switch
     "period" => ("Synthetic sentence.", "en"),
     "multiline" => ("synthetic command\r\nsecond line", "en"),
     "unicode" => ("世界", "zh"),
-    _ => throw new ArgumentException("Unknown --fixture. Use plain, seam, period, multiline, or unicode."),
+    "international" => ("مرحبا ١٢٣ | שלום | Cafe\u0301 | 👨‍👩‍👧‍👦 | 東京", "ar"),
+    _ => throw new ArgumentException(
+        "Unknown --fixture. Use plain, seam, period, multiline, unicode, or international."),
 };
 
 emit(

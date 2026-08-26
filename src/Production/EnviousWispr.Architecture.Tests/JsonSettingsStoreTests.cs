@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Services.Settings;
@@ -208,6 +209,28 @@ public sealed class JsonSettingsStoreTests
     }
 
     [Fact]
+    public async Task LoadMigratesPhaseFourteenSettingsWithAutomaticWhisperLanguage()
+    {
+        await WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "settings.json");
+            var legacy = CreatePopulatedSettings() with { SchemaVersion = 5 };
+            var json = System.Text.Json.JsonSerializer.Serialize(
+                legacy,
+                JsonSettingsStore.SerializerOptions);
+            var root = JsonNode.Parse(json)!.AsObject();
+            root["preferences"]!["dictation"]!.AsObject().Remove("whisperLanguage");
+            await File.WriteAllTextAsync(path, root.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var result = await new JsonSettingsStore(path).LoadAsync();
+
+            Assert.Equal(SettingsLoadStatus.Migrated, result.Status);
+            Assert.Equal(5, result.SourceSchemaVersion);
+            Assert.Equal(WhisperLanguagePreference.Automatic, result.Settings.Preferences.Dictation.WhisperLanguage);
+        });
+    }
+
+    [Fact]
     public async Task LoadRejectsFutureSchemaWithoutChangingSource()
     {
         await WithTestDirectoryAsync(async directory =>
@@ -259,7 +282,8 @@ public sealed class JsonSettingsStoreTests
                 WordCorrectionEnabled: false,
                 FillerRemovalEnabled: false,
                 EmojiFormatterEnabled: false,
-                SpokenPunctuationEnabled: true),
+                SpokenPunctuationEnabled: true,
+                WhisperLanguage: WhisperLanguagePreference.French),
             Polish = new PolishPreferences(
                 PolishProvider.Ollama,
                 "qwen3:4b",

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Services.Settings;
@@ -127,6 +128,27 @@ public sealed class PortableProfileServiceTests
             Assert.Equal(PortableProfile.CurrentSchemaVersion, result.Profile?.SchemaVersion);
             Assert.Equal("llama3.2", result.Profile?.Preferences.Polish.ModelId);
             Assert.Null(result.Profile?.Preferences.Polish.OllamaEndpoint);
+        });
+    }
+
+    [Fact]
+    public async Task ImportMigratesPhaseFourteenProfileWithAutomaticWhisperLanguage()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "profile.enviouswispr.json");
+            var current = JsonSettingsStoreTests.CreatePopulatedSettings().ToPortableProfile();
+            var json = JsonSerializer.Serialize(
+                current with { SchemaVersion = 3 },
+                JsonSettingsStore.SerializerOptions);
+            var root = JsonNode.Parse(json)!.AsObject();
+            root["preferences"]!["dictation"]!.AsObject().Remove("whisperLanguage");
+            await File.WriteAllTextAsync(path, root.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var result = await new JsonPortableProfileService().ImportAsync(path);
+
+            Assert.Equal(PortableProfileImportStatus.Imported, result.Status);
+            Assert.Equal(WhisperLanguagePreference.Automatic, result.Profile?.Preferences.Dictation.WhisperLanguage);
         });
     }
 

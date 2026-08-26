@@ -33,4 +33,6 @@
   <data name="SettingsNavItem.Content" xml:space="preserve"><value>Settings</value></data>
   <data name="SettingsNavItem.AccessKey" xml:space="preserve"><value>T</value></data>
   <data name="HomeTitle.Text" xml:space="preserve"><value>Speak naturally. Keep working.</value></data>
+  <data name="WhisperLanguageComboBox.Header" xml:space="preserve"><value>Whisper language</value></data>
+  <data name="WhisperLanguageComboBox.AutomationProperties.HelpText" xml:space="preserve"><value>Automatic detects the spoken language. A fixed language can improve recognition when automatic detection is unreliable.</value></data>
 </root>

@@ -57,6 +57,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 2 => MigrateFromV2(json),
                 3 => MigrateFromV3(json),
                 4 => MigrateFromV4(json),
+                5 => MigrateFromV5(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -213,6 +214,24 @@ public sealed class JsonSettingsStore : ISettingsStore
             {
                 SchemaVersion = AppSettings.CurrentSchemaVersion,
                 PreferredMicrophoneId = null,
+            };
+    }
+
+    private static AppSettings? MigrateFromV5(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = AppSettings.CurrentSchemaVersion,
+                Preferences = legacy.Preferences with
+                {
+                    Dictation = legacy.Preferences.Dictation with
+                    {
+                        WhisperLanguage = WhisperLanguagePreference.Automatic,
+                    },
+                },
             };
     }
 

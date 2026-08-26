@@ -94,31 +94,34 @@
     "name": "spoken emoji canonical",
     "category": "emoji",
     "input": "send Mike a thumbs up emoji",
-    "expected": "send Mike a 👍",
+    "expected": "send Mike a thumbs up emoji",
     "language": "fr",
     "engineId": "whisper",
     "customWords": [],
-    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": true, "spokenPunctuationEnabled": false }
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": true, "spokenPunctuationEnabled": false },
+    "difference": "Windows skips English spoken-emoji commands when Whisper explicitly detects non-English speech."
   },
   {
     "name": "spoken emoji synonym",
     "category": "emoji",
     "input": "crying face emoji",
-    "expected": "😢",
+    "expected": "crying face emoji",
     "language": "fr",
     "engineId": "whisper",
     "customWords": [],
-    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": true, "spokenPunctuationEnabled": false }
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": true, "spokenPunctuationEnabled": false },
+    "difference": "Windows skips English spoken-emoji commands when Whisper explicitly detects non-English speech."
   },
   {
     "name": "spoken emoji punctuation separator",
     "category": "emoji",
     "input": "THUMBS UP, EMOJI!",
-    "expected": "👍!",
+    "expected": "THUMBS UP, EMOJI!",
     "language": "fr",
     "engineId": "whisper",
     "customWords": [],
-    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": true, "spokenPunctuationEnabled": false }
+    "options": { "wordCorrectionEnabled": false, "fillerRemovalEnabled": false, "emojiFormatterEnabled": true, "spokenPunctuationEnabled": false },
+    "difference": "Windows skips English spoken-emoji commands when Whisper explicitly detects non-English speech."
   },
   {
     "name": "bare emoji noun does not convert",
