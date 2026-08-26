@@ -11,8 +11,8 @@ being accepted by upstream Whisper does not make it an EnviousWispr-supported la
 | English UI (`en-US`) | Supported baseline | All product UI and help text are English. | Native WinUI/UI Automation inspection. No translated UI is shipped. Windows falls back to `en-US`. |
 | English final dictation | Supported baseline | Parakeet is the automatic final engine; Whisper English is selectable. English dates, numbers, punctuation, fillers, and spoken emoji may use deterministic cleanup. | Pinned English fixtures and native shell-to-worker evidence. |
 | French Whisper | Fixture-backed | French can be selected explicitly or detected automatically. English-only date, number, punctuation, and spoken-emoji commands are skipped when French is detected. | One public SHA-pinned MINDS-14 row passed at 0% WER on measured CPU and CUDA paths. A physical French speaker journey and representative corpus remain unobserved. |
-| German Whisper | Experimental, below per-row bar | Explicit German selection is available for testing because fixed-language decoding improves the measured slice, but it is not supported accuracy. | Five public SHA-pinned MINDS-14 rows: automatic passed 2/5 at 40.38% aggregate WER on CUDA; fixed-language passed 3/5 at 33.65%. Individual rows still fail the 35% guardrail, and one source reference appears truncated. |
-| Spanish Whisper | Experimental, below per-row bar | Explicit Spanish selection exists for testing and must not be presented as supported accuracy. | Five public SHA-pinned MINDS-14 rows: automatic and fixed-language each passed 4/5 at 20% aggregate WER, but row zero remained at 52.38% and fails the individual guardrail. |
+| German Whisper | Experimental, one ambiguous row below the per-row bar | Explicit German selection is available for testing because fixed-language decoding improves the measured slice, but it is not supported accuracy. | Five public SHA-pinned MINDS-14 rows: Q5 automatic CUDA passed 3/5 at 13.39% aggregate WER and detected German on 4/5; fixed-language CPU and CUDA passed 4/5 at 7.87%. Short row zero is misdetected automatically. Row 200 measures 42.11% WER against a grammatically broken source annotation even though bounded decoder and model variants agree on the core sentence. German-speaking human audio review and a representative corpus remain required. |
+| Spanish Whisper | Fixture-backed | Spanish can be selected explicitly or detected automatically. English-only date, number, punctuation, and spoken-emoji commands are skipped when Spanish is detected. | Five public SHA-pinned MINDS-14 rows passed 5/5 in automatic and fixed-language modes on measured CPU and CUDA paths, with 6.25% aggregate Q5 WER. Row zero uses a reviewed complete evaluation reference because the source annotation is truncated. A physical Spanish speaker journey and representative corpus remain unobserved. |
 | Other Whisper languages | Not advertised | No product support claim. | Upstream capability alone is insufficient; there is no trusted EnviousWispr fixture tier or UI selection. |
 | Mixed-language dictation | Not advertised | No product support claim. | No representative corpus or native-speaker evidence. |
 
@@ -39,7 +39,7 @@ being accepted by upstream Whisper does not make it an EnviousWispr-supported la
 
 ## Advertising rule
 
-Release copy may say that English is the supported baseline and French has trusted-fixture support. It
-must label German and Spanish experimental with the limits above. It must not claim translated UI,
+Release copy may say that English is the supported baseline and French and Spanish have trusted-fixture
+support. It must label German experimental with the limits above. It must not claim translated UI,
 representative multilingual parity, mixed-language accuracy, IME compatibility, or complete screen-reader
 support until the corresponding row gains repeatable evidence.

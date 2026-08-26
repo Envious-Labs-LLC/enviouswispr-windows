@@ -60,6 +60,11 @@ detection and Spanish public-fixture quality also failed in this run. Preview la
 German pass, and the known Spanish preview case remains at 52.38% WER. Quality failures are not relaxed to
 make a performance run green.
 
+Those language-quality statements describe the exact Phase 21 run and its then-current source references.
+The later fail-closed reference audit in `notes/phase-seven-whisper.md` supersedes them for product claims:
+the five-row Spanish final-Whisper slice now passes, while German remains below its individual-row gate.
+The performance timings and CPU-latency conclusion above are unchanged.
+
 ## Runbook
 
 Run the portable shell, recording, power-proxy, and repeated-lifecycle gate:
