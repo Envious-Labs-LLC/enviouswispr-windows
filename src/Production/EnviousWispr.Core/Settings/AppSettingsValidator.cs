@@ -16,6 +16,8 @@ public static class AppSettingsValidator
             (settings.PreferredMicrophoneId is not null &&
                 (string.IsNullOrWhiteSpace(settings.PreferredMicrophoneId) ||
                  settings.PreferredMicrophoneId.Length > 2_048)) ||
+            settings.Observability is null ||
+            settings.Observability.DiagnosticRetentionDays is < 1 or > 90 ||
             !IsValid(settings.Preferences) ||
             !IsValid(settings.UserData))
         {

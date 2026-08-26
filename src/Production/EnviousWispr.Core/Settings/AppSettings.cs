@@ -6,9 +6,10 @@ public sealed record AppSettings(
     bool HasCompletedOnboarding,
     UserPreferences Preferences,
     ReusableUserData UserData,
-    string? PreferredMicrophoneId = null)
+    string? PreferredMicrophoneId = null,
+    ObservabilityPreferences? Observability = null)
 {
-    public const int CurrentSchemaVersion = 6;
+    public const int CurrentSchemaVersion = 7;
 
     public static AppSettings Default { get; } = new(
         CurrentSchemaVersion,
@@ -16,7 +17,8 @@ public sealed record AppSettings(
         HasCompletedOnboarding: false,
         UserPreferences.Default,
         ReusableUserData.Empty,
-        PreferredMicrophoneId: null);
+        PreferredMicrophoneId: null,
+        Observability: ObservabilityPreferences.Default);
 
     public PortableProfile ToPortableProfile() => new(
         PortableProfile.CurrentSchemaVersion,

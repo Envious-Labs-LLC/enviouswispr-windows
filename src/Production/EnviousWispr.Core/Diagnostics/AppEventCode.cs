@@ -54,5 +54,10 @@ public enum AppEventCode
     LivePreviewUpdated,
     LivePreviewStopped,
     LivePreviewFailed,
+    RuntimeSelectionObserved,
+    DiagnosticsExported,
+    DiagnosticsExportFailed,
+    TelemetryConsentEnabled,
+    TelemetryConsentDisabled,
     UnhandledFailure,
 }

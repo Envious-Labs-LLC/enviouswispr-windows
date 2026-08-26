@@ -5,6 +5,7 @@ using System.Security;
 using EnviousWispr.Audio;
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Credentials;
+using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.History;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Reliability;
@@ -24,6 +25,8 @@ public sealed partial class MainWindow : Window, IDisposable
     private readonly IHistoryStore _historyStore;
     private readonly IApiKeyStore _apiKeyStore;
     private readonly IRecoveryTextStore _recoveryTextStore;
+    private readonly IDiagnosticExportService _diagnosticExportService;
+    private readonly bool _telemetryAvailable;
     private readonly DictationOverlayWindow _overlayWindow;
     private readonly List<HistoryItemViewModel> _history = [];
     private IReadOnlyList<MicrophoneChoice> _microphones = [];
@@ -39,7 +42,9 @@ public sealed partial class MainWindow : Window, IDisposable
         IPortableProfileService profileService,
         IHistoryStore historyStore,
         IApiKeyStore apiKeyStore,
-        IRecoveryTextStore recoveryTextStore)
+        IRecoveryTextStore recoveryTextStore,
+        IDiagnosticExportService diagnosticExportService,
+        bool telemetryAvailable)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(settingsStore);
@@ -47,6 +52,7 @@ public sealed partial class MainWindow : Window, IDisposable
         ArgumentNullException.ThrowIfNull(historyStore);
         ArgumentNullException.ThrowIfNull(apiKeyStore);
         ArgumentNullException.ThrowIfNull(recoveryTextStore);
+        ArgumentNullException.ThrowIfNull(diagnosticExportService);
 
         _settings = settings;
         _settingsStore = settingsStore;
@@ -54,6 +60,8 @@ public sealed partial class MainWindow : Window, IDisposable
         _historyStore = historyStore;
         _apiKeyStore = apiKeyStore;
         _recoveryTextStore = recoveryTextStore;
+        _diagnosticExportService = diagnosticExportService;
+        _telemetryAvailable = telemetryAvailable;
 
         InitializeComponent();
         _overlayWindow = new DictationOverlayWindow();
@@ -81,6 +89,8 @@ public sealed partial class MainWindow : Window, IDisposable
     public event Action<AudioDeviceChange>? AudioDevicesChanged;
 
     public event Action? RecoveryCleared;
+
+    public event Action<bool, int>? DiagnosticsExportCompleted;
 
     public AppSettings CurrentSettings => _settings;
 
@@ -330,11 +340,21 @@ public sealed partial class MainWindow : Window, IDisposable
             HistoryEnabledToggle.IsOn,
             (int)Math.Clamp(double.IsNaN(RetentionDaysBox.Value) ? 30 : RetentionDaysBox.Value, 0, 3650));
         var theme = ThemeFromIndex(ThemeComboBox.SelectedIndex);
+        var observability = new ObservabilityPreferences(
+            LocalDiagnosticsToggle.IsOn,
+            (int)Math.Clamp(
+                double.IsNaN(DiagnosticRetentionDaysBox.Value)
+                    ? ObservabilityPreferences.Default.DiagnosticRetentionDays
+                    : DiagnosticRetentionDaysBox.Value,
+                1,
+                90),
+            _telemetryAvailable && ShareTelemetryToggle.IsOn);
         var microphoneId = (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id;
         var next = _settings with
         {
             PreferredMicrophoneId = microphoneId,
             Preferences = new UserPreferences(dictation, polish, history, theme),
+            Observability = observability,
         };
 
         if (await TrySaveAsync(
@@ -693,6 +713,36 @@ public sealed partial class MainWindow : Window, IDisposable
             result.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Error);
     }
 
+    private async void ExportDiagnosticsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var picker = new FileSavePicker
+        {
+            SuggestedFileName = "EnviousWispr-diagnostics",
+            DefaultFileExtension = ".jsonl",
+        };
+        picker.FileTypeChoices.Add("Privacy-safe diagnostics", [".jsonl"]);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+        var file = await picker.PickSaveFileAsync();
+        if (file is null)
+        {
+            return;
+        }
+
+        var retentionDays = _settings.Observability?.DiagnosticRetentionDays ??
+            ObservabilityPreferences.Default.DiagnosticRetentionDays;
+        var result = await _diagnosticExportService.ExportAsync(
+            file.Path,
+            retentionDays,
+            DateTimeOffset.UtcNow).ConfigureAwait(true);
+        DiagnosticsExportCompleted?.Invoke(result.Succeeded, result.ExportedRecordCount);
+        ShowMessage(
+            result.Succeeded ? "Diagnostics exported" : "Diagnostics export failed safely",
+            result.Succeeded
+                ? $"{result.ExportedRecordCount.ToString(CultureInfo.CurrentCulture)} content-free operational record{(result.ExportedRecordCount == 1 ? string.Empty : "s")} exported. No dictated text, audio, keys, clipboard, surrounding context, or stable device identifier is included."
+                : "The destination was left untouched or replaced only with a valid content-free export.",
+            result.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Error);
+    }
+
     private async void ImportProfileButton_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FileOpenPicker();
@@ -857,6 +907,14 @@ public sealed partial class MainWindow : Window, IDisposable
             HistoryEnabledToggle.IsOn = preferences.History.IsEnabled;
             RetentionDaysBox.Value = preferences.History.RetentionDays;
             ThemeComboBox.SelectedIndex = ThemeIndex(preferences.Theme);
+            var observability = _settings.Observability ?? ObservabilityPreferences.Default;
+            LocalDiagnosticsToggle.IsOn = observability.LocalDiagnosticsEnabled;
+            DiagnosticRetentionDaysBox.Value = observability.DiagnosticRetentionDays;
+            ShareTelemetryToggle.IsEnabled = _telemetryAvailable;
+            ShareTelemetryToggle.IsOn = _telemetryAvailable && observability.ShareAnonymousTelemetry;
+            DiagnosticsStatusText.Text = _telemetryAvailable
+                ? "Anonymous sharing is off until you explicitly enable and save it. Local exports and uploads contain only the typed fields listed here."
+                : "No telemetry upload channel is configured in this development build. Local content-free diagnostics can still be retained, exported, or disabled.";
             DictionaryList.ItemsSource = _settings.UserData.CustomWords;
             SnippetList.ItemsSource = _settings.UserData.Snippets;
         }

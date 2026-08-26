@@ -231,6 +231,28 @@ public sealed class JsonSettingsStoreTests
     }
 
     [Fact]
+    public async Task LoadMigratesPhaseSeventeenSettingsWithPrivateObservabilityDefaults()
+    {
+        await WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "settings.json");
+            var legacy = CreatePopulatedSettings() with { SchemaVersion = 6 };
+            var json = System.Text.Json.JsonSerializer.Serialize(
+                legacy,
+                JsonSettingsStore.SerializerOptions);
+            var root = JsonNode.Parse(json)!.AsObject();
+            root.Remove("observability");
+            await File.WriteAllTextAsync(path, root.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var result = await new JsonSettingsStore(path).LoadAsync();
+
+            Assert.Equal(SettingsLoadStatus.Migrated, result.Status);
+            Assert.Equal(6, result.SourceSchemaVersion);
+            Assert.Equal(ObservabilityPreferences.Default, result.Settings.Observability);
+        });
+    }
+
+    [Fact]
     public async Task LoadRejectsFutureSchemaWithoutChangingSource()
     {
         await WithTestDirectoryAsync(async directory =>
@@ -274,6 +296,10 @@ public sealed class JsonSettingsStoreTests
         LaunchCount = 7,
         HasCompletedOnboarding = true,
         PreferredMicrophoneId = "synthetic-device-id",
+        Observability = new ObservabilityPreferences(
+            LocalDiagnosticsEnabled: false,
+            DiagnosticRetentionDays: 7,
+            ShareAnonymousTelemetry: true),
         Preferences = UserPreferences.Default with
         {
             Dictation = new DictationPreferences(

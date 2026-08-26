@@ -160,6 +160,10 @@ public sealed class PortableProfileServiceTests
             LaunchCount = 42,
             HasCompletedOnboarding = true,
             PreferredMicrophoneId = "machine-local-microphone",
+            Observability = new ObservabilityPreferences(
+                LocalDiagnosticsEnabled: false,
+                DiagnosticRetentionDays: 3,
+                ShareAnonymousTelemetry: false),
         };
         var imported = JsonSettingsStoreTests.CreatePopulatedSettings().ToPortableProfile();
 
@@ -168,6 +172,7 @@ public sealed class PortableProfileServiceTests
         Assert.Equal(42, applied.LaunchCount);
         Assert.True(applied.HasCompletedOnboarding);
         Assert.Equal("machine-local-microphone", applied.PreferredMicrophoneId);
+        Assert.Equal(current.Observability, applied.Observability);
         Assert.Equal(imported.Preferences, applied.Preferences);
         Assert.Equal(imported.UserData, applied.UserData);
     }

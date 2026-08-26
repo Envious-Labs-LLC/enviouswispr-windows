@@ -100,6 +100,9 @@ try {
     Write-Host "Building signed model-delivery UAT harness (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/model-delivery-uat/EnviousWispr.ModelDelivery.Uat.csproj", "-c", "Release", "--nologo")
 
+    Write-Host "Building privacy-safe observability UAT harness (Release)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/observability-uat/EnviousWispr.Observability.Uat.csproj", "-c", "Release", "--nologo")
+
     Write-Host "Building native ASR UAT harness (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/asr-uat/EnviousWispr.Asr.Uat.csproj", "-c", "Release", "--nologo")
 

@@ -7,5 +7,7 @@ public sealed record AppLogEntry(
     AppEventCode Event,
     AppFailureCategory Failure = AppFailureCategory.None,
     long? ElapsedMilliseconds = null,
-    string? Provider = null,
-    AppErrorCode? ErrorCode = null);
+    DiagnosticProvider? Provider = null,
+    AppErrorCode? ErrorCode = null,
+    DiagnosticEngineChoice? Engine = null,
+    DiagnosticHardwareClass? HardwareClass = null);

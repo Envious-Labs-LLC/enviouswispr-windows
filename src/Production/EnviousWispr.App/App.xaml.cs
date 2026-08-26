@@ -32,7 +32,8 @@ public partial class App : Application, IAsyncDisposable
     private static readonly TimeSpan MaximumRecordingDuration = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan MaximumFinalProcessingDuration = TimeSpan.FromMinutes(3);
 
-    private readonly JsonLineFileLogger _logger;
+    private readonly PrivacySafeObservabilityLogger _logger;
+    private readonly JsonDiagnosticExportService _diagnosticExportService;
     private readonly JsonSettingsStore _settingsStore;
     private readonly JsonPortableProfileService _profileService = new();
     private readonly JsonHistoryStore _historyStore;
@@ -105,7 +106,24 @@ public partial class App : Application, IAsyncDisposable
         }
 
         dataDirectory = Path.GetFullPath(dataDirectory);
-        _logger = new JsonLineFileLogger(Path.Combine(dataDirectory, "diagnostics", "app.jsonl"));
+        var diagnosticPath = Path.Combine(dataDirectory, "diagnostics", "app.jsonl");
+        IPrivacySafeTelemetryTransport? telemetryTransport = null;
+        var allowLoopbackTelemetry = string.Equals(
+            Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_ALLOW_LOOPBACK_TELEMETRY"),
+            "1",
+            StringComparison.Ordinal);
+        if (TelemetryEndpointPolicy.TryNormalize(
+                Environment.GetEnvironmentVariable("ENVIOUSWISPR_TELEMETRY_ENDPOINT"),
+                allowLoopbackTelemetry,
+                out var telemetryEndpoint))
+        {
+            telemetryTransport = new HttpPrivacySafeTelemetryTransport(telemetryEndpoint!);
+        }
+
+        _logger = new PrivacySafeObservabilityLogger(
+            new JsonLineFileLogger(diagnosticPath, enabled: false),
+            telemetryTransport);
+        _diagnosticExportService = new JsonDiagnosticExportService(diagnosticPath);
         _settingsStore = new JsonSettingsStore(Path.Combine(dataDirectory, "settings.json"));
         _historyStore = new JsonHistoryStore(Path.Combine(dataDirectory, "history.json"));
         _runStateStore = new JsonApplicationRunStateStore(Path.Combine(dataDirectory, "run-state.json"));
@@ -124,8 +142,6 @@ public partial class App : Application, IAsyncDisposable
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
-        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ApplicationStarting));
-
         if (!SingleInstanceLock.TryAcquire(SingleInstanceKey, out _singleInstanceLock))
         {
             var activated = await SingleInstanceActivationChannel.RequestActivationAsync(
@@ -146,6 +162,15 @@ public partial class App : Application, IAsyncDisposable
 
         var runStart = await _runStateStore.BeginRunAsync(DateTimeOffset.UtcNow).ConfigureAwait(true);
         _runId = runStart.Status == RunStateLoadStatus.Unavailable ? null : runStart.RunId;
+        if (_runId is { } activeRunId)
+        {
+            StartHeartbeat(activeRunId);
+        }
+
+        var loadResult = await _settingsStore.LoadAsync().ConfigureAwait(true);
+        var observability = loadResult.Settings.Observability ?? ObservabilityPreferences.Default;
+        _logger.Configure(observability, DateTimeOffset.UtcNow);
+        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ApplicationStarting));
         if (runStart.RecoveredInterruptedRun)
         {
             _logger.Write(new AppLogEntry(
@@ -155,12 +180,6 @@ public partial class App : Application, IAsyncDisposable
                 ErrorCode: AppErrorCode.PreviousRunInterrupted));
         }
 
-        if (_runId is { } activeRunId)
-        {
-            StartHeartbeat(activeRunId);
-        }
-
-        var loadResult = await _settingsStore.LoadAsync().ConfigureAwait(true);
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
             EventFor(loadResult.Status),
@@ -219,11 +238,14 @@ public partial class App : Application, IAsyncDisposable
             _profileService,
             _historyStore,
             _credentialStore,
-            _recoveryTextStore);
+            _recoveryTextStore,
+            _diagnosticExportService,
+            _logger.TelemetryAvailable);
         _window.SettingsChanged += OnSettingsChanged;
         _window.SessionStatusChanged += OnSessionStatusChanged;
         _window.AudioDevicesChanged += OnAudioDevicesChanged;
         _window.RecoveryCleared += OnRecoveryCleared;
+        _window.DiagnosticsExportCompleted += OnDiagnosticsExportCompleted;
         _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosed;
         _window.Activate();
@@ -319,6 +341,7 @@ public partial class App : Application, IAsyncDisposable
             window.SessionStatusChanged -= OnSessionStatusChanged;
             window.AudioDevicesChanged -= OnAudioDevicesChanged;
             window.RecoveryCleared -= OnRecoveryCleared;
+            window.DiagnosticsExportCompleted -= OnDiagnosticsExportCompleted;
             window.AppWindow.Closing -= OnAppWindowClosing;
             window.Closed -= OnWindowClosed;
         }
@@ -434,9 +457,29 @@ public partial class App : Application, IAsyncDisposable
 
     private void OnSettingsChanged(AppSettings settings)
     {
+        var previousSharing = _settings.Observability?.ShareAnonymousTelemetry == true;
         _settings = settings;
         _customWords = settings.UserData.CustomWords;
         _deterministicTextOptions = DeterministicTextOptions.From(settings.Preferences.Dictation);
+        var observability = settings.Observability ?? ObservabilityPreferences.Default;
+        _logger.Configure(observability, DateTimeOffset.UtcNow);
+        if (previousSharing != observability.ShareAnonymousTelemetry)
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                observability.ShareAnonymousTelemetry
+                    ? AppEventCode.TelemetryConsentEnabled
+                    : AppEventCode.TelemetryConsentDisabled));
+        }
+    }
+
+    private void OnDiagnosticsExportCompleted(bool succeeded, int recordCount)
+    {
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            succeeded ? AppEventCode.DiagnosticsExported : AppEventCode.DiagnosticsExportFailed,
+            succeeded ? AppFailureCategory.None : AppFailureCategory.Observability,
+            ElapsedMilliseconds: null));
     }
 
     private void ApplyOverlayUatState()
@@ -716,6 +759,15 @@ public partial class App : Application, IAsyncDisposable
                 AppFailureCategory.Recovery));
         }
 
+        try
+        {
+            await _logger.DisposeAsync().ConfigureAwait(true);
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            // Telemetry disposal is best-effort and cannot make the product shutdown unclean.
+        }
+
         GC.SuppressFinalize(this);
     }
 
@@ -891,7 +943,7 @@ public partial class App : Application, IAsyncDisposable
                 ? AppFailureCategory.None
                 : AppFailureCategory.LocalPolish,
             timer.ElapsedMilliseconds,
-            provider.ProviderId,
+            DiagnosticProviderFor(provider.ProviderId),
             health.Error?.Code));
         _window?.DispatcherQueue.TryEnqueue(() =>
         {
@@ -955,6 +1007,13 @@ public partial class App : Application, IAsyncDisposable
         }
 
         var hardware = await new WindowsHardwareDiscovery().ProbeAsync().ConfigureAwait(true);
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.RuntimeSelectionObserved,
+            Engine: engine == FinalAsrEngine.Whisper
+                ? DiagnosticEngineChoice.Whisper
+                : DiagnosticEngineChoice.Parakeet,
+            HardwareClass: DiagnosticHardwareClassFor(hardware)));
         var workerExecutable = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
         _transcriptionEngine = engine == FinalAsrEngine.Whisper
             ? CreateWhisperEngine(workerExecutable, modelDirectory, hardware, whisperLanguage)
@@ -1973,7 +2032,7 @@ public partial class App : Application, IAsyncDisposable
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
             AppEventCode.PolishStarted,
-            Provider: provider.ProviderId));
+            Provider: DiagnosticProviderFor(provider.ProviderId)));
         var timer = System.Diagnostics.Stopwatch.StartNew();
         PolishResult result;
         if (!_polishUsesLocalRuntime)
@@ -2022,7 +2081,7 @@ public partial class App : Application, IAsyncDisposable
                     : AppFailureCategory.CloudPolish
                 : AppFailureCategory.None,
             timer.ElapsedMilliseconds,
-            provider.ProviderId,
+            DiagnosticProviderFor(provider.ProviderId),
             result.Error?.Code));
         return result;
     }
@@ -2170,6 +2229,34 @@ public partial class App : Application, IAsyncDisposable
         null => AppFailureCategory.None,
         _ => AppFailureCategory.Unknown,
     };
+
+    private static DiagnosticProvider? DiagnosticProviderFor(string providerId) =>
+        providerId.Trim().ToLowerInvariant() switch
+        {
+            "eg-1" => DiagnosticProvider.EgOne,
+            "ollama" => DiagnosticProvider.Ollama,
+            "openai" => DiagnosticProvider.OpenAi,
+            "anthropic" => DiagnosticProvider.Anthropic,
+            "gemini" => DiagnosticProvider.Gemini,
+            _ => null,
+        };
+
+    private static DiagnosticHardwareClass DiagnosticHardwareClassFor(HardwareSnapshot hardware)
+    {
+        if (hardware.Cuda.IsDriverAvailable && hardware.Cuda.DeviceCount > 0)
+        {
+            return DiagnosticHardwareClass.NvidiaCuda;
+        }
+
+        if (hardware.GraphicsAdapters.Any(adapter => adapter.IsActive))
+        {
+            return DiagnosticHardwareClass.GpuPresent;
+        }
+
+        return hardware.Status == HardwareProbeStatus.Complete
+            ? DiagnosticHardwareClass.CpuOnly
+            : DiagnosticHardwareClass.Unknown;
+    }
 
     private static AppEventCode EventFor(SettingsLoadStatus status) => status switch
     {
