@@ -5,6 +5,14 @@
   "source": "https://huggingface.co/datasets/PolyAI/minds14",
   "fixtures": [
     {
+      "file": "en-US-row0.wav",
+      "config": "en-US",
+      "split": "train",
+      "row": 0,
+      "transcription": "I would like to set up a joint account with my partner",
+      "sha256": "0f56f001f964d2288851a5e4063781cb5793d25f1b4fd9b55607e79873b4b20c"
+    },
+    {
       "file": "fr-FR-row0.wav",
       "config": "fr-FR",
       "split": "train",

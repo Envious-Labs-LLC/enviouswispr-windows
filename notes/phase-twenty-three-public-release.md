@@ -78,6 +78,21 @@ strict acoustic mode adds real WASAPI and the installed global hook, but its key
 synthetic and the lexical assertion failed on the tested speaker/webcam path. A person speaking into the
 physical microphone while holding the configured key from a non-EnviousWispr app remains unobserved.
 
+The acoustic harness now also admits a pinned English `en-US/train/0` MINDS-14 fixture from the same
+CC-BY-4.0 dataset revision. Its deterministic production path passed with Parakeet CPU: the real shell and
+worker became ready, the reviewed fixture crossed capture, final ASR, deterministic processing, and controlled
+Windows delivery, the public word `account` was observed, and the app and worker exited cleanly. The corresponding
+speaker-to-physical-microphone mode completed recording, capture finalization, Parakeet transcription, and
+deterministic processing twice, but delivered no text because the speaker/webcam acoustic capture produced an
+empty transcript on this setup. The first attempt also exposed and corrected a harness-only fixed playback timeout;
+the timeout is now derived from admitted PCM duration. This strengthens the reproducible English success path but
+does not convert synthetic speaker playback into human-spoken microphone acceptance.
+
+The same English row was also added to the pinned Whisper language corpus rather than being excluded to keep a
+gate green. Fixed-language Whisper CPU detected English, but produced 7 word edits across the 12-word reference
+(58.33% WER), so it fails the existing 35% per-row guardrail. English Whisper quality on this public case is now
+an explicit blocker alongside the previously documented German and Spanish rows.
+
 A deterministic native failure matrix now exercises the remaining production-journey failure classes. An
 allowlisted `AccessDenied` audio fault traveled through the installed global hook and normal session controller;
 the app refused to enter recording, delivered nothing, retained the typed error code in content-free diagnostics,
@@ -99,8 +114,9 @@ defect was found in either path. The profile and settings lived under a bounded
 the execution policy blocked recursive deletion outside the workspace, so that directory remains eligible for
 normal OS temporary-file cleanup.
 
-After recording this evidence, canonical validation passed again: the public audit covered 378 tracked files,
-all 34 preserved-proof tests and all 377 production tests passed, every Release project and UAT harness built,
+After recording this evidence, canonical validation passed again: the public audit covered 379 tracked files
+and 12 reviewed public audio fixtures; all 34 preserved-proof tests and all 377 production tests passed, every
+Release project and UAT harness built,
 and the build reported zero warnings and zero errors. Local model runtime tests were not requested by this gate.
 
 Phase 23 is not complete. The physical journey above, signed install, update, rollback, uninstall, SmartScreen,

@@ -408,6 +408,7 @@ static IReadOnlyDictionary<string, IReadOnlyList<MultilingualFixture>> LoadMulti
     const string expectedRevision = "40ce77cb32a384e4d50a568e1ec39ac804019d33";
     var expectedRows = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal)
     {
+        ["en-US"] = [0],
         ["fr-FR"] = [0],
         ["de-DE"] = [0, 100, 200, 300, 400],
         ["es-ES"] = [0, 100, 200, 300, 400],

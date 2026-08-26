@@ -159,6 +159,8 @@ try {
         Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/whisper-uat/EnviousWispr.Whisper.Uat.csproj", "-c", "Release", "--no-build")
         Write-Host "Running the production WinUI public-fixture journey..."
         Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", "Release", "--no-build")
+        Write-Host "Running the production WinUI English Parakeet journey..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", "Release", "--no-build", "--", "--english-parakeet")
     }
     else {
         Write-Host "Running portable contract tests..."
