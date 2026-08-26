@@ -82,6 +82,7 @@ public enum AppErrorStage
     CredentialStore,
     ContextRead,
     TextDelivery,
+    DiagnosticExport,
 }
 
 public sealed record AppError(AppErrorCode Code, AppErrorStage Stage, bool CanRetry);

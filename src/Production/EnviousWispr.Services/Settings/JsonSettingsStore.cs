@@ -58,6 +58,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 3 => MigrateFromV3(json),
                 4 => MigrateFromV4(json),
                 5 => MigrateFromV5(json),
+                6 => MigrateFromV6(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -161,6 +162,29 @@ public sealed class JsonSettingsStore : ISettingsStore
         }
     }
 
+    internal static async Task WriteLinesAtomicallyAsync(
+        IEnumerable<string> lines,
+        string destinationPath,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+        var directory = GetParentDirectory(destinationPath);
+        Directory.CreateDirectory(directory);
+        var temporaryPath = Path.Combine(
+            directory,
+            $".{Path.GetFileName(destinationPath)}.{Guid.NewGuid():N}.tmp");
+
+        try
+        {
+            await File.WriteAllLinesAsync(temporaryPath, lines, cancellationToken).ConfigureAwait(false);
+            File.Move(temporaryPath, destinationPath, overwrite: true);
+        }
+        finally
+        {
+            TryDeleteTemporaryFile(temporaryPath);
+        }
+    }
+
     private static AppSettings? MigrateFromV1(string json)
     {
         var legacy = JsonSerializer.Deserialize<LegacySettingsV1>(json, SerializerOptions);
@@ -194,7 +218,8 @@ public sealed class JsonSettingsStore : ISettingsStore
                     legacy.Preferences.History,
                     legacy.Preferences.Theme),
                 legacy.UserData,
-                PreferredMicrophoneId: null);
+                PreferredMicrophoneId: null,
+                Observability: ObservabilityPreferences.Default);
     }
 
     private static AppSettings? MigrateFromV3(string json)
@@ -202,7 +227,11 @@ public sealed class JsonSettingsStore : ISettingsStore
         var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
         return legacy is null
             ? null
-            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+            : legacy with
+            {
+                SchemaVersion = AppSettings.CurrentSchemaVersion,
+                Observability = ObservabilityPreferences.Default,
+            };
     }
 
     private static AppSettings? MigrateFromV4(string json)
@@ -214,6 +243,7 @@ public sealed class JsonSettingsStore : ISettingsStore
             {
                 SchemaVersion = AppSettings.CurrentSchemaVersion,
                 PreferredMicrophoneId = null,
+                Observability = ObservabilityPreferences.Default,
             };
     }
 
@@ -225,6 +255,7 @@ public sealed class JsonSettingsStore : ISettingsStore
             : legacy with
             {
                 SchemaVersion = AppSettings.CurrentSchemaVersion,
+                Observability = ObservabilityPreferences.Default,
                 Preferences = legacy.Preferences with
                 {
                     Dictation = legacy.Preferences.Dictation with
@@ -232,6 +263,18 @@ public sealed class JsonSettingsStore : ISettingsStore
                         WhisperLanguage = WhisperLanguagePreference.Automatic,
                     },
                 },
+            };
+    }
+
+    private static AppSettings? MigrateFromV6(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = AppSettings.CurrentSchemaVersion,
+                Observability = ObservabilityPreferences.Default,
             };
     }
 

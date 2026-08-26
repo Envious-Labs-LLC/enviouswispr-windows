@@ -96,6 +96,17 @@ public sealed record HistoryPreferences(bool IsEnabled, int RetentionDays)
     public static HistoryPreferences Default { get; } = new(IsEnabled: true, RetentionDays: 30);
 }
 
+public sealed record ObservabilityPreferences(
+    bool LocalDiagnosticsEnabled,
+    int DiagnosticRetentionDays,
+    bool ShareAnonymousTelemetry)
+{
+    public static ObservabilityPreferences Default { get; } = new(
+        LocalDiagnosticsEnabled: true,
+        DiagnosticRetentionDays: 14,
+        ShareAnonymousTelemetry: false);
+}
+
 public sealed record UserPreferences(
     DictationPreferences Dictation,
     PolishPreferences Polish,
