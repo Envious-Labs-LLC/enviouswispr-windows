@@ -9,6 +9,8 @@ namespace EnviousWispr.Architecture.Tests;
 public sealed class WasapiAudioCaptureTests
 {
     private static readonly TimeSpan TestTimeout = TimeSpan.FromMilliseconds(25);
+    private static readonly float[] PreviewTail = [0.3f, 0.4f];
+    private static readonly float[] CompletePreviewFixture = [0.1f, 0.2f, 0.3f, 0.4f];
 
     [Fact]
     public async Task ClientStopReturnsCompletedBufferedAudio()
@@ -28,6 +30,25 @@ public sealed class WasapiAudioCaptureTests
         Assert.Null(result.Error);
         Assert.Equal(new[] { 0.25f, -0.5f }, result.Samples.ToArray());
         Assert.True(recorder.Disposed);
+    }
+
+    [Fact]
+    public async Task PreviewSnapshotIsBoundedAndDoesNotConsumeFinalAudio()
+    {
+        var recorder = new FakeRecorderSession();
+        await using var capture = CreateCapture(recorder);
+        var sessionId = DictationSessionId.Create();
+
+        await capture.StartAsync(new AudioCaptureRequest(sessionId));
+        recorder.Emit(0.1f, 0.2f, 0.3f, 0.4f);
+        var snapshot = capture.GetSnapshot(TimeSpan.FromSeconds(2d / 16_000));
+        var final = await capture.StopAsync();
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(sessionId, snapshot.SessionId);
+        Assert.Equal(PreviewTail, snapshot.Samples.ToArray());
+        Assert.Equal(CompletePreviewFixture, final.Samples.ToArray());
+        Assert.Null(capture.GetSnapshot(TimeSpan.FromSeconds(1)));
     }
 
     [Fact]

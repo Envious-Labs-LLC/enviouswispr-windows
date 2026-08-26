@@ -40,4 +40,12 @@ public sealed partial class MainWindow : Window
     }
 
     public void SetSessionStatus(string status) => SessionStatusText.Text = status;
+
+    public void SetLivePreview(string? text)
+    {
+        LivePreviewText.Text = text ?? string.Empty;
+        LivePreviewText.Visibility = string.IsNullOrWhiteSpace(text)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+    }
 }

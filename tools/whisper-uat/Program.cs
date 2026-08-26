@@ -30,9 +30,15 @@ var multilingual = new Dictionary<string, MultilingualFixture>(StringComparer.Or
 
 var mode = args.FirstOrDefault()?.ToLowerInvariant();
 var requestedProvider = mode is "cpu" or "cuda" ? mode : null;
-var modelPack = args.Contains("--full-precision", StringComparer.OrdinalIgnoreCase)
-    ? WhisperModelPack.FullPrecision
-    : WhisperModelPack.Quantized;
+var modelPack = args.Contains("--preview-small", StringComparer.OrdinalIgnoreCase)
+    ? WhisperModelPack.PreviewSmall
+    : args.Contains("--full-precision", StringComparer.OrdinalIgnoreCase)
+        ? WhisperModelPack.FullPrecision
+        : WhisperModelPack.Quantized;
+if (modelPack == WhisperModelPack.PreviewSmall)
+{
+    modelDirectory = Path.Combine(repositoryRoot, "models", "whisper-small");
+}
 if (mode is "fixed-cpu" or "fixed-cuda")
 {
     var provider = mode == "fixed-cpu" ? RuntimeProviderKind.Cpu : RuntimeProviderKind.Cuda;

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO.MemoryMappedFiles;
+using System.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Runtime;
@@ -22,9 +23,17 @@ public sealed record RuntimeWorkerTranscriptionOptions(
     int MaximumWorkerRestarts = 1,
     FinalAsrEngine Engine = FinalAsrEngine.Parakeet,
     WhisperModelPack WhisperPack = WhisperModelPack.Quantized,
-    string? Language = null);
+    string? Language = null,
+    ProcessPriorityClass? WorkerPriority = null);
 
-public sealed class RuntimeWorkerTranscriptionEngine : ITranscriptionEngine, IAsyncDisposable
+internal interface IWorkerTranscriptionRuntime : ITranscriptionEngine, IAsyncDisposable
+{
+    Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default);
+
+    Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default);
+}
+
+public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRuntime
 {
     private const int RequiredSampleRate = 16_000;
     private readonly RuntimeWorkerSupervisor _supervisor;
@@ -38,14 +47,15 @@ public sealed class RuntimeWorkerTranscriptionEngine : ITranscriptionEngine, IAs
         ArgumentNullException.ThrowIfNull(options);
         Validate(options);
         EngineId = options.Engine == FinalAsrEngine.Whisper
-            ? $"whisper-large-v3-turbo:{options.Provider.ToString().ToLowerInvariant()}:isolated"
+            ? $"{WhisperModelIds.For(options.WhisperPack)}:{options.Provider.ToString().ToLowerInvariant()}:isolated"
             : $"parakeet-tdt-0.6b-v3:{options.Provider.ToString().ToLowerInvariant()}:isolated";
         _startupTimeout = options.StartupTimeout ?? TimeSpan.FromSeconds(30);
         _transcriptionTimeout = options.TranscriptionTimeout ?? TimeSpan.FromMinutes(2);
         _supervisor = new RuntimeWorkerSupervisor(
             options.WorkerExecutable,
             CreateWorkerArguments(options),
-            options.MaximumWorkerRestarts);
+            options.MaximumWorkerRestarts,
+            options.WorkerPriority);
     }
 
     public string EngineId { get; }
@@ -54,6 +64,9 @@ public sealed class RuntimeWorkerTranscriptionEngine : ITranscriptionEngine, IAs
 
     public async Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default) =>
         await _supervisor.StartAsync(_startupTimeout, cancellationToken).ConfigureAwait(false);
+
+    public async Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default) =>
+        await _supervisor.StopAsync(cancellationToken).ConfigureAwait(false);
 
     public async Task<Transcript> TranscribeAsync(
         CapturedAudio audio,

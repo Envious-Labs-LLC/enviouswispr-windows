@@ -22,5 +22,9 @@ public enum AppEventCode
     DictationTranscriptionFailed,
     DictationCancelled,
     DictationSessionFailed,
+    LivePreviewStarted,
+    LivePreviewUpdated,
+    LivePreviewStopped,
+    LivePreviewFailed,
     UnhandledFailure,
 }

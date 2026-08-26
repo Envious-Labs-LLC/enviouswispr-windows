@@ -74,7 +74,10 @@ public interface IParakeetModelProbe
     ParakeetModelInventory Probe(string modelDirectory);
 }
 
-public sealed record WhisperModelInventory(bool QuantizedComplete, bool FullPrecisionComplete);
+public sealed record WhisperModelInventory(
+    bool QuantizedComplete,
+    bool FullPrecisionComplete,
+    bool PreviewSmallComplete = false);
 
 public interface IWhisperModelProbe
 {
@@ -106,17 +109,33 @@ public enum WhisperModelPack
 {
     Quantized,
     FullPrecision,
+    PreviewSmall,
 }
 
 public static class WhisperModelFileNames
 {
     public const string Quantized = "ggml-large-v3-turbo-q5_0.bin";
     public const string FullPrecision = "ggml-large-v3-turbo.bin";
+    public const string PreviewSmall = "ggml-small-q5_1.bin";
 
     public static string For(WhisperModelPack modelPack) => modelPack switch
     {
         WhisperModelPack.Quantized => Quantized,
         WhisperModelPack.FullPrecision => FullPrecision,
+        WhisperModelPack.PreviewSmall => PreviewSmall,
+        _ => throw new ArgumentOutOfRangeException(nameof(modelPack)),
+    };
+}
+
+public static class WhisperModelIds
+{
+    public const string Final = "whisper-large-v3-turbo";
+    public const string Preview = "whisper-small";
+
+    public static string For(WhisperModelPack modelPack) => modelPack switch
+    {
+        WhisperModelPack.PreviewSmall => Preview,
+        WhisperModelPack.Quantized or WhisperModelPack.FullPrecision => Final,
         _ => throw new ArgumentOutOfRangeException(nameof(modelPack)),
     };
 }
