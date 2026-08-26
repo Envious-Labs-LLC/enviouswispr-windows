@@ -3,9 +3,11 @@ using System.Globalization;
 using System.Reflection;
 using System.Security;
 using EnviousWispr.Audio;
+using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Credentials;
 using EnviousWispr.Core.History;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Settings;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -15,15 +17,17 @@ using Windows.Storage.Pickers;
 
 namespace EnviousWispr.App;
 
-public sealed partial class MainWindow : Window
+public sealed partial class MainWindow : Window, IDisposable
 {
     private readonly ISettingsStore _settingsStore;
     private readonly IPortableProfileService _profileService;
     private readonly IHistoryStore _historyStore;
     private readonly IApiKeyStore _apiKeyStore;
+    private readonly IRecoveryTextStore _recoveryTextStore;
     private readonly DictationOverlayWindow _overlayWindow;
     private readonly List<HistoryItemViewModel> _history = [];
     private IReadOnlyList<MicrophoneChoice> _microphones = [];
+    private WasapiDeviceCatalog? _deviceCatalog;
     private AppSettings _settings;
     private bool _isApplyingSettings;
     private bool _initialFocusAssigned;
@@ -34,19 +38,22 @@ public sealed partial class MainWindow : Window
         ISettingsStore settingsStore,
         IPortableProfileService profileService,
         IHistoryStore historyStore,
-        IApiKeyStore apiKeyStore)
+        IApiKeyStore apiKeyStore,
+        IRecoveryTextStore recoveryTextStore)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(settingsStore);
         ArgumentNullException.ThrowIfNull(profileService);
         ArgumentNullException.ThrowIfNull(historyStore);
         ArgumentNullException.ThrowIfNull(apiKeyStore);
+        ArgumentNullException.ThrowIfNull(recoveryTextStore);
 
         _settings = settings;
         _settingsStore = settingsStore;
         _profileService = profileService;
         _historyStore = historyStore;
         _apiKeyStore = apiKeyStore;
+        _recoveryTextStore = recoveryTextStore;
 
         InitializeComponent();
         _overlayWindow = new DictationOverlayWindow();
@@ -70,6 +77,10 @@ public sealed partial class MainWindow : Window
     public event Action<AppSettings>? SettingsChanged;
 
     public event Action<string>? SessionStatusChanged;
+
+    public event Action<AudioDeviceChange>? AudioDevicesChanged;
+
+    public event Action? RecoveryCleared;
 
     public AppSettings CurrentSettings => _settings;
 
@@ -177,7 +188,88 @@ public sealed partial class MainWindow : Window
         ShowPage("settings");
     }
 
-    public void ShutdownProductWindows() => _overlayWindow.Shutdown();
+    public void ShutdownProductWindows()
+    {
+        if (_deviceCatalog is not null)
+        {
+            _deviceCatalog.DevicesChanged -= OnAudioDevicesChanged;
+            _deviceCatalog.Dispose();
+            _deviceCatalog = null;
+        }
+
+        _overlayWindow.Shutdown();
+    }
+
+    public void Dispose() => ShutdownProductWindows();
+
+    public void SetRecoveredText(RecoveryTextLoadResult result)
+    {
+        if (result.Status == RecoveryTextLoadStatus.Found && result.Record is not null)
+        {
+            RecoveryTextBox.Text = result.Record.Text;
+            RecoveryCard.Visibility = Visibility.Visible;
+            FoundationInfoBar.Title = "Interrupted dictation recovered";
+            FoundationInfoBar.Message = "Review or copy the private recovery text on Home. It was not pasted automatically.";
+            FoundationInfoBar.Severity = InfoBarSeverity.Warning;
+            SetOnboardingReliabilityNotice(
+                "Interrupted dictation recovered",
+                "Select Get started to review or copy the private recovery text. It will not be pasted automatically.");
+            return;
+        }
+
+        ClearRecoveredText();
+        if (result.Status == RecoveryTextLoadStatus.Invalid)
+        {
+            SetOnboardingReliabilityNotice(
+                "Recovery data needs attention",
+                "The encrypted recovery file is invalid. It was preserved and no text was exposed.");
+            ShowMessage(
+                "Recovery data needs attention",
+                "The encrypted recovery file is invalid. It was preserved and no text was exposed.",
+                InfoBarSeverity.Warning);
+        }
+        else if (result.Status == RecoveryTextLoadStatus.Unavailable)
+        {
+            SetOnboardingReliabilityNotice(
+                "Recovery storage is unavailable",
+                "Windows could not open the encrypted recovery file. Dictation remains available.");
+            ShowMessage(
+                "Recovery storage is unavailable",
+                "Windows could not open the encrypted recovery file. Dictation remains available.",
+                InfoBarSeverity.Warning);
+        }
+    }
+
+    public void SetRunRecoveryNotice(int consecutiveInterruptedRuns)
+    {
+        FoundationInfoBar.Title = "Recovered after an interrupted run";
+        FoundationInfoBar.Message = consecutiveInterruptedRuns > 1
+            ? $"EnviousWispr detected {consecutiveInterruptedRuns.ToString(CultureInfo.CurrentCulture)} interrupted starts in a row. Global input and owned runtimes were reinitialized; unfinished text is never pasted automatically."
+            : "Global input and owned runtimes were reinitialized. Unfinished text is never pasted automatically.";
+        FoundationInfoBar.Severity = InfoBarSeverity.Warning;
+        SetOnboardingReliabilityNotice(
+            "Recovered after an interrupted run",
+            FoundationInfoBar.Message);
+    }
+
+    private void SetOnboardingReliabilityNotice(string title, string message)
+    {
+        OnboardingReliabilityInfoBar.Title = title;
+        OnboardingReliabilityInfoBar.Message = message;
+        OnboardingReliabilityInfoBar.IsOpen = true;
+    }
+
+    public void SetReliabilityNotice(string title, string message, bool isError = false) =>
+        ShowMessage(
+            title,
+            message,
+            isError ? InfoBarSeverity.Error : InfoBarSeverity.Warning);
+
+    public void ClearRecoveredText()
+    {
+        RecoveryTextBox.Text = string.Empty;
+        RecoveryCard.Visibility = Visibility.Collapsed;
+    }
 
     private async void FinishOnboardingButton_Click(object sender, RoutedEventArgs e)
     {
@@ -470,6 +562,66 @@ public sealed partial class MainWindow : Window
         ShowMessage("Copied", "The selected dictation is on your clipboard.", InfoBarSeverity.Success);
     }
 
+    private void CopyRecoveryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(RecoveryTextBox.Text))
+        {
+            return;
+        }
+
+        var package = new DataPackage();
+        package.SetText(RecoveryTextBox.Text);
+        Clipboard.SetContent(package);
+        Clipboard.Flush();
+        ShowMessage(
+            "Recovered text copied",
+            "The private recovery text is on your clipboard. Delete the recovery copy when you no longer need it.",
+            InfoBarSeverity.Success);
+    }
+
+    private async void DeleteRecoveryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(RecoveryTextBox.Text))
+        {
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = WindowRoot.XamlRoot,
+            Title = "Delete the recovered dictation?",
+            Content = "This permanently removes the encrypted recovery copy from this PC. It does not change history or clipboard contents.",
+            PrimaryButtonText = "Delete recovery copy",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        if (await _recoveryTextStore.ClearAsync().ConfigureAwait(true))
+        {
+            ClearRecoveredText();
+            FoundationInfoBar.Title = "No recovered dictation is pending";
+            FoundationInfoBar.Message = "The encrypted recovery copy was removed. EnviousWispr will not paste or retain that text.";
+            FoundationInfoBar.Severity = InfoBarSeverity.Success;
+            OnboardingReliabilityInfoBar.IsOpen = false;
+            RecoveryCleared?.Invoke();
+            ShowMessage(
+                "Recovery copy deleted",
+                "The encrypted local recovery copy was removed.",
+                InfoBarSeverity.Success);
+        }
+        else
+        {
+            ShowMessage(
+                "Recovery copy could not be deleted",
+                "Windows left the encrypted recovery file untouched.",
+                InfoBarSeverity.Error);
+        }
+    }
+
     private async void DeleteHistoryButton_Click(object sender, RoutedEventArgs e)
     {
         if (HistoryList.SelectedItem is not HistoryItemViewModel selected)
@@ -569,8 +721,13 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            using var catalog = new WasapiDeviceCatalog();
-            var devices = await catalog.GetCaptureDevicesAsync().ConfigureAwait(true);
+            if (_deviceCatalog is null)
+            {
+                _deviceCatalog = new WasapiDeviceCatalog();
+                _deviceCatalog.DevicesChanged += OnAudioDevicesChanged;
+            }
+
+            var devices = await _deviceCatalog.GetCaptureDevicesAsync().ConfigureAwait(true);
             _microphones = [
                 new MicrophoneChoice(null, "Use the Windows default microphone"),
                 .. devices.Select(device => new MicrophoneChoice(
@@ -598,6 +755,24 @@ public sealed partial class MainWindow : Window
             MicrophoneReadinessText.Text = status;
             OnboardingMicrophoneText.Text = status;
         }
+    }
+
+    private void OnAudioDevicesChanged(object? sender, AudioDeviceChange change)
+    {
+        if (!change.AffectsCapture)
+        {
+            return;
+        }
+
+        AudioDevicesChanged?.Invoke(change);
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            await LoadMicrophonesAsync().ConfigureAwait(true);
+            ShowMessage(
+                "Microphone devices updated",
+                "EnviousWispr refreshed the active recording-device list. A missing preferred microphone falls back to the Windows default.",
+                InfoBarSeverity.Informational);
+        });
     }
 
     private async Task ReloadHistoryAsync()

@@ -86,6 +86,17 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
             var started = await _audioCapture
                 .StartAsync(new AudioCaptureRequest(sessionId, _preferredAudioDevice), cancellationToken)
                 .ConfigureAwait(false);
+            AppError? fallbackReason = null;
+            if (!started.Succeeded &&
+                _preferredAudioDevice is not null &&
+                started.Error?.Code is AppErrorCode.AudioDeviceUnavailable or AppErrorCode.AudioDeviceLost)
+            {
+                fallbackReason = started.Error;
+                started = await _audioCapture
+                    .StartAsync(new AudioCaptureRequest(sessionId), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             if (!started.Succeeded)
             {
                 return Failure(started.Error ?? new AppError(
@@ -100,7 +111,10 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
                 target.Value,
                 _deliveryOptions);
             RaiseChanged();
-            return new SessionTransitionResult(SessionTransitionKind.Started, CurrentSession);
+            return new SessionTransitionResult(
+                SessionTransitionKind.Started,
+                CurrentSession,
+                Error: fallbackReason);
         }
         finally
         {
@@ -239,6 +253,43 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
             };
             RaiseChanged();
             return new SessionTransitionResult(SessionTransitionKind.Completed, CurrentSession);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<SessionTransitionResult> AbortAsync(
+        AppError error,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(error);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (CurrentSession is null)
+            {
+                return Ignored();
+            }
+
+            if (CurrentSession.State == DictationSessionState.Recording)
+            {
+                await _audioCapture.CancelAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            CurrentSession = CurrentSession with
+            {
+                State = DictationSessionState.Failed,
+                FinishedAt = _timeProvider.GetUtcNow(),
+                Error = error,
+            };
+            RaiseChanged();
+            return new SessionTransitionResult(
+                SessionTransitionKind.Failed,
+                CurrentSession,
+                Error: error);
         }
         finally
         {
