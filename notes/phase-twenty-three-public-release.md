@@ -101,6 +101,21 @@ confirming that this speaker-to-webcam coupling is also variable. These measurem
 microphone path with weak or echo-suppressed speaker coupling from a capture-start failure. Neither synthetic
 stimulus is recorded as microphone-dictation acceptance.
 
+The harness now exposes the outstanding acceptance journey directly as `--english-parakeet
+--manual-microphone`. It launches the production shell and one worker with an isolated profile, places a native
+edit target in the foreground with a fixed public sentence, and waits for a person to hold physical F8, speak the
+sentence into the microphone, and release F8. Unlike the acoustic modes, it sends no synthetic key input and
+plays no speaker stimulus. It passes only on lexical delivery, the required content-free production-stage
+sequence, clean app exit, and zero orphan workers. This mode is implemented and build-validated but has not yet
+been performed by a person, so the physical global-hotkey/microphone requirement remains unobserved.
+
+A native visual and UI Automation check at the machine's active display scale found the complete three-line
+public phrase visible, a named instruction element, a named phrase element, and the focused native edit target.
+The first layout attempt clipped the sentence and was corrected before handoff. An unattended negative run sent
+no key input, retained the target's original five characters, returned non-zero, recorded only startup/readiness
+and clean-shutdown stages, and left no app, target, or worker process. This proves the mode cannot pass merely by
+launching it; it does not satisfy the still-required human action.
+
 The same English row was also added to the pinned Whisper language corpus rather than being excluded to keep a
 gate green. Its source annotation stops around 7.0 seconds even though admitted audio continues to 10.837 seconds.
 Parakeet and both Whisper model packs independently produced the same additional seven-word question with bounded

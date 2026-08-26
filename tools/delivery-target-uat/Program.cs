@@ -81,25 +81,44 @@ internal static class Program
         }
         else
         {
+            var manualMicrophone = mode == "manual-microphone";
             var label = new Label
             {
                 AutoSize = true,
-                Text = mode == "password"
-                    ? "Controlled protected field"
-                    : "Controlled standard edit field",
-                Font = new Font(SystemFonts.DefaultFont.FontFamily, 18),
+                Text = manualMicrophone
+                    ? "Hold F8 and say this sentence clearly:"
+                    : mode == "password"
+                        ? "Controlled protected field"
+                        : "Controlled standard edit field",
+                Font = new Font(SystemFonts.DefaultFont.FontFamily, manualMicrophone ? 15 : 18),
                 Location = new Point(40, 40),
             };
+            if (manualMicrophone)
+            {
+                label.AccessibleName = "Physical microphone acceptance instructions";
+                form.Controls.Add(new Label
+                {
+                    AutoSize = true,
+                    Text = "This is an Envious Wispr microphone test.\r\n" +
+                        "The quick brown fox jumps over the lazy dog.\r\n" +
+                        "Then release F8.",
+                    Font = new Font(SystemFonts.DefaultFont.FontFamily, 15),
+                    Location = new Point(40, 82),
+                    AccessibleName = "Fixed public microphone acceptance phrase",
+                });
+            }
             var edit = new TextBox
             {
                 Name = mode == "password" ? "ProtectedField" : "StandardEditField",
-                AccessibleName = mode == "password"
-                    ? "Controlled protected field"
-                    : "Controlled standard edit field",
+                AccessibleName = manualMicrophone
+                    ? "Physical microphone delivery target"
+                    : mode == "password"
+                        ? "Controlled protected field"
+                        : "Controlled standard edit field",
                 UseSystemPasswordChar = mode == "password",
                 Text = mode == "password" ? string.Empty : "hello",
                 Font = new Font(SystemFonts.DefaultFont.FontFamily, 18),
-                Location = new Point(40, 100),
+                Location = new Point(40, manualMicrophone ? 180 : 100),
                 Width = 660,
             };
             form.Controls.Add(label);
