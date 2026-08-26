@@ -78,18 +78,6 @@ public static class WhisperRuntimeSelector
         int threads,
         bool manual)
     {
-        if (models.FullPrecisionComplete)
-        {
-            return new WhisperRuntimeSelection(
-                true,
-                RuntimeProviderKind.Cuda,
-                WhisperModelPack.FullPrecision,
-                threads,
-                manual
-                    ? WhisperRuntimeSelectionReason.ManualProviderAccepted
-                    : WhisperRuntimeSelectionReason.NvidiaCudaWithFullPrecisionModel);
-        }
-
         if (models.QuantizedComplete)
         {
             return new WhisperRuntimeSelection(
@@ -100,6 +88,18 @@ public static class WhisperRuntimeSelector
                 manual
                     ? WhisperRuntimeSelectionReason.ManualProviderAccepted
                     : WhisperRuntimeSelectionReason.NvidiaCudaWithQuantizedModel);
+        }
+
+        if (models.FullPrecisionComplete)
+        {
+            return new WhisperRuntimeSelection(
+                true,
+                RuntimeProviderKind.Cuda,
+                WhisperModelPack.FullPrecision,
+                threads,
+                manual
+                    ? WhisperRuntimeSelectionReason.ManualProviderAccepted
+                    : WhisperRuntimeSelectionReason.NvidiaCudaWithFullPrecisionModel);
         }
 
         return Failure(WhisperRuntimeSelectionReason.RequiredModelPackMissing);
