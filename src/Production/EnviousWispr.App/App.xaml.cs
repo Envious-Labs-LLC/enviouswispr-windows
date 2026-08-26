@@ -45,6 +45,8 @@ public partial class App : Application, IAsyncDisposable
     private readonly WindowsRecoveryTextStore _recoveryTextStore;
     private readonly WindowsSystemResourceProbe _resourceProbe;
     private readonly WindowsCredentialApiKeyStore _credentialStore;
+    private readonly string _dataDirectory;
+    private readonly string? _cudaRuntimeDirectory;
     private readonly RuntimeResourceArbiter _resourceArbiter = new();
     private readonly SemaphoreSlim _previewGate = new(1, 1);
     private readonly SemaphoreSlim _sessionOperationGate = new(1, 1);
@@ -111,8 +113,9 @@ public partial class App : Application, IAsyncDisposable
                 _releaseIdentity.DataDirectoryName);
         }
 
-        dataDirectory = Path.GetFullPath(dataDirectory);
-        var diagnosticPath = Path.Combine(dataDirectory, "diagnostics", "app.jsonl");
+        _dataDirectory = Path.GetFullPath(dataDirectory);
+        _cudaRuntimeDirectory = ResolveCudaRuntimeDirectory(_dataDirectory);
+        var diagnosticPath = Path.Combine(_dataDirectory, "diagnostics", "app.jsonl");
         IPrivacySafeTelemetryTransport? telemetryTransport = null;
         var allowLoopbackTelemetry = string.Equals(
             Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_ALLOW_LOOPBACK_TELEMETRY"),
@@ -130,11 +133,11 @@ public partial class App : Application, IAsyncDisposable
             new JsonLineFileLogger(diagnosticPath, enabled: false),
             telemetryTransport);
         _diagnosticExportService = new JsonDiagnosticExportService(diagnosticPath);
-        _settingsStore = new JsonSettingsStore(Path.Combine(dataDirectory, "settings.json"));
-        _historyStore = new JsonHistoryStore(Path.Combine(dataDirectory, "history.json"));
-        _runStateStore = new JsonApplicationRunStateStore(Path.Combine(dataDirectory, "run-state.json"));
-        _recoveryTextStore = new WindowsRecoveryTextStore(Path.Combine(dataDirectory, "recovery.json"));
-        _resourceProbe = new WindowsSystemResourceProbe(dataDirectory);
+        _settingsStore = new JsonSettingsStore(Path.Combine(_dataDirectory, "settings.json"));
+        _historyStore = new JsonHistoryStore(Path.Combine(_dataDirectory, "history.json"));
+        _runStateStore = new JsonApplicationRunStateStore(Path.Combine(_dataDirectory, "run-state.json"));
+        _recoveryTextStore = new WindowsRecoveryTextStore(Path.Combine(_dataDirectory, "recovery.json"));
+        _resourceProbe = new WindowsSystemResourceProbe(_dataDirectory);
 
         var allowLoopbackUpdates = string.Equals(
             Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_ALLOW_LOOPBACK_UPDATES"),
@@ -747,6 +750,11 @@ public partial class App : Application, IAsyncDisposable
 
         cleanShutdown &= await TryCleanupAsync(StopLivePreviewAsync).ConfigureAwait(true);
 
+        if (_audioCapture is not null)
+        {
+            _audioCapture.LevelChanged -= OnAudioLevelChanged;
+        }
+
         if (_sessionController is not null)
         {
             cleanShutdown &= await TryCleanupAsync(
@@ -948,6 +956,7 @@ public partial class App : Application, IAsyncDisposable
             ? fixtureCapture
             : new WasapiAudioCapture();
         var audioCapture = _audioCapture;
+        audioCapture.LevelChanged += OnAudioLevelChanged;
         _textTargetAdapter = new WindowsTextTargetAdapter();
         _textDelivery = new ContextAwareTextDelivery(_textTargetAdapter);
         _sessionController = new PushToTalkSessionController(
@@ -959,6 +968,11 @@ public partial class App : Application, IAsyncDisposable
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
         _window?.SetHotkeyReady(_pushToTalkHook.Gesture.ToString());
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.HotkeyReady));
+    }
+
+    private void OnAudioLevelChanged(object? sender, AudioLevel level)
+    {
+        _window?.DispatcherQueue.TryEnqueue(() => _window?.SetAudioLevel(level));
     }
 
     private void ConfigurePolish(PolishPreferences preferences)
@@ -1020,19 +1034,25 @@ public partial class App : Application, IAsyncDisposable
             "ENVIOUSWISPR_EG1_SERVER_EXE");
         if (string.IsNullOrWhiteSpace(serverExecutable))
         {
-            serverExecutable = Path.Combine(AppContext.BaseDirectory, "runtime", "llama-server.exe");
+            var provisionedServer = Path.Combine(
+                _dataDirectory,
+                "runtime",
+                "llama.cpp",
+                "llama-server.exe");
+            serverExecutable = File.Exists(provisionedServer)
+                ? provisionedServer
+                : Path.Combine(AppContext.BaseDirectory, "runtime", "llama-server.exe");
         }
 
         var modelFile = Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH");
         if (string.IsNullOrWhiteSpace(modelFile))
         {
-            modelFile = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Envious Labs",
-                "EnviousWispr",
-                "models",
-                "eg-1",
+            var modelDirectory = Path.Combine(_dataDirectory, "models", "eg-1");
+            var shippingModel = Path.Combine(
+                modelDirectory,
                 "eg-1-v2-q5_k_m-00001-of-00008.gguf");
+            var founderModel = Path.Combine(modelDirectory, "active.gguf");
+            modelFile = File.Exists(shippingModel) ? shippingModel : founderModel;
         }
 
         int? gpuLayers = null;
@@ -1141,7 +1161,9 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        var hardware = await new WindowsHardwareDiscovery().ProbeAsync().ConfigureAwait(true);
+        var hardware = await new WindowsHardwareDiscovery(_cudaRuntimeDirectory)
+            .ProbeAsync()
+            .ConfigureAwait(true);
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
             AppEventCode.RuntimeSelectionObserved,
@@ -1243,12 +1265,11 @@ public partial class App : Application, IAsyncDisposable
                 Engine: FinalAsrEngine.Whisper,
                 WhisperPack: WhisperModelPack.PreviewSmall,
                 Language: language,
-                CudaRuntimeDirectory: Environment.GetEnvironmentVariable(
-                    "ENVIOUSWISPR_CUDA_RUNTIME_DIR")),
+                CudaRuntimeDirectory: _cudaRuntimeDirectory),
             _resourceArbiter);
     }
 
-    private static RuntimeWorkerTranscriptionEngine? CreateParakeetEngine(
+    private RuntimeWorkerTranscriptionEngine? CreateParakeetEngine(
         string workerExecutable,
         string modelDirectory,
         HardwareSnapshot hardware)
@@ -1276,8 +1297,7 @@ public partial class App : Application, IAsyncDisposable
                 selection.IntraOpThreads,
                 selection.InterOpThreads,
                 CpuFallbackThreads: cpuSelection.IntraOpThreads,
-                CudaRuntimeDirectory: Environment.GetEnvironmentVariable(
-                    "ENVIOUSWISPR_CUDA_RUNTIME_DIR")));
+                CudaRuntimeDirectory: _cudaRuntimeDirectory));
     }
 
     private static RuntimeWorkerTranscriptionEngine? CreateCpuParakeetEngine(
@@ -1308,7 +1328,7 @@ public partial class App : Application, IAsyncDisposable
                 CpuFallbackThreads: selection.IntraOpThreads));
     }
 
-    private static RuntimeWorkerTranscriptionEngine? CreateWhisperEngine(
+    private RuntimeWorkerTranscriptionEngine? CreateWhisperEngine(
         string workerExecutable,
         string modelDirectory,
         HardwareSnapshot hardware,
@@ -1338,8 +1358,7 @@ public partial class App : Application, IAsyncDisposable
             Engine: FinalAsrEngine.Whisper,
             WhisperPack: selection.ModelPack.Value,
             Language: language,
-            CudaRuntimeDirectory: Environment.GetEnvironmentVariable(
-                "ENVIOUSWISPR_CUDA_RUNTIME_DIR")));
+            CudaRuntimeDirectory: _cudaRuntimeDirectory));
     }
 
     private static RuntimeWorkerTranscriptionEngine? CreateCpuWhisperEngine(
@@ -1372,7 +1391,19 @@ public partial class App : Application, IAsyncDisposable
             Language: language));
     }
 
-    private static string? ResolveModelDirectory(
+    private static string? ResolveCudaRuntimeDirectory(string dataDirectory)
+    {
+        var configured = Environment.GetEnvironmentVariable("ENVIOUSWISPR_CUDA_RUNTIME_DIR");
+        if (!string.IsNullOrWhiteSpace(configured) && Directory.Exists(configured))
+        {
+            return Path.GetFullPath(configured);
+        }
+
+        var installed = Path.Combine(dataDirectory, "runtime", "cuda");
+        return Directory.Exists(installed) ? installed : null;
+    }
+
+    private string? ResolveModelDirectory(
         string modelId,
         string environmentVariable = "ENVIOUSWISPR_MODEL_DIRECTORY")
     {
@@ -1382,12 +1413,7 @@ public partial class App : Application, IAsyncDisposable
             return Path.GetFullPath(configured);
         }
 
-        var installed = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Envious Labs",
-            "EnviousWispr",
-            "models",
-            modelId);
+        var installed = Path.Combine(_dataDirectory, "models", modelId);
         if (Directory.Exists(installed))
         {
             return installed;
@@ -1462,7 +1488,13 @@ public partial class App : Application, IAsyncDisposable
                 return;
             }
 
-            await Task.Delay(TimeSpan.FromMilliseconds(150)).ConfigureAwait(false);
+            var fixtureHold = string.Equals(
+                    Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_LIVE_PREVIEW"),
+                    "1",
+                    StringComparison.Ordinal)
+                ? TimeSpan.FromSeconds(5)
+                : TimeSpan.FromMilliseconds(150);
+            await Task.Delay(fixtureHold).ConfigureAwait(false);
             await HandlePushToTalkAsync(PushToTalkSignal.Released).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
@@ -1907,6 +1939,11 @@ public partial class App : Application, IAsyncDisposable
 
     private async Task StartLivePreviewAsync()
     {
+        if (!_settings.Preferences.LivePreviewEnabled)
+        {
+            return;
+        }
+
         var engine = _previewEngine;
         var audioCapture = _audioCapture as IAudioSnapshotSource;
         if (engine is null || audioCapture is null)

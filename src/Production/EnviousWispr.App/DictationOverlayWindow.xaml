@@ -7,19 +7,46 @@
     <Border
         x:Name="OverlayRoot"
         AutomationProperties.LiveSetting="Polite"
-        Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
-        BorderBrush="{ThemeResource BrandAccentBrush}"
+        Background="#F2111118"
+        BorderBrush="#806D75FF"
         BorderThickness="1"
-        CornerRadius="18"
-        Padding="18,14">
-        <Grid ColumnSpacing="12">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-            <FontIcon x:Name="StateIcon" AutomationProperties.AccessibilityView="Raw" FontSize="22" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE720;" />
-            <StackPanel Grid.Column="1" Spacing="3">
-                <TextBlock x:Name="StateTitle" FontSize="15" FontWeight="SemiBold" Text="Listening" TextWrapping="Wrap" />
-                <TextBlock x:Name="StateDetail" Foreground="{ThemeResource TextFillColorSecondaryBrush}" MaxLines="2" Text="Release your key to finish" TextWrapping="Wrap" />
-                <TextBlock x:Name="PreviewText" AutomationProperties.Name="Live transcription preview" Foreground="{ThemeResource TextFillColorSecondaryBrush}" MaxLines="2" TextWrapping="Wrap" Visibility="Collapsed" />
+        CornerRadius="29"
+        Padding="16,12">
+        <StackPanel Spacing="8">
+            <Grid ColumnSpacing="10">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <Ellipse x:Name="RainbowMark" Width="27" Height="16" VerticalAlignment="Center">
+                    <Ellipse.Fill>
+                        <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                            <GradientStop Color="#FFB13CFF" Offset="0" />
+                            <GradientStop Color="#FF2D8CFF" Offset="0.35" />
+                            <GradientStop Color="#FF2CE6A6" Offset="0.7" />
+                            <GradientStop Color="#FFFFC24A" Offset="1" />
+                        </LinearGradientBrush>
+                    </Ellipse.Fill>
+                </Ellipse>
+                <FontIcon x:Name="StateIcon" AutomationProperties.AccessibilityView="Raw" FontSize="20" Foreground="#FF8D8FFF" Glyph="&#xE720;" Visibility="Collapsed" />
+                <TextBlock x:Name="StateTitle" Grid.Column="1" Foreground="White" FontSize="14" FontWeight="SemiBold" Text="Listening" TextWrapping="Wrap" VerticalAlignment="Center" />
+                <TextBlock x:Name="ElapsedText" Grid.Column="2" Foreground="#FFB8B8C8" FontFamily="Consolas" FontSize="13" Text="00:00" VerticalAlignment="Center" />
+            </Grid>
+            <StackPanel x:Name="LevelBars" Height="25" Orientation="Horizontal" Spacing="3" Visibility="Collapsed" VerticalAlignment="Center">
+                <Border Width="4" Height="8" Background="#FFB13CFF" CornerRadius="2" VerticalAlignment="Center" />
+                <Border Width="4" Height="13" Background="#FF9354FF" CornerRadius="2" VerticalAlignment="Center" />
+                <Border Width="4" Height="19" Background="#FF6D75FF" CornerRadius="2" VerticalAlignment="Center" />
+                <Border Width="4" Height="11" Background="#FF428EFF" CornerRadius="2" VerticalAlignment="Center" />
+                <Border Width="4" Height="22" Background="#FF2BB7E5" CornerRadius="2" VerticalAlignment="Center" />
+                <Border Width="4" Height="16" Background="#FF2CE6A6" CornerRadius="2" VerticalAlignment="Center" />
+                <Border Width="4" Height="9" Background="#FF79EC79" CornerRadius="2" VerticalAlignment="Center" />
+                <Border Width="4" Height="20" Background="#FFC8E65A" CornerRadius="2" VerticalAlignment="Center" />
+                <Border Width="4" Height="14" Background="#FFFFC24A" CornerRadius="2" VerticalAlignment="Center" />
+                <Border Width="4" Height="7" Background="#FFFF954A" CornerRadius="2" VerticalAlignment="Center" />
+                <Border Width="4" Height="17" Background="#FFFF6D78" CornerRadius="2" VerticalAlignment="Center" />
+                <Border Width="4" Height="10" Background="#FFE45AAE" CornerRadius="2" VerticalAlignment="Center" />
             </StackPanel>
-        </Grid>
+            <Border x:Name="PreviewWell" Background="#FFF1F1F6" CornerRadius="10" Padding="12,9" Visibility="Collapsed">
+                <TextBlock x:Name="PreviewText" AutomationProperties.Name="Live transcription preview" Foreground="#FF17171D" MaxLines="5" Text="Listening…" TextAlignment="DetectFromContent" TextWrapping="Wrap" />
+            </Border>
+            <TextBlock x:Name="StateDetail" Foreground="#FFB8B8C8" MaxLines="2" Text="Release your key to finish" TextWrapping="Wrap" Visibility="Collapsed" />
+        </StackPanel>
     </Border>
 </Window>

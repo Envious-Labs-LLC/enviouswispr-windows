@@ -11,6 +11,7 @@ using EnviousWispr.Core.History;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Settings;
+using EnviousWispr.LLM;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.ApplicationModel.DataTransfer;
@@ -29,12 +30,17 @@ public sealed partial class MainWindow : Window, IDisposable
     private readonly IDiagnosticExportService _diagnosticExportService;
     private readonly bool _telemetryAvailable;
     private readonly DictationOverlayWindow _overlayWindow;
+    private readonly RecordingSoundCuePlayer _recordingSoundPlayer = new();
+    private readonly RecordingSoundCueCoordinator _recordingSoundCoordinator;
     private readonly List<HistoryItemViewModel> _history = [];
     private IReadOnlyList<MicrophoneChoice> _microphones = [];
     private WasapiDeviceCatalog? _deviceCatalog;
     private AppSettings _settings;
     private bool _isApplyingSettings;
     private bool _initialFocusAssigned;
+    private int _polishModelDiscoveryVersion;
+    private DictationOverlayState _currentOverlayState = DictationOverlayState.Hidden;
+    private CancellationTokenSource? _soundPreviewCancellation;
 
     public MainWindow(
         AppSettings settings,
@@ -69,7 +75,15 @@ public sealed partial class MainWindow : Window, IDisposable
         _telemetryAvailable = telemetryAvailable;
 
         InitializeComponent();
+        _recordingSoundCoordinator = new RecordingSoundCueCoordinator(
+            _recordingSoundPlayer.Play);
+        RecordingSoundComboBox.ItemsSource = RecordingSoundCatalog.Choices;
         _overlayWindow = new DictationOverlayWindow();
+        _overlayWindow.ApplyPreferences(
+            settings.Preferences.OverlayPosition,
+            settings.Preferences.LivePreviewEnabled,
+            settings.Preferences.PillDesignWithoutWords,
+            settings.Preferences.PillDesignWithWords);
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         AppWindow.Resize(new SizeInt32(1120, 760));
@@ -81,6 +95,7 @@ public sealed partial class MainWindow : Window, IDisposable
         ShowOnboarding(!settings.HasCompletedOnboarding);
         ProductNavigation.SelectedItem = HomeNavItem;
         BuildInfoText.Text = $"{releaseIdentity.DisplayName} {Assembly.GetExecutingAssembly().GetName().Version} · {releaseIdentity.ChannelName}";
+        WhatsNewBuildInfoText.Text = BuildInfoText.Text;
         UpdateStatusText.Text = updateConfigured
             ? $"Installed {releaseIdentity.ChannelName} version {currentVersion}. Updates are downloaded only while dictation is idle and must pass SHA-256 plus Envious Labs publisher verification before apply."
             : $"This {releaseIdentity.ChannelName} build has no update endpoint configured. It will not contact an update server.";
@@ -156,7 +171,11 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         SessionStatusText.Text = status;
         SessionStatusChanged?.Invoke(status);
-        _overlayWindow.ShowState(OverlayStateFor(status), status);
+        var overlayState = OverlayStateFor(status);
+        HandleRecordingSoundTransition(overlayState);
+        _currentOverlayState = overlayState;
+        PreviewRecordingSoundButton.IsEnabled = overlayState != DictationOverlayState.Recording;
+        _overlayWindow.ShowState(overlayState, status);
         if (status.Contains("ready", StringComparison.OrdinalIgnoreCase))
         {
             EngineReadinessText.Text = status;
@@ -169,6 +188,14 @@ public sealed partial class MainWindow : Window, IDisposable
             EngineReadinessText.Text = status;
             OnboardingModelText.Text = status;
         }
+    }
+
+    private void HandleRecordingSoundTransition(DictationOverlayState nextState)
+    {
+        _recordingSoundCoordinator.Handle(
+            isRecording: nextState == DictationOverlayState.Recording,
+            _settings.Preferences.PlayRecordingSounds,
+            _settings.Preferences.RecordingSoundPairing);
     }
 
     public void SetUpdateCheckInProgress()
@@ -235,6 +262,9 @@ public sealed partial class MainWindow : Window, IDisposable
         _overlayWindow.SetPreview(text);
     }
 
+    public void SetAudioLevel(AudioLevel level) =>
+        _overlayWindow.SetAudioLevel(level.RootMeanSquare);
+
     public async Task NotifyHistoryChangedAsync() => await ReloadHistoryAsync().ConfigureAwait(true);
 
     public void OpenSettings()
@@ -246,6 +276,10 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public void ShutdownProductWindows()
     {
+        _soundPreviewCancellation?.Cancel();
+        _soundPreviewCancellation?.Dispose();
+        _soundPreviewCancellation = null;
+        _recordingSoundPlayer.Dispose();
         if (_deviceCatalog is not null)
         {
             _deviceCatalog.DevicesChanged -= OnAudioDevicesChanged;
@@ -399,14 +433,24 @@ public sealed partial class MainWindow : Window, IDisposable
         var next = _settings with
         {
             PreferredMicrophoneId = microphoneId,
-            Preferences = new UserPreferences(dictation, polish, history, theme),
+            Preferences = new UserPreferences(
+                dictation,
+                polish,
+                history,
+                theme,
+                LivePreviewToggle.IsOn,
+                OverlayPositionFromIndex(OverlayPositionComboBox.SelectedIndex),
+                PillDesignWithoutWordsFromControls(),
+                RecordingPillDesign.ReadingWell,
+                PlayRecordingSoundsToggle.IsOn,
+                SelectedRecordingSoundPairing()),
             Observability = observability,
         };
 
         if (await TrySaveAsync(
                 next,
                 "Settings saved",
-                "Theme and local data choices apply now. Engine, microphone, shortcut, and polish changes apply safely on the next launch.")
+                "Theme, Live Preview, pill design, pill position, recording sounds, and local data choices apply now. Engine, microphone, shortcut, and polish changes apply safely on the next launch.")
             .ConfigureAwait(true))
         {
             ApplyTheme(theme);
@@ -421,7 +465,81 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
-    private void PolishProviderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void LivePreviewToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (!_isApplyingSettings)
+        {
+            UpdatePillDesignControls();
+        }
+    }
+
+    private void CapsulePillButton_Click(object sender, RoutedEventArgs e)
+    {
+        CapsulePillButton.IsChecked = true;
+        LevelRailPillButton.IsChecked = false;
+    }
+
+    private void LevelRailPillButton_Click(object sender, RoutedEventArgs e)
+    {
+        CapsulePillButton.IsChecked = false;
+        LevelRailPillButton.IsChecked = true;
+    }
+
+    private void ReadingWellPillButton_Click(object sender, RoutedEventArgs e) =>
+        ReadingWellPillButton.IsChecked = true;
+
+    private void RecordingSoundComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        var choice = RecordingSoundComboBox.SelectedItem as RecordingSoundChoice;
+        RecordingSoundDescriptionText.Text = choice?.Description ?? string.Empty;
+    }
+
+    private async void PreviewRecordingSoundButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentOverlayState == DictationOverlayState.Recording)
+        {
+            return;
+        }
+
+        _soundPreviewCancellation?.Cancel();
+        _soundPreviewCancellation?.Dispose();
+        var cancellation = new CancellationTokenSource();
+        _soundPreviewCancellation = cancellation;
+        PreviewRecordingSoundButton.IsEnabled = false;
+        var pairing = SelectedRecordingSoundPairing();
+        try
+        {
+            if (!_recordingSoundPlayer.Play(pairing, RecordingSoundMoment.Start))
+            {
+                ShowMessage(
+                    "Sound preview unavailable",
+                    "Windows could not open the current audio output device.",
+                    InfoBarSeverity.Warning);
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(550), cancellation.Token).ConfigureAwait(true);
+            if (_currentOverlayState != DictationOverlayState.Recording)
+            {
+                _recordingSoundPlayer.Play(pairing, RecordingSoundMoment.Stop);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_soundPreviewCancellation, cancellation))
+            {
+                _soundPreviewCancellation.Dispose();
+                _soundPreviewCancellation = null;
+                PreviewRecordingSoundButton.IsEnabled =
+                    _currentOverlayState != DictationOverlayState.Recording;
+            }
+        }
+    }
+
+    private async void PolishProviderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_isApplyingSettings)
         {
@@ -430,6 +548,17 @@ public sealed partial class MainWindow : Window, IDisposable
 
         ApiKeyPasswordBox.Password = string.Empty;
         RefreshApiKeyStatus();
+        await RefreshPolishModelChoicesAsync(
+            PolishProviderFromIndex(PolishProviderComboBox.SelectedIndex),
+            chooseDefault: true).ConfigureAwait(true);
+    }
+
+    private void PolishModelPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_isApplyingSettings && PolishModelPicker.SelectedItem is string modelId)
+        {
+            PolishModelTextBox.Text = modelId;
+        }
     }
 
     private void SaveApiKeyButton_Click(object sender, RoutedEventArgs e)
@@ -959,6 +1088,24 @@ public sealed partial class MainWindow : Window, IDisposable
             HistoryEnabledToggle.IsOn = preferences.History.IsEnabled;
             RetentionDaysBox.Value = preferences.History.RetentionDays;
             ThemeComboBox.SelectedIndex = ThemeIndex(preferences.Theme);
+            LivePreviewToggle.IsOn = preferences.LivePreviewEnabled;
+            OverlayPositionComboBox.SelectedIndex = OverlayPositionIndex(preferences.OverlayPosition);
+            CapsulePillButton.IsChecked =
+                preferences.PillDesignWithoutWords == RecordingPillDesign.Classic;
+            LevelRailPillButton.IsChecked =
+                preferences.PillDesignWithoutWords == RecordingPillDesign.LevelRail;
+            ReadingWellPillButton.IsChecked = true;
+            PlayRecordingSoundsToggle.IsOn = preferences.PlayRecordingSounds;
+            RecordingSoundComboBox.SelectedItem = RecordingSoundCatalog.Find(
+                preferences.RecordingSoundPairing);
+            RecordingSoundDescriptionText.Text = RecordingSoundCatalog.Find(
+                preferences.RecordingSoundPairing).Description;
+            UpdatePillDesignControls();
+            _overlayWindow.ApplyPreferences(
+                preferences.OverlayPosition,
+                preferences.LivePreviewEnabled,
+                preferences.PillDesignWithoutWords,
+                preferences.PillDesignWithWords);
             var observability = _settings.Observability ?? ObservabilityPreferences.Default;
             LocalDiagnosticsToggle.IsOn = observability.LocalDiagnosticsEnabled;
             DiagnosticRetentionDaysBox.Value = observability.DiagnosticRetentionDays;
@@ -977,6 +1124,81 @@ public sealed partial class MainWindow : Window, IDisposable
 
         ApiKeyPasswordBox.Password = string.Empty;
         RefreshApiKeyStatus();
+        _ = RefreshPolishModelChoicesAsync(
+            _settings.Preferences.Polish.Provider,
+            chooseDefault: false);
+    }
+
+    private async Task RefreshPolishModelChoicesAsync(
+        PolishProvider provider,
+        bool chooseDefault)
+    {
+        var discoveryVersion = Interlocked.Increment(ref _polishModelDiscoveryVersion);
+        var isCloudProvider = IsCloudProvider(provider);
+        OllamaEndpointTextBox.Visibility = provider == PolishProvider.Ollama
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        ApiKeyPasswordBox.Visibility = isCloudProvider
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        ApiKeyButtonPanel.Visibility = isCloudProvider
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        IReadOnlyList<string> choices = provider switch
+        {
+            PolishProvider.EgOne => ["eg-1"],
+            PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini =>
+                [CloudPolishOptions.DefaultModel(provider)],
+            _ => [],
+        };
+        string? discoveryNotice = null;
+        if (provider == PolishProvider.Ollama)
+        {
+            await using var catalog = new OllamaApiClient(NullIfBlank(OllamaEndpointTextBox.Text));
+            var discovery = await catalog.DiscoverAsync().ConfigureAwait(true);
+            choices = discovery.LocalModels.Select(model => model.Id).ToArray();
+            discoveryNotice = discovery.Health == OllamaHealth.Ready
+                ? $"{choices.Count.ToString(CultureInfo.CurrentCulture)} local Ollama model{(choices.Count == 1 ? string.Empty : "s")} available on this PC."
+                : "Ollama is not ready at this endpoint. Start Ollama or enter another loopback endpoint.";
+        }
+
+        if (discoveryVersion != Volatile.Read(ref _polishModelDiscoveryVersion))
+        {
+            return;
+        }
+
+        PolishModelPicker.ItemsSource = choices;
+        PolishModelPicker.IsEnabled = choices.Count > 0;
+        var current = PolishModelTextBox.Text.Trim();
+        var selectedIndex = choices
+            .Select((model, index) => new { model, index })
+            .Where(item => string.Equals(item.model, current, StringComparison.OrdinalIgnoreCase))
+            .Select(item => item.index)
+            .DefaultIfEmpty(-1)
+            .First();
+
+        if (chooseDefault && selectedIndex < 0 && choices.Count > 0)
+        {
+            var shouldChoose = provider switch
+            {
+                PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini =>
+                    !CloudPolishOptions.ModelIdLooksLikeProvider(current, provider),
+                _ => string.IsNullOrWhiteSpace(current) ||
+                    !choices.Contains(current, StringComparer.OrdinalIgnoreCase),
+            };
+            if (shouldChoose)
+            {
+                PolishModelTextBox.Text = choices[0];
+                selectedIndex = 0;
+            }
+        }
+
+        PolishModelPicker.SelectedIndex = selectedIndex;
+        if (discoveryNotice is not null)
+        {
+            ApiKeyStatusText.Text = discoveryNotice;
+        }
     }
 
     private void RefreshApiKeyStatus()
@@ -1023,12 +1245,126 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void ShowPage(string tag)
     {
+        var settingsPage = tag == "settings" || tag.StartsWith("settings-", StringComparison.Ordinal);
+        var helpPage = tag == "help" || tag.StartsWith("help-", StringComparison.Ordinal);
         HomePage.Visibility = tag == "home" ? Visibility.Visible : Visibility.Collapsed;
         HistoryPage.Visibility = tag == "history" ? Visibility.Visible : Visibility.Collapsed;
+        WhatsNewPage.Visibility = tag == "whats-new" ? Visibility.Visible : Visibility.Collapsed;
         DictionaryPage.Visibility = tag == "dictionary" ? Visibility.Visible : Visibility.Collapsed;
         SnippetsPage.Visibility = tag == "snippets" ? Visibility.Visible : Visibility.Collapsed;
-        SettingsPage.Visibility = tag == "settings" ? Visibility.Visible : Visibility.Collapsed;
-        HelpPage.Visibility = tag == "help" ? Visibility.Visible : Visibility.Collapsed;
+        SettingsPage.Visibility = settingsPage ? Visibility.Visible : Visibility.Collapsed;
+        HelpPage.Visibility = helpPage ? Visibility.Visible : Visibility.Collapsed;
+
+        if (settingsPage)
+        {
+            ConfigureSettingsPage(tag);
+        }
+        else if (helpPage)
+        {
+            ScrollSectionIntoView(HelpPage, HelpSectionFor(tag));
+        }
+    }
+
+    private void ConfigureSettingsPage(string tag)
+    {
+        var (title, description, section) = tag switch
+        {
+            "settings-appearance" => (
+                "Appearance",
+                "Match EnviousWispr to Windows, choose where the recording pill appears, and control Live Preview.",
+                (FrameworkElement?)AppearanceSection),
+            "settings-transcription" => (
+                "Transcription",
+                "Choose Automatic, Parakeet, or Whisper and configure the recognition language.",
+                (FrameworkElement?)RecordAndTranscribeSection),
+            "settings-live-preview" => (
+                "Live Preview",
+                "Show a display-only rough transcript while speaking; final text still comes from the selected final engine.",
+                (FrameworkElement?)AppearanceSection),
+            "settings-microphone" => (
+                "Microphone",
+                "Choose the Windows input device used for dictation and open the system privacy controls.",
+                (FrameworkElement?)RecordAndTranscribeSection),
+            "settings-sounds" => (
+                "Sounds",
+                "Configure audible recording feedback.",
+                (FrameworkElement?)SoundSection),
+            "settings-keybinds" => (
+                "Keybinds",
+                "Choose the global push-to-talk shortcut used in every Windows app.",
+                (FrameworkElement?)RecordAndTranscribeSection),
+            "settings-ai-polish" => (
+                "AI Polish",
+                "Choose local EG-1, local Ollama, or a direct cloud provider and model.",
+                (FrameworkElement?)AiPolishSection),
+            "settings-clipboard" => (
+                "Clipboard",
+                "Review how EnviousWispr safely inserts text without destroying the clipboard you already had.",
+                (FrameworkElement?)ClipboardSection),
+            _ => (
+                "All Settings",
+                "Choose how EnviousWispr records, transcribes, cleans, and stores your dictation.",
+                (FrameworkElement?)null),
+        };
+
+        SettingsPageTitle.Text = title;
+        SettingsPageDescription.Text = description;
+
+        var showAll = section is null;
+        var showTranscriptionCompanion = tag == "settings-transcription";
+        foreach (var candidate in SettingsSections())
+        {
+            candidate.Visibility = showAll ||
+                ReferenceEquals(candidate, section) ||
+                (showTranscriptionCompanion && ReferenceEquals(candidate, DeterministicCleanupSection))
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+        }
+
+        ScrollSectionIntoView(SettingsPage, section: null);
+    }
+
+    private Border[] SettingsSections() =>
+    [
+        RecordAndTranscribeSection,
+        SoundSection,
+        DeterministicCleanupSection,
+        AiPolishSection,
+        HistorySettingsSection,
+        AppearanceSection,
+        ClipboardSection,
+        DiagnosticsSection,
+        PortableProfileSection,
+    ];
+
+    private Border? HelpSectionFor(string tag) => tag switch
+    {
+        "help-permissions" => PermissionsSection,
+        "help-updates" => UpdatesSection,
+        "help-licenses" => LicensesSection,
+        _ => null,
+    };
+
+    private void ScrollSectionIntoView(ScrollViewer page, FrameworkElement? section)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            page.UpdateLayout();
+            if (section is null)
+            {
+                page.ChangeView(null, 0, null, disableAnimation: true);
+                return;
+            }
+
+            if (page.Content is UIElement content)
+            {
+                var offset = section
+                    .TransformToVisual(content)
+                    .TransformPoint(new Windows.Foundation.Point(0, 0))
+                    .Y;
+                page.ChangeView(null, Math.Max(0, offset), null, disableAnimation: true);
+            }
+        });
     }
 
     private void ShowMessage(string title, string message, InfoBarSeverity severity)
@@ -1059,6 +1395,35 @@ public sealed partial class MainWindow : Window, IDisposable
         AppTheme.Dark => 2,
         _ => 0,
     };
+
+    private static OverlayPillPosition OverlayPositionFromIndex(int index) =>
+        index == 1 ? OverlayPillPosition.Bottom : OverlayPillPosition.Top;
+
+    private static int OverlayPositionIndex(OverlayPillPosition position) =>
+        position == OverlayPillPosition.Bottom ? 1 : 0;
+
+    private RecordingPillDesign PillDesignWithoutWordsFromControls() =>
+        LevelRailPillButton.IsChecked == true
+            ? RecordingPillDesign.LevelRail
+            : RecordingPillDesign.Classic;
+
+    private RecordingSoundPairing SelectedRecordingSoundPairing() =>
+        (RecordingSoundComboBox.SelectedItem as RecordingSoundChoice)?.Pairing ??
+        RecordingSoundPairing.WhisperTick;
+
+    private void UpdatePillDesignControls()
+    {
+        var withWords = LivePreviewToggle.IsOn;
+        CapsulePillButton.IsEnabled = !withWords;
+        LevelRailPillButton.IsEnabled = !withWords;
+        ReadingWellPillButton.IsEnabled = withWords;
+        WithoutWordsPillHeading.Text = withWords
+            ? "Live Preview off"
+            : "Live Preview off · In use";
+        WithWordsPillHeading.Text = withWords
+            ? "Live Preview on · In use"
+            : "Live Preview on";
+    }
 
     private static PolishProvider PolishProviderFromIndex(int index) => index switch
     {

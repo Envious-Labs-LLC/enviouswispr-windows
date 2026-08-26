@@ -11,7 +11,33 @@ public readonly record struct OverlayPosition(int X, int Y);
 
 public static class OverlayPlacement
 {
+    public static OverlayPosition TopCenter(
+        DisplayWorkArea workArea,
+        int overlayWidth,
+        int overlayHeight,
+        int margin)
+    {
+        Validate(workArea, overlayWidth, overlayHeight, margin);
+        var x = workArea.Left + Math.Max(0, (workArea.Width - overlayWidth) / 2);
+        var y = Math.Min(workArea.Bottom - overlayHeight, workArea.Top + margin);
+        y = Math.Max(workArea.Top, y);
+        return new OverlayPosition(x, y);
+    }
+
     public static OverlayPosition BottomCenter(
+        DisplayWorkArea workArea,
+        int overlayWidth,
+        int overlayHeight,
+        int margin)
+    {
+        Validate(workArea, overlayWidth, overlayHeight, margin);
+        var x = workArea.Left + Math.Max(0, (workArea.Width - overlayWidth) / 2);
+        var y = workArea.Bottom - overlayHeight - margin;
+        y = Math.Max(workArea.Top, y);
+        return new OverlayPosition(x, y);
+    }
+
+    private static void Validate(
         DisplayWorkArea workArea,
         int overlayWidth,
         int overlayHeight,
@@ -24,10 +50,5 @@ public static class OverlayPlacement
         {
             throw new ArgumentException("The display work area must have positive dimensions.", nameof(workArea));
         }
-
-        var x = workArea.Left + Math.Max(0, (workArea.Width - overlayWidth) / 2);
-        var y = workArea.Bottom - overlayHeight - margin;
-        y = Math.Max(workArea.Top, y);
-        return new OverlayPosition(x, y);
     }
 }

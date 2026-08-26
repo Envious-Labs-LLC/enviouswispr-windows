@@ -55,7 +55,12 @@ public static class AppSettingsValidator
             (!string.IsNullOrWhiteSpace(preferences.Polish.OllamaEndpoint) &&
              preferences.Polish.OllamaEndpoint.Length <= 2_048)) &&
         preferences.History.RetentionDays is >= 0 and <= 3_650 &&
-        Enum.IsDefined(preferences.Theme);
+        Enum.IsDefined(preferences.Theme) &&
+        Enum.IsDefined(preferences.OverlayPosition) &&
+        Enum.IsDefined(preferences.PillDesignWithoutWords) &&
+        preferences.PillDesignWithoutWords is not RecordingPillDesign.ReadingWell &&
+        preferences.PillDesignWithWords is RecordingPillDesign.ReadingWell &&
+        Enum.IsDefined(preferences.RecordingSoundPairing);
 
     private static bool IsValid(ReusableUserData? userData) =>
         userData is not null &&

@@ -9,7 +9,7 @@ public sealed record AppSettings(
     string? PreferredMicrophoneId = null,
     ObservabilityPreferences? Observability = null)
 {
-    public const int CurrentSchemaVersion = 7;
+    public const int CurrentSchemaVersion = 9;
 
     public static AppSettings Default { get; } = new(
         CurrentSchemaVersion,

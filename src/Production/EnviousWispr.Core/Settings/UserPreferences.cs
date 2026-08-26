@@ -24,6 +24,35 @@ public enum AppTheme
     Dark,
 }
 
+public enum OverlayPillPosition
+{
+    Top,
+    Bottom,
+}
+
+public enum RecordingPillDesign
+{
+    Classic,
+    ReadingWell,
+    LevelRail,
+}
+
+public enum RecordingSoundPairing
+{
+    DustMote,
+    VelvetHush,
+    MutedConfirm,
+    WhisperTick,
+    RoundPebble,
+    PaperTap,
+    SoftHush,
+    LowNod,
+    CloudPop,
+    VelvetTap,
+    SatinShift,
+    AirGlint,
+}
+
 public enum WhisperLanguagePreference
 {
     Automatic,
@@ -111,11 +140,23 @@ public sealed record UserPreferences(
     DictationPreferences Dictation,
     PolishPreferences Polish,
     HistoryPreferences History,
-    AppTheme Theme)
+    AppTheme Theme,
+    bool LivePreviewEnabled = false,
+    OverlayPillPosition OverlayPosition = OverlayPillPosition.Top,
+    RecordingPillDesign PillDesignWithoutWords = RecordingPillDesign.Classic,
+    RecordingPillDesign PillDesignWithWords = RecordingPillDesign.ReadingWell,
+    bool PlayRecordingSounds = false,
+    RecordingSoundPairing RecordingSoundPairing = RecordingSoundPairing.WhisperTick)
 {
     public static UserPreferences Default { get; } = new(
         DictationPreferences.Default,
         PolishPreferences.Default,
         HistoryPreferences.Default,
-        AppTheme.System);
+        AppTheme.System,
+        LivePreviewEnabled: false,
+        OverlayPosition: OverlayPillPosition.Top,
+        PillDesignWithoutWords: RecordingPillDesign.Classic,
+        PillDesignWithWords: RecordingPillDesign.ReadingWell,
+        PlayRecordingSounds: false,
+        RecordingSoundPairing: RecordingSoundPairing.WhisperTick);
 }
