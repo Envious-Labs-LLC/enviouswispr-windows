@@ -89,9 +89,11 @@ the timeout is now derived from admitted PCM duration. This strengthens the repr
 does not convert synthetic speaker playback into human-spoken microphone acceptance.
 
 The same English row was also added to the pinned Whisper language corpus rather than being excluded to keep a
-gate green. Fixed-language Whisper CPU detected English, but produced 7 word edits across the 12-word reference
-(58.33% WER), so it fails the existing 35% per-row guardrail. English Whisper quality on this public case is now
-an explicit blocker alongside the previously documented German and Spanish rows.
+gate green. Its source annotation stops around 7.0 seconds even though admitted audio continues to 10.837 seconds.
+Parakeet and both Whisper model packs independently produced the same additional seven-word question with bounded
+Whisper timestamps covering the remaining audio. The manifest now preserves the original annotation and carries
+a separate reviewed complete evaluation transcription; the audit fails closed on either field. Fixed and automatic
+Whisper CPU then measure 0% evaluation WER. German and Spanish rows remain the actual multilingual blockers.
 
 A deterministic native failure matrix now exercises the remaining production-journey failure classes. An
 allowlisted `AccessDenied` audio fault traveled through the installed global hook and normal session controller;

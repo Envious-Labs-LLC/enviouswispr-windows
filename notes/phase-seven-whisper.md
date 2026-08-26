@@ -48,13 +48,15 @@ accuracy does not yet meet the acceptance guardrail and the CPU path is function
   content-free diagnostics; it is not evidence of spoken multilingual accuracy.
 - Multilingual fixtures are public MINDS-14 recordings, committed with source revision, config/split/row,
   reference text, SHA-256, and CC-BY-4.0 attribution in `tools/whisper-uat/fixtures/manifest.json`. The corpus
-  now contains row zero for French and deterministic rows 0/100/200/300/400 for German and Spanish. The UAT
-  fails closed unless the exact 11-row manifest, provenance, sizes, and hashes match.
+  now contains row zero for English and French and deterministic rows 0/100/200/300/400 for German and
+  Spanish. The UAT fails closed unless the exact 12-row manifest, provenance, sizes, hashes, and reviewed
+  evaluation-reference fields match.
 
 The expanded bounded CUDA experiment produced:
 
 | Language | Automatic decode | Fixed-language decode | Decision |
 |---|---:|---:|---|
+| English | 1/1 rows passed; 0% evaluation WER | 1/1; 0% | pass on one row |
 | French | 1/1 rows passed; 0% aggregate WER | 1/1; 0% | pass on one row |
 | German | 2/5 rows passed; language detected on 4/5; 40.38% aggregate WER | 3/5; 33.65% aggregate WER | fail individual-row guardrail |
 | Spanish | 4/5 rows passed; language detected on 5/5; 20% aggregate WER | 4/5; 20% aggregate WER | row-zero outlier still fails |
@@ -74,6 +76,14 @@ both end mid-sentence, while its 23.296-second audio produced 48 model words aga
 manifest retains the authoritative source text and the row remains red, but its 100% WER cannot safely be
 attributed entirely to the model. German row 200 also contains visibly noisy source wording and measured
 42.11% WER. This five-row slice is useful diagnostic evidence, not a representative language benchmark.
+
+English row zero exposed the same source-reference problem in a form that could be resolved without discarding
+the row. The authoritative annotation ends after `partner` at approximately 7.0 seconds, but the admitted audio
+continues to 10.837 seconds. Parakeet CPU, Whisper Q5 CPU, Whisper full-precision CPU, fixed English, and automatic
+language all independently produced the same additional seven-word question over the remaining timestamped
+audio. The manifest preserves the source transcription verbatim and separately records the complete reviewed
+evaluation transcription plus a typed reference-status marker. Both Whisper packs then measure 0% evaluation
+WER; the public audit rejects any drift or use of such a corrected reference on an unreviewed row.
 
 - An earlier three-row SHA-pinned full-precision comparison used the 1,624,555,275-byte
   `ggml-large-v3-turbo.bin` artifact with SHA-256
