@@ -34,6 +34,7 @@ On 2026-08-26, one AC-powered Windows 11 25H2 NVIDIA desktop produced these prod
 | App plus Parakeet worker warm startup p95 | 2,313 ms |
 | Combined ready working set | 973–975 MB |
 | Parakeet CPU, 10 / 20 / 91.5 second public fixtures | 390 / 696 / 3,786 ms |
+| Production WinUI public-fixture journey | 3/3 passed; 8,827–12,206 ms |
 | Reliability lifecycle | 1,000 cycles, handle delta 9 |
 | Portable contract suites | 34 proof + 350 production tests |
 
@@ -51,7 +52,9 @@ pwsh -NoProfile -File .\scripts\validate.ps1
 
 It builds the preserved .NET 8 proof, the .NET 10 production application and UAT tools, verifies the bundled
 runtime worker, checks release-compliance artifacts, and runs both contract suites. On a machine with the
-gitignored pinned model packs, add `-IncludeLocalRuntime` for the real Parakeet and Whisper gates.
+gitignored pinned model packs, add `-IncludeLocalRuntime` for the real Parakeet, Whisper, and production WinUI
+public-fixture journey gates. The journey's physical microphone and global-key boundary still requires a
+separate human pass; see [its UAT contract](tools/app-journey-uat/README.md).
 
 The production executable after a Release/x64 build is under:
 

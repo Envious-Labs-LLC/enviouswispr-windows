@@ -30,14 +30,25 @@ Date: 2026-08-26
   runtime worker launch assertion passed.
 - Local model runtime tests were not requested by canonical validation and are not claimed here.
 
-## Native UAT attempt and remaining blockers
+## Native UAT evidence and remaining blockers
 
 An isolated production WinUI app and its Parakeet worker launched successfully. The Windows UI-control helper
 discovered the single `EnviousWispr` window but failed twice to bind it because the foreground window did not
 report a process identifier. Per the helper's safety rules, no UI input was sent. Only the processes created by
-this attempt were stopped. The production global-hotkey-to-record-to-transcribe-to-polish-to-insert journey
-therefore remains unobserved and needs a deterministic production-specific native UAT path.
+this attempt were stopped.
 
-Phase 23 is not complete. Signed install, update, rollback, uninstall, SmartScreen, endpoint-security behavior,
-model and CUDA artifact licensing, accessibility review, representative hardware coverage, private-beta daily
-use, public support operations, website claims, final end-to-end UAT, and explicit founder approval remain open.
+The resulting deterministic production-specific harness then passed three times, in 12,206 ms, 8,827 ms, and
+8,910 ms, on this machine. The real shell and exactly one owned final-ASR worker became ready, the
+SHA-256-admitted PolyAI MINDS-14 French public fixture flowed through quantized Whisper on CUDA with polish
+disabled, and the expected
+phrase appeared in the controlled native edit field. The app exited normally and the harness observed zero
+remaining owned workers, app processes, or target processes. The result contained only typed fields and
+booleans; its isolated profile and temporary target observation were deleted.
+
+This automated result substitutes reviewed fixture capture and named press/release events. Physical WASAPI
+microphone capture and physical global-hotkey registration from a non-EnviousWispr app remain unobserved.
+
+Phase 23 is not complete. The physical journey above, signed install, update, rollback, uninstall, SmartScreen,
+endpoint-security behavior, model and CUDA artifact licensing, accessibility review, representative hardware
+coverage, private-beta daily use, public support operations, website claims, final release-candidate UAT, and
+explicit founder approval remain open.

@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Windows.Forms;
 
 namespace EnviousWispr.Delivery.Target.Uat;
@@ -21,11 +22,29 @@ internal static class Program
             out var hold)
             ? Math.Clamp(hold, 0, 30_000)
             : 0;
-        using var form = BuildForm(mode, refocusDelay, holdFocus);
+        var resultPath = ValidateResultPath(ArgumentValue(args, "--result"));
+        var expectedSubstring = ArgumentValue(args, "--expected-substring");
+        if (expectedSubstring is { Length: > 100 } ||
+            expectedSubstring?.Any(char.IsControl) == true)
+        {
+            throw new ArgumentException("The expected UAT substring is invalid.");
+        }
+
+        using var form = BuildForm(
+            mode,
+            refocusDelay,
+            holdFocus,
+            resultPath,
+            expectedSubstring);
         Application.Run(form);
     }
 
-    private static Form BuildForm(string mode, int refocusDelay, int holdFocus)
+    private static Form BuildForm(
+        string mode,
+        int refocusDelay,
+        int holdFocus,
+        string? resultPath,
+        string? expectedSubstring)
     {
         var form = new Form
         {
@@ -86,6 +105,14 @@ internal static class Program
             form.Controls.Add(label);
             form.Controls.Add(edit);
             focusTarget = edit;
+            if (resultPath is not null)
+            {
+                edit.TextChanged += (_, _) => WriteResult(
+                    resultPath,
+                    edit.Text,
+                    expectedSubstring);
+                WriteResult(resultPath, edit.Text, expectedSubstring);
+            }
         }
 
         static void Focus(Form form, Control focusTarget)
@@ -142,6 +169,38 @@ internal static class Program
             holdTimer?.Dispose();
         };
         return form;
+    }
+
+    private static string? ValidateResultPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var fullPath = Path.GetFullPath(path);
+        var temporaryRoot = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(Path.GetTempPath())) + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(temporaryRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("The UAT result must stay under the Windows temporary directory.");
+        }
+
+        return fullPath;
+    }
+
+    private static void WriteResult(
+        string path,
+        string text,
+        string? expectedSubstring)
+    {
+        var result = JsonSerializer.Serialize(new
+        {
+            containsExpected = !string.IsNullOrWhiteSpace(expectedSubstring) &&
+                text.Contains(expectedSubstring, StringComparison.OrdinalIgnoreCase),
+            characterCount = text.Length,
+        });
+        File.WriteAllText(path, result);
     }
 
     private static class NativeFocus
