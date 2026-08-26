@@ -24,9 +24,21 @@ public enum AppTheme
     Dark,
 }
 
-public sealed record DictationPreferences(FinalAsrEngine FinalEngine, string PushToTalkGesture)
+public sealed record DictationPreferences(
+    FinalAsrEngine FinalEngine,
+    string PushToTalkGesture,
+    bool WordCorrectionEnabled,
+    bool FillerRemovalEnabled,
+    bool EmojiFormatterEnabled,
+    bool SpokenPunctuationEnabled)
 {
-    public static DictationPreferences Default { get; } = new(FinalAsrEngine.Automatic, "F8");
+    public static DictationPreferences Default { get; } = new(
+        FinalAsrEngine.Automatic,
+        "F8",
+        WordCorrectionEnabled: true,
+        FillerRemovalEnabled: true,
+        EmojiFormatterEnabled: true,
+        SpokenPunctuationEnabled: false);
 }
 
 public sealed record PolishPreferences(PolishProvider Provider, string? ModelId)

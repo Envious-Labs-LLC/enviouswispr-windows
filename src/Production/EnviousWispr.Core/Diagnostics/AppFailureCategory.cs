@@ -13,5 +13,6 @@ public enum AppFailureCategory
     AsrUnavailable,
     RuntimeProvider,
     RuntimeWorker,
+    PostProcessing,
     Unknown,
 }
