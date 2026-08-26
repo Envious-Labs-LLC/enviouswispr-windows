@@ -1,5 +1,8 @@
 # Founder test: EnviousWispr for Windows
 
+> Historical evidence only: this file describes the preserved WPF proof from 2026-08-25. Use
+> `docs/founder-local-daily-use.md` for the current production WinUI founder build and acceptance journey.
+
 Updated 2026-08-25. The stable test build is installed on AlienSV and configured to use
 the RTX 4090 for both transcription and EG-1 polish.
 

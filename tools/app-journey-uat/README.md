@@ -95,6 +95,16 @@ dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.
   -c Release -- --english-parakeet --manual-microphone
 ```
 
+The guided mode can validate an exact installed founder candidate instead of the repository build. Supply a fully
+qualified `EnviousWispr.App.exe` path; the harness never emits that path:
+
+```powershell
+$installedApp = Join-Path $env:LOCALAPPDATA `
+  'EnviousLabs.EnviousWispr.Founder\current\EnviousWispr.App.exe'
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --manual-microphone --app-executable $installedApp
+```
+
 Add `--live-preview` to the same command when the gitignored small preview model is installed. The guided mode
 passes only when the real global hook starts and stops recording, production WASAPI captures the spoken phrase,
 the real worker and deterministic pipeline complete, the known public word appears in the native edit target,
@@ -104,7 +114,8 @@ stage, runtime, and cleanup evidence as the automated journey; it does not retai
 The default path requires the gitignored `models/whisper-large-v3-turbo` pack; the English path requires
 `models/parakeet-tdt-0.6b-v3`. The result is one content-free JSON object with
 shell/worker/journey/target/cleanup booleans and typed Windows, architecture, engine, provider, model-pack,
-fixture, and delivery-target fields. The temporary target observation records only whether the known public
+fixture, delivery-target, ProductVersion, and executable SHA-256 fields. The temporary target observation records
+only whether the known public
 phrase appeared and the character count, then the harness deletes it with the isolated profile.
 
 The default mode is real production pipeline proof, but not microphone or global-registration proof. The live

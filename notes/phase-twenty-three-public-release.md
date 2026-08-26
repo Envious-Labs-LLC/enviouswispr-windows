@@ -109,6 +109,15 @@ plays no speaker stimulus. It passes only on lexical delivery, the required cont
 sequence, clean app exit, and zero orphan workers. This mode is implemented and build-validated but has not yet
 been performed by a person, so the physical global-hotkey/microphone requirement remains unobserved.
 
+The guided mode also accepts a fully qualified `EnviousWispr.App.exe` through `--app-executable`, restricted to
+this manual journey. Its content-free result records ProductVersion and executable SHA-256 but never the supplied
+path. This permits the physical gate to identify an exact installed founder candidate instead of silently testing
+only the repository build. An unattended run identified founder version
+`0.24.0-founder.8+a32db242f75579fa784b993faf7cd46f4586c95b` and executable SHA-256
+`0A8D688B67C0BEEB41D101FE211485116A028051FE6A241E8AB7735192767D54`, then correctly returned non-zero with
+clean shutdown and zero remaining processes. The installed-candidate mode remains unobserved until the same human
+action passes.
+
 A native visual and UI Automation check at the machine's active display scale found the complete three-line
 public phrase visible, a named instruction element, a named phrase element, and the focused native edit target.
 The first layout attempt clipped the sentence and was corrected before handoff. An unattended negative run sent
