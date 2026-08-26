@@ -92,6 +92,7 @@ var summary = new
         graphicsVendors = hardware.GraphicsAdapters.Select(adapter => adapter.Vendor.ToString()).ToArray(),
         directMlRuntime = hardware.IsDirectMlRuntimeAvailable,
         cudaAvailable = hardware.Cuda.IsDriverAvailable,
+        onnxRuntimeCudaDependencies = hardware.IsOnnxRuntimeCudaDependencySetAvailable,
         cudaDevices = hardware.Cuda.DeviceCount,
         cudaDriverVersion = hardware.Cuda.DriverVersion,
     },

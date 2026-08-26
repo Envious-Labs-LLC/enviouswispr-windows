@@ -1172,7 +1172,8 @@ public partial class App : Application, IAsyncDisposable
         var useCuda = !forceCpu &&
             hardware.Architecture == ProcessorArchitectureKind.X64 &&
             hardware.Cuda.IsDriverAvailable &&
-            hardware.Cuda.DeviceCount > 0;
+            hardware.Cuda.DeviceCount > 0 &&
+            hardware.IsOnnxRuntimeCudaDependencySetAvailable;
         var provider = useCuda ? RuntimeProviderKind.Cuda : RuntimeProviderKind.Cpu;
         var threads = Math.Clamp(
             hardware.PhysicalCoreCount > 0

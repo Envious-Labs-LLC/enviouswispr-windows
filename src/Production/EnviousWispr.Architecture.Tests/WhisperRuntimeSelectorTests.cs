@@ -65,5 +65,6 @@ public sealed class WhisperRuntimeSelectorTests
         TotalPhysicalMemoryBytes: 64UL * 1024 * 1024 * 1024,
         GraphicsAdapters: [],
         IsDirectMlRuntimeAvailable: true,
-        new CudaDriverCapability(cuda, cuda ? 1 : 0, cuda ? 13_000 : null));
+        new CudaDriverCapability(cuda, cuda ? 1 : 0, cuda ? 13_000 : null),
+        IsOnnxRuntimeCudaDependencySetAvailable: false);
 }
