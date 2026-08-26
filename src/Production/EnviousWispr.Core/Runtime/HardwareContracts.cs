@@ -51,6 +51,7 @@ public sealed record HardwareSnapshot(
     IReadOnlyList<GraphicsAdapterCapability> GraphicsAdapters,
     bool IsDirectMlRuntimeAvailable,
     CudaDriverCapability Cuda,
+    bool IsOnnxRuntimeCudaDependencySetAvailable,
     AppError? Error = null)
 {
     public bool HasActiveAdapter(GraphicsVendor vendor) =>

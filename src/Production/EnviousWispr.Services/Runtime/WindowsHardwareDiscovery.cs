@@ -46,6 +46,8 @@ public sealed class WindowsHardwareDiscovery : IHardwareDiscovery
 
         var directMlAvailable = ProbeNativeLibrary("DirectML.dll");
         var cuda = ProbeCudaDriver();
+        var onnxRuntimeCudaDependencies = CudaRuntimeDependencyProbe.IsComplete(
+            Environment.GetEnvironmentVariable("ENVIOUSWISPR_CUDA_RUNTIME_DIR"));
         return new HardwareSnapshot(
             status,
             CurrentArchitecture(),
@@ -56,6 +58,7 @@ public sealed class WindowsHardwareDiscovery : IHardwareDiscovery
             graphicsAdapters,
             directMlAvailable,
             cuda,
+            onnxRuntimeCudaDependencies,
             status == HardwareProbeStatus.Complete
                 ? null
                 : new AppError(

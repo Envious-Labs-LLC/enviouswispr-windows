@@ -36,6 +36,21 @@ public sealed class ParakeetRuntimeSelectorTests
     }
 
     [Fact]
+    public void AutomaticFallsBackToCpuWhenCudaDependencySetIsIncomplete()
+    {
+        var result = ParakeetRuntimeSelector.Select(
+            Snapshot(cuda: true, GraphicsVendor.Nvidia) with
+            {
+                IsOnnxRuntimeCudaDependencySetAvailable = false,
+            },
+            new ParakeetModelInventory(Int8Complete: true, Fp32Complete: true));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(RuntimeProviderKind.Cpu, result.Provider);
+        Assert.Equal(RuntimeSelectionReason.TunedCpuUniversalFallback, result.Reason);
+    }
+
+    [Fact]
     public void ManualCudaRejectsMissingQdqFreeModelInsteadOfUsingSlowQdqGraph()
     {
         var result = ParakeetRuntimeSelector.Select(
@@ -107,5 +122,6 @@ public sealed class ParakeetRuntimeSelectorTests
         TotalPhysicalMemoryBytes: 64UL * 1024 * 1024 * 1024,
         GraphicsAdapters: [new GraphicsAdapterCapability(vendor, true, true)],
         IsDirectMlRuntimeAvailable: true,
-        new CudaDriverCapability(cuda, cuda ? 1 : 0, cuda ? 13_000 : null));
+        new CudaDriverCapability(cuda, cuda ? 1 : 0, cuda ? 13_000 : null),
+        IsOnnxRuntimeCudaDependencySetAvailable: cuda);
 }

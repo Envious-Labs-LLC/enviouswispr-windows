@@ -49,6 +49,7 @@ public static class ParakeetRuntimeSelector
     {
         if (hardware.Cuda.IsDriverAvailable &&
             hardware.Cuda.DeviceCount > 0 &&
+            hardware.IsOnnxRuntimeCudaDependencySetAvailable &&
             hardware.HasActiveAdapter(GraphicsVendor.Nvidia) &&
             models.Fp32Complete)
         {
@@ -90,6 +91,7 @@ public static class ParakeetRuntimeSelector
     {
         if (!hardware.Cuda.IsDriverAvailable ||
             hardware.Cuda.DeviceCount == 0 ||
+            !hardware.IsOnnxRuntimeCudaDependencySetAvailable ||
             !hardware.HasActiveAdapter(GraphicsVendor.Nvidia))
         {
             return Failure(
