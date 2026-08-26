@@ -1,7 +1,7 @@
 # Phase 7 Whisper final-ASR evidence
 
-Measured on the founder's Windows rig on 2026-08-26. This phase remains in progress because multilingual
-accuracy does not yet meet the acceptance guardrail and the CPU path is functional but not interactive.
+Measured on the founder's Windows rig on 2026-08-26. This phase remains in progress because the bounded
+German corpus does not yet meet the acceptance guardrail and the CPU path is functional but not interactive.
 
 ## Implemented so far
 
@@ -58,24 +58,35 @@ The expanded bounded CUDA experiment produced:
 |---|---:|---:|---|
 | English | 1/1 rows passed; 0% evaluation WER | 1/1; 0% | pass on one row |
 | French | 1/1 rows passed; 0% aggregate WER | 1/1; 0% | pass on one row |
-| German | 2/5 rows passed; language detected on 4/5; 40.38% aggregate WER | 3/5; 33.65% aggregate WER | fail individual-row guardrail |
-| Spanish | 4/5 rows passed; language detected on 5/5; 20% aggregate WER | 4/5; 20% aggregate WER | row-zero outlier still fails |
+| German | 3/5 rows passed; language detected on 4/5; 13.39% aggregate WER | 4/5; 7.87% aggregate WER | fail individual-row guardrail |
+| Spanish | 5/5 rows passed; language detected on 5/5; 6.25% aggregate WER | 5/5; 6.25% aggregate WER | pass on this bounded slice |
 
 The expanded automatic CPU run produced the same pass/fail decision on every multilingual row. French
-passed 1/1 at 0% aggregate WER, Spanish passed 4/5 at 20%, and German passed 2/5 with language detected on
-4/5 and 39.42% aggregate WER. German row zero measured 100% WER on CPU versus 112.5% on CUDA; all other
-row WER values matched. The CPU run loaded in 727 ms, completed the English 10/20/91.467-second clips in
-11,699/11,728/30,838 ms, and removed the cancelled worker in 595 ms.
+passed 1/1 at 0% aggregate WER, Spanish passed 5/5 at 6.25%, and German passed 3/5 with language detected on
+4/5 and 12.60% aggregate WER. German row zero measured 100% WER on CPU versus 112.5% on CUDA; all other
+row WER values matched. The CPU run loaded in 504 ms, completed the English 10/20/91.467-second clips in
+12,105/12,241/31,429 ms, and removed the cancelled worker in 596 ms. Fixed-language CPU matched the Q5 CUDA
+row decisions and aggregate WER exactly.
 
-The original Spanish row-zero result is therefore not representative of the five-row slice: rows 100, 200,
-300, and 400 measured 11.76%, 0%, 0%, and 19.05% WER. The strict UAT remains red because every admitted row
-must meet the 35% individual guardrail; the aggregate is evidence, not a replacement acceptance rule.
+Spanish rows 0, 100, 200, 300, and 400 measured 0%, 11.76%, 0%, 0%, and 19.05% evaluation WER. The strict
+UAT remains red only because German rows 0 and 200 fail automatic mode and row 200 fails fixed-language mode;
+every admitted row must meet the 35% individual guardrail, so aggregate WER is evidence rather than a replacement
+acceptance rule.
 
-Reference quality is itself a measured risk. German row 100's source transcription and English translation
-both end mid-sentence, while its 23.296-second audio produced 48 model words against a 25-word reference. The
-manifest retains the authoritative source text and the row remains red, but its 100% WER cannot safely be
-attributed entirely to the model. German row 200 also contains visibly noisy source wording and measured
-42.11% WER. This five-row slice is useful diagnostic evidence, not a representative language benchmark.
+Reference quality is itself a measured risk. German row 100's source annotation ends mid-sentence near 11.6
+seconds even though its audio continues to 23.296 seconds. Q5 and full precision, in automatic and fixed-language
+modes, independently produced the same complete 48-word transcription with tokens spanning the remaining audio.
+Spanish row zero has the same bounded defect: its source annotation ends near 10.1 seconds even though the audio
+continues to 17.067 seconds, and both packs in both modes independently produced the same complete 32-word result.
+The manifest preserves both authoritative source annotations verbatim and separately records the complete reviewed
+evaluation transcriptions plus typed reference-status markers. The public audit fails closed on any drift or use of
+such a correction on another row.
+
+German row 200 remains visibly noisy and ambiguous: Q5 measured 42.11% WER and full precision measured 36.84%
+against the unchanged source annotation, so it remains red. Automatic language detection also labels the short
+German row zero as Icelandic; explicitly selecting German brings that row to 25% WER, inside the guardrail. There
+was no safe confidence rule in the observed language scores that could correct this automatically without creating
+new errors. This five-row slice is useful diagnostic evidence, not a representative language benchmark.
 
 English row zero exposed the same source-reference problem in a form that could be resolved without discarding
 the row. The authoritative annotation ends after `partner` at approximately 7.0 seconds, but the admitted audio
@@ -83,26 +94,24 @@ continues to 10.837 seconds. Parakeet CPU, Whisper Q5 CPU, Whisper full-precisio
 language all independently produced the same additional seven-word question over the remaining timestamped
 audio. The manifest preserves the source transcription verbatim and separately records the complete reviewed
 evaluation transcription plus a typed reference-status marker. Both Whisper packs then measure 0% evaluation
-WER; the public audit rejects any drift or use of such a corrected reference on an unreviewed row.
+WER. The German and Spanish reviewed reference corrections now use the same fail-closed mechanism.
 
-- An earlier three-row SHA-pinned full-precision comparison used the 1,624,555,275-byte
+- The expanded SHA-pinned full-precision comparison used the 1,624,555,275-byte
   `ggml-large-v3-turbo.bin` artifact with SHA-256
-  `1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69`. On CUDA it produced the same
-  multilingual results as Q5: French 0% WER, German auto-detection failure with 100% WER, and Spanish
-  52.38% WER. English inference was 128/220/655 ms, slightly slower than Q5's 124/217/612 ms. The extra
-  1.05 GB therefore has no measured product benefit on this corpus.
-- On the original row-zero fixtures, fixed-language decoding with both Q5 and full precision brought German
-  to 25% WER, inside the guardrail, but Spanish remained at 52.38%. The expanded Q5 evidence above supersedes
-  that single-row German result for current acceptance. The durable UAT can rerun these diagnostics with
-  `fixed-cpu` or `fixed-cuda` and the optional `--full-precision` switch without emitting transcript text.
+  `1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69`. It produced the same row-level
+  acceptance decisions as Q5: Spanish 5/5, German 3/5 automatic, and German 4/5 fixed. Its CUDA automatic
+  aggregate WER was 11.81% German and 7.29% Spanish, versus Q5's 13.39% and 6.25%; neither pack resolved the
+  two German blockers. English inference was 123/211/618 ms versus Q5's 119/207/592 ms in the current run.
+  The extra 1.05 GB therefore has no measured product benefit on this corpus. The durable UAT can rerun these
+  diagnostics with `fixed-cpu` or `fixed-cuda` and the optional `--full-precision` switch without emitting
+  transcript text.
 
 ## Required evidence still missing
 
-- The expanded five-row German and Spanish slice narrows the failure: Spanish passes four rows and has 20%
-  aggregate WER, while German still fails three automatic rows and two fixed-language rows. Reference quality
-  is questionable for at least German row 100. Phase 7 still cannot claim representative multilingual parity;
-  the next useful evidence needs a larger, quality-reviewed public corpus and an explicit decision about
-  per-row versus corpus-level acceptance, not a weaker threshold chosen after seeing results.
+- The expanded five-row Spanish slice passes every admitted row in automatic and fixed-language modes after the
+  truncated row-zero source annotation was reviewed. German still fails two automatic rows and one fixed-language
+  row. Phase 7 still cannot claim representative multilingual parity; the next useful evidence needs a larger,
+  quality-reviewed public corpus, particularly for short German speech and the noisy financial-support recording.
 - The CPU Q5 path is accurate on the English and French samples but takes 11-32 seconds. It is a functional
   safety fallback, not a useful default on the observed desktop CPU.
 - The full-precision 1.5 GiB model was measured locally and rejected as the automatic choice. It is ignored

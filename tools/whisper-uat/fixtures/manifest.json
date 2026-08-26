@@ -36,6 +36,8 @@
       "split": "train",
       "row": 100,
       "transcription": "guten Tag ich möchte eine Lastschrift aufgeben und hätte diesbezüglich noch ein paar Fragen z.b. wüsste ich gerne wie lange es ungefähr dauert bis meine",
+      "evaluationTranscription": "Guten Tag, ich möchte eine Lastschrift aufgeben und hätte diesbezüglich noch ein paar Fragen. Zum Beispiel wüsste ich gerne, wie lange es ungefähr dauert, bis mein Geld bei dem Empfänger ankommt. Und ich würde auch gerne wissen, ob da irgendwelche Gebühren anfallen für mich oder für den Empfänger.",
+      "referenceStatus": "source-reference-truncated-at-11.6s-two-pack-two-mode-timestamp-review",
       "sha256": "c299d797afd081f263a900c4f3fb6cc45f4cb317653c2a7dd99ae85a9749213a"
     },
     {
@@ -68,6 +70,8 @@
       "split": "train",
       "row": 0,
       "transcription": "hola buenas a ver tengo un problema con vuestra aplicación resulta que quiero hacer una transferencia bancaria a una cuenta conocida",
+      "evaluationTranscription": "Hola, buenas. A ver, tengo un problema con vuestra aplicación. Resulta que quiero hacer una transferencia bancaria a una cuenta conocida, pero me da error la aplicación. A ver qué puede ser.",
+      "referenceStatus": "source-reference-truncated-at-10.1s-two-pack-two-mode-timestamp-review",
       "sha256": "8a350c47afd69d9fc7f01f6a7bdfa4ccec3515e2d0bdef218e7e2c17468f99b4"
     },
     {

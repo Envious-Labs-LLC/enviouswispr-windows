@@ -75,6 +75,26 @@ try {
         'es-ES/train/300',
         'es-ES/train/400'
     ) | ForEach-Object { [void]$expectedFixtureRows.Add($_) }
+    $reviewedEvaluationReferences =
+        [System.Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+    $reviewedEvaluationReferences.Add(
+        'en-US/train/0',
+        [pscustomobject]@{
+            Evaluation = 'I would like to set up a joint account with my partner. How do I proceed with doing that?'
+            Status = 'source-reference-ends-at-7s-two-engine-timestamp-review'
+        })
+    $reviewedEvaluationReferences.Add(
+        'de-DE/train/100',
+        [pscustomobject]@{
+            Evaluation = 'Guten Tag, ich möchte eine Lastschrift aufgeben und hätte diesbezüglich noch ein paar Fragen. Zum Beispiel wüsste ich gerne, wie lange es ungefähr dauert, bis mein Geld bei dem Empfänger ankommt. Und ich würde auch gerne wissen, ob da irgendwelche Gebühren anfallen für mich oder für den Empfänger.'
+            Status = 'source-reference-truncated-at-11.6s-two-pack-two-mode-timestamp-review'
+        })
+    $reviewedEvaluationReferences.Add(
+        'es-ES/train/0',
+        [pscustomobject]@{
+            Evaluation = 'Hola, buenas. A ver, tengo un problema con vuestra aplicación. Resulta que quiero hacer una transferencia bancaria a una cuenta conocida, pero me da error la aplicación. A ver qué puede ser.'
+            Status = 'source-reference-truncated-at-10.1s-two-pack-two-mode-timestamp-review'
+        })
     $reviewedFixturePaths = [System.Collections.Generic.HashSet[string]]::new(
         [StringComparer]::Ordinal)
     $reviewedFixtureRows = [System.Collections.Generic.HashSet[string]]::new(
@@ -95,12 +115,13 @@ try {
             throw "The reviewed public fixture manifest contains an invalid row: $rowKey"
         }
 
-        if ($rowKey -ceq 'en-US/train/0') {
-            if ($fixture.evaluationTranscription -cne
-                    'I would like to set up a joint account with my partner. How do I proceed with doing that?' -or
-                $fixture.referenceStatus -cne
-                    'source-reference-ends-at-7s-two-engine-timestamp-review') {
-                throw 'The reviewed English evaluation reference has drifted.'
+        $reviewedEvaluationReference = $null
+        if ($reviewedEvaluationReferences.TryGetValue(
+                $rowKey,
+                [ref]$reviewedEvaluationReference)) {
+            if ($fixture.evaluationTranscription -cne $reviewedEvaluationReference.Evaluation -or
+                $fixture.referenceStatus -cne $reviewedEvaluationReference.Status) {
+                throw "A reviewed evaluation reference has drifted: $rowKey"
             }
         }
         elseif (-not [string]::IsNullOrWhiteSpace($fixture.evaluationTranscription) -or

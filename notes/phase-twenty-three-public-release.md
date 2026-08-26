@@ -93,7 +93,10 @@ gate green. Its source annotation stops around 7.0 seconds even though admitted 
 Parakeet and both Whisper model packs independently produced the same additional seven-word question with bounded
 Whisper timestamps covering the remaining audio. The manifest now preserves the original annotation and carries
 a separate reviewed complete evaluation transcription; the audit fails closed on either field. Fixed and automatic
-Whisper CPU then measure 0% evaluation WER. German and Spanish rows remain the actual multilingual blockers.
+Whisper CPU then measure 0% evaluation WER. The same two-pack, two-mode timestamp review found truncated source
+annotations on German row 100 and Spanish row zero; their source text remains verbatim while separate exact
+evaluation references are audit-locked. Spanish now passes all 5/5 bounded rows in automatic and fixed-language
+modes. German remains the actual multilingual blocker at 3/5 automatic and 4/5 fixed-language rows.
 
 A deterministic native failure matrix now exercises the remaining production-journey failure classes. An
 allowlisted `AccessDenied` audio fault traveled through the installed global hook and normal session controller;
