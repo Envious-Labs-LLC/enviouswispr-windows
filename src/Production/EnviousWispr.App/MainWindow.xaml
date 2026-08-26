@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="EnviousWispr.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="EnviousWispr">
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <TitleBar x:Name="AppTitleBar" Title="EnviousWispr" Subtitle="Windows production shell" />
+
+        <ScrollViewer Grid.Row="1">
+            <StackPanel MaxWidth="760" Padding="32" Spacing="20" HorizontalAlignment="Stretch">
+                <StackPanel Spacing="6">
+                    <TextBlock FontSize="30" FontWeight="SemiBold" Text="Speak naturally. Keep working." />
+                    <TextBlock
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="The production Windows foundation is running. The founder-tested dictation proof remains intact while each capability moves into this architecture."
+                        TextWrapping="Wrap" />
+                </StackPanel>
+
+                <InfoBar
+                    IsClosable="False"
+                    IsOpen="True"
+                    Message="Phase 1 establishes lifecycle, storage, diagnostics, and module boundaries. Dictation remains in the verified WPF proof until its production replacements pass native Windows validation."
+                    Severity="Informational"
+                    Title="Foundation active" />
+
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Padding="20" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="12">
+                        <StackPanel Spacing="8">
+                            <TextBlock FontSize="16" FontWeight="SemiBold" Text="Local-first contract" />
+                            <TextBlock Text="Audio and deterministic processing stay on this PC. Optional cloud polish is direct BYOK and receives text only." TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="1" Padding="20" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="12">
+                        <StackPanel Spacing="8">
+                            <TextBlock FontSize="16" FontWeight="SemiBold" Text="Reliable by design" />
+                            <TextBlock Text="Every later stage will fall back to the last valid result instead of losing a dictation." TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <Border Padding="20" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="12">
+                    <Grid ColumnSpacing="20">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Settings state" />
+                            <TextBlock x:Name="SettingsStatusText" FontWeight="SemiBold" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Production-shell launches" />
+                            <TextBlock x:Name="LaunchCountText" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Window>

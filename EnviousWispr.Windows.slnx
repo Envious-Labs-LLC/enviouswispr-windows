@@ -1,0 +1,19 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EnviousWispr.Smoke/EnviousWispr.Smoke.csproj" />
+    <Project Path="src/EnviousWispr.Tests/EnviousWispr.Tests.csproj" />
+    <Project Path="src/EnviousWispr/EnviousWispr.csproj" />
+  </Folder>
+  <Folder Name="/src/Production/">
+    <Project Path="src/Production/EnviousWispr.App/EnviousWispr.App.csproj" />
+    <Project Path="src/Production/EnviousWispr.Architecture.Tests/EnviousWispr.Architecture.Tests.csproj" />
+    <Project Path="src/Production/EnviousWispr.ASR/EnviousWispr.ASR.csproj" />
+    <Project Path="src/Production/EnviousWispr.Audio/EnviousWispr.Audio.csproj" />
+    <Project Path="src/Production/EnviousWispr.Core/EnviousWispr.Core.csproj" />
+    <Project Path="src/Production/EnviousWispr.LLM/EnviousWispr.LLM.csproj" />
+    <Project Path="src/Production/EnviousWispr.ModelDelivery/EnviousWispr.ModelDelivery.csproj" />
+    <Project Path="src/Production/EnviousWispr.Pipeline/EnviousWispr.Pipeline.csproj" />
+    <Project Path="src/Production/EnviousWispr.PostProcessing/EnviousWispr.PostProcessing.csproj" />
+    <Project Path="src/Production/EnviousWispr.Services/EnviousWispr.Services.csproj" />
+  </Folder>
+</Solution>

@@ -3,10 +3,11 @@
 Windows-native voice-to-text: hold **F8**, speak, release — polished text is typed into your
 focused app. Sister project to macOS [EnviousWispr](https://github.com/saurabhav88/EnviousWispr).
 
-**Status: founder-tested prototype plus Phase Zero foundation.** GPU transcription, GPU polish, the
+**Status: founder-tested prototype plus production foundation.** GPU transcription, GPU polish, the
 visible overlay, tray controls, startup behavior, and the physical F8 voice-to-paste path were verified
 on the Envious Labs rig (2026-08-25). This proves the vertical slice; it is not yet the production WinUI
-architecture or full macOS feature parity.
+feature set. The separate .NET 10 and WinUI 3 production solution now establishes the module, lifecycle,
+settings, and privacy-safe diagnostics boundaries that will replace the proof capability by capability.
 
 Maintained by [Envious Labs](https://github.com/Envious-Labs-LLC).
 
@@ -37,6 +38,8 @@ Maintained by [Envious Labs](https://github.com/Envious-Labs-LLC).
 src/EnviousWispr/         the WPF app (capture, ASR, polish, paste, tray, overlay)
 src/EnviousWispr.Tests/   xUnit contract suite + local-only runtime ASR tests
 src/EnviousWispr.Smoke/   end-to-end smoke harness (ASR + EG-1 + A/B mode)
+src/Production/           the .NET 10 + WinUI 3 production app, modules, and architecture tests
+EnviousWispr.Windows.slnx proof and production projects in one solution
 spikes/s1/                the S1 latency spike (measurement, verdicts in notes/)
 spikes/web-rtc-vad/       VAD exploration (not in the v1 capture path)
 notes/                    findings — one file per topic, every claim labelled
@@ -53,6 +56,9 @@ powershell -ExecutionPolicy Bypass -File scripts/validate.ps1
 src\EnviousWispr\bin\Release\net8.0-windows\EnviousWispr.exe
 dotnet run --project src/EnviousWispr.Smoke -c Release
 ```
+
+The canonical validation command requires the current .NET LTS SDK. It builds both the preserved WPF
+proof and the self-contained x64 WinUI 3 production shell, then runs both contract suites.
 
 On a configured Windows machine with the gitignored model packs, add `-IncludeLocalRuntime` to run the
 real model runtime tests too.
@@ -71,6 +77,7 @@ Model packs (ASR ~670 MB int8 / ~2.5 GB fp32) and the EG-1 GGUF are **not in git
 | Clipboard-safe delivery fallback | ✅ keeps text on clipboard when automatic paste is blocked |
 | CPU fallback | ✅ app falls back automatically if CUDA cannot load |
 | Contract tests plus runtime ASR and native-input tests | ✅ 39/39 locally, CI on every push |
+| .NET 10 + WinUI 3 production shell and module graph | 🚧 foundation builds and is architecture-tested |
 | EG-1 distribution story | ⏳ open (founder's call) |
 | Streaming ASR / fused-decoder export | post-v1 (S1 verdicts) |
 

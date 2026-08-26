@@ -1,5 +1,18 @@
 # Toolchain — what the rig has, installed for this project
 
+## 2026-08-25 — Phase 1 production toolchain
+
+- `MEASURED`: .NET SDK 10.0.400 installed side-by-side under the standard user-local `.dotnet`
+  directory. The existing system .NET 8 SDK remains installed for the founder-tested proof.
+- `MEASURED`: Microsoft's signed `dotnet-install.ps1` validated with a Microsoft Corporation
+  Authenticode signature before use (SHA-256
+  `E8B873E18A81E5C4CD8AB69D84DAC8FEAD291D50B3C44633CD7FDDAD709A13D6`).
+- `MEASURED`: official `Microsoft.WindowsAppSDK.WinUI.CSharp.Templates` 0.0.6-alpha installed for
+  CLI scaffolding. The generated project was pinned to stable `Microsoft.WindowsAppSDK` 2.4.0 and
+  `Microsoft.Windows.SDK.BuildTools` 10.0.28000.2526.
+- `MEASURED`: an unpackaged, self-contained x64 WinUI 3 reference scaffold built in Release with
+  0 warnings and 0 errors before the production project was added.
+
 ## 2026-08-24 (evening) — the rig moved to native Windows
 
 The rig this project runs on is now **Windows 11, not Linux**. The Linux sections in

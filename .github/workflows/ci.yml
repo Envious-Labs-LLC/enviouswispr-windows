@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main, "rig/*"]
+    branches: [main, "rig/*", "codex/*"]
   pull_request:
 
 jobs:
@@ -13,16 +13,12 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: |
+            8.0.x
+            10.0.x
 
-      - name: Build app
-        run: dotnet build src/EnviousWispr/EnviousWispr.csproj -c Release --nologo
-
-      - name: Build smoke harness
-        run: dotnet build src/EnviousWispr.Smoke/EnviousWispr.Smoke.csproj -c Release --nologo
-
-      # Contract suite (prompt bytes, probe semantics, polish strip, vocab) runs
-      # everywhere. The runtime ASR tests are compile-excluded here — the model
-      # packs are gitignored by design and live on the dev rig.
-      - name: Test
-        run: dotnet test src/EnviousWispr.Tests/EnviousWispr.Tests.csproj -c Release --nologo -p:ExcludeLocalOnlyTests=true
+      # Canonical parity with local validation. Model runtime tests remain
+      # excluded because their packs are gitignored and machine-local by design.
+      - name: Validate portable build and contracts
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/validate.ps1
