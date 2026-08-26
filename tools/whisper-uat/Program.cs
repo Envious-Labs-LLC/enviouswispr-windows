@@ -413,6 +413,19 @@ static IReadOnlyDictionary<string, IReadOnlyList<MultilingualFixture>> LoadMulti
         ["de-DE"] = [0, 100, 200, 300, 400],
         ["es-ES"] = [0, 100, 200, 300, 400],
     };
+    var reviewedEvaluationReferences =
+        new Dictionary<(string Config, int Row), (string EvaluationTranscription, string ReferenceStatus)>
+        {
+            [("en-US", 0)] = (
+                "I would like to set up a joint account with my partner. How do I proceed with doing that?",
+                "source-reference-ends-at-7s-two-engine-timestamp-review"),
+            [("de-DE", 100)] = (
+                "Guten Tag, ich möchte eine Lastschrift aufgeben und hätte diesbezüglich noch ein paar Fragen. Zum Beispiel wüsste ich gerne, wie lange es ungefähr dauert, bis mein Geld bei dem Empfänger ankommt. Und ich würde auch gerne wissen, ob da irgendwelche Gebühren anfallen für mich oder für den Empfänger.",
+                "source-reference-truncated-at-11.6s-two-pack-two-mode-timestamp-review"),
+            [("es-ES", 0)] = (
+                "Hola, buenas. A ver, tengo un problema con vuestra aplicación. Resulta que quiero hacer una transferencia bancaria a una cuenta conocida, pero me da error la aplicación. A ver qué puede ser.",
+                "source-reference-truncated-at-10.1s-two-pack-two-mode-timestamp-review"),
+        };
     var fixtureDirectory = Path.Combine(repositoryRoot, "tools", "whisper-uat", "fixtures");
     var manifestPath = Path.Combine(fixtureDirectory, "manifest.json");
     var manifest = JsonSerializer.Deserialize<FixtureManifest>(
@@ -453,23 +466,20 @@ static IReadOnlyDictionary<string, IReadOnlyList<MultilingualFixture>> LoadMulti
             throw new InvalidDataException("The Whisper fixture manifest contains an unexpected row.");
         }
 
-        var isReviewedEnglishRow = string.Equals(
-                fixture.Config,
-                "en-US",
-                StringComparison.Ordinal) &&
-            fixture.Row == 0;
-        if (isReviewedEnglishRow)
+        if (reviewedEvaluationReferences.TryGetValue(
+                (fixture.Config, fixture.Row),
+                out var reviewedEvaluationReference))
         {
             if (!string.Equals(
                     fixture.EvaluationTranscription,
-                    "I would like to set up a joint account with my partner. How do I proceed with doing that?",
+                    reviewedEvaluationReference.EvaluationTranscription,
                     StringComparison.Ordinal) ||
                 !string.Equals(
                     fixture.ReferenceStatus,
-                    "source-reference-ends-at-7s-two-engine-timestamp-review",
+                    reviewedEvaluationReference.ReferenceStatus,
                     StringComparison.Ordinal))
             {
-                throw new InvalidDataException("The reviewed English evaluation reference has drifted.");
+                throw new InvalidDataException("A reviewed evaluation reference has drifted.");
             }
         }
         else if (!string.IsNullOrWhiteSpace(fixture.EvaluationTranscription) ||
