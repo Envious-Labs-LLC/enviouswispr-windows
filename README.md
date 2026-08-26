@@ -1,123 +1,109 @@
-# EnviousWispr — Windows Edition
+# EnviousWispr for Windows
 
-Windows-native voice-to-text: hold **F8**, speak, release — polished text is typed into your
-focused app. Sister project to macOS [EnviousWispr](https://github.com/saurabhav88/EnviousWispr).
+EnviousWispr is a native Windows 11 dictation app: hold the configured key, speak, release, and continue
+working in the app that was focused when recording began. Audio and local transcription stay on the PC.
 
-**Status: founder-tested prototype plus production foundation.** GPU transcription, GPU polish, the
-visible overlay, tray controls, startup behavior, and the physical F8 voice-to-paste path were verified
-on the Envious Labs rig (2026-08-25). This proves the vertical slice; it is not yet the production WinUI
-feature set. The separate .NET 10 and WinUI 3 production solution now establishes the module, lifecycle,
-migration-safe settings, portable reusable-data, typed-error, session-state, and privacy-safe diagnostics
-boundaries that will replace the proof capability by capability.
+This repository is **pre-release**. It contains a preserved founder-tested WPF proof and the production
+.NET 10 / WinUI 3 application that is replacing it capability by capability. No artifact in the repository
+or its draft pull requests is approved for public distribution.
 
-Maintained by [Envious Labs](https://github.com/Envious-Labs-LLC).
+## Production product shape
 
-## What it does
+- WASAPI capture with device routing, 16 kHz mono conversion, interruption handling, and recovery.
+- Configurable global push-to-talk with frozen-target delivery and safe refusal when Windows blocks access.
+- Isolated Parakeet and Whisper final transcription, automatic CPU-safe selection, and crash recovery.
+- Separate multilingual Whisper preview that cannot affect the final transcript.
+- Deterministic custom words, cleanup, spoken punctuation and emoji, inverse text normalization, and
+  cursor-aware repair.
+- Optional local EG-1 or Ollama polish and direct BYOK OpenAI, Anthropic, or Gemini polish. Cloud polish is
+  opt-in and sends text only to the provider selected by the user; audio never leaves the PC.
+- Onboarding, overlay, tray, settings, history, dictionary, snippets, import/export, updates, diagnostics,
+  accessibility, and localization foundations.
+- Self-contained Velopack founder, beta, and stable identities with isolated data and update channels.
 
-- Push-to-talk on **F8** (changeable in config). A small pill shows recording state.
-- 16 kHz mono capture → **Parakeet TDT 0.6B v3** (ONNX Runtime, C#) → raw transcript.
-- **EG-1** (the EnviousWispr local GGUF polishing model) polishes the transcript via a llama-server the app
-  **launches itself** on an ephemeral loopback port with a random API key. The model and the
-  server are torn down on quit.
-- The polished text is pasted into whatever app had focus.
-- Resident in the system tray (right-click: live status, how-to help, "Start with Windows", Quit).
-  Autostarts on login by default.
+The product contracts are authoritative. Source code and tests prove implementation; dated notes record
+measurements and experiments but do not redefine the forward-looking product.
 
-## Measured performance (this rig: i9-14900KF, RTX 4090)
+## Current measured evidence
 
-| Stage | GPU test tier | Notes |
-|---|---|---|
-| ASR, 10 s clip | **346 ms** | CUDA fp32, warm run |
-| ASR, 20 s clip | **183 ms** | CUDA fp32, warm run |
-| ASR, 91.5 s clip | **485 ms** | CUDA fp32, warm run |
-| EG-1 probe | **72 ms** | CUDA llama-server, all layers on GPU |
-| Full ASR + polish, 10 s clip | **332 ms** | model pipeline smoke; excludes live capture and paste |
+On 2026-08-26, one AC-powered Windows 11 25H2 NVIDIA desktop produced these production-path results:
 
-## Layout
+| Measurement | Observed result |
+| --- | ---: |
+| WinUI shell warm startup p95 | 609 ms |
+| App plus Parakeet worker warm startup p95 | 2,313 ms |
+| Combined ready working set | 973–975 MB |
+| Parakeet CPU, 10 / 20 / 91.5 second public fixtures | 390 / 696 / 3,786 ms |
+| Reliability lifecycle | 1,000 cycles, handle delta 9 |
+| Portable contract suites | 34 proof + 350 production tests |
 
-```
-src/EnviousWispr/         the WPF app (capture, ASR, polish, paste, tray, overlay)
-src/EnviousWispr.Tests/   xUnit contract suite + local-only runtime ASR tests
-src/EnviousWispr.Smoke/   end-to-end smoke harness (ASR + EG-1 + A/B mode)
-src/Production/           the .NET 10 + WinUI 3 production app, modules, and architecture tests
-EnviousWispr.Windows.slnx proof and production projects in one solution
-spikes/s1/                the S1 latency spike (measurement, verdicts in notes/)
-spikes/web-rtc-vad/       VAD exploration (not in the v1 capture path)
-notes/                    findings — one file per topic, every claim labelled
-                          MEASURED / READ / ASSUMED
-models/                   ASR model packs (gitignored — see notes/founder-test.md)
-tools/llama.cpp/          local llama.cpp build (gitignored)
-tools/synth-test/         strict interactive overlay and paste test harness
-```
+Those numbers do not establish public hardware requirements. Whisper CPU latency, Spanish fixture quality,
+CUDA runtime delivery, battery and thermal behavior, lower-spec laptops, signed lifecycle testing, and
+multi-machine private-beta daily use remain open release evidence.
 
-## Building and running
+## Build and validate
+
+Run the canonical Windows gate from the repository root:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/validate.ps1
-src\EnviousWispr\bin\Release\net8.0-windows\EnviousWispr.exe
-dotnet run --project src/EnviousWispr.Smoke -c Release
+pwsh -NoProfile -File .\scripts\validate.ps1
 ```
 
-The canonical validation command requires the current .NET LTS SDK. It builds both the preserved WPF
-proof and the self-contained x64 WinUI 3 production shell, then runs both contract suites.
+It builds the preserved .NET 8 proof, the .NET 10 production application and UAT tools, verifies the bundled
+runtime worker, checks release-compliance artifacts, and runs both contract suites. On a machine with the
+gitignored pinned model packs, add `-IncludeLocalRuntime` for the real Parakeet and Whisper gates.
 
-On a configured Windows machine with the gitignored model packs, add `-IncludeLocalRuntime` to run the
-real model runtime tests too.
+The production executable after a Release/x64 build is under:
 
-Model packs (ASR ~670 MB int8 / ~2.5 GB fp32) and the EG-1 GGUF are **not in git** — see
-[`notes/founder-test.md`](notes/founder-test.md) for exact paths and the config reference
-(`src/EnviousWispr/appsettings.json`).
+```text
+src/Production/EnviousWispr.App/bin/x64/Release/net10.0-windows10.0.26100.0/win-x64/
+```
 
-## Status
+Unsigned packaging is only for isolated installer UAT. Production packaging fails closed unless approved
+Azure Artifact Signing metadata is supplied:
 
-| Area | State |
-|---|---|
-| GPU ASR + EG-1 model pipeline | ✅ measured smoke pass on the RTX 4090 |
-| Visible overlay, tray, startup, single-instance behavior | ✅ verified in interactive Windows session 1 |
-| Physical F8, live mic, paste into founder-selected apps | ✅ founder-verified on unlocked AlienSV |
-| Clipboard-safe delivery fallback | ✅ keeps text on clipboard when automatic paste is blocked |
-| CPU fallback | ✅ app falls back automatically if CUDA cannot load |
-| Contract tests plus runtime ASR and native-input tests | ✅ 39/39 locally, CI on every push |
-| .NET 10 + WinUI 3 production shell and module graph | 🚧 foundation builds and is architecture-tested |
-| Versioned settings and portable reusable-data storage | ✅ migration, downgrade, corruption, reset, import, and export tested |
-| EG-1 distribution story | ⏳ open (founder's call) |
-| Streaming ASR / fused-decoder export | post-v1 (S1 verdicts) |
+```powershell
+pwsh -NoProfile -File .\scripts\package-windows.ps1 `
+  -Version <version> -Channel founder `
+  -AzureTrustedSignFile <secure-signing-metadata>
+```
 
-## Production direction
+Never commit signing metadata, credentials, model weights, private machine paths, audio, transcripts, or
+user content.
 
-The project source of truth starts at [`CLAUDE.md`](CLAUDE.md). The complete build sequence is in the
-[`Windows master plan`](docs/plans/windows-master-plan.md), and the Phase Zero keep/adapt/drop decisions are
-in the [`porting ledger`](docs/phase-zero/porting-ledger.md).
+## Repository layout
 
-The current prototype stays runnable while production modules replace it capability by capability. The
-target is C# on the current .NET LTS with WinUI 3, Parakeet and Whisper final ASR, separate multilingual
-Whisper live preview, deterministic and emoji parity, EG-1, Ollama, BYOK cloud polish, automatic hardware
-selection with manual overrides, Velopack updates, and signed direct distribution.
+```text
+src/EnviousWispr/          preserved WPF/.NET 8 proof
+src/Production/            production WinUI app, modules, worker, and architecture tests
+tools/                     native and model-dependent Windows UAT tools
+scripts/                   canonical validation, packaging, compatibility, performance, and release gates
+.claude/knowledge/         forward-looking product and architecture contracts
+docs/                      durable operator, privacy, compatibility, and release documentation
+notes/                     dated measurements and experiment evidence
+models/                    local model packs, ignored by Git
+```
 
-## Who works here
+## Release status
 
-The first implementation was built by **Qwen3.8-27B** on the Envious Labs rig and was then hardened for
-founder testing. Agent routing starts in [`AGENTS.md`](AGENTS.md); the project brain and contracts are
-checked into this repository so Codex or Claude Code can continue from either development machine.
+The direct installer is the primary distribution path; Microsoft Store/MSIX is a later secondary option.
+Draft release gates exist, but public release still requires a valid Envious Labs signature, immutable HTTPS
+feeds, clean-machine install/update/rollback/uninstall, representative laptop and target-app evidence,
+reviewed model/CUDA licenses, security and privacy review, private-beta daily use, and Saurabh's explicit
+approval for the exact release candidate. Pull requests are never merged automatically.
 
-That machine is native Windows (Windows 11, i9-14900KF, 64 GB, RTX 4090 24 GB — MEASURED
-2026-08-24), so it can exercise real Windows audio, tray, clipboard and UI Automation and
-build the C#/.NET stack; it cannot run the macOS app or Apple silicon. Claims are labelled
-`MEASURED`, `READ` or `ASSUMED` accordingly, and that labelling is load-bearing rather than
-decoration. (The rig moved from Linux/WSL to native Windows on 2026-08-24; Linux-era rig
-facts in the notes are superseded history.)
+Start with [CLAUDE.md](CLAUDE.md), the [product contract](.claude/knowledge/product-contract.md), and the
+[Windows master plan](docs/plans/windows-master-plan.md). Release operators should also read the
+[distribution runbook](docs/distribution/windows-release.md) and
+[public-release gate](docs/distribution/public-release.md).
 
-## Reference material lives on the rig, not in this repo
+## Security, privacy, support, and license
 
-A verbatim snapshot of the macOS source at commit `f9b70283` (2026-08-24), plus the internal engineering
-knowledge, sits at `C:\Users\saura\agent-workspace\enviouswispr-windows\` on the rig. It is deliberately NOT
-committed here: it belongs to the macOS repo, it is 175 MB, and a copy in two places drifts.
+- Report vulnerabilities through [GitHub private vulnerability reporting](https://github.com/Envious-Labs-LLC/enviouswispr-windows/security/advisories/new), not a public issue. See [SECURITY.md](SECURITY.md).
+- Read the engineering privacy notice in [PRIVACY.md](PRIVACY.md).
+- Use the bounded support and private-beta forms described in [SUPPORT.md](SUPPORT.md).
+- EnviousWispr source is licensed under GNU GPL version 3 only; see [LICENSE](LICENSE). Production NuGet
+  notices are generated in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). Separate model and native
+  redistributable licenses remain mandatory release inputs.
 
-Anything learned FROM that snapshot belongs here, in `notes/`, with the source path cited.
-
-## How this got here
-
-The repo started as research: the macOS app is 139,085 lines of Swift across 17 modules with a
-164,289-line test suite, and the first deliverable was a port map, not code. That map and the
-S1 latency spike (which settled the CPU-vs-GPU tiering and the thread-pinning requirement)
-became the design the app was built on. The full evidence trail is in `notes/`.
+Copyright © 2026 Envious Labs LLC.

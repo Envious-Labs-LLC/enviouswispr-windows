@@ -128,13 +128,13 @@ API also moved twice in 1.13.x (`model_config=` kwarg, then `from_transducer()` 
 ## 2026-08-25 — EG-1 weights found locally (user hint, MEASURED)
 
 EG-1 was trained AND runs on this PC:
-- `C:\Users\saura\eg1-overnight\` — the training workspace: `eg1-polish-prompt-v1.txt`
+- `<private-training-workspace>` — the founder-local training workspace: `eg1-polish-prompt-v1.txt`
   contains the EXACT training prompt; **byte-verified MATCH (265 chars) vs EgOnePrompt.cs and
   the Mac's pinned prompt** (its header names EGOnePromptBuilder.swift as source of truth).
 - EG-1 base = **Qwen3-4B** (lora experiments + `qwen3-4b-instruct-2507-base` fallback in the dir).
-- Local builds (all Q5_K_M, exactly 2,889,511,680 bytes, Jul 16): `C:\Users\saura\eg1-v3-en-Q5_K_M.gguf`,
+- Local builds (all Q5_K_M, exactly 2,889,511,680 bytes, Jul 16): `eg1-v3-en-Q5_K_M.gguf`,
   `eg1-v4-twins-Q5_K_M.gguf`, `eg1-v5-Q5_K_M.gguf` (latest, 20:02). Older: `gemma4e4b-polish-q4_k_m.gguf` (Jul 2).
-- App config now points at `C:\Users\saura\eg1-v5-Q5_K_M.gguf` (single file, no shards —
+- App config pointed at founder-local `eg1-v5-Q5_K_M.gguf` (single file, no shards —
   EgOneServer passes the path positionally; llama.cpp loads it directly).
 - Mac's remote "eg-1-v2" (8 shards, ~3.2 GB total) is a different quantization than the local
   Q5_K_M builds — FLAG: Windows app runs v5; Mac runs v2. Probe + output quality will tell if it matters.
@@ -154,7 +154,7 @@ EG-1 was trained AND runs on this PC:
 - Full-corpus int8 vs fp32 (453 clips, CPU 8t): median 274 vs 326 ms; p95 2219 vs 2094 ms;
   EMPTY 18 vs 2. int8 = faster median, fp32 = far fewer empties (quantization artifacts).
   Both selectable via asr.pack in appsettings.
-- EG-1 model in use: `C:\Users\saura\eg1-v5-Q5_K_M.gguf` (Jul 16 20:02, newest local build).
+- EG-1 model in use: founder-local `eg1-v5-Q5_K_M.gguf` (Jul 16 20:02, newest local build).
   serverExe: tools\llama.cpp CPU build (keeps the 4090 free for the control plane).
 
 ## 2026-08-25 (second recovery) — session lost, app relaunched

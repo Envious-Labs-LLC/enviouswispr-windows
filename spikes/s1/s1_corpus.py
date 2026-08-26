@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import json
+import os
 import statistics
 import time
 from pathlib import Path
@@ -22,7 +23,10 @@ from pathlib import Path
 import soundfile as sf
 
 HERE = Path(__file__).parent
-SAMPLES = Path(r"C:\Users\saura\audio-samples")
+sample_root = os.environ.get("ENVIOUSWISPR_AUDIO_SAMPLES")
+if not sample_root:
+    raise RuntimeError("Set ENVIOUSWISPR_AUDIO_SAMPLES to the private sample directory.")
+SAMPLES = Path(sample_root)
 OUT_DIR = HERE / "corpus-results"
 MODEL_DIR = HERE / "models" / "parakeet-tdt-0.6b-v3"
 SHERPA_DIR = HERE / "models" / "sherpa-parakeet-tdt-v3-int8"

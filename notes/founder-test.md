@@ -28,10 +28,10 @@ new text on the clipboard.
 
 ## Installed paths
 
-- Desktop shortcut: `C:\Users\saura\OneDrive\Desktop\EnviousWispr Windows Test.lnk`
-- App: `C:\Users\saura\Apps\EnviousWispr-Windows-Test\EnviousWispr.exe`
-- Log: `C:\Users\saura\Apps\EnviousWispr-Windows-Test\enviouswispr.log`
-- Source checkout: `C:\Users\saura\agent-workspace\enviouswispr-windows`
+- Desktop shortcut: founder desktop `EnviousWispr Windows Test.lnk`
+- App: founder-local `Apps\EnviousWispr-Windows-Test\EnviousWispr.exe`
+- Log: beside the founder-local proof executable as `enviouswispr.log`
+- Source checkout: repository root on the founder rig
 - Configuration: `appsettings.json` beside the installed app
 
 ## Current proof

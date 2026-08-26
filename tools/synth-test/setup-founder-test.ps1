@@ -1,10 +1,16 @@
 param(
-    [string]$AppExe = "C:\Users\saura\Apps\EnviousWispr-Windows-Test\EnviousWispr.exe",
-    [string]$RepoRoot = "C:\Users\saura\agent-workspace\enviouswispr-windows",
+    [string]$AppExe = "",
+    [string]$RepoRoot = "",
     [string]$TaskName = "EnviousWispr-UAT"
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+}
+if ([string]::IsNullOrWhiteSpace($AppExe)) {
+    $AppExe = Join-Path $RepoRoot "src\EnviousWispr\bin\Release\net8.0-windows\EnviousWispr.exe"
+}
 if (-not (Test-Path $AppExe)) { throw "Published app not found at $AppExe" }
 
 $desktop = [Environment]::GetFolderPath("Desktop")

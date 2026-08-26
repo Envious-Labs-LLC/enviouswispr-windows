@@ -27,9 +27,9 @@ new rig today:
 | Disk | C: 1.9 TB, 805 GB free | `MEASURED` (df) |
 | GPU | NVIDIA RTX 4090, 24 GB | `MEASURED` (nvidia-smi) |
 | NPU | none (no NPU device in PnP enumeration; 14900KF has none) | `MEASURED` (Win32_PnPEntity) + `READ` (CPU spec) |
-| .NET | SDK 8.0.424; runtimes 6.0.32 / 8.x / **10.0.11** (runtime only, no .NET 10 SDK); `csharp-ls.exe` in `C:\Users\saura\.dotnet\tools` | `MEASURED` (dotnet --list-sdks/--list-runtimes, where csharp-ls) |
+| .NET | SDK 8.0.424; runtimes 6.0.32 / 8.x / **10.0.11** (runtime only, no .NET 10 SDK); `csharp-ls.exe` in the user-local .NET tools directory | `MEASURED` (dotnet --list-sdks/--list-runtimes, where csharp-ls) |
 | Swift | not installed | `MEASURED` (`swift: command not found`) |
-| `/home/saura/...` | does not exist on this machine | `MEASURED` (ls) |
+| `/home/<founder>/...` | does not exist on this machine | `MEASURED` (ls) |
 | Agent model / server | qwen3.8-27b (PI_MODEL env); local server answering at 127.0.0.1:8081 | `MEASURED` (env, curl /v1/models) |
 
 Hardware (i9-14900KF + 4090 + 64 GB + ~2 TB) matches the Linux-era rig facts in the
@@ -57,7 +57,7 @@ for Linux; success or the failure list both become MEASURED.
 
 - **Swift 6.3.3 RELEASE** (swift.org official `ubuntu24.04` x86_64 tarball,
   1,069,589,818 bytes) at
-  `/home/saura/tools/swift-6.3.3-RELEASE-ubuntu24.04/`.
+  `/home/<founder>/tools/swift-6.3.3-RELEASE-ubuntu24.04/`.
   Version chosen deliberately: the snapshot's `Package.swift` comment pins the
   project to "Swift 6.3.3 toolchain" (swift-syntax 603.0.2), so the spike
   compiles against the same Swift the product builds with — `READ`
@@ -74,10 +74,10 @@ for Linux; success or the failure list both become MEASURED.
 
 **Usage:**
 ```
-export PATH=/home/saura/tools/swift-6.3.3-RELEASE-ubuntu24.04/usr/bin:$PATH
+export PATH=/home/<founder>/tools/swift-6.3.3-RELEASE-ubuntu24.04/usr/bin:$PATH
 ```
 
-**Spike layout:** `/home/saura/swift-spike/{core,postprocessing}` —
+**Spike layout:** `/home/<founder>/swift-spike/{core,postprocessing}` —
 byte-identical copies of the snapshot modules (verified with `diff -r`) plus a
 minimal `Package.swift` each (real package's macOS platform line dropped —
 SwiftPM requires one platform and Linux ignores it). Nothing in
@@ -139,7 +139,7 @@ payloads targeting a newer TFM. Fix: install the .NET 10 SDK side-by-side
 (runtime 10.0.11 was already present), then tool install works. Side effect
 noted: `dotnet new` templates will default to the newest SDK after install.
 
-**Working config (in place):** `C:\Users\saura\.pi\agent\pi-lsp.json` →
+**Working config (in place):** the founder-local `.pi\agent\pi-lsp.json` →
 `csharp-ls` server, command `["csharp-ls"],` extensions `.cs`/`.csx`. Test
 fixture: `C:\rig-toolcheck\{Broken.cs, lspcheck.csproj, lspcheck.sln, probe6.log}`
 — keep the fixture; it is the rig's standing test for this tool.

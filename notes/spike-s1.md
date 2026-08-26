@@ -31,7 +31,7 @@
   - CPU: `onnxruntime` CPU EP (i9-14900KF, 32 logical)
   - GPU: `onnxruntime-directml` DML EP (RTX 4090, no CUDA dependency). CUDA EP is a follow-up if DML
     numbers are not conclusive (ORT 1.27+ wants CUDA 13; pip-installable, ~GB of downloads).
-- Clips: **the founder's real dictation** from `C:\Users\saura\audio-samples` (453 recordings,
+- Clips: **the founder's real dictation** from an uncommitted private sample directory (453 recordings,
   270 MB; each dir = raw.wav + fed.wav + meta.json). `fed.wav` is what the Mac engine actually
   received (post-VAD trim) — the honest input. All 16 kHz mono PCM_16, matching the capture spec
   exactly, so no resampling is introduced.

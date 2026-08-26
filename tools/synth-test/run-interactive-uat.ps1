@@ -1,9 +1,15 @@
 param(
-    [string]$AppExe = "C:\Users\saura\Apps\EnviousWispr-Windows-Test\EnviousWispr.exe",
-    [string]$RepoRoot = "C:\Users\saura\agent-workspace\enviouswispr-windows"
+    [string]$AppExe = "",
+    [string]$RepoRoot = ""
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+}
+if ([string]::IsNullOrWhiteSpace($AppExe)) {
+    $AppExe = Join-Path $RepoRoot "src\EnviousWispr\bin\Release\net8.0-windows\EnviousWispr.exe"
+}
 $result = Join-Path $RepoRoot "tools\synth-test\uat-result.txt"
 $appLog = [System.IO.Path]::Combine([System.IO.Path]::GetDirectoryName($AppExe), "enviouswispr.log")
 $transcript = Join-Path $RepoRoot "tools\synth-test\uat-transcript.txt"

@@ -1,4 +1,4 @@
-"""S1 test clips: the founder's real dictation, from C:\\Users\\saura\\audio-samples.
+"""S1 test clips from the founder's private ENVIOUSWISPR_AUDIO_SAMPLES directory.
 
 Each sample dir holds raw.wav (full capture), fed.wav (what the engine received),
 and meta.json. fed.wav is the honest S1 input — it is what the production
@@ -10,12 +10,16 @@ Picks (both classified asr_complete on the Mac, i.e. clean runs):
   clip20.wav <- 68B90FDC-1478-497D-AEDF-86B7EB7B5FA1  (21.21 s -> 20.0 s)
 """
 
+import os
 import pathlib
 import shutil
 
 import soundfile as sf
 
-SRC = pathlib.Path("C:/Users/saura/audio-samples")
+sample_root = os.environ.get("ENVIOUSWISPR_AUDIO_SAMPLES")
+if not sample_root:
+    raise RuntimeError("Set ENVIOUSWISPR_AUDIO_SAMPLES to the private sample directory.")
+SRC = pathlib.Path(sample_root)
 DST = pathlib.Path(__file__).parent / "audio"
 DST.mkdir(exist_ok=True)
 
