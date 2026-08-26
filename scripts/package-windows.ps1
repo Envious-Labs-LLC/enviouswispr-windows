@@ -111,12 +111,19 @@ try {
         'MainWindow.xbf',
         'DictationOverlayWindow.xbf',
         'EnviousWispr.RuntimeWorker.exe',
+        'EnviousWispr.RuntimeWorker.dll',
         'Microsoft.WindowsAppRuntime.Bootstrap.dll'
     )
     foreach ($required in $requiredPublishedFiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $publishDirectory $required) -PathType Leaf)) {
             throw "Self-contained publish is missing required file: $required"
         }
+    }
+
+    Write-Host 'Validating the self-contained runtime worker can launch...'
+    & (Join-Path $publishDirectory 'EnviousWispr.RuntimeWorker.exe') 2>$null
+    if ($LASTEXITCODE -ne 2) {
+        throw "The self-contained runtime worker could not launch (exit $LASTEXITCODE)."
     }
 
     $packArguments = @(
@@ -214,7 +221,8 @@ try {
 finally {
     Pop-Location
     $resolvedScratch = [IO.Path]::GetFullPath($scratchRoot)
-    $resolvedTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()) + [IO.Path]::DirectorySeparatorChar
+    $resolvedTemp = [IO.Path]::TrimEndingDirectorySeparator(
+        [IO.Path]::GetFullPath([IO.Path]::GetTempPath())) + [IO.Path]::DirectorySeparatorChar
     if ($resolvedScratch.StartsWith($resolvedTemp, [StringComparison]::OrdinalIgnoreCase) -and
         (Split-Path -Leaf $resolvedScratch).StartsWith('EnviousWisprPackage-', [StringComparison]::Ordinal)) {
         Remove-Item -LiteralPath $resolvedScratch -Recurse -Force -ErrorAction SilentlyContinue

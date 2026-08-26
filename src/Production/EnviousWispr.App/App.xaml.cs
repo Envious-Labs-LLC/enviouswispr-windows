@@ -306,9 +306,44 @@ public partial class App : Application, IAsyncDisposable
         }
 
         ApplyOverlayUatState();
-        ApplyReliabilityUatExit();
-
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellShown));
+        SignalPerformanceUatReady();
+        ApplyReliabilityUatExit();
+    }
+
+    private void SignalPerformanceUatReady()
+    {
+        SignalPerformanceUatEvent("ENVIOUSWISPR_UAT_READY_EVENT");
+        if (_transcriptionEngine is not null)
+        {
+            SignalPerformanceUatEvent("ENVIOUSWISPR_UAT_RUNTIME_READY_EVENT");
+        }
+    }
+
+    private static void SignalPerformanceUatEvent(string environmentVariable)
+    {
+        const string allowedPrefix = @"Local\EnviousLabs.EnviousWispr.PerformanceUat.";
+        var eventName = Environment.GetEnvironmentVariable(environmentVariable);
+        if (string.IsNullOrWhiteSpace(eventName) ||
+            eventName.Length > 200 ||
+            !eventName.StartsWith(allowedPrefix, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        try
+        {
+            using var readyEvent = EventWaitHandle.OpenExisting(eventName);
+            readyEvent.Set();
+        }
+        catch (Exception exception) when (exception is
+                                          ArgumentException or
+                                          WaitHandleCannotBeOpenedException or
+                                          UnauthorizedAccessException or
+                                          IOException)
+        {
+            // UAT instrumentation must never make normal startup fail.
+        }
     }
 
     private async Task<RecoveryTextLoadResult> LoadStartupRecoveryAsync()
@@ -1061,6 +1096,15 @@ public partial class App : Application, IAsyncDisposable
 
     private async Task ConfigureTranscriptionAsync(FinalAsrEngine configuredEngine)
     {
+        if (string.Equals(
+                Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_DISABLE_LOCAL_RUNTIME"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            _window?.SetSessionStatus("Local transcription disabled for performance UAT");
+            return;
+        }
+
         var environmentEngine = Environment.GetEnvironmentVariable("ENVIOUSWISPR_ASR_ENGINE");
         if (Enum.TryParse<FinalAsrEngine>(environmentEngine, ignoreCase: true, out var parsedEngine))
         {
