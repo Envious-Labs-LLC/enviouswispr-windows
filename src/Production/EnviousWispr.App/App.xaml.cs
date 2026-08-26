@@ -54,7 +54,7 @@ public partial class App : Application, IAsyncDisposable
     private WindowsSystemLifecycleMonitor? _lifecycleMonitor;
     private WindowsPushToTalkHook? _pushToTalkHook;
     private PushToTalkSessionController? _sessionController;
-    private WasapiAudioCapture? _audioCapture;
+    private IAudioCapture? _audioCapture;
     private RuntimeWorkerTranscriptionEngine? _transcriptionEngine;
     private RuntimeWorkerLivePreviewEngine? _previewEngine;
     private IPolishProvider? _polishProvider;
@@ -308,6 +308,7 @@ public partial class App : Application, IAsyncDisposable
         ApplyOverlayUatState();
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellShown));
         SignalPerformanceUatReady();
+        StartPublicFixtureJourneyUat();
         ApplyReliabilityUatExit();
     }
 
@@ -942,11 +943,15 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        _audioCapture = new WasapiAudioCapture();
+        _audioCapture = TryCreatePublicFixtureAudioCapture(out var fixtureCapture) &&
+            fixtureCapture is not null
+            ? fixtureCapture
+            : new WasapiAudioCapture();
+        var audioCapture = _audioCapture;
         _textTargetAdapter = new WindowsTextTargetAdapter();
         _textDelivery = new ContextAwareTextDelivery(_textTargetAdapter);
         _sessionController = new PushToTalkSessionController(
-            _audioCapture,
+            audioCapture,
             new WindowsForegroundTargetProvider(),
             preferredAudioDevice: string.IsNullOrWhiteSpace(_settings.PreferredMicrophoneId)
                 ? null
@@ -1405,6 +1410,148 @@ public partial class App : Application, IAsyncDisposable
     private void OnPushToTalkSignalled(object? sender, PushToTalkSignalEvent args) =>
         _ = HandlePushToTalkAsync(args.Signal);
 
+    private static bool TryCreatePublicFixtureAudioCapture(
+        out PublicFixtureAudioCapture? capture)
+    {
+        capture = null;
+        return HasValidPublicFixtureJourneyUatConfiguration() &&
+            PublicFixtureAudioCapture.TryCreate(
+                Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_AUDIO_FIXTURE"),
+                out capture);
+    }
+
+    private void StartPublicFixtureJourneyUat()
+    {
+        if (!HasValidPublicFixtureJourneyUatConfiguration())
+        {
+            return;
+        }
+
+        _ = RunPublicFixtureJourneyUatAsync();
+    }
+
+    private async Task RunPublicFixtureJourneyUatAsync()
+    {
+        const string startVariable = "ENVIOUSWISPR_UAT_JOURNEY_START_EVENT";
+        const string completeVariable = "ENVIOUSWISPR_UAT_JOURNEY_COMPLETE_EVENT";
+        try
+        {
+            if (_audioCapture is not PublicFixtureAudioCapture ||
+                _sessionController is null ||
+                !TryOpenJourneyUatEvent(startVariable, out var startEvent) ||
+                startEvent is null)
+            {
+                return;
+            }
+
+            using (startEvent)
+            {
+                var started = await Task.Run(
+                        () => startEvent.WaitOne(TimeSpan.FromSeconds(30)))
+                    .ConfigureAwait(false);
+                if (!started || _exitRequested || _disposed)
+                {
+                    return;
+                }
+            }
+
+            await HandlePushToTalkAsync(PushToTalkSignal.Pressed).ConfigureAwait(false);
+            if (_sessionController.CurrentSession?.State !=
+                EnviousWispr.Core.Sessions.DictationSessionState.Recording)
+            {
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(150)).ConfigureAwait(false);
+            await HandlePushToTalkAsync(PushToTalkSignal.Released).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.UnhandledFailure,
+                AppFailureCategory.Unknown));
+        }
+        finally
+        {
+            SignalJourneyUatEvent(completeVariable);
+            if (string.Equals(
+                    Environment.GetEnvironmentVariable(
+                        "ENVIOUSWISPR_UAT_JOURNEY_EXIT_AFTER_COMPLETION"),
+                    "1",
+                    StringComparison.Ordinal))
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(250)).ConfigureAwait(false);
+                _window?.DispatcherQueue.TryEnqueue(ExitFromTray);
+            }
+        }
+    }
+
+    private static bool TryOpenJourneyUatEvent(
+        string environmentVariable,
+        out EventWaitHandle? journeyEvent)
+    {
+        journeyEvent = null;
+        var eventName = Environment.GetEnvironmentVariable(environmentVariable);
+        if (!IsJourneyUatEventName(eventName))
+        {
+            return false;
+        }
+
+        try
+        {
+            journeyEvent = EventWaitHandle.OpenExisting(eventName!);
+            return true;
+        }
+        catch (Exception exception) when (exception is
+                                          ArgumentException or
+                                          WaitHandleCannotBeOpenedException or
+                                          UnauthorizedAccessException or
+                                          IOException)
+        {
+            return false;
+        }
+    }
+
+    private static bool HasValidPublicFixtureJourneyUatConfiguration()
+    {
+        var credentialSuffix = Environment.GetEnvironmentVariable(
+            "ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX");
+        return string.Equals(
+                Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_JOURNEY"),
+                "public-fixture-v1",
+                StringComparison.Ordinal) &&
+            credentialSuffix is { Length: 40 } &&
+            credentialSuffix.StartsWith("journey-", StringComparison.Ordinal) &&
+            Guid.TryParseExact(credentialSuffix[8..], "N", out _) &&
+            IsJourneyUatEventName(Environment.GetEnvironmentVariable(
+                "ENVIOUSWISPR_UAT_JOURNEY_START_EVENT")) &&
+            IsJourneyUatEventName(Environment.GetEnvironmentVariable(
+                "ENVIOUSWISPR_UAT_JOURNEY_COMPLETE_EVENT"));
+    }
+
+    private static bool IsJourneyUatEventName(string? eventName)
+    {
+        const string allowedPrefix = @"Local\EnviousLabs.EnviousWispr.JourneyUat.";
+        return !string.IsNullOrWhiteSpace(eventName) &&
+            eventName.Length <= 200 &&
+            eventName.StartsWith(allowedPrefix, StringComparison.Ordinal);
+    }
+
+    private static void SignalJourneyUatEvent(string environmentVariable)
+    {
+        if (!TryOpenJourneyUatEvent(environmentVariable, out var journeyEvent) ||
+            journeyEvent is null)
+        {
+            return;
+        }
+
+        using (journeyEvent)
+        {
+            journeyEvent.Set();
+        }
+    }
+
     private async Task HandlePushToTalkAsync(PushToTalkSignal signal)
     {
         if (_exitRequested || _disposed)
@@ -1761,7 +1908,7 @@ public partial class App : Application, IAsyncDisposable
     private async Task StartLivePreviewAsync()
     {
         var engine = _previewEngine;
-        var audioCapture = _audioCapture;
+        var audioCapture = _audioCapture as IAudioSnapshotSource;
         if (engine is null || audioCapture is null)
         {
             return;
@@ -1801,7 +1948,7 @@ public partial class App : Application, IAsyncDisposable
 
     private async Task RunLivePreviewAsync(
         RuntimeWorkerLivePreviewEngine engine,
-        WasapiAudioCapture audioCapture,
+        IAudioSnapshotSource audioCapture,
         CancellationToken cancellationToken)
     {
         var cadence = TimeSpan.FromMilliseconds(2_500);
