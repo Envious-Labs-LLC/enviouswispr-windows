@@ -76,6 +76,8 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 1 => MigrateFromV1(json),
                 2 => MigrateFromV2(json),
                 3 => MigrateFromV3(json),
+                4 => MigrateFromV4(json),
+                5 => MigrateFromV5(json),
                 PortableProfile.CurrentSchemaVersion => JsonSerializer.Deserialize<PortableProfile>(
                     json,
                     JsonSettingsStore.SerializerOptions),
@@ -168,6 +170,44 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                     {
                         WhisperLanguage = WhisperLanguagePreference.Automatic,
                     },
+                },
+            };
+    }
+
+    private static PortableProfile? MigrateFromV4(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<PortableProfile>(
+            json,
+            JsonSettingsStore.SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = PortableProfile.CurrentSchemaVersion,
+                Preferences = legacy.Preferences with
+                {
+                    LivePreviewEnabled = UserPreferences.Default.LivePreviewEnabled,
+                    OverlayPosition = UserPreferences.Default.OverlayPosition,
+                },
+            };
+    }
+
+    private static PortableProfile? MigrateFromV5(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<PortableProfile>(
+            json,
+            JsonSettingsStore.SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = PortableProfile.CurrentSchemaVersion,
+                Preferences = legacy.Preferences with
+                {
+                    PillDesignWithoutWords = UserPreferences.Default.PillDesignWithoutWords,
+                    PillDesignWithWords = UserPreferences.Default.PillDesignWithWords,
+                    PlayRecordingSounds = UserPreferences.Default.PlayRecordingSounds,
+                    RecordingSoundPairing = UserPreferences.Default.RecordingSoundPairing,
                 },
             };
     }

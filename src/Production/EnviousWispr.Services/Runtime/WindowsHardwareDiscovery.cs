@@ -7,10 +7,19 @@ namespace EnviousWispr.Services.Runtime;
 
 public sealed class WindowsHardwareDiscovery : IHardwareDiscovery
 {
+    private readonly string? _cudaRuntimeDirectory;
+
+    public WindowsHardwareDiscovery(string? cudaRuntimeDirectory = null)
+    {
+        _cudaRuntimeDirectory = string.IsNullOrWhiteSpace(cudaRuntimeDirectory)
+            ? null
+            : Path.GetFullPath(cudaRuntimeDirectory);
+    }
+
     public Task<HardwareSnapshot> ProbeAsync(CancellationToken cancellationToken = default) =>
         Task.Run(() => Probe(cancellationToken), cancellationToken);
 
-    private static HardwareSnapshot Probe(CancellationToken cancellationToken)
+    private HardwareSnapshot Probe(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var status = HardwareProbeStatus.Complete;
@@ -47,7 +56,7 @@ public sealed class WindowsHardwareDiscovery : IHardwareDiscovery
         var directMlAvailable = ProbeNativeLibrary("DirectML.dll");
         var cuda = ProbeCudaDriver();
         var onnxRuntimeCudaDependencies = CudaRuntimeDependencyProbe.IsComplete(
-            Environment.GetEnvironmentVariable("ENVIOUSWISPR_CUDA_RUNTIME_DIR"));
+            _cudaRuntimeDirectory ?? Environment.GetEnvironmentVariable("ENVIOUSWISPR_CUDA_RUNTIME_DIR"));
         return new HardwareSnapshot(
             status,
             CurrentArchitecture(),

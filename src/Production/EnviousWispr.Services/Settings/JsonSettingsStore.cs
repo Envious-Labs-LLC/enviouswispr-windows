@@ -59,6 +59,8 @@ public sealed class JsonSettingsStore : ISettingsStore
                 4 => MigrateFromV4(json),
                 5 => MigrateFromV5(json),
                 6 => MigrateFromV6(json),
+                7 => MigrateFromV7(json),
+                8 => MigrateFromV8(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -275,6 +277,40 @@ public sealed class JsonSettingsStore : ISettingsStore
             {
                 SchemaVersion = AppSettings.CurrentSchemaVersion,
                 Observability = ObservabilityPreferences.Default,
+            };
+    }
+
+    private static AppSettings? MigrateFromV7(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = AppSettings.CurrentSchemaVersion,
+                Preferences = legacy.Preferences with
+                {
+                    LivePreviewEnabled = UserPreferences.Default.LivePreviewEnabled,
+                    OverlayPosition = UserPreferences.Default.OverlayPosition,
+                },
+            };
+    }
+
+    private static AppSettings? MigrateFromV8(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = AppSettings.CurrentSchemaVersion,
+                Preferences = legacy.Preferences with
+                {
+                    PillDesignWithoutWords = UserPreferences.Default.PillDesignWithoutWords,
+                    PillDesignWithWords = UserPreferences.Default.PillDesignWithWords,
+                    PlayRecordingSounds = UserPreferences.Default.PlayRecordingSounds,
+                    RecordingSoundPairing = UserPreferences.Default.RecordingSoundPairing,
+                },
             };
     }
 

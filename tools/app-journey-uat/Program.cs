@@ -1,7 +1,9 @@
 using EnviousWispr.ASR;
+using EnviousWispr.Core.Settings;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.ModelDelivery;
 using EnviousWispr.Services.Runtime;
+using EnviousWispr.Services.Settings;
 using NAudio.Codecs;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
@@ -19,6 +21,10 @@ const string ReviewedFrenchFixtureHash =
 var liveMicrophone = args.Any(argument => string.Equals(
     argument,
     "--live-microphone",
+    StringComparison.OrdinalIgnoreCase));
+var livePreview = args.Any(argument => string.Equals(
+    argument,
+    "--live-preview",
     StringComparison.OrdinalIgnoreCase));
 var repositoryRoot = FindRepositoryRoot(AppContext.BaseDirectory);
 var appExecutable = Path.Combine(
@@ -41,6 +47,10 @@ var targetExecutable = Path.Combine(
     "net10.0-windows10.0.26100.0",
     "EnviousWispr.Delivery.Target.Uat.exe");
 var modelDirectory = Path.Combine(repositoryRoot, "models", WhisperTranscriptionEngine.ModelId);
+var previewModelDirectory = Path.Combine(
+    repositoryRoot,
+    "models",
+    WhisperTranscriptionEngine.PreviewModelId);
 var fixturePath = Path.Combine(
     repositoryRoot,
     "tools",
@@ -57,6 +67,11 @@ if (!new LocalWhisperModelProbe().Probe(modelDirectory).QuantizedComplete)
     throw new DirectoryNotFoundException(
         "The gitignored Whisper large-v3-turbo quantized model is required for journey UAT.");
 }
+if (livePreview && !new LocalWhisperModelProbe().Probe(previewModelDirectory).PreviewSmallComplete)
+{
+    throw new DirectoryNotFoundException(
+        "The gitignored Whisper small preview model is required for live-preview journey UAT.");
+}
 
 EnsureNoUnownedProcesses("EnviousWispr.App", "EnviousWispr.Delivery.Target.Uat");
 
@@ -64,7 +79,24 @@ var runId = Guid.NewGuid().ToString("N");
 var uatDirectory = Path.Combine(Path.GetTempPath(), $"EnviousWispr-AppJourney-Uat-{runId}");
 Directory.CreateDirectory(uatDirectory);
 Directory.CreateDirectory(Path.Combine(uatDirectory, "no-preview-model"));
-var diagnosticPath = Path.Combine(uatDirectory, "profile", "diagnostics", "app.jsonl");
+var profileDirectory = Path.Combine(uatDirectory, "profile");
+Directory.CreateDirectory(profileDirectory);
+if (livePreview)
+{
+    var livePreviewSettings = AppSettings.Default with
+    {
+        HasCompletedOnboarding = true,
+        Preferences = AppSettings.Default.Preferences with
+        {
+            LivePreviewEnabled = true,
+            PillDesignWithWords = RecordingPillDesign.ReadingWell,
+        },
+    };
+    await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"))
+        .SaveAsync(livePreviewSettings);
+}
+
+var diagnosticPath = Path.Combine(profileDirectory, "diagnostics", "app.jsonl");
 var targetResultPath = Path.Combine(uatDirectory, "target-result.json");
 var readyEventName = $@"Local\EnviousLabs.EnviousWispr.PerformanceUat.{runId}.ready";
 var runtimeEventName = $@"Local\EnviousLabs.EnviousWispr.PerformanceUat.{runId}.runtime";
@@ -108,15 +140,20 @@ try
         UseShellExecute = false,
         WorkingDirectory = Path.GetDirectoryName(appExecutable)!,
     };
-    appStart.Environment["ENVIOUSWISPR_DATA_DIRECTORY"] = Path.Combine(uatDirectory, "profile");
+    appStart.Environment["ENVIOUSWISPR_DATA_DIRECTORY"] = profileDirectory;
     appStart.Environment["ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX"] = $"journey-{runId}";
     appStart.Environment["ENVIOUSWISPR_UAT_READY_EVENT"] = readyEventName;
     appStart.Environment["ENVIOUSWISPR_UAT_RUNTIME_READY_EVENT"] = runtimeEventName;
     appStart.Environment["ENVIOUSWISPR_ASR_ENGINE"] = "Whisper";
     appStart.Environment["ENVIOUSWISPR_ASR_LANGUAGE"] = "fr";
     appStart.Environment["ENVIOUSWISPR_MODEL_DIRECTORY"] = modelDirectory;
-    appStart.Environment["ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY"] =
-        Path.Combine(uatDirectory, "no-preview-model");
+    appStart.Environment["ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY"] = livePreview
+        ? previewModelDirectory
+        : Path.Combine(uatDirectory, "no-preview-model");
+    if (livePreview)
+    {
+        appStart.Environment["ENVIOUSWISPR_UAT_LIVE_PREVIEW"] = "1";
+    }
     appStart.Environment["ENVIOUSWISPR_POLISH_PROVIDER"] = "None";
     if (liveMicrophone)
     {
@@ -137,8 +174,12 @@ try
     runtimeReady = runtimeEvent.WaitOne(TimeSpan.FromSeconds(30));
     if (!shellReady || !runtimeReady || app.HasExited)
     {
+        var startupEvents = string.Join(",", ReadDiagnosticEvents(diagnosticPath));
         throw new InvalidOperationException(
-            "The production shell or final-ASR worker did not become ready.");
+            $"The production shell or final-ASR worker did not become ready " +
+            $"(shellReady={shellReady}, runtimeReady={runtimeReady}, " +
+            $"appExited={app.HasExited}, exitCode={(app.HasExited ? app.ExitCode : null)}, " +
+            $"events={startupEvents}).");
     }
 
     ownedWorkerIds = ChildProcessIds(app.Id, "EnviousWispr.RuntimeWorker").ToArray();
@@ -214,6 +255,10 @@ try
 
     var diagnosticEvents = ReadDiagnosticEvents(diagnosticPath);
     RequireProductionJourneyEvents(diagnosticEvents);
+    if (livePreview)
+    {
+        RequireLivePreviewJourneyEvents(diagnosticEvents);
+    }
     var productionStagesObserved = true;
 
     ownedWorkerCount = ownedWorkerIds.Count(IsProcessRunning);
@@ -235,6 +280,10 @@ try
         journeyCompleted,
         targetObserved,
         productionStagesObserved,
+        livePreview,
+        livePreviewUpdated = livePreview && diagnosticEvents.Any(value => value.StartsWith(
+            "LivePreviewUpdated/",
+            StringComparison.Ordinal)),
         appExitedCleanly,
         ownedWorkerStartedCount = ownedWorkerIds.Length,
         ownedWorkerCount,
@@ -459,6 +508,19 @@ static void RequireProductionJourneyEvents(IReadOnlyList<string> events)
     {
         throw new InvalidOperationException(
             $"The production journey omitted required content-free stages: {string.Join(", ", missing)}.");
+    }
+}
+
+static void RequireLivePreviewJourneyEvents(IReadOnlyList<string> events)
+{
+    var required = new[] { "LivePreviewStarted", "LivePreviewUpdated", "LivePreviewStopped" };
+    var missing = required.Where(eventName => !events.Any(value => value.StartsWith(
+        eventName + '/',
+        StringComparison.Ordinal))).ToArray();
+    if (missing.Length > 0)
+    {
+        throw new InvalidOperationException(
+            $"The live-preview journey omitted content-free stages: {string.Join(", ", missing)}.");
     }
 }
 

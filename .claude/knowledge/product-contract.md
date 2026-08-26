@@ -19,6 +19,21 @@ without a dedicated GPU.
 - Settings, dictionaries, snippets, history preferences, and reusable user data must be portable through
   import and export. Contacts integration is intentionally omitted from Windows parity.
 
+## macOS interaction parity
+
+- The main navigation uses the macOS product groups and names: APP (History, What’s New, Appearance),
+  RECORD (Transcription, Live Preview, Microphone, Sounds, Keybinds), PROCESS (AI Polish, Your Words),
+  OUTPUT (Clipboard), and SYSTEM (Permissions, Check for Updates, Open Source Licenses).
+- Appearance follows the Windows setting by default and also offers explicit Light and Dark modes.
+- The recording pill can appear at the top or bottom of the active monitor.
+- The three recording-pill designs are Capsule, Reading Well, and Level Rail. Capsule and Level Rail are
+  wordless choices. Reading Well is the Live Preview choice and grows to show up to five lines of the
+  display-only preview. The app remembers the wordless and with-words selections separately.
+- Recording sounds are optional and off by default. Whisper Tick is the fresh-install selection. The
+  ordered catalog is Dust Mote, Velvet Hush, Muted Confirm, Whisper Tick, Round Pebble, Paper Tap, Soft
+  Hush, Low Nod, Cloud Pop, Velvet Tap, Satin Shift, and Air Glint. Settings can preview the selected
+  start/stop pair even while the master switch is off, but never during an active recording.
+
 ## Privacy boundary
 
 - Audio never leaves the device.

@@ -253,6 +253,59 @@ public sealed class JsonSettingsStoreTests
     }
 
     [Fact]
+    public async Task LoadMigratesPhaseTwentyThreeSettingsWithMacAppearanceDefaults()
+    {
+        await WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "settings.json");
+            var legacy = CreatePopulatedSettings() with { SchemaVersion = 7 };
+            var json = System.Text.Json.JsonSerializer.Serialize(
+                legacy,
+                JsonSettingsStore.SerializerOptions);
+            var root = JsonNode.Parse(json)!.AsObject();
+            root["preferences"]!.AsObject().Remove("livePreviewEnabled");
+            root["preferences"]!.AsObject().Remove("overlayPosition");
+            await File.WriteAllTextAsync(path, root.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var result = await new JsonSettingsStore(path).LoadAsync();
+
+            Assert.Equal(SettingsLoadStatus.Migrated, result.Status);
+            Assert.Equal(7, result.SourceSchemaVersion);
+            Assert.False(result.Settings.Preferences.LivePreviewEnabled);
+            Assert.Equal(OverlayPillPosition.Top, result.Settings.Preferences.OverlayPosition);
+        });
+    }
+
+    [Fact]
+    public async Task LoadMigratesPhaseTwentyFourSettingsWithPillAndSoundDefaults()
+    {
+        await WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "settings.json");
+            var legacy = CreatePopulatedSettings() with { SchemaVersion = 8 };
+            var json = System.Text.Json.JsonSerializer.Serialize(
+                legacy,
+                JsonSettingsStore.SerializerOptions);
+            var root = JsonNode.Parse(json)!.AsObject();
+            var preferences = root["preferences"]!.AsObject();
+            preferences.Remove("pillDesignWithoutWords");
+            preferences.Remove("pillDesignWithWords");
+            preferences.Remove("playRecordingSounds");
+            preferences.Remove("recordingSoundPairing");
+            await File.WriteAllTextAsync(path, root.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var result = await new JsonSettingsStore(path).LoadAsync();
+
+            Assert.Equal(SettingsLoadStatus.Migrated, result.Status);
+            Assert.Equal(8, result.SourceSchemaVersion);
+            Assert.Equal(RecordingPillDesign.Classic, result.Settings.Preferences.PillDesignWithoutWords);
+            Assert.Equal(RecordingPillDesign.ReadingWell, result.Settings.Preferences.PillDesignWithWords);
+            Assert.False(result.Settings.Preferences.PlayRecordingSounds);
+            Assert.Equal(RecordingSoundPairing.WhisperTick, result.Settings.Preferences.RecordingSoundPairing);
+        });
+    }
+
+    [Fact]
     public async Task LoadRejectsFutureSchemaWithoutChangingSource()
     {
         await WithTestDirectoryAsync(async directory =>
@@ -316,6 +369,12 @@ public sealed class JsonSettingsStoreTests
                 "http://127.0.0.1:11434"),
             History = new HistoryPreferences(IsEnabled: false, RetentionDays: 14),
             Theme = AppTheme.Dark,
+            LivePreviewEnabled = true,
+            OverlayPosition = OverlayPillPosition.Bottom,
+            PillDesignWithoutWords = RecordingPillDesign.LevelRail,
+            PillDesignWithWords = RecordingPillDesign.ReadingWell,
+            PlayRecordingSounds = true,
+            RecordingSoundPairing = RecordingSoundPairing.AirGlint,
         },
         UserData = new ReusableUserData(
             [new CustomWordEntry("envy wisper", "EnviousWispr")],

@@ -153,6 +153,59 @@ public sealed class PortableProfileServiceTests
     }
 
     [Fact]
+    public async Task ImportMigratesPhaseTwentyThreeProfileWithMacAppearanceDefaults()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "profile.enviouswispr.json");
+            var current = JsonSettingsStoreTests.CreatePopulatedSettings().ToPortableProfile();
+            var json = JsonSerializer.Serialize(
+                current with { SchemaVersion = 4 },
+                JsonSettingsStore.SerializerOptions);
+            var root = JsonNode.Parse(json)!.AsObject();
+            root["preferences"]!.AsObject().Remove("livePreviewEnabled");
+            root["preferences"]!.AsObject().Remove("overlayPosition");
+            await File.WriteAllTextAsync(path, root.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var result = await new JsonPortableProfileService().ImportAsync(path);
+
+            Assert.Equal(PortableProfileImportStatus.Imported, result.Status);
+            Assert.Equal(PortableProfile.CurrentSchemaVersion, result.Profile?.SchemaVersion);
+            Assert.False(result.Profile?.Preferences.LivePreviewEnabled);
+            Assert.Equal(OverlayPillPosition.Top, result.Profile?.Preferences.OverlayPosition);
+        });
+    }
+
+    [Fact]
+    public async Task ImportMigratesPhaseTwentyFourProfileWithPillAndSoundDefaults()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "profile.enviouswispr.json");
+            var current = JsonSettingsStoreTests.CreatePopulatedSettings().ToPortableProfile();
+            var json = JsonSerializer.Serialize(
+                current with { SchemaVersion = 5 },
+                JsonSettingsStore.SerializerOptions);
+            var root = JsonNode.Parse(json)!.AsObject();
+            var preferences = root["preferences"]!.AsObject();
+            preferences.Remove("pillDesignWithoutWords");
+            preferences.Remove("pillDesignWithWords");
+            preferences.Remove("playRecordingSounds");
+            preferences.Remove("recordingSoundPairing");
+            await File.WriteAllTextAsync(path, root.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var result = await new JsonPortableProfileService().ImportAsync(path);
+
+            Assert.Equal(PortableProfileImportStatus.Imported, result.Status);
+            Assert.Equal(PortableProfile.CurrentSchemaVersion, result.Profile?.SchemaVersion);
+            Assert.Equal(RecordingPillDesign.Classic, result.Profile?.Preferences.PillDesignWithoutWords);
+            Assert.Equal(RecordingPillDesign.ReadingWell, result.Profile?.Preferences.PillDesignWithWords);
+            Assert.False(result.Profile?.Preferences.PlayRecordingSounds);
+            Assert.Equal(RecordingSoundPairing.WhisperTick, result.Profile?.Preferences.RecordingSoundPairing);
+        });
+    }
+
+    [Fact]
     public void ApplyingImportedProfilePreservesMachineLocalLifecycleState()
     {
         var current = AppSettings.Default with

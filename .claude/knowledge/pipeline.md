@@ -22,7 +22,9 @@ If a stage fails, return the last valid text. Optional polish failure returns de
 
 Preview consumes audio snapshots through a separate small multilingual Whisper engine. It may revise its
 own display, but its text never enters final processing, history, analytics, or delivery. Stop and release
-preview resources before final ASR begins. Preview failure must not fail recording.
+preview resources before final ASR begins. Preview failure must not fail recording. When enabled, the
+Reading Well pill displays the latest preview and grows from one to five lines; Capsule and Level Rail
+remain wordless designs.
 
 ## Session behavior
 
