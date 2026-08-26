@@ -5,10 +5,9 @@ namespace EnviousWispr.Audio;
 
 public sealed class WasapiDeviceCatalog : IAudioDeviceCatalog
 {
-    private readonly object _gate = new();
     private readonly MMDeviceEnumerator _enumerator;
     private readonly MMDeviceNotificationClient _notifications;
-    private readonly HashSet<string> _knownCaptureDeviceIds = new(StringComparer.Ordinal);
+    private readonly AudioDeviceChangeTracker _changeTracker = new();
     private bool _disposed;
 
     public WasapiDeviceCatalog()
@@ -55,14 +54,7 @@ public sealed class WasapiDeviceCatalog : IAudioDeviceCatalog
             }
         }
 
-        lock (_gate)
-        {
-            _knownCaptureDeviceIds.Clear();
-            foreach (var device in result)
-            {
-                _knownCaptureDeviceIds.Add(device.Id.Value);
-            }
-        }
+        _changeTracker.ReplaceKnownCaptureDevices(result.Select(device => device.Id));
 
         return Task.FromResult<IReadOnlyList<AudioDeviceInfo>>(result);
     }
@@ -86,50 +78,27 @@ public sealed class WasapiDeviceCatalog : IAudioDeviceCatalog
     private void OnDeviceAdded(object? sender, DeviceNotificationEventArgs args)
     {
         var affectsCapture = TryIsCaptureDevice(args.DeviceId);
-        if (affectsCapture)
-        {
-            lock (_gate)
-            {
-                _knownCaptureDeviceIds.Add(args.DeviceId);
-            }
-        }
-
-        Raise(args.DeviceId, AudioDeviceChangeKind.Added, affectsCapture);
+        Raise(_changeTracker.Added(args.DeviceId, affectsCapture));
     }
 
     private void OnDeviceRemoved(object? sender, DeviceNotificationEventArgs args)
     {
-        bool affectsCapture;
-        lock (_gate)
-        {
-            affectsCapture = _knownCaptureDeviceIds.Remove(args.DeviceId);
-        }
-
-        Raise(args.DeviceId, AudioDeviceChangeKind.Removed, affectsCapture);
+        Raise(_changeTracker.Removed(args.DeviceId));
     }
 
     private void OnDeviceStateChanged(object? sender, DeviceStateChangedEventArgs args)
     {
         var affectsCapture = TryIsCaptureDevice(args.DeviceId);
-        lock (_gate)
-        {
-            if (affectsCapture && args.NewState == DeviceState.Active)
-            {
-                _knownCaptureDeviceIds.Add(args.DeviceId);
-            }
-            else if (args.NewState != DeviceState.Active)
-            {
-                affectsCapture = _knownCaptureDeviceIds.Remove(args.DeviceId) || affectsCapture;
-            }
-        }
-
-        Raise(args.DeviceId, AudioDeviceChangeKind.StateChanged, affectsCapture);
+        Raise(_changeTracker.StateChanged(
+            args.DeviceId,
+            affectsCapture,
+            args.NewState == DeviceState.Active));
     }
 
     private void OnDefaultDeviceChanged(object? sender, DefaultDeviceChangedEventArgs args)
     {
         var affectsCapture = args.Flow is DataFlow.Capture or DataFlow.All;
-        Raise(args.DeviceId ?? string.Empty, AudioDeviceChangeKind.DefaultChanged, affectsCapture);
+        Raise(AudioDeviceChangeTracker.DefaultChanged(args.DeviceId, affectsCapture));
     }
 
     private bool TryIsCaptureDevice(string deviceId)
@@ -141,15 +110,9 @@ public sealed class WasapiDeviceCatalog : IAudioDeviceCatalog
         }
         catch
         {
-            lock (_gate)
-            {
-                return _knownCaptureDeviceIds.Contains(deviceId);
-            }
+            return false;
         }
     }
 
-    private void Raise(string deviceId, AudioDeviceChangeKind kind, bool affectsCapture) =>
-        DevicesChanged?.Invoke(
-            this,
-            new AudioDeviceChange(new AudioDeviceId(deviceId), kind, affectsCapture));
+    private void Raise(AudioDeviceChange change) => DevicesChanged?.Invoke(this, change);
 }
