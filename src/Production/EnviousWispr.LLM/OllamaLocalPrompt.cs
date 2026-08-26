@@ -2,7 +2,7 @@ namespace EnviousWispr.LLM;
 
 public static class OllamaLocalPrompt
 {
-    public const string SystemPrompt =
+    private const string RawSystemPrompt =
         """
         Clean dictated speech for direct paste. Output only the cleaned text, in the input language.
 
@@ -36,6 +36,11 @@ public static class OllamaLocalPrompt
         - pick up groceries
         - finish the report for Sarah
         """;
+
+    public static readonly string SystemPrompt = RawSystemPrompt.Replace(
+        "\r\n",
+        "\n",
+        StringComparison.Ordinal);
 
     public static string BuildUserMessage(string transcript) =>
         $"Transcript to clean:\n\n{transcript}";
