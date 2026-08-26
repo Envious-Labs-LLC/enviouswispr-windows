@@ -13,6 +13,9 @@ public static class AppSettingsValidator
         if (settings is null ||
             settings.SchemaVersion != AppSettings.CurrentSchemaVersion ||
             settings.LaunchCount is < 0 or int.MaxValue ||
+            (settings.PreferredMicrophoneId is not null &&
+                (string.IsNullOrWhiteSpace(settings.PreferredMicrophoneId) ||
+                 settings.PreferredMicrophoneId.Length > 2_048)) ||
             !IsValid(settings.Preferences) ||
             !IsValid(settings.UserData))
         {

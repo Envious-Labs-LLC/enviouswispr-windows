@@ -14,8 +14,10 @@ public sealed class WindowsCredentialApiKeyStoreTests
         try
         {
             Assert.Equal(ApiKeyReadStatus.Missing, store.Read(PolishProvider.OpenAI).Status);
+            Assert.Equal(ApiKeyReadStatus.Missing, store.GetStatus(PolishProvider.OpenAI));
 
             store.Store(PolishProvider.OpenAI, "first-test-value");
+            Assert.Equal(ApiKeyReadStatus.Found, store.GetStatus(PolishProvider.OpenAI));
             var first = store.Read(PolishProvider.OpenAI);
             Assert.Equal(ApiKeyReadStatus.Found, first.Status);
             Assert.Equal("first-test-value", first.Value);
@@ -28,6 +30,7 @@ public sealed class WindowsCredentialApiKeyStoreTests
             store.Delete(PolishProvider.OpenAI);
             store.Delete(PolishProvider.OpenAI);
             Assert.Equal(ApiKeyReadStatus.Missing, store.Read(PolishProvider.OpenAI).Status);
+            Assert.Equal(ApiKeyReadStatus.Missing, store.GetStatus(PolishProvider.OpenAI));
         }
         finally
         {
@@ -42,7 +45,19 @@ public sealed class WindowsCredentialApiKeyStoreTests
             $"EnviousLabs.EnviousWispr.Tests.{Guid.NewGuid():N}");
 
         Assert.Throws<ArgumentOutOfRangeException>(() => store.Read(PolishProvider.EgOne));
+        Assert.Throws<ArgumentOutOfRangeException>(() => store.GetStatus(PolishProvider.EgOne));
         Assert.Throws<ArgumentOutOfRangeException>(() => store.Store(PolishProvider.None, "value"));
         Assert.Throws<ArgumentOutOfRangeException>(() => store.Delete(PolishProvider.Ollama));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("contains spaces")]
+    [InlineData("contains.period")]
+    [InlineData("contains/slash")]
+    public void IsolatedUatScopeRejectsUnsafeSuffixes(string suffix)
+    {
+        Assert.Throws<ArgumentException>(() =>
+            WindowsCredentialApiKeyStore.CreateForIsolatedUat(suffix));
     }
 }

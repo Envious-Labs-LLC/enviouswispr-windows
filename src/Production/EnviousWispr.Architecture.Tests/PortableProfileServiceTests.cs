@@ -27,6 +27,7 @@ public sealed class PortableProfileServiceTests
             var propertyNames = DescendantPropertyNames(document.RootElement).ToHashSet(StringComparer.OrdinalIgnoreCase);
             Assert.DoesNotContain("launchCount", propertyNames);
             Assert.DoesNotContain("hasCompletedOnboarding", propertyNames);
+            Assert.DoesNotContain("preferredMicrophoneId", propertyNames);
             Assert.DoesNotContain("credential", propertyNames);
             Assert.DoesNotContain("apiKey", propertyNames);
             Assert.DoesNotContain("secret", propertyNames);
@@ -132,13 +133,19 @@ public sealed class PortableProfileServiceTests
     [Fact]
     public void ApplyingImportedProfilePreservesMachineLocalLifecycleState()
     {
-        var current = AppSettings.Default with { LaunchCount = 42, HasCompletedOnboarding = true };
+        var current = AppSettings.Default with
+        {
+            LaunchCount = 42,
+            HasCompletedOnboarding = true,
+            PreferredMicrophoneId = "machine-local-microphone",
+        };
         var imported = JsonSettingsStoreTests.CreatePopulatedSettings().ToPortableProfile();
 
         var applied = current.Apply(imported);
 
         Assert.Equal(42, applied.LaunchCount);
         Assert.True(applied.HasCompletedOnboarding);
+        Assert.Equal("machine-local-microphone", applied.PreferredMicrophoneId);
         Assert.Equal(imported.Preferences, applied.Preferences);
         Assert.Equal(imported.UserData, applied.UserData);
     }

@@ -31,6 +31,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan _minimumHoldDuration;
     private readonly TextDeliveryOptions _deliveryOptions;
+    private readonly AudioDeviceId? _preferredAudioDevice;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private bool _disposed;
 
@@ -39,7 +40,8 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         IForegroundTargetProvider targetProvider,
         TimeProvider? timeProvider = null,
         TimeSpan? minimumHoldDuration = null,
-        TextDeliveryOptions? deliveryOptions = null)
+        TextDeliveryOptions? deliveryOptions = null,
+        AudioDeviceId? preferredAudioDevice = null)
     {
         ArgumentNullException.ThrowIfNull(audioCapture);
         ArgumentNullException.ThrowIfNull(targetProvider);
@@ -48,6 +50,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         _timeProvider = timeProvider ?? TimeProvider.System;
         _minimumHoldDuration = minimumHoldDuration ?? TimeSpan.FromMilliseconds(100);
         _deliveryOptions = deliveryOptions ?? TextDeliveryOptions.Default;
+        _preferredAudioDevice = preferredAudioDevice;
         ArgumentOutOfRangeException.ThrowIfLessThan(_minimumHoldDuration, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(
             _minimumHoldDuration,
@@ -81,7 +84,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
 
             var sessionId = DictationSessionId.Create();
             var started = await _audioCapture
-                .StartAsync(new AudioCaptureRequest(sessionId), cancellationToken)
+                .StartAsync(new AudioCaptureRequest(sessionId, _preferredAudioDevice), cancellationToken)
                 .ConfigureAwait(false);
             if (!started.Succeeded)
             {

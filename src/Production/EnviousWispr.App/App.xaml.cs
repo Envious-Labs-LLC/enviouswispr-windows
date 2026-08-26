@@ -3,6 +3,7 @@ using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.History;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.ASR;
@@ -12,10 +13,12 @@ using EnviousWispr.Pipeline;
 using EnviousWispr.Services.Diagnostics;
 using EnviousWispr.Services.Credentials;
 using EnviousWispr.Services.Input;
+using EnviousWispr.Services.History;
 using EnviousWispr.Services.Lifecycle;
 using EnviousWispr.Services.Runtime;
 using EnviousWispr.Services.Settings;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Windowing;
 using System.Security;
 
 namespace EnviousWispr.App;
@@ -26,6 +29,9 @@ public partial class App : Application, IAsyncDisposable
 
     private readonly JsonLineFileLogger _logger;
     private readonly JsonSettingsStore _settingsStore;
+    private readonly JsonPortableProfileService _profileService = new();
+    private readonly JsonHistoryStore _historyStore;
+    private readonly WindowsCredentialApiKeyStore _credentialStore;
     private readonly RuntimeResourceArbiter _resourceArbiter = new();
     private readonly SemaphoreSlim _previewGate = new(1, 1);
     private readonly DeterministicTextPipeline _deterministicTextPipeline = new();
@@ -48,21 +54,38 @@ public partial class App : Application, IAsyncDisposable
     private Task? _previewLoop;
     private long _previewSequence;
     private MainWindow? _window;
+    private WindowsTrayIcon? _trayIcon;
     private IReadOnlyList<CustomWordEntry> _customWords = [];
+    private AppSettings _settings = AppSettings.Default;
     private DeterministicTextOptions _deterministicTextOptions =
         DeterministicTextOptions.From(DictationPreferences.Default);
     private bool _disposed;
+    private bool _exitRequested;
+    private bool _backgroundNoticeShown;
 
     public App()
     {
         InitializeComponent();
 
-        var dataDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Envious Labs",
-            "EnviousWispr");
+        var uatCredentialSuffix = Environment.GetEnvironmentVariable(
+            "ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX");
+        _credentialStore = string.IsNullOrWhiteSpace(uatCredentialSuffix)
+            ? new WindowsCredentialApiKeyStore()
+            : WindowsCredentialApiKeyStore.CreateForIsolatedUat(uatCredentialSuffix);
+
+        var dataDirectory = Environment.GetEnvironmentVariable("ENVIOUSWISPR_DATA_DIRECTORY");
+        if (string.IsNullOrWhiteSpace(dataDirectory))
+        {
+            dataDirectory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Envious Labs",
+                "EnviousWispr");
+        }
+
+        dataDirectory = Path.GetFullPath(dataDirectory);
         _logger = new JsonLineFileLogger(Path.Combine(dataDirectory, "diagnostics", "app.jsonl"));
         _settingsStore = new JsonSettingsStore(Path.Combine(dataDirectory, "settings.json"));
+        _historyStore = new JsonHistoryStore(Path.Combine(dataDirectory, "history.json"));
 
         UnhandledException += (_, eventArgs) =>
         {
@@ -95,6 +118,7 @@ public partial class App : Application, IAsyncDisposable
         {
             LaunchCount = checked(loadResult.Settings.LaunchCount + 1),
         };
+        _settings = settings;
         _customWords = settings.UserData.CustomWords;
         _deterministicTextOptions = DeterministicTextOptions.From(settings.Preferences.Dictation);
         ConfigurePolish(settings.Preferences.Polish);
@@ -136,9 +160,21 @@ public partial class App : Application, IAsyncDisposable
                 AppFailureCategory.AccessDenied));
         }
 
-        _window = new MainWindow(settings, loadResult.Status);
+        _window = new MainWindow(
+            settings,
+            loadResult.Status,
+            _settingsStore,
+            _profileService,
+            _historyStore,
+            _credentialStore);
+        _window.SettingsChanged += OnSettingsChanged;
+        _window.SessionStatusChanged += OnSessionStatusChanged;
+        _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosed;
         _window.Activate();
+        ConfigureTrayIcon();
+        await _window.InitializeProductDataAsync().ConfigureAwait(true);
+        _window.FocusInitialControl();
         _window.SetCloudPolishNotice(_cloudPolishConsent?.Notice);
         _window.SetOllamaPolishNotice(_localPolishNotice);
         _window.SetSessionStatus("Preparing local transcription...");
@@ -153,15 +189,112 @@ public partial class App : Application, IAsyncDisposable
             _polishWarmup = ProbeOllamaRuntimeAsync(ollamaProvider, _polishLifetime.Token);
         }
 
+        ApplyOverlayUatState();
+
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellShown));
     }
 
     private async void OnWindowClosed(object sender, WindowEventArgs args)
     {
+        _window?.ShutdownProductWindows();
         (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately();
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellClosed));
         await DisposeAsync().ConfigureAwait(true);
+        if (_window is not null)
+        {
+            _window.SettingsChanged -= OnSettingsChanged;
+            _window.SessionStatusChanged -= OnSessionStatusChanged;
+            _window.AppWindow.Closing -= OnAppWindowClosing;
+        }
         _window = null;
+    }
+
+    private void OnSettingsChanged(AppSettings settings)
+    {
+        _settings = settings;
+        _customWords = settings.UserData.CustomWords;
+        _deterministicTextOptions = DeterministicTextOptions.From(settings.Preferences.Dictation);
+    }
+
+    private void ApplyOverlayUatState()
+    {
+        var requested = Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_OVERLAY_STATE");
+        var status = requested?.Trim().ToLowerInvariant() switch
+        {
+            "recording" => "Recording — release to finish, Escape to cancel",
+            "processing" => "Transcribing locally...",
+            "success" => "Inserted safely in the app you started in",
+            "warning" => "Protected field — copied only; paste manually if intended",
+            "error" => "Local transcription failed safely",
+            _ => null,
+        };
+        if (status is not null)
+        {
+            _window?.SetSessionStatus(status);
+        }
+    }
+
+    private void OnSessionStatusChanged(string status)
+    {
+        try
+        {
+            _trayIcon?.SetStatus(status);
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private void ConfigureTrayIcon()
+    {
+        _trayIcon = new WindowsTrayIcon();
+        _trayIcon.ShowWindowRequested += () => ShowMainWindow(openSettings: false);
+        _trayIcon.OpenSettingsRequested += () => ShowMainWindow(openSettings: true);
+        _trayIcon.ExitRequested += ExitFromTray;
+        _trayIcon.SetStatus("ready");
+    }
+
+    private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
+    {
+        if (_exitRequested)
+        {
+            return;
+        }
+
+        args.Cancel = true;
+        sender.Hide();
+        if (!_backgroundNoticeShown)
+        {
+            _backgroundNoticeShown = true;
+            _trayIcon?.ShowBackgroundNotice();
+        }
+    }
+
+    private void ShowMainWindow(bool openSettings)
+    {
+        _window?.DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_window is null)
+            {
+                return;
+            }
+
+            _window.AppWindow.Show();
+            _window.Activate();
+            if (openSettings)
+            {
+                _window.OpenSettings();
+            }
+        });
+    }
+
+    private void ExitFromTray()
+    {
+        _window?.DispatcherQueue.TryEnqueue(() =>
+        {
+            _exitRequested = true;
+            _window?.Close();
+        });
     }
 
     public async ValueTask DisposeAsync()
@@ -230,6 +363,9 @@ public partial class App : Application, IAsyncDisposable
         _resourceArbiter.Dispose();
         _polishLifetime.Dispose();
         _previewGate.Dispose();
+        _trayIcon?.Dispose();
+        _trayIcon = null;
+        _historyStore.Dispose();
         GC.SuppressFinalize(this);
     }
 
@@ -254,7 +390,10 @@ public partial class App : Application, IAsyncDisposable
         _textDelivery = new ContextAwareTextDelivery(_textTargetAdapter);
         _sessionController = new PushToTalkSessionController(
             _audioCapture,
-            new WindowsForegroundTargetProvider());
+            new WindowsForegroundTargetProvider(),
+            preferredAudioDevice: string.IsNullOrWhiteSpace(_settings.PreferredMicrophoneId)
+                ? null
+                : new EnviousWispr.Core.Audio.AudioDeviceId(_settings.PreferredMicrophoneId));
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
         _window?.SetHotkeyReady(_pushToTalkHook.Gesture.ToString());
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.HotkeyReady));
@@ -272,7 +411,6 @@ public partial class App : Application, IAsyncDisposable
 
         if (provider is PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini)
         {
-            var credentialStore = new WindowsCredentialApiKeyStore();
             var configuredModel = CloudPolishOptions.ModelIdLooksLikeProvider(
                 preferences.ModelId,
                 provider)
@@ -280,9 +418,9 @@ public partial class App : Application, IAsyncDisposable
                 : CloudPolishOptions.DefaultModel(provider);
             _polishProvider = provider switch
             {
-                PolishProvider.OpenAI => new OpenAiPolishProvider(credentialStore, configuredModel),
-                PolishProvider.Anthropic => new AnthropicPolishProvider(credentialStore, configuredModel),
-                PolishProvider.Gemini => new GeminiPolishProvider(credentialStore, configuredModel),
+                PolishProvider.OpenAI => new OpenAiPolishProvider(_credentialStore, configuredModel),
+                PolishProvider.Anthropic => new AnthropicPolishProvider(_credentialStore, configuredModel),
+                PolishProvider.Gemini => new GeminiPolishProvider(_credentialStore, configuredModel),
                 _ => null,
             };
             _cloudPolishConsent = CloudPolishConsent.For(provider);
@@ -876,6 +1014,11 @@ public partial class App : Application, IAsyncDisposable
                             pendingSession.DeliveryOptions)).ConfigureAwait(false);
                     deliveryTimer.Stop();
                     WriteDeliveryEvent(delivery, deliveryTimer.ElapsedMilliseconds);
+                    await SaveHistoryAsync(
+                        transcript,
+                        processed.Output.Text,
+                        polishResult is { Status: PolishAttemptStatus.Polished },
+                        delivery.Delivered).ConfigureAwait(false);
                     await controller.CompleteAsync(sessionId).ConfigureAwait(false);
                     await controller.ResetAsync().ConfigureAwait(false);
                     _window?.DispatcherQueue.TryEnqueue(() =>
@@ -884,6 +1027,11 @@ public partial class App : Application, IAsyncDisposable
                 }
             }
 
+            await SaveHistoryAsync(
+                transcript,
+                processed.Output.Text,
+                polishResult is { Status: PolishAttemptStatus.Polished },
+                wasDelivered: false).ConfigureAwait(false);
             await controller.CompleteAsync(sessionId).ConfigureAwait(false);
             await controller.ResetAsync().ConfigureAwait(false);
             var status = string.IsNullOrWhiteSpace(processed.Output.Text)
@@ -913,6 +1061,39 @@ public partial class App : Application, IAsyncDisposable
             await controller.ResetAsync().ConfigureAwait(false);
             _window?.DispatcherQueue.TryEnqueue(() =>
                 _window?.SetSessionStatus("Local transcription failed safely"));
+        }
+    }
+
+    private async Task SaveHistoryAsync(
+        Transcript transcript,
+        string text,
+        bool wasPolished,
+        bool wasDelivered)
+    {
+        var historyPreferences = _settings.Preferences.History;
+        if (!historyPreferences.IsEnabled || string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        var result = await _historyStore.AddAsync(
+            DictationHistoryEntry.Create(
+                DateTimeOffset.UtcNow,
+                text,
+                transcript.EngineId,
+                wasPolished,
+                wasDelivered),
+            historyPreferences.RetentionDays,
+            DateTimeOffset.UtcNow).ConfigureAwait(false);
+        if (result.Succeeded)
+        {
+            _window?.DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_window is not null)
+                {
+                    _ = _window.NotifyHistoryChangedAsync();
+                }
+            });
         }
     }
 
