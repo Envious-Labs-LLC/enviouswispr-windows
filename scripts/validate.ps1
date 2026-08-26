@@ -70,6 +70,13 @@ try {
     Write-Host "Building production WinUI app and module graph (Release, x64)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "src/Production/EnviousWispr.App/EnviousWispr.App.csproj", "-c", "Release", "--nologo", "-p:Platform=x64")
 
+    Write-Host "Validating the WinUI-bundled runtime worker can launch..."
+    $bundledWorker = Join-Path $repoRoot "src\Production\EnviousWispr.App\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\EnviousWispr.RuntimeWorker.exe"
+    & $bundledWorker 2>$null
+    if ($LASTEXITCODE -ne 2) {
+        throw "The WinUI-bundled runtime worker could not launch (exit $LASTEXITCODE)."
+    }
+
     Write-Host "Building native audio UAT harness (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/audio-uat/EnviousWispr.Audio.Uat.csproj", "-c", "Release", "--nologo")
 
@@ -105,6 +112,9 @@ try {
 
     Write-Host "Building privacy-safe compatibility UAT harness (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/compatibility-uat/EnviousWispr.Compatibility.Uat.csproj", "-c", "Release", "--nologo")
+
+    Write-Host "Building privacy-safe performance UAT harness (Release)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/performance-uat/EnviousWispr.Performance.Uat.csproj", "-c", "Release", "--nologo")
 
     Write-Host "Building native ASR UAT harness (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/asr-uat/EnviousWispr.Asr.Uat.csproj", "-c", "Release", "--nologo")

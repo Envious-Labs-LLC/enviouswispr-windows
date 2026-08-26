@@ -14,26 +14,39 @@ var clips = new Dictionary<string, float[]>(StringComparer.Ordinal)
     ["clip20"] = ReadWaveFile(Path.Combine(audioDirectory, "clip20.wav")),
     ["clip94"] = ReadWaveFile(Path.Combine(audioDirectory, "clip94.wav")),
 };
+var requestedProvider = args.FirstOrDefault()?.ToLowerInvariant() switch
+{
+    null => null,
+    "cpu" => "cpu",
+    "cuda" => "cuda",
+    _ => throw new ArgumentException("Use cpu or cuda, or omit the provider to test both."),
+};
 
-var cpu = await RunProviderSafelyAsync(
-    new ParakeetEngineOptions(
-        modelDirectory,
-        RuntimeProviderKind.Cpu,
-        ParakeetModelPack.Quantized,
-        IntraOpThreads: 8),
-    clips);
-var cuda = await RunProviderSafelyAsync(
-    new ParakeetEngineOptions(
-        modelDirectory,
-        RuntimeProviderKind.Cuda,
-        ParakeetModelPack.FullPrecision,
-        IntraOpThreads: 1,
-        CudaRuntimeDirectory: Environment.GetEnvironmentVariable("ENVIOUSWISPR_CUDA_RUNTIME_DIR")),
-    clips);
-var isolated = await RunIsolatedAsync(repositoryRoot, modelDirectory, clips);
+var cpu = requestedProvider is null or "cpu"
+    ? await RunProviderSafelyAsync(
+        new ParakeetEngineOptions(
+            modelDirectory,
+            RuntimeProviderKind.Cpu,
+            ParakeetModelPack.Quantized,
+            IntraOpThreads: 8),
+        clips)
+    : null;
+var cuda = requestedProvider is null or "cuda"
+    ? await RunProviderSafelyAsync(
+        new ParakeetEngineOptions(
+            modelDirectory,
+            RuntimeProviderKind.Cuda,
+            ParakeetModelPack.FullPrecision,
+            IntraOpThreads: 1,
+            CudaRuntimeDirectory: Environment.GetEnvironmentVariable("ENVIOUSWISPR_CUDA_RUNTIME_DIR")),
+        clips)
+    : null;
+var isolated = requestedProvider is null or "cuda"
+    ? await RunIsolatedAsync(repositoryRoot, modelDirectory, clips)
+    : null;
 
 Console.WriteLine(JsonSerializer.Serialize(new { cpu, cuda, isolated }));
-return cpu.Passed && cuda.Passed && isolated.Passed ? 0 : 6;
+return (cpu?.Passed ?? true) && (cuda?.Passed ?? true) && (isolated?.Passed ?? true) ? 0 : 6;
 
 static async Task<IsolatedResult> RunIsolatedAsync(
     string repositoryRoot,
