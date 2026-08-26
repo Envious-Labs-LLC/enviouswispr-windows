@@ -42,7 +42,9 @@ public sealed class RuntimeWorkerSupervisorTests
     {
         var supervisor = new RuntimeWorkerSupervisor(
             WorkerPath(),
-            ["--health-delay-ms", "1000"],
+            // Keep the simulated wedge far beyond the timeout even on a loaded CI runner,
+            // where timer callbacks can be delayed long enough for a one-second worker to win.
+            ["--health-delay-ms", "10000"],
             maximumRestarts: 0);
 
         var result = await supervisor.StartAsync(TimeSpan.FromMilliseconds(50));
