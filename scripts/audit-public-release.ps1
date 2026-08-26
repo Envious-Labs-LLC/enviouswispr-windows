@@ -55,13 +55,14 @@ try {
         $fixtureManifest.datasetRevision -cne '40ce77cb32a384e4d50a568e1ec39ac804019d33' -or
         $fixtureManifest.license -cne 'CC-BY-4.0' -or
         $fixtureManifest.source -cne 'https://huggingface.co/datasets/PolyAI/minds14' -or
-        @($fixtureManifest.fixtures).Count -ne 11) {
+        @($fixtureManifest.fixtures).Count -ne 12) {
         throw 'The reviewed public Whisper fixture manifest has unapproved provenance.'
     }
 
     $expectedFixtureRows = [System.Collections.Generic.HashSet[string]]::new(
         [StringComparer]::Ordinal)
     @(
+        'en-US/train/0',
         'fr-FR/train/0',
         'de-DE/train/0',
         'de-DE/train/100',
@@ -131,8 +132,7 @@ try {
     $forbiddenExtensions = @('.gguf', '.onnx', '.ort', '.wav', '.mp3', '.pfx', '.p12', '.pem', '.key')
     $forbiddenTracked = @($tracked | Where-Object {
         $extension = [IO.Path]::GetExtension($_).ToLowerInvariant()
-        $isReviewedPublicFixture = $extension -eq '.wav' -and
-            $_.StartsWith('tools/whisper-uat/fixtures/', [StringComparison]::Ordinal)
+        $isReviewedPublicFixture = $extension -eq '.wav' -and $reviewedFixturePaths.Contains($_)
         $forbiddenExtensions -contains $extension -and -not $isReviewedPublicFixture
     })
     if ($forbiddenTracked.Count -gt 0) {

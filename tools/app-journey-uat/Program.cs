@@ -21,9 +21,15 @@ const int AcousticPlaybackGain = 2;
 const int AcousticPlaybackRepetitions = 2;
 const string ReviewedFrenchFixtureHash =
     "84DEFDC828EF59CEC10364354FBC284BC2CC683FDD4A5EDD5863B7BB2C6123A8";
+const string ReviewedEnglishFixtureHash =
+    "0F56F001F964D2288851A5E4063781CB5793D25F1B4FD9B55607E79873B4B20C";
 var liveMicrophone = args.Any(argument => string.Equals(
     argument,
     "--live-microphone",
+    StringComparison.OrdinalIgnoreCase));
+var englishParakeet = args.Any(argument => string.Equals(
+    argument,
+    "--english-parakeet",
     StringComparison.OrdinalIgnoreCase));
 var livePreview = args.Any(argument => string.Equals(
     argument,
@@ -51,6 +57,10 @@ if (failureMode != JourneyFailureMode.None && (liveMicrophone || livePreview || 
 {
     throw new ArgumentException("Failure journeys cannot be combined with live microphone, Live Preview, or Escape Recovery modes.");
 }
+if (failureMode != JourneyFailureMode.None && englishParakeet)
+{
+    throw new ArgumentException("Failure journeys use the fixed reviewed Whisper fixture configuration.");
+}
 var repositoryRoot = FindRepositoryRoot(AppContext.BaseDirectory);
 var appExecutable = Path.Combine(
     repositoryRoot,
@@ -71,7 +81,19 @@ var targetExecutable = Path.Combine(
     "Release",
     "net10.0-windows10.0.26100.0",
     "EnviousWispr.Delivery.Target.Uat.exe");
-var modelDirectory = Path.Combine(repositoryRoot, "models", WhisperTranscriptionEngine.ModelId);
+var finalEngine = englishParakeet ? FinalAsrEngine.Parakeet : FinalAsrEngine.Whisper;
+var engineName = finalEngine.ToString();
+var language = englishParakeet ? "en" : "fr";
+var expectedSubstring = englishParakeet ? "account" : "adresse";
+var fixtureFileName = englishParakeet ? "en-US-row0.wav" : "fr-FR-row0.wav";
+var fixtureHash = englishParakeet ? ReviewedEnglishFixtureHash : ReviewedFrenchFixtureHash;
+var fixtureIdentity = englishParakeet
+    ? "PolyAI-minds14-en-US-row0"
+    : "PolyAI-minds14-fr-FR-row0";
+var modelDirectory = Path.Combine(
+    repositoryRoot,
+    "models",
+    englishParakeet ? ParakeetTranscriptionEngine.ModelId : WhisperTranscriptionEngine.ModelId);
 var previewModelDirectory = Path.Combine(
     repositoryRoot,
     "models",
@@ -81,13 +103,18 @@ var fixturePath = Path.Combine(
     "tools",
     "whisper-uat",
     "fixtures",
-    "fr-FR-row0.wav");
+    fixtureFileName);
 
 RequireFile(appExecutable, "Build the Release/x64 production WinUI app before journey UAT.");
 RequireFile(targetExecutable, "Build the controlled delivery target before journey UAT.");
-RequireFile(fixturePath, "The reviewed public French fixture is missing.");
-RequireReviewedFixture(fixturePath, ReviewedFrenchFixtureHash);
-if (!new LocalWhisperModelProbe().Probe(modelDirectory).QuantizedComplete)
+RequireFile(fixturePath, "The reviewed public fixture is missing.");
+RequireReviewedFixture(fixturePath, fixtureHash);
+if (englishParakeet && !new LocalParakeetModelProbe().Probe(modelDirectory).Int8Complete)
+{
+    throw new DirectoryNotFoundException(
+        "The gitignored Parakeet quantized model is required for English journey UAT.");
+}
+if (!englishParakeet && !new LocalWhisperModelProbe().Probe(modelDirectory).QuantizedComplete)
 {
     throw new DirectoryNotFoundException(
         "The gitignored Whisper large-v3-turbo quantized model is required for journey UAT.");
@@ -172,7 +199,7 @@ try
     targetStart.ArgumentList.Add("--result");
     targetStart.ArgumentList.Add(targetResultPath);
     targetStart.ArgumentList.Add("--expected-substring");
-    targetStart.ArgumentList.Add("adresse");
+    targetStart.ArgumentList.Add(expectedSubstring);
     target = Process.Start(targetStart) ?? throw new InvalidOperationException(
         "The controlled delivery target did not start.");
     WaitForWindow(target, TimeSpan.FromSeconds(10));
@@ -186,8 +213,8 @@ try
     appStart.Environment["ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX"] = $"journey-{runId}";
     appStart.Environment["ENVIOUSWISPR_UAT_READY_EVENT"] = readyEventName;
     appStart.Environment["ENVIOUSWISPR_UAT_RUNTIME_READY_EVENT"] = runtimeEventName;
-    appStart.Environment["ENVIOUSWISPR_ASR_ENGINE"] = "Whisper";
-    appStart.Environment["ENVIOUSWISPR_ASR_LANGUAGE"] = "fr";
+    appStart.Environment["ENVIOUSWISPR_ASR_ENGINE"] = engineName;
+    appStart.Environment["ENVIOUSWISPR_ASR_LANGUAGE"] = language;
     appStart.Environment["ENVIOUSWISPR_MODEL_DIRECTORY"] = modelDirectory;
     appStart.Environment["ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY"] = livePreview
         ? previewModelDirectory
@@ -341,12 +368,16 @@ try
         if (liveMicrophone)
         {
             _ = app.WaitForExit(35_000);
-            Console.Error.WriteLine(JsonSerializer.Serialize(new
-            {
-                liveMicrophoneDiagnosticEvents = ReadDiagnosticEvents(diagnosticPath),
-                targetCharacterCount = ReadTargetCharacterCount(targetResultPath),
-            }));
         }
+
+        Console.Error.WriteLine(JsonSerializer.Serialize(new
+        {
+            failedJourney = liveMicrophone ? "acoustic-playback" : "reviewed-fixture",
+            engine = engineName,
+            language,
+            diagnosticEvents = ReadDiagnosticEvents(diagnosticPath),
+            targetCharacterCount = ReadTargetCharacterCount(targetResultPath),
+        }));
 
         throw new InvalidOperationException(
             liveMicrophone
@@ -404,9 +435,24 @@ try
     }
 
     var hardware = await new WindowsHardwareDiscovery().ProbeAsync();
-    var selection = WhisperRuntimeSelector.Select(
-        hardware,
-        new LocalWhisperModelProbe().Probe(modelDirectory));
+    string provider;
+    string modelPack;
+    if (englishParakeet)
+    {
+        var selection = ParakeetRuntimeSelector.Select(
+            hardware,
+            new LocalParakeetModelProbe().Probe(modelDirectory));
+        provider = selection.Provider?.ToString() ?? "Unavailable";
+        modelPack = selection.ModelPack?.ToString() ?? "Unavailable";
+    }
+    else
+    {
+        var selection = WhisperRuntimeSelector.Select(
+            hardware,
+            new LocalWhisperModelProbe().Probe(modelDirectory));
+        provider = selection.Provider?.ToString() ?? "Unavailable";
+        modelPack = selection.ModelPack?.ToString() ?? "Unavailable";
+    }
     timer.Stop();
     Console.WriteLine(JsonSerializer.Serialize(new
     {
@@ -429,10 +475,10 @@ try
         elapsedMilliseconds = timer.ElapsedMilliseconds,
         windowsVersion = Environment.OSVersion.Version.ToString(),
         architecture = hardware.Architecture.ToString(),
-        engine = "Whisper",
-        language = "fr",
-        provider = selection.Provider?.ToString() ?? "Unavailable",
-        modelPack = selection.ModelPack?.ToString() ?? "Unavailable",
+        engine = engineName,
+        language,
+        provider,
+        modelPack,
         polish = "None",
         inputKind = failureMode switch
         {
@@ -451,8 +497,8 @@ try
         fixture = failureMode is JourneyFailureMode.MicrophoneUnavailable or JourneyFailureMode.WorkerStartup
             ? "None"
             : liveMicrophone
-                ? "PolyAI-minds14-fr-FR-row0-acoustic-playback"
-                : "PolyAI-minds14-fr-FR-row0",
+                ? $"{fixtureIdentity}-acoustic-playback"
+                : fixtureIdentity,
         deliveryTarget = failureMode == JourneyFailureMode.TargetUnavailable
             ? "ControlledWinFormsEditClosedDuringRecording"
             : failureMode is JourneyFailureMode.MicrophoneUnavailable or JourneyFailureMode.WorkerStartup
@@ -780,7 +826,9 @@ static async Task PlayPublicFixtureAsync(string fixturePath)
     output.Init(source);
     output.Volume = 1f;
     output.Play();
-    var failure = await completed.Task.WaitAsync(TimeSpan.FromSeconds(15));
+    var playbackDuration = TimeSpan.FromSeconds(
+        pcmBytes.Length / (sampleRate * sizeof(short) * 1d));
+    var failure = await completed.Task.WaitAsync(playbackDuration + TimeSpan.FromSeconds(5));
     if (failure is not null)
     {
         throw new InvalidOperationException("The reviewed public fixture could not be played.", failure);

@@ -2,8 +2,8 @@
 
 This harness proves the production shell-to-worker-to-delivery path with controlled public input. It launches
 the real WinUI app with an isolated profile, requires exactly one owned final-ASR worker, focuses the native
-WinForms delivery target, and signals a strictly allowlisted in-app journey. The app accepts only the three
-reviewed `tools/whisper-uat/fixtures` WAV files by SHA-256.
+WinForms delivery target, and signals a strictly allowlisted in-app journey. The app accepts only the four
+journey fixtures selected from the reviewed Whisper fixture manifest by SHA-256.
 
 The journey uses the same push-to-talk session controller, final transcription worker, deterministic text
 pipeline, recovery handling, context capture, and delivery adapter as a normal launch. Only audio capture and
@@ -16,6 +16,14 @@ Build the production app, delivery target, and harness, then run on an interacti
 ```powershell
 pwsh -NoProfile -File .\scripts\validate.ps1
 dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj -c Release
+```
+
+The default path uses the reviewed French fixture with Whisper. Add `--english-parakeet` to run the same
+deterministic production journey with the pinned English fixture and Parakeet:
+
+```powershell
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet
 ```
 
 Add `--escape-recovery` to exercise the same production pipeline while cancelling with Escape Recovery
@@ -57,13 +65,16 @@ to disk.
 ```powershell
 dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
   -c Release -- --live-microphone
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --live-microphone
 ```
 
 This mode is audible. It records only while F8 is held, never persists audio, uses an isolated profile, and
 stores only a temporary phrase-match boolean and character count before cleanup. It refuses to run while an
 unowned EnviousWispr or controlled-target process exists.
 
-The gitignored `models/whisper-large-v3-turbo` pack is required. The result is one content-free JSON object with
+The default path requires the gitignored `models/whisper-large-v3-turbo` pack; the English path requires
+`models/parakeet-tdt-0.6b-v3`. The result is one content-free JSON object with
 shell/worker/journey/target/cleanup booleans and typed Windows, architecture, engine, provider, model-pack,
 fixture, and delivery-target fields. The temporary target observation records only whether the known public
 phrase appeared and the character count, then the harness deletes it with the isolated profile.
