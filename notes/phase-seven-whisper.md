@@ -38,7 +38,7 @@ accuracy does not yet meet the acceptance guardrail and the CPU path is function
 
 | Provider | 10 s | 20 s | 91.467 s | Result |
 |---|---:|---:|---:|---|
-| CPU, 8 threads | 11,481 ms | 12,523 ms | 31,818 ms | accurate checks passed; not interactive |
+| CPU, 8 threads | 11,699 ms | 11,728 ms | 30,838 ms | accurate checks passed; not interactive |
 | NVIDIA CUDA 13 | 124 ms | 217 ms | 612 ms | accurate checks passed; all below one second |
 
 - Cancellation removed the exact active worker in 584-614 ms on both providers.
@@ -46,31 +46,53 @@ accuracy does not yet meet the acceptance guardrail and the CPU path is function
   own CUDA worker, exercised the registered F8 capture path, and completed final transcription in 289 ms.
   Closing the shell also removed that exact worker. This proves the native shell-to-worker path with
   content-free diagnostics; it is not evidence of spoken multilingual accuracy.
-- Multilingual fixtures are public MInDS-14 row-zero recordings, committed with source revision, reference
-  text, SHA-256, and CC-BY-4.0 attribution in `tools/whisper-uat/fixtures/manifest.json`.
+- Multilingual fixtures are public MINDS-14 recordings, committed with source revision, config/split/row,
+  reference text, SHA-256, and CC-BY-4.0 attribution in `tools/whisper-uat/fixtures/manifest.json`. The corpus
+  now contains row zero for French and deterministic rows 0/100/200/300/400 for German and Spanish. The UAT
+  fails closed unless the exact 11-row manifest, provenance, sizes, and hashes match.
 
-| Language | CPU result | CUDA result | Decision |
+The expanded bounded CUDA experiment produced:
+
+| Language | Automatic decode | Fixed-language decode | Decision |
 |---|---:|---:|---|
-| French | correct language, 0% WER | correct language, 0% WER | pass |
-| German | wrong language, 100% WER | wrong language, 112.5% WER | fail |
-| Spanish | not yet rerun on CPU | correct language, 52.38% WER | fail |
+| French | 1/1 rows passed; 0% aggregate WER | 1/1; 0% | pass on one row |
+| German | 2/5 rows passed; language detected on 4/5; 40.38% aggregate WER | 3/5; 33.65% aggregate WER | fail individual-row guardrail |
+| Spanish | 4/5 rows passed; language detected on 5/5; 20% aggregate WER | 4/5; 20% aggregate WER | row-zero outlier still fails |
 
-- A SHA-pinned full-precision comparison used the 1,624,555,275-byte
+The expanded automatic CPU run produced the same pass/fail decision on every multilingual row. French
+passed 1/1 at 0% aggregate WER, Spanish passed 4/5 at 20%, and German passed 2/5 with language detected on
+4/5 and 39.42% aggregate WER. German row zero measured 100% WER on CPU versus 112.5% on CUDA; all other
+row WER values matched. The CPU run loaded in 727 ms, completed the English 10/20/91.467-second clips in
+11,699/11,728/30,838 ms, and removed the cancelled worker in 595 ms.
+
+The original Spanish row-zero result is therefore not representative of the five-row slice: rows 100, 200,
+300, and 400 measured 11.76%, 0%, 0%, and 19.05% WER. The strict UAT remains red because every admitted row
+must meet the 35% individual guardrail; the aggregate is evidence, not a replacement acceptance rule.
+
+Reference quality is itself a measured risk. German row 100's source transcription and English translation
+both end mid-sentence, while its 23.296-second audio produced 48 model words against a 25-word reference. The
+manifest retains the authoritative source text and the row remains red, but its 100% WER cannot safely be
+attributed entirely to the model. German row 200 also contains visibly noisy source wording and measured
+42.11% WER. This five-row slice is useful diagnostic evidence, not a representative language benchmark.
+
+- An earlier three-row SHA-pinned full-precision comparison used the 1,624,555,275-byte
   `ggml-large-v3-turbo.bin` artifact with SHA-256
   `1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69`. On CUDA it produced the same
   multilingual results as Q5: French 0% WER, German auto-detection failure with 100% WER, and Spanish
   52.38% WER. English inference was 128/220/655 ms, slightly slower than Q5's 124/217/612 ms. The extra
   1.05 GB therefore has no measured product benefit on this corpus.
-- Fixed-language decoding with both Q5 and full precision brought German to 25% WER, inside the guardrail,
-  but Spanish remained at 52.38%. The durable UAT can rerun these diagnostics with `fixed-cpu` or
-  `fixed-cuda` and the optional `--full-precision` switch without emitting transcript text.
+- On the original row-zero fixtures, fixed-language decoding with both Q5 and full precision brought German
+  to 25% WER, inside the guardrail, but Spanish remained at 52.38%. The expanded Q5 evidence above supersedes
+  that single-row German result for current acceptance. The durable UAT can rerun these diagnostics with
+  `fixed-cpu` or `fixed-cuda` and the optional `--full-precision` switch without emitting transcript text.
 
 ## Required evidence still missing
 
-- German and Spanish automatic-mode accuracy failures exceed the 35% WER guardrail. Fixed-language decode
-  resolves the German fixture, but Spanish still fails. Phase 7 cannot claim representative multilingual
-  parity; the next bounded work is a broader public corpus and decode analysis rather than shipping the
-  much larger full-precision model.
+- The expanded five-row German and Spanish slice narrows the failure: Spanish passes four rows and has 20%
+  aggregate WER, while German still fails three automatic rows and two fixed-language rows. Reference quality
+  is questionable for at least German row 100. Phase 7 still cannot claim representative multilingual parity;
+  the next useful evidence needs a larger, quality-reviewed public corpus and an explicit decision about
+  per-row versus corpus-level acceptance, not a weaker threshold chosen after seeing results.
 - The CPU Q5 path is accurate on the English and French samples but takes 11-32 seconds. It is a functional
   safety fallback, not a useful default on the observed desktop CPU.
 - The full-precision 1.5 GiB model was measured locally and rejected as the automatic choice. It is ignored

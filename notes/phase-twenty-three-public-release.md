@@ -25,7 +25,8 @@ Date: 2026-08-26
 
 ## Validation
 
-- The public audit passed over 364 tracked files and verified all 30 production NuGet packages.
+- The expanded public audit passed over 372 tracked files, admitted exactly 11 manifest-listed public audio
+  fixtures by size and SHA-256, rejected unlisted WAV files, and verified all 30 production NuGet packages.
 - The expanded public audit validates the eight-record model/native inventory without treating source evidence
   as legal approval.
 - `git diff --cached --check`, PowerShell parsing for changed scripts, and Python AST parsing for changed spike

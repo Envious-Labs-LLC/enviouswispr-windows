@@ -21,12 +21,76 @@
       "sha256": "9ef96afdcb339aeaa6ee9e1f012689a9d1cd262b112868917bd3774a7f2ec85c"
     },
     {
+      "file": "de-DE-row100.wav",
+      "config": "de-DE",
+      "split": "train",
+      "row": 100,
+      "transcription": "guten Tag ich möchte eine Lastschrift aufgeben und hätte diesbezüglich noch ein paar Fragen z.b. wüsste ich gerne wie lange es ungefähr dauert bis meine",
+      "sha256": "c299d797afd081f263a900c4f3fb6cc45f4cb317653c2a7dd99ae85a9749213a"
+    },
+    {
+      "file": "de-DE-row200.wav",
+      "config": "de-DE",
+      "split": "train",
+      "row": 200,
+      "transcription": "guten Tag ich habe Probleme mit meiner Karten war wird SEPA Zahlung abgelehnt kannst du mir da weiterhelfen danke",
+      "sha256": "eab4072b741854dcd66f2a244831bb02f902f225ac1d766ac6ba899e43887507"
+    },
+    {
+      "file": "de-DE-row300.wav",
+      "config": "de-DE",
+      "split": "train",
+      "row": 300,
+      "transcription": "wie kann ich bei Ihrer Bank ein Gemeinschaftskonto einrichten",
+      "sha256": "36306724341754fd08d7313b5a8ba34307229bd985cf21a49e14896d18fe551f"
+    },
+    {
+      "file": "de-DE-row400.wav",
+      "config": "de-DE",
+      "split": "train",
+      "row": 400,
+      "transcription": "guten Tag und zwar ich rufe an weil ich letztens umgezogen bin und gerne bei Ihnen meine Adresse ändern möchte wo kann ich das machen muss ich das online machen oder am Schalter oder wie sind da die Möglichkeiten meine Adresse zu ändern",
+      "sha256": "fa6a26a4ccc93ad3538c6aba872c07b6c58363f6e5b5c5e2fb4ebef579e1a751"
+    },
+    {
       "file": "es-ES-row0.wav",
       "config": "es-ES",
       "split": "train",
       "row": 0,
       "transcription": "hola buenas a ver tengo un problema con vuestra aplicación resulta que quiero hacer una transferencia bancaria a una cuenta conocida",
       "sha256": "8a350c47afd69d9fc7f01f6a7bdfa4ccec3515e2d0bdef218e7e2c17468f99b4"
+    },
+    {
+      "file": "es-ES-row100.wav",
+      "config": "es-ES",
+      "split": "train",
+      "row": 100,
+      "transcription": "hola buenas tardes quiero saber las condiciones de la tarjeta en el extranjero por ejemplo en estos",
+      "sha256": "4e8535c57cc5db20ea4da9c6445401a51d00e5d8bcc8b833791b0bd7012806cc"
+    },
+    {
+      "file": "es-ES-row200.wav",
+      "config": "es-ES",
+      "split": "train",
+      "row": 200,
+      "transcription": "hola a ver me gustaría saber cuál es la cantidad máxima de dinero que puedo yo retirar de vuestro cajero automático gracias",
+      "sha256": "ffc4408a7c4038153c8986718b60d0bb8f64883af73248640041637144939203"
+    },
+    {
+      "file": "es-ES-row300.wav",
+      "config": "es-ES",
+      "split": "train",
+      "row": 300,
+      "transcription": "mi tarjeta no funciona",
+      "sha256": "b5cf77cda9823bb9284adb146bbcce18d0efd7b411d5fd7830b6023ba9d2398a"
+    },
+    {
+      "file": "es-ES-row400.wav",
+      "config": "es-ES",
+      "split": "train",
+      "row": 400,
+      "transcription": "hola buenos días me gustaría salir citar información sobre sobre las domiciliaciones bancaria ya que no sé muy bien cómo funciona",
+      "sha256": "fd7ad9607ebc03d5cd2d66a6da698d3abc257fcb8ac67666c0a88b8af18eb99c"
     }
   ]
 }
