@@ -14,10 +14,12 @@
     <Project Path="src/Production/EnviousWispr.ModelDelivery/EnviousWispr.ModelDelivery.csproj" />
     <Project Path="src/Production/EnviousWispr.Pipeline/EnviousWispr.Pipeline.csproj" />
     <Project Path="src/Production/EnviousWispr.PostProcessing/EnviousWispr.PostProcessing.csproj" />
+    <Project Path="src/Production/EnviousWispr.RuntimeWorker/EnviousWispr.RuntimeWorker.csproj" />
     <Project Path="src/Production/EnviousWispr.Services/EnviousWispr.Services.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/audio-uat/EnviousWispr.Audio.Uat.csproj" />
     <Project Path="tools/hotkey-uat/EnviousWispr.Hotkey.Uat.csproj" />
+    <Project Path="tools/runtime-uat/EnviousWispr.Runtime.Uat.csproj" />
   </Folder>
 </Solution>

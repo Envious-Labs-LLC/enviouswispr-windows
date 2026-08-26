@@ -16,6 +16,12 @@ public enum AppErrorCode
     HotkeyConflict,
     HotkeyUnavailable,
     TargetUnavailable,
+    HardwareProbeFailed,
+    RuntimeProviderUnavailable,
+    RuntimeProviderIncompatible,
+    ModelPackUnavailable,
+    RuntimeWorkerFailed,
+    RuntimeResourceBusy,
 }
 
 public enum AppErrorStage
@@ -31,6 +37,10 @@ public enum AppErrorStage
     HotkeyConfiguration,
     HotkeyHook,
     TargetCapture,
+    HardwareDiscovery,
+    RuntimeSelection,
+    RuntimeWorker,
+    RuntimeResource,
 }
 
 public sealed record AppError(AppErrorCode Code, AppErrorStage Stage, bool CanRetry);

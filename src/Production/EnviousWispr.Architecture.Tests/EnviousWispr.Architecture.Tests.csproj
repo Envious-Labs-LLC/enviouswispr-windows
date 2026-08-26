@@ -15,8 +15,18 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <ProjectReference Include="..\EnviousWispr.ASR\EnviousWispr.ASR.csproj" />
     <ProjectReference Include="..\EnviousWispr.Audio\EnviousWispr.Audio.csproj" />
+    <ProjectReference Include="..\EnviousWispr.ModelDelivery\EnviousWispr.ModelDelivery.csproj" />
     <ProjectReference Include="..\EnviousWispr.Pipeline\EnviousWispr.Pipeline.csproj" />
+    <ProjectReference Include="..\EnviousWispr.RuntimeWorker\EnviousWispr.RuntimeWorker.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\EnviousWispr.Services\EnviousWispr.Services.csproj" />
   </ItemGroup>
+
+  <Target Name="CopyRuntimeWorkerForTests" AfterTargets="Build">
+    <ItemGroup>
+      <RuntimeWorkerFiles Include="..\EnviousWispr.RuntimeWorker\bin\$(Configuration)\net10.0-windows10.0.26100.0\EnviousWispr.RuntimeWorker*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(RuntimeWorkerFiles)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
 </Project>
