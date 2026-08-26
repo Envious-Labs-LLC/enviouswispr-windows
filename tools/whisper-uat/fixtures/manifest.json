@@ -1,0 +1,32 @@
+{
+  "dataset": "PolyAI/minds14",
+  "datasetRevision": "40ce77cb32a384e4d50a568e1ec39ac804019d33",
+  "license": "CC-BY-4.0",
+  "source": "https://huggingface.co/datasets/PolyAI/minds14",
+  "fixtures": [
+    {
+      "file": "fr-FR-row0.wav",
+      "config": "fr-FR",
+      "split": "train",
+      "row": 0,
+      "transcription": "je souhaite changer mon adresse",
+      "sha256": "84defdc828ef59cec10364354fbc284bc2cc683fdd4a5edd5863b7bb2c6123a8"
+    },
+    {
+      "file": "de-DE-row0.wav",
+      "config": "de-DE",
+      "split": "train",
+      "row": 0,
+      "transcription": "ich möchte gerne Geld auf mein Konto einzahlen",
+      "sha256": "9ef96afdcb339aeaa6ee9e1f012689a9d1cd262b112868917bd3774a7f2ec85c"
+    },
+    {
+      "file": "es-ES-row0.wav",
+      "config": "es-ES",
+      "split": "train",
+      "row": 0,
+      "transcription": "hola buenas a ver tengo un problema con vuestra aplicación resulta que quiero hacer una transferencia bancaria a una cuenta conocida",
+      "sha256": "8a350c47afd69d9fc7f01f6a7bdfa4ccec3515e2d0bdef218e7e2c17468f99b4"
+    }
+  ]
+}

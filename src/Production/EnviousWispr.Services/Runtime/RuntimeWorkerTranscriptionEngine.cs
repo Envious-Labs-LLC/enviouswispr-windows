@@ -3,6 +3,7 @@ using System.IO.MemoryMappedFiles;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Runtime;
+using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Services.Runtime;
 
@@ -18,7 +19,10 @@ public sealed record RuntimeWorkerTranscriptionOptions(
     string? CudaRuntimeDirectory = null,
     TimeSpan? StartupTimeout = null,
     TimeSpan? TranscriptionTimeout = null,
-    int MaximumWorkerRestarts = 1);
+    int MaximumWorkerRestarts = 1,
+    FinalAsrEngine Engine = FinalAsrEngine.Parakeet,
+    WhisperModelPack WhisperPack = WhisperModelPack.Quantized,
+    string? Language = null);
 
 public sealed class RuntimeWorkerTranscriptionEngine : ITranscriptionEngine, IAsyncDisposable
 {
@@ -33,7 +37,9 @@ public sealed class RuntimeWorkerTranscriptionEngine : ITranscriptionEngine, IAs
     {
         ArgumentNullException.ThrowIfNull(options);
         Validate(options);
-        EngineId = $"parakeet-tdt-0.6b-v3:{options.Provider.ToString().ToLowerInvariant()}:isolated";
+        EngineId = options.Engine == FinalAsrEngine.Whisper
+            ? $"whisper-large-v3-turbo:{options.Provider.ToString().ToLowerInvariant()}:isolated"
+            : $"parakeet-tdt-0.6b-v3:{options.Provider.ToString().ToLowerInvariant()}:isolated";
         _startupTimeout = options.StartupTimeout ?? TimeSpan.FromSeconds(30);
         _transcriptionTimeout = options.TranscriptionTimeout ?? TimeSpan.FromMinutes(2);
         _supervisor = new RuntimeWorkerSupervisor(
@@ -131,13 +137,16 @@ public sealed class RuntimeWorkerTranscriptionEngine : ITranscriptionEngine, IAs
             transcript.EngineId,
             transcript.TokenTimings,
             transcript.UsedFallback,
-            transcript.DegradedError);
+            transcript.DegradedError,
+            transcript.DetectedLanguage);
     }
 
     private static string[] CreateWorkerArguments(RuntimeWorkerTranscriptionOptions options)
     {
         var arguments = new List<string>
         {
+            "--asr-engine",
+            options.Engine.ToString(),
             "--asr-model-directory",
             Path.GetFullPath(options.ModelDirectory),
             "--asr-provider",
@@ -153,6 +162,13 @@ public sealed class RuntimeWorkerTranscriptionEngine : ITranscriptionEngine, IAs
             "--asr-cpu-fallback-threads",
             options.CpuFallbackThreads.ToString(CultureInfo.InvariantCulture),
         };
+        if (options.Engine == FinalAsrEngine.Whisper)
+        {
+            arguments.Add("--asr-whisper-model-pack");
+            arguments.Add(options.WhisperPack.ToString());
+            arguments.Add("--asr-whisper-language");
+            arguments.Add(string.IsNullOrWhiteSpace(options.Language) ? "auto" : options.Language);
+        }
         if (!string.IsNullOrWhiteSpace(options.CudaRuntimeDirectory))
         {
             arguments.Add("--asr-cuda-runtime-directory");

@@ -80,4 +80,5 @@ public sealed record RuntimeWorkerTranscript(
     string EngineId,
     IReadOnlyList<TranscriptTokenTiming> TokenTimings,
     bool UsedFallback,
-    AppError? DegradedError = null);
+    AppError? DegradedError = null,
+    string? DetectedLanguage = null);

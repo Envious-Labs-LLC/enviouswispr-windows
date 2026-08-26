@@ -33,7 +33,8 @@ public sealed record Transcript(
     string EngineId,
     IReadOnlyList<TranscriptTokenTiming>? TokenTimings = null,
     bool UsedFallback = false,
-    AppError? DegradedError = null);
+    AppError? DegradedError = null,
+    string? DetectedLanguage = null);
 
 public sealed record ProcessedText(DictationSessionId SessionId, string Text);
 

@@ -6,6 +6,7 @@ using EnviousWispr.ASR;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Runtime;
+using EnviousWispr.Core.Settings;
 
 const int protocolVersion = 1;
 
@@ -26,7 +27,7 @@ catch (ArgumentException)
     return 3;
 }
 
-ParakeetEngineCreationResult? engineCreation;
+TranscriptionEngineCreation? engineCreation;
 try
 {
     engineCreation = CreateTranscriptionEngine(args);
@@ -107,18 +108,20 @@ using (engineCreation?.Engine as IDisposable)
 
 return 0;
 
-static ParakeetEngineCreationResult? CreateTranscriptionEngine(string[] arguments)
+static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments)
 {
+    ConfigureNativeRuntimePath(ReadStringArgument(arguments, "--asr-cuda-runtime-directory"));
     var modelDirectory = ReadStringArgument(arguments, "--asr-model-directory");
     if (modelDirectory is null)
     {
         return null;
     }
 
+    var engineText = ReadStringArgument(arguments, "--asr-engine") ?? "parakeet";
     var providerText = ReadStringArgument(arguments, "--asr-provider") ?? "cpu";
     var modelPackText = ReadStringArgument(arguments, "--asr-model-pack") ?? "quantized";
-    if (!Enum.TryParse<RuntimeProviderKind>(providerText, ignoreCase: true, out var provider) ||
-        !Enum.TryParse<ParakeetModelPack>(modelPackText, ignoreCase: true, out var modelPack))
+    if (!Enum.TryParse<FinalAsrEngine>(engineText, ignoreCase: true, out var engineKind) ||
+        !Enum.TryParse<RuntimeProviderKind>(providerText, ignoreCase: true, out var provider))
     {
         throw new TranscriptionEngineException(new AppError(
             AppErrorCode.RuntimeProviderUnavailable,
@@ -129,7 +132,30 @@ static ParakeetEngineCreationResult? CreateTranscriptionEngine(string[] argument
     var intraOpThreads = ReadIntegerArgument(arguments, "--asr-intra-op-threads", defaultValue: 1);
     var interOpThreads = ReadIntegerArgument(arguments, "--asr-inter-op-threads", defaultValue: 1);
     var maximumTokensPerStep = ReadIntegerArgument(arguments, "--asr-maximum-tokens-per-step", defaultValue: 10);
+    var fallbackThreads = ReadIntegerArgument(
+        arguments,
+        "--asr-cpu-fallback-threads",
+        defaultValue: Math.Clamp(Environment.ProcessorCount / 4, 2, 8));
     var cudaRuntimeDirectory = ReadStringArgument(arguments, "--asr-cuda-runtime-directory");
+    if (engineKind == FinalAsrEngine.Whisper)
+    {
+        return CreateWhisperEngine(
+            arguments,
+            modelDirectory,
+            provider,
+            intraOpThreads,
+            fallbackThreads);
+    }
+
+    if (engineKind is not (FinalAsrEngine.Parakeet or FinalAsrEngine.Automatic) ||
+        !Enum.TryParse<ParakeetModelPack>(modelPackText, ignoreCase: true, out var modelPack))
+    {
+        throw new TranscriptionEngineException(new AppError(
+            AppErrorCode.RuntimeProviderUnavailable,
+            AppErrorStage.FinalAsr,
+            CanRetry: true));
+    }
+
     var primary = new ParakeetEngineOptions(
         modelDirectory,
         provider,
@@ -138,10 +164,6 @@ static ParakeetEngineCreationResult? CreateTranscriptionEngine(string[] argument
         interOpThreads,
         maximumTokensPerStep,
         CudaRuntimeDirectory: cudaRuntimeDirectory);
-    var fallbackThreads = ReadIntegerArgument(
-        arguments,
-        "--asr-cpu-fallback-threads",
-        defaultValue: Math.Clamp(Environment.ProcessorCount / 4, 2, 8));
     var fallback = provider == RuntimeProviderKind.Cpu
         ? null
         : new ParakeetEngineOptions(
@@ -151,12 +173,82 @@ static ParakeetEngineCreationResult? CreateTranscriptionEngine(string[] argument
             fallbackThreads,
             InterOpThreads: 1,
             maximumTokensPerStep);
-    return new ParakeetEngineFactory().Create(primary, fallback);
+    var creation = new ParakeetEngineFactory().Create(primary, fallback);
+    return new TranscriptionEngineCreation(
+        creation.Engine,
+        creation.UsedFallback,
+        creation.DegradedError);
+}
+
+static void ConfigureNativeRuntimePath(string? runtimeDirectory)
+{
+    if (string.IsNullOrWhiteSpace(runtimeDirectory))
+    {
+        return;
+    }
+
+    var fullPath = Path.GetFullPath(runtimeDirectory);
+    if (!Directory.Exists(fullPath))
+    {
+        return;
+    }
+
+    var currentPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+    if (!currentPath.Split(Path.PathSeparator).Contains(fullPath, StringComparer.OrdinalIgnoreCase))
+    {
+        Environment.SetEnvironmentVariable("PATH", fullPath + Path.PathSeparator + currentPath);
+    }
+}
+
+static TranscriptionEngineCreation CreateWhisperEngine(
+    string[] arguments,
+    string modelDirectory,
+    RuntimeProviderKind provider,
+    int threadCount,
+    int fallbackThreads)
+{
+    var packText = ReadStringArgument(arguments, "--asr-whisper-model-pack") ?? "quantized";
+    if (!Enum.TryParse<WhisperModelPack>(packText, ignoreCase: true, out var pack))
+    {
+        throw new TranscriptionEngineException(new AppError(
+            AppErrorCode.ModelPackUnavailable,
+            AppErrorStage.FinalAsr,
+            CanRetry: true));
+    }
+
+    var language = ReadStringArgument(arguments, "--asr-whisper-language");
+    var primary = new WhisperEngineOptions(
+        Path.Combine(modelDirectory, WhisperModelFileNames.For(pack)),
+        provider,
+        pack,
+        threadCount,
+        language);
+    WhisperEngineOptions? fallback = null;
+    if (provider != RuntimeProviderKind.Cpu)
+    {
+        var quantizedPath = Path.Combine(modelDirectory, WhisperModelFileNames.Quantized);
+        var fallbackPack = File.Exists(quantizedPath)
+            ? WhisperModelPack.Quantized
+            : pack;
+        fallback = new WhisperEngineOptions(
+            Path.Combine(modelDirectory, WhisperModelFileNames.For(fallbackPack)),
+            RuntimeProviderKind.Cpu,
+            fallbackPack,
+            fallbackThreads,
+            language,
+            UseFlashAttention: false);
+    }
+
+    var creation = new WhisperEngineFactory().Create(primary, fallback);
+    return new TranscriptionEngineCreation(
+        creation.Engine,
+        creation.UsedFallback,
+        creation.DegradedError);
 }
 
 static async Task<RuntimeWorkerResponse> TranscribeAsync(
     RuntimeWorkerRequest request,
-    ParakeetEngineCreationResult? engineCreation)
+    TranscriptionEngineCreation? engineCreation)
 {
     if (engineCreation is null || request.Transcription is not { SampleCount: > 0 } transcription)
     {
@@ -192,7 +284,8 @@ static async Task<RuntimeWorkerResponse> TranscribeAsync(
                 transcript.EngineId,
                 transcript.TokenTimings ?? [],
                 usedFallback,
-                degradedError));
+                degradedError,
+                transcript.DetectedLanguage));
     }
     catch (TranscriptionEngineException exception)
     {
@@ -238,3 +331,8 @@ static async Task WriteResponseAsync(RuntimeWorkerResponse response)
     await Console.Out.WriteLineAsync(JsonSerializer.Serialize(response));
     await Console.Out.FlushAsync();
 }
+
+internal sealed record TranscriptionEngineCreation(
+    ITranscriptionEngine Engine,
+    bool UsedFallback,
+    AppError? DegradedError);

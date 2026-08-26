@@ -82,11 +82,16 @@ try {
     Write-Host "Building native ASR UAT harness (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/asr-uat/EnviousWispr.Asr.Uat.csproj", "-c", "Release", "--nologo")
 
+    Write-Host "Building native Whisper UAT harness (Release)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/whisper-uat/EnviousWispr.Whisper.Uat.csproj", "-c", "Release", "--nologo")
+
     if ($IncludeLocalRuntime) {
         Write-Host "Running contract and local model runtime tests..."
         Invoke-DotNet -Executable $dotnet8Exe -Arguments @("test", "src/EnviousWispr.Tests/EnviousWispr.Tests.csproj", "-c", "Release", "--nologo")
         Write-Host "Running production CPU and CUDA ASR acceptance..."
         Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/asr-uat/EnviousWispr.Asr.Uat.csproj", "-c", "Release", "--no-build")
+        Write-Host "Running production CPU and CUDA Whisper acceptance..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/whisper-uat/EnviousWispr.Whisper.Uat.csproj", "-c", "Release", "--no-build")
     }
     else {
         Write-Host "Running portable contract tests..."
