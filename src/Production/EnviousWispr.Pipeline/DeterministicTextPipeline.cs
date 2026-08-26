@@ -296,7 +296,9 @@ public sealed class DeterministicTextPipeline
         public TimeSpan Timeout => TimeSpan.FromMilliseconds(50);
 
         public bool IsEnabled(DeterministicTextContext context) =>
-            context.Options.EmojiFormatterEnabled && formatter is not null;
+            context.Options.EmojiFormatterEnabled &&
+            formatter is not null &&
+            IsEnglishDeterministicLanguage(context.Transcript);
 
         public DeterministicTextContext Process(DeterministicTextContext context) =>
             context with { Text = formatter!.Format(context.Text) };
@@ -309,17 +311,7 @@ public sealed class DeterministicTextPipeline
         public TimeSpan Timeout => TimeSpan.FromMilliseconds(500);
 
         public bool IsEnabled(DeterministicTextContext context)
-        {
-            var language = context.Transcript.DetectedLanguage?.Trim();
-            if (!string.IsNullOrEmpty(language))
-            {
-                return language.Equals("en", StringComparison.OrdinalIgnoreCase) ||
-                    language.StartsWith("en-", StringComparison.OrdinalIgnoreCase) ||
-                    language.StartsWith("en_", StringComparison.OrdinalIgnoreCase);
-            }
-
-            return !context.Transcript.EngineId.Contains("whisper", StringComparison.OrdinalIgnoreCase);
-        }
+            => IsEnglishDeterministicLanguage(context.Transcript);
 
         public DeterministicTextContext Process(DeterministicTextContext context) => context with
         {
@@ -341,5 +333,18 @@ public sealed class DeterministicTextPipeline
         {
             PolishedText = EmojiRestorer.Restore(context.PolishedText!, context.Text).Text,
         };
+    }
+
+    private static bool IsEnglishDeterministicLanguage(Transcript transcript)
+    {
+        var language = transcript.DetectedLanguage?.Trim();
+        if (!string.IsNullOrEmpty(language))
+        {
+            return language.Equals("en", StringComparison.OrdinalIgnoreCase) ||
+                language.StartsWith("en-", StringComparison.OrdinalIgnoreCase) ||
+                language.StartsWith("en_", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return !transcript.EngineId.Contains("whisper", StringComparison.OrdinalIgnoreCase);
     }
 }

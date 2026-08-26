@@ -320,7 +320,8 @@ public sealed partial class MainWindow : Window, IDisposable
             WordCorrectionToggle.IsOn,
             FillerRemovalToggle.IsOn,
             EmojiFormatterToggle.IsOn,
-            SpokenPunctuationToggle.IsOn);
+            SpokenPunctuationToggle.IsOn,
+            (WhisperLanguagePreference)Math.Clamp(WhisperLanguageComboBox.SelectedIndex, 0, 4));
         var polish = new PolishPreferences(
             PolishProviderFromIndex(PolishProviderComboBox.SelectedIndex),
             NullIfBlank(PolishModelTextBox.Text),
@@ -844,6 +845,7 @@ public sealed partial class MainWindow : Window, IDisposable
         {
             var preferences = _settings.Preferences;
             EngineComboBox.SelectedIndex = (int)preferences.Dictation.FinalEngine;
+            WhisperLanguageComboBox.SelectedIndex = (int)preferences.Dictation.WhisperLanguage;
             HotkeyTextBox.Text = preferences.Dictation.PushToTalkGesture;
             WordCorrectionToggle.IsOn = preferences.Dictation.WordCorrectionEnabled;
             FillerRemovalToggle.IsOn = preferences.Dictation.FillerRemovalEnabled;

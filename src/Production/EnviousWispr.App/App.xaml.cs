@@ -932,6 +932,15 @@ public partial class App : Application, IAsyncDisposable
         var engine = configuredEngine == FinalAsrEngine.Automatic
             ? FinalAsrEngine.Parakeet
             : configuredEngine;
+        var whisperLanguage = WhisperLanguageCodes.For(
+            _settings.Preferences.Dictation.WhisperLanguage);
+        if (WhisperLanguageCodes.TryNormalize(
+                Environment.GetEnvironmentVariable("ENVIOUSWISPR_ASR_LANGUAGE"),
+                out var environmentLanguage))
+        {
+            whisperLanguage = environmentLanguage;
+        }
+
         var modelDirectory = ResolveModelDirectory(engine == FinalAsrEngine.Whisper
             ? WhisperTranscriptionEngine.ModelId
             : ParakeetTranscriptionEngine.ModelId);
@@ -948,7 +957,7 @@ public partial class App : Application, IAsyncDisposable
         var hardware = await new WindowsHardwareDiscovery().ProbeAsync().ConfigureAwait(true);
         var workerExecutable = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
         _transcriptionEngine = engine == FinalAsrEngine.Whisper
-            ? CreateWhisperEngine(workerExecutable, modelDirectory, hardware)
+            ? CreateWhisperEngine(workerExecutable, modelDirectory, hardware, whisperLanguage)
             : CreateParakeetEngine(workerExecutable, modelDirectory, hardware);
         if (_transcriptionEngine is null)
         {
@@ -965,7 +974,7 @@ public partial class App : Application, IAsyncDisposable
         {
             await _transcriptionEngine.DisposeAsync().ConfigureAwait(true);
             _transcriptionEngine = engine == FinalAsrEngine.Whisper
-                ? CreateCpuWhisperEngine(workerExecutable, modelDirectory, hardware)
+                ? CreateCpuWhisperEngine(workerExecutable, modelDirectory, hardware, whisperLanguage)
                 : CreateCpuParakeetEngine(workerExecutable, modelDirectory, hardware);
             started = _transcriptionEngine is null
                 ? new RuntimeWorkerResult(false, RuntimeWorkerState.Faulted)
@@ -986,7 +995,7 @@ public partial class App : Application, IAsyncDisposable
                 return;
             }
 
-            ConfigureLivePreview(workerExecutable, hardware, forceCpu: true);
+            ConfigureLivePreview(workerExecutable, hardware, whisperLanguage, forceCpu: true);
             _window?.SetSessionStatus("Local transcription ready with CPU recovery");
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
@@ -996,13 +1005,14 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        ConfigureLivePreview(workerExecutable, hardware);
+        ConfigureLivePreview(workerExecutable, hardware, whisperLanguage);
         _window?.SetSessionStatus("Local transcription ready");
     }
 
     private void ConfigureLivePreview(
         string workerExecutable,
         HardwareSnapshot hardware,
+        string language,
         bool forceCpu = false)
     {
         var modelDirectory = ResolveModelDirectory(
@@ -1037,7 +1047,7 @@ public partial class App : Application, IAsyncDisposable
                 TranscriptionTimeout: TimeSpan.FromSeconds(15),
                 Engine: FinalAsrEngine.Whisper,
                 WhisperPack: WhisperModelPack.PreviewSmall,
-                Language: "auto",
+                Language: language,
                 CudaRuntimeDirectory: Environment.GetEnvironmentVariable(
                     "ENVIOUSWISPR_CUDA_RUNTIME_DIR")),
             _resourceArbiter);
@@ -1106,7 +1116,8 @@ public partial class App : Application, IAsyncDisposable
     private static RuntimeWorkerTranscriptionEngine? CreateWhisperEngine(
         string workerExecutable,
         string modelDirectory,
-        HardwareSnapshot hardware)
+        HardwareSnapshot hardware,
+        string language)
     {
         var models = new LocalWhisperModelProbe().Probe(modelDirectory);
         var selection = WhisperRuntimeSelector.Select(hardware, models);
@@ -1131,7 +1142,7 @@ public partial class App : Application, IAsyncDisposable
             CpuFallbackThreads: cpuSelection.ThreadCount,
             Engine: FinalAsrEngine.Whisper,
             WhisperPack: selection.ModelPack.Value,
-            Language: "auto",
+            Language: language,
             CudaRuntimeDirectory: Environment.GetEnvironmentVariable(
                 "ENVIOUSWISPR_CUDA_RUNTIME_DIR")));
     }
@@ -1139,7 +1150,8 @@ public partial class App : Application, IAsyncDisposable
     private static RuntimeWorkerTranscriptionEngine? CreateCpuWhisperEngine(
         string workerExecutable,
         string modelDirectory,
-        HardwareSnapshot hardware)
+        HardwareSnapshot hardware,
+        string language)
     {
         var models = new LocalWhisperModelProbe().Probe(modelDirectory);
         var selection = WhisperRuntimeSelector.Select(
@@ -1162,7 +1174,7 @@ public partial class App : Application, IAsyncDisposable
             CpuFallbackThreads: selection.ThreadCount,
             Engine: FinalAsrEngine.Whisper,
             WhisperPack: selection.ModelPack.Value,
-            Language: "auto"));
+            Language: language));
     }
 
     private static string? ResolveModelDirectory(

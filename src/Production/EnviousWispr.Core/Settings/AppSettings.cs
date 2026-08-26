@@ -8,7 +8,7 @@ public sealed record AppSettings(
     ReusableUserData UserData,
     string? PreferredMicrophoneId = null)
 {
-    public const int CurrentSchemaVersion = 5;
+    public const int CurrentSchemaVersion = 6;
 
     public static AppSettings Default { get; } = new(
         CurrentSchemaVersion,
