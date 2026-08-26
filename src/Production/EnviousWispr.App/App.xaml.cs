@@ -24,10 +24,17 @@ public partial class App : Application, IAsyncDisposable
 
     private readonly JsonLineFileLogger _logger;
     private readonly JsonSettingsStore _settingsStore;
+    private readonly RuntimeResourceArbiter _resourceArbiter = new();
+    private readonly SemaphoreSlim _previewGate = new(1, 1);
     private SingleInstanceLock? _singleInstanceLock;
     private WindowsPushToTalkHook? _pushToTalkHook;
     private PushToTalkSessionController? _sessionController;
+    private WasapiAudioCapture? _audioCapture;
     private RuntimeWorkerTranscriptionEngine? _transcriptionEngine;
+    private RuntimeWorkerLivePreviewEngine? _previewEngine;
+    private CancellationTokenSource? _previewCancellation;
+    private Task? _previewLoop;
+    private long _previewSequence;
     private MainWindow? _window;
     private bool _disposed;
 
@@ -142,10 +149,19 @@ public partial class App : Application, IAsyncDisposable
             _pushToTalkHook = null;
         }
 
+        await StopLivePreviewAsync().ConfigureAwait(true);
+
         if (_sessionController is not null)
         {
             await _sessionController.DisposeAsync().ConfigureAwait(true);
             _sessionController = null;
+            _audioCapture = null;
+        }
+
+        if (_previewEngine is not null)
+        {
+            await _previewEngine.DisposeAsync().ConfigureAwait(true);
+            _previewEngine = null;
         }
 
         if (_transcriptionEngine is not null)
@@ -156,6 +172,8 @@ public partial class App : Application, IAsyncDisposable
 
         _singleInstanceLock?.Dispose();
         _singleInstanceLock = null;
+        _resourceArbiter.Dispose();
+        _previewGate.Dispose();
         GC.SuppressFinalize(this);
     }
 
@@ -175,8 +193,9 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
+        _audioCapture = new WasapiAudioCapture();
         _sessionController = new PushToTalkSessionController(
-            new WasapiAudioCapture(),
+            _audioCapture,
             new WindowsForegroundTargetProvider());
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
         _window?.SetHotkeyReady(_pushToTalkHook.Gesture.ToString());
@@ -235,7 +254,47 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
+        ConfigureLivePreview(workerExecutable, hardware);
         _window?.SetSessionStatus("Local transcription ready");
+    }
+
+    private void ConfigureLivePreview(string workerExecutable, HardwareSnapshot hardware)
+    {
+        var modelDirectory = ResolveModelDirectory(
+            WhisperTranscriptionEngine.PreviewModelId,
+            "ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY");
+        if (modelDirectory is null ||
+            !new LocalWhisperModelProbe().Probe(modelDirectory).PreviewSmallComplete)
+        {
+            return;
+        }
+
+        var useCuda = hardware.Architecture == ProcessorArchitectureKind.X64 &&
+            hardware.Cuda.IsDriverAvailable &&
+            hardware.Cuda.DeviceCount > 0;
+        var provider = useCuda ? RuntimeProviderKind.Cuda : RuntimeProviderKind.Cpu;
+        var threads = Math.Clamp(
+            hardware.PhysicalCoreCount > 0
+                ? hardware.PhysicalCoreCount
+                : Math.Max(1, hardware.LogicalProcessorCount / 2),
+            2,
+            8);
+        _previewEngine = new RuntimeWorkerLivePreviewEngine(
+            new RuntimeWorkerTranscriptionOptions(
+                workerExecutable,
+                modelDirectory,
+                provider,
+                ParakeetModelPack.Quantized,
+                threads,
+                CpuFallbackThreads: threads,
+                StartupTimeout: TimeSpan.FromSeconds(15),
+                TranscriptionTimeout: TimeSpan.FromSeconds(15),
+                Engine: FinalAsrEngine.Whisper,
+                WhisperPack: WhisperModelPack.PreviewSmall,
+                Language: "auto",
+                CudaRuntimeDirectory: Environment.GetEnvironmentVariable(
+                    "ENVIOUSWISPR_CUDA_RUNTIME_DIR")),
+            _resourceArbiter);
     }
 
     private static RuntimeWorkerTranscriptionEngine? CreateParakeetEngine(
@@ -303,9 +362,11 @@ public partial class App : Application, IAsyncDisposable
                 "ENVIOUSWISPR_CUDA_RUNTIME_DIR")));
     }
 
-    private static string? ResolveModelDirectory(string modelId)
+    private static string? ResolveModelDirectory(
+        string modelId,
+        string environmentVariable = "ENVIOUSWISPR_MODEL_DIRECTORY")
     {
-        var configured = Environment.GetEnvironmentVariable("ENVIOUSWISPR_MODEL_DIRECTORY");
+        var configured = Environment.GetEnvironmentVariable(environmentVariable);
         if (!string.IsNullOrWhiteSpace(configured) && Directory.Exists(configured))
         {
             return Path.GetFullPath(configured);
@@ -358,16 +419,22 @@ public partial class App : Application, IAsyncDisposable
             };
 
             WriteSessionEvent(result);
-            if (result.Kind == SessionTransitionKind.FinalizeReady &&
+            if (result.Kind == SessionTransitionKind.Started && result.Session is not null)
+            {
+                await StartLivePreviewAsync().ConfigureAwait(false);
+            }
+            else if (result.Kind == SessionTransitionKind.FinalizeReady &&
                 result.Session is not null &&
                 result.Audio is not null)
             {
+                await StopLivePreviewAsync().ConfigureAwait(false);
                 await TranscribeFinalAsync(controller, result.Session.Id, result.Audio)
                     .ConfigureAwait(false);
                 return;
             }
             else if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
             {
+                await StopLivePreviewAsync().ConfigureAwait(false);
                 await controller.ResetAsync().ConfigureAwait(false);
             }
 
@@ -382,6 +449,142 @@ public partial class App : Application, IAsyncDisposable
                 AppFailureCategory.Unknown));
             _window?.DispatcherQueue.TryEnqueue(() =>
                 _window?.SetSessionStatus("Session failed safely"));
+        }
+    }
+
+    private async Task StartLivePreviewAsync()
+    {
+        var engine = _previewEngine;
+        var audioCapture = _audioCapture;
+        if (engine is null || audioCapture is null)
+        {
+            return;
+        }
+
+        await _previewGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_previewLoop is not null)
+            {
+                return;
+            }
+
+            var started = await engine.StartAsync().ConfigureAwait(false);
+            if (!started.Succeeded)
+            {
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.LivePreviewFailed,
+                    FailureFor(started.Error)));
+                return;
+            }
+
+            _previewSequence = 0;
+            _previewCancellation = new CancellationTokenSource();
+            _previewLoop = RunLivePreviewAsync(
+                engine,
+                audioCapture,
+                _previewCancellation.Token);
+            _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.LivePreviewStarted));
+        }
+        finally
+        {
+            _previewGate.Release();
+        }
+    }
+
+    private async Task RunLivePreviewAsync(
+        RuntimeWorkerLivePreviewEngine engine,
+        WasapiAudioCapture audioCapture,
+        CancellationToken cancellationToken)
+    {
+        var cadence = TimeSpan.FromMilliseconds(2_500);
+        var maximumWindow = TimeSpan.FromSeconds(20);
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(cadence, cancellationToken).ConfigureAwait(false);
+                var snapshot = audioCapture.GetSnapshot(maximumWindow);
+                if (snapshot is null || snapshot.Samples.Length < 8_000)
+                {
+                    continue;
+                }
+
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                var update = await engine.PreviewAsync(
+                    snapshot,
+                    Interlocked.Increment(ref _previewSequence),
+                    cancellationToken).ConfigureAwait(false);
+                timer.Stop();
+                if (!update.Succeeded)
+                {
+                    _logger.Write(new AppLogEntry(
+                        DateTimeOffset.UtcNow,
+                        AppEventCode.LivePreviewFailed,
+                        FailureFor(update.Error),
+                        timer.ElapsedMilliseconds));
+                    return;
+                }
+
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.LivePreviewUpdated,
+                    ElapsedMilliseconds: timer.ElapsedMilliseconds));
+                _window?.DispatcherQueue.TryEnqueue(() =>
+                    _window?.SetLivePreview(update.Text));
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Release or cancellation intentionally stops preview without affecting final ASR.
+        }
+        catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.LivePreviewFailed,
+                AppFailureCategory.RuntimeWorker));
+        }
+    }
+
+    private async Task StopLivePreviewAsync()
+    {
+        await _previewGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var cancellation = _previewCancellation;
+            var loop = _previewLoop;
+            _previewCancellation = null;
+            _previewLoop = null;
+            cancellation?.Cancel();
+            if (loop is not null)
+            {
+                try
+                {
+                    await loop.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // The preview task observes cancellation as its normal stop path.
+                }
+            }
+
+            cancellation?.Dispose();
+            if (_previewEngine is not null)
+            {
+                await _previewEngine.StopAsync().ConfigureAwait(false);
+            }
+
+            _window?.DispatcherQueue.TryEnqueue(() => _window?.SetLivePreview(text: null));
+            if (loop is not null)
+            {
+                _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.LivePreviewStopped));
+            }
+        }
+        finally
+        {
+            _previewGate.Release();
         }
     }
 

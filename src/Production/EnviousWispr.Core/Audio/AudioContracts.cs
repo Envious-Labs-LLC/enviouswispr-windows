@@ -35,6 +35,17 @@ public readonly record struct AudioLevel(float Peak, float RootMeanSquare)
 
 public sealed record AudioOperationResult(bool Succeeded, AppError? Error = null);
 
+public sealed record AudioSnapshot(
+    DictationSessionId SessionId,
+    ReadOnlyMemory<float> Samples,
+    int SampleRate,
+    int Channels);
+
+public interface IAudioSnapshotSource
+{
+    AudioSnapshot? GetSnapshot(TimeSpan maximumDuration);
+}
+
 public interface IAudioCapture : IAsyncDisposable
 {
     event EventHandler<AudioLevel>? LevelChanged;

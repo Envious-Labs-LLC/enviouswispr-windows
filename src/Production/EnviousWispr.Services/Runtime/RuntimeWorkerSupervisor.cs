@@ -13,6 +13,7 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
     private readonly string _workerExecutable;
     private readonly string[] _workerArguments;
     private readonly int _maximumRestarts;
+    private readonly ProcessPriorityClass? _processPriority;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private Process? _process;
     private Task<string>? _stderrDrain;
@@ -22,13 +23,15 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
     public RuntimeWorkerSupervisor(
         string workerExecutable,
         IEnumerable<string>? workerArguments = null,
-        int maximumRestarts = 1)
+        int maximumRestarts = 1,
+        ProcessPriorityClass? processPriority = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workerExecutable);
         ArgumentOutOfRangeException.ThrowIfNegative(maximumRestarts);
         _workerExecutable = Path.GetFullPath(workerExecutable);
         _workerArguments = workerArguments?.ToArray() ?? [];
         _maximumRestarts = maximumRestarts;
+        _processPriority = processPriority;
     }
 
     public RuntimeWorkerState State { get; private set; } = RuntimeWorkerState.Stopped;
@@ -237,6 +240,18 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             }
 
             _process = process;
+            if (_processPriority is { } priority)
+            {
+                try
+                {
+                    process.PriorityClass = priority;
+                }
+                catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
+                {
+                    // Priority is a best-effort hint; worker isolation and correctness do not depend on it.
+                }
+            }
+
             _stderrDrain = process.StandardError.ReadToEndAsync(CancellationToken.None);
             var health = await SendRequestAsync("health", timeout, cancellationToken)
                 .ConfigureAwait(false);

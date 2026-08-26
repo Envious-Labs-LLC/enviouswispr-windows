@@ -9,7 +9,8 @@ namespace EnviousWispr.ASR;
 
 public sealed class WhisperTranscriptionEngine : ITranscriptionEngine, IAsyncDisposable, IDisposable
 {
-    public const string ModelId = "whisper-large-v3-turbo";
+    public const string ModelId = WhisperModelIds.Final;
+    public const string PreviewModelId = WhisperModelIds.Preview;
     public const string NativeRuntimeVersion = "whisper.net-1.9.1-whisper.cpp-23ee035";
     public const int RequiredSampleRate = 16_000;
 
@@ -24,7 +25,7 @@ public sealed class WhisperTranscriptionEngine : ITranscriptionEngine, IAsyncDis
         Validate(options);
         Provider = options.Provider;
         ModelPack = options.ModelPack;
-        EngineId = $"{ModelId}:{Provider.ToString().ToLowerInvariant()}";
+        EngineId = $"{WhisperModelIds.For(options.ModelPack)}:{Provider.ToString().ToLowerInvariant()}";
 
         WhisperFactory? factory = null;
         try

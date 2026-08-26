@@ -85,6 +85,13 @@
                         <StackPanel Grid.Column="1" Spacing="4">
                             <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Session" />
                             <TextBlock x:Name="SessionStatusText" FontWeight="SemiBold" Text="Idle" />
+                            <TextBlock
+                                x:Name="LivePreviewText"
+                                AutomationProperties.Name="Live transcription preview"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                MaxLines="3"
+                                TextWrapping="Wrap"
+                                Visibility="Collapsed" />
                         </StackPanel>
                     </Grid>
                 </Border>

@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 
 namespace EnviousWispr.Audio;
 
-public sealed class WasapiAudioCapture : IAudioCapture
+public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource
 {
     private static readonly AudioBufferFormat CaptureFormat = new(
         AudioSampleConverter.TargetSampleRate,
@@ -43,6 +43,43 @@ public sealed class WasapiAudioCapture : IAudioCapture
     public event EventHandler<AudioLevel>? LevelChanged;
 
     public bool IsCapturing => _isCapturing;
+
+    public AudioSnapshot? GetSnapshot(TimeSpan maximumDuration)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maximumDuration, TimeSpan.Zero);
+        var maximumSamples = Math.Max(
+            1,
+            checked((int)Math.Ceiling(
+                maximumDuration.TotalSeconds * AudioSampleConverter.TargetSampleRate)));
+        var maximumBytes = checked(maximumSamples * sizeof(float));
+        byte[] bytes;
+        DictationSessionId sessionId;
+        lock (_bufferGate)
+        {
+            if (!_isCapturing || _request is null)
+            {
+                return null;
+            }
+
+            sessionId = _request.SessionId;
+            var byteCount = (int)Math.Min(_capturedBytes.Length, maximumBytes);
+            if (!_capturedBytes.TryGetBuffer(out var buffer) || buffer.Array is null)
+            {
+                return null;
+            }
+
+            bytes = buffer.Array.AsSpan(
+                buffer.Offset + checked((int)_capturedBytes.Length) - byteCount,
+                byteCount).ToArray();
+        }
+
+        var samples = AudioSampleConverter.ConvertToMono16Khz(bytes, CaptureFormat).Samples;
+        return new AudioSnapshot(
+            sessionId,
+            samples,
+            AudioSampleConverter.TargetSampleRate,
+            Channels: 1);
+    }
 
     public async Task<AudioOperationResult> StartAsync(
         AudioCaptureRequest request,
