@@ -1,4 +1,7 @@
+using EnviousWispr.Audio;
 using EnviousWispr.ASR;
+using EnviousWispr.Core.Audio;
+using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.ModelDelivery;
@@ -11,14 +14,17 @@ using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Drawing;
 using System.Management;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Windows.Forms;
 
 const byte F8 = 0x77;
-const int AcousticPlaybackGain = 2;
+const int DefaultAcousticPlaybackGain = 2;
 const int AcousticPlaybackRepetitions = 2;
+const string SynthesizedAcousticPhrase =
+    "This is an Envious Wispr microphone test. The quick brown fox jumps over the lazy dog.";
 const string ReviewedFrenchFixtureHash =
     "84DEFDC828EF59CEC10364354FBC284BC2CC683FDD4A5EDD5863B7BB2C6123A8";
 const string ReviewedEnglishFixtureHash =
@@ -39,6 +45,21 @@ var escapeRecovery = args.Any(argument => string.Equals(
     argument,
     "--escape-recovery",
     StringComparison.OrdinalIgnoreCase));
+var acousticPlaybackGain = ParseBoundedIntArgument(
+    args,
+    "--acoustic-gain",
+    DefaultAcousticPlaybackGain,
+    minimum: 1,
+    maximum: 8);
+var synthesizedAcoustic = args.Any(argument => string.Equals(
+    argument,
+    "--synthesized-acoustic",
+    StringComparison.OrdinalIgnoreCase));
+if (synthesizedAcoustic && (!liveMicrophone || !englishParakeet))
+{
+    throw new ArgumentException(
+        "--synthesized-acoustic requires --english-parakeet --live-microphone.");
+}
 var failureArgument = ArgumentValue(args, "--failure");
 var failureMode = failureArgument?.ToLowerInvariant() switch
 {
@@ -84,12 +105,18 @@ var targetExecutable = Path.Combine(
 var finalEngine = englishParakeet ? FinalAsrEngine.Parakeet : FinalAsrEngine.Whisper;
 var engineName = finalEngine.ToString();
 var language = englishParakeet ? "en" : "fr";
-var expectedSubstring = englishParakeet ? "account" : "adresse";
+var expectedSubstring = synthesizedAcoustic
+    ? "microphone"
+    : englishParakeet
+        ? "account"
+        : "adresse";
 var fixtureFileName = englishParakeet ? "en-US-row0.wav" : "fr-FR-row0.wav";
 var fixtureHash = englishParakeet ? ReviewedEnglishFixtureHash : ReviewedFrenchFixtureHash;
-var fixtureIdentity = englishParakeet
-    ? "PolyAI-minds14-en-US-row0"
-    : "PolyAI-minds14-fr-FR-row0";
+var fixtureIdentity = synthesizedAcoustic
+    ? "Windows-SAPI-fixed-public-phrase"
+    : englishParakeet
+        ? "PolyAI-minds14-en-US-row0"
+        : "PolyAI-minds14-fr-FR-row0";
 var modelDirectory = Path.Combine(
     repositoryRoot,
     "models",
@@ -126,6 +153,15 @@ if (livePreview && !new LocalWhisperModelProbe().Probe(previewModelDirectory).Pr
 }
 
 EnsureNoUnownedProcesses("EnviousWispr.App", "EnviousWispr.Delivery.Target.Uat");
+Func<Task> acousticStimulus = synthesizedAcoustic
+    ? () => SpeakPublicPhraseAsync(SynthesizedAcousticPhrase)
+    : () => PlayPublicFixtureAsync(
+        fixturePath,
+        acousticPlaybackGain,
+        AcousticPlaybackRepetitions);
+var acousticProbe = liveMicrophone
+    ? await MeasureAcousticPlaybackAsync(acousticStimulus)
+    : null;
 
 var runId = Guid.NewGuid().ToString("N");
 var uatDirectory = Path.Combine(Path.GetTempPath(), $"EnviousWispr-AppJourney-Uat-{runId}");
@@ -309,7 +345,7 @@ try
             try
             {
                 Thread.Sleep(500);
-                await PlayPublicFixtureAsync(fixturePath);
+                await acousticStimulus();
                 Thread.Sleep(500);
             }
             finally
@@ -375,6 +411,7 @@ try
             failedJourney = liveMicrophone ? "acoustic-playback" : "reviewed-fixture",
             engine = engineName,
             language,
+            acousticProbe,
             diagnosticEvents = ReadDiagnosticEvents(diagnosticPath),
             targetCharacterCount = ReadTargetCharacterCount(targetResultPath),
         }));
@@ -479,11 +516,13 @@ try
         language,
         provider,
         modelPack,
+        acousticProbe,
         polish = "None",
         inputKind = failureMode switch
         {
             JourneyFailureMode.MicrophoneUnavailable => "SyntheticF8-AllowlistedAccessDeniedAudioFault",
             JourneyFailureMode.WorkerStartup => "StartupFault-MissingOwnedWorkerExecutable",
+            _ when synthesizedAcoustic => "SyntheticF8-WindowsSpeechPlayback-ProductionWasapi",
             _ when liveMicrophone => "SyntheticF8-ReviewedFixturePlayback-ProductionWasapi",
             _ => "NamedEvents-ReviewedFixtureAudioCapture",
         },
@@ -809,12 +848,15 @@ static bool IsProcessRunning(int processId)
     }
 }
 
-static async Task PlayPublicFixtureAsync(string fixturePath)
+static async Task PlayPublicFixtureAsync(
+    string fixturePath,
+    int gain,
+    int repetitions)
 {
     var (pcmBytes, sampleRate) = ReadReviewedMuLawFixture(
         fixturePath,
-        AcousticPlaybackGain);
-    pcmBytes = RepeatPcm(pcmBytes, sampleRate, AcousticPlaybackRepetitions);
+        gain);
+    pcmBytes = RepeatPcm(pcmBytes, sampleRate, repetitions);
     using var stream = new MemoryStream(pcmBytes, writable: false);
     using var source = new RawSourceWaveStream(stream, new WaveFormat(sampleRate, 16, 1));
     await using var output = await new WasapiPlayerBuilder()
@@ -832,6 +874,126 @@ static async Task PlayPublicFixtureAsync(string fixturePath)
     if (failure is not null)
     {
         throw new InvalidOperationException("The reviewed public fixture could not be played.", failure);
+    }
+}
+
+static async Task<AcousticProbeMetrics> MeasureAcousticPlaybackAsync(
+    Func<Task> playStimulus)
+{
+    ArgumentNullException.ThrowIfNull(playStimulus);
+    await using var capture = new WasapiAudioCapture();
+    var levelGate = new object();
+    var levelEvents = 0;
+    var observedPeak = 0f;
+    double observedRmsSum = 0;
+    capture.LevelChanged += (_, level) =>
+    {
+        lock (levelGate)
+        {
+            levelEvents++;
+            observedPeak = Math.Max(observedPeak, level.Peak);
+            observedRmsSum += level.RootMeanSquare;
+        }
+    };
+
+    var started = await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
+    if (!started.Succeeded)
+    {
+        return new AcousticProbeMetrics(
+            Started: false,
+            Outcome: "StartFailed",
+            Error: started.Error?.Code.ToString(),
+            DurationMilliseconds: 0,
+            LevelEvents: 0,
+            Peak: 0,
+            AverageLevelRootMeanSquare: 0,
+            CapturedRootMeanSquare: 0);
+    }
+
+    await Task.Delay(TimeSpan.FromMilliseconds(500));
+    await playStimulus();
+    await Task.Delay(TimeSpan.FromMilliseconds(500));
+    var result = await capture.StopAsync();
+    var samples = result.Samples.ToArray();
+    var sumOfSquares = samples.Sum(sample => (double)sample * sample);
+    double averageLevelRootMeanSquare;
+    lock (levelGate)
+    {
+        averageLevelRootMeanSquare = levelEvents == 0 ? 0 : observedRmsSum / levelEvents;
+    }
+
+    return new AcousticProbeMetrics(
+        Started: true,
+        Outcome: result.Outcome.ToString(),
+        Error: result.Error?.Code.ToString(),
+        DurationMilliseconds: samples.Length * 1_000L / AudioSampleConverter.TargetSampleRate,
+        LevelEvents: levelEvents,
+        Peak: observedPeak,
+        AverageLevelRootMeanSquare: averageLevelRootMeanSquare,
+        CapturedRootMeanSquare: samples.Length == 0 ? 0 : Math.Sqrt(sumOfSquares / samples.Length));
+}
+
+static async Task SpeakPublicPhraseAsync(string phrase)
+{
+    ArgumentException.ThrowIfNullOrWhiteSpace(phrase);
+    var completion = new TaskCompletionSource<Exception?>(
+        TaskCreationOptions.RunContinuationsAsynchronously);
+    var thread = new Thread(() =>
+    {
+        object? voice = null;
+        try
+        {
+            var voiceType = Type.GetTypeFromProgID("SAPI.SpVoice") ??
+                throw new InvalidOperationException("Windows speech synthesis is unavailable.");
+            voice = Activator.CreateInstance(voiceType) ??
+                throw new InvalidOperationException("Windows speech synthesis could not start.");
+            _ = voiceType.InvokeMember(
+                "Volume",
+                BindingFlags.SetProperty,
+                binder: null,
+                voice,
+                [100],
+                System.Globalization.CultureInfo.InvariantCulture);
+            _ = voiceType.InvokeMember(
+                "Rate",
+                BindingFlags.SetProperty,
+                binder: null,
+                voice,
+                [0],
+                System.Globalization.CultureInfo.InvariantCulture);
+            _ = voiceType.InvokeMember(
+                "Speak",
+                BindingFlags.InvokeMethod,
+                binder: null,
+                voice,
+                [phrase, 0],
+                System.Globalization.CultureInfo.InvariantCulture);
+            completion.TrySetResult(null);
+        }
+        catch (Exception exception)
+        {
+            completion.TrySetResult(exception);
+        }
+        finally
+        {
+            if (voice is not null && Marshal.IsComObject(voice))
+            {
+                _ = Marshal.FinalReleaseComObject(voice);
+            }
+        }
+    })
+    {
+        IsBackground = true,
+        Name = "EnviousWispr acoustic UAT speech",
+    };
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+    var failure = await completion.Task.WaitAsync(TimeSpan.FromSeconds(20));
+    if (failure is not null)
+    {
+        throw new InvalidOperationException(
+            "The fixed public phrase could not be synthesized through the default speakers.",
+            failure);
     }
 }
 
@@ -1006,6 +1168,35 @@ static string? ArgumentValue(string[] arguments, string name)
     }
 
     return null;
+}
+
+static int ParseBoundedIntArgument(
+    string[] arguments,
+    string name,
+    int defaultValue,
+    int minimum,
+    int maximum)
+{
+    var value = ArgumentValue(arguments, name);
+    if (value is null)
+    {
+        return defaultValue;
+    }
+
+    if (!int.TryParse(
+            value,
+            System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out var parsed) ||
+        parsed < minimum ||
+        parsed > maximum)
+    {
+        throw new ArgumentOutOfRangeException(
+            name,
+            $"{name} must be an integer from {minimum} through {maximum}.");
+    }
+
+    return parsed;
 }
 
 static void CopyDirectoryExcept(string source, string destination, string excludedFileName)
@@ -1208,6 +1399,16 @@ internal enum JourneyFailureMode
     WorkerStartup,
     TargetUnavailable,
 }
+
+internal sealed record AcousticProbeMetrics(
+    bool Started,
+    string Outcome,
+    string? Error,
+    long DurationMilliseconds,
+    int LevelEvents,
+    float Peak,
+    double AverageLevelRootMeanSquare,
+    double CapturedRootMeanSquare);
 
 internal sealed class ClipboardGuard : IDisposable
 {

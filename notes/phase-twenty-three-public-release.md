@@ -88,6 +88,19 @@ empty transcript on this setup. The first attempt also exposed and corrected a h
 the timeout is now derived from admitted PCM duration. This strengthens the reproducible English success path but
 does not convert synthetic speaker playback into human-spoken microphone acceptance.
 
+The live-audio harness now performs a content-free preflight with the exact production WASAPI implementation
+before starting the app journey. It retains no audio or transcript and reports only capture outcome, duration,
+level-event count, peak, average level RMS, and captured RMS. The reviewed English fixture produced captured RMS
+of approximately 0.00214 at the default 2x playback gain. One maximum-gain attempt reached approximately 0.01456,
+but offline diagnostic normalization at 1x, 4x, 16x, and 64x still failed to recover the known word `account`, so
+no speculative input normalizer was added to the product. A separate fixed public sentence spoken through Windows
+SAPI produced captured RMS of approximately 0.00553; the production journey again completed capture,
+transcription, deterministic processing, and clean shutdown but produced an empty transcript and no delivery.
+A later repeated SAPI run measured approximately 0.00097 captured RMS and reached the same stage sequence,
+confirming that this speaker-to-webcam coupling is also variable. These measurements distinguish a working
+microphone path with weak or echo-suppressed speaker coupling from a capture-start failure. Neither synthetic
+stimulus is recorded as microphone-dictation acceptance.
+
 The same English row was also added to the pinned Whisper language corpus rather than being excluded to keep a
 gate green. Its source annotation stops around 7.0 seconds even though admitted audio continues to 10.837 seconds.
 Parakeet and both Whisper model packs independently produced the same additional seven-word question with bounded
