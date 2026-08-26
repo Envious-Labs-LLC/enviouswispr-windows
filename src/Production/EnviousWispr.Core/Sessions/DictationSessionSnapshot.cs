@@ -19,6 +19,7 @@ public sealed record DictationSessionSnapshot(
     DictationSessionState State,
     DateTimeOffset StartedAt,
     TargetWindowId Target,
+    TextDeliveryOptions DeliveryOptions,
     DateTimeOffset? FinishedAt = null,
     AppError? Error = null)
 {
@@ -26,14 +27,17 @@ public sealed record DictationSessionSnapshot(
         DictationSessionId.Create(),
         DictationSessionState.Recording,
         startedAt,
-        default);
+        default,
+        TextDeliveryOptions.Default);
 
     public static DictationSessionSnapshot Start(
         DictationSessionId id,
         DateTimeOffset startedAt,
-        TargetWindowId target) => new(
+        TargetWindowId target,
+        TextDeliveryOptions? deliveryOptions = null) => new(
         id,
         DictationSessionState.Recording,
         startedAt,
-        target);
+        target,
+        deliveryOptions ?? TextDeliveryOptions.Default);
 }

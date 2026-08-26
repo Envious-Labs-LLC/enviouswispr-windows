@@ -144,7 +144,10 @@ public static class HotkeyGestureParser
             CanRetry: false));
 }
 
-public readonly record struct TargetWindowId(nint Value)
+public readonly record struct TargetWindowId(
+    nint Value,
+    uint ProcessId = 0,
+    string? FocusedElementId = null)
 {
     public bool IsValid => Value != 0;
 }
