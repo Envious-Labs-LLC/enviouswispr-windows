@@ -7,7 +7,8 @@ focused app. Sister project to macOS [EnviousWispr](https://github.com/saurabhav
 visible overlay, tray controls, startup behavior, and the physical F8 voice-to-paste path were verified
 on the Envious Labs rig (2026-08-25). This proves the vertical slice; it is not yet the production WinUI
 feature set. The separate .NET 10 and WinUI 3 production solution now establishes the module, lifecycle,
-settings, and privacy-safe diagnostics boundaries that will replace the proof capability by capability.
+migration-safe settings, portable reusable-data, typed-error, session-state, and privacy-safe diagnostics
+boundaries that will replace the proof capability by capability.
 
 Maintained by [Envious Labs](https://github.com/Envious-Labs-LLC).
 
@@ -78,6 +79,7 @@ Model packs (ASR ~670 MB int8 / ~2.5 GB fp32) and the EG-1 GGUF are **not in git
 | CPU fallback | ✅ app falls back automatically if CUDA cannot load |
 | Contract tests plus runtime ASR and native-input tests | ✅ 39/39 locally, CI on every push |
 | .NET 10 + WinUI 3 production shell and module graph | 🚧 foundation builds and is architecture-tested |
+| Versioned settings and portable reusable-data storage | ✅ migration, downgrade, corruption, reset, import, and export tested |
 | EG-1 distribution story | ⏳ open (founder's call) |
 | Streaming ASR / fused-decoder export | post-v1 (S1 verdicts) |
 

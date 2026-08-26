@@ -18,7 +18,9 @@ public sealed partial class MainWindow : Window
         {
             SettingsLoadStatus.Loaded => "Restored",
             SettingsLoadStatus.Missing => "Created safely",
+            SettingsLoadStatus.Migrated => "Migrated safely",
             SettingsLoadStatus.Invalid => "Recovered from invalid data",
+            SettingsLoadStatus.NewerVersion => "Newer data preserved",
             SettingsLoadStatus.Unavailable => "Using safe defaults",
             _ => "Using safe defaults",
         };

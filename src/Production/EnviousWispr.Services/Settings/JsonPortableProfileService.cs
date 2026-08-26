@@ -1,0 +1,114 @@
+using System.Security;
+using System.Text.Json;
+using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Settings;
+
+namespace EnviousWispr.Services.Settings;
+
+public sealed class JsonPortableProfileService : IPortableProfileService
+{
+    public async Task<PortableProfileExportResult> ExportAsync(
+        PortableProfile profile,
+        string destinationPath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
+
+        var validationError = AppSettingsValidator.Validate(profile, AppErrorStage.ProfileExport);
+        if (validationError is not null)
+        {
+            return new PortableProfileExportResult(Succeeded: false, validationError);
+        }
+
+        try
+        {
+            await JsonSettingsStore.WriteAtomicallyAsync(
+                profile,
+                Path.GetFullPath(destinationPath),
+                cancellationToken).ConfigureAwait(false);
+            return new PortableProfileExportResult(Succeeded: true);
+        }
+        catch (IOException)
+        {
+            return Failure(AppErrorCode.StorageUnavailable, AppErrorStage.ProfileExport);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Failure(AppErrorCode.AccessDenied, AppErrorStage.ProfileExport);
+        }
+        catch (SecurityException)
+        {
+            return Failure(AppErrorCode.AccessDenied, AppErrorStage.ProfileExport);
+        }
+    }
+
+    public async Task<PortableProfileImportResult> ImportAsync(
+        string sourcePath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(Path.GetFullPath(sourcePath), cancellationToken)
+                .ConfigureAwait(false);
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("schemaVersion", out var versionElement) ||
+                !versionElement.TryGetInt32(out var schemaVersion) ||
+                schemaVersion < 1)
+            {
+                return Invalid();
+            }
+
+            if (schemaVersion > PortableProfile.CurrentSchemaVersion)
+            {
+                return new PortableProfileImportResult(
+                    PortableProfileImportStatus.NewerVersion,
+                    Error: new AppError(
+                        AppErrorCode.NewerSchema,
+                        AppErrorStage.ProfileImport,
+                        CanRetry: false));
+            }
+
+            var profile = JsonSerializer.Deserialize<PortableProfile>(
+                json,
+                JsonSettingsStore.SerializerOptions);
+            var validationError = AppSettingsValidator.Validate(profile, AppErrorStage.ProfileImport);
+            return validationError is null
+                ? new PortableProfileImportResult(PortableProfileImportStatus.Imported, profile)
+                : Invalid(validationError);
+        }
+        catch (JsonException)
+        {
+            return Invalid();
+        }
+        catch (IOException)
+        {
+            return Unavailable(AppErrorCode.StorageUnavailable);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Unavailable(AppErrorCode.AccessDenied);
+        }
+        catch (SecurityException)
+        {
+            return Unavailable(AppErrorCode.AccessDenied);
+        }
+    }
+
+    private static PortableProfileExportResult Failure(AppErrorCode code, AppErrorStage stage) => new(
+        Succeeded: false,
+        new AppError(code, stage, CanRetry: true));
+
+    private static PortableProfileImportResult Invalid(AppError? error = null) => new(
+        PortableProfileImportStatus.Invalid,
+        Error: error ?? new AppError(
+            AppErrorCode.InvalidData,
+            AppErrorStage.ProfileImport,
+            CanRetry: false));
+
+    private static PortableProfileImportResult Unavailable(AppErrorCode code) => new(
+        PortableProfileImportStatus.Unavailable,
+        Error: new AppError(code, AppErrorStage.ProfileImport, CanRetry: true));
+}

@@ -62,7 +62,18 @@ public partial class App : Application
 
         try
         {
-            await _settingsStore.SaveAsync(settings).ConfigureAwait(true);
+            if (loadResult.Status is SettingsLoadStatus.Invalid or SettingsLoadStatus.Migrated)
+            {
+                await _settingsStore.ResetAsync(settings).ConfigureAwait(true);
+                if (loadResult.Status == SettingsLoadStatus.Invalid)
+                {
+                    _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.SettingsReset));
+                }
+            }
+            else if (loadResult.Status is not (SettingsLoadStatus.NewerVersion or SettingsLoadStatus.Unavailable))
+            {
+                await _settingsStore.SaveAsync(settings).ConfigureAwait(true);
+            }
         }
         catch (IOException)
         {
@@ -104,13 +115,16 @@ public partial class App : Application
     {
         SettingsLoadStatus.Loaded => AppEventCode.SettingsLoaded,
         SettingsLoadStatus.Missing => AppEventCode.SettingsCreated,
+        SettingsLoadStatus.Migrated => AppEventCode.SettingsMigrated,
         SettingsLoadStatus.Invalid or SettingsLoadStatus.Unavailable => AppEventCode.SettingsRecovered,
+        SettingsLoadStatus.NewerVersion => AppEventCode.SettingsNewerVersionPreserved,
         _ => AppEventCode.SettingsRecovered,
     };
 
     private static AppFailureCategory FailureFor(SettingsLoadStatus status) => status switch
     {
         SettingsLoadStatus.Invalid => AppFailureCategory.InvalidData,
+        SettingsLoadStatus.NewerVersion => AppFailureCategory.InvalidData,
         SettingsLoadStatus.Unavailable => AppFailureCategory.StorageUnavailable,
         _ => AppFailureCategory.None,
     };
