@@ -60,7 +60,8 @@ verifies the fixture's reviewed SHA-256 before playback:
 
 Playback applies a bounded 2x in-memory gain with clipping protection and plays the fixture twice with a short
 silence gap so a webcam microphone can hear the quiet mu-law source; no converted or amplified audio is written
-to disk.
+to disk. Use `--acoustic-gain 1` through `--acoustic-gain 8` to override the in-memory fixture gain when measuring
+another machine.
 
 ```powershell
 dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
@@ -69,9 +70,20 @@ dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.
   -c Release -- --english-parakeet --live-microphone
 ```
 
-This mode is audible. It records only while F8 is held, never persists audio, uses an isolated profile, and
-stores only a temporary phrase-match boolean and character count before cleanup. It refuses to run while an
-unowned EnviousWispr or controlled-target process exists.
+For a clearer source than the quiet call-center fixture, the English Parakeet path can speak a fixed public
+sentence through Windows speech synthesis. The phrase is created in memory and is never written to disk:
+
+```powershell
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --live-microphone --synthesized-acoustic
+```
+
+This mode is audible. Before the app journey, it runs the same stimulus once through the production WASAPI
+capture implementation and reports only content-free coupling measurements: start/outcome/error, duration,
+level-event count, peak, average level RMS, and captured RMS. Samples remain in memory only for the measurement
+and are discarded. The actual journey records only while F8 is held, never persists audio, uses an isolated
+profile, and stores only a temporary phrase-match boolean and character count before cleanup. It refuses to run
+while an unowned EnviousWispr or controlled-target process exists.
 
 The default path requires the gitignored `models/whisper-large-v3-turbo` pack; the English path requires
 `models/parakeet-tdt-0.6b-v3`. The result is one content-free JSON object with
@@ -81,6 +93,8 @@ phrase appeared and the character count, then the harness deletes it with the is
 
 The default mode is real production pipeline proof, but not microphone or global-registration proof. The live
 mode adds production WASAPI, the installed global hook, and an acoustic speaker-to-microphone path, but its key
-edges and reviewed-fixture playback source are still synthetic. Before Phase 23 can close, a person must hold
+edges and playback source are still synthetic. On the current webcam-microphone hardware, both the reviewed
+fixture and Windows-synthesized sentence were detected by the content-free probe but failed their lexical gates;
+speaker echo suppression is the likely boundary. Before Phase 23 can close, a person must hold
 the configured global key from a non-EnviousWispr target, speak through a physical microphone, release, observe
 insertion, and record only content-free pass/fail evidence for that exact build.
