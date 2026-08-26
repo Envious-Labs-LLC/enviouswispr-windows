@@ -14,7 +14,8 @@ $requiredFiles = @(
     'THIRD-PARTY-NOTICES.md',
     'docs/distribution/artifact-license-inventory.json',
     'docs/distribution/artifact-license-inventory.md',
-    'docs/distribution/public-release.md'
+    'docs/distribution/public-release.md',
+    'tools/whisper-uat/fixtures/manifest.json'
 )
 foreach ($relative in $requiredFiles) {
     $path = Join-Path $repoRoot $relative
@@ -46,6 +47,85 @@ try {
     $tracked = @(git ls-files)
     if ($LASTEXITCODE -ne 0 -or $tracked.Count -eq 0) {
         throw 'Tracked-file inventory failed.'
+    }
+
+    $fixtureManifestPath = Join-Path $repoRoot 'tools/whisper-uat/fixtures/manifest.json'
+    $fixtureManifest = Get-Content -LiteralPath $fixtureManifestPath -Raw | ConvertFrom-Json
+    if ($fixtureManifest.dataset -cne 'PolyAI/minds14' -or
+        $fixtureManifest.datasetRevision -cne '40ce77cb32a384e4d50a568e1ec39ac804019d33' -or
+        $fixtureManifest.license -cne 'CC-BY-4.0' -or
+        $fixtureManifest.source -cne 'https://huggingface.co/datasets/PolyAI/minds14' -or
+        @($fixtureManifest.fixtures).Count -ne 11) {
+        throw 'The reviewed public Whisper fixture manifest has unapproved provenance.'
+    }
+
+    $expectedFixtureRows = [System.Collections.Generic.HashSet[string]]::new(
+        [StringComparer]::Ordinal)
+    @(
+        'fr-FR/train/0',
+        'de-DE/train/0',
+        'de-DE/train/100',
+        'de-DE/train/200',
+        'de-DE/train/300',
+        'de-DE/train/400',
+        'es-ES/train/0',
+        'es-ES/train/100',
+        'es-ES/train/200',
+        'es-ES/train/300',
+        'es-ES/train/400'
+    ) | ForEach-Object { [void]$expectedFixtureRows.Add($_) }
+    $reviewedFixturePaths = [System.Collections.Generic.HashSet[string]]::new(
+        [StringComparer]::Ordinal)
+    $reviewedFixtureRows = [System.Collections.Generic.HashSet[string]]::new(
+        [StringComparer]::Ordinal)
+    foreach ($fixture in @($fixtureManifest.fixtures)) {
+        $expectedFile = "$($fixture.config)-row$($fixture.row).wav"
+        $rowKey = "$($fixture.config)/$($fixture.split)/$($fixture.row)"
+        if ([string]::IsNullOrWhiteSpace($fixture.file) -or
+            $fixture.file -cne $expectedFile -or
+            [IO.Path]::GetFileName($fixture.file) -cne $fixture.file -or
+            $fixture.config -notmatch '^[a-z]{2}-[A-Z]{2}$' -or
+            $fixture.split -cne 'train' -or
+            $fixture.row -lt 0 -or
+            [string]::IsNullOrWhiteSpace($fixture.transcription) -or
+            $fixture.sha256 -notmatch '^[a-f0-9]{64}$' -or
+            -not $expectedFixtureRows.Contains($rowKey) -or
+            -not $reviewedFixtureRows.Add($rowKey)) {
+            throw "The reviewed public fixture manifest contains an invalid row: $rowKey"
+        }
+
+        $relativeFixture = "tools/whisper-uat/fixtures/$($fixture.file)"
+        $fixturePath = Join-Path $repoRoot $relativeFixture
+        if (-not $reviewedFixturePaths.Add($relativeFixture) -or
+            $tracked -cnotcontains $relativeFixture -or
+            -not (Test-Path -LiteralPath $fixturePath -PathType Leaf)) {
+            throw "A reviewed public fixture is missing, duplicated, or untracked: $relativeFixture"
+        }
+
+        $fixtureFile = Get-Item -LiteralPath $fixturePath
+        if ($fixtureFile.Length -le 0 -or $fixtureFile.Length -gt 1MB) {
+            throw "A reviewed public fixture has an unsafe size: $relativeFixture"
+        }
+        $actualHash = (Get-FileHash -LiteralPath $fixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualHash -cne $fixture.sha256) {
+            throw "A reviewed public fixture hash does not match its manifest: $relativeFixture"
+        }
+    }
+
+    if (-not $reviewedFixtureRows.SetEquals($expectedFixtureRows)) {
+        throw 'The reviewed public fixture manifest does not contain the exact approved row set.'
+    }
+
+    $trackedFixtureAudio = @($tracked | Where-Object {
+        $_.StartsWith('tools/whisper-uat/fixtures/', [StringComparison]::Ordinal) -and
+        [IO.Path]::GetExtension($_) -ieq '.wav'
+    })
+    $unreviewedFixtureAudio = @($trackedFixtureAudio | Where-Object {
+        -not $reviewedFixturePaths.Contains($_)
+    })
+    if ($unreviewedFixtureAudio.Count -gt 0 -or
+        $trackedFixtureAudio.Count -ne $reviewedFixturePaths.Count) {
+        throw "Unreviewed public fixture audio is tracked: $($unreviewedFixtureAudio -join ', ')"
     }
 
     $forbiddenExtensions = @('.gguf', '.onnx', '.ort', '.wav', '.mp3', '.pfx', '.p12', '.pem', '.key')
@@ -113,7 +193,7 @@ try {
         }
     }
 
-    Write-Host "Public-release repository audit passed: $($tracked.Count) tracked files, no private paths or secret-shaped content."
+    Write-Host "Public-release repository audit passed: $($tracked.Count) tracked files, $($reviewedFixturePaths.Count) reviewed public audio fixtures, no private paths or secret-shaped content."
 }
 finally {
     Pop-Location

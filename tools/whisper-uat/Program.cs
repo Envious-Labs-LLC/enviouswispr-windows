@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text.Json;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Runtime;
@@ -15,18 +16,7 @@ var clips = new Dictionary<string, float[]>(StringComparer.Ordinal)
     ["clip20"] = ReadWaveFile(Path.Combine(audioDirectory, "clip20.wav")),
     ["clip94"] = ReadWaveFile(Path.Combine(audioDirectory, "clip94.wav")),
 };
-var multilingual = new Dictionary<string, MultilingualFixture>(StringComparer.Ordinal)
-{
-    ["fr"] = new(
-        ReadWaveFile(Path.Combine(repositoryRoot, "tools", "whisper-uat", "fixtures", "fr-FR-row0.wav")),
-        "je souhaite changer mon adresse"),
-    ["de"] = new(
-        ReadWaveFile(Path.Combine(repositoryRoot, "tools", "whisper-uat", "fixtures", "de-DE-row0.wav")),
-        "ich möchte gerne Geld auf mein Konto einzahlen"),
-    ["es"] = new(
-        ReadWaveFile(Path.Combine(repositoryRoot, "tools", "whisper-uat", "fixtures", "es-ES-row0.wav")),
-        "hola buenas a ver tengo un problema con vuestra aplicación resulta que quiero hacer una transferencia bancaria a una cuenta conocida"),
-};
+var multilingual = LoadMultilingualFixtures(repositoryRoot);
 
 var mode = args.FirstOrDefault()?.ToLowerInvariant();
 var requestedProvider = mode is "cpu" or "cuda" ? mode : null;
@@ -48,7 +38,11 @@ if (mode is "fixed-cpu" or "fixed-cuda")
         repositoryRoot,
         modelDirectory,
         multilingual);
-    Console.WriteLine(JsonSerializer.Serialize(new { fixedLanguage }));
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        fixedLanguage,
+        fixedLanguageSummary = SummarizeLanguageResults(fixedLanguage),
+    }));
     return fixedLanguage.All(result => result.Passed) ? 0 : 9;
 }
 
@@ -79,7 +73,7 @@ static async Task<ProviderResult> RunProviderAsync(
     string repositoryRoot,
     string modelDirectory,
     IReadOnlyDictionary<string, float[]> clips,
-    IReadOnlyDictionary<string, MultilingualFixture> multilingual)
+    IReadOnlyDictionary<string, IReadOnlyList<MultilingualFixture>> multilingual)
 {
     var worker = Path.Combine(
         repositoryRoot,
@@ -119,6 +113,7 @@ static async Task<ProviderResult> RunProviderAsync(
             CancellationMilliseconds: 0,
             WorkerRemovedAfterCancellation: false,
             Multilingual: [],
+            MultilingualSummary: [],
             Passed: false);
     }
 
@@ -127,9 +122,12 @@ static async Task<ProviderResult> RunProviderAsync(
     var clip20 = await MeasureAsync(engine, clips["clip20"], "sentiment analysis");
     var clip94 = await MeasureAsync(engine, clips["clip94"], requiredPhrase: null);
     var multilingualResults = new List<LanguageResult>();
-    foreach (var (language, fixture) in multilingual)
+    foreach (var (language, fixtures) in multilingual)
     {
-        multilingualResults.Add(await MeasureLanguageAsync(engine, language, fixture));
+        foreach (var fixture in fixtures)
+        {
+            multilingualResults.Add(await MeasureLanguageAsync(engine, language, fixture));
+        }
     }
 
     var processId = engine.WorkerProcessId;
@@ -158,6 +156,7 @@ static async Task<ProviderResult> RunProviderAsync(
         cancellationTimer.ElapsedMilliseconds,
         workerRemoved,
         multilingualResults,
+        SummarizeLanguageResults(multilingualResults),
         Passed: clip10.Passed && clip20.Passed && clip94.Passed &&
             multilingualResults.All(result => result.Passed) &&
             cancellationObserved && workerRemoved);
@@ -168,10 +167,10 @@ static async Task<IReadOnlyList<LanguageResult>> RunFixedLanguageDiagnosticsAsyn
     WhisperModelPack modelPack,
     string repositoryRoot,
     string modelDirectory,
-    IReadOnlyDictionary<string, MultilingualFixture> multilingual)
+    IReadOnlyDictionary<string, IReadOnlyList<MultilingualFixture>> multilingual)
 {
     var results = new List<LanguageResult>();
-    foreach (var (language, fixture) in multilingual)
+    foreach (var (language, fixtures) in multilingual)
     {
         var worker = Path.Combine(
             repositoryRoot,
@@ -197,19 +196,27 @@ static async Task<IReadOnlyList<LanguageResult>> RunFixedLanguageDiagnosticsAsyn
         var started = await engine.StartAsync();
         if (!started.Succeeded)
         {
-            results.Add(new LanguageResult(
-                language,
-                fixture.Samples.Length * 1_000L / sampleRate,
-                0,
-                LanguageDetected: false,
-                Words(fixture.ExpectedText).Length,
-                ActualWordCount: 0,
-                WordErrorRate: 1,
-                Passed: false));
+            foreach (var fixture in fixtures)
+            {
+                results.Add(new LanguageResult(
+                    language,
+                    fixture.Row,
+                    fixture.Samples.Length * 1_000L / sampleRate,
+                    0,
+                    LanguageDetected: false,
+                    Words(fixture.ExpectedText).Length,
+                    ActualWordCount: 0,
+                    EditDistance: Words(fixture.ExpectedText).Length,
+                    WordErrorRate: 1,
+                    Passed: false));
+            }
             continue;
         }
 
-        results.Add(await MeasureLanguageAsync(engine, language, fixture));
+        foreach (var fixture in fixtures)
+        {
+            results.Add(await MeasureLanguageAsync(engine, language, fixture));
+        }
     }
 
     return results;
@@ -225,23 +232,47 @@ static async Task<LanguageResult> MeasureLanguageAsync(
     timer.Stop();
     var expected = Words(fixture.ExpectedText);
     var actual = Words(transcript.Text);
+    var editDistance = LevenshteinDistance(expected, actual);
     var wordErrorRate = expected.Length == 0
         ? actual.Length == 0 ? 0 : 1
-        : LevenshteinDistance(expected, actual) / (double)expected.Length;
+        : editDistance / (double)expected.Length;
     var detected = string.Equals(
         transcript.DetectedLanguage,
         expectedLanguage,
         StringComparison.OrdinalIgnoreCase);
     return new LanguageResult(
         expectedLanguage,
+        fixture.Row,
         fixture.Samples.Length * 1_000L / sampleRate,
         timer.ElapsedMilliseconds,
         detected,
         expected.Length,
         actual.Length,
+        editDistance,
         wordErrorRate,
         Passed: detected && wordErrorRate <= 0.35);
 }
+
+static IReadOnlyList<LanguageCorpusSummary> SummarizeLanguageResults(
+    IReadOnlyList<LanguageResult> results) => results
+        .GroupBy(result => result.ExpectedLanguage, StringComparer.Ordinal)
+        .Select(group =>
+        {
+            var referenceWords = group.Sum(result => result.ReferenceWordCount);
+            var editDistance = group.Sum(result => result.EditDistance);
+            return new LanguageCorpusSummary(
+                group.Key,
+                RowCount: group.Count(),
+                PassedRows: group.Count(result => result.Passed),
+                LanguageDetectedRows: group.Count(result => result.LanguageDetected),
+                ReferenceWordCount: referenceWords,
+                EditDistance: editDistance,
+                AggregateWordErrorRate: referenceWords == 0
+                    ? 0
+                    : editDistance / (double)referenceWords);
+        })
+        .OrderBy(result => result.ExpectedLanguage, StringComparer.Ordinal)
+        .ToArray();
 
 static async Task<ClipResult> MeasureAsync(
     RuntimeWorkerTranscriptionEngine engine,
@@ -371,6 +402,94 @@ static float[] ReadWaveFile(string path)
     throw new InvalidDataException("The Whisper fixture has no supported audio data.");
 }
 
+static IReadOnlyDictionary<string, IReadOnlyList<MultilingualFixture>> LoadMultilingualFixtures(
+    string repositoryRoot)
+{
+    const string expectedRevision = "40ce77cb32a384e4d50a568e1ec39ac804019d33";
+    var expectedRows = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal)
+    {
+        ["fr-FR"] = [0],
+        ["de-DE"] = [0, 100, 200, 300, 400],
+        ["es-ES"] = [0, 100, 200, 300, 400],
+    };
+    var fixtureDirectory = Path.Combine(repositoryRoot, "tools", "whisper-uat", "fixtures");
+    var manifestPath = Path.Combine(fixtureDirectory, "manifest.json");
+    var manifest = JsonSerializer.Deserialize<FixtureManifest>(
+        File.ReadAllText(manifestPath),
+        new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ??
+        throw new InvalidDataException("The Whisper fixture manifest is invalid.");
+    if (!string.Equals(manifest.Dataset, "PolyAI/minds14", StringComparison.Ordinal) ||
+        !string.Equals(manifest.DatasetRevision, expectedRevision, StringComparison.Ordinal) ||
+        !string.Equals(manifest.License, "CC-BY-4.0", StringComparison.Ordinal) ||
+        !string.Equals(
+            manifest.Source,
+            "https://huggingface.co/datasets/PolyAI/minds14",
+            StringComparison.Ordinal) ||
+        manifest.Fixtures.Count != expectedRows.Sum(entry => entry.Value.Count))
+    {
+        throw new InvalidDataException("The Whisper fixture manifest provenance is not approved.");
+    }
+
+    var seenFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var seenRows = expectedRows.Keys.ToDictionary(
+        config => config,
+        _ => new HashSet<int>(),
+        StringComparer.Ordinal);
+    var loaded = new Dictionary<string, List<MultilingualFixture>>(StringComparer.Ordinal);
+    foreach (var fixture in manifest.Fixtures)
+    {
+        if (!expectedRows.TryGetValue(fixture.Config, out var allowedRows) ||
+            !allowedRows.Contains(fixture.Row) ||
+            !string.Equals(fixture.Split, "train", StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(fixture.Transcription) ||
+            !string.Equals(
+                fixture.File,
+                $"{fixture.Config}-row{fixture.Row}.wav",
+                StringComparison.Ordinal) ||
+            !seenFiles.Add(fixture.File) ||
+            !seenRows[fixture.Config].Add(fixture.Row))
+        {
+            throw new InvalidDataException("The Whisper fixture manifest contains an unexpected row.");
+        }
+
+        var path = Path.Combine(fixtureDirectory, fixture.File);
+        var file = new FileInfo(path);
+        if (!file.Exists || file.Length is <= 0 or > 1_000_000)
+        {
+            throw new InvalidDataException("A Whisper fixture is missing or too large.");
+        }
+
+        using var stream = file.OpenRead();
+        var actualHash = Convert.ToHexString(SHA256.HashData(stream));
+        if (!string.Equals(actualHash, fixture.Sha256, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException("A Whisper fixture hash does not match its manifest.");
+        }
+
+        var language = fixture.Config[..2];
+        if (!loaded.TryGetValue(language, out var languageFixtures))
+        {
+            languageFixtures = [];
+            loaded.Add(language, languageFixtures);
+        }
+
+        languageFixtures.Add(new MultilingualFixture(
+            fixture.Row,
+            ReadWaveFile(path),
+            fixture.Transcription));
+    }
+
+    if (expectedRows.Any(entry => !seenRows[entry.Key].SetEquals(entry.Value)))
+    {
+        throw new InvalidDataException("The Whisper fixture manifest is incomplete.");
+    }
+
+    return loaded.ToDictionary(
+        entry => entry.Key,
+        entry => (IReadOnlyList<MultilingualFixture>)entry.Value.OrderBy(value => value.Row).ToArray(),
+        StringComparer.Ordinal);
+}
+
 static float DecodeMuLaw(byte value)
 {
     var decoded = (byte)~value;
@@ -432,16 +551,43 @@ internal sealed record ProviderResult(
     long CancellationMilliseconds,
     bool WorkerRemovedAfterCancellation,
     IReadOnlyList<LanguageResult> Multilingual,
+    IReadOnlyList<LanguageCorpusSummary> MultilingualSummary,
     bool Passed);
 
-internal sealed record MultilingualFixture(float[] Samples, string ExpectedText);
+internal sealed record MultilingualFixture(int Row, float[] Samples, string ExpectedText);
+
+internal sealed record FixtureManifest(
+    string Dataset,
+    string DatasetRevision,
+    string License,
+    string Source,
+    IReadOnlyList<FixtureManifestEntry> Fixtures);
+
+internal sealed record FixtureManifestEntry(
+    string File,
+    string Config,
+    string Split,
+    int Row,
+    string Transcription,
+    string Sha256);
 
 internal sealed record LanguageResult(
     string ExpectedLanguage,
+    int Row,
     long AudioMilliseconds,
     long TranscriptionMilliseconds,
     bool LanguageDetected,
     int ReferenceWordCount,
     int ActualWordCount,
+    int EditDistance,
     double WordErrorRate,
     bool Passed);
+
+internal sealed record LanguageCorpusSummary(
+    string ExpectedLanguage,
+    int RowCount,
+    int PassedRows,
+    int LanguageDetectedRows,
+    int ReferenceWordCount,
+    int EditDistance,
+    double AggregateWordErrorRate);

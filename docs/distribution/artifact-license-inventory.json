@@ -124,7 +124,7 @@
     {
       "id": "minds14-public-uat-fixtures",
       "artifactClass": "test-data",
-      "plannedPayload": "Three reviewed PolyAI MINDS-14 WAV fixtures and attribution manifest",
+      "plannedPayload": "Eleven reviewed PolyAI MINDS-14 WAV fixtures and attribution manifest",
       "upstreamIdentity": "PolyAI/minds14 revision 40ce77cb32a384e4d50a568e1ec39ac804019d33",
       "observedLicense": "CC-BY-4.0",
       "sourceUrl": "https://huggingface.co/datasets/PolyAI/minds14/tree/40ce77cb32a384e4d50a568e1ec39ac804019d33",
