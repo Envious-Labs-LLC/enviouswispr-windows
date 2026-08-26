@@ -14,15 +14,21 @@
     <PublishReadyToRun>false</PublishReadyToRun>
     <PublishTrimmed>false</PublishTrimmed>
     <DefaultLanguage>en-US</DefaultLanguage>
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <StartupObject>EnviousWispr.App.Program</StartupObject>
+    <Version>0.19.0</Version>
+    <EnviousWisprReleaseChannel Condition="'$(EnviousWisprReleaseChannel)' == ''">stable</EnviousWisprReleaseChannel>
   </PropertyGroup>
 
   <ItemGroup>
     <Manifest Include="$(ApplicationManifest)" />
+    <AssemblyMetadata Include="EnviousWisprReleaseChannel" Value="$(EnviousWisprReleaseChannel)" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2526" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
+    <PackageReference Include="Velopack" Version="1.2.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -39,8 +45,16 @@
 
   <Target Name="CopyRuntimeWorkerForApp" AfterTargets="Build">
     <ItemGroup>
-      <RuntimeWorkerFiles Include="..\EnviousWispr.RuntimeWorker\bin\$(Configuration)\net10.0-windows10.0.26100.0\**\*" />
+      <RuntimeWorkerFiles Include="..\EnviousWispr.RuntimeWorker\bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\win-x64\EnviousWispr.RuntimeWorker*" />
     </ItemGroup>
     <Copy SourceFiles="@(RuntimeWorkerFiles)" DestinationFiles="@(RuntimeWorkerFiles->'$(OutDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyUnpackagedWinUiResourcesForPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <UnpackagedWinUiResource Include="$(TargetDir)*.xbf" />
+      <UnpackagedWinUiResource Include="$(TargetDir)$(AssemblyName).pri" />
+    </ItemGroup>
+    <Copy SourceFiles="@(UnpackagedWinUiResource)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
   </Target>
 </Project>
