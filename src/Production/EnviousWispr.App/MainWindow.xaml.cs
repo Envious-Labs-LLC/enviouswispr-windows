@@ -26,4 +26,18 @@ public sealed partial class MainWindow : Window
         };
         LaunchCountText.Text = settings.LaunchCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
+
+    public void SetHotkeyReady(string gesture)
+    {
+        HotkeyStatusText.Text = $"Hold {gesture}";
+        SessionStatusText.Text = "Idle";
+    }
+
+    public void SetHotkeyUnavailable(string status)
+    {
+        HotkeyStatusText.Text = status;
+        SessionStatusText.Text = "Unavailable";
+    }
+
+    public void SetSessionStatus(string status) => SessionStatusText.Text = status;
 }

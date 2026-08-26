@@ -1,4 +1,5 @@
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Input;
 
 namespace EnviousWispr.Core.Settings;
 
@@ -40,8 +41,7 @@ public static class AppSettingsValidator
         preferences.Polish is not null &&
         preferences.History is not null &&
         Enum.IsDefined(preferences.Dictation.FinalEngine) &&
-        !string.IsNullOrWhiteSpace(preferences.Dictation.PushToTalkGesture) &&
-        preferences.Dictation.PushToTalkGesture.Length <= 64 &&
+        HotkeyGestureParser.Parse(preferences.Dictation.PushToTalkGesture).Succeeded &&
         Enum.IsDefined(preferences.Polish.Provider) &&
         (preferences.Polish.ModelId is null ||
             (!string.IsNullOrWhiteSpace(preferences.Polish.ModelId) && preferences.Polish.ModelId.Length <= 256)) &&

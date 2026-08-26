@@ -6,5 +6,9 @@ public enum AppFailureCategory
     AccessDenied,
     InvalidData,
     StorageUnavailable,
+    AudioUnavailable,
+    HotkeyConflict,
+    HotkeyUnavailable,
+    TargetUnavailable,
     Unknown,
 }
