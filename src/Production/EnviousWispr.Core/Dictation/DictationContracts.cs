@@ -38,8 +38,6 @@ public sealed record Transcript(
 
 public sealed record ProcessedText(DictationSessionId SessionId, string Text);
 
-public sealed record DeliveryResult(DictationSessionId SessionId, bool Delivered, bool ClipboardFallback);
-
 public interface ITranscriptionEngine
 {
     string EngineId { get; }
@@ -82,11 +80,6 @@ public interface IPolishProvider : IAsyncDisposable
     Task<PolishResult> TryPolishAsync(
         PolishRequest request,
         CancellationToken cancellationToken = default);
-}
-
-public interface ITextDelivery
-{
-    Task<DeliveryResult> DeliverAsync(ProcessedText text, CancellationToken cancellationToken = default);
 }
 
 public interface IModelCatalog

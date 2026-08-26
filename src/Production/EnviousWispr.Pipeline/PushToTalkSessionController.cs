@@ -30,6 +30,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
     private readonly IForegroundTargetProvider _targetProvider;
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan _minimumHoldDuration;
+    private readonly TextDeliveryOptions _deliveryOptions;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private bool _disposed;
 
@@ -37,7 +38,8 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         IAudioCapture audioCapture,
         IForegroundTargetProvider targetProvider,
         TimeProvider? timeProvider = null,
-        TimeSpan? minimumHoldDuration = null)
+        TimeSpan? minimumHoldDuration = null,
+        TextDeliveryOptions? deliveryOptions = null)
     {
         ArgumentNullException.ThrowIfNull(audioCapture);
         ArgumentNullException.ThrowIfNull(targetProvider);
@@ -45,6 +47,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         _targetProvider = targetProvider;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _minimumHoldDuration = minimumHoldDuration ?? TimeSpan.FromMilliseconds(100);
+        _deliveryOptions = deliveryOptions ?? TextDeliveryOptions.Default;
         ArgumentOutOfRangeException.ThrowIfLessThan(_minimumHoldDuration, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(
             _minimumHoldDuration,
@@ -91,7 +94,8 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
             CurrentSession = DictationSessionSnapshot.Start(
                 sessionId,
                 _timeProvider.GetUtcNow(),
-                target.Value);
+                target.Value,
+                _deliveryOptions);
             RaiseChanged();
             return new SessionTransitionResult(SessionTransitionKind.Started, CurrentSession);
         }

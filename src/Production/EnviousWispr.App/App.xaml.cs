@@ -36,6 +36,8 @@ public partial class App : Application, IAsyncDisposable
     private RuntimeWorkerTranscriptionEngine? _transcriptionEngine;
     private RuntimeWorkerLivePreviewEngine? _previewEngine;
     private IPolishProvider? _polishProvider;
+    private WindowsTextTargetAdapter? _textTargetAdapter;
+    private ContextAwareTextDelivery? _textDelivery;
     private RuntimeResourceKind _polishResource = RuntimeResourceKind.Cpu;
     private bool _polishUsesLocalRuntime;
     private CloudPolishConsent? _cloudPolishConsent;
@@ -186,6 +188,10 @@ public partial class App : Application, IAsyncDisposable
             _audioCapture = null;
         }
 
+        _textTargetAdapter?.Dispose();
+        _textTargetAdapter = null;
+        _textDelivery = null;
+
         if (_previewEngine is not null)
         {
             await _previewEngine.DisposeAsync().ConfigureAwait(true);
@@ -244,6 +250,8 @@ public partial class App : Application, IAsyncDisposable
         }
 
         _audioCapture = new WasapiAudioCapture();
+        _textTargetAdapter = new WindowsTextTargetAdapter();
+        _textDelivery = new ContextAwareTextDelivery(_textTargetAdapter);
         _sessionController = new PushToTalkSessionController(
             _audioCapture,
             new WindowsForegroundTargetProvider());
@@ -845,21 +853,52 @@ public partial class App : Application, IAsyncDisposable
                     polishResult.Output.Text).ConfigureAwait(false);
             }
 
+            if (!string.IsNullOrWhiteSpace(processed.Output.Text) &&
+                _textDelivery is not null &&
+                controller.CurrentSession is { } pendingSession)
+            {
+                var deliveryTransition = await controller
+                    .BeginDeliveryAsync(sessionId)
+                    .ConfigureAwait(false);
+                if (deliveryTransition.Kind == SessionTransitionKind.Delivering)
+                {
+                    _window?.DispatcherQueue.TryEnqueue(() =>
+                        _window?.SetSessionStatus("Delivering to the app you started in..."));
+                    _logger.Write(new AppLogEntry(
+                        DateTimeOffset.UtcNow,
+                        AppEventCode.TextDeliveryStarted));
+                    var deliveryTimer = System.Diagnostics.Stopwatch.StartNew();
+                    var delivery = await _textDelivery.DeliverAsync(
+                        new TextDeliveryRequest(
+                            processed.Output,
+                            pendingSession.Target,
+                            DeliveryLanguage(transcript),
+                            pendingSession.DeliveryOptions)).ConfigureAwait(false);
+                    deliveryTimer.Stop();
+                    WriteDeliveryEvent(delivery, deliveryTimer.ElapsedMilliseconds);
+                    await controller.CompleteAsync(sessionId).ConfigureAwait(false);
+                    await controller.ResetAsync().ConfigureAwait(false);
+                    _window?.DispatcherQueue.TryEnqueue(() =>
+                        _window?.SetSessionStatus(DeliveryStatus(delivery)));
+                    return;
+                }
+            }
+
             await controller.CompleteAsync(sessionId).ConfigureAwait(false);
             await controller.ResetAsync().ConfigureAwait(false);
             var status = string.IsNullOrWhiteSpace(processed.Output.Text)
-                ? "No speech detected"
-                : processed.IsDegraded
-                    ? "Transcribed and cleaned locally with a safe fallback — delivery comes next"
+                    ? "No speech detected"
+                    : processed.IsDegraded
+                    ? "Transcribed and cleaned locally with a safe fallback"
                     : polishResult is { UsedFallback: true }
                         ? PolishFallbackStatus(polishResult)
                     : polishResult is { UsedFallback: false }
                         ? _cloudPolishConsent is null
-                            ? "Transcribed and polished locally — delivery comes next"
-                            : $"Transcribed and polished directly with {_cloudPolishConsent.ProviderName} — delivery comes next"
+                            ? "Transcribed and polished locally"
+                            : $"Transcribed and polished directly with {_cloudPolishConsent.ProviderName}"
                     : transcript.UsedFallback
-                        ? "Transcribed and cleaned locally with CPU fallback — delivery comes next"
-                        : "Transcribed and cleaned locally — delivery comes next";
+                        ? "Transcribed and cleaned locally with CPU fallback"
+                        : "Transcribed and cleaned locally";
             _window?.DispatcherQueue.TryEnqueue(() => _window?.SetSessionStatus(status));
         }
         catch (TranscriptionEngineException exception)
@@ -959,6 +998,70 @@ public partial class App : Application, IAsyncDisposable
                 FailureFor(result.Error)));
         }
     }
+
+    private void WriteDeliveryEvent(DeliveryResult result, long elapsedMilliseconds)
+    {
+        var eventCode = result switch
+        {
+            { Delivered: true } => AppEventCode.TextDeliveryCompleted,
+            { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.None } =>
+                AppEventCode.TextDeliveryClipboardFallback,
+            { ClipboardFallback: true } => AppEventCode.TextDeliveryRefused,
+            _ => AppEventCode.TextDeliveryFailed,
+        };
+        var errorCode = result.RefusalReason switch
+        {
+            TextDeliveryRefusalReason.None => (AppErrorCode?)null,
+            TextDeliveryRefusalReason.TargetUnavailable or
+                TextDeliveryRefusalReason.TargetChanged => AppErrorCode.DeliveryTargetChanged,
+            TextDeliveryRefusalReason.ProtectedField => AppErrorCode.DeliveryProtectedField,
+            TextDeliveryRefusalReason.ElevatedTarget => AppErrorCode.DeliveryElevatedTarget,
+            TextDeliveryRefusalReason.ClipboardUnavailable => AppErrorCode.DeliveryClipboardUnavailable,
+            TextDeliveryRefusalReason.InputStateUnsafe or
+                TextDeliveryRefusalReason.InputBlocked => AppErrorCode.DeliveryInputBlocked,
+            _ => AppErrorCode.DeliveryUnsupportedTarget,
+        };
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            eventCode,
+            result.Delivered ? AppFailureCategory.None : AppFailureCategory.TextDelivery,
+            elapsedMilliseconds,
+            ErrorCode: errorCode));
+    }
+
+    private static string DeliveryStatus(DeliveryResult result) => result switch
+    {
+        { Delivered: true, Route: TextDeliveryRoute.UiAutomationValue } =>
+            "Inserted safely in the app you started in",
+        { Delivered: true, ClipboardRestored: true } =>
+            "Pasted safely and restored your clipboard",
+        { Delivered: true } => "Pasted safely",
+        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.ProtectedField } =>
+            "Protected field — copied only; paste manually if intended",
+        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.ElevatedTarget } =>
+            "Windows blocked the elevated app — copied only",
+        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.TargetChanged } =>
+            "The target changed — copied only to protect your text",
+        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.UnsafeMultilineTarget } =>
+            "Terminal line break refused — copied only",
+        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.UnsupportedTarget } =>
+            "Automatic paste is unsafe here — copied only",
+        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.InputStateUnsafe } =>
+            "A key was held — copied only; paste manually",
+        { ClipboardFallback: true } => "Copied — press Ctrl+V",
+        { RefusalReason: TextDeliveryRefusalReason.ClipboardUnavailable } =>
+            "Clipboard unavailable — text is held safely in memory",
+        { RefusalReason: TextDeliveryRefusalReason.DirectWriteUnverified } =>
+            "Insertion could not be verified — text is held safely in memory",
+        _ => "Text delivery stopped safely",
+    };
+
+    private static string? DeliveryLanguage(Transcript transcript) =>
+        transcript.EngineId.StartsWith(
+            ParakeetTranscriptionEngine.ModelId,
+            StringComparison.OrdinalIgnoreCase)
+            ? null
+            : transcript.DetectedLanguage;
 
     private static string SessionStatus(SessionTransitionResult result) => result.Kind switch
     {

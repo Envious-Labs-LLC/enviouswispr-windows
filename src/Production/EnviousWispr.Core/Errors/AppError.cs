@@ -41,6 +41,12 @@ public enum AppErrorCode
     PolishOutputTruncated,
     PolishEndpointInvalid,
     PolishRemoteModelDisallowed,
+    DeliveryTargetChanged,
+    DeliveryProtectedField,
+    DeliveryElevatedTarget,
+    DeliveryUnsupportedTarget,
+    DeliveryClipboardUnavailable,
+    DeliveryInputBlocked,
 }
 
 public enum AppErrorStage
@@ -64,6 +70,8 @@ public enum AppErrorStage
     LocalPolish,
     CloudPolish,
     CredentialStore,
+    ContextRead,
+    TextDelivery,
 }
 
 public sealed record AppError(AppErrorCode Code, AppErrorStage Stage, bool CanRetry);

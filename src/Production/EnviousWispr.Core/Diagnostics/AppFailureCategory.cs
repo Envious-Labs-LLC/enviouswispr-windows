@@ -16,5 +16,6 @@ public enum AppFailureCategory
     PostProcessing,
     LocalPolish,
     CloudPolish,
+    TextDelivery,
     Unknown,
 }

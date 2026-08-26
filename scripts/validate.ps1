@@ -76,6 +76,15 @@ try {
     Write-Host "Building native hotkey UAT harness (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/hotkey-uat/EnviousWispr.Hotkey.Uat.csproj", "-c", "Release", "--nologo")
 
+    Write-Host "Building native context and delivery UAT harness (Release)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/delivery-uat/EnviousWispr.Delivery.Uat.csproj", "-c", "Release", "--nologo")
+
+    Write-Host "Building controlled delivery target UAT harness (Release)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/delivery-target-uat/EnviousWispr.Delivery.Target.Uat.csproj", "-c", "Release", "--nologo")
+
+    Write-Host "Building limited-token delivery launcher UAT harness (Release)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/limited-launch-uat/EnviousWispr.LimitedLaunch.Uat.csproj", "-c", "Release", "--nologo")
+
     Write-Host "Building local polish UAT harness (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/polish-uat/EnviousWispr.Polish.Uat.csproj", "-c", "Release", "--nologo")
 
