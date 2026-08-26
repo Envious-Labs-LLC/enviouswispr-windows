@@ -1,5 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <InternalsVisibleTo Include="EnviousWispr.Architecture.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\EnviousWispr.Core\EnviousWispr.Core.csproj" />
   </ItemGroup>
 </Project>

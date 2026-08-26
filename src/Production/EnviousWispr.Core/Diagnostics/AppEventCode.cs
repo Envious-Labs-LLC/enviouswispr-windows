@@ -12,5 +12,11 @@ public enum AppEventCode
     SettingsNewerVersionPreserved,
     ShellShown,
     ShellClosed,
+    HotkeyReady,
+    HotkeyFailed,
+    DictationRecordingStarted,
+    DictationCaptureFinalized,
+    DictationCancelled,
+    DictationSessionFailed,
     UnhandledFailure,
 }

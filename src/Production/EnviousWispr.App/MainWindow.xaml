@@ -27,11 +27,12 @@
                 </StackPanel>
 
                 <InfoBar
+                    x:Name="FoundationInfoBar"
                     IsClosable="False"
                     IsOpen="True"
-                    Message="Phase 2 adds migration-safe settings, portable reusable data, typed errors, and content-free session state. Dictation remains in the verified WPF proof until its production replacements pass native Windows validation."
+                    Message="The production shell now owns settings, WASAPI capture, configurable push-to-talk, frozen target identity, and safe session cancellation. Final ASR and text delivery are still being moved from the verified proof."
                     Severity="Informational"
-                    Title="Storage foundation active" />
+                    Title="Native dictation foundation active" />
 
                 <Grid ColumnSpacing="16">
                     <Grid.ColumnDefinitions>
@@ -67,6 +68,23 @@
                         <StackPanel Grid.Column="1" Spacing="4">
                             <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Production-shell launches" />
                             <TextBlock x:Name="LaunchCountText" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Border Padding="20" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="12">
+                    <Grid ColumnSpacing="20">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Push-to-talk" />
+                            <TextBlock x:Name="HotkeyStatusText" FontWeight="SemiBold" Text="Starting…" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Session" />
+                            <TextBlock x:Name="SessionStatusText" FontWeight="SemiBold" Text="Idle" />
                         </StackPanel>
                     </Grid>
                 </Border>

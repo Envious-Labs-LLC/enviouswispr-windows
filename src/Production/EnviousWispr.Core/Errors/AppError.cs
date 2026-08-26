@@ -12,6 +12,10 @@ public enum AppErrorCode
     AudioDeviceLost,
     AudioFormatUnsupported,
     CaptureAlreadyActive,
+    HotkeyInvalid,
+    HotkeyConflict,
+    HotkeyUnavailable,
+    TargetUnavailable,
 }
 
 public enum AppErrorStage
@@ -24,6 +28,9 @@ public enum AppErrorStage
     ProfileExport,
     AudioDeviceEnumeration,
     AudioCapture,
+    HotkeyConfiguration,
+    HotkeyHook,
+    TargetCapture,
 }
 
 public sealed record AppError(AppErrorCode Code, AppErrorStage Stage, bool CanRetry);
