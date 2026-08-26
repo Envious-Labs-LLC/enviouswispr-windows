@@ -8,10 +8,10 @@ This is the current hands-on guide for the production Windows application. The o
 The founder machine currently has the unsigned, isolated founder channel installed under
 `%LOCALAPPDATA%\EnviousLabs.EnviousWispr.Founder\current`.
 
-- Product version: `0.24.0-founder.8+a32db242f75579fa784b993faf7cd46f4586c95b`
-- Installed executable SHA-256: `0A8D688B67C0BEEB41D101FE211485116A028051FE6A241E8AB7735192767D54`
+- Product version: `0.24.0-founder.9+ce13525d41770c669bb2034c360bb9247bfc7447`
+- Installed executable SHA-256: `131C053C8D60EB5BD1A5BC2272D29B442E46AF92F932CFA5238CFC1B8E38C197`
 - Setup: `EnviousLabs.EnviousWispr.Founder-win-x64-founder-Setup.exe`
-- Setup SHA-256: `B2DDAE6CE287C9258B21263D42B97D4DF3AA4A651DAF92485D73F15D14DD1835`
+- Setup SHA-256: `AA6AAC51413A126BBFDFF8203FF965FF1B95300B35D3BE43122A7C40DF56A0BC`
 - Platform: Windows 11 x64
 - Release status: founder-local and unsigned; not certified or approved for public distribution
 
