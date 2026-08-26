@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>EnviousWispr.App</RootNamespace>
+    <AssemblyName>EnviousWispr.App</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <WinUISDKReferences>false</WinUISDKReferences>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Manifest Include="$(ApplicationManifest)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2526" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EnviousWispr.Audio\EnviousWispr.Audio.csproj" />
+    <ProjectReference Include="..\EnviousWispr.ASR\EnviousWispr.ASR.csproj" />
+    <ProjectReference Include="..\EnviousWispr.Core\EnviousWispr.Core.csproj" />
+    <ProjectReference Include="..\EnviousWispr.LLM\EnviousWispr.LLM.csproj" />
+    <ProjectReference Include="..\EnviousWispr.ModelDelivery\EnviousWispr.ModelDelivery.csproj" />
+    <ProjectReference Include="..\EnviousWispr.Pipeline\EnviousWispr.Pipeline.csproj" />
+    <ProjectReference Include="..\EnviousWispr.PostProcessing\EnviousWispr.PostProcessing.csproj" />
+    <ProjectReference Include="..\EnviousWispr.Services\EnviousWispr.Services.csproj" />
+  </ItemGroup>
+</Project>
