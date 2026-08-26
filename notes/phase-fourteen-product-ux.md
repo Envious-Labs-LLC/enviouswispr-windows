@@ -68,15 +68,22 @@
 - MEASURED 2026-08-26 — the recording-state UAT seam exposed a second overlay window with the exact
   accessible listening/cancel guidance while Get started retained focus, proving the overlay did not
   steal activation.
-- UNOBSERVED 2026-08-26 — this host exposes one active monitor, so a physical multi-monitor move and
-  tray-menu restore were not observed. Monitor placement has deterministic signed-coordinate coverage,
-  but those tests do not replace native multi-monitor proof.
+- UNOBSERVED 2026-08-26 — this host exposes one active monitor, so a physical multi-monitor move was
+  not observed. Monitor placement has deterministic signed-coordinate coverage, but those tests do not
+  replace native multi-monitor proof.
 - UNOBSERVED 2026-08-26 — the host was exercised at its actual 150% scale, not separate live 100% and
   200% configurations. Narrator was not run. UI Automation names/live regions were inspected, but a
   real screen-reader journey and a complete keyboard-only journey remain required before the Phase 14
   exit can be called final.
-- UNOBSERVED 2026-08-26 — native file-picker profile import/export and founder acceptance were not
-  completed in this pass. Atomic profile contracts and exclusions are covered by tests; picker and
-  founder evidence still need native observation.
+- MEASURED 2026-08-26 — a later isolated native WinUI pass used the real Windows Save As and Open
+  dialogs to export and import a schema-7 portable profile. After export, Live Preview was changed from
+  off to on and saved; importing the exported profile restored it to off while preserving the source
+  file and machine-local choices. The app reported both operations successfully, and the exported JSON
+  contained preferences and reusable user data without credentials or machine-local state.
+- MEASURED 2026-08-26 — closing the same native window left its exact process responsive with no main
+  window handle. The real Windows notification-area menu exposed Open EnviousWispr, Settings, and Exit
+  EnviousWispr; Open restored the same process and window, and the final tray Exit shut it down cleanly.
+- UNOBSERVED 2026-08-26 — founder acceptance remains open. This pass established native mechanism
+  proof; it does not substitute for the founder's daily-use judgment.
 - MEASURED 2026-08-26 — the founder-tested WPF proof was not modified. No real credential, user text,
   model weight, external provider, protected port 8081 runtime, or unrelated model server was touched.

@@ -30,8 +30,9 @@ Date: 2026-08-26
 - The expanded public audit validates the eight-record model/native inventory without treating source evidence
   as legal approval.
 - Native keyboard UAT completed onboarding, every product page, representative selectors and toggles, and the
-  full Settings tab order through Save settings. File-dialog, destructive-history, external-link, Narrator,
-  High Contrast, and separate 100%/200% scale paths remain unobserved.
+  full Settings tab order through Save settings. A later native pass completed the portable-profile Save As
+  and Open dialogs. The diagnostics-export picker, destructive-history, external-link, Narrator, High Contrast,
+  and separate 100%/200% scale paths remain unobserved.
 - `git diff --cached --check`, PowerShell parsing for changed scripts, and Python AST parsing for changed spike
   helpers passed.
 - Canonical validation passed with zero build warnings or errors: 34 preserved-proof contract tests and 350
@@ -87,6 +88,20 @@ Whisper CUDA and deterministic processing completed, delivery was refused as `De
 reached the target, the pre-test clipboard was restored, and the app and worker exited cleanly. The normal
 successful production journey passed again after the fault instrumentation. This proves deterministic handling;
 it does not replace a clean-machine observation of the real Windows microphone privacy dialog or policy denial.
+
+A later isolated founder-local pass completed onboarding and used the actual Windows Save As and Open dialogs
+to round-trip a schema-7 portable profile. Live Preview was deliberately changed after export, and import restored
+the exported value while preserving the profile file and machine-local state. Closing the main window then left
+the exact app process responsive with no main window handle. The actual notification-area menu exposed Open,
+Settings, and Exit; Open restored the same native window and Exit ended the isolated process cleanly. No product
+defect was found in either path. The profile and settings lived under a bounded
+`%LOCALAPPDATA%\Temp\EnviousWispr-ProfilePicker-Uat-<run>` directory and contained only default/synthetic data;
+the execution policy blocked recursive deletion outside the workspace, so that directory remains eligible for
+normal OS temporary-file cleanup.
+
+After recording this evidence, canonical validation passed again: the public audit covered 378 tracked files,
+all 34 preserved-proof tests and all 377 production tests passed, every Release project and UAT harness built,
+and the build reported zero warnings and zero errors. Local model runtime tests were not requested by this gate.
 
 Phase 23 is not complete. The physical journey above, signed install, update, rollback, uninstall, SmartScreen,
 endpoint-security behavior, model and CUDA artifact licensing, accessibility review, representative hardware
