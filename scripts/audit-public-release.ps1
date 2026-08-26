@@ -95,6 +95,19 @@ try {
             throw "The reviewed public fixture manifest contains an invalid row: $rowKey"
         }
 
+        if ($rowKey -ceq 'en-US/train/0') {
+            if ($fixture.evaluationTranscription -cne
+                    'I would like to set up a joint account with my partner. How do I proceed with doing that?' -or
+                $fixture.referenceStatus -cne
+                    'source-reference-ends-at-7s-two-engine-timestamp-review') {
+                throw 'The reviewed English evaluation reference has drifted.'
+            }
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($fixture.evaluationTranscription) -or
+                -not [string]::IsNullOrWhiteSpace($fixture.referenceStatus)) {
+            throw "An unreviewed evaluation reference was added: $rowKey"
+        }
+
         $relativeFixture = "tools/whisper-uat/fixtures/$($fixture.file)"
         $fixturePath = Join-Path $repoRoot $relativeFixture
         if (-not $reviewedFixturePaths.Add($relativeFixture) -or

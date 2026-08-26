@@ -453,6 +453,31 @@ static IReadOnlyDictionary<string, IReadOnlyList<MultilingualFixture>> LoadMulti
             throw new InvalidDataException("The Whisper fixture manifest contains an unexpected row.");
         }
 
+        var isReviewedEnglishRow = string.Equals(
+                fixture.Config,
+                "en-US",
+                StringComparison.Ordinal) &&
+            fixture.Row == 0;
+        if (isReviewedEnglishRow)
+        {
+            if (!string.Equals(
+                    fixture.EvaluationTranscription,
+                    "I would like to set up a joint account with my partner. How do I proceed with doing that?",
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    fixture.ReferenceStatus,
+                    "source-reference-ends-at-7s-two-engine-timestamp-review",
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("The reviewed English evaluation reference has drifted.");
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(fixture.EvaluationTranscription) ||
+                 !string.IsNullOrWhiteSpace(fixture.ReferenceStatus))
+        {
+            throw new InvalidDataException("An unreviewed evaluation reference was added to the fixture manifest.");
+        }
+
         var path = Path.Combine(fixtureDirectory, fixture.File);
         var file = new FileInfo(path);
         if (!file.Exists || file.Length is <= 0 or > 1_000_000)
@@ -477,7 +502,7 @@ static IReadOnlyDictionary<string, IReadOnlyList<MultilingualFixture>> LoadMulti
         languageFixtures.Add(new MultilingualFixture(
             fixture.Row,
             ReadWaveFile(path),
-            fixture.Transcription));
+            fixture.EvaluationTranscription ?? fixture.Transcription));
     }
 
     if (expectedRows.Any(entry => !seenRows[entry.Key].SetEquals(entry.Value)))
@@ -570,7 +595,9 @@ internal sealed record FixtureManifestEntry(
     string Split,
     int Row,
     string Transcription,
-    string Sha256);
+    string Sha256,
+    string? EvaluationTranscription = null,
+    string? ReferenceStatus = null);
 
 internal sealed record LanguageResult(
     string ExpectedLanguage,

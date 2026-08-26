@@ -10,6 +10,8 @@
       "split": "train",
       "row": 0,
       "transcription": "I would like to set up a joint account with my partner",
+      "evaluationTranscription": "I would like to set up a joint account with my partner. How do I proceed with doing that?",
+      "referenceStatus": "source-reference-ends-at-7s-two-engine-timestamp-review",
       "sha256": "0f56f001f964d2288851a5e4063781cb5793d25f1b4fd9b55607e79873b4b20c"
     },
     {
