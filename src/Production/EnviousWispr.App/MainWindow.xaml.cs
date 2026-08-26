@@ -41,6 +41,17 @@ public sealed partial class MainWindow : Window
 
     public void SetSessionStatus(string status) => SessionStatusText.Text = status;
 
+    public void SetCloudPolishNotice(string? notice)
+    {
+        if (string.IsNullOrWhiteSpace(notice))
+        {
+            return;
+        }
+
+        FoundationInfoBar.Title = "Direct BYOK cloud polish enabled";
+        FoundationInfoBar.Message = notice;
+    }
+
     public void SetLivePreview(string? text)
     {
         LivePreviewText.Text = text ?? string.Empty;

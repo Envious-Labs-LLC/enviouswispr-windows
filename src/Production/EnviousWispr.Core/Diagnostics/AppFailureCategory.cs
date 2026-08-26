@@ -15,5 +15,6 @@ public enum AppFailureCategory
     RuntimeWorker,
     PostProcessing,
     LocalPolish,
+    CloudPolish,
     Unknown,
 }
