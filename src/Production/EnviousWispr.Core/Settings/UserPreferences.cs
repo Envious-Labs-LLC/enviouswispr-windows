@@ -41,9 +41,15 @@ public sealed record DictationPreferences(
         SpokenPunctuationEnabled: false);
 }
 
-public sealed record PolishPreferences(PolishProvider Provider, string? ModelId)
+public sealed record PolishPreferences(
+    PolishProvider Provider,
+    string? ModelId,
+    string? OllamaEndpoint = null)
 {
-    public static PolishPreferences Default { get; } = new(PolishProvider.None, ModelId: null);
+    public static PolishPreferences Default { get; } = new(
+        PolishProvider.None,
+        ModelId: null,
+        OllamaEndpoint: null);
 }
 
 public sealed record HistoryPreferences(bool IsEnabled, int RetentionDays)

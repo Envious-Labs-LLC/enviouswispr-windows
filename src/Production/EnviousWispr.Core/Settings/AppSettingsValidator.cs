@@ -45,6 +45,9 @@ public static class AppSettingsValidator
         Enum.IsDefined(preferences.Polish.Provider) &&
         (preferences.Polish.ModelId is null ||
             (!string.IsNullOrWhiteSpace(preferences.Polish.ModelId) && preferences.Polish.ModelId.Length <= 256)) &&
+        (preferences.Polish.OllamaEndpoint is null ||
+            (!string.IsNullOrWhiteSpace(preferences.Polish.OllamaEndpoint) &&
+             preferences.Polish.OllamaEndpoint.Length <= 2_048)) &&
         preferences.History.RetentionDays is >= 0 and <= 3_650 &&
         Enum.IsDefined(preferences.Theme);
 

@@ -22,6 +22,7 @@
     <Project Path="tools/audio-uat/EnviousWispr.Audio.Uat.csproj" />
     <Project Path="tools/cloud-polish-uat/EnviousWispr.CloudPolish.Uat.csproj" />
     <Project Path="tools/hotkey-uat/EnviousWispr.Hotkey.Uat.csproj" />
+    <Project Path="tools/ollama-uat/EnviousWispr.Ollama.Uat.csproj" />
     <Project Path="tools/polish-uat/EnviousWispr.Polish.Uat.csproj" />
     <Project Path="tools/runtime-uat/EnviousWispr.Runtime.Uat.csproj" />
   </Folder>

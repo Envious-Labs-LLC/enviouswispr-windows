@@ -39,6 +39,7 @@ public partial class App : Application, IAsyncDisposable
     private RuntimeResourceKind _polishResource = RuntimeResourceKind.Cpu;
     private bool _polishUsesLocalRuntime;
     private CloudPolishConsent? _cloudPolishConsent;
+    private string? _localPolishNotice;
     private readonly CancellationTokenSource _polishLifetime = new();
     private Task? _polishWarmup;
     private CancellationTokenSource? _previewCancellation;
@@ -137,14 +138,19 @@ public partial class App : Application, IAsyncDisposable
         _window.Closed += OnWindowClosed;
         _window.Activate();
         _window.SetCloudPolishNotice(_cloudPolishConsent?.Notice);
+        _window.SetOllamaPolishNotice(_localPolishNotice);
         _window.SetSessionStatus("Preparing local transcription...");
         await ConfigureTranscriptionAsync(settings.Preferences.Dictation.FinalEngine).ConfigureAwait(true);
+        ConfigurePushToTalk(settings.Preferences.Dictation.PushToTalkGesture);
         if (_polishProvider is EgOnePolishProvider polishProvider)
         {
             _polishWarmup = WarmPolishRuntimeAsync(polishProvider, _polishLifetime.Token);
         }
+        else if (_polishProvider is OllamaPolishProvider ollamaProvider)
+        {
+            _polishWarmup = ProbeOllamaRuntimeAsync(ollamaProvider, _polishLifetime.Token);
+        }
 
-        ConfigurePushToTalk(settings.Preferences.Dictation.PushToTalkGesture);
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellShown));
     }
 
@@ -275,6 +281,28 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
+        if (provider == PolishProvider.Ollama)
+        {
+            var endpoint = Environment.GetEnvironmentVariable("ENVIOUSWISPR_OLLAMA_ENDPOINT");
+            if (string.IsNullOrWhiteSpace(endpoint))
+            {
+                endpoint = preferences.OllamaEndpoint;
+            }
+
+            var model = Environment.GetEnvironmentVariable("ENVIOUSWISPR_OLLAMA_MODEL");
+            if (string.IsNullOrWhiteSpace(model))
+            {
+                model = preferences.ModelId ?? string.Empty;
+            }
+
+            _polishProvider = new OllamaPolishProvider(new OllamaPolishOptions(endpoint, model));
+            _polishUsesLocalRuntime = true;
+            _localPolishNotice = OllamaEndpointPolicy.TryNormalize(endpoint, out var normalized)
+                ? $"Ollama polish uses {normalized}. Dictated text stays on this PC; hosted Ollama models are refused."
+                : "Ollama polish is disabled until its endpoint is a loopback HTTP or HTTPS address.";
+            return;
+        }
+
         if (provider != PolishProvider.EgOne)
         {
             return;
@@ -314,6 +342,34 @@ public partial class App : Application, IAsyncDisposable
             new EgOneServerOptions(serverExecutable, modelFile, GpuLayers: gpuLayers),
             preferences.ModelId ?? "eg-1"));
         _polishUsesLocalRuntime = true;
+    }
+
+    private async Task ProbeOllamaRuntimeAsync(
+        OllamaPolishProvider provider,
+        CancellationToken cancellationToken)
+    {
+        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.PolishRuntimeStarted));
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var health = await provider.ProbeHealthAsync(cancellationToken).ConfigureAwait(false);
+        timer.Stop();
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            health.Health == OllamaHealth.Ready
+                ? AppEventCode.PolishRuntimeReady
+                : AppEventCode.PolishRuntimeDegraded,
+            health.Health == OllamaHealth.Ready
+                ? AppFailureCategory.None
+                : AppFailureCategory.LocalPolish,
+            timer.ElapsedMilliseconds,
+            provider.ProviderId,
+            health.Error?.Code));
+        _window?.DispatcherQueue.TryEnqueue(() =>
+        {
+            if (health.Health != OllamaHealth.Ready)
+            {
+                _window?.SetSessionStatus(OllamaHealthStatus(health.Health));
+            }
+        });
     }
 
     private async Task WarmPolishRuntimeAsync(
@@ -795,6 +851,8 @@ public partial class App : Application, IAsyncDisposable
                 ? "No speech detected"
                 : processed.IsDegraded
                     ? "Transcribed and cleaned locally with a safe fallback — delivery comes next"
+                    : polishResult is { UsedFallback: true }
+                        ? PolishFallbackStatus(polishResult)
                     : polishResult is { UsedFallback: false }
                         ? _cloudPolishConsent is null
                             ? "Transcribed and polished locally — delivery comes next"
@@ -918,6 +976,32 @@ public partial class App : Application, IAsyncDisposable
         AppErrorCode.HotkeyConflict => "Configured shortcut is already in use",
         AppErrorCode.HotkeyInvalid => "Configured shortcut is invalid",
         _ => "Global shortcut is unavailable",
+    };
+
+    private static string OllamaHealthStatus(OllamaHealth health) => health switch
+    {
+        OllamaHealth.EndpointInvalid => "Ollama endpoint must point to this PC",
+        OllamaHealth.ServerUnavailable => "Ollama is offline — cleaned text will still be preserved",
+        OllamaHealth.ServerUnhealthy => "Ollama did not return a usable health response",
+        OllamaHealth.NoLocalModels => "Ollama is running, but no local model is installed",
+        _ => "Ollama is ready",
+    };
+
+    private static string PolishFallbackStatus(PolishResult result) => result.Error?.Code switch
+    {
+        AppErrorCode.PolishEndpointInvalid =>
+            "Cleaned locally; Ollama endpoint must point to this PC",
+        AppErrorCode.PolishRemoteModelDisallowed =>
+            "Cleaned locally; hosted Ollama models are disabled",
+        AppErrorCode.PolishModelUnavailable =>
+            "Cleaned locally; the selected Ollama model is not installed",
+        AppErrorCode.PolishTimedOut =>
+            "Cleaned locally; Ollama timed out",
+        AppErrorCode.PolishProviderUnavailable =>
+            "Cleaned locally; Ollama is offline",
+        AppErrorCode.PolishOutputTruncated =>
+            "Cleaned locally; Ollama returned incomplete text",
+        _ => "Cleaned locally; AI polish failed safely",
     };
 
     private static AppFailureCategory FailureFor(AppError? error) => error?.Code switch

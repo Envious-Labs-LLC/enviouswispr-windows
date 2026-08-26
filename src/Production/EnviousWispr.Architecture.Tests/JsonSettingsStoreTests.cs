@@ -129,6 +129,46 @@ public sealed class JsonSettingsStoreTests
     }
 
     [Fact]
+    public async Task LoadMigratesPhaseElevenSettingsWithDefaultOllamaEndpoint()
+    {
+        await WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "settings.json");
+            const string legacyJson =
+                """
+                {
+                  "schemaVersion": 3,
+                  "launchCount": 13,
+                  "hasCompletedOnboarding": true,
+                  "preferences": {
+                    "dictation": {
+                      "finalEngine": "Parakeet",
+                      "pushToTalkGesture": "F8",
+                      "wordCorrectionEnabled": true,
+                      "fillerRemovalEnabled": true,
+                      "emojiFormatterEnabled": true,
+                      "spokenPunctuationEnabled": false
+                    },
+                    "polish": { "provider": "Ollama", "modelId": "llama3.2" },
+                    "history": { "isEnabled": true, "retentionDays": 30 },
+                    "theme": "System"
+                  },
+                  "userData": { "customWords": [], "snippets": [] }
+                }
+                """;
+            await File.WriteAllTextAsync(path, legacyJson);
+
+            var result = await new JsonSettingsStore(path).LoadAsync();
+
+            Assert.Equal(SettingsLoadStatus.Migrated, result.Status);
+            Assert.Equal(3, result.SourceSchemaVersion);
+            Assert.Equal(AppSettings.CurrentSchemaVersion, result.Settings.SchemaVersion);
+            Assert.Equal("llama3.2", result.Settings.Preferences.Polish.ModelId);
+            Assert.Null(result.Settings.Preferences.Polish.OllamaEndpoint);
+        });
+    }
+
+    [Fact]
     public async Task LoadRejectsFutureSchemaWithoutChangingSource()
     {
         await WithTestDirectoryAsync(async directory =>
@@ -180,7 +220,10 @@ public sealed class JsonSettingsStoreTests
                 FillerRemovalEnabled: false,
                 EmojiFormatterEnabled: false,
                 SpokenPunctuationEnabled: true),
-            Polish = new PolishPreferences(PolishProvider.Ollama, "qwen3:4b"),
+            Polish = new PolishPreferences(
+                PolishProvider.Ollama,
+                "qwen3:4b",
+                "http://127.0.0.1:11434"),
             History = new HistoryPreferences(IsEnabled: false, RetentionDays: 14),
             Theme = AppTheme.Dark,
         },

@@ -74,6 +74,7 @@ public sealed class JsonPortableProfileService : IPortableProfileService
             var profile = schemaVersion switch
             {
                 1 => MigrateFromV1(json),
+                2 => MigrateFromV2(json),
                 PortableProfile.CurrentSchemaVersion => JsonSerializer.Deserialize<PortableProfile>(
                     json,
                     JsonSettingsStore.SerializerOptions),
@@ -138,6 +139,16 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                     legacy.Preferences.History,
                     legacy.Preferences.Theme),
                 legacy.UserData);
+    }
+
+    private static PortableProfile? MigrateFromV2(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<PortableProfile>(
+            json,
+            JsonSettingsStore.SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = PortableProfile.CurrentSchemaVersion };
     }
 
     private sealed record LegacyDictationPreferences(
