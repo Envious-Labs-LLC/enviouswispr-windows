@@ -16,4 +16,7 @@
     <Project Path="src/Production/EnviousWispr.PostProcessing/EnviousWispr.PostProcessing.csproj" />
     <Project Path="src/Production/EnviousWispr.Services/EnviousWispr.Services.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/audio-uat/EnviousWispr.Audio.Uat.csproj" />
+  </Folder>
 </Solution>
