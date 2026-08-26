@@ -46,6 +46,34 @@ public sealed class PushToTalkSessionControllerTests
     }
 
     [Fact]
+    public async Task MissingPreferredMicrophoneFallsBackToWindowsDefault()
+    {
+        var microphone = new AudioDeviceId("synthetic-microphone");
+        var audio = new FakeAudioCapture
+        {
+            StartResultFactory = request => request.DeviceId is null
+                ? new AudioOperationResult(Succeeded: true)
+                : new AudioOperationResult(
+                    Succeeded: false,
+                    new AppError(
+                        AppErrorCode.AudioDeviceUnavailable,
+                        AppErrorStage.AudioCapture,
+                        CanRetry: true)),
+        };
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            new FakeTargetProvider(101),
+            preferredAudioDevice: microphone);
+
+        var result = await controller.PressAsync();
+
+        Assert.Equal(SessionTransitionKind.Started, result.Kind);
+        Assert.Equal(AppErrorCode.AudioDeviceUnavailable, result.Error?.Code);
+        Assert.Equal(2, audio.StartCount);
+        Assert.Null(audio.LastRequest?.DeviceId);
+    }
+
+    [Fact]
     public async Task EscapeCancellationDeliversNothingAndAllowsReset()
     {
         var audio = new FakeAudioCapture();
@@ -158,6 +186,50 @@ public sealed class PushToTalkSessionControllerTests
         Assert.True(audio.Disposed);
     }
 
+    [Fact]
+    public async Task ForcedAbortCancelsCaptureAndAllowsACompleteReset()
+    {
+        var audio = new FakeAudioCapture();
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            new FakeTargetProvider(606));
+        await controller.PressAsync();
+        var timeout = new AppError(
+            AppErrorCode.SessionTimedOut,
+            AppErrorStage.Session,
+            CanRetry: true);
+
+        var aborted = await controller.AbortAsync(timeout);
+        var reset = await controller.ResetAsync();
+
+        Assert.Equal(SessionTransitionKind.Failed, aborted.Kind);
+        Assert.Equal(DictationSessionState.Failed, aborted.Session?.State);
+        Assert.Equal(AppErrorCode.SessionTimedOut, aborted.Error?.Code);
+        Assert.Equal(1, audio.CancelCount);
+        Assert.Equal(SessionTransitionKind.Reset, reset.Kind);
+        Assert.Null(controller.CurrentSession);
+    }
+
+    [Fact]
+    public async Task ForcedAbortAfterCaptureDoesNotCancelAnAlreadyStoppedRecorder()
+    {
+        var audio = new FakeAudioCapture();
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            new FakeTargetProvider(707));
+        await controller.PressAsync();
+        await controller.ReleaseAsync();
+
+        var aborted = await controller.AbortAsync(new AppError(
+            AppErrorCode.Cancelled,
+            AppErrorStage.SystemLifecycle,
+            CanRetry: true));
+
+        Assert.Equal(SessionTransitionKind.Failed, aborted.Kind);
+        Assert.Equal(0, audio.CancelCount);
+        Assert.Equal(1, audio.StopCount);
+    }
+
     private sealed class FakeTargetProvider(nint window) : IForegroundTargetProvider
     {
         public TargetWindowId Window { get; set; } = new(window);
@@ -189,6 +261,8 @@ public sealed class PushToTalkSessionControllerTests
 
         public Func<DictationSessionId, CapturedAudio>? StopResultFactory { get; init; }
 
+        public Func<AudioCaptureRequest, AudioOperationResult>? StartResultFactory { get; init; }
+
         public Task<AudioOperationResult> StartAsync(
             AudioCaptureRequest request,
             CancellationToken cancellationToken = default)
@@ -197,8 +271,10 @@ public sealed class PushToTalkSessionControllerTests
             StartCount++;
             LastRequest = request;
             _sessionId = request.SessionId;
-            IsCapturing = true;
-            return Task.FromResult(new AudioOperationResult(Succeeded: true));
+            var result = StartResultFactory?.Invoke(request) ??
+                new AudioOperationResult(Succeeded: true);
+            IsCapturing = result.Succeeded;
+            return Task.FromResult(result);
         }
 
         public Task<CapturedAudio> StopAsync(CancellationToken cancellationToken = default)

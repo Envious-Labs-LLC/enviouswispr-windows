@@ -1,10 +1,12 @@
 using EnviousWispr.Audio;
+using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.History;
 using EnviousWispr.Core.Runtime;
+using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.ASR;
 using EnviousWispr.ModelDelivery;
@@ -16,6 +18,7 @@ using EnviousWispr.Services.Input;
 using EnviousWispr.Services.History;
 using EnviousWispr.Services.Lifecycle;
 using EnviousWispr.Services.Runtime;
+using EnviousWispr.Services.Reliability;
 using EnviousWispr.Services.Settings;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Windowing;
@@ -26,16 +29,24 @@ namespace EnviousWispr.App;
 public partial class App : Application, IAsyncDisposable
 {
     private const string SingleInstanceKey = "EnviousLabs.EnviousWispr.Production";
+    private static readonly TimeSpan MaximumRecordingDuration = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan MaximumFinalProcessingDuration = TimeSpan.FromMinutes(3);
 
     private readonly JsonLineFileLogger _logger;
     private readonly JsonSettingsStore _settingsStore;
     private readonly JsonPortableProfileService _profileService = new();
     private readonly JsonHistoryStore _historyStore;
+    private readonly JsonApplicationRunStateStore _runStateStore;
+    private readonly WindowsRecoveryTextStore _recoveryTextStore;
+    private readonly WindowsSystemResourceProbe _resourceProbe;
     private readonly WindowsCredentialApiKeyStore _credentialStore;
     private readonly RuntimeResourceArbiter _resourceArbiter = new();
     private readonly SemaphoreSlim _previewGate = new(1, 1);
+    private readonly SemaphoreSlim _sessionOperationGate = new(1, 1);
     private readonly DeterministicTextPipeline _deterministicTextPipeline = new();
     private SingleInstanceLock? _singleInstanceLock;
+    private SingleInstanceActivationChannel? _activationChannel;
+    private WindowsSystemLifecycleMonitor? _lifecycleMonitor;
     private WindowsPushToTalkHook? _pushToTalkHook;
     private PushToTalkSessionController? _sessionController;
     private WasapiAudioCapture? _audioCapture;
@@ -61,7 +72,18 @@ public partial class App : Application, IAsyncDisposable
         DeterministicTextOptions.From(DictationPreferences.Default);
     private bool _disposed;
     private bool _exitRequested;
+    private Task? _shutdownPreparation;
     private bool _backgroundNoticeShown;
+    private Guid? _runId;
+    private CancellationTokenSource? _heartbeatCancellation;
+    private Task? _heartbeatLoop;
+    private int _activationPending;
+    private CancellationTokenSource? _recordingWatchdogCancellation;
+    private Task? _recordingWatchdog;
+    private CancellationTokenSource? _activeProcessingCancellation;
+    private bool _canPersistRecoveryForSession = true;
+    private bool _hasPendingRecovery;
+    private RecoveryTextRecord? _pendingRecoveryRecord;
 
     public App()
     {
@@ -86,6 +108,9 @@ public partial class App : Application, IAsyncDisposable
         _logger = new JsonLineFileLogger(Path.Combine(dataDirectory, "diagnostics", "app.jsonl"));
         _settingsStore = new JsonSettingsStore(Path.Combine(dataDirectory, "settings.json"));
         _historyStore = new JsonHistoryStore(Path.Combine(dataDirectory, "history.json"));
+        _runStateStore = new JsonApplicationRunStateStore(Path.Combine(dataDirectory, "run-state.json"));
+        _recoveryTextStore = new WindowsRecoveryTextStore(Path.Combine(dataDirectory, "recovery.json"));
+        _resourceProbe = new WindowsSystemResourceProbe(dataDirectory);
 
         UnhandledException += (_, eventArgs) =>
         {
@@ -103,9 +128,36 @@ public partial class App : Application, IAsyncDisposable
 
         if (!SingleInstanceLock.TryAcquire(SingleInstanceKey, out _singleInstanceLock))
         {
-            _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.DuplicateInstanceRejected));
+            var activated = await SingleInstanceActivationChannel.RequestActivationAsync(
+                SingleInstanceKey,
+                TimeSpan.FromSeconds(2)).ConfigureAwait(true);
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                activated
+                    ? AppEventCode.DuplicateInstanceActivated
+                    : AppEventCode.DuplicateInstanceRejected));
             Exit();
             return;
+        }
+
+        _activationChannel = new SingleInstanceActivationChannel(SingleInstanceKey);
+        _activationChannel.ActivationRequested += OnDuplicateActivationRequested;
+        _activationChannel.Start();
+
+        var runStart = await _runStateStore.BeginRunAsync(DateTimeOffset.UtcNow).ConfigureAwait(true);
+        _runId = runStart.Status == RunStateLoadStatus.Unavailable ? null : runStart.RunId;
+        if (runStart.RecoveredInterruptedRun)
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.ApplicationRunRecovered,
+                AppFailureCategory.Recovery,
+                ErrorCode: AppErrorCode.PreviousRunInterrupted));
+        }
+
+        if (_runId is { } activeRunId)
+        {
+            StartHeartbeat(activeRunId);
         }
 
         var loadResult = await _settingsStore.LoadAsync().ConfigureAwait(true);
@@ -166,14 +218,32 @@ public partial class App : Application, IAsyncDisposable
             _settingsStore,
             _profileService,
             _historyStore,
-            _credentialStore);
+            _credentialStore,
+            _recoveryTextStore);
         _window.SettingsChanged += OnSettingsChanged;
         _window.SessionStatusChanged += OnSessionStatusChanged;
+        _window.AudioDevicesChanged += OnAudioDevicesChanged;
+        _window.RecoveryCleared += OnRecoveryCleared;
         _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosed;
         _window.Activate();
+        if (Interlocked.Exchange(ref _activationPending, 0) == 1)
+        {
+            ShowMainWindow(openSettings: false);
+        }
+
         ConfigureTrayIcon();
         await _window.InitializeProductDataAsync().ConfigureAwait(true);
+        var recovery = await LoadStartupRecoveryAsync().ConfigureAwait(true);
+        _hasPendingRecovery = recovery.Status == RecoveryTextLoadStatus.Found;
+        _pendingRecoveryRecord = recovery.Record;
+        _window.SetRecoveredText(recovery);
+        if (runStart.RecoveredInterruptedRun && recovery.Status != RecoveryTextLoadStatus.Found)
+        {
+            _window.SetRunRecoveryNotice(runStart.ConsecutiveInterruptedRuns);
+        }
+
+        ConfigureSystemLifecycleMonitor();
         _window.FocusInitialControl();
         _window.SetCloudPolishNotice(_cloudPolishConsent?.Notice);
         _window.SetOllamaPolishNotice(_localPolishNotice);
@@ -190,23 +260,176 @@ public partial class App : Application, IAsyncDisposable
         }
 
         ApplyOverlayUatState();
+        ApplyReliabilityUatExit();
 
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellShown));
     }
 
+    private async Task<RecoveryTextLoadResult> LoadStartupRecoveryAsync()
+    {
+        var recovery = await _recoveryTextStore.LoadAsync().ConfigureAwait(true);
+        if (recovery.Status != RecoveryTextLoadStatus.Missing ||
+            !string.Equals(
+                Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_RECOVERY_STATE"),
+                "synthetic",
+                StringComparison.Ordinal))
+        {
+            return recovery;
+        }
+
+        var record = new RecoveryTextRecord(
+            DictationSessionId.Create(),
+            DateTimeOffset.UtcNow,
+            "Synthetic unfinished dictation for Windows recovery UAT.");
+        return await _recoveryTextStore.SaveAsync(record).ConfigureAwait(true)
+            ? new RecoveryTextLoadResult(RecoveryTextLoadStatus.Found, record)
+            : new RecoveryTextLoadResult(
+                RecoveryTextLoadStatus.Unavailable,
+                Error: new AppError(
+                    AppErrorCode.StorageUnavailable,
+                    AppErrorStage.RecoveryText,
+                    CanRetry: true));
+    }
+
+    private void ApplyReliabilityUatExit()
+    {
+        var requested = Environment.GetEnvironmentVariable(
+            "ENVIOUSWISPR_UAT_EXIT_AFTER_MILLISECONDS");
+        if (!int.TryParse(requested, out var milliseconds) ||
+            milliseconds is < 500 or > 30_000)
+        {
+            return;
+        }
+
+        _ = ExitAfterUatDelayAsync(TimeSpan.FromMilliseconds(milliseconds));
+    }
+
+    private async Task ExitAfterUatDelayAsync(TimeSpan delay)
+    {
+        await Task.Delay(delay).ConfigureAwait(false);
+        _window?.DispatcherQueue.TryEnqueue(ExitFromTray);
+    }
+
     private async void OnWindowClosed(object sender, WindowEventArgs args)
     {
-        _window?.ShutdownProductWindows();
-        (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately();
-        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellClosed));
-        await DisposeAsync().ConfigureAwait(true);
-        if (_window is not null)
+        var window = _window;
+        if (window is not null)
         {
-            _window.SettingsChanged -= OnSettingsChanged;
-            _window.SessionStatusChanged -= OnSessionStatusChanged;
-            _window.AppWindow.Closing -= OnAppWindowClosing;
+            window.SettingsChanged -= OnSettingsChanged;
+            window.SessionStatusChanged -= OnSessionStatusChanged;
+            window.AudioDevicesChanged -= OnAudioDevicesChanged;
+            window.RecoveryCleared -= OnRecoveryCleared;
+            window.AppWindow.Closing -= OnAppWindowClosing;
+            window.Closed -= OnWindowClosed;
         }
+
+        await PrepareForExitAsync().ConfigureAwait(true);
         _window = null;
+    }
+
+    private void OnDuplicateActivationRequested(object? sender, EventArgs args)
+    {
+        Interlocked.Exchange(ref _activationPending, 1);
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.DuplicateInstanceActivated));
+        var window = _window;
+        if (window is not null)
+        {
+            window.DispatcherQueue.TryEnqueue(() =>
+            {
+                Interlocked.Exchange(ref _activationPending, 0);
+                ShowMainWindow(openSettings: false);
+            });
+        }
+    }
+
+    private void StartHeartbeat(Guid runId)
+    {
+        _heartbeatCancellation = new CancellationTokenSource();
+        _heartbeatLoop = RunHeartbeatAsync(runId, _heartbeatCancellation.Token);
+    }
+
+    private async Task RunHeartbeatAsync(Guid runId, CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (!await _runStateStore.HeartbeatAsync(
+                        runId,
+                        DateTimeOffset.UtcNow,
+                        cancellationToken).ConfigureAwait(false))
+                {
+                    _logger.Write(new AppLogEntry(
+                        DateTimeOffset.UtcNow,
+                        AppEventCode.ApplicationHeartbeatFailed,
+                        AppFailureCategory.StorageUnavailable));
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private void ConfigureSystemLifecycleMonitor()
+    {
+        try
+        {
+            _lifecycleMonitor = new WindowsSystemLifecycleMonitor();
+            _lifecycleMonitor.Transitioned += OnSystemLifecycleTransitioned;
+        }
+        catch (InvalidOperationException)
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.UnhandledFailure,
+                AppFailureCategory.SystemLifecycle));
+        }
+    }
+
+    private void OnSystemLifecycleTransitioned(
+        object? sender,
+        SystemLifecycleTransition transition)
+    {
+        var eventCode = transition switch
+        {
+            SystemLifecycleTransition.Suspending => AppEventCode.SystemSuspending,
+            SystemLifecycleTransition.Resumed => AppEventCode.SystemResumed,
+            SystemLifecycleTransition.SessionLocked => AppEventCode.SessionLocked,
+            SystemLifecycleTransition.SessionUnlocked => AppEventCode.SessionUnlocked,
+            _ => AppEventCode.UnhandledFailure,
+        };
+        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, eventCode));
+        if (transition is SystemLifecycleTransition.Suspending or
+            SystemLifecycleTransition.SessionLocked)
+        {
+            _ = RecoverFromSystemTransitionAsync(transition);
+        }
+        else
+        {
+            _window?.DispatcherQueue.TryEnqueue(() =>
+                _window?.SetSessionStatus("Windows resumed — EnviousWispr is ready"));
+        }
+    }
+
+    private void OnAudioDevicesChanged(AudioDeviceChange change)
+    {
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.AudioDevicesChanged,
+            change.AffectsCapture
+                ? AppFailureCategory.AudioUnavailable
+                : AppFailureCategory.None));
+    }
+
+    private void OnRecoveryCleared()
+    {
+        _hasPendingRecovery = false;
+        _pendingRecoveryRecord = null;
     }
 
     private void OnSettingsChanged(AppSettings settings)
@@ -290,11 +513,30 @@ public partial class App : Application, IAsyncDisposable
 
     private void ExitFromTray()
     {
-        _window?.DispatcherQueue.TryEnqueue(() =>
+        _window?.DispatcherQueue.TryEnqueue(() => _ = ExitFromTrayAsync());
+    }
+
+    private async Task ExitFromTrayAsync()
+    {
+        if (_exitRequested)
         {
-            _exitRequested = true;
-            _window?.Close();
-        });
+            return;
+        }
+
+        _exitRequested = true;
+        await PrepareForExitAsync().ConfigureAwait(true);
+        _window?.Close();
+    }
+
+    private Task PrepareForExitAsync() =>
+        _shutdownPreparation ??= PrepareForExitCoreAsync();
+
+    private async Task PrepareForExitCoreAsync()
+    {
+        _window?.ShutdownProductWindows();
+        (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately();
+        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellClosed));
+        await DisposeAsync().ConfigureAwait(true);
     }
 
     public async ValueTask DisposeAsync()
@@ -305,35 +547,71 @@ public partial class App : Application, IAsyncDisposable
         }
 
         _disposed = true;
+        var cleanShutdown = true;
+        _activeProcessingCancellation?.Cancel();
+        cleanShutdown &= await TryCleanupAsync(StopRecordingWatchdogAsync).ConfigureAwait(true);
+
+        var sessionGateHeld = false;
+        try
+        {
+            sessionGateHeld = await _sessionOperationGate
+                .WaitAsync(TimeSpan.FromSeconds(10))
+                .ConfigureAwait(true);
+            cleanShutdown &= sessionGateHeld;
+        }
+        catch (ObjectDisposedException)
+        {
+            cleanShutdown = false;
+        }
+
+        if (_lifecycleMonitor is not null)
+        {
+            _lifecycleMonitor.Transitioned -= OnSystemLifecycleTransitioned;
+            cleanShutdown &= TryCleanup(_lifecycleMonitor.Dispose);
+            _lifecycleMonitor = null;
+        }
+
         if (_pushToTalkHook is not null)
         {
             _pushToTalkHook.Signalled -= OnPushToTalkSignalled;
-            await _pushToTalkHook.DisposeAsync().ConfigureAwait(true);
+            cleanShutdown &= await TryCleanupAsync(
+                async () => await _pushToTalkHook.DisposeAsync().ConfigureAwait(true))
+                .ConfigureAwait(true);
             _pushToTalkHook = null;
         }
 
-        await StopLivePreviewAsync().ConfigureAwait(true);
+        cleanShutdown &= await TryCleanupAsync(StopLivePreviewAsync).ConfigureAwait(true);
 
         if (_sessionController is not null)
         {
-            await _sessionController.DisposeAsync().ConfigureAwait(true);
+            cleanShutdown &= await TryCleanupAsync(
+                async () => await _sessionController.DisposeAsync().ConfigureAwait(true))
+                .ConfigureAwait(true);
             _sessionController = null;
             _audioCapture = null;
         }
 
-        _textTargetAdapter?.Dispose();
+        if (_textTargetAdapter is not null)
+        {
+            cleanShutdown &= TryCleanup(_textTargetAdapter.Dispose);
+        }
+
         _textTargetAdapter = null;
         _textDelivery = null;
 
         if (_previewEngine is not null)
         {
-            await _previewEngine.DisposeAsync().ConfigureAwait(true);
+            cleanShutdown &= await TryCleanupAsync(
+                async () => await _previewEngine.DisposeAsync().ConfigureAwait(true))
+                .ConfigureAwait(true);
             _previewEngine = null;
         }
 
         if (_transcriptionEngine is not null)
         {
-            await _transcriptionEngine.DisposeAsync().ConfigureAwait(true);
+            cleanShutdown &= await TryCleanupAsync(
+                async () => await _transcriptionEngine.DisposeAsync().ConfigureAwait(true))
+                .ConfigureAwait(true);
             _transcriptionEngine = null;
         }
 
@@ -342,31 +620,137 @@ public partial class App : Application, IAsyncDisposable
             _polishLifetime.Cancel();
             if (_polishWarmup is not null)
             {
-                try
+                cleanShutdown &= await TryCleanupAsync(async () =>
                 {
-                    await _polishWarmup.ConfigureAwait(true);
-                }
-                catch (OperationCanceledException)
-                {
-                    // App shutdown cancels an in-flight fixed semantic readiness probe.
-                }
+                    try
+                    {
+                        await _polishWarmup.ConfigureAwait(true);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // App shutdown cancels an in-flight fixed semantic readiness probe.
+                    }
+                }).ConfigureAwait(true);
 
                 _polishWarmup = null;
             }
 
-            await _polishProvider.DisposeAsync().ConfigureAwait(true);
+            cleanShutdown &= await TryCleanupAsync(
+                async () => await _polishProvider.DisposeAsync().ConfigureAwait(true))
+                .ConfigureAwait(true);
             _polishProvider = null;
         }
 
-        _singleInstanceLock?.Dispose();
-        _singleInstanceLock = null;
-        _resourceArbiter.Dispose();
-        _polishLifetime.Dispose();
-        _previewGate.Dispose();
-        _trayIcon?.Dispose();
+        if (_activationChannel is not null)
+        {
+            _activationChannel.ActivationRequested -= OnDuplicateActivationRequested;
+            cleanShutdown &= await TryCleanupAsync(
+                async () => await _activationChannel.DisposeAsync().ConfigureAwait(true))
+                .ConfigureAwait(true);
+            _activationChannel = null;
+        }
+
+        var heartbeatCancellation = Interlocked.Exchange(ref _heartbeatCancellation, null);
+        var heartbeatLoop = Interlocked.Exchange(ref _heartbeatLoop, null);
+        heartbeatCancellation?.Cancel();
+        if (heartbeatLoop is not null)
+        {
+            cleanShutdown &= await TryCleanupAsync(async () =>
+            {
+                try
+                {
+                    await heartbeatLoop.ConfigureAwait(true);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            }).ConfigureAwait(true);
+        }
+
+        heartbeatCancellation?.Dispose();
+
+        cleanShutdown &= TryCleanup(_resourceArbiter.Dispose);
+        cleanShutdown &= TryCleanup(_polishLifetime.Dispose);
+        cleanShutdown &= TryCleanup(_previewGate.Dispose);
+        if (_trayIcon is not null)
+        {
+            cleanShutdown &= TryCleanup(_trayIcon.Dispose);
+        }
+
         _trayIcon = null;
-        _historyStore.Dispose();
+        cleanShutdown &= TryCleanup(_historyStore.Dispose);
+        cleanShutdown &= TryCleanup(_recoveryTextStore.Dispose);
+        if (sessionGateHeld)
+        {
+            _sessionOperationGate.Release();
+            cleanShutdown &= TryCleanup(_sessionOperationGate.Dispose);
+        }
+
+        if (_runId is { } runId)
+        {
+            var completed = cleanShutdown &&
+                await _runStateStore.CompleteRunAsync(runId, DateTimeOffset.UtcNow)
+                    .ConfigureAwait(true);
+            cleanShutdown &= completed;
+            if (completed)
+            {
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.ApplicationCleanShutdown));
+            }
+        }
+
+        if (_singleInstanceLock is not null)
+        {
+            cleanShutdown &= TryCleanup(_singleInstanceLock.Dispose);
+        }
+
+        _singleInstanceLock = null;
+        cleanShutdown &= TryCleanup(_runStateStore.Dispose);
+
+        if (!cleanShutdown)
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.UnhandledFailure,
+                AppFailureCategory.Recovery));
+        }
+
         GC.SuppressFinalize(this);
+    }
+
+    private async Task<bool> TryCleanupAsync(Func<Task> cleanup)
+    {
+        try
+        {
+            await cleanup().ConfigureAwait(true);
+            return true;
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.UnhandledFailure,
+                AppFailureCategory.Recovery));
+            return false;
+        }
+    }
+
+    private bool TryCleanup(Action cleanup)
+    {
+        try
+        {
+            cleanup();
+            return true;
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.UnhandledFailure,
+                AppFailureCategory.Recovery));
+            return false;
+        }
     }
 
     private void ConfigurePushToTalk(string configuredGesture)
@@ -580,12 +964,35 @@ public partial class App : Application, IAsyncDisposable
         if (!started.Succeeded)
         {
             await _transcriptionEngine.DisposeAsync().ConfigureAwait(true);
-            _transcriptionEngine = null;
-            _window?.SetSessionStatus("Local transcription worker could not start");
+            _transcriptionEngine = engine == FinalAsrEngine.Whisper
+                ? CreateCpuWhisperEngine(workerExecutable, modelDirectory, hardware)
+                : CreateCpuParakeetEngine(workerExecutable, modelDirectory, hardware);
+            started = _transcriptionEngine is null
+                ? new RuntimeWorkerResult(false, RuntimeWorkerState.Faulted)
+                : await _transcriptionEngine.StartAsync().ConfigureAwait(true);
+            if (!started.Succeeded)
+            {
+                if (_transcriptionEngine is not null)
+                {
+                    await _transcriptionEngine.DisposeAsync().ConfigureAwait(true);
+                }
+
+                _transcriptionEngine = null;
+                _window?.SetSessionStatus("Local transcription worker could not start");
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.DictationTranscriptionFailed,
+                    AppFailureCategory.RuntimeWorker));
+                return;
+            }
+
+            ConfigureLivePreview(workerExecutable, hardware, forceCpu: true);
+            _window?.SetSessionStatus("Local transcription ready with CPU recovery");
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
-                AppEventCode.DictationTranscriptionFailed,
-                AppFailureCategory.RuntimeWorker));
+                AppEventCode.DictationTranscriptionDegraded,
+                AppFailureCategory.RuntimeProvider,
+                ErrorCode: AppErrorCode.RuntimeProviderUnavailable));
             return;
         }
 
@@ -593,7 +1000,10 @@ public partial class App : Application, IAsyncDisposable
         _window?.SetSessionStatus("Local transcription ready");
     }
 
-    private void ConfigureLivePreview(string workerExecutable, HardwareSnapshot hardware)
+    private void ConfigureLivePreview(
+        string workerExecutable,
+        HardwareSnapshot hardware,
+        bool forceCpu = false)
     {
         var modelDirectory = ResolveModelDirectory(
             WhisperTranscriptionEngine.PreviewModelId,
@@ -604,7 +1014,8 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        var useCuda = hardware.Architecture == ProcessorArchitectureKind.X64 &&
+        var useCuda = !forceCpu &&
+            hardware.Architecture == ProcessorArchitectureKind.X64 &&
             hardware.Cuda.IsDriverAvailable &&
             hardware.Cuda.DeviceCount > 0;
         var provider = useCuda ? RuntimeProviderKind.Cuda : RuntimeProviderKind.Cpu;
@@ -664,6 +1075,34 @@ public partial class App : Application, IAsyncDisposable
                     "ENVIOUSWISPR_CUDA_RUNTIME_DIR")));
     }
 
+    private static RuntimeWorkerTranscriptionEngine? CreateCpuParakeetEngine(
+        string workerExecutable,
+        string modelDirectory,
+        HardwareSnapshot hardware)
+    {
+        var models = new LocalParakeetModelProbe().Probe(modelDirectory);
+        var selection = ParakeetRuntimeSelector.Select(
+            hardware,
+            models,
+            RuntimeProviderPreference.Cpu);
+        if (!selection.Succeeded ||
+            selection.Provider is not RuntimeProviderKind.Cpu ||
+            selection.ModelPack is null)
+        {
+            return null;
+        }
+
+        return new RuntimeWorkerTranscriptionEngine(
+            new RuntimeWorkerTranscriptionOptions(
+                workerExecutable,
+                modelDirectory,
+                RuntimeProviderKind.Cpu,
+                selection.ModelPack.Value,
+                selection.IntraOpThreads,
+                selection.InterOpThreads,
+                CpuFallbackThreads: selection.IntraOpThreads));
+    }
+
     private static RuntimeWorkerTranscriptionEngine? CreateWhisperEngine(
         string workerExecutable,
         string modelDirectory,
@@ -695,6 +1134,35 @@ public partial class App : Application, IAsyncDisposable
             Language: "auto",
             CudaRuntimeDirectory: Environment.GetEnvironmentVariable(
                 "ENVIOUSWISPR_CUDA_RUNTIME_DIR")));
+    }
+
+    private static RuntimeWorkerTranscriptionEngine? CreateCpuWhisperEngine(
+        string workerExecutable,
+        string modelDirectory,
+        HardwareSnapshot hardware)
+    {
+        var models = new LocalWhisperModelProbe().Probe(modelDirectory);
+        var selection = WhisperRuntimeSelector.Select(
+            hardware,
+            models,
+            RuntimeProviderPreference.Cpu);
+        if (!selection.Succeeded ||
+            selection.Provider is not RuntimeProviderKind.Cpu ||
+            selection.ModelPack is null)
+        {
+            return null;
+        }
+
+        return new RuntimeWorkerTranscriptionEngine(new RuntimeWorkerTranscriptionOptions(
+            workerExecutable,
+            modelDirectory,
+            RuntimeProviderKind.Cpu,
+            ParakeetModelPack.Quantized,
+            selection.ThreadCount,
+            CpuFallbackThreads: selection.ThreadCount,
+            Engine: FinalAsrEngine.Whisper,
+            WhisperPack: selection.ModelPack.Value,
+            Language: "auto"));
     }
 
     private static string? ResolveModelDirectory(
@@ -743,8 +1211,66 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
+        if (!await _sessionOperationGate.WaitAsync(0).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        CancellationTokenSource? processingCancellation = null;
         try
         {
+            if (signal == PushToTalkSignal.Pressed)
+            {
+                if (_hasPendingRecovery)
+                {
+                    _window?.DispatcherQueue.TryEnqueue(() =>
+                    {
+                        ShowMainWindow(openSettings: false);
+                        _window?.SetReliabilityNotice(
+                            "Recovered text is waiting",
+                            "Copy or delete the unfinished dictation on Home before starting another recording.");
+                        _window?.SetSessionStatus("Review recovered text before recording again");
+                    });
+                    return;
+                }
+
+                var admission = SystemResourceAdmissionPolicy.Evaluate(_resourceProbe.Probe());
+                _canPersistRecoveryForSession = admission.CanPersistRecovery;
+                if (admission.Status != DictationAdmissionStatus.Ready)
+                {
+                    _logger.Write(new AppLogEntry(
+                        DateTimeOffset.UtcNow,
+                        AppEventCode.ResourcePressureDetected,
+                        AppFailureCategory.ResourcePressure,
+                        ErrorCode: admission.Error?.Code));
+                }
+
+                if (!admission.CanStart)
+                {
+                    _window?.DispatcherQueue.TryEnqueue(() =>
+                    {
+                        _window?.SetReliabilityNotice(
+                            "Windows memory is critically low",
+                            "Close another memory-heavy app, then try dictation again. No recording was started.",
+                            isError: true);
+                        _window?.SetSessionStatus("Recording paused because Windows memory is critically low");
+                    });
+                    return;
+                }
+
+                if (!admission.CanPersistRecovery)
+                {
+                    _window?.DispatcherQueue.TryEnqueue(() =>
+                        _window?.SetReliabilityNotice(
+                            "Disk space is critically low",
+                            "Dictation can continue, but EnviousWispr may be unable to save an encrypted crash-recovery copy."));
+                }
+            }
+            else
+            {
+                await StopRecordingWatchdogAsync().ConfigureAwait(false);
+            }
+
             var result = signal switch
             {
                 PushToTalkSignal.Pressed => await controller.PressAsync().ConfigureAwait(false),
@@ -756,14 +1282,22 @@ public partial class App : Application, IAsyncDisposable
             WriteSessionEvent(result);
             if (result.Kind == SessionTransitionKind.Started && result.Session is not null)
             {
+                StartRecordingWatchdog(controller, result.Session.Id);
                 await StartLivePreviewAsync().ConfigureAwait(false);
             }
             else if (result.Kind == SessionTransitionKind.FinalizeReady &&
                 result.Session is not null &&
                 result.Audio is not null)
             {
+                processingCancellation = new CancellationTokenSource(
+                    MaximumFinalProcessingDuration);
+                _activeProcessingCancellation = processingCancellation;
                 await StopLivePreviewAsync().ConfigureAwait(false);
-                await TranscribeFinalAsync(controller, result.Session.Id, result.Audio)
+                await TranscribeFinalAsync(
+                        controller,
+                        result.Session.Id,
+                        result.Audio,
+                        processingCancellation.Token)
                     .ConfigureAwait(false);
                 return;
             }
@@ -776,14 +1310,244 @@ public partial class App : Application, IAsyncDisposable
             _window?.DispatcherQueue.TryEnqueue(() =>
                 _window?.SetSessionStatus(SessionStatus(result)));
         }
+        catch (OperationCanceledException)
+        {
+            await RecoverFailedSessionAsync(
+                controller,
+                new AppError(
+                    AppErrorCode.SessionTimedOut,
+                    AppErrorStage.Session,
+                    CanRetry: true),
+                "The dictation timed out and was recovered safely").ConfigureAwait(false);
+        }
         catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
         {
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationSessionFailed,
                 AppFailureCategory.Unknown));
+            await RecoverFailedSessionAsync(
+                controller,
+                new AppError(
+                    AppErrorCode.InvalidTransition,
+                    AppErrorStage.Session,
+                    CanRetry: true),
+                "Session failed and was reset safely").ConfigureAwait(false);
+        }
+        finally
+        {
+            if (ReferenceEquals(_activeProcessingCancellation, processingCancellation))
+            {
+                _activeProcessingCancellation = null;
+            }
+
+            processingCancellation?.Dispose();
+            _sessionOperationGate.Release();
+        }
+    }
+
+    private void StartRecordingWatchdog(
+        PushToTalkSessionController controller,
+        DictationSessionId sessionId)
+    {
+        _recordingWatchdogCancellation?.Cancel();
+        _recordingWatchdogCancellation?.Dispose();
+        _recordingWatchdogCancellation = new CancellationTokenSource();
+        _recordingWatchdog = WatchRecordingAsync(
+            controller,
+            sessionId,
+            _recordingWatchdogCancellation.Token);
+    }
+
+    private async Task WatchRecordingAsync(
+        PushToTalkSessionController controller,
+        DictationSessionId sessionId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(RecordingWatchdogDuration(), cancellationToken).ConfigureAwait(false);
+            await _sessionOperationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (controller.CurrentSession is
+                    {
+                        Id: var currentId,
+                        State: EnviousWispr.Core.Sessions.DictationSessionState.Recording,
+                    } && currentId == sessionId)
+                {
+                    await StopLivePreviewAsync().ConfigureAwait(false);
+                    var error = new AppError(
+                        AppErrorCode.SessionTimedOut,
+                        AppErrorStage.Session,
+                        CanRetry: true);
+                    await controller.AbortAsync(error, cancellationToken).ConfigureAwait(false);
+                    await controller.ResetAsync(cancellationToken).ConfigureAwait(false);
+                    _logger.Write(new AppLogEntry(
+                        DateTimeOffset.UtcNow,
+                        AppEventCode.DictationSessionRecovered,
+                        AppFailureCategory.Recovery,
+                        ErrorCode: error.Code));
+                    _window?.DispatcherQueue.TryEnqueue(() =>
+                        _window?.SetSessionStatus("Recording timed out and was cancelled safely"));
+                }
+            }
+            finally
+            {
+                _sessionOperationGate.Release();
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private static TimeSpan RecordingWatchdogDuration()
+    {
+        var requested = Environment.GetEnvironmentVariable(
+            "ENVIOUSWISPR_UAT_RECORDING_TIMEOUT_MILLISECONDS");
+        return int.TryParse(requested, out var milliseconds) &&
+            milliseconds is >= 500 and <= 30_000
+                ? TimeSpan.FromMilliseconds(milliseconds)
+                : MaximumRecordingDuration;
+    }
+
+    private async Task StopRecordingWatchdogAsync()
+    {
+        var cancellation = Interlocked.Exchange(ref _recordingWatchdogCancellation, null);
+        var watchdog = Interlocked.Exchange(ref _recordingWatchdog, null);
+        cancellation?.Cancel();
+        if (watchdog is not null)
+        {
+            try
+            {
+                await watchdog.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        cancellation?.Dispose();
+    }
+
+    private async Task RecoverFailedSessionAsync(
+        PushToTalkSessionController controller,
+        AppError error,
+        string status)
+    {
+        await StopRecordingWatchdogAsync().ConfigureAwait(false);
+        await StopLivePreviewAsync().ConfigureAwait(false);
+        if (controller.CurrentSession is not null)
+        {
+            await controller.AbortAsync(error).ConfigureAwait(false);
+            await controller.ResetAsync().ConfigureAwait(false);
+        }
+
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.DictationSessionRecovered,
+            AppFailureCategory.Recovery,
+            ErrorCode: error.Code));
+        ShowPendingRecovery();
+        _window?.DispatcherQueue.TryEnqueue(() => _window?.SetSessionStatus(status));
+    }
+
+    private async Task RecoverFromSystemTransitionAsync(SystemLifecycleTransition transition)
+    {
+        _activeProcessingCancellation?.Cancel();
+        if (!await _sessionOperationGate.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false))
+        {
             _window?.DispatcherQueue.TryEnqueue(() =>
-                _window?.SetSessionStatus("Session failed safely"));
+                _window?.SetSessionStatus("Windows interrupted the active dictation; recovery is still pending"));
+            return;
+        }
+
+        CancellationTokenSource? processingCancellation = null;
+        try
+        {
+            var controller = _sessionController;
+            if (controller?.CurrentSession is null)
+            {
+                return;
+            }
+
+            if (controller.CurrentSession.State ==
+                EnviousWispr.Core.Sessions.DictationSessionState.Recording)
+            {
+                await StopRecordingWatchdogAsync().ConfigureAwait(false);
+                var result = await controller.ReleaseAsync().ConfigureAwait(false);
+                WriteSessionEvent(result);
+                if (result.Kind == SessionTransitionKind.FinalizeReady &&
+                    result.Session is not null &&
+                    result.Audio is not null)
+                {
+                    processingCancellation = new CancellationTokenSource(
+                        MaximumFinalProcessingDuration);
+                    _activeProcessingCancellation = processingCancellation;
+                    await StopLivePreviewAsync().ConfigureAwait(false);
+                    _window?.DispatcherQueue.TryEnqueue(() =>
+                        _window?.SetSessionStatus(
+                            transition == SystemLifecycleTransition.Suspending
+                                ? "Windows is suspending — captured audio is being preserved"
+                                : "Windows locked — captured audio is being preserved"));
+                    await TranscribeFinalAsync(
+                            controller,
+                            result.Session.Id,
+                            result.Audio,
+                            processingCancellation.Token)
+                        .ConfigureAwait(false);
+                    return;
+                }
+            }
+
+            await RecoverFailedSessionAsync(
+                controller,
+                new AppError(
+                    AppErrorCode.Cancelled,
+                    AppErrorStage.SystemLifecycle,
+                    CanRetry: true),
+                "Windows interrupted the session; it was reset safely").ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            if (_sessionController is { } controller)
+            {
+                await RecoverFailedSessionAsync(
+                    controller,
+                    new AppError(
+                        AppErrorCode.SessionTimedOut,
+                        AppErrorStage.SystemLifecycle,
+                        CanRetry: true),
+                    "Windows interrupted the session; recovery timed out safely").ConfigureAwait(false);
+            }
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DictationSessionFailed,
+                AppFailureCategory.SystemLifecycle));
+            if (_sessionController is { } controller)
+            {
+                await RecoverFailedSessionAsync(
+                    controller,
+                    new AppError(
+                        AppErrorCode.InvalidTransition,
+                        AppErrorStage.SystemLifecycle,
+                        CanRetry: true),
+                    "Windows interrupted the session; it was reset safely").ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_activeProcessingCancellation, processingCancellation))
+            {
+                _activeProcessingCancellation = null;
+            }
+
+            processingCancellation?.Dispose();
+            _sessionOperationGate.Release();
         }
     }
 
@@ -926,7 +1690,8 @@ public partial class App : Application, IAsyncDisposable
     private async Task TranscribeFinalAsync(
         PushToTalkSessionController controller,
         DictationSessionId sessionId,
-        CapturedAudio audio)
+        CapturedAudio audio,
+        CancellationToken cancellationToken)
     {
         var engine = _transcriptionEngine;
         if (engine is null)
@@ -935,8 +1700,8 @@ public partial class App : Application, IAsyncDisposable
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionFailed,
                 AppFailureCategory.AsrUnavailable));
-            await controller.CompleteAsync(sessionId).ConfigureAwait(false);
-            await controller.ResetAsync().ConfigureAwait(false);
+            await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
+            await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
             _window?.DispatcherQueue.TryEnqueue(() =>
                 _window?.SetSessionStatus("Audio captured, but local transcription is unavailable"));
             return;
@@ -950,7 +1715,7 @@ public partial class App : Application, IAsyncDisposable
         var timer = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            var transcript = await engine.TranscribeAsync(audio).ConfigureAwait(false);
+            var transcript = await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
             timer.Stop();
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
@@ -970,7 +1735,8 @@ public partial class App : Application, IAsyncDisposable
                 _customWords,
                 _deterministicTextOptions);
             var processed = await _deterministicTextPipeline.ProcessAsync(
-                deterministicRequest).ConfigureAwait(false);
+                deterministicRequest,
+                cancellationToken).ConfigureAwait(false);
             processingTimer.Stop();
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
@@ -981,14 +1747,20 @@ public partial class App : Application, IAsyncDisposable
                     ? AppFailureCategory.PostProcessing
                     : AppFailureCategory.None,
                 processingTimer.ElapsedMilliseconds));
-            var polishResult = await TryPolishAsync(processed.Output, transcript.DetectedLanguage)
+            await SaveRecoveryTextAsync(processed.Output, cancellationToken).ConfigureAwait(false);
+            var polishResult = await TryPolishAsync(
+                    processed.Output,
+                    transcript.DetectedLanguage,
+                    cancellationToken)
                 .ConfigureAwait(false);
             if (polishResult is not null && !polishResult.UsedFallback)
             {
                 processed = await _deterministicTextPipeline.ApplyPolishedTextAsync(
                     deterministicRequest,
                     processed,
-                    polishResult.Output.Text).ConfigureAwait(false);
+                    polishResult.Output.Text,
+                    cancellationToken).ConfigureAwait(false);
+                await SaveRecoveryTextAsync(processed.Output, cancellationToken).ConfigureAwait(false);
             }
 
             if (!string.IsNullOrWhiteSpace(processed.Output.Text) &&
@@ -996,7 +1768,7 @@ public partial class App : Application, IAsyncDisposable
                 controller.CurrentSession is { } pendingSession)
             {
                 var deliveryTransition = await controller
-                    .BeginDeliveryAsync(sessionId)
+                    .BeginDeliveryAsync(sessionId, cancellationToken)
                     .ConfigureAwait(false);
                 if (deliveryTransition.Kind == SessionTransitionKind.Delivering)
                 {
@@ -1011,16 +1783,25 @@ public partial class App : Application, IAsyncDisposable
                             processed.Output,
                             pendingSession.Target,
                             DeliveryLanguage(transcript),
-                            pendingSession.DeliveryOptions)).ConfigureAwait(false);
+                            pendingSession.DeliveryOptions),
+                        cancellationToken).ConfigureAwait(false);
                     deliveryTimer.Stop();
                     WriteDeliveryEvent(delivery, deliveryTimer.ElapsedMilliseconds);
+                    if (delivery.Delivered || delivery.ClipboardFallback)
+                    {
+                        await ClearRecoveryTextAsync().ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        ShowPendingRecovery();
+                    }
                     await SaveHistoryAsync(
                         transcript,
                         processed.Output.Text,
                         polishResult is { Status: PolishAttemptStatus.Polished },
                         delivery.Delivered).ConfigureAwait(false);
-                    await controller.CompleteAsync(sessionId).ConfigureAwait(false);
-                    await controller.ResetAsync().ConfigureAwait(false);
+                    await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
+                    await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
                     _window?.DispatcherQueue.TryEnqueue(() =>
                         _window?.SetSessionStatus(DeliveryStatus(delivery)));
                     return;
@@ -1032,8 +1813,9 @@ public partial class App : Application, IAsyncDisposable
                 processed.Output.Text,
                 polishResult is { Status: PolishAttemptStatus.Polished },
                 wasDelivered: false).ConfigureAwait(false);
-            await controller.CompleteAsync(sessionId).ConfigureAwait(false);
-            await controller.ResetAsync().ConfigureAwait(false);
+            await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
+            await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
+            ShowPendingRecovery();
             var status = string.IsNullOrWhiteSpace(processed.Output.Text)
                     ? "No speech detected"
                     : processed.IsDegraded
@@ -1057,11 +1839,79 @@ public partial class App : Application, IAsyncDisposable
                 AppEventCode.DictationTranscriptionFailed,
                 FailureFor(exception.Error),
                 timer.ElapsedMilliseconds));
-            await controller.CompleteAsync(sessionId).ConfigureAwait(false);
-            await controller.ResetAsync().ConfigureAwait(false);
+            await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
+            await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
             _window?.DispatcherQueue.TryEnqueue(() =>
                 _window?.SetSessionStatus("Local transcription failed safely"));
         }
+    }
+
+    private async Task SaveRecoveryTextAsync(
+        ProcessedText text,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(text.Text))
+        {
+            return;
+        }
+
+        var record = new RecoveryTextRecord(text.SessionId, DateTimeOffset.UtcNow, text.Text);
+        _pendingRecoveryRecord = record;
+        _hasPendingRecovery = true;
+        if (!_canPersistRecoveryForSession)
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.RecoveryTextUnavailable,
+                AppFailureCategory.ResourcePressure,
+                ErrorCode: AppErrorCode.LowDiskSpace));
+            return;
+        }
+
+        var saved = await _recoveryTextStore.SaveAsync(record, cancellationToken)
+            .ConfigureAwait(false);
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            saved ? AppEventCode.RecoveryTextSaved : AppEventCode.RecoveryTextUnavailable,
+            saved ? AppFailureCategory.None : AppFailureCategory.Recovery,
+            ErrorCode: saved ? null : AppErrorCode.StorageUnavailable));
+    }
+
+    private async Task ClearRecoveryTextAsync()
+    {
+        if (!await _recoveryTextStore.ClearAsync().ConfigureAwait(false))
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.RecoveryTextUnavailable,
+                AppFailureCategory.Recovery,
+                ErrorCode: AppErrorCode.StorageUnavailable));
+            return;
+        }
+
+        _pendingRecoveryRecord = null;
+        _hasPendingRecovery = false;
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.RecoveryTextCleared));
+        _window?.DispatcherQueue.TryEnqueue(() => _window?.ClearRecoveredText());
+    }
+
+    private void ShowPendingRecovery()
+    {
+        var record = _pendingRecoveryRecord;
+        if (record is null)
+        {
+            return;
+        }
+
+        _window?.DispatcherQueue.TryEnqueue(() =>
+        {
+            ShowMainWindow(openSettings: false);
+            _window?.SetRecoveredText(new RecoveryTextLoadResult(
+                RecoveryTextLoadStatus.Found,
+                record));
+        });
     }
 
     private async Task SaveHistoryAsync(
@@ -1099,7 +1949,8 @@ public partial class App : Application, IAsyncDisposable
 
     private async Task<PolishResult?> TryPolishAsync(
         ProcessedText input,
-        string? detectedLanguage)
+        string? detectedLanguage,
+        CancellationToken cancellationToken)
     {
         var provider = _polishProvider;
         if (provider is null || string.IsNullOrWhiteSpace(input.Text))
@@ -1116,14 +1967,16 @@ public partial class App : Application, IAsyncDisposable
         if (!_polishUsesLocalRuntime)
         {
             result = await provider.TryPolishAsync(
-                new PolishRequest(input, detectedLanguage)).ConfigureAwait(false);
+                new PolishRequest(input, detectedLanguage),
+                cancellationToken).ConfigureAwait(false);
         }
         else
         {
             var acquired = await _resourceArbiter.AcquireAsync(
                 _polishResource,
                 RuntimeWorkloadKind.LocalPolish,
-                TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+                TimeSpan.FromSeconds(2),
+                cancellationToken).ConfigureAwait(false);
             if (!acquired.Succeeded || acquired.Lease is null)
             {
                 timer.Stop();
@@ -1141,7 +1994,8 @@ public partial class App : Application, IAsyncDisposable
                 await using (acquired.Lease.ConfigureAwait(false))
                 {
                     result = await provider.TryPolishAsync(
-                        new PolishRequest(input, detectedLanguage)).ConfigureAwait(false);
+                        new PolishRequest(input, detectedLanguage),
+                        cancellationToken).ConfigureAwait(false);
                 }
             }
         }

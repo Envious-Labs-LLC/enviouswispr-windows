@@ -31,6 +31,7 @@
                         <StackPanel Spacing="18">
                             <TextBlock Style="{StaticResource SectionTitleStyle}" Text="Ready on this PC" />
                             <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="These checks are honest snapshots. Missing models or permissions can be fixed later without blocking access to your data and settings." TextWrapping="Wrap" />
+                            <InfoBar x:Name="OnboardingReliabilityInfoBar" IsClosable="False" IsOpen="False" Severity="Warning" />
                             <Grid ColumnSpacing="12">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="32" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                 <FontIcon Glyph="&#xE720;" Foreground="{ThemeResource BrandAccentBrush}" />
@@ -73,6 +74,7 @@
                         <StackPanel MaxWidth="900" Spacing="18">
                             <StackPanel Spacing="6"><TextBlock x:Uid="HomeTitle" Style="{StaticResource PageTitleStyle}" Text="Speak naturally. Keep working." /><TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="EnviousWispr is ready in the background. Put your cursor in any app, hold your key, speak, and release." TextWrapping="Wrap" /></StackPanel>
                             <InfoBar x:Name="FoundationInfoBar" IsClosable="False" IsOpen="True" Message="Local transcription, deterministic cleanup, optional AI polish, context-aware insertion, and safe clipboard recovery are active." Severity="Success" Title="Private dictation pipeline active" />
+                            <Border x:Name="RecoveryCard" AutomationProperties.Name="Recovered unfinished dictation" Style="{StaticResource CardStyle}" Visibility="Collapsed"><StackPanel Spacing="10"><TextBlock Style="{StaticResource SectionTitleStyle}" Text="Recovered unfinished dictation" /><TextBlock Text="EnviousWispr found text that had not reached its destination before the previous run ended. Review it here; it will never be pasted automatically." TextWrapping="Wrap" /><TextBox x:Name="RecoveryTextBox" AcceptsReturn="True" AutomationProperties.Name="Recovered dictation text" IsReadOnly="True" MaxHeight="180" TextWrapping="Wrap" /><StackPanel Orientation="Horizontal" Spacing="10"><Button Click="CopyRecoveryButton_Click" Content="Copy recovered text" /><Button Click="DeleteRecoveryButton_Click" Content="Delete recovery copy" /></StackPanel></StackPanel></Border>
                             <Grid ColumnSpacing="14" RowSpacing="14">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>

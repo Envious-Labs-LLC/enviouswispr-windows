@@ -193,6 +193,31 @@ public sealed class CloudPolishProviderTests
     }
 
     [Fact]
+    public async Task NetworkLossReturnsTheLastDeterministicTextAfterBoundedRetries()
+    {
+        var handler = new ScriptedHandler(_ =>
+            throw new HttpRequestException("controlled offline fault"));
+        var delays = new List<TimeSpan>();
+        await using var provider = new OpenAiPolishProvider(
+            new FakeApiKeyStore(PolishProvider.OpenAI, "secret"),
+            new CloudPolishOptions(PolishProvider.OpenAI, "gpt-4o-mini"),
+            handler,
+            (delay, _) =>
+            {
+                delays.Add(delay);
+                return Task.CompletedTask;
+            });
+
+        var result = await provider.TryPolishAsync(new PolishRequest(Input));
+
+        Assert.Equal(Input, result.Output);
+        Assert.Equal(PolishAttemptStatus.Unavailable, result.Status);
+        Assert.Equal(AppErrorCode.PolishProviderUnavailable, result.Error?.Code);
+        Assert.Equal(3, handler.Exchanges.Count);
+        Assert.Equal([TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3)], delays);
+    }
+
+    [Fact]
     public async Task CallerCancellationIsPreserved()
     {
         var handler = new ScriptedHandler(async (_, cancellationToken) =>
