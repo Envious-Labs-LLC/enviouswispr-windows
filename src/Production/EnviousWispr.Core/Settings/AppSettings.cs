@@ -7,7 +7,7 @@ public sealed record AppSettings(
     UserPreferences Preferences,
     ReusableUserData UserData)
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
 
     public static AppSettings Default { get; } = new(
         CurrentSchemaVersion,

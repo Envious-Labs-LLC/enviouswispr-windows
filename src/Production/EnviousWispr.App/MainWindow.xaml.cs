@@ -52,6 +52,17 @@ public sealed partial class MainWindow : Window
         FoundationInfoBar.Message = notice;
     }
 
+    public void SetOllamaPolishNotice(string? notice)
+    {
+        if (string.IsNullOrWhiteSpace(notice))
+        {
+            return;
+        }
+
+        FoundationInfoBar.Title = "Local Ollama polish enabled";
+        FoundationInfoBar.Message = notice;
+    }
+
     public void SetLivePreview(string? text)
     {
         LivePreviewText.Text = text ?? string.Empty;

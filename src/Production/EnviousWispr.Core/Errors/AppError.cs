@@ -39,6 +39,8 @@ public enum AppErrorCode
     PolishBadRequest,
     PolishEmptyResponse,
     PolishOutputTruncated,
+    PolishEndpointInvalid,
+    PolishRemoteModelDisallowed,
 }
 
 public enum AppErrorStage

@@ -93,6 +93,43 @@ public sealed class PortableProfileServiceTests
     }
 
     [Fact]
+    public async Task ImportMigratesPhaseElevenProfileWithDefaultOllamaEndpoint()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "profile.enviouswispr.json");
+            const string legacyJson =
+                """
+                {
+                  "schemaVersion": 2,
+                  "preferences": {
+                    "dictation": {
+                      "finalEngine": "Parakeet",
+                      "pushToTalkGesture": "F8",
+                      "wordCorrectionEnabled": true,
+                      "fillerRemovalEnabled": true,
+                      "emojiFormatterEnabled": true,
+                      "spokenPunctuationEnabled": false
+                    },
+                    "polish": { "provider": "Ollama", "modelId": "llama3.2" },
+                    "history": { "isEnabled": true, "retentionDays": 30 },
+                    "theme": "System"
+                  },
+                  "userData": { "customWords": [], "snippets": [] }
+                }
+                """;
+            await File.WriteAllTextAsync(path, legacyJson);
+
+            var result = await new JsonPortableProfileService().ImportAsync(path);
+
+            Assert.Equal(PortableProfileImportStatus.Imported, result.Status);
+            Assert.Equal(PortableProfile.CurrentSchemaVersion, result.Profile?.SchemaVersion);
+            Assert.Equal("llama3.2", result.Profile?.Preferences.Polish.ModelId);
+            Assert.Null(result.Profile?.Preferences.Polish.OllamaEndpoint);
+        });
+    }
+
+    [Fact]
     public void ApplyingImportedProfilePreservesMachineLocalLifecycleState()
     {
         var current = AppSettings.Default with { LaunchCount = 42, HasCompletedOnboarding = true };
