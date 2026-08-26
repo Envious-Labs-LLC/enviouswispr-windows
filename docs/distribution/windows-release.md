@@ -86,6 +86,9 @@ running this command.
 
 ## Release gate
 
+Founder and beta candidates must also pass the independent artifact and lifecycle admission described in
+`docs/distribution/private-beta-release.md`. Packaging success alone is never a release approval.
+
 The following remain mandatory before public direct distribution:
 
 - Founder approval and configuration of Azure Artifact Signing.
