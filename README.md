@@ -3,9 +3,10 @@
 Windows-native voice-to-text: hold **F8**, speak, release — polished text is typed into your
 focused app. Sister project to macOS [EnviousWispr](https://github.com/saurabhav88/EnviousWispr).
 
-**Status: founder UAT passed.** GPU transcription, GPU polish, the visible overlay,
-tray controls, startup behavior, and the physical F8 voice-to-paste path were verified on
-the Envious Labs rig (2026-08-25).
+**Status: founder-tested prototype plus Phase Zero foundation.** GPU transcription, GPU polish, the
+visible overlay, tray controls, startup behavior, and the physical F8 voice-to-paste path were verified
+on the Envious Labs rig (2026-08-25). This proves the vertical slice; it is not yet the production WinUI
+architecture or full macOS feature parity.
 
 Maintained by [Envious Labs](https://github.com/Envious-Labs-LLC).
 
@@ -13,7 +14,7 @@ Maintained by [Envious Labs](https://github.com/Envious-Labs-LLC).
 
 - Push-to-talk on **F8** (changeable in config). A small pill shows recording state.
 - 16 kHz mono capture → **Parakeet TDT 0.6B v3** (ONNX Runtime, C#) → raw transcript.
-- **EG-1** (a 2B fine-tuned Qwen, GGUF) polishes the transcript via a llama-server the app
+- **EG-1** (the EnviousWispr local GGUF polishing model) polishes the transcript via a llama-server the app
   **launches itself** on an ephemeral loopback port with a random API key. The model and the
   server are torn down on quit.
 - The polished text is pasted into whatever app had focus.
@@ -48,11 +49,13 @@ tools/synth-test/         strict interactive overlay and paste test harness
 ## Building and running
 
 ```powershell
-dotnet build src/EnviousWispr.Smoke/EnviousWispr.Smoke.csproj -c Release
+powershell -ExecutionPolicy Bypass -File scripts/validate.ps1
 src\EnviousWispr\bin\Release\net8.0-windows\EnviousWispr.exe
 dotnet run --project src/EnviousWispr.Smoke -c Release
-dotnet test src/EnviousWispr.Tests/EnviousWispr.Tests.csproj -c Release
 ```
+
+On a configured Windows machine with the gitignored model packs, add `-IncludeLocalRuntime` to run the
+real model runtime tests too.
 
 Model packs (ASR ~670 MB int8 / ~2.5 GB fp32) and the EG-1 GGUF are **not in git** — see
 [`notes/founder-test.md`](notes/founder-test.md) for exact paths and the config reference
@@ -71,11 +74,22 @@ Model packs (ASR ~670 MB int8 / ~2.5 GB fp32) and the EG-1 GGUF are **not in git
 | EG-1 distribution story | ⏳ open (founder's call) |
 | Streaming ASR / fused-decoder export | post-v1 (S1 verdicts) |
 
+## Production direction
+
+The project source of truth starts at [`CLAUDE.md`](CLAUDE.md). The complete build sequence is in the
+[`Windows master plan`](docs/plans/windows-master-plan.md), and the Phase Zero keep/adapt/drop decisions are
+in the [`porting ledger`](docs/phase-zero/porting-ledger.md).
+
+The current prototype stays runnable while production modules replace it capability by capability. The
+target is C# on the current .NET LTS with WinUI 3, Parakeet and Whisper final ASR, separate multilingual
+Whisper live preview, deterministic and emoji parity, EG-1, Ollama, BYOK cloud polish, automatic hardware
+selection with manual overrides, Velopack updates, and signed direct distribution.
+
 ## Who works here
 
-The first implementation was built by **Qwen3.8-27B** on the Envious Labs rig and was then
-hardened for founder testing. The repo's evidence rules and Windows constraints live in
-[`AGENTS.md`](AGENTS.md).
+The first implementation was built by **Qwen3.8-27B** on the Envious Labs rig and was then hardened for
+founder testing. Agent routing starts in [`AGENTS.md`](AGENTS.md); the project brain and contracts are
+checked into this repository so Codex or Claude Code can continue from either development machine.
 
 That machine is native Windows (Windows 11, i9-14900KF, 64 GB, RTX 4090 24 GB — MEASURED
 2026-08-24), so it can exercise real Windows audio, tray, clipboard and UI Automation and
