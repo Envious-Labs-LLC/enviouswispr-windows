@@ -18,11 +18,31 @@ pwsh -NoProfile -File .\scripts\validate.ps1
 dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj -c Release
 ```
 
+The separate live-audio mode keeps the production WASAPI capture and global hook. It synthesizes F8 edges,
+plays the reviewed public French MINDS-14 fixture through the default speakers, and requires the known word
+`adresse` to travel back through the default capture device and appear in the controlled target. The harness
+verifies the fixture's reviewed SHA-256 before playback:
+
+Playback applies a bounded 2x in-memory gain with clipping protection and plays the fixture twice with a short
+silence gap so a webcam microphone can hear the quiet mu-law source; no converted or amplified audio is written
+to disk.
+
+```powershell
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --live-microphone
+```
+
+This mode is audible. It records only while F8 is held, never persists audio, uses an isolated profile, and
+stores only a temporary phrase-match boolean and character count before cleanup. It refuses to run while an
+unowned EnviousWispr or controlled-target process exists.
+
 The gitignored `models/whisper-large-v3-turbo` pack is required. The result is one content-free JSON object with
 shell/worker/journey/target/cleanup booleans and typed Windows, architecture, engine, provider, model-pack,
 fixture, and delivery-target fields. The temporary target observation records only whether the known public
 phrase appeared and the character count, then the harness deletes it with the isolated profile.
 
-This is real production pipeline proof, but not microphone or global-registration proof. Before Phase 23 can
-close, a person must hold the configured global key from a non-EnviousWispr target, speak through a physical
-microphone, release, observe insertion, and record only content-free pass/fail evidence for that exact build.
+The default mode is real production pipeline proof, but not microphone or global-registration proof. The live
+mode adds production WASAPI, the installed global hook, and an acoustic speaker-to-microphone path, but its key
+edges and reviewed-fixture playback source are still synthetic. Before Phase 23 can close, a person must hold
+the configured global key from a non-EnviousWispr target, speak through a physical microphone, release, observe
+insertion, and record only content-free pass/fail evidence for that exact build.

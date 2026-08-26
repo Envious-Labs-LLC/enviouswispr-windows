@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Production\EnviousWispr.Audio\EnviousWispr.Audio.csproj" />
     <ProjectReference Include="..\..\src\Production\EnviousWispr.ASR\EnviousWispr.ASR.csproj" />
     <ProjectReference Include="..\..\src\Production\EnviousWispr.Core\EnviousWispr.Core.csproj" />
     <ProjectReference Include="..\..\src\Production\EnviousWispr.ModelDelivery\EnviousWispr.ModelDelivery.csproj" />
