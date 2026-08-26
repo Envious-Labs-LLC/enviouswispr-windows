@@ -70,6 +70,9 @@ try {
     Write-Host "Building production WinUI app and module graph (Release, x64)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "src/Production/EnviousWispr.App/EnviousWispr.App.csproj", "-c", "Release", "--nologo", "-p:Platform=x64")
 
+    Write-Host "Building native audio UAT harness (Release)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/audio-uat/EnviousWispr.Audio.Uat.csproj", "-c", "Release", "--nologo")
+
     if ($IncludeLocalRuntime) {
         Write-Host "Running contract and local model runtime tests..."
         Invoke-DotNet -Executable $dotnet8Exe -Arguments @("test", "src/EnviousWispr.Tests/EnviousWispr.Tests.csproj", "-c", "Release", "--nologo")

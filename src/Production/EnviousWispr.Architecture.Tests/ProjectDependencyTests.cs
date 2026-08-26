@@ -26,7 +26,7 @@ public sealed class ProjectDependencyTests
                 "EnviousWispr.PostProcessing",
                 "EnviousWispr.Services",
             ],
-            ["EnviousWispr.Architecture.Tests"] = ["EnviousWispr.Services"],
+            ["EnviousWispr.Architecture.Tests"] = ["EnviousWispr.Audio", "EnviousWispr.Services"],
         };
 
     [Fact]

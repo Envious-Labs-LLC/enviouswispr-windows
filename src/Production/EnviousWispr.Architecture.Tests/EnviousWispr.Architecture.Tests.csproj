@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <ProjectReference Include="..\EnviousWispr.Audio\EnviousWispr.Audio.csproj" />
     <ProjectReference Include="..\EnviousWispr.Services\EnviousWispr.Services.csproj" />
   </ItemGroup>
 </Project>

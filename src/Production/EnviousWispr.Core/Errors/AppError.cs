@@ -8,6 +8,10 @@ public enum AppErrorCode
     AccessDenied,
     Cancelled,
     InvalidTransition,
+    AudioDeviceUnavailable,
+    AudioDeviceLost,
+    AudioFormatUnsupported,
+    CaptureAlreadyActive,
 }
 
 public enum AppErrorStage
@@ -18,6 +22,8 @@ public enum AppErrorStage
     SettingsReset,
     ProfileImport,
     ProfileExport,
+    AudioDeviceEnumeration,
+    AudioCapture,
 }
 
 public sealed record AppError(AppErrorCode Code, AppErrorStage Stage, bool CanRetry);
