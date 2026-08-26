@@ -1,5 +1,6 @@
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Settings;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
@@ -30,10 +31,24 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
     private readonly Task _dispatchTask;
     private nint _hook;
 
-    private WindowsPushToTalkHook(HotkeyGesture gesture, uint virtualKey)
+    private WindowsPushToTalkHook(
+        HotkeyGesture gesture,
+        HotkeyGesture cancelGesture,
+        HotkeyGesture quickAddGesture,
+        DictationRecordingMode recordingMode,
+        uint virtualKey,
+        uint cancelVirtualKey,
+        uint quickAddVirtualKey)
     {
         Gesture = gesture;
-        _edgeTracker = new HotkeyEdgeTracker(virtualKey, gesture.Modifiers);
+        CancelGesture = cancelGesture;
+        QuickAddGesture = quickAddGesture;
+        RecordingMode = recordingMode;
+        _edgeTracker = new HotkeyEdgeTracker(
+            new HotkeyBinding(virtualKey, gesture.Modifiers),
+            new HotkeyBinding(cancelVirtualKey, cancelGesture.Modifiers),
+            new HotkeyBinding(quickAddVirtualKey, quickAddGesture.Modifiers),
+            recordingMode);
         _procedure = HookCallback;
         _dispatchTask = Task.Run(DispatchAsync);
         _hook = SetWindowsHookEx(
@@ -53,23 +68,55 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
 
     public HotkeyGesture Gesture { get; }
 
+    public HotkeyGesture CancelGesture { get; }
+
+    public HotkeyGesture QuickAddGesture { get; }
+
+    public DictationRecordingMode RecordingMode { get; }
+
     public bool IsInstalled => _hook != 0;
 
     public static bool TryCreate(
         string configuredGesture,
         out WindowsPushToTalkHook? hook,
+        out AppError? error) => TryCreate(
+            configuredGesture,
+            DictationRecordingMode.PushToTalk,
+            "Escape",
+            "Ctrl+Alt+W",
+            out hook,
+            out error);
+
+    public static bool TryCreate(
+        string configuredGesture,
+        DictationRecordingMode recordingMode,
+        string configuredCancelGesture,
+        string configuredQuickAddGesture,
+        out WindowsPushToTalkHook? hook,
         out AppError? error)
     {
         hook = null;
         var parsed = HotkeyGestureParser.Parse(configuredGesture);
-        if (!parsed.Succeeded || parsed.Gesture is null)
+        var parsedCancel = HotkeyGestureParser.Parse(configuredCancelGesture);
+        var parsedQuickAdd = HotkeyGestureParser.Parse(configuredQuickAddGesture);
+        if (!parsed.Succeeded || parsed.Gesture is null ||
+            !parsedCancel.Succeeded || parsedCancel.Gesture is null ||
+            !parsedQuickAdd.Succeeded || parsedQuickAdd.Gesture is null ||
+            !Enum.IsDefined(recordingMode) ||
+            parsed.Gesture.Value == parsedCancel.Gesture.Value ||
+            parsed.Gesture.Value == parsedQuickAdd.Gesture.Value ||
+            parsedCancel.Gesture.Value == parsedQuickAdd.Gesture.Value)
         {
             error = parsed.Error;
             return false;
         }
 
         var gesture = parsed.Gesture.Value;
-        if (!WindowsVirtualKeyMap.TryMap(gesture.Key, out var virtualKey))
+        var cancelGesture = parsedCancel.Gesture.Value;
+        var quickAddGesture = parsedQuickAdd.Gesture.Value;
+        if (!WindowsVirtualKeyMap.TryMap(gesture.Key, out var virtualKey) ||
+            !WindowsVirtualKeyMap.TryMap(cancelGesture.Key, out var cancelVirtualKey) ||
+            !WindowsVirtualKeyMap.TryMap(quickAddGesture.Key, out var quickAddVirtualKey))
         {
             error = new AppError(
                 AppErrorCode.HotkeyInvalid,
@@ -78,7 +125,9 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
             return false;
         }
 
-        var conflict = ProbeConflict(gesture, virtualKey);
+        var conflict = ProbeConflict(gesture, virtualKey) ??
+            ProbeConflict(cancelGesture, cancelVirtualKey) ??
+            ProbeConflict(quickAddGesture, quickAddVirtualKey);
         if (conflict is not null)
         {
             error = conflict;
@@ -87,7 +136,14 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
 
         try
         {
-            hook = new WindowsPushToTalkHook(gesture, virtualKey);
+            hook = new WindowsPushToTalkHook(
+                gesture,
+                cancelGesture,
+                quickAddGesture,
+                recordingMode,
+                virtualKey,
+                cancelVirtualKey,
+                quickAddVirtualKey);
             error = null;
             return true;
         }
@@ -113,6 +169,8 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
         _signals.Writer.TryComplete();
         await _dispatchTask.ConfigureAwait(false);
     }
+
+    public void SetRecordingActive(bool active) => _edgeTracker.SetRecordingActive(active);
 
     private nint HookCallback(int code, nint message, nint data)
     {
@@ -299,6 +357,7 @@ internal static class WindowsVirtualKeyMap
             "Insert" => 0x2D,
             "Delete" => 0x2E,
             "ScrollLock" => 0x91,
+            "Escape" => 0x1B,
             _ => 0,
         };
         return virtualKey != 0;

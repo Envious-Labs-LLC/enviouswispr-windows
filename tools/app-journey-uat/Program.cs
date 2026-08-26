@@ -26,6 +26,14 @@ var livePreview = args.Any(argument => string.Equals(
     argument,
     "--live-preview",
     StringComparison.OrdinalIgnoreCase));
+var escapeRecovery = args.Any(argument => string.Equals(
+    argument,
+    "--escape-recovery",
+    StringComparison.OrdinalIgnoreCase));
+if (escapeRecovery && liveMicrophone)
+{
+    throw new ArgumentException("Escape Recovery UAT uses the reviewed in-memory fixture, not live microphone mode.");
+}
 var repositoryRoot = FindRepositoryRoot(AppContext.BaseDirectory);
 var appExecutable = Path.Combine(
     repositoryRoot,
@@ -81,19 +89,23 @@ Directory.CreateDirectory(uatDirectory);
 Directory.CreateDirectory(Path.Combine(uatDirectory, "no-preview-model"));
 var profileDirectory = Path.Combine(uatDirectory, "profile");
 Directory.CreateDirectory(profileDirectory);
-if (livePreview)
+if (livePreview || escapeRecovery)
 {
-    var livePreviewSettings = AppSettings.Default with
+    var journeySettings = AppSettings.Default with
     {
         HasCompletedOnboarding = true,
         Preferences = AppSettings.Default.Preferences with
         {
-            LivePreviewEnabled = true,
+            LivePreviewEnabled = livePreview,
             PillDesignWithWords = RecordingPillDesign.ReadingWell,
+            Dictation = AppSettings.Default.Preferences.Dictation with
+            {
+                EscapeRecoveryEnabled = escapeRecovery,
+            },
         },
     };
     await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"))
-        .SaveAsync(livePreviewSettings);
+        .SaveAsync(journeySettings);
 }
 
 var diagnosticPath = Path.Combine(profileDirectory, "diagnostics", "app.jsonl");
@@ -153,6 +165,10 @@ try
     if (livePreview)
     {
         appStart.Environment["ENVIOUSWISPR_UAT_LIVE_PREVIEW"] = "1";
+    }
+    if (escapeRecovery)
+    {
+        appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_CANCEL"] = "1";
     }
     appStart.Environment["ENVIOUSWISPR_POLISH_PROVIDER"] = "None";
     if (liveMicrophone)
@@ -221,10 +237,10 @@ try
 
         targetObserved = WaitForExpectedTargetResult(
             targetResultPath,
-            TimeSpan.FromSeconds(5));
+            escapeRecovery ? TimeSpan.FromMilliseconds(500) : TimeSpan.FromSeconds(5));
     }
 
-    if (!targetObserved)
+    if (!targetObserved && !escapeRecovery)
     {
         if (liveMicrophone)
         {
@@ -254,12 +270,26 @@ try
     }
 
     var diagnosticEvents = ReadDiagnosticEvents(diagnosticPath);
-    RequireProductionJourneyEvents(diagnosticEvents);
+    if (escapeRecovery)
+    {
+        RequireEscapeRecoveryJourneyEvents(diagnosticEvents);
+    }
+    else
+    {
+        RequireProductionJourneyEvents(diagnosticEvents);
+    }
     if (livePreview)
     {
         RequireLivePreviewJourneyEvents(diagnosticEvents);
     }
     var productionStagesObserved = true;
+    var recoveryHistoryObserved = escapeRecovery &&
+        ReadEscapeRecoveryHistory(Path.Combine(profileDirectory, "history.json"));
+    if (escapeRecovery && (!recoveryHistoryObserved || targetObserved))
+    {
+        throw new InvalidOperationException(
+            "Escape Recovery must save one 24-hour undelivered History entry and deliver nothing to the target.");
+    }
 
     ownedWorkerCount = ownedWorkerIds.Count(IsProcessRunning);
     if (ownedWorkerCount != 0)
@@ -279,6 +309,8 @@ try
         runtimeReady,
         journeyCompleted,
         targetObserved,
+        escapeRecovery,
+        recoveryHistoryObserved,
         productionStagesObserved,
         livePreview,
         livePreviewUpdated = livePreview && diagnosticEvents.Any(value => value.StartsWith(
@@ -302,7 +334,7 @@ try
         fixture = liveMicrophone
             ? "PolyAI-minds14-fr-FR-row0-acoustic-playback"
             : "PolyAI-minds14-fr-FR-row0",
-        deliveryTarget = "ControlledWinFormsEdit",
+        deliveryTarget = escapeRecovery ? "SuppressedForEscapeRecovery" : "ControlledWinFormsEdit",
     }));
     return 0;
 }
@@ -521,6 +553,51 @@ static void RequireLivePreviewJourneyEvents(IReadOnlyList<string> events)
     {
         throw new InvalidOperationException(
             $"The live-preview journey omitted content-free stages: {string.Join(", ", missing)}.");
+    }
+}
+
+static void RequireEscapeRecoveryJourneyEvents(IReadOnlyList<string> events)
+{
+    var required = new[]
+    {
+        "HotkeyReady",
+        "DictationRecordingStarted",
+        "DictationCaptureFinalized",
+        "DictationTranscriptionStarted",
+        "DeterministicProcessingStarted",
+        "ApplicationCleanShutdown",
+    };
+    var missing = required.Where(eventName => !events.Any(value => value.StartsWith(
+        eventName + '/',
+        StringComparison.Ordinal))).ToArray();
+    if (missing.Length > 0 || events.Any(value => value.StartsWith("TextDeliveryStarted/", StringComparison.Ordinal)))
+    {
+        throw new InvalidOperationException(
+            $"Escape Recovery journey stages were invalid: missing={string.Join(",", missing)}.");
+    }
+}
+
+static bool ReadEscapeRecoveryHistory(string path)
+{
+    try
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        var entries = document.RootElement.GetProperty("entries");
+        if (entries.GetArrayLength() != 1)
+        {
+            return false;
+        }
+
+        var entry = entries[0];
+        var createdAt = entry.GetProperty("createdAt").GetDateTimeOffset();
+        var expiresAt = entry.GetProperty("expiresAt").GetDateTimeOffset();
+        return !entry.GetProperty("wasDelivered").GetBoolean() &&
+            expiresAt - createdAt >= TimeSpan.FromHours(23.9) &&
+            expiresAt - createdAt <= TimeSpan.FromHours(24.1);
+    }
+    catch (Exception exception) when (exception is IOException or JsonException or InvalidOperationException)
+    {
+        return false;
     }
 }
 

@@ -86,6 +86,27 @@ public sealed class JsonHistoryStoreTests
     }
 
     [Fact]
+    public async Task EscapeRecoveryExpiresAfterOneDayUnlessKept()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            using var store = new JsonHistoryStore(Path.Combine(directory, "history.json"));
+            var expiring = CreateEntry(Now, "temporary recovery") with
+            {
+                ExpiresAt = Now.AddHours(24),
+            };
+            Assert.True((await store.AddAsync(expiring, 0, Now)).Succeeded);
+            Assert.Single((await store.LoadAsync(0, Now.AddHours(23))).Entries);
+            Assert.Empty((await store.LoadAsync(0, Now.AddHours(25))).Entries);
+
+            var kept = CreateEntry(Now, "kept recovery") with { ExpiresAt = Now.AddHours(24) };
+            Assert.True((await store.AddAsync(kept, 0, Now)).Succeeded);
+            Assert.True((await store.KeepAsync(kept.Id)).Succeeded);
+            Assert.Single((await store.LoadAsync(0, Now.AddDays(2))).Entries);
+        });
+    }
+
+    [Fact]
     public async Task InvalidEntryIsRejectedWithoutCreatingHistory()
     {
         await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>

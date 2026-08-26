@@ -344,6 +344,34 @@ public sealed class JsonSettingsStoreTests
         });
     }
 
+    [Fact]
+    public async Task LoadMigratesPreviousSettingsWithMacKeybindDefaults()
+    {
+        await WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "settings.json");
+            var legacy = CreatePopulatedSettings() with { SchemaVersion = 9 };
+            var root = JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(
+                legacy,
+                JsonSettingsStore.SerializerOptions))!.AsObject();
+            var dictation = root["preferences"]!["dictation"]!.AsObject();
+            dictation.Remove("recordingMode");
+            dictation.Remove("cancelGesture");
+            dictation.Remove("escapeRecoveryEnabled");
+            dictation.Remove("quickAddGesture");
+            await File.WriteAllTextAsync(path, root.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var result = await new JsonSettingsStore(path).LoadAsync();
+
+            Assert.Equal(SettingsLoadStatus.Migrated, result.Status);
+            Assert.Equal(9, result.SourceSchemaVersion);
+            Assert.Equal(DictationRecordingMode.PushToTalk, result.Settings.Preferences.Dictation.RecordingMode);
+            Assert.Equal("Escape", result.Settings.Preferences.Dictation.CancelGesture);
+            Assert.False(result.Settings.Preferences.Dictation.EscapeRecoveryEnabled);
+            Assert.Equal("Ctrl+Alt+W", result.Settings.Preferences.Dictation.QuickAddGesture);
+        });
+    }
+
     internal static AppSettings CreatePopulatedSettings() => AppSettings.Default with
     {
         LaunchCount = 7,

@@ -18,6 +18,15 @@ pwsh -NoProfile -File .\scripts\validate.ps1
 dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj -c Release
 ```
 
+Add `--escape-recovery` to exercise the same production pipeline while cancelling with Escape Recovery
+enabled. That mode requires transcription and deterministic processing to finish, requires a 24-hour recovery
+entry in History, and proves that no text reaches the controlled target:
+
+```powershell
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --escape-recovery
+```
+
 The separate live-audio mode keeps the production WASAPI capture and global hook. It synthesizes F8 edges,
 plays the reviewed public French MINDS-14 fixture through the default speakers, and requires the known word
 `adresse` to travel back through the default capture device and appear in the controlled target. The harness

@@ -78,6 +78,7 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 3 => MigrateFromV3(json),
                 4 => MigrateFromV4(json),
                 5 => MigrateFromV5(json),
+                6 => MigrateFromV6(json),
                 PortableProfile.CurrentSchemaVersion => JsonSerializer.Deserialize<PortableProfile>(
                     json,
                     JsonSettingsStore.SerializerOptions),
@@ -208,6 +209,29 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                     PillDesignWithWords = UserPreferences.Default.PillDesignWithWords,
                     PlayRecordingSounds = UserPreferences.Default.PlayRecordingSounds,
                     RecordingSoundPairing = UserPreferences.Default.RecordingSoundPairing,
+                },
+            };
+    }
+
+    private static PortableProfile? MigrateFromV6(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<PortableProfile>(
+            json,
+            JsonSettingsStore.SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = PortableProfile.CurrentSchemaVersion,
+                Preferences = legacy.Preferences with
+                {
+                    Dictation = legacy.Preferences.Dictation with
+                    {
+                        RecordingMode = DictationPreferences.Default.RecordingMode,
+                        CancelGesture = DictationPreferences.Default.CancelGesture,
+                        EscapeRecoveryEnabled = DictationPreferences.Default.EscapeRecoveryEnabled,
+                        QuickAddGesture = DictationPreferences.Default.QuickAddGesture,
+                    },
                 },
             };
     }
