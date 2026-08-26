@@ -24,6 +24,12 @@ if (@($redEvidence.checks.PSObject.Properties.Value | Where-Object { $_ -ne 'uno
     throw "The checked-in private-beta evidence example must remain explicitly unobserved and blocked."
 }
 
+Write-Host "Validating public-release repository compliance..."
+& pwsh -NoProfile -File (Join-Path $repoRoot "scripts\audit-public-release.ps1")
+if ($LASTEXITCODE -ne 0) {
+    throw "Public-release repository compliance failed."
+}
+
 function Resolve-DotNetSdk {
     param([Parameter(Mandatory = $true)][int]$MajorVersion)
 
