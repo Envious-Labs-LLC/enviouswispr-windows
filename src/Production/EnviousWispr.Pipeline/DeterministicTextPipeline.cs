@@ -180,6 +180,66 @@ public sealed class DeterministicTextPipeline
         };
     }
 
+    public async Task<DeterministicTextResult> ApplyPolishedTextAsync(
+        DeterministicTextRequest request,
+        DeterministicTextResult deterministicResult,
+        string polishedText,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(deterministicResult);
+        ArgumentNullException.ThrowIfNull(polishedText);
+        var step = _steps.Single(candidate => candidate.Stage == DeterministicTextStage.EmojiRestoration);
+        var input = new DeterministicTextContext(
+            request.Transcript,
+            deterministicResult.DeterministicText,
+            request.CustomWords,
+            request.Options,
+            polishedText);
+        var context = input;
+        var stopwatch = Stopwatch.StartNew();
+        var status = DeterministicStageStatus.Completed;
+        var degraded = deterministicResult.IsDegraded;
+        try
+        {
+            context = await Task.Run(() => step.Process(input), cancellationToken)
+                .WaitAsync(step.Timeout, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            context = input;
+            status = DeterministicStageStatus.TimedOut;
+            degraded = true;
+        }
+        catch (Exception exception) when (exception is not (
+            OperationCanceledException or StackOverflowException or OutOfMemoryException))
+        {
+            context = input;
+            status = DeterministicStageStatus.Failed;
+            degraded = true;
+        }
+
+        stopwatch.Stop();
+        var receipt = new DeterministicStageReceipt(
+            DeterministicTextStage.EmojiRestoration,
+            status,
+            !string.Equals(input.PolishedText, context.PolishedText, StringComparison.Ordinal),
+            stopwatch.ElapsedMilliseconds);
+        var receipts = deterministicResult.Receipts
+            .Select(existing => existing.Stage == DeterministicTextStage.EmojiRestoration
+                ? receipt
+                : existing)
+            .ToArray();
+        return new DeterministicTextResult(
+            new ProcessedText(request.Transcript.SessionId, context.PolishedText ?? polishedText),
+            receipts,
+            degraded)
+        {
+            DeterministicText = deterministicResult.DeterministicText,
+        };
+    }
+
     private static IReadOnlyList<IDeterministicTextStep> CreateDefaultSteps()
     {
         SpokenEmojiFormatter? emojiFormatter;
