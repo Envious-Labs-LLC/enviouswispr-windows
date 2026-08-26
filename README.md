@@ -36,9 +36,9 @@ On 2026-08-26, one AC-powered Windows 11 25H2 NVIDIA desktop produced these prod
 | Parakeet CPU, 10 / 20 / 91.5 second public fixtures | 390 / 696 / 3,786 ms |
 | Production WinUI public-fixture journey | 3/3 passed; 8,827–12,206 ms |
 | Reliability lifecycle | 1,000 cycles, handle delta 9 |
-| Portable contract suites | 34 proof + 350 production tests |
+| Portable contract suites | 34 proof + 377 production tests |
 
-Those numbers do not establish public hardware requirements. Whisper CPU latency, Spanish fixture quality,
+Those numbers do not establish public hardware requirements. Whisper CPU latency, bounded German fixture quality,
 CUDA runtime delivery, battery and thermal behavior, lower-spec laptops, signed lifecycle testing, and
 multi-machine private-beta daily use remain open release evidence.
 
@@ -55,6 +55,10 @@ runtime worker, checks release-compliance artifacts, and runs both contract suit
 gitignored pinned model packs, add `-IncludeLocalRuntime` for the real Parakeet, Whisper, and production WinUI
 public-fixture journey gates. The journey's physical microphone and global-key boundary still requires a
 separate human pass; see [its UAT contract](tools/app-journey-uat/README.md).
+
+For the current unsigned founder installation, product-parity session, and exact installed-candidate microphone
+command, use the [founder-local daily-use guide](docs/founder-local-daily-use.md). The similarly named file under
+`notes/` is historical evidence for the preserved WPF proof.
 
 The production executable after a Release/x64 build is under:
 

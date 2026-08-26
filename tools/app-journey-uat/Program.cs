@@ -102,18 +102,36 @@ if (failureMode != JourneyFailureMode.None && englishParakeet)
 {
     throw new ArgumentException("Failure journeys use the fixed reviewed Whisper fixture configuration.");
 }
+var appExecutableArgument = ArgumentValue(args, "--app-executable");
+if (appExecutableArgument is not null && !manualMicrophone)
+{
+    throw new ArgumentException(
+        "--app-executable is limited to the guided --manual-microphone acceptance journey.");
+}
+if (appExecutableArgument is not null &&
+    (!Path.IsPathFullyQualified(appExecutableArgument) ||
+     !string.Equals(
+         Path.GetFileName(appExecutableArgument),
+         "EnviousWispr.App.exe",
+         StringComparison.OrdinalIgnoreCase)))
+{
+    throw new ArgumentException(
+        "--app-executable must be a fully qualified EnviousWispr.App.exe path.");
+}
 var repositoryRoot = FindRepositoryRoot(AppContext.BaseDirectory);
-var appExecutable = Path.Combine(
-    repositoryRoot,
-    "src",
-    "Production",
-    "EnviousWispr.App",
-    "bin",
-    "x64",
-    "Release",
-    "net10.0-windows10.0.26100.0",
-    "win-x64",
-    "EnviousWispr.App.exe");
+var appExecutable = appExecutableArgument is null
+    ? Path.Combine(
+        repositoryRoot,
+        "src",
+        "Production",
+        "EnviousWispr.App",
+        "bin",
+        "x64",
+        "Release",
+        "net10.0-windows10.0.26100.0",
+        "win-x64",
+        "EnviousWispr.App.exe")
+    : Path.GetFullPath(appExecutableArgument);
 var targetExecutable = Path.Combine(
     repositoryRoot,
     "tools",
@@ -158,6 +176,8 @@ RequireFile(appExecutable, "Build the Release/x64 production WinUI app before jo
 RequireFile(targetExecutable, "Build the controlled delivery target before journey UAT.");
 RequireFile(fixturePath, "The reviewed public fixture is missing.");
 RequireReviewedFixture(fixturePath, fixtureHash);
+var appVersion = FileVersionInfo.GetVersionInfo(appExecutable).ProductVersion ?? "Unknown";
+var appSha256 = Sha256Hex(appExecutable);
 if (englishParakeet && !new LocalParakeetModelProbe().Probe(modelDirectory).Int8Complete)
 {
     throw new DirectoryNotFoundException(
@@ -445,6 +465,8 @@ try
                 : liveMicrophone
                     ? "acoustic-playback"
                     : "reviewed-fixture",
+            appVersion,
+            appSha256,
             engine = engineName,
             language,
             acousticProbe,
@@ -548,6 +570,8 @@ try
         ownedWorkerStartedCount = ownedWorkerIds.Length,
         ownedWorkerCount,
         elapsedMilliseconds = timer.ElapsedMilliseconds,
+        appVersion,
+        appSha256,
         windowsVersion = Environment.OSVersion.Version.ToString(),
         architecture = hardware.Architecture.ToString(),
         engine = engineName,
@@ -641,6 +665,12 @@ static void RequireReviewedFixture(string path, string expectedHash)
     {
         throw new InvalidDataException("The reviewed public fixture hash does not match.");
     }
+}
+
+static string Sha256Hex(string path)
+{
+    using var stream = File.OpenRead(path);
+    return Convert.ToHexString(SHA256.HashData(stream));
 }
 
 static void EnsureNoUnownedProcesses(params string[] processNames)
