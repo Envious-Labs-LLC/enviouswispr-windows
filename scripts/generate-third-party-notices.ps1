@@ -162,7 +162,13 @@ try {
         if (-not (Test-Path -LiteralPath $noticePath -PathType Leaf)) {
             throw 'THIRD-PARTY-NOTICES.md is missing.'
         }
-        $existing = Get-Content -LiteralPath $noticePath -Raw
+        # Git may materialize the tracked Markdown with CRLF on Windows even though
+        # the generated contract is intentionally LF-only. Normalize checkout line
+        # endings before the exact content comparison so CI still verifies every
+        # package, version, license value, and hash rather than the Git worktree mode.
+        $existing = (Get-Content -LiteralPath $noticePath -Raw) `
+            -replace "`r`n", "`n" `
+            -replace "`r", "`n"
         if ($existing -ne $content) {
             throw 'THIRD-PARTY-NOTICES.md does not match the resolved production dependency graph.'
         }
