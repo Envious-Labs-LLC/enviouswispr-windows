@@ -22,6 +22,8 @@ public interface IApiKeyStore
 {
     ApiKeyReadResult Read(PolishProvider provider);
 
+    ApiKeyReadStatus GetStatus(PolishProvider provider) => Read(provider).Status;
+
     void Store(PolishProvider provider, string value);
 
     void Delete(PolishProvider provider);

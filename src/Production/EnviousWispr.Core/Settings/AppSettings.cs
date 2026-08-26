@@ -5,16 +5,18 @@ public sealed record AppSettings(
     int LaunchCount,
     bool HasCompletedOnboarding,
     UserPreferences Preferences,
-    ReusableUserData UserData)
+    ReusableUserData UserData,
+    string? PreferredMicrophoneId = null)
 {
-    public const int CurrentSchemaVersion = 4;
+    public const int CurrentSchemaVersion = 5;
 
     public static AppSettings Default { get; } = new(
         CurrentSchemaVersion,
         LaunchCount: 0,
         HasCompletedOnboarding: false,
         UserPreferences.Default,
-        ReusableUserData.Empty);
+        ReusableUserData.Empty,
+        PreferredMicrophoneId: null);
 
     public PortableProfile ToPortableProfile() => new(
         PortableProfile.CurrentSchemaVersion,

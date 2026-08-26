@@ -31,6 +31,21 @@ public sealed class PushToTalkSessionControllerTests
     }
 
     [Fact]
+    public async Task PressRoutesCaptureToConfiguredMachineLocalMicrophone()
+    {
+        var audio = new FakeAudioCapture();
+        var microphone = new AudioDeviceId("synthetic-microphone");
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            new FakeTargetProvider(101),
+            preferredAudioDevice: microphone);
+
+        await controller.PressAsync();
+
+        Assert.Equal(microphone, audio.LastRequest?.DeviceId);
+    }
+
+    [Fact]
     public async Task EscapeCancellationDeliversNothingAndAllowsReset()
     {
         var audio = new FakeAudioCapture();
@@ -170,6 +185,8 @@ public sealed class PushToTalkSessionControllerTests
 
         public bool Disposed { get; private set; }
 
+        public AudioCaptureRequest? LastRequest { get; private set; }
+
         public Func<DictationSessionId, CapturedAudio>? StopResultFactory { get; init; }
 
         public Task<AudioOperationResult> StartAsync(
@@ -178,6 +195,7 @@ public sealed class PushToTalkSessionControllerTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             StartCount++;
+            LastRequest = request;
             _sessionId = request.SessionId;
             IsCapturing = true;
             return Task.FromResult(new AudioOperationResult(Succeeded: true));

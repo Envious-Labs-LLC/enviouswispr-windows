@@ -56,6 +56,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 1 => MigrateFromV1(json),
                 2 => MigrateFromV2(json),
                 3 => MigrateFromV3(json),
+                4 => MigrateFromV4(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -191,7 +192,8 @@ public sealed class JsonSettingsStore : ISettingsStore
                     legacy.Preferences.Polish,
                     legacy.Preferences.History,
                     legacy.Preferences.Theme),
-                legacy.UserData);
+                legacy.UserData,
+                PreferredMicrophoneId: null);
     }
 
     private static AppSettings? MigrateFromV3(string json)
@@ -200,6 +202,18 @@ public sealed class JsonSettingsStore : ISettingsStore
         return legacy is null
             ? null
             : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+    }
+
+    private static AppSettings? MigrateFromV4(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = AppSettings.CurrentSchemaVersion,
+                PreferredMicrophoneId = null,
+            };
     }
 
     private static SettingsLoadResult Invalid(

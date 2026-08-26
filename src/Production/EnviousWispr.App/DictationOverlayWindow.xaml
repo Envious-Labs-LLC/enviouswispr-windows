@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="EnviousWispr.App.DictationOverlayWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="EnviousWispr dictation status">
+    <Border
+        x:Name="OverlayRoot"
+        AutomationProperties.LiveSetting="Polite"
+        Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+        BorderBrush="{ThemeResource BrandAccentBrush}"
+        BorderThickness="1"
+        CornerRadius="18"
+        Padding="18,14">
+        <Grid ColumnSpacing="12">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <FontIcon x:Name="StateIcon" AutomationProperties.AccessibilityView="Raw" FontSize="22" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE720;" />
+            <StackPanel Grid.Column="1" Spacing="3">
+                <TextBlock x:Name="StateTitle" FontSize="15" FontWeight="SemiBold" Text="Listening" TextWrapping="Wrap" />
+                <TextBlock x:Name="StateDetail" Foreground="{ThemeResource TextFillColorSecondaryBrush}" MaxLines="2" Text="Release your key to finish" TextWrapping="Wrap" />
+                <TextBlock x:Name="PreviewText" AutomationProperties.Name="Live transcription preview" Foreground="{ThemeResource TextFillColorSecondaryBrush}" MaxLines="2" TextWrapping="Wrap" Visibility="Collapsed" />
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>

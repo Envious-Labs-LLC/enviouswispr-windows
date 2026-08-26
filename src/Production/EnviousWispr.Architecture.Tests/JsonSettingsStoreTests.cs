@@ -169,6 +169,45 @@ public sealed class JsonSettingsStoreTests
     }
 
     [Fact]
+    public async Task LoadMigratesPhaseThirteenSettingsWithMachineLocalMicrophoneDefault()
+    {
+        await WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "settings.json");
+            const string legacyJson =
+                """
+                {
+                  "schemaVersion": 4,
+                  "launchCount": 14,
+                  "hasCompletedOnboarding": true,
+                  "preferences": {
+                    "dictation": {
+                      "finalEngine": "Automatic",
+                      "pushToTalkGesture": "F8",
+                      "wordCorrectionEnabled": true,
+                      "fillerRemovalEnabled": true,
+                      "emojiFormatterEnabled": true,
+                      "spokenPunctuationEnabled": false
+                    },
+                    "polish": { "provider": "None", "modelId": null, "ollamaEndpoint": null },
+                    "history": { "isEnabled": true, "retentionDays": 30 },
+                    "theme": "System"
+                  },
+                  "userData": { "customWords": [], "snippets": [] }
+                }
+                """;
+            await File.WriteAllTextAsync(path, legacyJson);
+
+            var result = await new JsonSettingsStore(path).LoadAsync();
+
+            Assert.Equal(SettingsLoadStatus.Migrated, result.Status);
+            Assert.Equal(4, result.SourceSchemaVersion);
+            Assert.Equal(AppSettings.CurrentSchemaVersion, result.Settings.SchemaVersion);
+            Assert.Null(result.Settings.PreferredMicrophoneId);
+        });
+    }
+
+    [Fact]
     public async Task LoadRejectsFutureSchemaWithoutChangingSource()
     {
         await WithTestDirectoryAsync(async directory =>
@@ -211,6 +250,7 @@ public sealed class JsonSettingsStoreTests
     {
         LaunchCount = 7,
         HasCompletedOnboarding = true,
+        PreferredMicrophoneId = "synthetic-device-id",
         Preferences = UserPreferences.Default with
         {
             Dictation = new DictationPreferences(

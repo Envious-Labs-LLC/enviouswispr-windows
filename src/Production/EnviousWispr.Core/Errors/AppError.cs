@@ -57,6 +57,8 @@ public enum AppErrorStage
     SettingsReset,
     ProfileImport,
     ProfileExport,
+    HistoryLoad,
+    HistorySave,
     AudioDeviceEnumeration,
     AudioCapture,
     HotkeyConfiguration,

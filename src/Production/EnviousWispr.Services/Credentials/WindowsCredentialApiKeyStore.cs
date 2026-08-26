@@ -20,6 +20,19 @@ public sealed class WindowsCredentialApiKeyStore : IApiKeyStore
     {
     }
 
+    public static WindowsCredentialApiKeyStore CreateForIsolatedUat(string suffix)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(suffix);
+        if (suffix.Length > 64 || suffix.Any(character => !char.IsAsciiLetterOrDigit(character) && character != '-'))
+        {
+            throw new ArgumentException(
+                "The isolated UAT credential suffix must contain only ASCII letters, digits, or hyphens.",
+                nameof(suffix));
+        }
+
+        return new WindowsCredentialApiKeyStore($"{ProductionTargetPrefix}.Uat.{suffix}");
+    }
+
     internal WindowsCredentialApiKeyStore(string targetPrefix)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(targetPrefix);
@@ -49,6 +62,29 @@ public sealed class WindowsCredentialApiKeyStore : IApiKeyStore
             return string.IsNullOrWhiteSpace(value)
                 ? ApiKeyReadResult.Unavailable
                 : ApiKeyReadResult.Found(value);
+        }
+        finally
+        {
+            CredFree(nativeCredential);
+        }
+    }
+
+    public ApiKeyReadStatus GetStatus(PolishProvider provider)
+    {
+        var targetName = TargetName(provider);
+        if (!CredRead(targetName, CredTypeGeneric, 0, out var nativeCredential))
+        {
+            return Marshal.GetLastWin32Error() == ErrorNotFound
+                ? ApiKeyReadStatus.Missing
+                : ApiKeyReadStatus.Unavailable;
+        }
+
+        try
+        {
+            var credential = Marshal.PtrToStructure<Credential>(nativeCredential);
+            return credential.CredentialBlob != IntPtr.Zero && credential.CredentialBlobSize > 0
+                ? ApiKeyReadStatus.Found
+                : ApiKeyReadStatus.Unavailable;
         }
         finally
         {
