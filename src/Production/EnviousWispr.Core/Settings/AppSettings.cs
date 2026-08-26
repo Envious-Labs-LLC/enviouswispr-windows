@@ -3,12 +3,27 @@ namespace EnviousWispr.Core.Settings;
 public sealed record AppSettings(
     int SchemaVersion,
     int LaunchCount,
-    bool HasCompletedOnboarding)
+    bool HasCompletedOnboarding,
+    UserPreferences Preferences,
+    ReusableUserData UserData)
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public static AppSettings Default { get; } = new(
         CurrentSchemaVersion,
         LaunchCount: 0,
-        HasCompletedOnboarding: false);
+        HasCompletedOnboarding: false,
+        UserPreferences.Default,
+        ReusableUserData.Empty);
+
+    public PortableProfile ToPortableProfile() => new(
+        PortableProfile.CurrentSchemaVersion,
+        Preferences,
+        UserData);
+
+    public AppSettings Apply(PortableProfile profile) => this with
+    {
+        Preferences = profile.Preferences,
+        UserData = profile.UserData,
+    };
 }

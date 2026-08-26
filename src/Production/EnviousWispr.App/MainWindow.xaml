@@ -29,9 +29,9 @@
                 <InfoBar
                     IsClosable="False"
                     IsOpen="True"
-                    Message="Phase 1 establishes lifecycle, storage, diagnostics, and module boundaries. Dictation remains in the verified WPF proof until its production replacements pass native Windows validation."
+                    Message="Phase 2 adds migration-safe settings, portable reusable data, typed errors, and content-free session state. Dictation remains in the verified WPF proof until its production replacements pass native Windows validation."
                     Severity="Informational"
-                    Title="Foundation active" />
+                    Title="Storage foundation active" />
 
                 <Grid ColumnSpacing="16">
                     <Grid.ColumnDefinitions>
