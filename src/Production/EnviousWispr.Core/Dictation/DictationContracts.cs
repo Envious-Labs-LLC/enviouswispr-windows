@@ -22,7 +22,18 @@ public sealed record CapturedAudio(
     AudioCaptureOutcome Outcome = AudioCaptureOutcome.Completed,
     AppError? Error = null);
 
-public sealed record Transcript(DictationSessionId SessionId, string Text, string EngineId);
+public sealed record TranscriptTokenTiming(
+    string Text,
+    TimeSpan Start,
+    TimeSpan End);
+
+public sealed record Transcript(
+    DictationSessionId SessionId,
+    string Text,
+    string EngineId,
+    IReadOnlyList<TranscriptTokenTiming>? TokenTimings = null,
+    bool UsedFallback = false,
+    AppError? DegradedError = null);
 
 public sealed record ProcessedText(DictationSessionId SessionId, string Text);
 

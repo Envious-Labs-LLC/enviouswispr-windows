@@ -22,6 +22,7 @@ public enum AppErrorCode
     ModelPackUnavailable,
     RuntimeWorkerFailed,
     RuntimeResourceBusy,
+    TranscriptionFailed,
 }
 
 public enum AppErrorStage
@@ -41,6 +42,7 @@ public enum AppErrorStage
     RuntimeSelection,
     RuntimeWorker,
     RuntimeResource,
+    FinalAsr,
 }
 
 public sealed record AppError(AppErrorCode Code, AppErrorStage Stage, bool CanRetry);

@@ -1,12 +1,17 @@
 using EnviousWispr.Audio;
 using EnviousWispr.Core.Diagnostics;
+using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
+using EnviousWispr.ASR;
+using EnviousWispr.ModelDelivery;
 using EnviousWispr.Pipeline;
 using EnviousWispr.Services.Diagnostics;
 using EnviousWispr.Services.Input;
 using EnviousWispr.Services.Lifecycle;
+using EnviousWispr.Services.Runtime;
 using EnviousWispr.Services.Settings;
 using Microsoft.UI.Xaml;
 using System.Security;
@@ -22,6 +27,7 @@ public partial class App : Application, IAsyncDisposable
     private SingleInstanceLock? _singleInstanceLock;
     private WindowsPushToTalkHook? _pushToTalkHook;
     private PushToTalkSessionController? _sessionController;
+    private RuntimeWorkerTranscriptionEngine? _transcriptionEngine;
     private MainWindow? _window;
     private bool _disposed;
 
@@ -108,6 +114,8 @@ public partial class App : Application, IAsyncDisposable
         _window = new MainWindow(settings, loadResult.Status);
         _window.Closed += OnWindowClosed;
         _window.Activate();
+        _window.SetSessionStatus("Preparing local transcription...");
+        await ConfigureTranscriptionAsync().ConfigureAwait(true);
         ConfigurePushToTalk(settings.Preferences.Dictation.PushToTalkGesture);
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellShown));
     }
@@ -140,6 +148,12 @@ public partial class App : Application, IAsyncDisposable
             _sessionController = null;
         }
 
+        if (_transcriptionEngine is not null)
+        {
+            await _transcriptionEngine.DisposeAsync().ConfigureAwait(true);
+            _transcriptionEngine = null;
+        }
+
         _singleInstanceLock?.Dispose();
         _singleInstanceLock = null;
         GC.SuppressFinalize(this);
@@ -169,6 +183,100 @@ public partial class App : Application, IAsyncDisposable
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.HotkeyReady));
     }
 
+    private async Task ConfigureTranscriptionAsync()
+    {
+        var modelDirectory = ResolveModelDirectory();
+        if (modelDirectory is null)
+        {
+            _window?.SetSessionStatus("Local transcription model is not installed");
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DictationTranscriptionFailed,
+                AppFailureCategory.AsrUnavailable));
+            return;
+        }
+
+        var hardware = await new WindowsHardwareDiscovery().ProbeAsync().ConfigureAwait(true);
+        var models = new LocalParakeetModelProbe().Probe(modelDirectory);
+        var selection = ParakeetRuntimeSelector.Select(hardware, models);
+        var cpuSelection = ParakeetRuntimeSelector.Select(
+            hardware,
+            models,
+            RuntimeProviderPreference.Cpu);
+        if (!selection.Succeeded ||
+            selection.Provider is null ||
+            selection.ModelPack is null ||
+            !cpuSelection.Succeeded)
+        {
+            _window?.SetSessionStatus("Local transcription is unavailable on this machine");
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DictationTranscriptionFailed,
+                FailureFor(selection.Error)));
+            return;
+        }
+
+        var workerExecutable = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
+        _transcriptionEngine = new RuntimeWorkerTranscriptionEngine(
+            new RuntimeWorkerTranscriptionOptions(
+                workerExecutable,
+                modelDirectory,
+                selection.Provider.Value,
+                selection.ModelPack.Value,
+                selection.IntraOpThreads,
+                selection.InterOpThreads,
+                CpuFallbackThreads: cpuSelection.IntraOpThreads,
+                CudaRuntimeDirectory: Environment.GetEnvironmentVariable(
+                    "ENVIOUSWISPR_CUDA_RUNTIME_DIR")));
+        var started = await _transcriptionEngine.StartAsync().ConfigureAwait(true);
+        if (!started.Succeeded)
+        {
+            await _transcriptionEngine.DisposeAsync().ConfigureAwait(true);
+            _transcriptionEngine = null;
+            _window?.SetSessionStatus("Local transcription worker could not start");
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DictationTranscriptionFailed,
+                AppFailureCategory.RuntimeWorker));
+            return;
+        }
+
+        _window?.SetSessionStatus("Local transcription ready");
+    }
+
+    private static string? ResolveModelDirectory()
+    {
+        var configured = Environment.GetEnvironmentVariable("ENVIOUSWISPR_MODEL_DIRECTORY");
+        if (!string.IsNullOrWhiteSpace(configured) && Directory.Exists(configured))
+        {
+            return Path.GetFullPath(configured);
+        }
+
+        var installed = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Envious Labs",
+            "EnviousWispr",
+            "models",
+            ParakeetTranscriptionEngine.ModelId);
+        if (Directory.Exists(installed))
+        {
+            return installed;
+        }
+
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "CLAUDE.md")))
+        {
+            directory = directory.Parent;
+        }
+
+        var developmentModel = directory is null
+            ? null
+            : Path.Combine(directory.FullName, "models", ParakeetTranscriptionEngine.ModelId);
+        return developmentModel is not null && Directory.Exists(developmentModel)
+            ? developmentModel
+            : null;
+    }
+
     private void OnPushToTalkSignalled(object? sender, PushToTalkSignalEvent args) =>
         _ = HandlePushToTalkAsync(args.Signal);
 
@@ -190,17 +298,20 @@ public partial class App : Application, IAsyncDisposable
                 _ => throw new InvalidOperationException("Unsupported push-to-talk signal."),
             };
 
-            if (result.Kind == SessionTransitionKind.FinalizeReady && result.Session is not null)
+            WriteSessionEvent(result);
+            if (result.Kind == SessionTransitionKind.FinalizeReady &&
+                result.Session is not null &&
+                result.Audio is not null)
             {
-                await controller.CompleteAsync(result.Session.Id).ConfigureAwait(false);
-                await controller.ResetAsync().ConfigureAwait(false);
+                await TranscribeFinalAsync(controller, result.Session.Id, result.Audio)
+                    .ConfigureAwait(false);
+                return;
             }
             else if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
             {
                 await controller.ResetAsync().ConfigureAwait(false);
             }
 
-            WriteSessionEvent(result);
             _window?.DispatcherQueue.TryEnqueue(() =>
                 _window?.SetSessionStatus(SessionStatus(result)));
         }
@@ -212,6 +323,68 @@ public partial class App : Application, IAsyncDisposable
                 AppFailureCategory.Unknown));
             _window?.DispatcherQueue.TryEnqueue(() =>
                 _window?.SetSessionStatus("Session failed safely"));
+        }
+    }
+
+    private async Task TranscribeFinalAsync(
+        PushToTalkSessionController controller,
+        DictationSessionId sessionId,
+        CapturedAudio audio)
+    {
+        var engine = _transcriptionEngine;
+        if (engine is null)
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DictationTranscriptionFailed,
+                AppFailureCategory.AsrUnavailable));
+            await controller.CompleteAsync(sessionId).ConfigureAwait(false);
+            await controller.ResetAsync().ConfigureAwait(false);
+            _window?.DispatcherQueue.TryEnqueue(() =>
+                _window?.SetSessionStatus("Audio captured, but local transcription is unavailable"));
+            return;
+        }
+
+        _window?.DispatcherQueue.TryEnqueue(() =>
+            _window?.SetSessionStatus("Transcribing locally..."));
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.DictationTranscriptionStarted));
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var transcript = await engine.TranscribeAsync(audio).ConfigureAwait(false);
+            timer.Stop();
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                transcript.UsedFallback
+                    ? AppEventCode.DictationTranscriptionDegraded
+                    : AppEventCode.DictationTranscriptionCompleted,
+                transcript.UsedFallback
+                    ? FailureFor(transcript.DegradedError)
+                    : AppFailureCategory.None,
+                timer.ElapsedMilliseconds));
+            await controller.CompleteAsync(sessionId).ConfigureAwait(false);
+            await controller.ResetAsync().ConfigureAwait(false);
+            var status = string.IsNullOrWhiteSpace(transcript.Text)
+                ? "No speech detected"
+                : transcript.UsedFallback
+                    ? "Transcribed locally with CPU fallback — delivery comes next"
+                    : "Transcribed locally — delivery comes next";
+            _window?.DispatcherQueue.TryEnqueue(() => _window?.SetSessionStatus(status));
+        }
+        catch (TranscriptionEngineException exception)
+        {
+            timer.Stop();
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DictationTranscriptionFailed,
+                FailureFor(exception.Error),
+                timer.ElapsedMilliseconds));
+            await controller.CompleteAsync(sessionId).ConfigureAwait(false);
+            await controller.ResetAsync().ConfigureAwait(false);
+            _window?.DispatcherQueue.TryEnqueue(() =>
+                _window?.SetSessionStatus("Local transcription failed safely"));
         }
     }
 
@@ -239,7 +412,7 @@ public partial class App : Application, IAsyncDisposable
         SessionTransitionKind.Started => "Recording — release to finish, Escape to cancel",
         SessionTransitionKind.FinalizeReady when result.Error is not null =>
             "Capture preserved after a microphone interruption",
-        SessionTransitionKind.FinalizeReady => "Capture complete — final ASR is the next production phase",
+        SessionTransitionKind.FinalizeReady => "Capture complete — transcribing locally",
         SessionTransitionKind.Cancelled => "Cancelled — nothing will be delivered",
         SessionTransitionKind.Failed => "Session failed safely",
         _ => "Idle",
@@ -260,6 +433,11 @@ public partial class App : Application, IAsyncDisposable
         AppErrorCode.TargetUnavailable => AppFailureCategory.TargetUnavailable,
         AppErrorCode.AudioDeviceUnavailable or AppErrorCode.AudioDeviceLost =>
             AppFailureCategory.AudioUnavailable,
+        AppErrorCode.RuntimeProviderUnavailable or AppErrorCode.RuntimeProviderIncompatible =>
+            AppFailureCategory.RuntimeProvider,
+        AppErrorCode.RuntimeWorkerFailed => AppFailureCategory.RuntimeWorker,
+        AppErrorCode.ModelPackUnavailable or AppErrorCode.TranscriptionFailed =>
+            AppFailureCategory.AsrUnavailable,
         null => AppFailureCategory.None,
         _ => AppFailureCategory.Unknown,
     };

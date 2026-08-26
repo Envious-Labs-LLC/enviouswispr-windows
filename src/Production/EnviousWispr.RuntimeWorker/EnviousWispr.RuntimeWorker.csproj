@@ -4,4 +4,9 @@
     <AssemblyName>EnviousWispr.RuntimeWorker</AssemblyName>
     <RootNamespace>EnviousWispr.RuntimeWorker</RootNamespace>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EnviousWispr.ASR\EnviousWispr.ASR.csproj" />
+    <ProjectReference Include="..\EnviousWispr.Core\EnviousWispr.Core.csproj" />
+  </ItemGroup>
 </Project>

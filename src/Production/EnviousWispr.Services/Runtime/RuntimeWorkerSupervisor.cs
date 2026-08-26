@@ -104,6 +104,51 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         }
     }
 
+    internal async Task<RuntimeWorkerResponse?> TranscribeAsync(
+        RuntimeWorkerTranscriptionRequest request,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ValidateTimeout(timeout);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_process is null || _process.HasExited || State is not RuntimeWorkerState.Ready)
+            {
+                var start = await StartCoreAsync(timeout, cancellationToken).ConfigureAwait(false);
+                if (!start.Succeeded)
+                {
+                    return null;
+                }
+            }
+
+            var response = await SendRawRequestAsync(
+                "transcribe",
+                request,
+                timeout,
+                cancellationToken).ConfigureAwait(false);
+            if (response is null)
+            {
+                await StopCoreAsync().ConfigureAwait(false);
+                State = RuntimeWorkerState.Faulted;
+            }
+
+            return response;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await StopCoreAsync().ConfigureAwait(false);
+            State = RuntimeWorkerState.Faulted;
+            throw;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -241,14 +286,32 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
+        var response = await SendRawRequestAsync(
+            command,
+            transcription: null,
+            timeout,
+            cancellationToken).ConfigureAwait(false);
+        var expectedStatus = command == "shutdown" ? "stopping" : "ready";
+        return response is not null &&
+            string.Equals(response.Status, expectedStatus, StringComparison.Ordinal)
+            ? Success(State)
+            : Failure();
+    }
+
+    private async Task<RuntimeWorkerResponse?> SendRawRequestAsync(
+        string command,
+        RuntimeWorkerTranscriptionRequest? transcription,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
         var process = _process;
         if (process is null || process.HasExited)
         {
-            return Failure();
+            return null;
         }
 
         var requestId = Guid.NewGuid();
-        var request = new RuntimeWorkerRequest(ProtocolVersion, requestId, command);
+        var request = new RuntimeWorkerRequest(ProtocolVersion, requestId, command, transcription);
         try
         {
             await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request))
@@ -260,26 +323,24 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
                 .ConfigureAwait(false);
             if (line is null)
             {
-                return Failure();
+                return null;
             }
 
             var response = JsonSerializer.Deserialize<RuntimeWorkerResponse>(line);
-            var expectedStatus = command == "shutdown" ? "stopping" : "ready";
             return response is not null &&
                 response.ProtocolVersion == ProtocolVersion &&
-                response.RequestId == requestId &&
-                string.Equals(response.Status, expectedStatus, StringComparison.Ordinal)
-                ? Success(State)
-                : Failure();
+                response.RequestId == requestId
+                ? response
+                : null;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return Failure();
+            return null;
         }
         catch (Exception exception) when (
             exception is IOException or InvalidOperationException or JsonException or TimeoutException)
         {
-            return Failure();
+            return null;
         }
     }
 
@@ -367,7 +428,4 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             AppErrorStage.RuntimeWorker,
             CanRetry: true));
 
-    private sealed record RuntimeWorkerRequest(int ProtocolVersion, Guid RequestId, string Command);
-
-    private sealed record RuntimeWorkerResponse(int ProtocolVersion, Guid RequestId, string Status);
 }
