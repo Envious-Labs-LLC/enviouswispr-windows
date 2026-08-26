@@ -91,6 +91,7 @@ public partial class App : Application, IAsyncDisposable
     private bool _canPersistRecoveryForSession = true;
     private bool _hasPendingRecovery;
     private RecoveryTextRecord? _pendingRecoveryRecord;
+    private bool _escapeRecoveryForSession;
 
     public App()
     {
@@ -298,7 +299,7 @@ public partial class App : Application, IAsyncDisposable
         _window.SetOllamaPolishNotice(_localPolishNotice);
         _window.SetSessionStatus("Preparing local transcription...");
         await ConfigureTranscriptionAsync(settings.Preferences.Dictation.FinalEngine).ConfigureAwait(true);
-        ConfigurePushToTalk(settings.Preferences.Dictation.PushToTalkGesture);
+        ConfigurePushToTalk(settings.Preferences.Dictation);
         if (_polishProvider is EgOnePolishProvider polishProvider)
         {
             _polishWarmup = WarmPolishRuntimeAsync(polishProvider, _polishLifetime.Token);
@@ -935,10 +936,13 @@ public partial class App : Application, IAsyncDisposable
         }
     }
 
-    private void ConfigurePushToTalk(string configuredGesture)
+    private void ConfigurePushToTalk(DictationPreferences preferences)
     {
         if (!WindowsPushToTalkHook.TryCreate(
-                configuredGesture,
+                preferences.PushToTalkGesture,
+                preferences.RecordingMode,
+                preferences.CancelGesture,
+                preferences.QuickAddGesture,
                 out _pushToTalkHook,
                 out var error) ||
             _pushToTalkHook is null)
@@ -966,7 +970,11 @@ public partial class App : Application, IAsyncDisposable
                 ? null
                 : new EnviousWispr.Core.Audio.AudioDeviceId(_settings.PreferredMicrophoneId));
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
-        _window?.SetHotkeyReady(_pushToTalkHook.Gesture.ToString());
+        _window?.SetHotkeyReady(
+            _pushToTalkHook.Gesture.ToString(),
+            _pushToTalkHook.RecordingMode,
+            _pushToTalkHook.CancelGesture.ToString(),
+            _pushToTalkHook.QuickAddGesture.ToString());
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.HotkeyReady));
     }
 
@@ -1433,8 +1441,56 @@ public partial class App : Application, IAsyncDisposable
             : null;
     }
 
-    private void OnPushToTalkSignalled(object? sender, PushToTalkSignalEvent args) =>
+    private void OnPushToTalkSignalled(object? sender, PushToTalkSignalEvent args)
+    {
+        if (args.Signal == PushToTalkSignal.QuickAdd)
+        {
+            _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.QuickAddRequested));
+            _ = HandleQuickAddAsync();
+            return;
+        }
+
         _ = HandlePushToTalkAsync(args.Signal);
+    }
+
+    private async Task HandleQuickAddAsync()
+    {
+        if (_exitRequested || _disposed || _textTargetAdapter is null ||
+            _sessionController?.CurrentSession is not null)
+        {
+            return;
+        }
+
+        var target = new WindowsForegroundTargetProvider().CaptureForegroundTarget();
+        if (target is null || !target.Value.IsValid)
+        {
+            _window?.DispatcherQueue.TryEnqueue(() =>
+            {
+                ShowMainWindow(openSettings: false);
+                _window?.OpenQuickAdd(null, "Select a word in another app, then press the Add-a-word shortcut again.");
+            });
+            return;
+        }
+
+        var context = await _textTargetAdapter.CaptureContextAsync(
+            target.Value,
+            TextDeliveryOptions.Default).ConfigureAwait(false);
+        var selection = context.Status == TargetContextStatus.Available &&
+            context.Context?.TargetKind != TextTargetKind.Terminal
+                ? context.Context?.Selection.Trim()
+                : null;
+        var message = !string.IsNullOrWhiteSpace(selection)
+            ? null
+            : context.Context?.TargetKind == TextTargetKind.Terminal
+                ? "Terminal windows do not share their selection. Add the word here by hand."
+                : "No readable selection was found. Select a misheard word, then try the shortcut again.";
+        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.QuickAddPrepared));
+        _window?.DispatcherQueue.TryEnqueue(() =>
+        {
+            ShowMainWindow(openSettings: false);
+            _window?.OpenQuickAdd(selection, message);
+        });
+    }
 
     private static bool TryCreatePublicFixtureAudioCapture(
         out PublicFixtureAudioCapture? capture)
@@ -1495,7 +1551,13 @@ public partial class App : Application, IAsyncDisposable
                 ? TimeSpan.FromSeconds(5)
                 : TimeSpan.FromMilliseconds(150);
             await Task.Delay(fixtureHold).ConfigureAwait(false);
-            await HandlePushToTalkAsync(PushToTalkSignal.Released).ConfigureAwait(false);
+            var stopSignal = string.Equals(
+                    Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_JOURNEY_CANCEL"),
+                    "1",
+                    StringComparison.Ordinal)
+                ? PushToTalkSignal.Cancelled
+                : PushToTalkSignal.Released;
+            await HandlePushToTalkAsync(stopSignal).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
         {
@@ -1657,10 +1719,14 @@ public partial class App : Application, IAsyncDisposable
                 await StopRecordingWatchdogAsync().ConfigureAwait(false);
             }
 
+            var recoverCancelledRecording =
+                signal == PushToTalkSignal.Cancelled && _escapeRecoveryForSession;
             var result = signal switch
             {
                 PushToTalkSignal.Pressed => await controller.PressAsync().ConfigureAwait(false),
                 PushToTalkSignal.Released => await controller.ReleaseAsync().ConfigureAwait(false),
+                PushToTalkSignal.Cancelled when recoverCancelledRecording =>
+                    await controller.ReleaseAsync().ConfigureAwait(false),
                 PushToTalkSignal.Cancelled => await controller.CancelAsync().ConfigureAwait(false),
                 _ => throw new InvalidOperationException("Unsupported push-to-talk signal."),
             };
@@ -1668,6 +1734,7 @@ public partial class App : Application, IAsyncDisposable
             WriteSessionEvent(result);
             if (result.Kind == SessionTransitionKind.Started && result.Session is not null)
             {
+                _escapeRecoveryForSession = _settings.Preferences.Dictation.EscapeRecoveryEnabled;
                 StartRecordingWatchdog(controller, result.Session.Id);
                 await StartLivePreviewAsync().ConfigureAwait(false);
             }
@@ -1683,12 +1750,14 @@ public partial class App : Application, IAsyncDisposable
                         controller,
                         result.Session.Id,
                         result.Audio,
-                        processingCancellation.Token)
+                        processingCancellation.Token,
+                        recoveryOnly: recoverCancelledRecording)
                     .ConfigureAwait(false);
                 return;
             }
             else if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
             {
+                _escapeRecoveryForSession = false;
                 await StopLivePreviewAsync().ConfigureAwait(false);
                 await controller.ResetAsync().ConfigureAwait(false);
             }
@@ -2082,8 +2151,10 @@ public partial class App : Application, IAsyncDisposable
         PushToTalkSessionController controller,
         DictationSessionId sessionId,
         CapturedAudio audio,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool recoveryOnly = false)
     {
+        _escapeRecoveryForSession = false;
         var engine = _transcriptionEngine;
         if (engine is null)
         {
@@ -2154,7 +2225,8 @@ public partial class App : Application, IAsyncDisposable
                 await SaveRecoveryTextAsync(processed.Output, cancellationToken).ConfigureAwait(false);
             }
 
-            if (!string.IsNullOrWhiteSpace(processed.Output.Text) &&
+            if (!recoveryOnly &&
+                !string.IsNullOrWhiteSpace(processed.Output.Text) &&
                 _textDelivery is not null &&
                 controller.CurrentSession is { } pendingSession)
             {
@@ -2203,12 +2275,24 @@ public partial class App : Application, IAsyncDisposable
                 transcript,
                 processed.Output.Text,
                 polishResult is { Status: PolishAttemptStatus.Polished },
-                wasDelivered: false).ConfigureAwait(false);
+                wasDelivered: false,
+                expiresAt: recoveryOnly ? DateTimeOffset.UtcNow.AddHours(24) : null,
+                forceSave: recoveryOnly)
+                .ConfigureAwait(false);
             await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
             await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
             ShowPendingRecovery();
+            if (recoveryOnly && !string.IsNullOrWhiteSpace(processed.Output.Text))
+            {
+                _window?.DispatcherQueue.TryEnqueue(() =>
+                    _window?.SetReliabilityNotice(
+                        "Escape Recovery finished",
+                        "The dictation is ready to copy on Home and stays in History for 24 hours unless you Keep it."));
+            }
             var status = string.IsNullOrWhiteSpace(processed.Output.Text)
                     ? "No speech detected"
+                    : recoveryOnly
+                        ? "Escape Recovery finished — text is ready to copy"
                     : processed.IsDegraded
                     ? "Transcribed and cleaned locally with a safe fallback"
                     : polishResult is { UsedFallback: true }
@@ -2309,10 +2393,12 @@ public partial class App : Application, IAsyncDisposable
         Transcript transcript,
         string text,
         bool wasPolished,
-        bool wasDelivered)
+        bool wasDelivered,
+        DateTimeOffset? expiresAt = null,
+        bool forceSave = false)
     {
         var historyPreferences = _settings.Preferences.History;
-        if (!historyPreferences.IsEnabled || string.IsNullOrWhiteSpace(text))
+        if ((!historyPreferences.IsEnabled && !forceSave) || string.IsNullOrWhiteSpace(text))
         {
             return;
         }
@@ -2323,7 +2409,8 @@ public partial class App : Application, IAsyncDisposable
                 text,
                 transcript.EngineId,
                 wasPolished,
-                wasDelivered),
+                wasDelivered,
+                expiresAt),
             historyPreferences.RetentionDays,
             DateTimeOffset.UtcNow).ConfigureAwait(false);
         if (result.Succeeded)
@@ -2408,6 +2495,20 @@ public partial class App : Application, IAsyncDisposable
 
     private void WriteSessionEvent(SessionTransitionResult result)
     {
+        if (result.Kind == SessionTransitionKind.Started)
+        {
+            _pushToTalkHook?.SetRecordingActive(active: true);
+        }
+        else if (result.Kind is SessionTransitionKind.FinalizeReady or
+                 SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
+        {
+            _pushToTalkHook?.SetRecordingActive(active: false);
+            if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
+            {
+                _escapeRecoveryForSession = false;
+            }
+        }
+
         var eventCode = result.Kind switch
         {
             SessionTransitionKind.Started => AppEventCode.DictationRecordingStarted,

@@ -131,6 +131,7 @@ public static class HotkeyGestureParser
             "PAGEDOWN" => "PageDown",
             "PAUSE" => "Pause",
             "SCROLLLOCK" => "ScrollLock",
+            "ESC" or "ESCAPE" => "Escape",
             _ => string.Empty,
         };
         return key.Length > 0;
@@ -162,6 +163,7 @@ public enum PushToTalkSignal
     Pressed,
     Released,
     Cancelled,
+    QuickAdd,
 }
 
 public sealed record PushToTalkSignalEvent(PushToTalkSignal Signal);

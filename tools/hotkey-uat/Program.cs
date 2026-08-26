@@ -7,8 +7,29 @@ using System.Threading.Channels;
 
 const byte F24 = 0x87;
 const byte Escape = 0x1B;
+const byte Control = 0x11;
+const byte Alt = 0x12;
+const byte W = 0x57;
 const int ConflictRegistrationId = 0x6204;
 const uint ControlAltShift = 0x0001 | 0x0002 | 0x0004;
+
+if (args.Contains("--emit-quick-add", StringComparer.OrdinalIgnoreCase))
+{
+    SendKey(Control, keyDown: true);
+    Thread.Sleep(30);
+    SendKey(Alt, keyDown: true);
+    Thread.Sleep(30);
+    SendKey(W, keyDown: true);
+    SendKey(W, keyDown: false);
+    SendKey(Alt, keyDown: false);
+    SendKey(Control, keyDown: false);
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        inputKind = "SyntheticSendInput",
+        emittedQuickAdd = true,
+    }));
+    return 0;
+}
 
 var target = new WindowsForegroundTargetProvider().CaptureForegroundTarget();
 var conflictRegistered = NativeMethods.RegisterHotKey(
@@ -50,10 +71,20 @@ SendKey(F24, keyDown: false);
 var holdReleaseSignals = await ReadSignalsAsync(signals.Reader, count: 2);
 
 SendKey(F24, keyDown: true);
+hook.SetRecordingActive(active: true);
 SendKey(Escape, keyDown: true);
 SendKey(Escape, keyDown: false);
 SendKey(F24, keyDown: false);
+hook.SetRecordingActive(active: false);
 var cancellationSignals = await ReadSignalsAsync(signals.Reader, count: 2);
+
+SendKey(Control, keyDown: true);
+SendKey(Alt, keyDown: true);
+SendKey(W, keyDown: true);
+SendKey(W, keyDown: false);
+SendKey(Alt, keyDown: false);
+SendKey(Control, keyDown: false);
+var quickAddSignals = await ReadSignalsAsync(signals.Reader, count: 1);
 
 await hook.DisposeAsync();
 var summary = new
@@ -66,6 +97,7 @@ var summary = new
         [PushToTalkSignal.Pressed, PushToTalkSignal.Released],
     cancellation = cancellationSignals is
         [PushToTalkSignal.Pressed, PushToTalkSignal.Cancelled],
+    quickAdd = quickAddSignals is [PushToTalkSignal.QuickAdd],
     teardownReleasedHook = !hook.IsInstalled,
 };
 Console.WriteLine(JsonSerializer.Serialize(summary));
@@ -74,6 +106,7 @@ return summary.targetFrozen &&
     summary.conflictDetected &&
     summary.pressRelease &&
     summary.cancellation &&
+    summary.quickAdd &&
     summary.teardownReleasedHook
     ? 0
     : 4;

@@ -11,6 +11,7 @@ public sealed class HotkeyGestureParserTests
     [InlineData("ctrl+shift+f12", HotkeyModifiers.Control | HotkeyModifiers.Shift, "F12")]
     [InlineData("F9 + Windows + Alt", HotkeyModifiers.Windows | HotkeyModifiers.Alt, "F9")]
     [InlineData("control + space", HotkeyModifiers.Control, "Space")]
+    [InlineData("esc", HotkeyModifiers.None, "Escape")]
     public void ValidGesturesAreCanonicalized(
         string value,
         HotkeyModifiers expectedModifiers,
@@ -29,7 +30,6 @@ public sealed class HotkeyGestureParserTests
     [InlineData("Ctrl")]
     [InlineData("Ctrl+Ctrl+F8")]
     [InlineData("F8+F9")]
-    [InlineData("Escape")]
     [InlineData("F25")]
     [InlineData("Ctrl++F8")]
     public void InvalidGesturesReturnContentFreeTypedFailure(string? value)
@@ -51,7 +51,7 @@ public sealed class HotkeyGestureParserTests
             {
                 Dictation = DictationPreferences.Default with
                 {
-                    PushToTalkGesture = "Escape",
+                    CancelGesture = "F8",
                 },
             },
         };

@@ -8,7 +8,7 @@ namespace EnviousWispr.Services.History;
 
 public sealed class JsonHistoryStore : IHistoryStore, IDisposable
 {
-    private const int CurrentSchemaVersion = 1;
+    private const int CurrentSchemaVersion = 2;
     private const int MaximumEntries = 10_000;
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
@@ -111,6 +111,15 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
         CancellationToken cancellationToken = default) =>
         MutateAsync(entries => entries.Where(entry => entry.Id != id).ToArray(), cancellationToken);
 
+    public Task<HistoryOperationResult> KeepAsync(
+        Guid id,
+        CancellationToken cancellationToken = default) =>
+        MutateAsync(
+            entries => entries
+                .Select(entry => entry.Id == id ? entry with { ExpiresAt = null } : entry)
+                .ToArray(),
+            cancellationToken);
+
     public Task<HistoryOperationResult> ClearAsync(CancellationToken cancellationToken = default) =>
         MutateAsync(_ => Array.Empty<DictationHistoryEntry>(), cancellationToken);
 
@@ -162,7 +171,7 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
             var json = await File.ReadAllTextAsync(_historyPath, cancellationToken).ConfigureAwait(false);
             var document = JsonSerializer.Deserialize<HistoryDocument>(json, SerializerOptions);
             if (document is null ||
-                document.SchemaVersion != CurrentSchemaVersion ||
+                document.SchemaVersion is < 1 or > CurrentSchemaVersion ||
                 document.Entries is null ||
                 document.Entries.Count > MaximumEntries ||
                 document.Entries.Any(entry => entry is null || !entry.IsValid))
@@ -232,11 +241,15 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
     {
         if (retentionDays == 0)
         {
-            return entries.OrderByDescending(entry => entry.CreatedAt).ToArray();
+            return entries
+                .Where(entry => entry.ExpiresAt is null || entry.ExpiresAt > now)
+                .OrderByDescending(entry => entry.CreatedAt)
+                .ToArray();
         }
 
         var cutoff = now - TimeSpan.FromDays(retentionDays);
         return entries
+            .Where(entry => entry.ExpiresAt is null || entry.ExpiresAt > now)
             .Where(entry => entry.CreatedAt >= cutoff)
             .OrderByDescending(entry => entry.CreatedAt)
             .ToArray();

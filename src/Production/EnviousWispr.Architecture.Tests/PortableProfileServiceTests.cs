@@ -230,6 +230,35 @@ public sealed class PortableProfileServiceTests
         Assert.Equal(imported.UserData, applied.UserData);
     }
 
+    [Fact]
+    public async Task ImportMigratesPreviousProfileWithMacKeybindDefaults()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "profile.enviouswispr.json");
+            var legacy = JsonSettingsStoreTests.CreatePopulatedSettings().ToPortableProfile() with
+            {
+                SchemaVersion = 6,
+            };
+            var root = JsonNode.Parse(JsonSerializer.Serialize(
+                legacy,
+                JsonSettingsStore.SerializerOptions))!.AsObject();
+            var dictation = root["preferences"]!["dictation"]!.AsObject();
+            dictation.Remove("recordingMode");
+            dictation.Remove("cancelGesture");
+            dictation.Remove("escapeRecoveryEnabled");
+            dictation.Remove("quickAddGesture");
+            await File.WriteAllTextAsync(path, root.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var result = await new JsonPortableProfileService().ImportAsync(path);
+
+            Assert.Equal(PortableProfileImportStatus.Imported, result.Status);
+            Assert.Equal(PortableProfile.CurrentSchemaVersion, result.Profile?.SchemaVersion);
+            Assert.Equal("Escape", result.Profile?.Preferences.Dictation.CancelGesture);
+            Assert.Equal("Ctrl+Alt+W", result.Profile?.Preferences.Dictation.QuickAddGesture);
+        });
+    }
+
     private static IEnumerable<string> DescendantPropertyNames(JsonElement element)
     {
         if (element.ValueKind == JsonValueKind.Object)

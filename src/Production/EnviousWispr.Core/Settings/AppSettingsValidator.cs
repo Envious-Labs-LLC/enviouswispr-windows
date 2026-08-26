@@ -47,7 +47,11 @@ public static class AppSettingsValidator
         preferences.History is not null &&
         Enum.IsDefined(preferences.Dictation.FinalEngine) &&
         Enum.IsDefined(preferences.Dictation.WhisperLanguage) &&
+        Enum.IsDefined(preferences.Dictation.RecordingMode) &&
         HotkeyGestureParser.Parse(preferences.Dictation.PushToTalkGesture).Succeeded &&
+        HotkeyGestureParser.Parse(preferences.Dictation.CancelGesture).Succeeded &&
+        HotkeyGestureParser.Parse(preferences.Dictation.QuickAddGesture).Succeeded &&
+        HasDistinctDictationGestures(preferences.Dictation) &&
         Enum.IsDefined(preferences.Polish.Provider) &&
         (preferences.Polish.ModelId is null ||
             (!string.IsNullOrWhiteSpace(preferences.Polish.ModelId) && preferences.Polish.ModelId.Length <= 256)) &&
@@ -61,6 +65,17 @@ public static class AppSettingsValidator
         preferences.PillDesignWithoutWords is not RecordingPillDesign.ReadingWell &&
         preferences.PillDesignWithWords is RecordingPillDesign.ReadingWell &&
         Enum.IsDefined(preferences.RecordingSoundPairing);
+
+    private static bool HasDistinctDictationGestures(DictationPreferences preferences)
+    {
+        var record = HotkeyGestureParser.Parse(preferences.PushToTalkGesture).Gesture;
+        var cancel = HotkeyGestureParser.Parse(preferences.CancelGesture).Gesture;
+        var quickAdd = HotkeyGestureParser.Parse(preferences.QuickAddGesture).Gesture;
+        return record is not null && cancel is not null && quickAdd is not null &&
+            record.Value != cancel.Value &&
+            record.Value != quickAdd.Value &&
+            cancel.Value != quickAdd.Value;
+    }
 
     private static bool IsValid(ReusableUserData? userData) =>
         userData is not null &&

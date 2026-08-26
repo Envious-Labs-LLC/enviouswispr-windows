@@ -18,6 +18,8 @@ public enum AppEventCode
     ShellClosed,
     HotkeyReady,
     HotkeyFailed,
+    QuickAddRequested,
+    QuickAddPrepared,
     DictationRecordingStarted,
     DictationCaptureFinalized,
     DictationTranscriptionStarted,

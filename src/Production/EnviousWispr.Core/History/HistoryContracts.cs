@@ -8,7 +8,8 @@ public sealed record DictationHistoryEntry(
     string Text,
     string EngineId,
     bool WasPolished,
-    bool WasDelivered)
+    bool WasDelivered,
+    DateTimeOffset? ExpiresAt = null)
 {
     public const int MaximumTextLength = 100_000;
 
@@ -17,13 +18,15 @@ public sealed record DictationHistoryEntry(
         string text,
         string engineId,
         bool wasPolished,
-        bool wasDelivered) => new(
+        bool wasDelivered,
+        DateTimeOffset? expiresAt = null) => new(
             Guid.NewGuid(),
             createdAt,
             text,
             engineId,
             wasPolished,
-            wasDelivered);
+            wasDelivered,
+            expiresAt);
 
     public bool IsValid =>
         Id != Guid.Empty &&
@@ -31,7 +34,8 @@ public sealed record DictationHistoryEntry(
         !string.IsNullOrWhiteSpace(Text) &&
         Text.Length <= MaximumTextLength &&
         !string.IsNullOrWhiteSpace(EngineId) &&
-        EngineId.Length <= 256;
+        EngineId.Length <= 256 &&
+        (ExpiresAt is null || ExpiresAt > CreatedAt);
 }
 
 public enum HistoryLoadStatus
@@ -63,6 +67,10 @@ public interface IHistoryStore
         CancellationToken cancellationToken = default);
 
     Task<HistoryOperationResult> DeleteAsync(
+        Guid id,
+        CancellationToken cancellationToken = default);
+
+    Task<HistoryOperationResult> KeepAsync(
         Guid id,
         CancellationToken cancellationToken = default);
 

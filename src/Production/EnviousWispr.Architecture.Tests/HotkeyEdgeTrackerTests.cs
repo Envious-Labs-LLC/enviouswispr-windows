@@ -55,6 +55,7 @@ public sealed class HotkeyEdgeTrackerTests
     {
         var tracker = new HotkeyEdgeTracker(F8, HotkeyModifiers.None);
         tracker.Process(F8, isKeyDown: true, HotkeyModifiers.None);
+        tracker.SetRecordingActive(active: true);
 
         var cancelled = tracker.Process(
             HotkeyEdgeTracker.EscapeVirtualKey,
@@ -79,6 +80,49 @@ public sealed class HotkeyEdgeTrackerTests
     }
 
     [Fact]
+    public void ToggleModeUsesActualRecordingStateAndIgnoresKeyUp()
+    {
+        var tracker = new HotkeyEdgeTracker(
+            new HotkeyBinding(F8, HotkeyModifiers.None),
+            new HotkeyBinding(HotkeyEdgeTracker.EscapeVirtualKey, HotkeyModifiers.None),
+            new HotkeyBinding('W', HotkeyModifiers.Control | HotkeyModifiers.Alt),
+            EnviousWispr.Core.Settings.DictationRecordingMode.Toggle);
+
+        var start = tracker.Process(F8, isKeyDown: true, HotkeyModifiers.None);
+        var firstUp = tracker.Process(F8, isKeyDown: false, HotkeyModifiers.None);
+        tracker.SetRecordingActive(active: true);
+        var stop = tracker.Process(F8, isKeyDown: true, HotkeyModifiers.None);
+        var secondUp = tracker.Process(F8, isKeyDown: false, HotkeyModifiers.None);
+
+        Assert.Equal(PushToTalkSignal.Pressed, start.Signal);
+        Assert.Null(firstUp.Signal);
+        Assert.Equal(PushToTalkSignal.Released, stop.Signal);
+        Assert.Null(secondUp.Signal);
+    }
+
+    [Fact]
+    public void QuickAddIsGlobalWhenIdleAndPassesThroughWhileRecording()
+    {
+        var tracker = new HotkeyEdgeTracker(F8, HotkeyModifiers.None);
+
+        var add = tracker.Process(
+            'W',
+            isKeyDown: true,
+            HotkeyModifiers.Control | HotkeyModifiers.Alt);
+        tracker.Process('W', isKeyDown: false, HotkeyModifiers.None);
+        tracker.SetRecordingActive(active: true);
+        var blocked = tracker.Process(
+            'W',
+            isKeyDown: true,
+            HotkeyModifiers.Control | HotkeyModifiers.Alt);
+
+        Assert.Equal(PushToTalkSignal.QuickAdd, add.Signal);
+        Assert.True(add.Consume);
+        Assert.Null(blocked.Signal);
+        Assert.False(blocked.Consume);
+    }
+
+    [Fact]
     public void ReleaseCompletesEvenWhenModifierWasReleasedFirst()
     {
         var tracker = new HotkeyEdgeTracker(F8, HotkeyModifiers.Control);
@@ -88,5 +132,28 @@ public sealed class HotkeyEdgeTrackerTests
 
         Assert.Equal(PushToTalkSignal.Released, released.Signal);
         Assert.True(released.Consume);
+    }
+
+    [Fact]
+    public void SameVirtualKeyWithDifferentModifiersRoutesToExactBinding()
+    {
+        var tracker = new HotkeyEdgeTracker(
+            new HotkeyBinding('W', HotkeyModifiers.Control),
+            new HotkeyBinding(HotkeyEdgeTracker.EscapeVirtualKey, HotkeyModifiers.None),
+            new HotkeyBinding('W', HotkeyModifiers.Control | HotkeyModifiers.Alt),
+            EnviousWispr.Core.Settings.DictationRecordingMode.PushToTalk);
+
+        var quickAddDown = tracker.Process(
+            'W',
+            isKeyDown: true,
+            HotkeyModifiers.Control | HotkeyModifiers.Alt);
+        var quickAddUp = tracker.Process('W', isKeyDown: false, HotkeyModifiers.None);
+        var recordDown = tracker.Process('W', isKeyDown: true, HotkeyModifiers.Control);
+        var recordUp = tracker.Process('W', isKeyDown: false, HotkeyModifiers.None);
+
+        Assert.Equal(PushToTalkSignal.QuickAdd, quickAddDown.Signal);
+        Assert.True(quickAddUp.Consume);
+        Assert.Equal(PushToTalkSignal.Pressed, recordDown.Signal);
+        Assert.Equal(PushToTalkSignal.Released, recordUp.Signal);
     }
 }

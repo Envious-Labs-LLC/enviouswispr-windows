@@ -7,6 +7,12 @@ public enum FinalAsrEngine
     Whisper,
 }
 
+public enum DictationRecordingMode
+{
+    PushToTalk,
+    Toggle,
+}
+
 public enum PolishProvider
 {
     None,
@@ -97,7 +103,11 @@ public sealed record DictationPreferences(
     bool FillerRemovalEnabled,
     bool EmojiFormatterEnabled,
     bool SpokenPunctuationEnabled,
-    WhisperLanguagePreference WhisperLanguage = WhisperLanguagePreference.Automatic)
+    WhisperLanguagePreference WhisperLanguage = WhisperLanguagePreference.Automatic,
+    DictationRecordingMode RecordingMode = DictationRecordingMode.PushToTalk,
+    string CancelGesture = "Escape",
+    bool EscapeRecoveryEnabled = false,
+    string QuickAddGesture = "Ctrl+Alt+W")
 {
     public static DictationPreferences Default { get; } = new(
         FinalAsrEngine.Automatic,
@@ -106,7 +116,11 @@ public sealed record DictationPreferences(
         FillerRemovalEnabled: true,
         EmojiFormatterEnabled: true,
         SpokenPunctuationEnabled: false,
-        WhisperLanguage: WhisperLanguagePreference.Automatic);
+        WhisperLanguage: WhisperLanguagePreference.Automatic,
+        RecordingMode: DictationRecordingMode.PushToTalk,
+        CancelGesture: "Escape",
+        EscapeRecoveryEnabled: false,
+        QuickAddGesture: "Ctrl+Alt+W");
 }
 
 public sealed record PolishPreferences(

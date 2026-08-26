@@ -61,6 +61,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 6 => MigrateFromV6(json),
                 7 => MigrateFromV7(json),
                 8 => MigrateFromV8(json),
+                9 => MigrateFromV9(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -310,6 +311,27 @@ public sealed class JsonSettingsStore : ISettingsStore
                     PillDesignWithWords = UserPreferences.Default.PillDesignWithWords,
                     PlayRecordingSounds = UserPreferences.Default.PlayRecordingSounds,
                     RecordingSoundPairing = UserPreferences.Default.RecordingSoundPairing,
+                },
+            };
+    }
+
+    private static AppSettings? MigrateFromV9(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = AppSettings.CurrentSchemaVersion,
+                Preferences = legacy.Preferences with
+                {
+                    Dictation = legacy.Preferences.Dictation with
+                    {
+                        RecordingMode = DictationPreferences.Default.RecordingMode,
+                        CancelGesture = DictationPreferences.Default.CancelGesture,
+                        EscapeRecoveryEnabled = DictationPreferences.Default.EscapeRecoveryEnabled,
+                        QuickAddGesture = DictationPreferences.Default.QuickAddGesture,
+                    },
                 },
             };
     }

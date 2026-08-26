@@ -153,10 +153,19 @@ public sealed partial class MainWindow : Window, IDisposable
         await ReloadHistoryAsync().ConfigureAwait(true);
     }
 
-    public void SetHotkeyReady(string gesture)
+    public void SetHotkeyReady(
+        string gesture,
+        DictationRecordingMode recordingMode,
+        string cancelGesture,
+        string quickAddGesture)
     {
-        HotkeyStatusText.Text = $"Hold {gesture}";
-        OnboardingHotkeyText.Text = $"Hold {gesture} while speaking; release to finish.";
+        var instruction = recordingMode == DictationRecordingMode.PushToTalk
+            ? $"Hold {gesture} while speaking; release to finish."
+            : $"Press {gesture} to start; press it again to finish.";
+        HotkeyStatusText.Text = recordingMode == DictationRecordingMode.PushToTalk
+            ? $"Hold {gesture}"
+            : $"Toggle with {gesture}";
+        OnboardingHotkeyText.Text = $"{instruction} Cancel with {cancelGesture}. Add a selected word with {quickAddGesture}.";
         SessionStatusText.Text = "Idle";
         SessionStatusChanged?.Invoke($"ready · {gesture}");
     }
@@ -274,6 +283,25 @@ public sealed partial class MainWindow : Window, IDisposable
         ShowOnboarding(show: false);
         ProductNavigation.SelectedItem = SettingsNavItem;
         ShowPage("settings");
+    }
+
+    public void OpenQuickAdd(string? selection, string? message)
+    {
+        ShowOnboarding(show: false);
+        ProductNavigation.SelectedItem = DictionaryNavItem;
+        ShowPage("dictionary");
+        if (!string.IsNullOrWhiteSpace(selection))
+        {
+            SpokenFormBox.Text = selection;
+            ReplacementBox.Text = selection;
+            ReplacementBox.Focus(FocusState.Programmatic);
+            ReplacementBox.SelectAll();
+        }
+        else
+        {
+            SpokenFormBox.Focus(FocusState.Programmatic);
+            ShowMessage("Add a word", message ?? "Enter the spoken and written forms.", InfoBarSeverity.Warning);
+        }
     }
 
     public void ShutdownProductWindows()
@@ -400,10 +428,22 @@ public sealed partial class MainWindow : Window, IDisposable
     private async void SaveSettingsButton_Click(object sender, RoutedEventArgs e)
     {
         var parsedHotkey = HotkeyGestureParser.Parse(HotkeyTextBox.Text);
-        if (!parsedHotkey.Succeeded)
+        var parsedCancelHotkey = HotkeyGestureParser.Parse(CancelHotkeyTextBox.Text);
+        var parsedQuickAddHotkey = HotkeyGestureParser.Parse(QuickAddHotkeyTextBox.Text);
+        if (!parsedHotkey.Succeeded || !parsedCancelHotkey.Succeeded || !parsedQuickAddHotkey.Succeeded)
         {
-            ShowMessage("Shortcut needs attention", "Use a supported key such as F8 or Ctrl+F8.", InfoBarSeverity.Error);
-            HotkeyTextBox.Focus(FocusState.Programmatic);
+            ShowMessage("Shortcut needs attention", "Use supported keys such as F8, Escape, or Ctrl+Alt+W.", InfoBarSeverity.Error);
+            (parsedHotkey.Succeeded
+                ? parsedCancelHotkey.Succeeded ? QuickAddHotkeyTextBox : CancelHotkeyTextBox
+                : HotkeyTextBox).Focus(FocusState.Programmatic);
+            return;
+        }
+
+        if (parsedHotkey.Gesture == parsedCancelHotkey.Gesture ||
+            parsedHotkey.Gesture == parsedQuickAddHotkey.Gesture ||
+            parsedCancelHotkey.Gesture == parsedQuickAddHotkey.Gesture)
+        {
+            ShowMessage("Shortcuts overlap", "Recording, cancel, and Add-a-word must use three different shortcuts.", InfoBarSeverity.Error);
             return;
         }
 
@@ -414,7 +454,11 @@ public sealed partial class MainWindow : Window, IDisposable
             FillerRemovalToggle.IsOn,
             EmojiFormatterToggle.IsOn,
             SpokenPunctuationToggle.IsOn,
-            (WhisperLanguagePreference)Math.Clamp(WhisperLanguageComboBox.SelectedIndex, 0, 4));
+            (WhisperLanguagePreference)Math.Clamp(WhisperLanguageComboBox.SelectedIndex, 0, 4),
+            (DictationRecordingMode)Math.Clamp(RecordingModeComboBox.SelectedIndex, 0, 1),
+            parsedCancelHotkey.Gesture!.Value.ToString(),
+            EscapeRecoveryToggle.IsOn,
+            parsedQuickAddHotkey.Gesture!.Value.ToString());
         var polish = new PolishPreferences(
             PolishProviderFromIndex(PolishProviderComboBox.SelectedIndex),
             NullIfBlank(PolishModelTextBox.Text),
@@ -857,6 +901,26 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
+    private async void KeepHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (HistoryList.SelectedItem is not HistoryItemViewModel selected)
+        {
+            ShowMessage("Select a dictation first", "Choose the temporary recovery entry you want to keep.", InfoBarSeverity.Informational);
+            return;
+        }
+
+        var result = await _historyStore.KeepAsync(selected.Id).ConfigureAwait(true);
+        if (result.Succeeded)
+        {
+            await ReloadHistoryAsync().ConfigureAwait(true);
+            ShowMessage("History entry kept", "Its 24-hour Escape Recovery expiry was removed.", InfoBarSeverity.Success);
+        }
+        else
+        {
+            ShowMessage("History could not be changed", "The private history file was left untouched.", InfoBarSeverity.Error);
+        }
+    }
+
     private async void ClearHistoryButton_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new ContentDialog
@@ -1097,6 +1161,10 @@ public sealed partial class MainWindow : Window, IDisposable
             EngineComboBox.SelectedIndex = (int)preferences.Dictation.FinalEngine;
             WhisperLanguageComboBox.SelectedIndex = (int)preferences.Dictation.WhisperLanguage;
             HotkeyTextBox.Text = preferences.Dictation.PushToTalkGesture;
+            RecordingModeComboBox.SelectedIndex = (int)preferences.Dictation.RecordingMode;
+            CancelHotkeyTextBox.Text = preferences.Dictation.CancelGesture;
+            EscapeRecoveryToggle.IsOn = preferences.Dictation.EscapeRecoveryEnabled;
+            QuickAddHotkeyTextBox.Text = preferences.Dictation.QuickAddGesture;
             WordCorrectionToggle.IsOn = preferences.Dictation.WordCorrectionEnabled;
             FillerRemovalToggle.IsOn = preferences.Dictation.FillerRemovalEnabled;
             EmojiFormatterToggle.IsOn = preferences.Dictation.EmojiFormatterEnabled;
@@ -1585,7 +1653,10 @@ public sealed partial class MainWindow : Window, IDisposable
             Id = entry.Id;
             Text = entry.Text;
             CreatedDisplay = entry.CreatedAt.ToLocalTime().ToString("f", CultureInfo.CurrentCulture);
-            Details = $"{entry.EngineId} · {(entry.WasPolished ? "AI polished" : "deterministic cleanup")} · {(entry.WasDelivered ? "delivered" : "held safely")}";
+            var retention = entry.ExpiresAt is null
+                ? string.Empty
+                : $" · Escape Recovery expires {entry.ExpiresAt.Value.ToLocalTime():g} unless kept";
+            Details = $"{entry.EngineId} · {(entry.WasPolished ? "AI polished" : "deterministic cleanup")} · {(entry.WasDelivered ? "delivered" : "held safely")}{retention}";
         }
 
         public Guid Id { get; }

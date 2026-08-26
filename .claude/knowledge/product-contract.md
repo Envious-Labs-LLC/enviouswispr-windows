@@ -3,7 +3,8 @@
 ## Audience and promise
 
 EnviousWispr is commercial-grade Windows dictation for ordinary laptops and powerful gaming PCs. The
-experience is hold, speak, release, and continue working. It must remain useful without an account and
+default experience is hold, speak, release, and continue working; Toggle is available for people who
+prefer press, speak, press. It must remain useful without an account and
 without a dedicated GPU.
 
 ## Supported product shape
@@ -33,6 +34,17 @@ without a dedicated GPU.
   ordered catalog is Dust Mote, Velvet Hush, Muted Confirm, Whisper Tick, Round Pebble, Paper Tap, Soft
   Hush, Low Nod, Cloud Pop, Velvet Tap, Satin Shift, and Air Glint. Settings can preview the selected
   start/stop pair even while the master switch is off, but never during an active recording.
+- Keybinds offer Push to Talk and Toggle recording modes. The recording, cancel, and Add-a-word
+  shortcuts are independently configurable and must not overlap. Windows defaults are F8, Escape, and
+  Ctrl+Alt+W respectively.
+- Escape Recovery is off by default and is frozen when each recording starts. When enabled, the cancel
+  shortcut finishes local transcription, deterministic cleanup, and configured polish without delivering
+  automatically. The audio is released after text is saved; the text is offered on Home and expires from
+  History after 24 hours unless the user chooses Keep. A direct Cancel control, where present, still
+  discards immediately.
+- Add-a-word reads the current selection before EnviousWispr takes focus and opens Your Words with the
+  selected spelling ready to correct. No selection text crosses a network or diagnostic boundary.
+  Terminals and inaccessible targets fail safely with by-hand guidance.
 - AI Polish lists installed Ollama models locally. For direct OpenAI, Anthropic, and Gemini providers,
   a stored BYOK credential may list the compatible model IDs available to that account without sending
   transcript text or invoking a generation endpoint. The recommended model and a custom compatible ID
