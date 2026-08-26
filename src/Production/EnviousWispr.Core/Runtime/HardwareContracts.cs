@@ -74,6 +74,13 @@ public interface IParakeetModelProbe
     ParakeetModelInventory Probe(string modelDirectory);
 }
 
+public sealed record WhisperModelInventory(bool QuantizedComplete, bool FullPrecisionComplete);
+
+public interface IWhisperModelProbe
+{
+    WhisperModelInventory Probe(string modelDirectory);
+}
+
 public enum RuntimeProviderPreference
 {
     Automatic,
@@ -95,6 +102,25 @@ public enum ParakeetModelPack
     FullPrecision,
 }
 
+public enum WhisperModelPack
+{
+    Quantized,
+    FullPrecision,
+}
+
+public static class WhisperModelFileNames
+{
+    public const string Quantized = "ggml-large-v3-turbo-q5_0.bin";
+    public const string FullPrecision = "ggml-large-v3-turbo.bin";
+
+    public static string For(WhisperModelPack modelPack) => modelPack switch
+    {
+        WhisperModelPack.Quantized => Quantized,
+        WhisperModelPack.FullPrecision => FullPrecision,
+        _ => throw new ArgumentOutOfRangeException(nameof(modelPack)),
+    };
+}
+
 public enum RuntimeSelectionReason
 {
     NvidiaCudaWithQdqFreeModel,
@@ -113,4 +139,24 @@ public sealed record RuntimeSelection(
     int IntraOpThreads,
     int InterOpThreads,
     RuntimeSelectionReason Reason,
+    AppError? Error = null);
+
+public enum WhisperRuntimeSelectionReason
+{
+    NvidiaCudaWithFullPrecisionModel,
+    NvidiaCudaWithQuantizedModel,
+    TunedCpuWithQuantizedModel,
+    TunedCpuWithFullPrecisionModel,
+    ManualProviderAccepted,
+    RequestedProviderUnavailable,
+    RequiredModelPackMissing,
+    UnsupportedProcessorArchitecture,
+}
+
+public sealed record WhisperRuntimeSelection(
+    bool Succeeded,
+    RuntimeProviderKind? Provider,
+    WhisperModelPack? ModelPack,
+    int ThreadCount,
+    WhisperRuntimeSelectionReason Reason,
     AppError? Error = null);

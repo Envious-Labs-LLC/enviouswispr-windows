@@ -115,7 +115,7 @@ public partial class App : Application, IAsyncDisposable
         _window.Closed += OnWindowClosed;
         _window.Activate();
         _window.SetSessionStatus("Preparing local transcription...");
-        await ConfigureTranscriptionAsync().ConfigureAwait(true);
+        await ConfigureTranscriptionAsync(settings.Preferences.Dictation.FinalEngine).ConfigureAwait(true);
         ConfigurePushToTalk(settings.Preferences.Dictation.PushToTalkGesture);
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellShown));
     }
@@ -183,9 +183,20 @@ public partial class App : Application, IAsyncDisposable
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.HotkeyReady));
     }
 
-    private async Task ConfigureTranscriptionAsync()
+    private async Task ConfigureTranscriptionAsync(FinalAsrEngine configuredEngine)
     {
-        var modelDirectory = ResolveModelDirectory();
+        var environmentEngine = Environment.GetEnvironmentVariable("ENVIOUSWISPR_ASR_ENGINE");
+        if (Enum.TryParse<FinalAsrEngine>(environmentEngine, ignoreCase: true, out var parsedEngine))
+        {
+            configuredEngine = parsedEngine;
+        }
+
+        var engine = configuredEngine == FinalAsrEngine.Automatic
+            ? FinalAsrEngine.Parakeet
+            : configuredEngine;
+        var modelDirectory = ResolveModelDirectory(engine == FinalAsrEngine.Whisper
+            ? WhisperTranscriptionEngine.ModelId
+            : ParakeetTranscriptionEngine.ModelId);
         if (modelDirectory is null)
         {
             _window?.SetSessionStatus("Local transcription model is not installed");
@@ -197,37 +208,20 @@ public partial class App : Application, IAsyncDisposable
         }
 
         var hardware = await new WindowsHardwareDiscovery().ProbeAsync().ConfigureAwait(true);
-        var models = new LocalParakeetModelProbe().Probe(modelDirectory);
-        var selection = ParakeetRuntimeSelector.Select(hardware, models);
-        var cpuSelection = ParakeetRuntimeSelector.Select(
-            hardware,
-            models,
-            RuntimeProviderPreference.Cpu);
-        if (!selection.Succeeded ||
-            selection.Provider is null ||
-            selection.ModelPack is null ||
-            !cpuSelection.Succeeded)
+        var workerExecutable = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
+        _transcriptionEngine = engine == FinalAsrEngine.Whisper
+            ? CreateWhisperEngine(workerExecutable, modelDirectory, hardware)
+            : CreateParakeetEngine(workerExecutable, modelDirectory, hardware);
+        if (_transcriptionEngine is null)
         {
             _window?.SetSessionStatus("Local transcription is unavailable on this machine");
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionFailed,
-                FailureFor(selection.Error)));
+                AppFailureCategory.AsrUnavailable));
             return;
         }
 
-        var workerExecutable = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
-        _transcriptionEngine = new RuntimeWorkerTranscriptionEngine(
-            new RuntimeWorkerTranscriptionOptions(
-                workerExecutable,
-                modelDirectory,
-                selection.Provider.Value,
-                selection.ModelPack.Value,
-                selection.IntraOpThreads,
-                selection.InterOpThreads,
-                CpuFallbackThreads: cpuSelection.IntraOpThreads,
-                CudaRuntimeDirectory: Environment.GetEnvironmentVariable(
-                    "ENVIOUSWISPR_CUDA_RUNTIME_DIR")));
         var started = await _transcriptionEngine.StartAsync().ConfigureAwait(true);
         if (!started.Succeeded)
         {
@@ -244,7 +238,72 @@ public partial class App : Application, IAsyncDisposable
         _window?.SetSessionStatus("Local transcription ready");
     }
 
-    private static string? ResolveModelDirectory()
+    private static RuntimeWorkerTranscriptionEngine? CreateParakeetEngine(
+        string workerExecutable,
+        string modelDirectory,
+        HardwareSnapshot hardware)
+    {
+        var models = new LocalParakeetModelProbe().Probe(modelDirectory);
+        var selection = ParakeetRuntimeSelector.Select(hardware, models);
+        var cpuSelection = ParakeetRuntimeSelector.Select(
+            hardware,
+            models,
+            RuntimeProviderPreference.Cpu);
+        if (!selection.Succeeded ||
+            selection.Provider is null ||
+            selection.ModelPack is null ||
+            !cpuSelection.Succeeded)
+        {
+            return null;
+        }
+
+        return new RuntimeWorkerTranscriptionEngine(
+            new RuntimeWorkerTranscriptionOptions(
+                workerExecutable,
+                modelDirectory,
+                selection.Provider.Value,
+                selection.ModelPack.Value,
+                selection.IntraOpThreads,
+                selection.InterOpThreads,
+                CpuFallbackThreads: cpuSelection.IntraOpThreads,
+                CudaRuntimeDirectory: Environment.GetEnvironmentVariable(
+                    "ENVIOUSWISPR_CUDA_RUNTIME_DIR")));
+    }
+
+    private static RuntimeWorkerTranscriptionEngine? CreateWhisperEngine(
+        string workerExecutable,
+        string modelDirectory,
+        HardwareSnapshot hardware)
+    {
+        var models = new LocalWhisperModelProbe().Probe(modelDirectory);
+        var selection = WhisperRuntimeSelector.Select(hardware, models);
+        var cpuSelection = WhisperRuntimeSelector.Select(
+            hardware,
+            models,
+            RuntimeProviderPreference.Cpu);
+        if (!selection.Succeeded ||
+            selection.Provider is null ||
+            selection.ModelPack is null ||
+            !cpuSelection.Succeeded)
+        {
+            return null;
+        }
+
+        return new RuntimeWorkerTranscriptionEngine(new RuntimeWorkerTranscriptionOptions(
+            workerExecutable,
+            modelDirectory,
+            selection.Provider.Value,
+            ParakeetModelPack.Quantized,
+            selection.ThreadCount,
+            CpuFallbackThreads: cpuSelection.ThreadCount,
+            Engine: FinalAsrEngine.Whisper,
+            WhisperPack: selection.ModelPack.Value,
+            Language: "auto",
+            CudaRuntimeDirectory: Environment.GetEnvironmentVariable(
+                "ENVIOUSWISPR_CUDA_RUNTIME_DIR")));
+    }
+
+    private static string? ResolveModelDirectory(string modelId)
     {
         var configured = Environment.GetEnvironmentVariable("ENVIOUSWISPR_MODEL_DIRECTORY");
         if (!string.IsNullOrWhiteSpace(configured) && Directory.Exists(configured))
@@ -257,7 +316,7 @@ public partial class App : Application, IAsyncDisposable
             "Envious Labs",
             "EnviousWispr",
             "models",
-            ParakeetTranscriptionEngine.ModelId);
+            modelId);
         if (Directory.Exists(installed))
         {
             return installed;
@@ -271,7 +330,7 @@ public partial class App : Application, IAsyncDisposable
 
         var developmentModel = directory is null
             ? null
-            : Path.Combine(directory.FullName, "models", ParakeetTranscriptionEngine.ModelId);
+            : Path.Combine(directory.FullName, "models", modelId);
         return developmentModel is not null && Directory.Exists(developmentModel)
             ? developmentModel
             : null;
