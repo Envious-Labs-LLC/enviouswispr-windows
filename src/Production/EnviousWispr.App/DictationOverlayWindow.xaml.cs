@@ -129,6 +129,7 @@ public sealed partial class DictationOverlayWindow : Window
     public void SetPreview(string? text)
     {
         _previewText = string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+        ApplyPreviewInk();
         if (_state == DictationOverlayState.Recording &&
             _activeDesign == RecordingPillDesign.ReadingWell)
         {
@@ -184,6 +185,7 @@ public sealed partial class DictationOverlayWindow : Window
 
     private void ConfigureRecordingDesign()
     {
+        StateTitle.Style = (Style)OverlayRoot.Resources["PillModeQuietTextStyle"];
         StateIcon.Visibility = Visibility.Collapsed;
         StateDetail.Visibility = Visibility.Collapsed;
         ElapsedText.Visibility = Visibility.Visible;
@@ -197,6 +199,7 @@ public sealed partial class DictationOverlayWindow : Window
             ? Visibility.Visible
             : Visibility.Collapsed;
         PreviewText.Text = _previewText ?? "Listening…";
+        ApplyPreviewInk();
         OverlayRoot.CornerRadius = _activeDesign == RecordingPillDesign.ReadingWell
             ? new CornerRadius(18)
             : new CornerRadius(29);
@@ -220,6 +223,7 @@ public sealed partial class DictationOverlayWindow : Window
 
     private void ConfigureNotice()
     {
+        StateTitle.Style = (Style)OverlayRoot.Resources["PillNoticeTextStyle"];
         RainbowMark.Visibility = Visibility.Collapsed;
         StateIcon.Visibility = Visibility.Visible;
         StateDetail.Visibility = Visibility.Visible;
@@ -229,6 +233,12 @@ public sealed partial class DictationOverlayWindow : Window
         OverlayRoot.CornerRadius = new CornerRadius(18);
         OverlayRoot.Padding = new Thickness(18, 14, 18, 14);
         Resize(NoticeWidth, NoticeHeight);
+    }
+
+    private void ApplyPreviewInk()
+    {
+        var styleKey = _previewText is null ? "PillDimmedTextStyle" : "PillLiveTextStyle";
+        PreviewText.Style = (Style)OverlayRoot.Resources[styleKey];
     }
 
     private void ResizeReadingWell()

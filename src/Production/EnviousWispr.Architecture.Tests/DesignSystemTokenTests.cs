@@ -17,6 +17,19 @@ public sealed class MacSnapshotFactAttribute : FactAttribute
     }
 }
 
+[AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
+public sealed class MacPillSnapshotFactAttribute : FactAttribute
+{
+    public MacPillSnapshotFactAttribute()
+    {
+        var swiftPath = DesignSystemTokenTests.GetMacPillSnapshotPath();
+        if (!File.Exists(swiftPath))
+        {
+            Skip = $"macOS pill snapshot not found at '{swiftPath}'; the macOS-parity half did not run.";
+        }
+    }
+}
+
 public sealed partial class DesignSystemTokenTests
 {
     private const string XamlNamespace = "http://schemas.microsoft.com/winfx/2006/xaml";
@@ -53,6 +66,20 @@ public sealed partial class DesignSystemTokenTests
         ["BrandSpectrumViolet"] = new("#8A2BE2", "#8A2BE2"),
     };
 
+    private static readonly Dictionary<string, ThemePair> ExpectedPillTokenColors = new(StringComparer.Ordinal)
+    {
+        ["PillSurface"] = new("#F0FCFAFF", "#E6110F18"),
+        ["PillBorder"] = new("#240F0A1A", "#21FFFFFF"),
+        ["PillDivider"] = new("#1A0F0A1A", "#17FFFFFF"),
+        ["PillTimer"] = new("#FF221B33", "#F0FFFFFF"),
+        ["PillModeQuiet"] = new("#990F0A1A", "#80FFFFFF"),
+        ["PillBadgeFill"] = new("#170F0A1A", "#21FFFFFF"),
+        ["PillBadgeText"] = new("#B80F0A1A", "#E0FFFFFF"),
+        ["PillText"] = new("#FF0F0A1A", "#F7FFFFFF"),
+        ["PillTextDimmed"] = new("#990F0A1A", "#80FFFFFF"),
+        ["PillNotice"] = new("#E00F0A1A", "#F2FFFFFF"),
+    };
+
     private static readonly (string SwiftName, string BrandName)[] SwiftTokenMap =
     [
         ("stPageBg", "BrandPageBg"),
@@ -73,6 +100,20 @@ public sealed partial class DesignSystemTokenTests
         ("stToggleOn", "BrandToggleOn"),
         ("stToggleOff", "BrandToggleOff"),
         ("stDivider", "BrandDivider"),
+    ];
+
+    private static readonly (string SwiftName, string PillName)[] SwiftPillTokenMap =
+    [
+        ("surface", "PillSurface"),
+        ("border", "PillBorder"),
+        ("divider", "PillDivider"),
+        ("timer", "PillTimer"),
+        ("modeQuiet", "PillModeQuiet"),
+        ("badgeFill", "PillBadgeFill"),
+        ("badgeText", "PillBadgeText"),
+        ("text", "PillText"),
+        ("textDimmed", "PillTextDimmed"),
+        ("notice", "PillNotice"),
     ];
 
     [Fact]
@@ -124,6 +165,55 @@ public sealed partial class DesignSystemTokenTests
         }
     }
 
+    [Fact]
+    public void EveryThemeDeclaresEveryPillColorAndBrushToken()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var themeDictionaries = LoadThemeDictionaries(repositoryRoot, "PillTokens.xaml");
+        var missing = new List<string>();
+
+        foreach (var themeName in new[] { "Light", "Dark", "HighContrast" })
+        {
+            if (!themeDictionaries.TryGetValue(themeName, out var theme))
+            {
+                missing.Add($"theme dictionary '{themeName}'");
+                continue;
+            }
+
+            var keys = theme.Elements()
+                .Select(element => (string?)element.Attribute(XName.Get("Key", XamlNamespace)))
+                .Where(key => key is not null)
+                .ToHashSet(StringComparer.Ordinal);
+            foreach (var tokenName in ExpectedPillTokenColors.Keys)
+            {
+                foreach (var suffix in new[] { "Color", "Brush" })
+                {
+                    var resourceKey = tokenName + suffix;
+                    if (!keys.Contains(resourceKey))
+                    {
+                        missing.Add($"{themeName}/{resourceKey}");
+                    }
+                }
+            }
+        }
+
+        Assert.True(
+            missing.Count == 0,
+            $"Pill token resources are missing: {string.Join(", ", missing)}");
+    }
+
+    [Fact]
+    public void LightAndDarkPillTokensMatchExpectedTable()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var themeDictionaries = LoadThemeDictionaries(repositoryRoot, "PillTokens.xaml");
+        foreach (var token in ExpectedPillTokenColors)
+        {
+            AssertColorMatches(themeDictionaries, "Light", token.Key, token.Value.Light);
+            AssertColorMatches(themeDictionaries, "Dark", token.Key, token.Value.Dark);
+        }
+    }
+
     [MacSnapshotFact]
     public void MacDynamicColorsMatchExpectedTable()
     {
@@ -160,6 +250,105 @@ public sealed partial class DesignSystemTokenTests
                 actual.Dark,
                 mapping.SwiftName);
         }
+    }
+
+    [MacPillSnapshotFact]
+    public void MacPillDynamicColorsMatchExpectedTableIncludingAlpha()
+    {
+        var swiftPath = GetMacPillSnapshotPath();
+        Assert.True(
+            File.Exists(swiftPath),
+            $"The macOS pill snapshot disappeared after test discovery at '{swiftPath}'.");
+
+        var swiftTokens = ParseSwiftTokens(File.ReadAllText(swiftPath));
+        foreach (var mapping in SwiftPillTokenMap)
+        {
+            if (!swiftTokens.TryGetValue(mapping.SwiftName, out var actual))
+            {
+                throw new InvalidOperationException(
+                    $"Mapped Swift pill token '{mapping.SwiftName}' for '{mapping.PillName}' was not found in '{swiftPath}'.");
+            }
+
+            if (!ExpectedPillTokenColors.TryGetValue(mapping.PillName, out var expected))
+            {
+                throw new InvalidOperationException(
+                    $"Mapped Pill token '{mapping.PillName}' for '{mapping.SwiftName}' is missing from the expected table.");
+            }
+
+            AssertChannelsMatch(
+                "macOS Light pill snapshot",
+                mapping.PillName,
+                ParseHexColor(mapping.PillName, "expected Light pill table", expected.Light),
+                actual.Light,
+                mapping.SwiftName);
+            AssertChannelsMatch(
+                "macOS Dark pill snapshot",
+                mapping.PillName,
+                ParseHexColor(mapping.PillName, "expected Dark pill table", expected.Dark),
+                actual.Dark,
+                mapping.SwiftName);
+        }
+    }
+
+    [Fact]
+    public void OverlayUsesDeclaredPillTokensAndNoUndersizedText()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var overlayPath = Path.Combine(
+            repositoryRoot,
+            "src",
+            "Production",
+            "EnviousWispr.App",
+            "DictationOverlayWindow.xaml");
+        var overlayCodeBehindPath = overlayPath + ".cs";
+        var overlay = XDocument.Load(overlayPath);
+        var declaredPillKeys = LoadThemeDictionaries(repositoryRoot, "PillTokens.xaml")["Light"]
+            .Elements()
+            .Select(element => (string?)element.Attribute(XName.Get("Key", XamlNamespace)))
+            .Where(key => key is not null)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var resourceReferences = overlay.Descendants()
+            .Attributes()
+            .Select(attribute => ThemeResourceRegex().Match(attribute.Value))
+            .Where(match => match.Success)
+            .Select(match => match.Groups["key"].Value)
+            .Where(key => key.StartsWith("Pill", StringComparison.Ordinal))
+            .ToArray();
+        Assert.NotEmpty(resourceReferences);
+        Assert.All(resourceReferences, key => Assert.Contains(key, declaredPillKeys));
+
+        var declaredLocalKeys = overlay.Descendants()
+            .Select(element => (string?)element.Attribute(XName.Get("Key", XamlNamespace)))
+            .Where(key => key is not null)
+            .ToHashSet(StringComparer.Ordinal);
+        var localStyleReferences = overlay.Descendants()
+            .Attributes()
+            .Select(attribute => StaticResourceRegex().Match(attribute.Value))
+            .Where(match => match.Success)
+            .Select(match => match.Groups["key"].Value)
+            .Where(key => key.StartsWith("Pill", StringComparison.Ordinal))
+            .Concat(CodeBehindPillStyleRegex()
+                .Matches(File.ReadAllText(overlayCodeBehindPath))
+                .Cast<Match>()
+                .Select(match => match.Value))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        Assert.NotEmpty(localStyleReferences);
+        Assert.All(localStyleReferences, key => Assert.Contains(key, declaredLocalKeys));
+
+        var undersizedText = overlay.Descendants()
+            .Where(element => element.Name.LocalName == "TextBlock")
+            .Select(element => new
+            {
+                Name = (string?)element.Attribute(XName.Get("Name", XamlNamespace)) ?? "unnamed TextBlock",
+                FontSize = (double?)element.Attribute("FontSize"),
+            })
+            .Where(text => text.FontSize is null or < 14)
+            .ToArray();
+        Assert.True(
+            undersizedText.Length == 0,
+            $"Overlay text must be at least 14px: {string.Join(", ", undersizedText.Select(text => $"{text.Name}={text.FontSize}"))}");
     }
 
     [Fact]
@@ -337,7 +526,9 @@ public sealed partial class DesignSystemTokenTests
                 || segment.Equals("bin", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static Dictionary<string, XElement> LoadThemeDictionaries(string repositoryRoot)
+    private static Dictionary<string, XElement> LoadThemeDictionaries(
+        string repositoryRoot,
+        string fileName = "DesignTokens.xaml")
     {
         var tokenPath = Path.Combine(
             repositoryRoot,
@@ -345,8 +536,8 @@ public sealed partial class DesignSystemTokenTests
             "Production",
             "EnviousWispr.App",
             "Theme",
-            "DesignTokens.xaml");
-        Assert.True(File.Exists(tokenPath), $"DesignTokens.xaml was not found at '{tokenPath}'.");
+            fileName);
+        Assert.True(File.Exists(tokenPath), $"{fileName} was not found at '{tokenPath}'.");
 
         var document = XDocument.Load(tokenPath);
         var container = document.Descendants()
@@ -534,6 +725,15 @@ public sealed partial class DesignSystemTokenTests
             "Settings",
             "SettingsDesignTokens.swift");
 
+    internal static string GetMacPillSnapshotPath() =>
+        Path.Combine(
+            FindRepositoryRoot(),
+            "macos-source",
+            "Sources",
+            "EnviousWisprAppKit",
+            "App",
+            "PreviewPillPalette.swift");
+
     private static string DescribeOffender(string repositoryRoot, string path, int line, string value) =>
         $"{Path.GetRelativePath(repositoryRoot, path)}:{line}: {value}";
 
@@ -548,9 +748,24 @@ public sealed partial class DesignSystemTokenTests
     private static partial Regex NamedColorAttributeRegex();
 
     [GeneratedRegex(
-        @"static\s+let\s+(?<name>st\w+)\s*=\s*stDynamic\(\s*lightRGB:\s*\((?<light>[^)]*)\),\s*darkRGB:\s*\((?<dark>[^)]*)\)\s*\)",
+        @"static\s+let\s+(?<name>\w+)\s*=\s*(?:Color\.)?stDynamic\(\s*lightRGB:\s*\((?<light>[^)]*)\),\s*darkRGB:\s*\((?<dark>[^)]*)\)\s*\)",
         RegexOptions.CultureInvariant | RegexOptions.Singleline)]
     private static partial Regex SwiftDynamicColorRegex();
+
+    [GeneratedRegex(
+        @"^\{ThemeResource\s+(?<key>[^}]+)\}$",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex ThemeResourceRegex();
+
+    [GeneratedRegex(
+        @"^\{StaticResource\s+(?<key>[^}]+)\}$",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex StaticResourceRegex();
+
+    [GeneratedRegex(
+        @"Pill(?:ModeQuiet|Notice|Live|Dimmed)TextStyle",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex CodeBehindPillStyleRegex();
 
     private readonly record struct DynamicColor(Rgba Light, Rgba Dark);
 
