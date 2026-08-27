@@ -27,6 +27,8 @@ public sealed record SelectableChoiceOption(string Name, string Description)
 
 public sealed partial class MainWindow : Window, IDisposable
 {
+    private const int WindowFrameInsetCount = 3;
+
     private static readonly SelectableChoiceOption[] FinalEngineChoices =
     [
         new("Automatic", "Chooses the best available local engine for this PC."),
@@ -127,6 +129,7 @@ public sealed partial class MainWindow : Window, IDisposable
             settings.Preferences.PillDesignWithWords);
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
+        ConfigureMinimumWindowWidth();
         AppWindow.Resize(new SizeInt32(1120, 760));
         AppWindow.SetIcon(Path.Combine(
             AppContext.BaseDirectory,
@@ -164,6 +167,17 @@ public sealed partial class MainWindow : Window, IDisposable
     public event Action? UpdateCheckRequested;
 
     public event Action? UpdateApplyRequested;
+
+    private void ConfigureMinimumWindowWidth()
+    {
+        var frameInset = (double)Application.Current.Resources["BrandWindowFrameInset"];
+        var contentCardMinimumWidth = (double)Application.Current.Resources["BrandContentCardMinimumWidth"];
+
+        MinWidth = Math.Ceiling(
+            ProductNavigation.OpenPaneLength
+            + (WindowFrameInsetCount * frameInset)
+            + contentCardMinimumWidth);
+    }
 
     public AppSettings CurrentSettings => _settings;
 
