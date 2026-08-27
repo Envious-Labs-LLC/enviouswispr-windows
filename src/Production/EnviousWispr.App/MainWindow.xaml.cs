@@ -12,6 +12,7 @@ using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.LLM;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.ApplicationModel.DataTransfer;
@@ -173,10 +174,17 @@ public sealed partial class MainWindow : Window, IDisposable
         var frameInset = (double)Application.Current.Resources["BrandWindowFrameInset"];
         var contentCardMinimumWidth = (double)Application.Current.Resources["BrandContentCardMinimumWidth"];
 
-        MinWidth = Math.Ceiling(
-            ProductNavigation.OpenPaneLength
-            + (WindowFrameInsetCount * frameInset)
-            + contentCardMinimumWidth);
+        // Microsoft.UI.Xaml.Window.MinWidth does not exist in the Windows App SDK this project
+        // builds against, so the minimum is set on the window's presenter instead. The
+        // presenter is only an OverlappedPresenter for a normal window; if the app is ever
+        // shown full-screen or compact-overlay there is nothing to constrain and nothing to do.
+        if (AppWindow.Presenter is OverlappedPresenter presenter)
+        {
+            presenter.PreferredMinimumWidth = (int)Math.Ceiling(
+                ProductNavigation.OpenPaneLength
+                + (WindowFrameInsetCount * frameInset)
+                + contentCardMinimumWidth);
+        }
     }
 
     public AppSettings CurrentSettings => _settings;
