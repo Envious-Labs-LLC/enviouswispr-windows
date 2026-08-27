@@ -540,7 +540,7 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        FoundationInfoBar.Title = "Direct BYOK cloud polish enabled";
+        FoundationInfoBar.Title = "Cloud polish is on, using your own key";
         FoundationInfoBar.Message = notice;
     }
 
@@ -551,7 +551,7 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        FoundationInfoBar.Title = "Local Ollama polish enabled";
+        FoundationInfoBar.Title = "Ollama polish is on, running on this PC";
         FoundationInfoBar.Message = notice;
     }
 
@@ -1154,7 +1154,7 @@ public sealed partial class MainWindow : Window, IDisposable
         {
             ClearRecoveredText();
             FoundationInfoBar.Title = "No recovered dictation is pending";
-            FoundationInfoBar.Message = "The encrypted recovery copy was removed. EnviousWispr will not paste or retain that text.";
+            FoundationInfoBar.Message = "The saved copy is gone. EnviousWispr will not paste it or keep it anywhere.";
             FoundationInfoBar.Severity = InfoBarSeverity.Success;
             OnboardingReliabilityInfoBar.IsOpen = false;
             RecoveryCleared?.Invoke();
