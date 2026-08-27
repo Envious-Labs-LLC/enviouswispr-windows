@@ -71,6 +71,8 @@ public partial class App : Application, IAsyncDisposable
     private Task? _polishWarmup;
     private CancellationTokenSource? _previewCancellation;
     private Task? _previewLoop;
+    private CancellationTokenSource? _autoStopCancellation;
+    private Task? _autoStopLoop;
     private long _previewSequence;
     private MainWindow? _window;
     private WindowsTrayIcon? _trayIcon;
@@ -767,6 +769,7 @@ public partial class App : Application, IAsyncDisposable
             _pushToTalkHook = null;
         }
 
+        cleanShutdown &= await TryCleanupAsync(StopAutoStopWatchAsync).ConfigureAwait(true);
         cleanShutdown &= await TryCleanupAsync(StopLivePreviewAsync).ConfigureAwait(true);
 
         if (_audioCapture is not null)
@@ -1821,6 +1824,7 @@ public partial class App : Application, IAsyncDisposable
                 _escapeRecoveryForSession = _settings.Preferences.Dictation.EscapeRecoveryEnabled;
                 StartRecordingWatchdog(controller, result.Session.Id);
                 await StartLivePreviewAsync().ConfigureAwait(false);
+                StartAutoStopWatch(result.Session.Id);
             }
             else if (result.Kind == SessionTransitionKind.FinalizeReady &&
                 result.Session is not null &&
@@ -1829,6 +1833,7 @@ public partial class App : Application, IAsyncDisposable
                 processingCancellation = new CancellationTokenSource(
                     MaximumFinalProcessingDuration);
                 _activeProcessingCancellation = processingCancellation;
+                await StopAutoStopWatchAsync().ConfigureAwait(false);
                 await StopLivePreviewAsync().ConfigureAwait(false);
                 await TranscribeFinalAsync(
                         controller,
@@ -1842,6 +1847,7 @@ public partial class App : Application, IAsyncDisposable
             else if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
             {
                 _escapeRecoveryForSession = false;
+                await StopAutoStopWatchAsync().ConfigureAwait(false);
                 await StopLivePreviewAsync().ConfigureAwait(false);
                 await controller.ResetAsync().ConfigureAwait(false);
             }
@@ -1915,7 +1921,8 @@ public partial class App : Application, IAsyncDisposable
                         State: EnviousWispr.Core.Sessions.DictationSessionState.Recording,
                     } && currentId == sessionId)
                 {
-                    await StopLivePreviewAsync().ConfigureAwait(false);
+                    await StopAutoStopWatchAsync().ConfigureAwait(false);
+                await StopLivePreviewAsync().ConfigureAwait(false);
                     var error = new AppError(
                         AppErrorCode.SessionTimedOut,
                         AppErrorStage.Session,
@@ -1976,7 +1983,8 @@ public partial class App : Application, IAsyncDisposable
         string status)
     {
         await StopRecordingWatchdogAsync().ConfigureAwait(false);
-        await StopLivePreviewAsync().ConfigureAwait(false);
+        await StopAutoStopWatchAsync().ConfigureAwait(false);
+                await StopLivePreviewAsync().ConfigureAwait(false);
         if (controller.CurrentSession is not null)
         {
             await controller.AbortAsync(error).ConfigureAwait(false);
@@ -2024,7 +2032,8 @@ public partial class App : Application, IAsyncDisposable
                     processingCancellation = new CancellationTokenSource(
                         MaximumFinalProcessingDuration);
                     _activeProcessingCancellation = processingCancellation;
-                    await StopLivePreviewAsync().ConfigureAwait(false);
+                    await StopAutoStopWatchAsync().ConfigureAwait(false);
+                await StopLivePreviewAsync().ConfigureAwait(false);
                     _window?.DispatcherQueue.TryEnqueue(() =>
                         _window?.SetSessionStatus(
                             transition == SystemLifecycleTransition.Suspending
@@ -2088,6 +2097,130 @@ public partial class App : Application, IAsyncDisposable
             processingCancellation?.Dispose();
             _sessionOperationGate.Release();
         }
+    }
+
+    /// <summary>How often the watcher asks whether the speaker has finished.</summary>
+    /// <remarks>
+    /// Far more often than the threshold it is testing, so the recording ends close to when the
+    /// user expects rather than up to a poll late. Cheap: it reads a buffer already being written.
+    /// </remarks>
+    private static readonly TimeSpan AutoStopPollInterval = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
+    /// Watches a running recording and ends it when the speaker has stopped, if the user asked.
+    /// </summary>
+    /// <remarks>
+    /// IT ENDS THE RECORDING THROUGH THE SAME DOOR A KEY RELEASE USES. Calling
+    /// HandlePushToTalkAsync with a Released signal means the session state machine, the hook's
+    /// own recording flag, transcription, delivery and history all run exactly as they would have.
+    /// A parallel finish path here would be a second implementation of ending a dictation, and the
+    /// two would drift.
+    ///
+    /// HAS-HEARD-SPEECH IS STICKY AND LIVES HERE, not in the snapshot. The buffer only holds a
+    /// window, so a speaker who says one word and then pauses past that window would look to a
+    /// single snapshot like someone who never spoke - and the policy would stop protecting them at
+    /// the exact moment it should fire. Once speech is heard in this recording, it stays heard.
+    ///
+    /// THE SNAPSHOT WINDOW IS LONGER THAN ANY THRESHOLD IT COULD BE ASKED ABOUT. A window shorter
+    /// than the threshold can never contain enough silence to satisfy it, so the feature would
+    /// simply never fire - silently, and looking exactly like a user who had not turned it on.
+    /// </remarks>
+    private void StartAutoStopWatch(DictationSessionId sessionId)
+    {
+        var dictation = _settings.Preferences.Dictation;
+        if (!dictation.AutoStopEnabled ||
+            dictation.RecordingMode != DictationRecordingMode.Toggle ||
+            _audioCapture is not IAudioSnapshotSource snapshots)
+        {
+            return;
+        }
+
+        var cancellation = new CancellationTokenSource();
+        _autoStopCancellation = cancellation;
+        _autoStopLoop = RunAutoStopWatchAsync(snapshots, sessionId, dictation, cancellation.Token);
+    }
+
+    private async Task RunAutoStopWatchAsync(
+        IAudioSnapshotSource snapshots,
+        DictationSessionId sessionId,
+        DictationPreferences dictation,
+        CancellationToken cancellationToken)
+    {
+        var required = TimeSpan.FromSeconds(dictation.AutoStopSilenceSeconds);
+        if (required < AutoStopPolicy.MinimumSilence)
+        {
+            required = AutoStopPolicy.MinimumSilence;
+        }
+
+        // Comfortably more than the threshold, so the window can always hold enough silence to
+        // answer the question being asked of it.
+        var window = required + required;
+        var heardSpeech = false;
+
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(AutoStopPollInterval, cancellationToken).ConfigureAwait(false);
+
+                var snapshot = snapshots.GetSnapshot(window);
+                if (snapshot is null || snapshot.SessionId != sessionId)
+                {
+                    continue;
+                }
+
+                var segmenter = new SpeechSegmenter(snapshot.SampleRate, TimeSpan.FromMilliseconds(400));
+                var samples = snapshot.Samples.Span;
+                heardSpeech |= segmenter.Segment(samples).Any(segment => segment.IsSpeech);
+
+                var decision = AutoStopPolicy.Decide(
+                    dictation.AutoStopEnabled,
+                    dictation.RecordingMode == DictationRecordingMode.Toggle,
+                    heardSpeech,
+                    segmenter.TrailingSilence(samples),
+                    required);
+                if (decision != AutoStopDecision.Stop)
+                {
+                    continue;
+                }
+
+                _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.AutoStopTriggered));
+                // Fire and return. Awaiting here would hold this loop open across the whole
+                // transcription, and the loop is cancelled as part of ending the recording.
+                _ = HandlePushToTalkAsync(PushToTalkSignal.Released);
+                return;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The recording ended some other way, which is the ordinary case.
+        }
+    }
+
+    private async Task StopAutoStopWatchAsync()
+    {
+        var cancellation = _autoStopCancellation;
+        var loop = _autoStopLoop;
+        _autoStopCancellation = null;
+        _autoStopLoop = null;
+        if (cancellation is null)
+        {
+            return;
+        }
+
+        await cancellation.CancelAsync().ConfigureAwait(false);
+        if (loop is not null)
+        {
+            try
+            {
+                await loop.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        cancellation.Dispose();
     }
 
     private async Task StartLivePreviewAsync()

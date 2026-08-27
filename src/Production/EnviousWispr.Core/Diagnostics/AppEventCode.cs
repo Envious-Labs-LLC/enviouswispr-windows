@@ -72,6 +72,8 @@ public enum AppEventCode
     /// belongs to, and a sum silently reports zero for everything BETWEEN the stages, which is
     /// where an unexplained wait would hide. This is measured by one stopwatch spanning the path.
     /// </remarks>
+    /// <summary>The watcher ended a recording because the speaker had stopped.</summary>
+    AutoStopTriggered,
     DictationCompleted,
     UnhandledFailure,
 }
