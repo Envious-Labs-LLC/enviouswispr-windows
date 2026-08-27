@@ -13,6 +13,9 @@ using EnviousWispr.Core.History;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Runtime;
+using Microsoft.UI.Composition.SystemBackdrops;
+using Microsoft.UI.Xaml.Media.Animation;
+using Windows.UI.ViewManagement;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.LLM;
 using Microsoft.UI.Windowing;
@@ -56,6 +59,7 @@ public sealed class SelectableChoiceOption : INotifyPropertyChanged
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
+
 
     public string Name { get; }
 
@@ -104,6 +108,18 @@ public sealed partial class MainWindow : Window, IDisposable
             choices[i].IsSelected = i == index;
         }
     }
+
+    /// <summary>
+    /// The system's "show animations" setting, read once. A user who turned animations off said so
+    /// for every app, and re-reading it on every navigation would cost a COM call per page change.
+    /// </summary>
+    private readonly bool _animationsEnabled = new UISettings().AnimationsEnabled;
+
+    /// <summary>How far a page rises as it arrives, in device-independent pixels.</summary>
+    private const double PageEntranceOffsetPixels = 12;
+
+    /// <summary>Fluent's short-duration band. Long enough to read as motion, short enough to feel instant.</summary>
+    private const double PageEntranceMilliseconds = 180;
 
     private static readonly SelectableChoiceOption[] FinalEngineChoices =
     [
@@ -259,6 +275,7 @@ public sealed partial class MainWindow : Window, IDisposable
             settings.Preferences.PillDesignWithWords);
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
+        TryUseMicaBackdrop();
         ConfigureMinimumWindowWidth();
         ResizeToDefault();
         AppWindow.SetIcon(Path.Combine(
@@ -2072,7 +2089,31 @@ public sealed partial class MainWindow : Window, IDisposable
             ConfigureHelpPage(tag);
             ScrollPageToTop(HelpPage);
         }
+
+        // Whichever page is now visible is the one that arrived. Reading it back from the pages
+        // themselves rather than re-deriving it from the tag means a page added later cannot be
+        // left out of the animation while still being reachable from the sidebar.
+        foreach (var page in Pages())
+        {
+            if (page.Visibility == Visibility.Visible)
+            {
+                PlayPageEntrance(page);
+                break;
+            }
+        }
     }
+
+    /// <summary>Every page the sidebar can reach, in the order they are declared.</summary>
+    private ScrollViewer[] Pages() =>
+    [
+        HomePage,
+        HistoryPage,
+        WhatsNewPage,
+        DictionaryPage,
+        SnippetsPage,
+        SettingsPage,
+        HelpPage,
+    ];
 
     private void ConfigureSettingsPage(string tag)
     {
@@ -2315,6 +2356,77 @@ public sealed partial class MainWindow : Window, IDisposable
         OperationInfoBar.Message = message;
         OperationInfoBar.Severity = severity;
         OperationInfoBar.IsOpen = true;
+    }
+
+    /// <summary>
+    /// Puts the Windows 11 material behind the two cards, in place of a flat painted canvas.
+    /// </summary>
+    /// <remarks>
+    /// Mica is the single loudest "this is a Windows 11 app" signal there is - Settings, Photos and
+    /// Terminal all sit on it - and its absence is most of why this window read as a form.
+    ///
+    /// THE ORDER IS THE WHOLE THING. The canvas brush paints OVER the material, so it has to be
+    /// cleared; but clearing it on a machine where Mica is unavailable leaves a window with no
+    /// background at all. So the brush is cleared only AFTER the backdrop is actually assigned, and
+    /// the unsupported path changes nothing and needs no fallback of its own.
+    ///
+    /// Mica follows the window content's theme, and ApplyTheme sets RequestedTheme on exactly that
+    /// element, so the light and dark materials follow the user's choice without a second switch.
+    /// </remarks>
+    private void TryUseMicaBackdrop()
+    {
+        if (!MicaController.IsSupported())
+        {
+            return;
+        }
+
+        SystemBackdrop = new MicaBackdrop { Kind = MicaKind.Base };
+        WindowRoot.Background = null;
+    }
+
+    /// <summary>
+    /// The short settle a Windows 11 page makes when it arrives, instead of a hard cut.
+    /// </summary>
+    /// <remarks>
+    /// Windows 11 apps MOVE. A page that simply appears is one of the loudest not-native signals
+    /// after a missing backdrop, and every page here was a Visibility flip.
+    ///
+    /// Hand-rolled rather than EntranceThemeTransition, and the reason is not preference: a theme
+    /// transition fires when an element is ADDED to the tree, and these pages are always in the
+    /// tree and only change Visibility, so the sanctioned transition would attach cleanly and never
+    /// play. That is the "ships and does nothing" shape, so it is written down here rather than
+    /// discovered by measuring an unchanged screen.
+    ///
+    /// Honours the system's animation setting. A user who has turned animations off has said so
+    /// once, for every app, and Fluent motion is not exempt from that.
+    /// </remarks>
+    private void PlayPageEntrance(UIElement page)
+    {
+        if (!_animationsEnabled)
+        {
+            page.Opacity = 1;
+            return;
+        }
+
+        var offset = new TranslateTransform { Y = PageEntranceOffsetPixels };
+        page.RenderTransform = offset;
+        page.Opacity = 0;
+
+        var duration = new Duration(TimeSpan.FromMilliseconds(PageEntranceMilliseconds));
+        var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+
+        var fade = new DoubleAnimation { To = 1, Duration = duration };
+        Storyboard.SetTarget(fade, page);
+        Storyboard.SetTargetProperty(fade, "Opacity");
+
+        var settle = new DoubleAnimation { To = 0, Duration = duration, EasingFunction = easing };
+        Storyboard.SetTarget(settle, offset);
+        Storyboard.SetTargetProperty(settle, "Y");
+
+        var storyboard = new Storyboard();
+        storyboard.Children.Add(fade);
+        storyboard.Children.Add(settle);
+        storyboard.Begin();
     }
 
     private void ApplyTheme(AppTheme theme) => WindowRoot.RequestedTheme = theme switch
