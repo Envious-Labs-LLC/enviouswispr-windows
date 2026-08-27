@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -1200,13 +1201,29 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         AudioDevicesChanged?.Invoke(change);
+        // An async callback handed to TryEnqueue is an async void: a throw inside it is
+        // UNOBSERVED and takes the process down. This one fires on a device change - a headset
+        // plugged in, a dock disconnected - which is an ordinary thing to do while the app is
+        // sitting in the tray, and both halves can fail (device enumeration, and touching UI on a
+        // window that may be closing). Same shape as the navigation crash: a callback that runs
+        // later, against a world that has moved on.
         DispatcherQueue.TryEnqueue(async () =>
         {
-            await LoadMicrophonesAsync().ConfigureAwait(true);
-            ShowMessage(
-                "Microphone devices updated",
-                "EnviousWispr refreshed the active recording-device list. A missing preferred microphone falls back to the Windows default.",
-                InfoBarSeverity.Informational);
+            try
+            {
+                await LoadMicrophonesAsync().ConfigureAwait(true);
+                ShowMessage(
+                    "Microphone devices updated",
+                    "EnviousWispr refreshed the active recording-device list. A missing preferred microphone falls back to the Windows default.",
+                    InfoBarSeverity.Informational);
+            }
+            catch (Exception)
+            {
+                // Failing to REFRESH a device list, or to announce that it changed, is a missed
+                // convenience. Letting it escape is a dead app and a lost dictation. The user's
+                // next recording re-reads the device list anyway, so there is nothing here worth
+                // the process.
+            }
         });
     }
 
@@ -1626,7 +1643,7 @@ public sealed partial class MainWindow : Window, IDisposable
         else if (helpPage)
         {
             ConfigureHelpPage(tag);
-            ScrollSectionIntoView(HelpPage, section: null);
+            ScrollPageToTop(HelpPage);
         }
     }
 
@@ -1727,7 +1744,7 @@ public sealed partial class MainWindow : Window, IDisposable
             ? Visibility.Visible
             : Visibility.Collapsed;
 
-        ScrollSectionIntoView(SettingsPage, section: null);
+        ScrollPageToTop(SettingsPage);
     }
 
     /// <summary>
@@ -1828,24 +1845,51 @@ public sealed partial class MainWindow : Window, IDisposable
         _ => null,
     };
 
-    private void ScrollSectionIntoView(ScrollViewer page, FrameworkElement? section)
+    /// <summary>
+    /// Returns a page to the top after navigation. Best effort: never worth a crash.
+    /// </summary>
+    /// <remarks>
+    /// This CRASHED THE APP, and the crash was mine. It used to compute a section's offset and
+    /// call <c>UpdateLayout()</c> first to make that offset valid. Filtering the Help page removed
+    /// the last caller that passed a section, so the offset branch became dead - and I left the
+    /// <c>UpdateLayout()</c> behind serving nothing but the dead code.
+    ///
+    /// The callback is queued, so navigation can move on before it runs. When it did,
+    /// <c>UpdateLayout()</c> threw <c>E_UNEXPECTED</c> on a page no longer in the visual tree,
+    /// nothing caught it inside a DispatcherQueue callback, and the process died. Found by driving
+    /// rapid page changes; at human clicking speed it would present as "the app randomly closed".
+    ///
+    /// So the fix is a deletion rather than a guard: nothing here needs a forced layout pass any
+    /// more. The remaining guard and catch cover the same window for <c>ChangeView</c>, which can
+    /// reach a torn-down page for exactly the same reason. Failing to scroll is invisible; failing
+    /// loudly costs the user their session.
+    /// </remarks>
+    private static void ScrollPageToTop(ScrollViewer page)
     {
-        DispatcherQueue.TryEnqueue(() =>
+        page.DispatcherQueue.TryEnqueue(() =>
         {
-            page.UpdateLayout();
-            if (section is null)
+            if (page.XamlRoot is null)
             {
-                page.ChangeView(null, 0, null, disableAnimation: true);
                 return;
             }
 
-            if (page.Content is UIElement content)
+            try
             {
-                var offset = section
-                    .TransformToVisual(content)
-                    .TransformPoint(new Windows.Foundation.Point(0, 0))
-                    .Y;
-                page.ChangeView(null, Math.Max(0, offset), null, disableAnimation: true);
+                page.ChangeView(null, 0, null, disableAnimation: true);
+            }
+            catch (COMException failure)
+            {
+                // The page went away between the check above and this call. Scrolling a page the
+                // user has already navigated off is a no-op worth exactly nothing, so swallowing
+                // is the correct outcome and not a hidden failure.
+                //
+                // Stated plainly because the next reader will otherwise assume a trace exists:
+                // Debug.WriteLine is compiled OUT of release builds, so this leaves a breadcrumb
+                // for someone reproducing the crash under a debugger and NOTHING in a shipped
+                // app. There is no logger on this window to route it to. If this ever needs to be
+                // visible in the field it belongs in the privacy-safe diagnostics record - the
+                // event is content-free, so that route is open - not in a wider catch here.
+                Debug.WriteLine($"ScrollPageToTop: page went away before ChangeView ({failure.HResult:X8}).");
             }
         });
     }
