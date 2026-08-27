@@ -4,14 +4,12 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="EnviousWispr">
-    <Window.SystemBackdrop><MicaBackdrop /></Window.SystemBackdrop>
-
     <Grid x:Name="WindowRoot" Background="{ThemeResource BrandWindowBgBrush}">
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
         <TitleBar x:Name="AppTitleBar" AutomationProperties.Name="EnviousWispr window title" IsTabStop="False" Title="EnviousWispr" Subtitle="Private voice dictation for Windows">
-            <TitleBar.IconSource>
-                <ImageIconSource ImageSource="Assets/Brand/EnviousWisprAppIcon.png" />
-            </TitleBar.IconSource>
+            <TitleBar.LeftHeader>
+                <Image Width="31" Height="24" AutomationProperties.AccessibilityView="Raw" Source="Assets/Brand/EnviousWisprMark.svg" VerticalAlignment="Center" />
+            </TitleBar.LeftHeader>
         </TitleBar>
 
         <Grid Grid.Row="1">
@@ -21,14 +19,14 @@
                     <StackPanel Margin="0,28,48,0" Spacing="18">
                         <Image Width="72" Height="72" AutomationProperties.AccessibilityView="Raw" HorizontalAlignment="Left" Source="Assets/Brand/EnviousWisprMark.svg" />
                         <TextBlock x:Uid="OnboardingTitle" Style="{StaticResource BrandPageTitleStyle}" Text="Your voice, instantly captured." />
-                        <TextBlock FontSize="18" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Speak naturally in any Windows app. EnviousWispr transcribes locally, cleans the result, and delivers it back where you started." TextWrapping="Wrap" />
+                        <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Speak naturally in any Windows app. EnviousWispr transcribes locally, cleans the result, and delivers it back where you started." TextWrapping="Wrap" />
                         <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}">
                             <StackPanel Spacing="12">
                                 <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Private by default" />
                                 <TextBlock Text="Audio and transcription stay on this PC. Optional cloud polish receives text only, goes directly to your chosen provider, and is off until you enable it." TextWrapping="Wrap" />
                             </StackPanel>
                         </Border>
-                        <TextBlock FontSize="16" FontWeight="SemiBold" Text="How to dictate" />
+                        <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="How to dictate" />
                         <TextBlock Text="1. Put the cursor where your words should go.&#x0a;2. Hold the configured key while you speak.&#x0a;3. Release to transcribe and insert. Press Escape to cancel safely." TextWrapping="Wrap" />
                     </StackPanel>
                     <Border Grid.Column="1" Padding="20" Style="{StaticResource BrandSectionCardStyle}">
@@ -39,32 +37,52 @@
                             <Grid ColumnSpacing="12">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="32" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                 <FontIcon Glyph="&#xE720;" Foreground="{ThemeResource BrandAccentBrush}" />
-                                <StackPanel Grid.Column="1" Spacing="6"><TextBlock FontWeight="SemiBold" Text="Microphone" /><TextBlock x:Name="OnboardingMicrophoneText" Text="Checking Windows audio devices…" TextWrapping="Wrap" /><Button AutomationProperties.HelpText="Opens the Windows microphone privacy controls." Click="OpenMicrophonePrivacyButton_Click" Content="Open microphone privacy settings" HorizontalAlignment="Left" TabIndex="10" /></StackPanel>
+                                <StackPanel Grid.Column="1" Spacing="6"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Microphone" /><TextBlock x:Name="OnboardingMicrophoneText" Text="Checking Windows audio devices…" TextWrapping="Wrap" /><Button AutomationProperties.HelpText="Opens the Windows microphone privacy controls." Click="OpenMicrophonePrivacyButton_Click" Content="Open microphone privacy settings" HorizontalAlignment="Left" TabIndex="10" /></StackPanel>
                             </Grid>
                             <Grid ColumnSpacing="12">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="32" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                 <FontIcon Glyph="&#xE9D9;" Foreground="{ThemeResource BrandAccentBrush}" />
-                                <StackPanel Grid.Column="1" Spacing="2"><TextBlock FontWeight="SemiBold" Text="Local transcription" /><TextBlock x:Name="OnboardingModelText" Text="Checking installed model packs…" TextWrapping="Wrap" /></StackPanel>
+                                <StackPanel Grid.Column="1" Spacing="2"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Local transcription" /><TextBlock x:Name="OnboardingModelText" Text="Checking installed model packs…" TextWrapping="Wrap" /></StackPanel>
                             </Grid>
                             <Grid ColumnSpacing="12">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="32" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                 <FontIcon Glyph="&#xE765;" Foreground="{ThemeResource BrandAccentBrush}" />
-                                <StackPanel Grid.Column="1" Spacing="2"><TextBlock FontWeight="SemiBold" Text="Push-to-talk" /><TextBlock x:Name="OnboardingHotkeyText" Text="F8 will start and stop dictation." TextWrapping="Wrap" /></StackPanel>
+                                <StackPanel Grid.Column="1" Spacing="2"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Push-to-talk" /><TextBlock x:Name="OnboardingHotkeyText" Text="F8 will start and stop dictation." TextWrapping="Wrap" /></StackPanel>
                             </Grid>
                             <Button x:Name="FinishOnboardingButton" x:Uid="FinishOnboardingButton" AccessKey="G" AutomationProperties.HelpText="Completes setup and opens the EnviousWispr home page. Press Control plus Enter from anywhere on this screen." Click="FinishOnboardingButton_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Style="{StaticResource AccentButtonStyle}" Content="Get started" TabIndex="0">
                                 <Button.KeyboardAccelerators><KeyboardAccelerator Key="Enter" Modifiers="Control" /></Button.KeyboardAccelerators>
                             </Button>
-                            <TextBlock FontSize="12" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="You can change every choice later in Settings. No account is required." TextAlignment="Center" TextWrapping="Wrap" />
+                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="You can change every choice later in Settings. No account is required." TextAlignment="Center" TextWrapping="Wrap" />
                         </StackPanel>
                     </Border>
                 </Grid>
             </ScrollViewer>
 
-            <NavigationView x:Name="ProductNavigation" AutomationProperties.Name="EnviousWispr navigation" IsBackButtonVisible="Collapsed" IsSettingsVisible="False" IsTitleBarAutoPaddingEnabled="False" PaneDisplayMode="Auto" SelectionChanged="ProductNavigation_SelectionChanged">
+            <Border
+                Width="{Binding OpenPaneLength, ElementName=ProductNavigation}"
+                Margin="14"
+                HorizontalAlignment="Left"
+                Background="{ThemeResource BrandSidebarBgBrush}"
+                IsHitTestVisible="False"
+                Style="{StaticResource BrandWindowCardStyle}"
+                Visibility="{Binding Visibility, ElementName=ProductNavigation}" />
+
+            <NavigationView x:Name="ProductNavigation" AutomationProperties.Name="EnviousWispr navigation" IsBackButtonVisible="Collapsed" IsPaneToggleButtonVisible="False" IsSettingsVisible="False" IsTitleBarAutoPaddingEnabled="False" Margin="14" OpenPaneLength="320" PaneDisplayMode="Left" SelectionChanged="ProductNavigation_SelectionChanged">
+                <NavigationView.Resources>
+                    <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="{ThemeResource BrandSidebarBgColor}" Opacity="0" />
+                    <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="{ThemeResource BrandSidebarBgColor}" Opacity="0" />
+                    <SolidColorBrush x:Key="NavigationViewContentBackground" Color="{ThemeResource BrandPageBgColor}" />
+                    <SolidColorBrush x:Key="NavigationViewContentGridBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+                    <Thickness x:Key="NavigationViewBorderThickness">0</Thickness>
+                    <Thickness x:Key="NavigationViewContentGridBorderThickness">1</Thickness>
+                    <CornerRadius x:Key="NavigationViewContentGridCornerRadius">18</CornerRadius>
+                    <Thickness x:Key="NavigationViewContentMargin">14,0,0,0</Thickness>
+                    <Thickness x:Key="NavigationViewPaneContentGridMargin">0</Thickness>
+                </NavigationView.Resources>
                 <NavigationView.PaneHeader>
                     <StackPanel Margin="0,8,0,12" Orientation="Horizontal" Spacing="10">
                         <Image Width="34" Height="34" AutomationProperties.AccessibilityView="Raw" Source="Assets/Brand/EnviousWisprMark.svg" />
-                        <TextBlock FontSize="17" FontWeight="SemiBold" Text="EnviousWispr" VerticalAlignment="Center" />
+                        <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="EnviousWispr" VerticalAlignment="Center" />
                     </StackPanel>
                 </NavigationView.PaneHeader>
                 <NavigationView.MenuItems>
@@ -105,10 +123,10 @@
                             <Grid ColumnSpacing="14" RowSpacing="14">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}"><StackPanel Spacing="7"><TextBlock Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Push-to-talk" /><TextBlock x:Name="HotkeyStatusText" FontSize="18" FontWeight="SemiBold" Text="Starting…" TextWrapping="Wrap" /></StackPanel></Border>
-                                <Border Grid.Column="1" Padding="20" Style="{StaticResource BrandSectionCardStyle}"><StackPanel Spacing="7"><TextBlock Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Session" /><TextBlock x:Name="SessionStatusText" AutomationProperties.LiveSetting="Polite" FontSize="18" FontWeight="SemiBold" Text="Idle" TextWrapping="Wrap" /><TextBlock x:Name="LivePreviewText" AutomationProperties.Name="Live transcription preview" Foreground="{ThemeResource BrandTextSecondaryBrush}" MaxLines="3" TextAlignment="DetectFromContent" TextWrapping="Wrap" Visibility="Collapsed" /></StackPanel></Border>
-                                <Border Grid.Row="1" Padding="20" Style="{StaticResource BrandSectionCardStyle}"><StackPanel Spacing="7"><TextBlock Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Transcription engine" /><TextBlock x:Name="EngineReadinessText" FontWeight="SemiBold" Text="Checking…" TextWrapping="Wrap" /></StackPanel></Border>
-                                <Border Grid.Row="1" Grid.Column="1" Padding="20" Style="{StaticResource BrandSectionCardStyle}"><StackPanel Spacing="7"><TextBlock Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Microphone" /><TextBlock x:Name="MicrophoneReadinessText" FontWeight="SemiBold" Text="Checking…" TextWrapping="Wrap" /></StackPanel></Border>
+                                <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}"><StackPanel Spacing="7"><TextBlock Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Push-to-talk" /><TextBlock x:Name="HotkeyStatusText" Style="{StaticResource BrandRowTitleStyle}" Text="Starting…" TextWrapping="Wrap" /></StackPanel></Border>
+                                <Border Grid.Column="1" Padding="20" Style="{StaticResource BrandSectionCardStyle}"><StackPanel Spacing="7"><TextBlock Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Session" /><TextBlock x:Name="SessionStatusText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandRowTitleStyle}" Text="Idle" TextWrapping="Wrap" /><TextBlock x:Name="LivePreviewText" AutomationProperties.Name="Live transcription preview" Foreground="{ThemeResource BrandTextSecondaryBrush}" MaxLines="3" TextAlignment="DetectFromContent" TextWrapping="Wrap" Visibility="Collapsed" /></StackPanel></Border>
+                                <Border Grid.Row="1" Padding="20" Style="{StaticResource BrandSectionCardStyle}"><StackPanel Spacing="7"><TextBlock Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Transcription engine" /><TextBlock x:Name="EngineReadinessText" Style="{StaticResource BrandRowLabelStyle}" Text="Checking…" TextWrapping="Wrap" /></StackPanel></Border>
+                                <Border Grid.Row="1" Grid.Column="1" Padding="20" Style="{StaticResource BrandSectionCardStyle}"><StackPanel Spacing="7"><TextBlock Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Microphone" /><TextBlock x:Name="MicrophoneReadinessText" Style="{StaticResource BrandRowLabelStyle}" Text="Checking…" TextWrapping="Wrap" /></StackPanel></Border>
                             </Grid>
                             <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}"><Grid ColumnSpacing="20"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel Spacing="5"><TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Recent dictations" /><TextBlock x:Name="HistorySummaryText" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Loading local history…" TextWrapping="Wrap" /></StackPanel><Button Grid.Column="1" Click="OpenHistoryButton_Click" Content="Open history" VerticalAlignment="Center" /></Grid></Border>
                         </StackPanel>
@@ -128,7 +146,7 @@
                             <TextBlock Style="{StaticResource BrandPageTitleStyle}" Text="History" />
                             <TextBlock Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Past dictations stay in a private file on this PC. Search, copy, remove, or turn history off at any time." TextWrapping="Wrap" />
                             <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBox x:Name="HistorySearchBox" AutomationProperties.Name="Search dictation history" PlaceholderText="Search local history" TextChanged="HistorySearchBox_TextChanged" /><Button Grid.Column="1" Click="CopyHistoryButton_Click" Content="Copy selected" /><Button Grid.Column="2" Click="KeepHistoryButton_Click" Content="Keep selected" /><Button Grid.Column="3" Click="DeleteHistoryButton_Click" Content="Delete selected" /></Grid>
-                            <ListView x:Name="HistoryList" AutomationProperties.Name="Local dictation history" SelectionMode="Single"><ListView.ItemTemplate><DataTemplate><StackPanel Padding="6" Spacing="5"><TextBlock FontWeight="SemiBold" Text="{Binding CreatedDisplay}" /><TextBlock MaxLines="4" Text="{Binding Text}" TextAlignment="DetectFromContent" TextWrapping="Wrap" /><TextBlock Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="{Binding Details}" /></StackPanel></DataTemplate></ListView.ItemTemplate></ListView>
+                            <ListView x:Name="HistoryList" AutomationProperties.Name="Local dictation history" SelectionMode="Single"><ListView.ItemTemplate><DataTemplate><StackPanel Padding="6" Spacing="5"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding CreatedDisplay}" /><TextBlock MaxLines="4" Text="{Binding Text}" TextAlignment="DetectFromContent" TextWrapping="Wrap" /><TextBlock Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="{Binding Details}" /></StackPanel></DataTemplate></ListView.ItemTemplate></ListView>
                             <Button HorizontalAlignment="Right" Click="ClearHistoryButton_Click" Content="Delete all history" />
                         </StackPanel>
                     </ScrollViewer>
@@ -138,7 +156,7 @@
                             <TextBlock Style="{StaticResource BrandPageTitleStyle}" Text="Your Words" />
                             <TextBlock Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Teach deterministic word correction how a spoken form should be written. These entries stay local and are included in portable profile exports." TextWrapping="Wrap" />
                             <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}"><Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBox x:Name="SpokenFormBox" Header="When I say" MaxLength="256" PlaceholderText="envy wisper" /><TextBox x:Name="ReplacementBox" Grid.Column="1" Header="Write" MaxLength="256" PlaceholderText="EnviousWispr" /><Button Grid.Column="2" Margin="0,28,0,0" Click="AddWordButton_Click" Content="Add word" /></Grid></Border>
-                            <ListView x:Name="DictionaryList" AutomationProperties.Name="Custom dictionary entries" SelectionMode="Single"><ListView.ItemTemplate><DataTemplate><Grid Padding="6" ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="{Binding SpokenForm}" TextAlignment="DetectFromContent" TextWrapping="Wrap" /><TextBlock Grid.Column="1" FontWeight="SemiBold" Text="{Binding Replacement}" TextAlignment="DetectFromContent" TextWrapping="Wrap" /></Grid></DataTemplate></ListView.ItemTemplate></ListView>
+                            <ListView x:Name="DictionaryList" AutomationProperties.Name="Custom dictionary entries" SelectionMode="Single"><ListView.ItemTemplate><DataTemplate><Grid Padding="6" ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="{Binding SpokenForm}" TextAlignment="DetectFromContent" TextWrapping="Wrap" /><TextBlock Grid.Column="1" Style="{StaticResource BrandRowLabelStyle}" Text="{Binding Replacement}" TextAlignment="DetectFromContent" TextWrapping="Wrap" /></Grid></DataTemplate></ListView.ItemTemplate></ListView>
                             <Button HorizontalAlignment="Right" Click="RemoveWordButton_Click" Content="Remove selected" />
                         </StackPanel>
                     </ScrollViewer>
@@ -148,7 +166,7 @@
                             <TextBlock Style="{StaticResource BrandPageTitleStyle}" Text="Snippets" />
                             <TextBlock Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Keep reusable text beside your dictation settings. Snippets stay local and are included in portable profile exports." TextWrapping="Wrap" />
                             <Border Padding="20" Style="{StaticResource BrandSectionCardStyle}"><StackPanel Spacing="10"><TextBox x:Name="SnippetNameBox" Header="Name" MaxLength="128" PlaceholderText="Email sign-off" /><TextBox x:Name="SnippetBodyBox" AcceptsReturn="True" Header="Text" MaxLength="10000" MinHeight="100" PlaceholderText="Kind regards," TextWrapping="Wrap" /><Button HorizontalAlignment="Right" Click="AddSnippetButton_Click" Content="Add snippet" /></StackPanel></Border>
-                            <ListView x:Name="SnippetList" AutomationProperties.Name="Saved snippets" SelectionMode="Single"><ListView.ItemTemplate><DataTemplate><StackPanel Padding="6" Spacing="4"><TextBlock FontWeight="SemiBold" Text="{Binding Name}" TextAlignment="DetectFromContent" /><TextBlock MaxLines="4" Text="{Binding Body}" TextAlignment="DetectFromContent" TextWrapping="Wrap" /></StackPanel></DataTemplate></ListView.ItemTemplate></ListView>
+                            <ListView x:Name="SnippetList" AutomationProperties.Name="Saved snippets" SelectionMode="Single"><ListView.ItemTemplate><DataTemplate><StackPanel Padding="6" Spacing="4"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding Name}" TextAlignment="DetectFromContent" /><TextBlock MaxLines="4" Text="{Binding Body}" TextAlignment="DetectFromContent" TextWrapping="Wrap" /></StackPanel></DataTemplate></ListView.ItemTemplate></ListView>
                             <Button HorizontalAlignment="Right" Click="RemoveSnippetButton_Click" Content="Remove selected" />
                         </StackPanel>
                     </ScrollViewer>
@@ -181,23 +199,23 @@
                                     <ComboBox x:Name="ThemeComboBox" Header="Theme" HorizontalAlignment="Stretch" SelectionChanged="ThemeComboBox_SelectionChanged"><x:String>Use Windows setting</x:String><x:String>Light</x:String><x:String>Dark</x:String></ComboBox>
                                     <ToggleSwitch x:Name="LivePreviewToggle" AutomationProperties.HelpText="Shows a display-only rough transcript while recording. Final delivered text still comes from the selected final transcription engine." Header="Show Live Preview while speaking" Toggled="LivePreviewToggle_Toggled" />
                                     <ComboBox x:Name="OverlayPositionComboBox" Header="Recording pill position" HorizontalAlignment="Stretch"><x:String>Top</x:String><x:String>Bottom</x:String></ComboBox>
-                                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="Recording Pill" />
+                                    <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Recording Pill" />
                                     <TextBlock x:Name="WithoutWordsPillHeading" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Live Preview off · In use" />
                                     <Grid ColumnSpacing="12">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                         <ToggleButton x:Name="CapsulePillButton" AutomationProperties.Name="Capsule. A small capsule with the rainbow mark and a timer." Click="CapsulePillButton_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center">
                                             <StackPanel Spacing="8">
-                                                <TextBlock FontWeight="SemiBold" Text="Capsule" TextAlignment="Center" />
+                                                <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Capsule" TextAlignment="Center" />
                                                 <Border Width="185" Height="58" Background="{ThemeResource BrandSidebarBgBrush}" CornerRadius="29" Padding="16,10">
-                                                    <Grid ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Ellipse Width="27" Height="16"><Ellipse.Fill><LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5"><GradientStop Color="{ThemeResource BrandSpectrumVioletColor}" Offset="0" /><GradientStop Color="{ThemeResource BrandSpectrumBlueColor}" Offset="0.35" /><GradientStop Color="{ThemeResource BrandSpectrumSpringColor}" Offset="0.7" /><GradientStop Color="{ThemeResource BrandSpectrumGoldColor}" Offset="1" /></LinearGradientBrush></Ellipse.Fill></Ellipse><TextBlock Grid.Column="1" Foreground="{ThemeResource BrandTextPrimaryBrush}" FontFamily="Consolas" FontWeight="SemiBold" Text="00:12" VerticalAlignment="Center" /></Grid>
+                                                    <Grid ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Ellipse Width="27" Height="16"><Ellipse.Fill><LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5"><GradientStop Color="{ThemeResource BrandSpectrumVioletColor}" Offset="0" /><GradientStop Color="{ThemeResource BrandSpectrumBlueColor}" Offset="0.35" /><GradientStop Color="{ThemeResource BrandSpectrumSpringColor}" Offset="0.7" /><GradientStop Color="{ThemeResource BrandSpectrumGoldColor}" Offset="1" /></LinearGradientBrush></Ellipse.Fill></Ellipse><TextBlock Grid.Column="1" Foreground="{ThemeResource BrandTextPrimaryBrush}" FontFamily="Consolas" Style="{StaticResource BrandRowLabelStyle}" Text="00:12" VerticalAlignment="Center" /></Grid>
                                                 </Border>
                                             </StackPanel>
                                         </ToggleButton>
                                         <ToggleButton x:Name="LevelRailPillButton" AutomationProperties.Name="Level Rail. A wider capsule with a live rainbow meter beside the timer." Click="LevelRailPillButton_Click" Grid.Column="1" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center">
                                             <StackPanel Spacing="8">
-                                                <TextBlock FontWeight="SemiBold" Text="Level Rail" TextAlignment="Center" />
+                                                <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Level Rail" TextAlignment="Center" />
                                                 <Border Width="288" Height="58" Background="{ThemeResource BrandSidebarBgBrush}" CornerRadius="29" Padding="16,10">
-                                                    <Grid ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Foreground="{ThemeResource BrandTextPrimaryBrush}" FontFamily="Consolas" FontWeight="SemiBold" Text="00:12" VerticalAlignment="Center" /><ProgressBar Grid.Column="1" Foreground="{ThemeResource BrandSpectrumRoyalBrush}" Maximum="1" Value="0.62" VerticalAlignment="Center" /></Grid>
+                                                    <Grid ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Foreground="{ThemeResource BrandTextPrimaryBrush}" FontFamily="Consolas" Style="{StaticResource BrandRowLabelStyle}" Text="00:12" VerticalAlignment="Center" /><ProgressBar Grid.Column="1" Foreground="{ThemeResource BrandSpectrumRoyalBrush}" Maximum="1" Value="0.62" VerticalAlignment="Center" /></Grid>
                                                 </Border>
                                             </StackPanel>
                                         </ToggleButton>
@@ -205,9 +223,9 @@
                                     <TextBlock x:Name="WithWordsPillHeading" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Live Preview on" />
                                     <ToggleButton x:Name="ReadingWellPillButton" AutomationProperties.Name="Reading Well. A wide panel that shows your words as you speak." Click="ReadingWellPillButton_Click" HorizontalAlignment="Left" HorizontalContentAlignment="Center">
                                         <StackPanel Spacing="8">
-                                            <TextBlock FontWeight="SemiBold" Text="Reading Well" TextAlignment="Center" />
+                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Reading Well" TextAlignment="Center" />
                                             <Border Width="400" MinHeight="96" Background="{ThemeResource BrandSidebarBgBrush}" CornerRadius="18" Padding="14">
-                                                <StackPanel Spacing="9"><Grid><TextBlock Foreground="{ThemeResource BrandTextPrimaryBrush}" FontWeight="SemiBold" Text="Listening" /><TextBlock HorizontalAlignment="Right" Foreground="{ThemeResource BrandTextSecondaryBrush}" FontFamily="Consolas" Text="00:12" /></Grid><Border Background="{ThemeResource BrandCardBgBrush}" CornerRadius="10" Padding="12"><TextBlock Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="the quarterly numbers came in" TextWrapping="Wrap" /></Border></StackPanel>
+                                                <StackPanel Spacing="9"><Grid><TextBlock Foreground="{ThemeResource BrandTextPrimaryBrush}" Style="{StaticResource BrandRowLabelStyle}" Text="Listening" /><TextBlock HorizontalAlignment="Right" Foreground="{ThemeResource BrandTextSecondaryBrush}" FontFamily="Consolas" Text="00:12" /></Grid><Border Background="{ThemeResource BrandCardBgBrush}" CornerRadius="10" Padding="12"><TextBlock Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="the quarterly numbers came in" TextWrapping="Wrap" /></Border></StackPanel>
                                             </Border>
                                         </StackPanel>
                                     </ToggleButton>
