@@ -103,11 +103,6 @@ if (failureMode != JourneyFailureMode.None && englishParakeet)
     throw new ArgumentException("Failure journeys use the fixed reviewed Whisper fixture configuration.");
 }
 var appExecutableArgument = ArgumentValue(args, "--app-executable");
-if (appExecutableArgument is not null && !manualMicrophone)
-{
-    throw new ArgumentException(
-        "--app-executable is limited to the guided --manual-microphone acceptance journey.");
-}
 if (appExecutableArgument is not null &&
     (!Path.IsPathFullyQualified(appExecutableArgument) ||
      !string.Equals(
@@ -132,6 +127,9 @@ var appExecutable = appExecutableArgument is null
         "win-x64",
         "EnviousWispr.App.exe")
     : Path.GetFullPath(appExecutableArgument);
+var appSource = appExecutableArgument is null
+    ? "RepositoryReleaseBuild"
+    : "ExplicitCandidateExecutable";
 var targetExecutable = Path.Combine(
     repositoryRoot,
     "tools",
@@ -173,6 +171,9 @@ var fixturePath = Path.Combine(
     fixtureFileName);
 
 RequireFile(appExecutable, "Build the Release/x64 production WinUI app before journey UAT.");
+RequireFile(
+    Path.Combine(Path.GetDirectoryName(appExecutable)!, "EnviousWispr.RuntimeWorker.exe"),
+    "The selected production app directory is missing its runtime worker executable.");
 RequireFile(targetExecutable, "Build the controlled delivery target before journey UAT.");
 RequireFile(fixturePath, "The reviewed public fixture is missing.");
 RequireReviewedFixture(fixturePath, fixtureHash);
@@ -467,6 +468,7 @@ try
                     : "reviewed-fixture",
             appVersion,
             appSha256,
+            appSource,
             engine = engineName,
             language,
             acousticProbe,
@@ -572,6 +574,7 @@ try
         elapsedMilliseconds = timer.ElapsedMilliseconds,
         appVersion,
         appSha256,
+        appSource,
         windowsVersion = Environment.OSVersion.Version.ToString(),
         architecture = hardware.Architecture.ToString(),
         engine = engineName,
