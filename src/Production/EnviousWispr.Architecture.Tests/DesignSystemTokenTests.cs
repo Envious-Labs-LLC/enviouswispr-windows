@@ -673,13 +673,16 @@ public sealed partial class DesignSystemTokenTests
             // moved nothing. Both properties, or neither.
             Assert.Equal("Once", (string?)list.Attribute("TabFocusNavigation"));
 
-            // Arrow movement is supplied BY HAND, not by a framework property. Two properties
-            // were tried and both were verified inert on the running app: TabFocusNavigation
-            // alone gives a tab stop with nothing to move within, and XYFocusKeyboardNavigation
-            // governs directional/gamepad navigation rather than arrow keys inside a radio group.
-            // A plain ItemsControl has no such key handling, so the handler is the mechanism and
-            // its absence is the regression.
-            Assert.Equal("ChoiceListKeyDown", (string?)list.Attribute("KeyDown"));
+            // Arrow movement is supplied BY HAND and subscribed IN CODE, and the markup must NOT
+            // carry a KeyDown attribute. Three mechanisms were tried and all three were verified
+            // inert or partial on the running app: TabFocusNavigation alone gives a tab stop with
+            // nothing to move within; XYFocusKeyboardNavigation governs directional/gamepad
+            // navigation, not arrow keys in a radio group; and a KeyDown="" attribute subscribes
+            // with handledEventsToo:false, so it stops firing the moment focus lands on a card,
+            // because a focused RadioButton marks the arrow handled first. Since the handler's
+            // last act is to focus the newly selected card, the attribute form defeats itself
+            // after exactly one press.
+            Assert.Null((string?)list.Attribute("KeyDown"));
 
             var orientation = (string?)panel[0].Attribute("Orientation");
             Assert.True(
@@ -1223,6 +1226,40 @@ public sealed partial class DesignSystemTokenTests
                 + $"  pill    ({real.Length} bars): {string.Join(" ", real.Select(b => b.Height))}\n"
                 + $"  preview ({previewMeter.Length} bars): {string.Join(" ", previewMeter.Select(b => b.Height))}\n"
                 + "The preview is the only view of this design a user gets before choosing it.");
+    }
+
+    /// <summary>
+    /// The arrow-key handler is subscribed so that it still fires once a card has focus.
+    /// </summary>
+    /// <remarks>
+    /// The markup half of this claim lives in EveryChoiceListIsOneFullWidthColumn, which requires
+    /// the absence of a KeyDown attribute. This is the other half: the subscription must exist in
+    /// code AND pass handledEventsToo, because without it the handler is called exactly once per
+    /// group and then never again. Split across two assertions because either half alone is
+    /// satisfied by a build where the arrows do not work.
+    /// </remarks>
+    [Fact]
+    public void ArrowNavigationIsSubscribedSoItStillFiresOnceACardHasFocus()
+    {
+        var codeBehind = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "Production",
+            "EnviousWispr.App",
+            "MainWindow.xaml.cs"));
+
+        Assert.Contains("new KeyEventHandler(ChoiceListKeyDown)", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("handledEventsToo: true", codeBehind, StringComparison.Ordinal);
+
+        var subscription = Regex.Match(
+            codeBehind,
+            @"AddHandler\(\s*UIElement\.KeyDownEvent,\s*new KeyEventHandler\(ChoiceListKeyDown\),\s*handledEventsToo:\s*true\s*\)",
+            RegexOptions.Singleline);
+        Assert.True(
+            subscription.Success,
+            "The arrow handler is not subscribed with handledEventsToo: true. Without it a focused "
+                + "RadioButton marks the arrow handled first, the handler never sees it, and the "
+                + "arrows die after one press - which is exactly what shipped.");
     }
 
     private static XDocument LoadMainWindow() =>

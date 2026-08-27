@@ -193,6 +193,23 @@ public sealed partial class MainWindow : Window, IDisposable
         PolishProviderComboBox.ItemsSource = PolishProviderChoices;
         ThemeComboBox.ItemsSource = ThemeChoices;
         OverlayPositionComboBox.ItemsSource = OverlayPositionChoices;
+
+        // Subscribed HERE rather than with a KeyDown="" attribute in the markup, and the
+        // difference is the whole fix. A XAML attribute subscribes with handledEventsToo:false,
+        // so the handler stops being called the moment focus is on one of the cards: a focused
+        // RadioButton marks the arrow handled before it reaches the list.
+        //
+        // The handler's last act is to focus the newly selected card, so it defeated itself -
+        // exactly one arrow worked per group, then they went dead. Measured: with focus on the
+        // list, Down moved selection and focus correctly; with focus on a card, Down did nothing.
+        // Same key, same page, same handler, only the focused element differed.
+        foreach (var list in ChoiceLists())
+        {
+            list.AddHandler(
+                UIElement.KeyDownEvent,
+                new KeyEventHandler(ChoiceListKeyDown),
+                handledEventsToo: true);
+        }
         _recordingSoundCoordinator = new RecordingSoundCueCoordinator(
             _recordingSoundPlayer.Play);
         RecordingSoundComboBox.ItemsSource = RecordingSoundCatalog.Choices;
@@ -1464,6 +1481,15 @@ public sealed partial class MainWindow : Window, IDisposable
     /// RadioButtons did here before. Left and Right are included because a user reaching for
     /// either is reaching for the same thing.
     /// </remarks>
+    /// <summary>The four card-based choice lists.</summary>
+    private ItemsControl[] ChoiceLists() =>
+    [
+        EngineComboBox,
+        PolishProviderComboBox,
+        ThemeComboBox,
+        OverlayPositionComboBox,
+    ];
+
     private void ChoiceListKeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (sender is not ItemsControl list
