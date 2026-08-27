@@ -363,3 +363,53 @@ soft tint to `Transparent`** so the system's own colours decide, which is what H
 had no effect. This is the other half: a token that was never created, whose absence renders as a
 plausible default rather than as a gap.
 
+## RULE: a-gate-that-pins-the-MECHANISM-accuses-a-healthy-app
+A gate asserting HOW a state is expressed fails every time the expression legitimately changes, and
+it fails looking exactly like a real defect.
+
+Measured on one assertion, twice in one session. `SelectableCardStyleUsesRadioButtonInteractionStates`
+first required the Checked state to set `CardBorder.BorderThickness` to 2 - which was itself the
+defect, since a border's thickness is layout and selecting a card shifted the page by two pixels.
+Rewritten to read a Setter on the replacement overlay, it failed AGAIN the moment that setter became
+a Storyboard so the ring could fade in. **Both times the app was right and the gate was wrong.**
+
+**Two rewrites of one assertion is the signal, not the third.** There is no number of rewrites that
+fixes a mechanism-pinning gate; only changing WHAT IT ASSERTS does. It now reads the whole visual
+state as text and asserts the OUTCOME - the ring turns on, by whatever means.
+
+**Every control that pins current behaviour to prove an instrument works carries the same
+exposure.** The Windows session's own scroll control asserts that an unhandled arrow scrolls the
+page, so making the page not scroll would have it accusing a healthy app. There is no general fix,
+but there is a general disposal: **when such a check fires, the first question is whether the app
+CHANGED rather than whether it BROKE**, and the answer belongs in the file beside the old assertion.
+Quote what it used to claim and label it wrong, so nobody re-derives it.
+
+## FACT: mica-renders-and-only-a-21px-strip-shows-it
+The window draws a sidebar card and a content card inset 14 DIP from the window edge, so **the
+backdrop is visible only as a thin border around and between them** - about 21 physical pixels at
+150%. Everything inside is opaque card.
+
+Confirmed by measurement 2026-08-27: the three constant-colour strips are exactly 21px, and their
+colour SHIFTS with the desktop behind the window - bluer over a dark sky, warmer over lanterns,
+about R+3 G-1 B-5 between two positions. The gutter reads sd 0.207 across 3000 samples with 15
+distinct colours; a card reads sd 0.000.
+
+**The three colours that tell you what you are looking at, in dark theme:**
+
+| Reading | What it is |
+|---|---|
+| `#0D0B12` flat, sd 0 | the painted canvas - Mica is NOT rendering and the fallback kept the brush |
+| `#131019` flat, sd 0 | the page card. You sampled the wrong surface. |
+| anything varying, or changing with the desktop | Mica |
+
+**THE INSTRUMENT LESSON IS WORTH MORE THAN THE FACT.** A 3500-point sample of the page card came
+back sd 0.000, min equal to max, corners identical - clean, complete, well-formed, and about the
+wrong surface. It even had corroboration: the colour matched the pre-Mica build exactly, because
+the page card had not changed. **"sd 0.000 means painted" was never true on its own** - it means
+UNIFORM, and uniform is what any opaque surface looks like.
+
+Every other instrument failure in that session announced itself with a zero, an empty result, or a
+value that would not move. This one returned a plausible number with supporting evidence, and the
+only thing that caught it was knowing what the number SHOULD have been. **Carry the expected VALUE,
+not just the expected variance.**
+

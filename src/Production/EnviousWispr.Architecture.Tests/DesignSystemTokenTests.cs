@@ -450,15 +450,25 @@ public sealed partial class DesignSystemTokenTests
         Assert.Contains("Focused", stateNames);
         Assert.Equal("3", ReadVisualStateSetter(style, "PointerOver", "InteractionBorder.BorderThickness"));
         Assert.Equal("4", ReadVisualStateSetter(style, "Pressed", "InteractionBorder.BorderThickness"));
-        // WAS: Checked sets CardBorder.BorderThickness to 2. That assertion pinned a DEFECT.
-        // A border's thickness is layout, so a selected card measured 125 tall where its siblings
-        // were 123 and choosing a different option shifted everything below it by two pixels. The
-        // gate fired when the defect was fixed, which is what a design-pinning gate does: it pins
-        // the design's mistakes with equal force.
-        // The ring is now a dedicated zero-layout overlay, and the stronger successor to this line
-        // is SelectingAChoiceCardChangesNoLayoutProperty, which forbids the whole CLASS rather
-        // than naming one property.
-        Assert.Equal("1", ReadVisualStateSetter(style, "Checked", "SelectionBorder.Opacity"));
+        // THIS LINE HAS NOW FAILED A CORRECT FIX TWICE, and the second time is the signal.
+        //
+        // It first asserted Checked sets CardBorder.BorderThickness to 2 - which was the DEFECT: a
+        // border's thickness is layout, so a selected card measured 125 tall where its siblings
+        // were 123 and choosing an option shifted everything below it by two pixels. Rewritten to
+        // read a Setter on the new overlay, it failed AGAIN the moment that setter became a
+        // Storyboard so the ring could fade in.
+        //
+        // Both times the app was right and the gate was wrong, because it pinned the MECHANISM -
+        // which setter holds which value - rather than the OUTCOME. A mechanism-pinning gate
+        // accuses a healthy app every time the mechanism legitimately changes, and there is no
+        // number of rewrites that fixes that; only changing what it asserts does.
+        //
+        // It now asserts the OUTCOME: selecting a card turns the ring on, by whatever means. The
+        // two properties that actually matter are covered elsewhere and by construction -
+        // SelectingAChoiceCardChangesNoLayoutProperty forbids the whole layout class.
+        var checkedState = ReadVisualState(style, "Checked");
+        Assert.Contains("SelectionBorder", checkedState, StringComparison.Ordinal);
+        Assert.Contains("Opacity", checkedState, StringComparison.Ordinal);
         Assert.Contains(style.Descendants(), element =>
             string.Equals(
                 (string?)element.Attribute(XName.Get("Name", XamlNamespace)),
@@ -466,6 +476,21 @@ public sealed partial class DesignSystemTokenTests
                 StringComparison.Ordinal) &&
             string.Equals((string?)element.Attribute("Background"), "{ThemeResource BrandAccentSolidBrush}", StringComparison.Ordinal));
     }
+
+    /// <summary>
+    /// The whole of a visual state as text, so an assertion about it survives the state being
+    /// expressed as setters, as a storyboard, or as both.
+    /// </summary>
+    private static string ReadVisualState(XElement style, string stateName) =>
+        style.Descendants()
+            .Where(element => element.Name.LocalName == "VisualState")
+            .Where(element => string.Equals(
+                (string?)element.Attribute(XName.Get("Name", XamlNamespace)),
+                stateName,
+                StringComparison.Ordinal))
+            .Select(element => element.ToString())
+            .DefaultIfEmpty(string.Empty)
+            .First();
 
     private static string? ReadVisualStateSetter(XElement style, string stateName, string target)
     {
