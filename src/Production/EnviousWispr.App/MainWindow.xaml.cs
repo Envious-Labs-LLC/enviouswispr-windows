@@ -453,12 +453,17 @@ public sealed partial class MainWindow : Window, IDisposable
         var instruction = recordingMode == DictationRecordingMode.PushToTalk
             ? $"Hold {gesture} while speaking; release to finish."
             : $"Press {gesture} to start; press it again to finish.";
-        HotkeyStatusText.Text = recordingMode == DictationRecordingMode.PushToTalk
+        // One shortcut phrase, used on screen and in the tray, so the two cannot drift apart.
+        var shortcut = recordingMode == DictationRecordingMode.PushToTalk
             ? $"Hold {gesture}"
             : $"Toggle with {gesture}";
+        HotkeyStatusText.Text = shortcut;
         OnboardingHotkeyText.Text = $"{instruction} Cancel with {cancelGesture}. Add a selected word with {quickAddGesture}.";
         SessionStatusText.Text = "Idle";
-        SessionStatusChanged?.Invoke($"ready · {gesture}");
+        // A full stop rather than a middle dot. The tray tooltip is a SENTENCE - it has no
+        // layout to separate, and a screen reader either announces a middle dot literally or
+        // drops it. Text that is laid out on screen may still use one; this is not.
+        SessionStatusChanged?.Invoke($"ready. {shortcut}");
     }
 
     public void SetHotkeyUnavailable(string status)
