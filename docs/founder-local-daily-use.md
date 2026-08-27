@@ -97,6 +97,12 @@ present but all four switches disabled, the original recognized word survived an
 exact installed runs exited cleanly and left zero owned workers. Reproduction commands are in
 `tools/app-journey-uat/README.md`.
 
+Founder.11 also passed exact installed missing-key fallback for OpenAI, Anthropic, and Gemini in 4,373 ms,
+4,341 ms, and 4,393 ms. Each provider emitted its typed missing-credential result within 2–3 ms, preserved the
+deterministic transcript, delivered it natively, exited cleanly, and left zero workers. These runs used unique
+empty test credential slots and made no provider request; real BYOK generation remains unobserved until a founder
+supplies a key and explicitly accepts transmission and possible provider charges.
+
 ```powershell
 & "$env:USERPROFILE\.dotnet\dotnet.exe" run --no-build `
   --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj -c Release -- `

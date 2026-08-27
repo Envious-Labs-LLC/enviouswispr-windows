@@ -86,6 +86,23 @@ loopback daemon and installed local chat model; the harness never installs or pu
 kept separate from Live Preview, live-microphone, Escape Recovery, and fault-injection modes so one result has
 one unambiguous resource and fallback contract.
 
+The same exact installed journey can prove safe cloud composition without using a real credential or making a
+billable request. OpenAI, Anthropic, and Gemini modes always use the harness's unique isolated Credential Manager
+suffix, require `PolishStarted` followed by provider-tagged `PolishDegraded/PolishCredentialMissing`, reject a
+false completion, and require deterministic text to continue through native delivery and clean process teardown:
+
+```powershell
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --polish openai --app-executable $installedApp
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --polish anthropic --app-executable $installedApp
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --polish gemini --app-executable $installedApp
+```
+
+These are credential-fallback tests, not real-provider quality or billing acceptance. Real generation remains
+available only through the separate explicit-consent cloud UAT with a founder-supplied key.
+
 Add `--escape-recovery` to exercise the same production pipeline while cancelling with Escape Recovery
 enabled. That mode requires transcription and deterministic processing to finish, requires a 24-hour recovery
 entry in History, and proves that no text reaches the controlled target:

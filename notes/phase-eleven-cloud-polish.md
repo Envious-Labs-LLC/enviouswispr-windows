@@ -51,6 +51,19 @@ Canonical `scripts/validate.ps1` passed with zero build warnings or errors, 34/3
 
 Real-provider UAT remains unobserved because no explicit authorization to transmit text or incur provider charges was given. API-key entry in the full product settings UI belongs to Phase 14; Phase 11 supplies and validates the credential-store and adapter contracts that screen will call.
 
+## 2026-08-27 exact installed missing-key fallback
+
+The exact installed founder.11 candidate completed isolated OpenAI, Anthropic, and Gemini app journeys without a
+real credential. Each run selected Parakeet English/CPU, completed final ASR and deterministic processing, emitted
+provider-tagged `PolishStarted`, then returned `PolishDegraded` with the typed
+`PolishCredentialMissing` error in 3 ms, 3 ms, and 2 ms respectively. Deterministic text continued through the
+controlled native delivery target, the app exited cleanly, and the one owned runtime worker was reduced to zero.
+
+The harness supplies a unique per-run Credential Manager suffix that is known to be empty, so provider code
+returns before constructing or sending a request. It requires degraded fallback and rejects a false polish
+completion. This proves exact installed provider composition and safe missing-key behavior; it does not replace
+the explicitly consented real-provider test, claim model quality, or authorize charges.
+
 ## Primary protocol references
 
 - [OpenAI Chat Completions](https://developers.openai.com/api/reference/cli/resources/chat/subresources/completions)

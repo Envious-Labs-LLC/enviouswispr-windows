@@ -66,7 +66,11 @@ var polishProvider = polishArgument?.ToLowerInvariant() switch
     null or "none" => PolishProvider.None,
     "eg-1" or "eg1" => PolishProvider.EgOne,
     "ollama" => PolishProvider.Ollama,
-    _ => throw new ArgumentException("--polish must be none, eg-1, or ollama."),
+    "openai" => PolishProvider.OpenAI,
+    "anthropic" or "claude" => PolishProvider.Anthropic,
+    "gemini" => PolishProvider.Gemini,
+    _ => throw new ArgumentException(
+        "--polish must be none, eg-1, ollama, openai, anthropic, or gemini."),
 };
 var egOneServerExecutable = ArgumentValue(args, "--eg1-server");
 var egOneModelFile = ArgumentValue(args, "--eg1-model");
@@ -459,7 +463,7 @@ try
             $"expected {expectedWorkerCount}.");
     }
 
-    if (polishProvider != PolishProvider.None)
+    if (IsLocalPolishProvider(polishProvider))
     {
         var polishReady = WaitForPolishRuntimeReady(
             diagnosticPath,
@@ -720,6 +724,7 @@ try
         polish = PolishProviderName(polishProvider),
         polishCompleted = polishEvidence.Completed,
         polishDegraded = polishEvidence.Degraded,
+        polishErrorCode = polishEvidence.ErrorCode,
         polishElapsedMilliseconds = polishEvidence.ElapsedMilliseconds,
         deterministicProfile = deterministicProfile == DeterministicJourneyProfile.None
             ? null
@@ -837,8 +842,23 @@ static string PolishProviderName(PolishProvider provider) => provider switch
     PolishProvider.None => "None",
     PolishProvider.EgOne => "EgOne",
     PolishProvider.Ollama => "Ollama",
+    PolishProvider.OpenAI => "OpenAI",
+    PolishProvider.Anthropic => "Anthropic",
+    PolishProvider.Gemini => "Gemini",
     _ => throw new ArgumentOutOfRangeException(nameof(provider)),
 };
+
+static string DiagnosticProviderName(PolishProvider provider) => provider switch
+{
+    PolishProvider.OpenAI => "OpenAi",
+    _ => PolishProviderName(provider),
+};
+
+static bool IsLocalPolishProvider(PolishProvider provider) =>
+    provider is PolishProvider.EgOne or PolishProvider.Ollama;
+
+static bool IsCloudPolishProvider(PolishProvider provider) =>
+    provider is PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini;
 
 static void RequireReviewedFixture(string path, string expectedHash)
 {
@@ -994,15 +1014,16 @@ static PolishJourneyEvidence ReadPolishJourneyEvidence(
 {
     if (provider == PolishProvider.None || !File.Exists(path))
     {
-        return new PolishJourneyEvidence(false, false, false, false, false, null);
+        return new PolishJourneyEvidence(false, false, false, false, false, null, null);
     }
 
-    var expectedProvider = PolishProviderName(provider);
+    var expectedProvider = DiagnosticProviderName(provider);
     var runtimeReady = false;
     var runtimeDegraded = false;
     var started = false;
     var completed = false;
     var degraded = false;
+    string? errorCode = null;
     long? elapsedMilliseconds = null;
     try
     {
@@ -1045,14 +1066,29 @@ static PolishJourneyEvidence ReadPolishJourneyEvidence(
                     }
                     break;
                 case "PolishDegraded":
-                    degraded |= providerMatches;
+                    if (!providerMatches)
+                    {
+                        break;
+                    }
+                    degraded = true;
+                    if (root.TryGetProperty("errorCode", out var errorElement) &&
+                        errorElement.ValueKind == JsonValueKind.String)
+                    {
+                        errorCode = errorElement.GetString();
+                    }
+                    if (root.TryGetProperty("elapsedMilliseconds", out var degradedElapsed) &&
+                        degradedElapsed.ValueKind == JsonValueKind.Number &&
+                        degradedElapsed.TryGetInt64(out var parsedDegradedElapsed))
+                    {
+                        elapsedMilliseconds = parsedDegradedElapsed;
+                    }
                     break;
             }
         }
     }
     catch (Exception exception) when (exception is IOException or JsonException)
     {
-        return new PolishJourneyEvidence(false, false, false, false, false, null);
+        return new PolishJourneyEvidence(false, false, false, false, false, null, null);
     }
 
     return new PolishJourneyEvidence(
@@ -1061,6 +1097,7 @@ static PolishJourneyEvidence ReadPolishJourneyEvidence(
         started,
         completed,
         degraded,
+        errorCode,
         elapsedMilliseconds);
 }
 
@@ -1068,6 +1105,29 @@ static void RequirePolishJourneyEvidence(
     PolishProvider provider,
     PolishJourneyEvidence evidence)
 {
+    if (IsCloudPolishProvider(provider))
+    {
+        if (evidence.RuntimeReady ||
+            evidence.RuntimeDegraded ||
+            !evidence.Started ||
+            evidence.Completed ||
+            !evidence.Degraded ||
+            !string.Equals(
+                evidence.ErrorCode,
+                "PolishCredentialMissing",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"The {PolishProviderName(provider)} journey did not preserve deterministic text " +
+                $"through the expected isolated missing-credential fallback " +
+                $"(runtimeReady={evidence.RuntimeReady}, runtimeDegraded={evidence.RuntimeDegraded}, " +
+                $"started={evidence.Started}, completed={evidence.Completed}, degraded={evidence.Degraded}, " +
+                $"errorCode={evidence.ErrorCode ?? "none"}).");
+        }
+
+        return;
+    }
+
     if (!evidence.RuntimeReady ||
         evidence.RuntimeDegraded ||
         !evidence.Started ||
@@ -1786,6 +1846,7 @@ internal sealed record PolishJourneyEvidence(
     bool Started,
     bool Completed,
     bool Degraded,
+    string? ErrorCode,
     long? ElapsedMilliseconds);
 
 internal sealed record AcousticProbeMetrics(
