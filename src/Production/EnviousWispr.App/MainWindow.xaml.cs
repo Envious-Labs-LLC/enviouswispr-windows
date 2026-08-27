@@ -16,6 +16,7 @@ using EnviousWispr.Core.Settings;
 using EnviousWispr.LLM;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Input;
 using Microsoft.UI.Xaml.Controls;
 using Windows.System;
 using Microsoft.UI.Xaml.Media;
@@ -1490,6 +1491,122 @@ public sealed partial class MainWindow : Window, IDisposable
         OverlayPositionComboBox,
     ];
 
+    /// <summary>
+    /// Captures a pressed key combination into a keybind field.
+    /// </summary>
+    /// <remarks>
+    /// These were plain text boxes. A field labelled "Recording keybind" showing "F8" reads
+    /// unmistakably as a capture control, so the overwhelmingly likely user action is to click it
+    /// and press the key they want. Measured on the running app: pressing F9 did nothing at all -
+    /// no value change, no feedback - and pressing Q produced "qF8", because the character was
+    /// inserted at a caret sitting at position 0. Silent in both directions, and the corrupted
+    /// value still LOOKS like a keybind.
+    ///
+    /// Only the combinations HotkeyGestureParser can express are accepted, so anything captured
+    /// here round-trips: letters, digits, F1-F24 and the named keys it normalises. An unsupported
+    /// key leaves the field untouched rather than writing something that cannot be parsed.
+    /// </remarks>
+    private void HotkeyBoxKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (sender is not TextBox box)
+        {
+            return;
+        }
+
+        // A modifier on its own is not a gesture. Swallow it so it neither edits the field nor
+        // moves focus while the user is still assembling a combination.
+        if (e.Key is VirtualKey.Control or VirtualKey.Menu or VirtualKey.Shift
+            or VirtualKey.LeftWindows or VirtualKey.RightWindows)
+        {
+            e.Handled = true;
+            return;
+        }
+
+        // Handled regardless of whether the key is usable: the field is capture-driven, so a
+        // keystroke must never fall through and be inserted as text. That fall-through is the
+        // defect being fixed.
+        e.Handled = true;
+
+        if (!TryDescribeKey(e.Key, out var key))
+        {
+            return;
+        }
+
+        var modifiers = HotkeyModifiers.None;
+        if (IsHeld(VirtualKey.Control))
+        {
+            modifiers |= HotkeyModifiers.Control;
+        }
+
+        if (IsHeld(VirtualKey.Menu))
+        {
+            modifiers |= HotkeyModifiers.Alt;
+        }
+
+        if (IsHeld(VirtualKey.Shift))
+        {
+            modifiers |= HotkeyModifiers.Shift;
+        }
+
+        if (IsHeld(VirtualKey.LeftWindows) || IsHeld(VirtualKey.RightWindows))
+        {
+            modifiers |= HotkeyModifiers.Windows;
+        }
+
+        box.Text = new HotkeyGesture(modifiers, key).ToString();
+        box.SelectionStart = box.Text.Length;
+    }
+
+    private static bool IsHeld(VirtualKey key) =>
+        InputKeyboardSource.GetKeyStateForCurrentThread(key)
+            .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+
+    /// <summary>
+    /// The parser's own vocabulary, and nothing outside it.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately mirrors HotkeyGestureParser.TryNormalizeKey rather than accepting every key
+    /// Windows can report. Capturing something the parser cannot read back would put a value in
+    /// the field that looks valid and fails at save - which is the failure this whole change
+    /// exists to remove.
+    /// </remarks>
+    private static bool TryDescribeKey(VirtualKey key, out string described)
+    {
+        if (key is >= VirtualKey.A and <= VirtualKey.Z)
+        {
+            described = key.ToString();
+            return true;
+        }
+
+        if (key is >= VirtualKey.Number0 and <= VirtualKey.Number9)
+        {
+            described = ((int)key - (int)VirtualKey.Number0).ToString(CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        if (key is >= VirtualKey.F1 and <= VirtualKey.F24)
+        {
+            described = $"F{(int)key - (int)VirtualKey.F1 + 1}";
+            return true;
+        }
+
+        described = key switch
+        {
+            VirtualKey.Space => "Space",
+            VirtualKey.Insert => "Insert",
+            VirtualKey.Delete => "Delete",
+            VirtualKey.Home => "Home",
+            VirtualKey.End => "End",
+            VirtualKey.PageUp => "PageUp",
+            VirtualKey.PageDown => "PageDown",
+            VirtualKey.Pause => "Pause",
+            VirtualKey.Scroll => "ScrollLock",
+            VirtualKey.Escape => "Escape",
+            _ => string.Empty,
+        };
+        return described.Length > 0;
+    }
+
     private void ChoiceListKeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (sender is not ItemsControl list
@@ -2297,5 +2414,17 @@ public sealed partial class MainWindow : Window, IDisposable
         public string CreatedDisplay { get; }
 
         public string Details { get; }
+
+        /// <summary>
+        /// What a screen reader announces for this row.
+        /// </summary>
+        /// <remarks>
+        /// Without this a list row falls back to ToString on the bound item, and a plain class
+        /// returns its fully-qualified type name - so the row would announce
+        /// "EnviousWispr.App.MainWindow+HistoryItemViewModel" before reaching the dictation. The
+        /// two other list types had the record version of the same defect, measured on the running
+        /// app; this one is fixed from the same reading rather than waiting for history to exist.
+        /// </remarks>
+        public override string ToString() => $"{Text} · {CreatedDisplay}";
     }
 }

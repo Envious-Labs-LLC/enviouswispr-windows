@@ -1319,6 +1319,81 @@ public sealed partial class DesignSystemTokenTests
         Assert.Null((string?)bar.Attribute("Canvas.ZIndex"));
     }
 
+    /// <summary>
+    /// Every type bound to a list row says something a person would want read aloud.
+    /// </summary>
+    /// <remarks>
+    /// A list row with no explicit automation name falls back to ToString on the bound item. A
+    /// RECORD emits its type name and brace syntax; a plain CLASS emits its fully-qualified type
+    /// name. Measured on the running app, a dictionary row announced "CustomWordEntry open brace
+    /// SpokenForm equals ... close brace" before reaching any content.
+    ///
+    /// The defect only exists once a row is BOUND, which is why an accessibility audit of the same
+    /// pages found nothing: the lists were empty. That is the general lesson - an empty list is not
+    /// a list, and auditing one proves nothing about the other.
+    /// </remarks>
+    [Fact]
+    public void EveryListRowTypeOverridesToString()
+    {
+        var root = FindRepositoryRoot();
+        var sources = new (string Path, string Type)[]
+        {
+            (Path.Combine(root, "src", "Production", "EnviousWispr.Core", "Settings", "ReusableUserData.cs"), "CustomWordEntry"),
+            (Path.Combine(root, "src", "Production", "EnviousWispr.Core", "Settings", "ReusableUserData.cs"), "SnippetEntry"),
+            (Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"), "HistoryItemViewModel"),
+        };
+
+        foreach (var (path, type) in sources)
+        {
+            var text = File.ReadAllText(path);
+            var declaration = Regex.Match(
+                text,
+                $@"(record|class)\s+{Regex.Escape(type)}\b(?<body>.*?)(?=\n(public|internal|private)\s+(sealed\s+)?(record|class)\s|\z)",
+                RegexOptions.Singleline);
+            Assert.True(
+                declaration.Success,
+                $"'{type}' was not found in {Path.GetFileName(path)}. This test's subject is gone, so "
+                    + "its green means nothing - update it or delete it deliberately.");
+
+            Assert.True(
+                declaration.Groups["body"].Value.Contains("override string ToString()", StringComparison.Ordinal),
+                $"'{type}' is bound to a list row and does not override ToString, so a screen reader "
+                    + "announces its type name before any content the user cares about.");
+        }
+    }
+
+    /// <summary>
+    /// A keybind field captures the key you press; it is never a free-text box.
+    /// </summary>
+    /// <remarks>
+    /// They were plain TextBoxes. A field labelled "Recording keybind" showing "F8" reads
+    /// unmistakably as a capture control, so the likely user action is to click it and press a
+    /// key. Measured on the running app: F9 did nothing at all, and Q produced "qF8" - the
+    /// character inserted at a caret sitting at position 0. Silent in both directions, and the
+    /// corrupted value still looks like a keybind.
+    ///
+    /// Both properties are required. IsReadOnly stops a keystroke being inserted as text; the
+    /// handler supplies the value. Either alone leaves the field able to be corrupted or unable
+    /// to be set.
+    /// </remarks>
+    [Fact]
+    public void EveryKeybindFieldCapturesRatherThanAcceptsTypedText()
+    {
+        var document = LoadMainWindow();
+        var fields = new[] { "HotkeyTextBox", "CancelHotkeyTextBox", "QuickAddHotkeyTextBox" };
+
+        foreach (var name in fields)
+        {
+            var box = FindNamedElement(document, name);
+            Assert.Equal("TextBox", box.Name.LocalName);
+            Assert.True(
+                (string?)box.Attribute("IsReadOnly") == "True",
+                $"'{name}' is editable, so a typed character is inserted into the gesture - which "
+                    + "produced values like \"qF8\" on the running app.");
+            Assert.Equal("HotkeyBoxKeyDown", (string?)box.Attribute("KeyDown"));
+        }
+    }
+
     private static XDocument LoadMainWindow() =>
         XDocument.Load(Path.Combine(
             FindRepositoryRoot(),

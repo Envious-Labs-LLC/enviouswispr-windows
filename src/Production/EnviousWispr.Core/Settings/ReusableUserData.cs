@@ -1,8 +1,27 @@
 namespace EnviousWispr.Core.Settings;
 
-public sealed record CustomWordEntry(string SpokenForm, string Replacement);
+public sealed record CustomWordEntry(string SpokenForm, string Replacement)
+{
+    /// <summary>
+    /// What a screen reader announces for this row.
+    /// </summary>
+    /// <remarks>
+    /// A record's generated ToString emits its type name and brace syntax, and a list row with no
+    /// explicit automation name falls back to exactly that. Measured on the running app, the row
+    /// announced "CustomWordEntry open brace SpokenForm equals zzz test entry comma Replacement
+    /// equals ZZZTestEntry close brace" before reaching anything a user cares about.
+    ///
+    /// The row's child text elements were already clean; only the container was wrong, and only
+    /// once a row was bound - which is why an audit of an EMPTY list found nothing.
+    /// </remarks>
+    public override string ToString() => $"{SpokenForm} becomes {Replacement}";
+}
 
-public sealed record SnippetEntry(string Name, string Body);
+public sealed record SnippetEntry(string Name, string Body)
+{
+    /// <summary>What a screen reader announces for this row. See <see cref="CustomWordEntry"/>.</summary>
+    public override string ToString() => $"{Name}: {Body}";
+}
 
 public sealed class ReusableUserData : IEquatable<ReusableUserData>
 {
