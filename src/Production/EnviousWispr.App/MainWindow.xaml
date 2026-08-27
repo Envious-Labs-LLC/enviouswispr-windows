@@ -408,7 +408,7 @@
                                     <Button HorizontalAlignment="Center" Click="FocusAddWordButton_Click" Content="Add your first word" Style="{StaticResource BrandQuietButtonStyle}" />
                                 </StackPanel>
                             </Border>
-                            <Button x:Name="RemoveWordButton" IsEnabled="False" HorizontalAlignment="Right" Click="RemoveWordButton_Click" Content="Remove selected" Style="{StaticResource BrandQuietButtonStyle}" />
+                            <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="8"><Button Click="ImportWordsButton_Click" Content="Import words" AutomationProperties.HelpText="Reads a file of word pairs. Nothing is changed until you see what it found." Style="{StaticResource BrandQuietButtonStyle}" /><Button x:Name="ExportWordsButton" IsEnabled="False" Click="ExportWordsButton_Click" Content="Export words" Style="{StaticResource BrandQuietButtonStyle}" /><Button x:Name="RemoveWordButton" IsEnabled="False" Click="RemoveWordButton_Click" Content="Remove selected" Style="{StaticResource BrandQuietButtonStyle}" /></StackPanel>
                         </StackPanel>
                     </ScrollViewer>
 

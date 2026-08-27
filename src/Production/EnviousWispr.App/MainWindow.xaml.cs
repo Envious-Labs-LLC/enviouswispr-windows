@@ -1291,6 +1291,131 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
+    /// <summary>
+    /// Reads a word list and reports what it found, without changing anything the user did not see.
+    /// </summary>
+    /// <remarks>
+    /// The message names every outcome that occurred, including the ones that are NOT failures.
+    /// A count of additions alone would let a file that was half unreadable report a clean import,
+    /// which is the failure this whole feature is shaped to avoid.
+    ///
+    /// A conflict adds nothing. Overwriting a correction someone tuned by hand, silently, because
+    /// a file they downloaded happened to disagree, is worse than importing nothing at all - so
+    /// conflicts are reported and skipped rather than resolved on the user's behalf.
+    /// </remarks>
+    private async void ImportWordsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var picker = new FileOpenPicker();
+        picker.FileTypeFilter.Add(".csv");
+        picker.FileTypeFilter.Add(".txt");
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+        var file = await picker.PickSingleFileAsync();
+        if (file is null)
+        {
+            return;
+        }
+
+        string text;
+        try
+        {
+            text = await File.ReadAllTextAsync(file.Path).ConfigureAwait(true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            ShowMessage(
+                "That file could not be read",
+                "Windows would not open it. Nothing was changed.",
+                InfoBarSeverity.Error);
+            return;
+        }
+
+        var existing = _settings.UserData.CustomWords;
+        var plan = CustomWordImport.Read(text, existing);
+        if (plan.Additions.Count == 0)
+        {
+            ShowMessage("No new words to add", DescribeImport(plan), InfoBarSeverity.Informational);
+            return;
+        }
+
+        var userData = new ReusableUserData(
+            [.. existing, .. plan.Additions],
+            _settings.UserData.Snippets);
+        await SaveUserDataAsync(userData, "Words imported").ConfigureAwait(true);
+    }
+
+    private async void ExportWordsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var picker = new FileSavePicker
+        {
+            SuggestedFileName = "EnviousWispr-words",
+            DefaultFileExtension = ".csv",
+        };
+        picker.FileTypeChoices.Add("Word list", [".csv"]);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+        var file = await picker.PickSaveFileAsync();
+        if (file is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                file.Path,
+                CustomWordImport.Write(_settings.UserData.CustomWords)).ConfigureAwait(true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            ShowMessage(
+                "That file could not be written",
+                "Windows would not save it. Your words are unchanged.",
+                InfoBarSeverity.Error);
+            return;
+        }
+
+        ShowMessage(
+            "Words exported",
+            "Your word list was saved. You can edit it and import it back.",
+            InfoBarSeverity.Success);
+    }
+
+    /// <summary>
+    /// Says what happened to EVERY line, not only the ones that worked.
+    /// </summary>
+    /// <remarks>
+    /// Built by naming each outcome that occurred rather than by reporting a total. A file that is
+    /// half unreadable and half duplicates would otherwise produce "0 words added", which reads as
+    /// nothing to do rather than as a file that needs fixing.
+    /// </remarks>
+    private static string DescribeImport(CustomWordImportPlan plan)
+    {
+        var parts = new List<string>();
+        var already = plan.Lines.Count(line => line.Outcome == ImportedWordOutcome.AlreadyPresent);
+        if (plan.Additions.Count > 0)
+        {
+            parts.Add($"{plan.Additions.Count} added");
+        }
+
+        if (already > 0)
+        {
+            parts.Add($"{already} you already had");
+        }
+
+        if (plan.ConflictCount > 0)
+        {
+            parts.Add($"{plan.ConflictCount} left alone because you already correct them differently");
+        }
+
+        if (plan.UnreadableCount > 0)
+        {
+            parts.Add($"{plan.UnreadableCount} lines could not be read. Each needs a spoken form and a replacement, separated by a comma.");
+        }
+
+        return parts.Count == 0
+            ? "That file had no word pairs in it."
+            : string.Join(". ", parts) + ".";
+    }
+
     private async void ExportProfileButton_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FileSavePicker
@@ -1522,6 +1647,8 @@ public sealed partial class MainWindow : Window, IDisposable
         ClearHistoryButton.IsEnabled = _history.Count > 0;
 
         RemoveWordButton.IsEnabled = DictionaryList.SelectedItem is not null;
+        // Export needs words rather than a selection - it writes the whole list.
+        ExportWordsButton.IsEnabled = _settings.UserData.CustomWords.Count > 0;
         RemoveSnippetButton.IsEnabled = SnippetList.SelectedItem is not null;
     }
 
