@@ -1,4 +1,5 @@
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Settings;
 using EnviousWispr.Services.Input;
 
 namespace EnviousWispr.Architecture.Tests;
@@ -155,5 +156,98 @@ public sealed class HotkeyEdgeTrackerTests
         Assert.True(quickAddUp.Consume);
         Assert.Equal(PushToTalkSignal.Pressed, recordDown.Signal);
         Assert.Equal(PushToTalkSignal.Released, recordUp.Signal);
+    }
+
+    /// <summary>
+    /// The defect: pressing the recording key inside its own capture field started a real
+    /// recording. The field marking the keystroke handled cannot reach this - the hook is a
+    /// different path - so the tracker itself has to stand down.
+    /// </summary>
+    [Fact]
+    public void WhileCapturingAKeybindTheRecordingKeyProducesNoSignal()
+    {
+        var tracker = new HotkeyEdgeTracker(F8, HotkeyModifiers.None);
+        tracker.SetCapturingKeybind(capturing: true);
+
+        var pressed = tracker.Process(F8, isKeyDown: true, HotkeyModifiers.None);
+        var released = tracker.Process(F8, isKeyDown: false, HotkeyModifiers.None);
+
+        Assert.Null(pressed.Signal);
+        Assert.Null(released.Signal);
+        // Not consumed either: the keystroke still has to reach the field that is capturing it.
+        Assert.False(pressed.Consume);
+        Assert.False(released.Consume);
+    }
+
+    /// <summary>
+    /// The control for the test above. Same tracker, same keystrokes, capture off. Without this
+    /// a tracker that had stopped signalling for every reason would pass the test above.
+    /// </summary>
+    [Fact]
+    public void WithoutCaptureTheSameKeystrokesStillRecord()
+    {
+        var tracker = new HotkeyEdgeTracker(F8, HotkeyModifiers.None);
+
+        var pressed = tracker.Process(F8, isKeyDown: true, HotkeyModifiers.None);
+        var released = tracker.Process(F8, isKeyDown: false, HotkeyModifiers.None);
+
+        Assert.Equal(PushToTalkSignal.Pressed, pressed.Signal);
+        Assert.Equal(PushToTalkSignal.Released, released.Signal);
+    }
+
+    /// <summary>
+    /// Capture must never be able to strand a recording. A key held when capture begins keeps
+    /// its release, or the recording it started would have nothing left that could end it.
+    /// </summary>
+    [Fact]
+    public void AKeyAlreadyHeldWhenCaptureBeginsStillDeliversItsRelease()
+    {
+        var tracker = new HotkeyEdgeTracker(F8, HotkeyModifiers.None);
+
+        var pressed = tracker.Process(F8, isKeyDown: true, HotkeyModifiers.None);
+        tracker.SetCapturingKeybind(capturing: true);
+        var released = tracker.Process(F8, isKeyDown: false, HotkeyModifiers.None);
+
+        Assert.Equal(PushToTalkSignal.Pressed, pressed.Signal);
+        Assert.Equal(PushToTalkSignal.Released, released.Signal);
+    }
+
+    /// <summary>
+    /// The same invariant for toggle mode, where a recording runs with nothing held at all. Here
+    /// the press IS the stop, so suppressing it would leave a recording nobody could end.
+    /// </summary>
+    [Fact]
+    public void ATogglingRecordingCanStillBeStoppedWhileCapturing()
+    {
+        var tracker = new HotkeyEdgeTracker(
+            new HotkeyBinding(F8, HotkeyModifiers.None),
+            new HotkeyBinding(HotkeyEdgeTracker.EscapeVirtualKey, HotkeyModifiers.None),
+            new HotkeyBinding('W', HotkeyModifiers.Control | HotkeyModifiers.Alt),
+            DictationRecordingMode.Toggle);
+        tracker.SetRecordingActive(active: true);
+        tracker.SetCapturingKeybind(capturing: true);
+
+        var pressed = tracker.Process(F8, isKeyDown: true, HotkeyModifiers.None);
+
+        Assert.Equal(PushToTalkSignal.Released, pressed.Signal);
+    }
+
+    /// <summary>
+    /// Capture ends and the key works again. A stand-down that could not be lifted would stop
+    /// dictation with nothing on screen to explain it.
+    /// </summary>
+    [Fact]
+    public void ClearingCaptureRestoresTheRecordingKey()
+    {
+        var tracker = new HotkeyEdgeTracker(F8, HotkeyModifiers.None);
+        tracker.SetCapturingKeybind(capturing: true);
+        var whileCapturing = tracker.Process(F8, isKeyDown: true, HotkeyModifiers.None);
+        tracker.Process(F8, isKeyDown: false, HotkeyModifiers.None);
+
+        tracker.SetCapturingKeybind(capturing: false);
+        var afterCapturing = tracker.Process(F8, isKeyDown: true, HotkeyModifiers.None);
+
+        Assert.Null(whileCapturing.Signal);
+        Assert.Equal(PushToTalkSignal.Pressed, afterCapturing.Signal);
     }
 }

@@ -48,7 +48,7 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
         Validate(options);
         EngineId = options.Engine == FinalAsrEngine.Whisper
             ? $"{WhisperModelIds.For(options.WhisperPack)}:{options.Provider.ToString().ToLowerInvariant()}:isolated"
-            : $"parakeet-tdt-0.6b-v3:{options.Provider.ToString().ToLowerInvariant()}:isolated";
+            : $"{ParakeetModelIds.Final}:{options.Provider.ToString().ToLowerInvariant()}:isolated";
         _startupTimeout = options.StartupTimeout ?? TimeSpan.FromSeconds(30);
         _transcriptionTimeout = options.TranscriptionTimeout ?? TimeSpan.FromMinutes(2);
         _supervisor = new RuntimeWorkerSupervisor(

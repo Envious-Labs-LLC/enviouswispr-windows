@@ -63,6 +63,10 @@ one before.
 - A check badge hidden from one visual-state group while another group set the same property. Two groups,
   one property, no defined order between them - the other group won.
 - A rule implemented on one page when the case it was written for lived on the other page.
+- A `DecimalFormatter` attached to both day fields to stop fractional days. `FractionDigits` is a
+  MINIMUM number of fraction digits, not a maximum: it stops zero-padding and rounds nothing. Measured
+  after shipping, "12.7" survived the display AND the value untouched. Rounding needs a `NumberRounder`
+  beside the formatter - `IncrementNumberRounder { Increment = 1 }`.
 
 **The tell is always the same and it is free: the measurement does not move.** Not "improves a little" -
 IDENTICAL. Ask for the number before and the number after, and treat an unchanged number as evidence the
@@ -307,3 +311,35 @@ someone else's document, whether a header card's icon tile sits right beside wra
 window width — all of that is asserted here and checked nowhere. Say so when you ship UI, rather than
 letting a green suite imply it was looked at. The entire design system landed this way once, in one night,
 against code and the macOS token files and never against a screen.
+
+## RULE: a-handled-routed-event-does-not-reach-the-system-wide-hook
+**The recording key is a low-level keyboard hook, so it fires BEFORE any window sees the key.** Setting
+`e.Handled = true` in a XAML `KeyDown` handler is a statement about the window's routed event and has no
+bearing on the hook at all.
+
+Measured on the running app: pressing the recording key inside its own capture field on the Keybinds page
+started a real recording, which ran for 64 seconds. The capture handler had marked the event handled. The
+field was also read-only, so once it held a different value there was no way to restore it in-session -
+the key that would restore it records instead of typing.
+
+**So a keybind field cannot fix this in its key handler. The hook has to be told to stand down**, which is
+what `HotkeyEdgeTracker.SetCapturingKeybind` does, driven by the field's FOCUS rather than its keystrokes.
+
+**The half that matters more than the fix: standing down must never strand a recording.** Capture never
+suppresses a key while a gesture is part-way through or a toggle-mode recording is running, because
+swallowing the release edge would leave a recording nothing could end - a worse defect than the one being
+removed. Deliberate consequence: press the recording key mid-recording and it stops the recording rather
+than being captured.
+
+Same reasoning applies to any future field that captures keys. Enumerate the fields FROM THE MARKUP, not
+from the three anyone remembers: miss one and that field alone records, which is invisible beside two that
+behave.
+
+## FACT: the-app-has-two-top-level-windows-and-the-overlay-can-win-a-uia-race
+A UI Automation lookup of `FindFirst(Children, ProcessId)` returns the FIRST top-level window for the
+process. EnviousWispr has two: the main window and the recording overlay pill. When the pill appears it
+can become that first window, and every query then runs against the pill's tree and returns empty.
+
+**An empty result reads exactly like a dead app**, and that is the reading it got the first time. Select
+the window by NAME - "EnviousWispr" - not by process. Ref: Windows session, 2026-08-27.
+

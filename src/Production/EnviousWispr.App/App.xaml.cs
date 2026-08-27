@@ -55,6 +55,7 @@ public partial class App : Application, IAsyncDisposable
     private SingleInstanceActivationChannel? _activationChannel;
     private WindowsSystemLifecycleMonitor? _lifecycleMonitor;
     private WindowsPushToTalkHook? _pushToTalkHook;
+    private bool _keybindCaptureActive;
     private PushToTalkSessionController? _sessionController;
     private IAudioCapture? _audioCapture;
     private RuntimeWorkerTranscriptionEngine? _transcriptionEngine;
@@ -274,6 +275,7 @@ public partial class App : Application, IAsyncDisposable
         _window.DiagnosticsExportCompleted += OnDiagnosticsExportCompleted;
         _window.UpdateCheckRequested += OnUpdateCheckRequested;
         _window.UpdateApplyRequested += OnUpdateApplyRequested;
+        _window.KeybindCaptureActiveChanged += OnKeybindCaptureActiveChanged;
         _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosed;
         _window.Activate();
@@ -408,12 +410,24 @@ public partial class App : Application, IAsyncDisposable
             window.DiagnosticsExportCompleted -= OnDiagnosticsExportCompleted;
             window.UpdateCheckRequested -= OnUpdateCheckRequested;
             window.UpdateApplyRequested -= OnUpdateApplyRequested;
+            window.KeybindCaptureActiveChanged -= OnKeybindCaptureActiveChanged;
             window.AppWindow.Closing -= OnAppWindowClosing;
             window.Closed -= OnWindowClosed;
         }
 
+        // The window can close with a keybind field still focused, and unsubscribing above stops
+        // the field's own LostFocus ever arriving. Clearing it here is what stops the hook being
+        // left standing down with nothing on screen to explain why dictation no longer responds.
+        OnKeybindCaptureActiveChanged(active: false);
+
         await PrepareForExitAsync().ConfigureAwait(true);
         _window = null;
+    }
+
+    private void OnKeybindCaptureActiveChanged(bool active)
+    {
+        _keybindCaptureActive = active;
+        _pushToTalkHook?.SetCapturingKeybind(active);
     }
 
     private void OnDuplicateActivationRequested(object? sender, EventArgs args)
@@ -976,6 +990,10 @@ public partial class App : Application, IAsyncDisposable
                 ? null
                 : new EnviousWispr.Core.Audio.AudioDeviceId(_settings.PreferredMicrophoneId));
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
+        // A saved keybind builds a NEW hook, which starts armed and knows nothing about a capture
+        // field that is still focused. Carrying the state across is what stops the hook re-arming
+        // underneath a field the user is still standing in.
+        _pushToTalkHook.SetCapturingKeybind(_keybindCaptureActive);
         _window?.SetHotkeyReady(
             _pushToTalkHook.Gesture.ToString(),
             _pushToTalkHook.RecordingMode,

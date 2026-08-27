@@ -21,6 +21,7 @@ internal sealed class HotkeyEdgeTracker
     private bool _quickAddHeld;
     private bool _recordingActive;
     private bool _cancelledUntilRecordRelease;
+    private bool _capturingKeybind;
 
     public HotkeyEdgeTracker(uint triggerVirtualKey, HotkeyModifiers requiredModifiers)
         : this(
@@ -51,10 +52,40 @@ internal sealed class HotkeyEdgeTracker
         }
     }
 
+    /// <summary>
+    /// While true, a keybind field on the Keybinds page is waiting for a keystroke.
+    /// </summary>
+    /// <remarks>
+    /// The recording key is a system-wide hook, so pressing it to rebind it STARTS A RECORDING:
+    /// measured on the running app, pressing the recording key inside its own capture field ran
+    /// a live recording for 64 seconds. The field marks the keystroke handled, but that is a
+    /// different path - the hook sees the key before any window does, so being handled in the
+    /// window changes nothing.
+    ///
+    /// The exception below is the important half. A recording ALREADY IN FLIGHT must always be
+    /// able to stop, so capture never suppresses a key while something is held or while a
+    /// toggle-mode recording is running. Suppressing there would swallow the release edge and
+    /// leave a recording nothing could end, which is a worse defect than the one being fixed.
+    /// The consequence, deliberately: press the recording key mid-recording and it stops the
+    /// recording rather than being captured.
+    /// </remarks>
+    public void SetCapturingKeybind(bool capturing)
+    {
+        lock (_sync)
+        {
+            _capturingKeybind = capturing;
+        }
+    }
+
     public HotkeyEdgeDecision Process(uint virtualKey, bool isKeyDown, HotkeyModifiers activeModifiers)
     {
         lock (_sync)
         {
+            if (_capturingKeybind && !IsAnythingInFlight())
+            {
+                return new HotkeyEdgeDecision(Consume: false);
+            }
+
             if (!isKeyDown)
             {
                 if (_recordHeld && virtualKey == _record.VirtualKey)
@@ -93,6 +124,13 @@ internal sealed class HotkeyEdgeTracker
             return new HotkeyEdgeDecision(Consume: false);
         }
     }
+
+    /// <summary>
+    /// True while a gesture is part-way through, or a toggle-mode recording is running - the
+    /// states in which a key must still reach the tracker so the recording can be ended.
+    /// </summary>
+    private bool IsAnythingInFlight() =>
+        _recordHeld || _cancelHeld || _quickAddHeld || _recordingActive;
 
     private HotkeyEdgeDecision ProcessRecord(bool isKeyDown, HotkeyModifiers activeModifiers)
     {
