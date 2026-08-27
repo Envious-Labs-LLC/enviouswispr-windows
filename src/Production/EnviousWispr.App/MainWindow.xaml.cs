@@ -2440,12 +2440,16 @@ public sealed partial class MainWindow : Window, IDisposable
         /// What a screen reader announces for this row.
         /// </summary>
         /// <remarks>
+        /// Reads as a sentence rather than a field dump: the point is what a person HEARS, so a
+        /// visual separator like a middle dot is not good enough - a screen reader either
+        /// announces it literally or drops it, and neither is a word.
+        ///
         /// Without this a list row falls back to ToString on the bound item, and a plain class
         /// returns its fully-qualified type name - so the row would announce
         /// "EnviousWispr.App.MainWindow+HistoryItemViewModel" before reaching the dictation. The
         /// two other list types had the record version of the same defect, measured on the running
         /// app; this one is fixed from the same reading rather than waiting for history to exist.
         /// </remarks>
-        public override string ToString() => $"{Text} · {CreatedDisplay}";
+        public override string ToString() => $"{Text}, dictated {CreatedDisplay}";
     }
 }
