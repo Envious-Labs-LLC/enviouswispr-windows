@@ -23,14 +23,81 @@ using Windows.Storage.Pickers;
 
 namespace EnviousWispr.App;
 
-public sealed record SelectableChoiceOption(string Name, string Description)
+/// <summary>
+/// One card in a choice list. Carries its own selection, because the list that shows it does not.
+/// </summary>
+/// <remarks>
+/// The choice lists were <c>RadioButtons</c> controls and are now plain <c>ItemsControl</c>s. That
+/// change was forced by layout: RadioButtons arranges each item at the item's own desired size and
+/// never consults the item's alignment, so six provider cards rendered at six different widths
+/// tracking six description lengths. Three attempts to make the container hand its width down -
+/// stretching the control, stretching the items, a minimum width bound to the list - all failed,
+/// the last one inertly, producing byte-identical measurements across two builds.
+///
+/// An ItemsControl over a StackPanel gives each item the panel's full width, which is all that was
+/// ever wanted. The items are still RadioButtons, so the card style and its template are untouched.
+/// What an ItemsControl does not have is a selection, so selection moved here, onto the data, where
+/// two-way binding keeps it and the card in step without anyone reaching into a container.
+/// </remarks>
+public sealed class SelectableChoiceOption : INotifyPropertyChanged
 {
+    private bool _isSelected;
+
+    public SelectableChoiceOption(string name, string description)
+    {
+        Name = name;
+        Description = description;
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public string Name { get; }
+
+    public string Description { get; }
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value)
+            {
+                return;
+            }
+
+            _isSelected = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+        }
+    }
+
     public override string ToString() => Name;
 }
 
 public sealed partial class MainWindow : Window, IDisposable
 {
     private const int WindowFrameInsetCount = 3;
+
+    /// <summary>
+    /// The index of the chosen card, or 0 when nothing is chosen yet.
+    /// </summary>
+    /// <remarks>
+    /// Falls back to 0 rather than -1 deliberately: every caller feeds this straight into an enum
+    /// or a clamp, and a -1 would either throw or quietly become a different setting. The first
+    /// option in each of these lists is the safe default - Automatic, None, System, Top.
+    /// </remarks>
+    private static int SelectedIndexOf(SelectableChoiceOption[] choices)
+    {
+        var index = Array.FindIndex(choices, choice => choice.IsSelected);
+        return index >= 0 ? index : 0;
+    }
+
+    private static void SelectChoice(SelectableChoiceOption[] choices, int index)
+    {
+        for (var i = 0; i < choices.Length; i++)
+        {
+            choices[i].IsSelected = i == index;
+        }
+    }
 
     private static readonly SelectableChoiceOption[] FinalEngineChoices =
     [
@@ -190,13 +257,32 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private void ResizeToDefault()
     {
-        const int defaultWidthDips = 1120;
-        const int defaultHeightDips = 760;
+        const int preferredWidthDips = 1120;
+
+        // Tall enough to show the whole navigation list without scrolling, measured rather than
+        // guessed: the list needs roughly 754 DIP at the density this app uses, and the window
+        // chrome above and below it - title bar, brand header, pinned footer, padding - takes a
+        // further 227 that the list can never use.
+        const int preferredHeightDips = 1010;
 
         var scale = DisplayScale();
-        AppWindow.Resize(new SizeInt32(
-            (int)Math.Round(defaultWidthDips * scale),
-            (int)Math.Round(defaultHeightDips * scale)));
+        var width = preferredWidthDips * scale;
+        var height = preferredHeightDips * scale;
+
+        // Never open larger than the screen. A settings window that wants more height than the
+        // display has is not a window the user can use, and on a 1080p laptop the preferred
+        // height exceeds the work area outright. Clamping is what makes one preferred size safe
+        // everywhere instead of correct on the machine it was chosen on - the same class of
+        // mistake as writing the size in the wrong units, one level up.
+        var workArea = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest)?.WorkArea;
+        if (workArea is { } area && area.Width > 0 && area.Height > 0)
+        {
+            const double screenMargin = 0.94;
+            width = Math.Min(width, area.Width * screenMargin);
+            height = Math.Min(height, area.Height * screenMargin);
+        }
+
+        AppWindow.Resize(new SizeInt32((int)Math.Round(width), (int)Math.Round(height)));
     }
 
     /// <summary>
@@ -575,7 +661,7 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         var dictation = new DictationPreferences(
-            (FinalAsrEngine)Math.Clamp(EngineComboBox.SelectedIndex, 0, 2),
+            (FinalAsrEngine)Math.Clamp(SelectedIndexOf(FinalEngineChoices), 0, 2),
             parsedHotkey.Gesture!.Value.ToString(),
             WordCorrectionToggle.IsOn,
             FillerRemovalToggle.IsOn,
@@ -587,13 +673,13 @@ public sealed partial class MainWindow : Window, IDisposable
             EscapeRecoveryToggle.IsOn,
             parsedQuickAddHotkey.Gesture!.Value.ToString());
         var polish = new PolishPreferences(
-            PolishProviderFromIndex(PolishProviderComboBox.SelectedIndex),
+            PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)),
             NullIfBlank(PolishModelTextBox.Text),
             NullIfBlank(OllamaEndpointTextBox.Text));
         var history = new HistoryPreferences(
             HistoryEnabledToggle.IsOn,
             (int)Math.Clamp(double.IsNaN(RetentionDaysBox.Value) ? 30 : RetentionDaysBox.Value, 0, 3650));
-        var theme = ThemeFromIndex(ThemeComboBox.SelectedIndex);
+        var theme = ThemeFromIndex(SelectedIndexOf(ThemeChoices));
         var observability = new ObservabilityPreferences(
             LocalDiagnosticsToggle.IsOn,
             (int)Math.Clamp(
@@ -613,7 +699,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 history,
                 theme,
                 LivePreviewToggle.IsOn,
-                OverlayPositionFromIndex(OverlayPositionComboBox.SelectedIndex),
+                OverlayPositionFromIndex(SelectedIndexOf(OverlayPositionChoices)),
                 PillDesignWithoutWordsFromControls(),
                 RecordingPillDesign.ReadingWell,
                 PlayRecordingSoundsToggle.IsOn,
@@ -631,11 +717,11 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
-    private void ThemeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void ThemeCardChecked(object sender, RoutedEventArgs e)
     {
         if (!_isApplyingSettings)
         {
-            ApplyTheme(ThemeFromIndex(ThemeComboBox.SelectedIndex));
+            ApplyTheme(ThemeFromIndex(SelectedIndexOf(ThemeChoices)));
         }
     }
 
@@ -698,7 +784,7 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
-    private async void PolishProviderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void PolishProviderCardChecked(object sender, RoutedEventArgs e)
     {
         if (_isApplyingSettings)
         {
@@ -708,7 +794,7 @@ public sealed partial class MainWindow : Window, IDisposable
         ApiKeyPasswordBox.Password = string.Empty;
         RefreshApiKeyStatus();
         await RefreshPolishModelChoicesAsync(
-            PolishProviderFromIndex(PolishProviderComboBox.SelectedIndex),
+            PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)),
             chooseDefault: true).ConfigureAwait(true);
     }
 
@@ -722,7 +808,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private async void SaveApiKeyButton_Click(object sender, RoutedEventArgs e)
     {
-        var provider = PolishProviderFromIndex(PolishProviderComboBox.SelectedIndex);
+        var provider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
         if (!IsCloudProvider(provider))
         {
             ShowMessage(
@@ -765,7 +851,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private async void RemoveApiKeyButton_Click(object sender, RoutedEventArgs e)
     {
-        var provider = PolishProviderFromIndex(PolishProviderComboBox.SelectedIndex);
+        var provider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
         if (!IsCloudProvider(provider))
         {
             return;
@@ -819,7 +905,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private async void RefreshPolishModelsButton_Click(object sender, RoutedEventArgs e)
     {
-        var provider = PolishProviderFromIndex(PolishProviderComboBox.SelectedIndex);
+        var provider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
         if (provider is PolishProvider.None or PolishProvider.EgOne)
         {
             return;
@@ -1305,6 +1391,39 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
+    /// Hides a section's eyebrow when it merely repeats the page title above it.
+    /// </summary>
+    /// <remarks>
+    /// On a page showing ONE section the small-caps eyebrow sits a few pixels under the page
+    /// title saying the same word: "Sounds" over "SOUNDS". Splitting the pages made this worse,
+    /// because most pages now show exactly one section. Where the eyebrow does real work -
+    /// Transcription shows an engine section and a cleanup section - it stays.
+    ///
+    /// Shared by BOTH pages. The first version lived inside the settings page only, so Open Source
+    /// Licenses kept showing "OPEN SOURCE LICENSES" under "Open Source Licenses" - the exact case
+    /// the rule was written for, on the one page the rule never ran. Only an EXACT match collapses:
+    /// Permissions shows "PERMISSIONS AND PRIVACY" and Updates shows "UPDATES" under "Check for
+    /// Updates", and neither is a repeat.
+    /// </remarks>
+    private static void CollapseEyebrowThatRepeatsTheTitle(
+        Border[] allSections, Border[] visibleSections, string title)
+    {
+        foreach (var candidate in allSections)
+        {
+            var eyebrow = EyebrowOf(candidate);
+            if (eyebrow is null)
+            {
+                continue;
+            }
+
+            var redundant = visibleSections.Length == 1
+                && ReferenceEquals(candidate, visibleSections[0])
+                && string.Equals(eyebrow.Text, title, StringComparison.OrdinalIgnoreCase);
+            eyebrow.Visibility = redundant ? Visibility.Collapsed : Visibility.Visible;
+        }
+    }
+
+    /// <summary>
     /// The eyebrow of a section card: by construction the first TextBlock inside it.
     /// </summary>
     /// <remarks>
@@ -1410,7 +1529,7 @@ public sealed partial class MainWindow : Window, IDisposable
         try
         {
             var preferences = _settings.Preferences;
-            EngineComboBox.SelectedIndex = (int)preferences.Dictation.FinalEngine;
+            SelectChoice(FinalEngineChoices, (int)preferences.Dictation.FinalEngine);
             WhisperLanguageComboBox.SelectedIndex = (int)preferences.Dictation.WhisperLanguage;
             HotkeyTextBox.Text = preferences.Dictation.PushToTalkGesture;
             RecordingModeComboBox.SelectedIndex = (int)preferences.Dictation.RecordingMode;
@@ -1421,14 +1540,14 @@ public sealed partial class MainWindow : Window, IDisposable
             FillerRemovalToggle.IsOn = preferences.Dictation.FillerRemovalEnabled;
             EmojiFormatterToggle.IsOn = preferences.Dictation.EmojiFormatterEnabled;
             SpokenPunctuationToggle.IsOn = preferences.Dictation.SpokenPunctuationEnabled;
-            PolishProviderComboBox.SelectedIndex = PolishProviderIndex(preferences.Polish.Provider);
+            SelectChoice(PolishProviderChoices, PolishProviderIndex(preferences.Polish.Provider));
             PolishModelTextBox.Text = preferences.Polish.ModelId ?? string.Empty;
             OllamaEndpointTextBox.Text = preferences.Polish.OllamaEndpoint ?? string.Empty;
             HistoryEnabledToggle.IsOn = preferences.History.IsEnabled;
             RetentionDaysBox.Value = preferences.History.RetentionDays;
-            ThemeComboBox.SelectedIndex = ThemeIndex(preferences.Theme);
+            SelectChoice(ThemeChoices, ThemeIndex(preferences.Theme));
             LivePreviewToggle.IsOn = preferences.LivePreviewEnabled;
-            OverlayPositionComboBox.SelectedIndex = OverlayPositionIndex(preferences.OverlayPosition);
+            SelectChoice(OverlayPositionChoices, OverlayPositionIndex(preferences.OverlayPosition));
             CapsulePillButton.IsChecked =
                 preferences.PillDesignWithoutWords == RecordingPillDesign.Classic;
             LevelRailPillButton.IsChecked =
@@ -1584,7 +1703,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void RefreshApiKeyStatus()
     {
-        var provider = PolishProviderFromIndex(PolishProviderComboBox.SelectedIndex);
+        var provider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
         var isCloudProvider = IsCloudProvider(provider);
         ApiKeyPasswordBox.IsEnabled = isCloudProvider;
         SaveApiKeyButton.IsEnabled = isCloudProvider;
@@ -1716,24 +1835,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var visible = SettingsSections()
             .Where(candidate => candidate.Visibility == Visibility.Visible)
             .ToArray();
-        // On a page showing ONE section, that section's eyebrow repeats the page title a few
-        // pixels below it, in small caps: "Sounds" over "SOUNDS". Splitting the pages made this
-        // worse rather than better, because most pages now show exactly one section. Where the
-        // eyebrow is doing real work - Transcription shows two sections, Appearance shows two -
-        // it stays.
-        foreach (var candidate in SettingsSections())
-        {
-            var eyebrow = EyebrowOf(candidate);
-            if (eyebrow is null)
-            {
-                continue;
-            }
-
-            var redundant = visible.Length == 1
-                && ReferenceEquals(candidate, visible[0])
-                && string.Equals(eyebrow.Text, title, StringComparison.OrdinalIgnoreCase);
-            eyebrow.Visibility = redundant ? Visibility.Collapsed : Visibility.Visible;
-        }
+        CollapseEyebrowThatRepeatsTheTitle(SettingsSections(), visible, title);
 
         // A page with nothing to change should not offer to save it. Clipboard is one paragraph
         // explaining fixed behaviour - there are no clipboard preferences in AppSettings at all -
@@ -1810,6 +1912,11 @@ public sealed partial class MainWindow : Window, IDisposable
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         }
+
+        var visible = HelpSections()
+            .Where(candidate => candidate.Visibility == Visibility.Visible)
+            .ToArray();
+        CollapseEyebrowThatRepeatsTheTitle(HelpSections(), visible, title);
     }
 
     private Border[] HelpSections() =>
