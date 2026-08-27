@@ -12,6 +12,8 @@ internal sealed class HotkeyEdgeTracker
     internal const uint EscapeVirtualKey = 0x1B;
 
     private readonly object _sync = new();
+    private readonly HandsFreeLockPolicy _handsFree = new();
+    private readonly Func<DateTimeOffset> _now;
     private readonly HotkeyBinding _record;
     private readonly HotkeyBinding _cancel;
     private readonly HotkeyBinding _quickAdd;
@@ -32,16 +34,34 @@ internal sealed class HotkeyEdgeTracker
     {
     }
 
+    /// <param name="now">
+    /// Injected rather than read from the system, because the hands-free gesture is a question
+    /// about elapsed time and a gesture with a real clock inside it can only be tested by sleeping.
+    /// </param>
     public HotkeyEdgeTracker(
         HotkeyBinding record,
         HotkeyBinding cancel,
         HotkeyBinding quickAdd,
-        DictationRecordingMode recordingMode)
+        DictationRecordingMode recordingMode,
+        Func<DateTimeOffset>? now = null)
     {
         _record = record;
         _cancel = cancel;
         _quickAdd = quickAdd;
         _recordingMode = recordingMode;
+        _now = now ?? (() => DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>Whether the recording is running with the key released.</summary>
+    public bool IsHandsFreeLocked
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _handsFree.IsLocked;
+            }
+        }
     }
 
     public void SetRecordingActive(bool active)
@@ -49,6 +69,14 @@ internal sealed class HotkeyEdgeTracker
         lock (_sync)
         {
             _recordingActive = active;
+            if (!active)
+            {
+                // Whatever ended the recording - release, cancel, auto-stop, a crash recovery -
+                // ends the gesture with it. A lock surviving into the next recording would make
+                // its second press CANCEL instead of lock, and nothing on screen would connect
+                // that to what the user did a minute earlier.
+                _handsFree.RecordingEnded();
+            }
         }
     }
 
@@ -148,9 +176,32 @@ internal sealed class HotkeyEdgeTracker
 
             _recordHeld = true;
             _cancelledUntilRecordRelease = false;
+
+            // The hands-free gesture reads the SAME press edge the recording does, so a second
+            // quick press is a lock rather than the start of a new dictation. Asked before the
+            // ordinary decision below, because that decision would otherwise consume the press.
+            var gesture = _handsFree.Press(
+                _now(),
+                _recordingMode == DictationRecordingMode.Toggle);
+            if (gesture == HandsFreePressOutcome.Lock)
+            {
+                return new HotkeyEdgeDecision(Consume: true);
+            }
+
+            if (gesture == HandsFreePressOutcome.Cancel)
+            {
+                _cancelledUntilRecordRelease = true;
+                return new HotkeyEdgeDecision(Consume: true, PushToTalkSignal.Cancelled);
+            }
+
             var signal = _recordingMode == DictationRecordingMode.Toggle && _recordingActive
                 ? PushToTalkSignal.Released
                 : PushToTalkSignal.Pressed;
+            if (signal == PushToTalkSignal.Pressed)
+            {
+                _handsFree.RecordingStarted(_now());
+            }
+
             return new HotkeyEdgeDecision(Consume: true, signal);
         }
 
@@ -163,6 +214,14 @@ internal sealed class HotkeyEdgeTracker
         if (_recordingMode == DictationRecordingMode.Toggle || _cancelledUntilRecordRelease)
         {
             _cancelledUntilRecordRelease = false;
+            return new HotkeyEdgeDecision(Consume: true);
+        }
+
+        // A locked recording keeps running with the key released. Asked of the policy rather than
+        // read off its flag here, so there is ONE answer to "does this release stop the recording"
+        // rather than two places deciding it.
+        if (!_handsFree.ReleaseEndsRecording())
+        {
             return new HotkeyEdgeDecision(Consume: true);
         }
 
