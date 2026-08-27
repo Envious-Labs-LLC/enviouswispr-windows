@@ -2063,12 +2063,17 @@ public sealed partial class MainWindow : Window, IDisposable
         CapsulePillButton.IsEnabled = !withWords;
         LevelRailPillButton.IsEnabled = !withWords;
         ReadingWellPillButton.IsEnabled = withWords;
+        // The inactive group's cards are disabled, and a disabled card with no stated reason reads
+        // as a control that ignores clicks. Measured on the running app: with Live Preview off,
+        // Reading Well showed a purple selected-style border and greyed text, and nothing on the
+        // page said why it could not be chosen. The heading is the honest place to say it - the
+        // cards are remembered choices for a mode that is not currently on, not broken controls.
         WithoutWordsPillHeading.Text = withWords
-            ? "Live Preview off"
+            ? "Live Preview off · turn Live Preview off to use these"
             : "Live Preview off · In use";
         WithWordsPillHeading.Text = withWords
             ? "Live Preview on · In use"
-            : "Live Preview on";
+            : "Live Preview on · turn Live Preview on to use this";
     }
 
     private static PolishProvider PolishProviderFromIndex(int index) => index switch
