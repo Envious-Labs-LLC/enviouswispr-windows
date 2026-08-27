@@ -227,4 +227,78 @@ public sealed partial class DesignSystemTokenTests
 
     [GeneratedRegex(@"box\.NumberFormatter = new DecimalFormatter\s*\{(.*?)\};", RegexOptions.Singleline)]
     private static partial Regex DayFieldFormatter();
+
+    /// <summary>
+    /// No em dash or en dash reaches a person. Brand rule, and it applies to in-app strings, not
+    /// only to marketing: use a full stop, a comma, a colon, a semicolon, brackets, or rewrite.
+    /// </summary>
+    /// <remarks>
+    /// This is worth a gate where a wording rule usually is not, because the thing being banned
+    /// is two CHARACTERS. There is no next counterexample to argue about and no judgement to
+    /// apply, so the check is exactly as complete as the rule.
+    ///
+    /// It found 24 on the day it was written, across status lines, paste-fallback messages, the
+    /// tray tooltip and two choice cards - every one of them shipped and read by users. Two of
+    /// the strings appeared TWICE in different branches of the same file, which is the ordinary
+    /// way half a fix like this gets made.
+    ///
+    /// Test sources are excluded on purpose: their prose is read by the next author, not by a
+    /// user, and this file's own explanation contains the characters it bans.
+    /// </remarks>
+    [Fact]
+    public void NoDashReachesAPersonInAnyShippedString()
+    {
+        var production = Path.Combine(FindRepositoryRoot(), "src", "Production");
+
+        var offenders = Directory
+            .EnumerateFiles(production, "*.*", SearchOption.AllDirectories)
+            .Where(path => path.EndsWith(".cs", StringComparison.Ordinal)
+                || path.EndsWith(".xaml", StringComparison.Ordinal)
+                || path.EndsWith(".resw", StringComparison.Ordinal))
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Where(path => !path.Contains(".Tests", StringComparison.Ordinal))
+            .SelectMany(path => File.ReadAllLines(path)
+                .Select((line, index) => (path, line, number: index + 1))
+                .Where(row => ShippedStringWithADash(row.path, row.line))
+                .Select(row => $"{Path.GetRelativePath(production, row.path)}:{row.number}"))
+            .ToArray();
+
+        Assert.True(
+            offenders.Length == 0,
+            "An em dash or en dash reaches a person at: " + string.Join(", ", offenders));
+
+        // Controls, both directions. Without the first, a matcher that had stopped matching would
+        // report the same clean result; without the second, one that matched everything would too.
+        Assert.True(ShippedStringWithADash("Any.xaml", "<x:String>Toggle \u2014 press once</x:String>"));
+        Assert.False(ShippedStringWithADash("Any.xaml", "<x:String>Toggle: press once</x:String>"));
+    }
+
+    /// <summary>
+    /// A dash in a C# COMMENT is prose for the next author, not a shipped string. In XAML and
+    /// resource files every dash is shipped, because those files have no code to comment.
+    /// </summary>
+    private static bool ShippedStringWithADash(string path, string line)
+    {
+        if (!line.Contains('\u2014') && !line.Contains('\u2013'))
+        {
+            return false;
+        }
+
+        if (!path.EndsWith(".cs", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var trimmed = line.TrimStart();
+        if (trimmed.StartsWith("//", StringComparison.Ordinal) || trimmed.StartsWith('*'))
+        {
+            return false;
+        }
+
+        return QuotedDash().IsMatch(line);
+    }
+
+    [GeneratedRegex("\"[^\"]*[\u2014\u2013][^\"]*\"")]
+    private static partial Regex QuotedDash();
 }

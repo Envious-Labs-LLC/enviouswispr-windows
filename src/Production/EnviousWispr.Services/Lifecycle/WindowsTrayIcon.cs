@@ -22,7 +22,7 @@ public sealed class WindowsTrayIcon : IDisposable
         {
             ContextMenuStrip = menu,
             Icon = _icon,
-            Text = "EnviousWispr — starting",
+            Text = "EnviousWispr: starting",
             Visible = true,
         };
         _notifyIcon.DoubleClick += (_, _) => ShowWindowRequested?.Invoke();
@@ -37,7 +37,7 @@ public sealed class WindowsTrayIcon : IDisposable
     public void SetStatus(string status)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        var text = $"EnviousWispr — {status}";
+        var text = $"EnviousWispr: {status}";
         _notifyIcon.Text = text.Length <= 63 ? text : text[..63];
     }
 

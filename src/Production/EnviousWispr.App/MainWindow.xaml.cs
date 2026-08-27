@@ -654,14 +654,17 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public void SetRunRecoveryNotice(int consecutiveInterruptedRuns)
     {
-        FoundationInfoBar.Title = "Recovered after an interrupted run";
+        // This is a banner on the FIRST SCREEN of the product, so it is written for the person
+        // reading it rather than for the mechanism that raised it. The previous wording said
+        // "Global input and owned runtimes were reinitialized", which names two internal parts
+        // and asks a user to be reassured by them.
+        const string title = "EnviousWispr did not close properly last time";
+        FoundationInfoBar.Title = title;
         FoundationInfoBar.Message = consecutiveInterruptedRuns > 1
-            ? $"EnviousWispr detected {consecutiveInterruptedRuns.ToString(CultureInfo.CurrentCulture)} interrupted starts in a row. Global input and owned runtimes were reinitialized; unfinished text is never pasted automatically."
-            : "Global input and owned runtimes were reinitialized. Unfinished text is never pasted automatically.";
+            ? $"That has now happened {consecutiveInterruptedRuns.ToString(CultureInfo.CurrentCulture)} times in a row. Everything was reset and dictation is ready. Unfinished text is never pasted for you."
+            : "Everything was reset and dictation is ready. Unfinished text is never pasted for you.";
         FoundationInfoBar.Severity = InfoBarSeverity.Warning;
-        SetOnboardingReliabilityNotice(
-            "Recovered after an interrupted run",
-            FoundationInfoBar.Message);
+        SetOnboardingReliabilityNotice(title, FoundationInfoBar.Message);
     }
 
     private void SetOnboardingReliabilityNotice(string title, string message)
