@@ -72,6 +72,16 @@ public enum AppEventCode
     /// belongs to, and a sum silently reports zero for everything BETWEEN the stages, which is
     /// where an unexplained wait would hide. This is measured by one stopwatch spanning the path.
     /// </remarks>
+    /// <summary>
+    /// A polish result was refused as nonsense and the cleaned transcript was kept instead.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from the polish FAILING. A refused result is one the model returned confidently,
+    /// so without this event it is indistinguishable in the log from polish that ran and chose to
+    /// change nothing - and those want opposite responses.
+    /// </remarks>
+    PolishOutputRefused,
+
     /// <summary>The watcher ended a recording because the speaker had stopped.</summary>
     AutoStopTriggered,
     DictationCompleted,
