@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security;
 using EnviousWispr.Audio;
 using EnviousWispr.Core.Audio;
@@ -133,7 +134,7 @@ public sealed partial class MainWindow : Window, IDisposable
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         ConfigureMinimumWindowWidth();
-        AppWindow.Resize(new SizeInt32(1120, 760));
+        ResizeToDefault();
         AppWindow.SetIcon(Path.Combine(
             AppContext.BaseDirectory,
             "Assets",
@@ -171,6 +172,50 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public event Action? UpdateApplyRequested;
 
+    /// <summary>
+    /// The window's opening size, in the same units the rest of the layout is expressed in.
+    /// </summary>
+    /// <remarks>
+    /// <c>AppWindow.Resize</c> takes PHYSICAL pixels, while every size in the XAML - the sidebar,
+    /// the frame inset, the content measure, the minimum width - is in device-independent units.
+    /// Passing a DIP figure straight to Resize therefore shrinks the window by the display's
+    /// scale factor, and does it silently: it looks right on the machine it was written on and
+    /// gets worse the higher the user's scaling.
+    ///
+    /// Measured on a 150% display: the intended 1120x760 opened at 747x507 effective, small
+    /// enough that the navigation list clipped on first run and a user had to scroll to reach
+    /// half the app. At 200% the same call would open the window NARROWER than the minimum width
+    /// this class enforces a few lines above, so the app would fight its own floor.
+    /// </remarks>
+    private void ResizeToDefault()
+    {
+        const int defaultWidthDips = 1120;
+        const int defaultHeightDips = 760;
+
+        var scale = DisplayScale();
+        AppWindow.Resize(new SizeInt32(
+            (int)Math.Round(defaultWidthDips * scale),
+            (int)Math.Round(defaultHeightDips * scale)));
+    }
+
+    /// <summary>
+    /// Physical pixels per layout unit for the display this window is on.
+    /// </summary>
+    /// <remarks>
+    /// One function, because both callers convert the same layout units into the same window
+    /// units and two answers to that would drift apart. An unreadable DPI falls back to 1.0
+    /// rather than to a guess: that is the value the size constants are already written in, so
+    /// the fallback degrades to the pre-scaling behaviour instead of inventing a new one.
+    /// </remarks>
+    private double DisplayScale()
+    {
+        var dpi = GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this));
+        return dpi > 0 ? dpi / 96.0 : 1.0;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
+
     private void ConfigureMinimumWindowWidth()
     {
         var frameInset = ((Thickness)Application.Current.Resources["BrandWindowFrameInset"]).Left;
@@ -190,10 +235,16 @@ public sealed partial class MainWindow : Window, IDisposable
         // shown full-screen or compact-overlay there is nothing to constrain and nothing to do.
         if (AppWindow.Presenter is OverlappedPresenter presenter)
         {
+            // Scaled for the same reason ResizeToDefault is: the three inputs are layout units
+            // and the presenter's floor is in physical pixels. Unscaled, the minimum shrinks by
+            // the display's scale factor - on a 150% display the window could be dragged to two
+            // thirds of the width the frame arithmetic says it needs, which is precisely the
+            // case this floor exists to prevent.
             presenter.PreferredMinimumWidth = (int)Math.Ceiling(
-                ProductNavigation.OpenPaneLength
-                + (WindowFrameInsetCount * frameInset)
-                + contentCardMinimumWidth);
+                (ProductNavigation.OpenPaneLength
+                    + (WindowFrameInsetCount * frameInset)
+                    + contentCardMinimumWidth)
+                * DisplayScale());
         }
     }
 
@@ -1189,7 +1240,68 @@ public sealed partial class MainWindow : Window, IDisposable
             : _history.Where(item => item.Text.Contains(query, StringComparison.CurrentCultureIgnoreCase)).ToArray();
         HistoryList.ItemsSource = visibleHistory;
         UpdateHistoryListVisibility(query, visibleHistory.Length);
+        UpdateSelectionDependentButtons();
     }
+
+    /// <summary>
+    /// Keeps every button that acts on a list selection in step with that selection.
+    /// </summary>
+    /// <remarks>
+    /// These buttons were live with nothing selected. Clicking one was not destructive - each
+    /// handler guards and shows "Select a dictation first" - but offering an action and then
+    /// telling the user off for taking it is the difference between working and finished. The
+    /// button should not be there to click.
+    ///
+    /// "Delete all history" tracks the LIST rather than the selection: with no history there is
+    /// nothing to delete, and a live button promising otherwise is the same defect one step over.
+    /// </remarks>
+    private void UpdateSelectionDependentButtons()
+    {
+        // The lists appear BEFORE some of these buttons in the markup, so a selection event
+        // raised while the page is still being built would reach a field that is not assigned
+        // yet. An empty ListView does not raise one, but "does not" and "cannot" are different
+        // claims and the cost of being wrong here is an app that will not start. Every caller
+        // that populates a list calls this again afterwards, so a skipped early pass corrects
+        // itself rather than leaving a button stale.
+        //
+        // Every button is named, not just the last-declared ones. Guarding three and then
+        // dereferencing six would be correct only because of the order they happen to sit in the
+        // markup, which is a premise nothing states and any reorder silently breaks.
+        if (CopyHistoryButton is null
+            || KeepHistoryButton is null
+            || DeleteHistoryButton is null
+            || ClearHistoryButton is null
+            || RemoveWordButton is null
+            || RemoveSnippetButton is null)
+        {
+            return;
+        }
+
+        var historySelected = HistoryList.SelectedItem is not null;
+        CopyHistoryButton.IsEnabled = historySelected;
+        KeepHistoryButton.IsEnabled = historySelected;
+        DeleteHistoryButton.IsEnabled = historySelected;
+        ClearHistoryButton.IsEnabled = _history.Count > 0;
+
+        RemoveWordButton.IsEnabled = DictionaryList.SelectedItem is not null;
+        RemoveSnippetButton.IsEnabled = SnippetList.SelectedItem is not null;
+    }
+
+    /// <summary>
+    /// The eyebrow of a section card: by construction the first TextBlock inside it.
+    /// </summary>
+    /// <remarks>
+    /// Read from the STRUCTURE rather than from a name on each of the fifteen eyebrows, so a
+    /// section added later behaves the same without anyone wiring it up. Returns null rather than
+    /// throwing if a card is ever built differently - a missing eyebrow is not worth a crash.
+    /// </remarks>
+    private static TextBlock? EyebrowOf(Border section) =>
+        section.Child is StackPanel panel
+            ? panel.Children.OfType<TextBlock>().FirstOrDefault()
+            : null;
+
+    private void ListSelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        UpdateSelectionDependentButtons();
 
     private async Task SaveUserDataAsync(ReusableUserData userData, string title)
     {
@@ -1236,6 +1348,7 @@ public sealed partial class MainWindow : Window, IDisposable
         SnippetList.ItemsSource = snippets;
         UpdateListAndEmptyStateVisibility(DictionaryList, DictionaryEmptyState, customWords.Count);
         UpdateListAndEmptyStateVisibility(SnippetList, SnippetEmptyState, snippets.Count);
+        UpdateSelectionDependentButtons();
     }
 
     private static void UpdateListAndEmptyStateVisibility(
@@ -1583,16 +1696,36 @@ public sealed partial class MainWindow : Window, IDisposable
                     : Visibility.Collapsed;
         }
 
+        var visible = SettingsSections()
+            .Where(candidate => candidate.Visibility == Visibility.Visible)
+            .ToArray();
+        // On a page showing ONE section, that section's eyebrow repeats the page title a few
+        // pixels below it, in small caps: "Sounds" over "SOUNDS". Splitting the pages made this
+        // worse rather than better, because most pages now show exactly one section. Where the
+        // eyebrow is doing real work - Transcription shows two sections, Appearance shows two -
+        // it stays.
+        foreach (var candidate in SettingsSections())
+        {
+            var eyebrow = EyebrowOf(candidate);
+            if (eyebrow is null)
+            {
+                continue;
+            }
+
+            var redundant = visible.Length == 1
+                && ReferenceEquals(candidate, visible[0])
+                && string.Equals(eyebrow.Text, title, StringComparison.OrdinalIgnoreCase);
+            eyebrow.Visibility = redundant ? Visibility.Collapsed : Visibility.Visible;
+        }
+
         // A page with nothing to change should not offer to save it. Clipboard is one paragraph
         // explaining fixed behaviour - there are no clipboard preferences in AppSettings at all -
         // so the button sat under it promising an action it could not perform on anything visible.
         // Asked of the SECTIONS rather than of a list of tags kept here, so a prose-only section
         // added later is handled without anyone remembering this rule.
-        SaveSettingsButton.Visibility = SettingsSections()
-            .Where(candidate => candidate.Visibility == Visibility.Visible)
-            .Any(ContainsAnEditableControl)
-                ? Visibility.Visible
-                : Visibility.Collapsed;
+        SaveSettingsButton.Visibility = visible.Any(ContainsAnEditableControl)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
         ScrollSectionIntoView(SettingsPage, section: null);
     }

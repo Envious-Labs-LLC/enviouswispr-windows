@@ -2,6 +2,22 @@
 <ResourceDictionary
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- The recording meter. The spectrum is the brand's signature and the design contract
+         reserves it for the mark and the recording HUD, which this is - the level rail is what a
+         user sees while dictating. Its own caption already promised "a live rainbow meter" while
+         the preview drew a solid royal blue bar, so the picture contradicted the words beside it.
+         The spectrum colours are identical in every theme, so this brush is not theme-scoped. -->
+    <LinearGradientBrush x:Key="BrandSpectrumRailBrush" StartPoint="0,0.5" EndPoint="1,0.5">
+        <GradientStop Offset="0.00" Color="{ThemeResource BrandSpectrumRedColor}" />
+        <GradientStop Offset="0.14" Color="{ThemeResource BrandSpectrumOrangeColor}" />
+        <GradientStop Offset="0.28" Color="{ThemeResource BrandSpectrumGoldColor}" />
+        <GradientStop Offset="0.42" Color="{ThemeResource BrandSpectrumLimeColor}" />
+        <GradientStop Offset="0.56" Color="{ThemeResource BrandSpectrumSpringColor}" />
+        <GradientStop Offset="0.70" Color="{ThemeResource BrandSpectrumCyanColor}" />
+        <GradientStop Offset="0.82" Color="{ThemeResource BrandSpectrumBlueColor}" />
+        <GradientStop Offset="0.91" Color="{ThemeResource BrandSpectrumRoyalColor}" />
+        <GradientStop Offset="1.00" Color="{ThemeResource BrandSpectrumVioletColor}" />
+    </LinearGradientBrush>
     <Style x:Key="BrandWindowCardStyle" TargetType="Border">
         <Setter Property="BorderBrush" Value="{ThemeResource BrandDividerBrush}" />
         <Setter Property="BorderThickness" Value="1" />
@@ -43,6 +59,13 @@
         <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
         <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
     </Style>
+    <!-- A dropdown whose selected text is wider than the control clips mid-word with no
+         ellipsis, which reads as a rendering fault rather than as a shortened label. Measured at
+         the app's own default window size: "Push to Talk - hold to record, release to stop" came
+         out as "Push to Talk - hold to reco". -->
+    <DataTemplate x:Key="BrandTrimmedChoiceTemplate">
+        <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+    </DataTemplate>
     <DataTemplate x:Key="BrandControlHeaderTemplate">
         <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding}" TextWrapping="Wrap" />
     </DataTemplate>
@@ -88,6 +111,14 @@
                                 <VisualState x:Name="Disabled">
                                     <VisualState.Setters>
                                         <Setter Target="CardBorder.Opacity" Value="0.55" />
+                                        <!-- A dimmed card wearing a filled check badge says "this is
+                                             your choice" while everything else about it says "this
+                                             does not apply right now". On the Live Preview page both
+                                             pill groups are shown at once and only one is in use, so
+                                             two cards were reading as selected simultaneously. The
+                                             choice is still remembered; it just stops claiming to be
+                                             the current one. -->
+                                        <Setter Target="CheckBadge.Visibility" Value="Collapsed" />
                                     </VisualState.Setters>
                                 </VisualState>
                             </VisualStateGroup>
