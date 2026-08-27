@@ -405,7 +405,7 @@
                                     <Border Width="56" Height="56" HorizontalAlignment="Center" Style="{StaticResource BrandIconTileStyle}"><FontIcon Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE8D2;" /></Border>
                                     <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="No custom words yet" TextAlignment="Center" />
                                     <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Enter what you say and what EnviousWispr should write, then add your first word." TextAlignment="Center" TextWrapping="Wrap" />
-                                    <Button HorizontalAlignment="Center" Click="FocusAddWordButton_Click" Content="Add your first word" Style="{StaticResource BrandPrimaryButtonStyle}" />
+                                    <Button HorizontalAlignment="Center" Click="FocusAddWordButton_Click" Content="Add your first word" Style="{StaticResource BrandQuietButtonStyle}" />
                                 </StackPanel>
                             </Border>
                             <Button x:Name="RemoveWordButton" IsEnabled="False" HorizontalAlignment="Right" Click="RemoveWordButton_Click" Content="Remove selected" Style="{StaticResource BrandQuietButtonStyle}" />
@@ -422,7 +422,7 @@
                                     <Border Width="56" Height="56" HorizontalAlignment="Center" Style="{StaticResource BrandIconTileStyle}"><FontIcon Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE8A5;" /></Border>
                                     <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="No snippets yet" TextAlignment="Center" />
                                     <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Enter a name and reusable text above, then add your first snippet." TextAlignment="Center" TextWrapping="Wrap" />
-                                    <Button HorizontalAlignment="Center" Click="FocusAddSnippetButton_Click" Content="Add your first snippet" Style="{StaticResource BrandPrimaryButtonStyle}" />
+                                    <Button HorizontalAlignment="Center" Click="FocusAddSnippetButton_Click" Content="Add your first snippet" Style="{StaticResource BrandQuietButtonStyle}" />
                                 </StackPanel>
                             </Border>
                             <Button x:Name="RemoveSnippetButton" IsEnabled="False" HorizontalAlignment="Right" Click="RemoveSnippetButton_Click" Content="Remove selected" Style="{StaticResource BrandQuietButtonStyle}" />

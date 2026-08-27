@@ -734,4 +734,57 @@ public sealed partial class DesignSystemTokenTests
 
     [GeneratedRegex(@"Storyboard\.SetTargetProperty\(\s*(\w+)\s*,\s*""([^""]+)""")]
     private static partial Regex AnimationTarget();
+
+    /// <summary>
+    /// A button that only moves focus is not a primary action.
+    /// </summary>
+    /// <remarks>
+    /// Measured on the running app: Your Words showed TWO filled primary buttons at once - "Add
+    /// word", which adds a word, and "Add your first word", which moves the cursor into the form's
+    /// first field. Two equally loud buttons doing unequal things, on a page where one of them
+    /// does nothing but point at the other. Snippets had the identical pair, which is the usual
+    /// shape: a defect on one page is a defect on its twin.
+    ///
+    /// The empty-state button is still a button and still does its job. It just stops competing.
+    ///
+    /// GATED BY WHAT THE BUTTON DOES rather than by counting primaries per page. A count needs a
+    /// notion of "page" that flat markup does not have, and it would pass a page that genuinely
+    /// needs two primaries while failing one that legitimately has none. The handler name is the
+    /// honest signal: a Focus-prefixed handler moves focus, and moving focus is never the main
+    /// thing a person came to a page to do.
+    /// </remarks>
+    [Fact]
+    public void NoButtonThatOnlyMovesFocusIsAPrimaryAction()
+    {
+        var markup = File.ReadAllText(
+            Path.Combine(
+                FindRepositoryRoot(),
+                "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+
+        var focusButtons = FocusButton().Matches(markup).Select(match => match.Value).ToArray();
+
+        Assert.True(focusButtons.Length >= 2, $"Expected the empty-state buttons, found {focusButtons.Length}.");
+
+        var shouting = focusButtons
+            .Where(button => button.Contains("BrandPrimaryButtonStyle", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            shouting.Length == 0,
+            $"{shouting.Length} button(s) that only move focus are styled as the page's main action.");
+
+        // Control: a real primary button must still exist somewhere, or "no primaries" would be
+        // true of a page that had lost its main action entirely - which this gate would otherwise
+        // read as a pass.
+        Assert.Contains("BrandPrimaryButtonStyle", markup, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A handler name contains an underscore. The first version of this pattern did not allow one,
+    /// so it matched nothing and the gate failed for its own reason rather than the app's - the
+    /// fourth instrument today to fail loudly on its first run, and every one of them accused
+    /// something healthy rather than passing something broken.
+    /// </summary>
+    [GeneratedRegex(@"<Button[^>]*Click=""Focus[A-Za-z_]*""[^>]*>")]
+    private static partial Regex FocusButton();
 }
