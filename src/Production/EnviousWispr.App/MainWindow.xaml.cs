@@ -75,6 +75,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private IReadOnlyList<MicrophoneChoice> _microphones = [];
     private WasapiDeviceCatalog? _deviceCatalog;
     private AppSettings _settings;
+    private HistoryLoadStatus _historyLoadStatus = HistoryLoadStatus.Missing;
     private bool _isApplyingSettings;
     private bool _initialFocusAssigned;
     private int _polishModelDiscoveryVersion;
@@ -856,6 +857,15 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void HistorySearchBox_TextChanged(object sender, TextChangedEventArgs e) => RefreshHistoryView();
 
+    private void ClearHistorySearchButton_Click(object sender, RoutedEventArgs e) =>
+        HistorySearchBox.Text = string.Empty;
+
+    private void FocusAddWordButton_Click(object sender, RoutedEventArgs e) =>
+        SpokenFormBox.Focus(FocusState.Programmatic);
+
+    private void FocusAddSnippetButton_Click(object sender, RoutedEventArgs e) =>
+        SnippetNameBox.Focus(FocusState.Programmatic);
+
     private void CopyHistoryButton_Click(object sender, RoutedEventArgs e)
     {
         if (HistoryList.SelectedItem is not HistoryItemViewModel selected)
@@ -1145,6 +1155,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var result = await _historyStore.LoadAsync(
             _settings.Preferences.History.RetentionDays,
             DateTimeOffset.UtcNow).ConfigureAwait(true);
+        _historyLoadStatus = result.Status;
         _history.Clear();
         _history.AddRange(result.Entries.Select(entry => new HistoryItemViewModel(entry)));
         RefreshHistoryView();
@@ -1161,18 +1172,66 @@ public sealed partial class MainWindow : Window, IDisposable
     private void RefreshHistoryView()
     {
         var query = HistorySearchBox.Text.Trim();
-        HistoryList.ItemsSource = string.IsNullOrWhiteSpace(query)
+        var visibleHistory = string.IsNullOrWhiteSpace(query)
             ? _history.ToArray()
             : _history.Where(item => item.Text.Contains(query, StringComparison.CurrentCultureIgnoreCase)).ToArray();
+        HistoryList.ItemsSource = visibleHistory;
+        UpdateHistoryListVisibility(query, visibleHistory.Length);
     }
 
     private async Task SaveUserDataAsync(ReusableUserData userData, string title)
     {
         if (await TrySaveAsync(_settings with { UserData = userData }, title, "The change was saved locally.").ConfigureAwait(true))
         {
-            DictionaryList.ItemsSource = _settings.UserData.CustomWords;
-            SnippetList.ItemsSource = _settings.UserData.Snippets;
+            RefreshReusableUserDataViews();
         }
+    }
+
+    private void UpdateHistoryListVisibility(string query, int itemCount)
+    {
+        var hasItems = itemCount > 0;
+        var hasQuery = !string.IsNullOrWhiteSpace(query);
+        var historyUnavailable = _historyLoadStatus is HistoryLoadStatus.Invalid or HistoryLoadStatus.Unavailable;
+        HistoryList.Visibility = hasItems ? Visibility.Visible : Visibility.Collapsed;
+        HistoryEmptyState.Visibility = !hasItems && !hasQuery && !historyUnavailable
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        HistorySearchEmptyState.Visibility = !hasItems && hasQuery && !historyUnavailable
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        HistoryUnavailableState.Visibility = !hasItems && historyUnavailable
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        if (!hasItems && hasQuery && !historyUnavailable)
+        {
+            HistorySearchEmptyDescription.Text = $"No saved dictations match “{query}”. Try another search or clear it.";
+        }
+
+        if (!hasItems && historyUnavailable)
+        {
+            HistoryUnavailableDescription.Text = _historyLoadStatus == HistoryLoadStatus.Invalid
+                ? "The local history file is invalid. It was left untouched for recovery."
+                : "Windows could not open the private history file. It was left untouched.";
+        }
+    }
+
+    private void RefreshReusableUserDataViews()
+    {
+        var customWords = _settings.UserData.CustomWords;
+        var snippets = _settings.UserData.Snippets;
+        DictionaryList.ItemsSource = customWords;
+        SnippetList.ItemsSource = snippets;
+        UpdateListAndEmptyStateVisibility(DictionaryList, DictionaryEmptyState, customWords.Count);
+        UpdateListAndEmptyStateVisibility(SnippetList, SnippetEmptyState, snippets.Count);
+    }
+
+    private static void UpdateListAndEmptyStateVisibility(
+        ListView list,
+        FrameworkElement emptyState,
+        int itemCount)
+    {
+        list.Visibility = itemCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+        emptyState.Visibility = itemCount == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private async Task<bool> TrySaveAsync(AppSettings next, string title, string message)
@@ -1251,8 +1310,7 @@ public sealed partial class MainWindow : Window, IDisposable
             DiagnosticsStatusText.Text = _telemetryAvailable
                 ? "Anonymous sharing is off until you explicitly enable and save it. Local exports and uploads contain only the typed fields listed here."
                 : "No telemetry upload channel is configured in this development build. Local content-free diagnostics can still be retained, exported, or disabled.";
-            DictionaryList.ItemsSource = _settings.UserData.CustomWords;
-            SnippetList.ItemsSource = _settings.UserData.Snippets;
+            RefreshReusableUserDataViews();
         }
         finally
         {

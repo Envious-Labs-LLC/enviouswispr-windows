@@ -26,8 +26,27 @@ No literal colour may appear in a view. Every brush resolves from `Theme/DesignT
 `ThemeResource` lookup, so Light, Dark and HighContrast all follow from one declaration site. A hard-coded
 `#RRGGBB` in a `.xaml` view or a `.cs` view file is a defect regardless of whether it happens to match.
 
-Enforced by `DesignSystemTokenTests`. That test is the mechanism; it fails on any literal colour outside
-the token dictionary and on any token missing from any of the three theme dictionaries.
+## FACT: what actually enforces this document
+Three test classes hold this contract up. They are the mechanism; this prose is only the explanation, and
+where the two disagree the tests are what ships.
+
+| Enforcer | Refuses |
+|---|---|
+| `DesignSystemTokenTests` | a literal colour in any view outside `Theme/`; a token missing from any of the three theme dictionaries; a Light or Dark value that disagrees with the macOS source; an overlay colour that is not a pill token; overlay text below the 14px floor |
+| `XamlResourceResolutionTests` | a `Brand*` or `Pill*` key that resolves nowhere; a style applied to a control type it does not target |
+| `WindowMinimumSizeTests` | a window minimum that stops being derived from the sidebar width and the frame inset; a content-card minimum too small to be usable |
+
+**Two of these guard defects that are invisible to the compiler and fatal at runtime.** A mistyped
+`ThemeResource` key does not fail the build; the page throws when it is opened. A minimum size that stops
+tracking the sidebar does not fail anything; the window just becomes unusable at a width nobody tested.
+Both were caught only because a test was written for them, and both had their ability to fail proven by
+deliberately introducing the defect and watching the test report it. **A gate never observed failing is a
+comment** — if you add a fourth enforcer here, prove it the same way.
+
+Known reach limits, stated so a green run is not over-read: the resource gate covers only the `Brand*` and
+`Pill*` prefixes we own, and its type check cannot see custom controls, WinUI inheritance outside its
+explicit table, platform-owned styles, implicit styles, or `BasedOn` chains. What none of them can see at
+all is owned below by RULE: verify-rendered-result-not-the-declaration.
 
 ## FACT: colour-tokens
 Light / Dark. HighContrast maps to the system colours and is listed separately below.
@@ -165,3 +184,11 @@ Reading back a style declaration confirms the cascade, never the layout. A test 
 `ThemeResource` key was set proves nothing about what the user sees. Assert measured geometry and resolved
 brushes, and treat any absolute-size assertion as a measurement of the host machine - gate it, and say out
 loud that a gated row proves nothing on CI.
+
+**No enforcer in this repository can see a rendered pixel, so every geometric and perceptual claim in this
+document is unverified until a human looks.** Whether the two cards read as raised rather than as regions
+of one sheet, whether a focus ring survives a filled purple row, whether the pill stays legible over
+someone else's document, whether a header card's icon tile sits right beside wrapped copy at the minimum
+window width — all of that is asserted here and checked nowhere. Say so when you ship UI, rather than
+letting a green suite imply it was looked at. The entire design system landed this way once, in one night,
+against code and the macOS token files and never against a screen.
