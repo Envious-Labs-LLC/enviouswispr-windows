@@ -652,17 +652,24 @@ public sealed partial class DesignSystemTokenTests
             // The grid's OWN first column, not any column anywhere beneath it. Descendants() walks
             // into nested grids, so a container wrapping a setting row matched as though it were
             // one — a row with no icon of its own, reported as a row missing its icon.
+            // A setting row is a grid whose first column sizes to its leading glyph. The marker is
+            // structural rather than a token: the width token now lives on the FontIcon, because
+            // ColumnDefinition.Width is a GridLength and a StaticResource handed to it is a
+            // load-time parse failure - so keying the selector off that attribute would be keying
+            // it off the very thing that crashed the app.
             .Where(grid => grid.Elements()
                 .Where(child => child.Name.LocalName == "Grid.ColumnDefinitions")
                 .SelectMany(definitions => definitions.Elements())
                 .Select(definition => (string?)definition.Attribute("Width"))
-                .FirstOrDefault() == "{StaticResource BrandRowIconColumnWidth}")
+                .FirstOrDefault() == "Auto"
+                && grid.Elements().Any(child => child.Name.LocalName == "FontIcon"))
             .ToArray();
 
         Assert.True(
             rowGrids.Length > 0,
-            "No setting rows were found. BrandRowIconColumnWidth is the marker for a row, so zero "
-                + "matches means the marker was renamed and this test now checks nothing.");
+            "No setting rows were found. A row is a Grid whose first column is Auto and which carries "
+                + "a FontIcon, so zero matches means that shape changed and this test is now checking "
+                + "nothing rather than checking something and passing.");
 
         foreach (var grid in rowGrids)
         {
@@ -675,6 +682,9 @@ public sealed partial class DesignSystemTokenTests
             Assert.Equal(
                 "{StaticResource BrandRowIconInset}",
                 (string?)icon.Attribute("Margin"));
+            Assert.Equal(
+                "{StaticResource BrandRowIconColumnWidth}",
+                (string?)icon.Attribute("Width"));
         }
     }
 
@@ -882,6 +892,121 @@ public sealed partial class DesignSystemTokenTests
                 + string.Join("\n  ", disagreements)
                 + "\nThe resource file wins at runtime, so the markup value is what nobody sees. Make "
                 + "them match — the user should not meet one feature under two names.");
+    }
+
+    /// <summary>
+    /// Every layout token is assigned to a property of the type it was declared as.
+    /// </summary>
+    /// <remarks>
+    /// A StaticResource is assigned WITHOUT running a type converter. Hand an
+    /// <c>x:Double</c> to a property whose type is <c>GridLength</c> and the build is clean, the
+    /// XML is well-formed, every existing gate here is green — and the app exits about two seconds
+    /// after launch with E_XAMLPARSEFAILED, no window, and nothing on stdout or stderr.
+    ///
+    /// Measured, and it shipped through four commits: 41 ColumnDefinition.Width attributes read a
+    /// Double token. Every check in this file parses MainWindow.xaml as XML, so all of them passed
+    /// on a build that could not start. XML well-formedness and XAML validity are different
+    /// questions, and only the first one was ever being asked.
+    ///
+    /// This asks the second one, for the part of it that is decidable from source: a token's
+    /// declared element type against the type its consuming property requires. Enumerated from the
+    /// USES in the markup, so a new consumer is checked on arrival, and any attribute this table
+    /// does not know about is reported rather than skipped in silence — an unknown property is the
+    /// case where a wrong answer looks exactly like a right one.
+    /// </remarks>
+    [Fact]
+    public void EveryLayoutTokenIsAssignedToAPropertyOfItsOwnType()
+    {
+        var root = FindRepositoryRoot();
+        var layout = XDocument.Load(Path.Combine(
+            root, "src", "Production", "EnviousWispr.App", "Theme", "Layout.xaml"));
+
+        var declaredType = layout.Root!
+            .Elements()
+            .Where(element => element.Attribute(XName.Get("Key", XamlNamespace)) is not null)
+            .ToDictionary(
+                element => (string)element.Attribute(XName.Get("Key", XamlNamespace))!,
+                element => element.Name.LocalName switch
+                {
+                    "Double" => "Double",
+                    var other => other,
+                },
+                StringComparer.Ordinal);
+
+        // What each property REQUIRES. Keyed by owning element where the same attribute name means
+        // different things: Width on a ColumnDefinition is a GridLength, Width on anything else is
+        // a Double. That collision is the whole defect.
+        static string? RequiredType(string element, string attribute) => (element, attribute) switch
+        {
+            ("ColumnDefinition", "Width") or ("RowDefinition", "Height") => "GridLength",
+            (_, "Margin") or (_, "Padding") => "Thickness",
+            (_, "CornerRadius") => "CornerRadius",
+            (_, "Width") or (_, "Height") or (_, "MaxWidth") or (_, "MinWidth")
+                or (_, "MaxHeight") or (_, "MinHeight") or (_, "Spacing")
+                or (_, "ColumnSpacing") or (_, "RowSpacing")
+                or (_, "FontSize") or (_, "OpenPaneLength") => "Double",
+            _ => null,
+        };
+
+        var mismatches = new List<string>();
+        var unknown = new List<string>();
+        var checkedCount = 0;
+
+        foreach (var view in new[] { "MainWindow.xaml", "DictationOverlayWindow.xaml" })
+        {
+            var document = XDocument.Load(Path.Combine(
+                root, "src", "Production", "EnviousWispr.App", view));
+
+            foreach (var element in document.Descendants())
+            {
+                foreach (var attribute in element.Attributes())
+                {
+                    var match = Regex.Match(attribute.Value, @"^\{StaticResource (?<key>\w+)\}$");
+                    if (!match.Success
+                        || !declaredType.TryGetValue(match.Groups["key"].Value, out var actual))
+                    {
+                        continue;
+                    }
+
+                    var key = match.Groups["key"].Value;
+                    var required = RequiredType(element.Name.LocalName, attribute.Name.LocalName);
+                    if (required is null)
+                    {
+                        unknown.Add($"{view}: {element.Name.LocalName}.{attribute.Name.LocalName} <- {key}");
+                        continue;
+                    }
+
+                    checkedCount++;
+                    if (!string.Equals(required, actual, StringComparison.Ordinal))
+                    {
+                        mismatches.Add(
+                            $"{view}: {element.Name.LocalName}.{attribute.Name.LocalName} needs {required}, "
+                                + $"but {key} is declared as {actual}");
+                    }
+                }
+            }
+        }
+
+        Assert.True(
+            checkedCount > 0,
+            "No layout tokens were checked at all, so this test proved nothing. Either the views stopped "
+                + "using layout tokens or the resource keys stopped resolving.");
+
+        Assert.True(
+            unknown.Count == 0,
+            "These properties consume a layout token but are not in this test's type table, so their "
+                + "types went unchecked:\n  "
+                + string.Join("\n  ", unknown.Distinct(StringComparer.Ordinal))
+                + "\nAdd them to RequiredType with the type the property actually takes. Skipping an "
+                + "unknown property quietly is how the original defect would have survived this gate.");
+
+        Assert.True(
+            mismatches.Count == 0,
+            "These tokens are assigned to a property of a different type:\n  "
+                + string.Join("\n  ", mismatches)
+                + "\nA StaticResource is assigned without a type converter, so this builds clean and "
+                + "then fails at LOAD: the app exits seconds after launch with E_XAMLPARSEFAILED and no "
+                + "window. Change the token's declared type, or move it to a property that takes it.");
     }
 
     private static XDocument LoadMainWindow() =>

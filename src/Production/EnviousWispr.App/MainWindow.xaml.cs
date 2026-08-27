@@ -1583,7 +1583,44 @@ public sealed partial class MainWindow : Window, IDisposable
                     : Visibility.Collapsed;
         }
 
+        // A page with nothing to change should not offer to save it. Clipboard is one paragraph
+        // explaining fixed behaviour - there are no clipboard preferences in AppSettings at all -
+        // so the button sat under it promising an action it could not perform on anything visible.
+        // Asked of the SECTIONS rather than of a list of tags kept here, so a prose-only section
+        // added later is handled without anyone remembering this rule.
+        SaveSettingsButton.Visibility = SettingsSections()
+            .Where(candidate => candidate.Visibility == Visibility.Visible)
+            .Any(ContainsAnEditableControl)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
         ScrollSectionIntoView(SettingsPage, section: null);
+    }
+
+    /// <summary>
+    /// True when <paramref name="element"/> contains a control the user can actually change.
+    /// </summary>
+    /// <remarks>
+    /// Walks the LOGICAL tree - panels, borders, content controls - rather than the visual tree,
+    /// because the visual tree of a collapsed section is not realised and would report every
+    /// hidden section as empty, which is the answer that happens to look right.
+    /// </remarks>
+    private static bool ContainsAnEditableControl(DependencyObject element)
+    {
+        if (element is ToggleSwitch or ComboBox or RadioButtons or RadioButton
+            or TextBox or PasswordBox or NumberBox or CheckBox or Slider)
+        {
+            return true;
+        }
+
+        return element switch
+        {
+            Panel panel => panel.Children.Any(ContainsAnEditableControl),
+            Border border => border.Child is not null && ContainsAnEditableControl(border.Child),
+            ContentControl content => content.Content is DependencyObject child
+                && ContainsAnEditableControl(child),
+            _ => false,
+        };
     }
 
     private void ConfigureHelpPage(string tag)
