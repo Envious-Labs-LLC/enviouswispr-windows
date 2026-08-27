@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+            <Color x:Key="PillSurfaceColor">#F0FCFAFF</Color>
+            <SolidColorBrush x:Key="PillSurfaceBrush" Color="#F0FCFAFF" />
+            <Color x:Key="PillBorderColor">#240F0A1A</Color>
+            <SolidColorBrush x:Key="PillBorderBrush" Color="#240F0A1A" />
+            <Color x:Key="PillDividerColor">#1A0F0A1A</Color>
+            <SolidColorBrush x:Key="PillDividerBrush" Color="#1A0F0A1A" />
+            <Color x:Key="PillTimerColor">#FF221B33</Color>
+            <SolidColorBrush x:Key="PillTimerBrush" Color="#FF221B33" />
+            <Color x:Key="PillModeQuietColor">#990F0A1A</Color>
+            <SolidColorBrush x:Key="PillModeQuietBrush" Color="#990F0A1A" />
+            <Color x:Key="PillBadgeFillColor">#170F0A1A</Color>
+            <SolidColorBrush x:Key="PillBadgeFillBrush" Color="#170F0A1A" />
+            <Color x:Key="PillBadgeTextColor">#B80F0A1A</Color>
+            <SolidColorBrush x:Key="PillBadgeTextBrush" Color="#B80F0A1A" />
+            <Color x:Key="PillTextColor">#FF0F0A1A</Color>
+            <SolidColorBrush x:Key="PillTextBrush" Color="#FF0F0A1A" />
+            <Color x:Key="PillTextDimmedColor">#990F0A1A</Color>
+            <SolidColorBrush x:Key="PillTextDimmedBrush" Color="#990F0A1A" />
+            <Color x:Key="PillNoticeColor">#E00F0A1A</Color>
+            <SolidColorBrush x:Key="PillNoticeBrush" Color="#E00F0A1A" />
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="Dark">
+            <Color x:Key="PillSurfaceColor">#E6110F18</Color>
+            <SolidColorBrush x:Key="PillSurfaceBrush" Color="#E6110F18" />
+            <Color x:Key="PillBorderColor">#21FFFFFF</Color>
+            <SolidColorBrush x:Key="PillBorderBrush" Color="#21FFFFFF" />
+            <Color x:Key="PillDividerColor">#17FFFFFF</Color>
+            <SolidColorBrush x:Key="PillDividerBrush" Color="#17FFFFFF" />
+            <Color x:Key="PillTimerColor">#F0FFFFFF</Color>
+            <SolidColorBrush x:Key="PillTimerBrush" Color="#F0FFFFFF" />
+            <Color x:Key="PillModeQuietColor">#80FFFFFF</Color>
+            <SolidColorBrush x:Key="PillModeQuietBrush" Color="#80FFFFFF" />
+            <Color x:Key="PillBadgeFillColor">#21FFFFFF</Color>
+            <SolidColorBrush x:Key="PillBadgeFillBrush" Color="#21FFFFFF" />
+            <Color x:Key="PillBadgeTextColor">#E0FFFFFF</Color>
+            <SolidColorBrush x:Key="PillBadgeTextBrush" Color="#E0FFFFFF" />
+            <Color x:Key="PillTextColor">#F7FFFFFF</Color>
+            <SolidColorBrush x:Key="PillTextBrush" Color="#F7FFFFFF" />
+            <Color x:Key="PillTextDimmedColor">#80FFFFFF</Color>
+            <SolidColorBrush x:Key="PillTextDimmedBrush" Color="#80FFFFFF" />
+            <Color x:Key="PillNoticeColor">#F2FFFFFF</Color>
+            <SolidColorBrush x:Key="PillNoticeBrush" Color="#F2FFFFFF" />
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="HighContrast">
+            <Color x:Key="PillSurfaceColor">{ThemeResource SystemColorWindowColor}</Color>
+            <SolidColorBrush x:Key="PillSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <Color x:Key="PillBorderColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <SolidColorBrush x:Key="PillBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <Color x:Key="PillDividerColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <SolidColorBrush x:Key="PillDividerBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <Color x:Key="PillTimerColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <SolidColorBrush x:Key="PillTimerBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <Color x:Key="PillModeQuietColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <SolidColorBrush x:Key="PillModeQuietBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <Color x:Key="PillBadgeFillColor">{ThemeResource SystemColorHighlightColor}</Color>
+            <SolidColorBrush x:Key="PillBadgeFillBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <Color x:Key="PillBadgeTextColor">{ThemeResource SystemColorHighlightTextColor}</Color>
+            <SolidColorBrush x:Key="PillBadgeTextBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <Color x:Key="PillTextColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <SolidColorBrush x:Key="PillTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <Color x:Key="PillTextDimmedColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <SolidColorBrush x:Key="PillTextDimmedBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <Color x:Key="PillNoticeColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <SolidColorBrush x:Key="PillNoticeBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>
