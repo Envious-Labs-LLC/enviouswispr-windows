@@ -17,6 +17,9 @@ using EnviousWispr.LLM;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Windows.System;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Input;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
 using Windows.Storage.Pickers;
@@ -1440,6 +1443,87 @@ public sealed partial class MainWindow : Window, IDisposable
         section.Child is StackPanel panel
             ? panel.Children.OfType<TextBlock>().FirstOrDefault()
             : null;
+
+    /// <summary>
+    /// Moves the choice with the arrow keys, the way a Windows radio group does.
+    /// </summary>
+    /// <remarks>
+    /// Written by hand because the framework does not supply it here. Replacing RadioButtons with
+    /// an ItemsControl fixed card widths and took the group's keyboard behaviour with it, and two
+    /// attempts to get it back from a property failed: TabFocusNavigation="Once" gave the single
+    /// tab stop and nothing to move within the group, then XYFocusKeyboardNavigation="Enabled"
+    /// changed nothing at all - it governs directional/gamepad navigation, not arrow keys inside a
+    /// radio group, which RadioButtons supplies through its own key handling.
+    ///
+    /// Both were verified INERT on the running app rather than assumed: with focus resting on a
+    /// non-selected card, Down and Up moved nothing, while the same synthetic arrow injection
+    /// moved the navigation list in the same binary. So focus can sit on these cards; the keys
+    /// were simply never routed between them.
+    ///
+    /// Arrowing CHANGES the selection, which is what a Windows radio group does and what
+    /// RadioButtons did here before. Left and Right are included because a user reaching for
+    /// either is reaching for the same thing.
+    /// </remarks>
+    private void ChoiceListKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (sender is not ItemsControl list
+            || list.ItemsSource is not SelectableChoiceOption[] choices
+            || choices.Length == 0)
+        {
+            return;
+        }
+
+        var delta = e.Key switch
+        {
+            VirtualKey.Down or VirtualKey.Right => 1,
+            VirtualKey.Up or VirtualKey.Left => -1,
+            _ => 0,
+        };
+        if (delta == 0)
+        {
+            return;
+        }
+
+        // Handled either way once an arrow reaches a choice list: at the ends the key does
+        // nothing here, and letting it bubble would move focus out of the group, which is the
+        // one thing a radio group's arrow keys must never do.
+        e.Handled = true;
+
+        var next = Math.Clamp(SelectedIndexOf(choices) + delta, 0, choices.Length - 1);
+        if (choices[next].IsSelected)
+        {
+            return;
+        }
+
+        SelectChoice(choices, next);
+        FindDescendant<RadioButton>(list.ContainerFromIndex(next) as DependencyObject)
+            ?.Focus(FocusState.Keyboard);
+    }
+
+    /// <summary>First descendant of the requested type, or null.</summary>
+    private static T? FindDescendant<T>(DependencyObject? root) where T : DependencyObject
+    {
+        if (root is null)
+        {
+            return null;
+        }
+
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T match)
+            {
+                return match;
+            }
+
+            if (FindDescendant<T>(child) is { } deeper)
+            {
+                return deeper;
+            }
+        }
+
+        return null;
+    }
 
     private void ListSelectionChanged(object sender, SelectionChangedEventArgs e) =>
         UpdateSelectionDependentButtons();
