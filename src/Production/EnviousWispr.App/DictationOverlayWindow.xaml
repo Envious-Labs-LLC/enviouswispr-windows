@@ -12,20 +12,6 @@
         BorderThickness="1"
         CornerRadius="29"
         Padding="16,12">
-        <Border.Resources>
-            <Style x:Key="PillModeQuietTextStyle" TargetType="TextBlock">
-                <Setter Property="Foreground" Value="{ThemeResource PillModeQuietBrush}" />
-            </Style>
-            <Style x:Key="PillNoticeTextStyle" TargetType="TextBlock">
-                <Setter Property="Foreground" Value="{ThemeResource PillNoticeBrush}" />
-            </Style>
-            <Style x:Key="PillLiveTextStyle" TargetType="TextBlock">
-                <Setter Property="Foreground" Value="{ThemeResource PillTextBrush}" />
-            </Style>
-            <Style x:Key="PillDimmedTextStyle" TargetType="TextBlock">
-                <Setter Property="Foreground" Value="{ThemeResource PillTextDimmedBrush}" />
-            </Style>
-        </Border.Resources>
         <StackPanel Spacing="8">
             <Grid ColumnSpacing="10">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>

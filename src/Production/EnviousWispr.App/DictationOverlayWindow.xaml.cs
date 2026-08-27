@@ -185,7 +185,7 @@ public sealed partial class DictationOverlayWindow : Window
 
     private void ConfigureRecordingDesign()
     {
-        StateTitle.Style = (Style)OverlayRoot.Resources["PillModeQuietTextStyle"];
+        StateTitle.Style = GetPillStyle("PillModeQuietTextStyle");
         StateIcon.Visibility = Visibility.Collapsed;
         StateDetail.Visibility = Visibility.Collapsed;
         ElapsedText.Visibility = Visibility.Visible;
@@ -223,7 +223,7 @@ public sealed partial class DictationOverlayWindow : Window
 
     private void ConfigureNotice()
     {
-        StateTitle.Style = (Style)OverlayRoot.Resources["PillNoticeTextStyle"];
+        StateTitle.Style = GetPillStyle("PillNoticeTextStyle");
         RainbowMark.Visibility = Visibility.Collapsed;
         StateIcon.Visibility = Visibility.Visible;
         StateDetail.Visibility = Visibility.Visible;
@@ -238,8 +238,11 @@ public sealed partial class DictationOverlayWindow : Window
     private void ApplyPreviewInk()
     {
         var styleKey = _previewText is null ? "PillDimmedTextStyle" : "PillLiveTextStyle";
-        PreviewText.Style = (Style)OverlayRoot.Resources[styleKey];
+        PreviewText.Style = GetPillStyle(styleKey);
     }
+
+    private static Style GetPillStyle(string key) =>
+        (Style)Application.Current.Resources[key];
 
     private void ResizeReadingWell()
     {

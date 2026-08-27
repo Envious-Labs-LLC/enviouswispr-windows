@@ -318,7 +318,20 @@ public sealed partial class DesignSystemTokenTests
         Assert.NotEmpty(resourceReferences);
         Assert.All(resourceReferences, key => Assert.Contains(key, declaredPillKeys));
 
+        // Resolve a style reference against the overlay's own resources OR anywhere in the
+        // pill theme file. The property worth pinning is that every Pill* style the overlay
+        // names is AVAILABLE, not which file happens to hold it: the four pill text styles
+        // moved from the overlay into PillTokens.xaml and a test asserting their location
+        // failed on a change that broke nothing a user could see.
+        //
+        // Read EVERY x:Key in that file, not just the theme dictionaries' — a Style does not
+        // vary by theme (only the brushes it references do), so these correctly sit at the
+        // dictionary root, outside <ResourceDictionary.ThemeDictionaries>.
+        var pillThemeFile = XDocument.Load(
+            Path.Combine(
+                repositoryRoot, "src", "Production", "EnviousWispr.App", "Theme", "PillTokens.xaml"));
         var declaredLocalKeys = overlay.Descendants()
+            .Concat(pillThemeFile.Descendants())
             .Select(element => (string?)element.Attribute(XName.Get("Key", XamlNamespace)))
             .Where(key => key is not null)
             .ToHashSet(StringComparer.Ordinal);
