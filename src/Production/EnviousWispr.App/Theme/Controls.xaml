@@ -134,9 +134,41 @@
                                 <VisualState x:Name="Checked">
                                     <VisualState.Setters>
                                         <Setter Target="CardBorder.BorderBrush" Value="{ThemeResource BrandAccentBrush}" />
-                                        <Setter Target="SelectionBorder.Opacity" Value="1" />
                                         <Setter Target="CheckBadge.Visibility" Value="Visible" />
                                     </VisualState.Setters>
+                                    <!--
+                                        Clicking a card is a decision the user just made, and this
+                                        ring is the one place the app tells them it heard. Measured
+                                        arriving in a single frame, which reads as unresponsive
+                                        rather than crisp.
+
+                                        Opacity only, so the animation cannot move anything: the
+                                        ring is already a zero-layout overlay and animating a size
+                                        here would put back the two-pixel page shift this border
+                                        exists to remove.
+
+                                        The badge fades with it. Its Visibility stays a setter
+                                        because that is what hit-testing and assistive tools read;
+                                        opacity is only how it arrives.
+                                    -->
+                                    <Storyboard>
+                                        <DoubleAnimation
+                                            Storyboard.TargetName="SelectionBorder"
+                                            Storyboard.TargetProperty="Opacity"
+                                            From="0"
+                                            To="1"
+                                            Duration="0:0:0.15">
+                                            <DoubleAnimation.EasingFunction>
+                                                <CubicEase EasingMode="EaseOut" />
+                                            </DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                        <DoubleAnimation
+                                            Storyboard.TargetName="CheckBadge"
+                                            Storyboard.TargetProperty="Opacity"
+                                            From="0"
+                                            To="1"
+                                            Duration="0:0:0.15" />
+                                    </Storyboard>
                                 </VisualState>
                             </VisualStateGroup>
                             <VisualStateGroup x:Name="FocusStates">

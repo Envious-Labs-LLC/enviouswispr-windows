@@ -62,6 +62,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 7 => MigrateFromV7(json),
                 8 => MigrateFromV8(json),
                 9 => MigrateFromV9(json),
+                10 => MigrateFromV10(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -331,6 +332,38 @@ public sealed class JsonSettingsStore : ISettingsStore
                         CancelGesture = DictationPreferences.Default.CancelGesture,
                         EscapeRecoveryEnabled = DictationPreferences.Default.EscapeRecoveryEnabled,
                         QuickAddGesture = DictationPreferences.Default.QuickAddGesture,
+                    },
+                },
+            };
+    }
+
+    /// <summary>
+    /// A settings file written before auto-stop existed.
+    /// </summary>
+    /// <remarks>
+    /// The two new fields are optional with defaults, so deserialising a v10 file already fills
+    /// them correctly. The migration is here anyway, and it is not ceremony: it takes the DEFAULTS
+    /// explicitly, so a future change to those defaults reaches an upgrading user rather than
+    /// leaving them on whatever the record happened to declare when their file was written.
+    ///
+    /// The schema version had to move regardless. Writing the new fields under the old version
+    /// would make an older build reject the file as unreadable and reset the user's settings,
+    /// because this store refuses unmapped members.
+    /// </remarks>
+    private static AppSettings? MigrateFromV10(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = AppSettings.CurrentSchemaVersion,
+                Preferences = legacy.Preferences with
+                {
+                    Dictation = legacy.Preferences.Dictation with
+                    {
+                        AutoStopEnabled = DictationPreferences.Default.AutoStopEnabled,
+                        AutoStopSilenceSeconds = DictationPreferences.Default.AutoStopSilenceSeconds,
                     },
                 },
             };
