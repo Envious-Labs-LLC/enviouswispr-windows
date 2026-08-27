@@ -1419,9 +1419,14 @@ public sealed partial class MainWindow : Window, IDisposable
             // "separated by a comma..". And the list of separators is the parser's rather than a
             // remembered one - it accepts a tab and an equals sign too, and a user with a
             // tab-separated file was being told the wrong thing about a file it would have taken.
+            // "1 lines could not be read" - the only clause in this message with a noun that has
+            // to agree with its count. The others are correct at any number: "1 added", "1 you
+            // already had", "1 left alone because you already correct them differently". Checked
+            // rather than assumed, so this is one line rather than a pattern to sweep for.
+            var lineWord = plan.UnreadableCount == 1 ? "line" : "lines";
             parts.Add(
-                $"{plan.UnreadableCount} lines could not be read. Each needs a spoken form and a "
-                + "replacement, separated by a comma, a tab, or an equals sign");
+                $"{plan.UnreadableCount} {lineWord} could not be read. Each needs a spoken form "
+                + "and a replacement, separated by a comma, a tab, or an equals sign");
         }
 
         return parts.Count == 0
