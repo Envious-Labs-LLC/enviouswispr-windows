@@ -33,6 +33,7 @@ public sealed partial class DesignSystemTokenTests
         ["BrandTextTertiary"] = new("#6B5E86", "#7A7290"),
         ["BrandAccent"] = new("#7C3AED", "#A78BFA"),
         ["BrandAccentSolid"] = new("#7C3AED", "#8B46F0"),
+        ["BrandOnAccent"] = new("#FFFFFF", "#FFFFFF"),
         ["BrandAccentLight"] = new("#177C3AED", "#29A78BFA"),
         ["BrandSuccess"] = new("#00A366", "#5CC99A"),
         ["BrandWarning"] = new("#CC7000", "#E6B766"),
@@ -206,6 +207,115 @@ public sealed partial class DesignSystemTokenTests
             offenders.Count == 0,
             $"Literal colors must use a ThemeResource token:{Environment.NewLine}{string.Join(Environment.NewLine, offenders)}");
     }
+
+    [Fact]
+    public void SelectableCardStyleUsesRadioButtonInteractionStates()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var controlsPath = Path.Combine(
+            repositoryRoot,
+            "src",
+            "Production",
+            "EnviousWispr.App",
+            "Theme",
+            "Controls.xaml");
+        var document = XDocument.Load(controlsPath);
+        var style = document.Descendants().Single(element =>
+            element.Name.LocalName == "Style" &&
+            string.Equals(
+                (string?)element.Attribute(XName.Get("Key", XamlNamespace)),
+                "BrandSelectableCardStyle",
+                StringComparison.Ordinal));
+
+        Assert.Equal("RadioButton", (string?)style.Attribute("TargetType"));
+        var stateNames = style.Descendants()
+            .Where(element => element.Name.LocalName == "VisualState")
+            .Select(element => (string?)element.Attribute(XName.Get("Name", XamlNamespace)))
+            .Where(name => name is not null)
+            .ToHashSet(StringComparer.Ordinal);
+        Assert.Contains("PointerOver", stateNames);
+        Assert.Contains("Checked", stateNames);
+        Assert.Contains("Focused", stateNames);
+        Assert.Contains(style.Descendants(), element =>
+            string.Equals(
+                (string?)element.Attribute(XName.Get("Name", XamlNamespace)),
+                "CheckBadge",
+                StringComparison.Ordinal) &&
+            string.Equals((string?)element.Attribute("Background"), "{ThemeResource BrandAccentSolidBrush}", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ChoiceSetsKeepPlatformSingleSelectionSemantics()
+    {
+        var document = LoadMainWindow();
+        foreach (var name in new[]
+                 {
+                     "EngineComboBox",
+                     "PolishProviderComboBox",
+                     "ThemeComboBox",
+                     "OverlayPositionComboBox",
+                 })
+        {
+            var element = FindNamedElement(document, name);
+            Assert.Equal("RadioButtons", element.Name.LocalName);
+        }
+
+        foreach (var name in new[]
+                 {
+                     "CapsulePillButton",
+                     "LevelRailPillButton",
+                     "ReadingWellPillButton",
+                 })
+        {
+            var element = FindNamedElement(document, name);
+            Assert.Equal("RadioButton", element.Name.LocalName);
+            Assert.Null(element.Attribute("Click"));
+        }
+
+        Assert.Equal(
+            (string?)FindNamedElement(document, "CapsulePillButton").Attribute("GroupName"),
+            (string?)FindNamedElement(document, "LevelRailPillButton").Attribute("GroupName"));
+    }
+
+    [Fact]
+    public void EveryProductPageStartsWithAHeaderCard()
+    {
+        var document = LoadMainWindow();
+        foreach (var name in new[]
+                 {
+                     "HomePage",
+                     "WhatsNewPage",
+                     "HistoryPage",
+                     "DictionaryPage",
+                     "SnippetsPage",
+                     "SettingsPage",
+                     "HelpPage",
+                 })
+        {
+            var page = FindNamedElement(document, name);
+            var stack = page.Elements().Single(element => element.Name.LocalName == "StackPanel");
+            var firstContent = stack.Elements().First();
+            Assert.Equal("Border", firstContent.Name.LocalName);
+            Assert.Equal(
+                "{StaticResource BrandHeaderCardStyle}",
+                (string?)firstContent.Attribute("Style"));
+        }
+    }
+
+    private static XDocument LoadMainWindow() =>
+        XDocument.Load(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "Production",
+            "EnviousWispr.App",
+            "MainWindow.xaml"));
+
+    private static XElement FindNamedElement(XDocument document, string name) =>
+        document.Descendants().Single(element =>
+            string.Equals(
+                (string?)element.Attribute(XName.Get("Name", XamlNamespace)),
+                name,
+                StringComparison.Ordinal));
 
     /// <summary>
     /// True when the path sits under a build-output directory.

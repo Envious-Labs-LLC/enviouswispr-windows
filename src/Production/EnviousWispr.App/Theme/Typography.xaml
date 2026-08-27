@@ -13,6 +13,7 @@
         <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
         <Setter Property="FontSize" Value="14" />
         <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="CharacterSpacing" Value="40" />
         <Setter Property="Foreground" Value="{ThemeResource BrandAccentBrush}" />
     </Style>
     <Style x:Key="BrandRowTitleStyle" TargetType="TextBlock">
