@@ -11,6 +11,20 @@ public enum DiagnosticProvider
     Gemini,
 }
 
+public static class DiagnosticProviderIds
+{
+    public static DiagnosticProvider? FromProviderId(string? providerId) =>
+        providerId?.Trim().ToLowerInvariant() switch
+        {
+            "eg-one" or "eg-1" => DiagnosticProvider.EgOne,
+            "ollama" => DiagnosticProvider.Ollama,
+            "openai" => DiagnosticProvider.OpenAi,
+            "anthropic" => DiagnosticProvider.Anthropic,
+            "gemini" => DiagnosticProvider.Gemini,
+            _ => null,
+        };
+}
+
 public enum DiagnosticEngineChoice
 {
     Parakeet,

@@ -1086,7 +1086,10 @@ public partial class App : Application, IAsyncDisposable
         OllamaPolishProvider provider,
         CancellationToken cancellationToken)
     {
-        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.PolishRuntimeStarted));
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.PolishRuntimeStarted,
+            Provider: DiagnosticProviderIds.FromProviderId(provider.ProviderId)));
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var health = await provider.ProbeHealthAsync(cancellationToken).ConfigureAwait(false);
         timer.Stop();
@@ -1099,7 +1102,7 @@ public partial class App : Application, IAsyncDisposable
                 ? AppFailureCategory.None
                 : AppFailureCategory.LocalPolish,
             timer.ElapsedMilliseconds,
-            DiagnosticProviderFor(provider.ProviderId),
+            DiagnosticProviderIds.FromProviderId(provider.ProviderId),
             health.Error?.Code));
         _window?.DispatcherQueue.TryEnqueue(() =>
         {
@@ -1114,7 +1117,10 @@ public partial class App : Application, IAsyncDisposable
         EgOnePolishProvider provider,
         CancellationToken cancellationToken)
     {
-        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.PolishRuntimeStarted));
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.PolishRuntimeStarted,
+            Provider: DiagnosticProviderIds.FromProviderId(provider.ProviderId)));
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var health = await provider.ProbeHealthAsync(cancellationToken).ConfigureAwait(false);
         timer.Stop();
@@ -1126,7 +1132,8 @@ public partial class App : Application, IAsyncDisposable
             health.Health == EgOneHealth.Green
                 ? AppFailureCategory.None
                 : AppFailureCategory.LocalPolish,
-            timer.ElapsedMilliseconds));
+            timer.ElapsedMilliseconds,
+            DiagnosticProviderIds.FromProviderId(provider.ProviderId)));
     }
 
     private async Task ConfigureTranscriptionAsync(FinalAsrEngine configuredEngine)
@@ -2494,7 +2501,7 @@ public partial class App : Application, IAsyncDisposable
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
             AppEventCode.PolishStarted,
-            Provider: DiagnosticProviderFor(provider.ProviderId)));
+            Provider: DiagnosticProviderIds.FromProviderId(provider.ProviderId)));
         var timer = System.Diagnostics.Stopwatch.StartNew();
         PolishResult result;
         if (!_polishUsesLocalRuntime)
@@ -2543,7 +2550,7 @@ public partial class App : Application, IAsyncDisposable
                     : AppFailureCategory.CloudPolish
                 : AppFailureCategory.None,
             timer.ElapsedMilliseconds,
-            DiagnosticProviderFor(provider.ProviderId),
+            DiagnosticProviderIds.FromProviderId(provider.ProviderId),
             result.Error?.Code));
         return result;
     }
@@ -2708,17 +2715,6 @@ public partial class App : Application, IAsyncDisposable
         null => AppFailureCategory.None,
         _ => AppFailureCategory.Unknown,
     };
-
-    private static DiagnosticProvider? DiagnosticProviderFor(string providerId) =>
-        providerId.Trim().ToLowerInvariant() switch
-        {
-            "eg-1" => DiagnosticProvider.EgOne,
-            "ollama" => DiagnosticProvider.Ollama,
-            "openai" => DiagnosticProvider.OpenAi,
-            "anthropic" => DiagnosticProvider.Anthropic,
-            "gemini" => DiagnosticProvider.Gemini,
-            _ => null,
-        };
 
     private static DiagnosticHardwareClass DiagnosticHardwareClassFor(HardwareSnapshot hardware)
     {
