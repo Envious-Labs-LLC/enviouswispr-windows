@@ -172,6 +172,8 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
 
     public void SetRecordingActive(bool active) => _edgeTracker.SetRecordingActive(active);
 
+    public void SetCapturingKeybind(bool capturing) => _edgeTracker.SetCapturingKeybind(capturing);
+
     private nint HookCallback(int code, nint message, nint data)
     {
         if (code >= 0 && IsKeyboardEdge(message))

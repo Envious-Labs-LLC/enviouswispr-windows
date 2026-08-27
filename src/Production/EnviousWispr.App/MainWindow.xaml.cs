@@ -12,6 +12,7 @@ using EnviousWispr.Core.Distribution;
 using EnviousWispr.Core.History;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Reliability;
+using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.LLM;
 using Microsoft.UI.Windowing;
@@ -200,6 +201,13 @@ public sealed partial class MainWindow : Window, IDisposable
         // measured on the running app, "12.7" was accepted and shown as 12.7, then stored as 12 by
         // the save path's cast. No crash and no bad state - the defect is that the control shows a
         // precision it does not honour, and the user is never told their 12.7 became 12.
+        //
+        // THE ROUNDER IS THE PART THAT DOES THE WORK. FractionDigits is a MINIMUM number of
+        // fraction digits, not a maximum: it stops zero-padding and it does not round anything.
+        // A formatter carrying only FractionDigits = 0 was measured on the running app and 12.7
+        // survived both the display and the value unchanged - it compiled, it was attached, and
+        // it did nothing. Vendor documentation for NumberBox pairs a NumberRounder with the
+        // formatter for exactly this reason.
         foreach (var box in new[] { RetentionDaysBox, DiagnosticRetentionDaysBox })
         {
             box.NumberFormatter = new DecimalFormatter
@@ -207,7 +215,21 @@ public sealed partial class MainWindow : Window, IDisposable
                 FractionDigits = 0,
                 IsDecimalPointAlwaysDisplayed = false,
                 IsGrouped = false,
+                NumberRounder = new IncrementNumberRounder
+                {
+                    Increment = 1,
+                    RoundingAlgorithm = RoundingAlgorithm.RoundHalfUp,
+                },
             };
+        }
+
+        // A keybind field waiting for a keystroke must not let the system-wide hook act on it.
+        // Focus is what the hook needs to know, so focus is what is reported - see
+        // KeybindCaptureActiveChanged.
+        foreach (var box in new[] { HotkeyTextBox, CancelHotkeyTextBox, QuickAddHotkeyTextBox })
+        {
+            box.GotFocus += (_, _) => KeybindCaptureActiveChanged?.Invoke(true);
+            box.LostFocus += (_, _) => KeybindCaptureActiveChanged?.Invoke(false);
         }
 
         // Subscribed HERE rather than with a KeyDown="" attribute in the markup, and the
@@ -275,6 +297,21 @@ public sealed partial class MainWindow : Window, IDisposable
     public event Action? UpdateCheckRequested;
 
     public event Action? UpdateApplyRequested;
+
+    /// <summary>
+    /// Raised true while a keybind field is waiting for a keystroke, false the moment it is not.
+    /// </summary>
+    /// <remarks>
+    /// Pressing the recording key inside its own capture field started a real recording, because
+    /// the system-wide hook sees the key before this window does and marking the routed event
+    /// handled has no bearing on it. So the fix cannot live in the field's key handler at all -
+    /// the hook has to be told to stand down, and the only thing this window knows is focus.
+    ///
+    /// Closing the window raises false as well. A capture field that still held focus when the
+    /// window went away would otherwise leave the hook standing down with no field on screen to
+    /// clear it, and dictation would stop working with nothing on screen to explain it.
+    /// </remarks>
+    public event Action<bool>? KeybindCaptureActiveChanged;
 
     /// <summary>
     /// The window's opening size, in the same units the rest of the layout is expressed in.
@@ -2425,7 +2462,7 @@ public sealed partial class MainWindow : Window, IDisposable
             var retention = entry.ExpiresAt is null
                 ? string.Empty
                 : $" · Escape Recovery expires {entry.ExpiresAt.Value.ToLocalTime():g} unless kept";
-            Details = $"{entry.EngineId} · {(entry.WasPolished ? "AI polished" : "deterministic cleanup")} · {(entry.WasDelivered ? "delivered" : "held safely")}{retention}";
+            Details = $"{TranscriptionEngineNames.DisplayName(entry.EngineId)} · {(entry.WasPolished ? "AI polished" : "deterministic cleanup")} · {(entry.WasDelivered ? "delivered" : "held safely")}{retention}";
         }
 
         public Guid Id { get; }
