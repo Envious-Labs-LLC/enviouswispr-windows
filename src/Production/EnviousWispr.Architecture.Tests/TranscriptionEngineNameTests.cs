@@ -585,4 +585,73 @@ public sealed partial class DesignSystemTokenTests
 
     [GeneratedRegex(@"finally\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", RegexOptions.Singleline)]
     private static partial Regex FinallyBlock();
+
+    /// <summary>
+    /// The auto-stop watcher is torn down everywhere the live preview is.
+    /// </summary>
+    /// <remarks>
+    /// Both are loops that exist only while a recording is running, and there are FIVE places a
+    /// recording stops: finalize, cancel, fail, the watchdog, and app shutdown. Miss one and a
+    /// watcher outlives its recording, then ends the NEXT one early - which would present as the
+    /// app randomly cutting people off and would be nearly impossible to attribute.
+    ///
+    /// Gated by pairing rather than by counting call sites, so a sixth stop path added later is
+    /// covered by construction: the preview teardown is long-established and every stop path
+    /// already has one, so requiring the two to appear together makes the existing owner the
+    /// enumeration.
+    /// </remarks>
+    [Fact]
+    public void TheAutoStopWatcherIsTornDownWhereverTheLivePreviewIs()
+    {
+        var source = File.ReadAllText(
+            Path.Combine(
+                FindRepositoryRoot(),
+                "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+
+        var previewStops = source.Split("StopLivePreviewAsync").Length - 1;
+        var watcherStops = source.Split("StopAutoStopWatchAsync").Length - 1;
+
+        // One extra mention each for the method's own declaration.
+        Assert.True(previewStops >= 6, $"Expected the preview teardown call sites, found {previewStops}.");
+
+        Assert.True(
+            watcherStops >= previewStops,
+            $"The live preview is torn down in {previewStops} places and the auto-stop watcher in "
+            + $"{watcherStops}. A watcher that outlives its recording ends the NEXT one early.");
+    }
+
+    /// <summary>
+    /// Auto-stop ends a recording through the same door a key release uses.
+    /// </summary>
+    /// <remarks>
+    /// A parallel finish path would be a second implementation of ending a dictation - session
+    /// state machine, the hook's own recording flag, transcription, delivery, history - and the
+    /// two would drift. The drift would show up as auto-stopped recordings behaving subtly
+    /// differently from released ones, which is the hardest kind of bug to attribute.
+    /// </remarks>
+    [Fact]
+    public void AutoStopEndsTheRecordingThroughTheKeyReleasePath()
+    {
+        var source = File.ReadAllText(
+            Path.Combine(
+                FindRepositoryRoot(),
+                "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+
+        var watcher = AutoStopWatcherBody().Match(source);
+        Assert.True(watcher.Success, "Could not find the auto-stop watcher.");
+
+        Assert.Contains(
+            "HandlePushToTalkAsync(PushToTalkSignal.Released)",
+            watcher.Value,
+            StringComparison.Ordinal);
+
+        // Control: the matcher must have captured a real body rather than an empty match, or the
+        // assertion above would be about nothing.
+        Assert.True(
+            watcher.Value.Length > 400,
+            $"The watcher body matched only {watcher.Value.Length} characters; the matcher is wrong.");
+    }
+
+    [GeneratedRegex(@"private async Task RunAutoStopWatchAsync.*?\n    \}", RegexOptions.Singleline)]
+    private static partial Regex AutoStopWatcherBody();
 }
