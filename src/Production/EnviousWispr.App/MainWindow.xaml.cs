@@ -22,6 +22,7 @@ using Windows.System;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Input;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Globalization.NumberFormatting;
 using Windows.Graphics;
 using Windows.Storage.Pickers;
 
@@ -194,6 +195,20 @@ public sealed partial class MainWindow : Window, IDisposable
         PolishProviderComboBox.ItemsSource = PolishProviderChoices;
         ThemeComboBox.ItemsSource = ThemeChoices;
         OverlayPositionComboBox.ItemsSource = OverlayPositionChoices;
+
+        // Days are whole days. Without a formatter a NumberBox keeps and DISPLAYS a fraction:
+        // measured on the running app, "12.7" was accepted and shown as 12.7, then stored as 12 by
+        // the save path's cast. No crash and no bad state - the defect is that the control shows a
+        // precision it does not honour, and the user is never told their 12.7 became 12.
+        foreach (var box in new[] { RetentionDaysBox, DiagnosticRetentionDaysBox })
+        {
+            box.NumberFormatter = new DecimalFormatter
+            {
+                FractionDigits = 0,
+                IsDecimalPointAlwaysDisplayed = false,
+                IsGrouped = false,
+            };
+        }
 
         // Subscribed HERE rather than with a KeyDown="" attribute in the markup, and the
         // difference is the whole fix. A XAML attribute subscribes with handledEventsToo:false,
@@ -1984,6 +1999,12 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void ShowPage(string tag)
     {
+        // A confirmation belongs to the page that produced it. Measured on the running app:
+        // "Snippet removed" was still displayed minutes later across Clipboard, History, All
+        // Settings and Keybinds, where it reads as a message about the page you are now looking
+        // at rather than the one you left.
+        OperationInfoBar.IsOpen = false;
+
         var settingsPage = tag == "settings" || tag.StartsWith("settings-", StringComparison.Ordinal);
         var helpPage = tag == "help" || tag.StartsWith("help-", StringComparison.Ordinal);
         HomePage.Visibility = tag == "home" ? Visibility.Visible : Visibility.Collapsed;
