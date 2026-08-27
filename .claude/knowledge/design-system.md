@@ -201,6 +201,8 @@ dim title. Only helper steps down in colour.
 | `BrandContentH` | 24 | Content card horizontal padding |
 | `BrandContentBottom` | 32 | Bottom padding |
 | `BrandPillRadius` | 100 | Pills and tags |
+| `BrandNavRowHeight` | 36 | Nav row height - the macOS sidebar's pitch, matched deliberately |
+| `BrandNavGroupHeaderMargin` | 0,10,0,2 | The group heading BLOCK; the text box is never height-constrained |
 | `BrandPageContentMaxWidth` | 1040 | The measure of EVERY settings page |
 | `BrandInlineContentMaxWidth` | 440 | A column centred inside a page card |
 | `BrandRowIconColumnWidth` | 28 | The leading icon column on a setting row |
@@ -221,6 +223,28 @@ darker canvas:
   uniform on all four sides.
 - Both cards carry a 1px `BrandDivider` border.
 - Inside the content card, setting cards use `BrandCardBg` at radius 14.
+
+## FACT: navigation-sizing-numbers
+Measured on the running app, not derived from row arithmetic. **Every figure previously derived by
+multiplying rows by row height was wrong** - 754 against a real 896, then 731 against a real 832 - because
+the arithmetic does not know what the five group headings cost, and the headings are the expensive part.
+
+| Quantity | Value |
+|---|---|
+| Nav content, full scroll extent | 832 DIP |
+| Window chrome above and below the nav | 219 DIP |
+| Window height to show the nav whole | 1051 DIP (default asks 1060) |
+| Nav row height / pitch | 32 / 36 DIP - the macOS pitch |
+| Group heading block | 56 DIP from previous row bottom to next row top |
+
+The default window asks for 1060 DIP and **clamps to 94% of the display work area**, so it opens whole on
+a 4K or 1440p screen and opens to fit, scrolling, on anything shorter. That is what the Mac does too: its
+sidebar is a ScrollView and does not fit its own list either.
+
+**Do not buy the fit out of the heading margins.** The lead-in above each heading is what makes five
+groups read as groups rather than one long list; trimming it is the single change that moves the sidebar
+from "reads well" to "tight". Grow the window while headroom remains, and accept scrolling once it does
+not.
 
 ## RULE: one-measure-for-every-page
 Every page caps its content at `BrandPageContentMaxWidth` and centres it in the content card. **No page

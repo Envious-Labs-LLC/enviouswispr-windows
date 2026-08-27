@@ -259,11 +259,16 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         const int preferredWidthDips = 1120;
 
-        // Tall enough to show the whole navigation list without scrolling, measured rather than
-        // guessed: the list needs roughly 754 DIP at the density this app uses, and the window
-        // chrome above and below it - title bar, brand header, pinned footer, padding - takes a
-        // further 227 that the list can never use.
-        const int preferredHeightDips = 1010;
+        // Tall enough to show the whole navigation list without scrolling. MEASURED on the
+        // running app, not derived from the row arithmetic: the list is 832 DIP at this density
+        // and the chrome above and below it - title bar, brand header, pinned footer, padding -
+        // takes a further 219 that the list can never use. 1051 is the sum; the rest is slack.
+        //
+        // Every previous value here came from multiplying a row count by a row height, and every
+        // one of them was wrong - 754 against a real 896, then 731 against a real 832. The row
+        // arithmetic consistently under-counts because it does not know what the group headings
+        // cost, and the headings are the expensive part.
+        const int preferredHeightDips = 1060;
 
         var scale = DisplayScale();
         var width = preferredWidthDips * scale;
