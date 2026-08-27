@@ -1262,6 +1262,63 @@ public sealed partial class DesignSystemTokenTests
                 + "arrows die after one press - which is exactly what shipped.");
     }
 
+    /// <summary>
+    /// The notification bar occupies its own row rather than painting over the page.
+    /// </summary>
+    /// <remarks>
+    /// It used to be a sibling of every page ScrollViewer in a single-cell Grid, floated above
+    /// them with Canvas.ZIndex. Measured on the running app: with a validation message open on
+    /// Your Words, the bar spanned y 122-198 and the page title y 152-212 - 46 of the title's 60px
+    /// drawn over, so the heading rendered on the warning's amber background instead of its own
+    /// card. The title's rectangle was IDENTICAL with the bar open and closed, which is what
+    /// proves nothing was being displaced.
+    ///
+    /// It is a shared surface spanning the full content width, so ANY page whose header sits in
+    /// that band does the same; Your Words is only where it was first triggered.
+    ///
+    /// An Auto row costs nothing when the bar is closed, so the fix does not shift the layout in
+    /// the ordinary case.
+    /// </remarks>
+    [Fact]
+    public void TheNotificationBarDoesNotPaintOverThePage()
+    {
+        var document = LoadMainWindow();
+        var bar = document.Descendants().SingleOrDefault(element =>
+            (string?)element.Attribute(XName.Get("Name", XamlNamespace)) == "OperationInfoBar");
+        Assert.True(bar is not null, "OperationInfoBar was not found in MainWindow.xaml.");
+
+        var grid = bar!.Parent;
+        Assert.True(grid is not null && grid.Name.LocalName == "Grid",
+            "The notification bar is expected to sit directly in the content Grid.");
+
+        var rows = grid!.Elements()
+            .Where(child => child.Name.LocalName == "Grid.RowDefinitions")
+            .SelectMany(definitions => definitions.Elements())
+            .ToArray();
+        Assert.True(
+            rows.Length >= 2,
+            "The content Grid has no rows, so the notification bar and the pages share one cell and "
+                + "the bar draws over the page header.");
+
+        Assert.Equal("0", (string?)bar.Attribute(XName.Get("Row", "http://schemas.microsoft.com/winfx/2006/xaml/presentation")) ?? (string?)bar.Attribute("Grid.Row"));
+
+        // Every page must be in the row BELOW it. A page left in row 0 is overlapped again, and
+        // the symptom - a heading rendered on the notification's background - is easy to miss.
+        var pages = grid.Elements()
+            .Where(child => child.Name.LocalName == "ScrollViewer")
+            .ToArray();
+        Assert.True(pages.Length > 0, "No pages were found in the content Grid.");
+        foreach (var page in pages)
+        {
+            var name = (string?)page.Attribute(XName.Get("Name", XamlNamespace)) ?? "(unnamed)";
+            Assert.True(
+                (string?)page.Attribute("Grid.Row") == "1",
+                $"Page '{name}' is not in the content row, so the notification bar overlaps it.");
+        }
+
+        Assert.Null((string?)bar.Attribute("Canvas.ZIndex"));
+    }
+
     private static XDocument LoadMainWindow() =>
         XDocument.Load(Path.Combine(
             FindRepositoryRoot(),
