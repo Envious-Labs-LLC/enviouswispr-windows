@@ -371,4 +371,74 @@ public sealed partial class DesignSystemTokenTests
 
     private static Regex ColorToken(string key) =>
         new(@"<Color x:Key=""" + Regex.Escape(key) + @""">");
+
+    /// <summary>
+    /// The first screen now promises "Your voice is transcribed here and never leaves it." This
+    /// is the check that fails when that stops being true.
+    /// </summary>
+    /// <remarks>
+    /// TWO STRUCTURAL FACTS, both printed rather than read:
+    ///
+    /// The project holding the transcription engines has no network client of any kind, so
+    /// transcription is local by construction rather than by policy. And no project that DOES
+    /// hold a network client mentions any audio-carrying type, so there is no route by which
+    /// captured samples reach one.
+    ///
+    /// STATED LIMIT, because the obvious stronger gate does not work and it is worth saying why
+    /// rather than leaving the next reader to try it. A project-reference gate - "network
+    /// projects must not reference the audio project" - would be a false claim: the captured
+    /// audio type lives in Core, which every project references, so the reference graph cannot
+    /// separate them. This is a tripwire on the routes a person would actually take, not a proof.
+    /// The proof is watching the network, which no unit test can do.
+    /// </remarks>
+    [Fact]
+    public void NothingThatCanReachTheNetworkCanReachTheAudio()
+    {
+        var production = Path.Combine(FindRepositoryRoot(), "src", "Production");
+
+        string[] networkClients = ["HttpClient", "WebSocket", "PostAsync", "WebRequest"];
+        string[] audioCarriers = ["CapturedAudio", "AudioSample", "float[]", "PcmFrame"];
+
+        var asr = SourceFilesIn(Path.Combine(production, "EnviousWispr.ASR"));
+        Assert.NotEmpty(asr);
+
+        var asrTalksToTheNetwork = asr
+            .Where(file => networkClients.Any(client => file.text.Contains(client, StringComparison.Ordinal)))
+            .Select(file => file.name)
+            .ToArray();
+
+        Assert.True(
+            asrTalksToTheNetwork.Length == 0,
+            "Transcription is no longer local by construction; a network client appeared in: "
+            + string.Join(", ", asrTalksToTheNetwork));
+
+        foreach (var project in new[] { "EnviousWispr.LLM", "EnviousWispr.ModelDelivery" })
+        {
+            var reachesAudio = SourceFilesIn(Path.Combine(production, project))
+                .Where(file => audioCarriers.Any(carrier => file.text.Contains(carrier, StringComparison.Ordinal)))
+                .Select(file => file.name)
+                .ToArray();
+
+            Assert.True(
+                reachesAudio.Length == 0,
+                $"{project} can reach the network AND now names an audio type in: "
+                + string.Join(", ", reachesAudio));
+        }
+
+        // The control, and it is the half that matters: prove both halves of the matcher can
+        // actually see what they are looking for, somewhere they are allowed to be.
+        var app = SourceFilesIn(Path.Combine(production, "EnviousWispr.App"));
+        Assert.Contains(app, file => audioCarriers.Any(c => file.text.Contains(c, StringComparison.Ordinal)));
+
+        var llm = SourceFilesIn(Path.Combine(production, "EnviousWispr.LLM"));
+        Assert.Contains(llm, file => networkClients.Any(c => file.text.Contains(c, StringComparison.Ordinal)));
+    }
+
+    private static (string name, string text)[] SourceFilesIn(string directory) =>
+        Directory
+            .EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories)
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Select(path => (Path.GetFileName(path), File.ReadAllText(path)))
+            .ToArray();
 }
