@@ -1513,7 +1513,7 @@ public sealed partial class MainWindow : Window, IDisposable
         else if (helpPage)
         {
             ConfigureHelpPage(tag);
-            ScrollSectionIntoView(HelpPage, HelpSectionFor(tag));
+            ScrollSectionIntoView(HelpPage, section: null);
         }
     }
 
@@ -1523,24 +1523,24 @@ public sealed partial class MainWindow : Window, IDisposable
         {
             "settings-appearance" => (
                 "Appearance",
-                "How the app looks, and the pill you see while dictating.",
+                "The theme, and where the recording pill appears while you dictate.",
                 "\uE771",
                 (FrameworkElement?)AppearanceSection),
             "settings-transcription" => (
                 "Transcription",
                 "The speech engine that turns your voice into text.",
                 "\uE8C1",
-                (FrameworkElement?)RecordAndTranscribeSection),
+                (FrameworkElement?)TranscriptionEngineSection),
             "settings-live-preview" => (
                 "Live Preview",
                 "See your words on screen while you are still speaking.",
                 "\uE890",
-                (FrameworkElement?)AppearanceSection),
+                (FrameworkElement?)LivePreviewSection),
             "settings-microphone" => (
                 "Microphone",
                 "Choose your input source and readiness behavior.",
                 "\uE720",
-                (FrameworkElement?)RecordAndTranscribeSection),
+                (FrameworkElement?)MicrophoneSection),
             "settings-sounds" => (
                 "Sounds",
                 "Play a short sound when recording starts and stops.",
@@ -1550,7 +1550,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 "Keybinds",
                 "Set the keybinds that start, stop, and cancel dictation.",
                 "\uE765",
-                (FrameworkElement?)RecordAndTranscribeSection),
+                (FrameworkElement?)KeybindsSection),
             "settings-ai-polish" => (
                 "AI Polish",
                 "Clean up and rewrite your dictation with AI.",
@@ -1611,16 +1611,40 @@ public sealed partial class MainWindow : Window, IDisposable
         HelpPageTitle.Text = title;
         HelpPageDescription.Text = description;
         HelpPageGlyph.Glyph = glyph;
+
+        // Show only the section the user asked for. Setting the header alone left three sidebar
+        // rows rendering all five sections, so "Permissions" opened onto a keyboard guide and the
+        // sidebar promised three destinations while delivering one.
+        var section = HelpSectionFor(tag);
+        var showAll = section is null;
+        foreach (var candidate in HelpSections())
+        {
+            candidate.Visibility = showAll || ReferenceEquals(candidate, section)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
     }
+
+    private Border[] HelpSections() =>
+    [
+        KeyboardGuideSection,
+        PermissionsSection,
+        LanguageSupportSection,
+        UpdatesSection,
+        LicensesSection,
+    ];
 
     private Border[] SettingsSections() =>
     [
-        RecordAndTranscribeSection,
+        MicrophoneSection,
+        TranscriptionEngineSection,
+        KeybindsSection,
         SoundSection,
         DeterministicCleanupSection,
         AiPolishSection,
         HistorySettingsSection,
         AppearanceSection,
+        LivePreviewSection,
         ClipboardSection,
         DiagnosticsSection,
         PortableProfileSection,
