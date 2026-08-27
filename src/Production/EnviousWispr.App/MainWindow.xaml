@@ -277,8 +277,8 @@
                         <Setter Property="MinHeight" Value="{StaticResource BrandNavRowHeight}" />
                     </Style>
                     <Style TargetType="NavigationViewItemHeader">
-                        <Setter Property="Height" Value="{StaticResource BrandNavGroupHeaderHeight}" />
-                        <Setter Property="MinHeight" Value="{StaticResource BrandNavGroupHeaderHeight}" />
+                        <!-- No Height. The heading is sized by its own text; the block is made
+                             shorter with margin. A fixed height here clipped the glyphs. -->
                         <Setter Property="Margin" Value="{StaticResource BrandNavGroupHeaderMargin}" />
                     </Style>
                     <DataTemplate x:Key="BrandNavigationGroupHeaderTemplate">
