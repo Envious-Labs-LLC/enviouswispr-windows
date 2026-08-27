@@ -38,6 +38,10 @@
             <Color x:Key="BrandWarningColor">#CC7000</Color>
             <SolidColorBrush x:Key="BrandWarningBrush" Color="#CC7000" />
             <Color x:Key="BrandWarningSoftColor">#1ACC7000</Color>
+            <Color x:Key="BrandSuccessSoftColor">#1A00A366</Color>
+            <SolidColorBrush x:Key="BrandSuccessSoftBrush" Color="#1A00A366" />
+            <Color x:Key="BrandErrorSoftColor">#1AC0392B</Color>
+            <SolidColorBrush x:Key="BrandErrorSoftBrush" Color="#1AC0392B" />
             <SolidColorBrush x:Key="BrandWarningSoftBrush" Color="#1ACC7000" />
             <Color x:Key="BrandErrorColor">#C0392B</Color>
             <SolidColorBrush x:Key="BrandErrorBrush" Color="#C0392B" />
@@ -101,6 +105,10 @@
             <Color x:Key="BrandWarningColor">#E6B766</Color>
             <SolidColorBrush x:Key="BrandWarningBrush" Color="#E6B766" />
             <Color x:Key="BrandWarningSoftColor">#24E6B766</Color>
+            <Color x:Key="BrandSuccessSoftColor">#245CC99A</Color>
+            <SolidColorBrush x:Key="BrandSuccessSoftBrush" Color="#245CC99A" />
+            <Color x:Key="BrandErrorSoftColor">#24EF7C89</Color>
+            <SolidColorBrush x:Key="BrandErrorSoftBrush" Color="#24EF7C89" />
             <SolidColorBrush x:Key="BrandWarningSoftBrush" Color="#24E6B766" />
             <Color x:Key="BrandErrorColor">#EF7C89</Color>
             <SolidColorBrush x:Key="BrandErrorBrush" Color="#EF7C89" />
@@ -165,6 +173,10 @@
             <SolidColorBrush x:Key="BrandWarningBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
             <Color x:Key="BrandWarningSoftColor">Transparent</Color>
             <SolidColorBrush x:Key="BrandWarningSoftBrush" Color="Transparent" />
+            <Color x:Key="BrandSuccessSoftColor">Transparent</Color>
+            <SolidColorBrush x:Key="BrandSuccessSoftBrush" Color="Transparent" />
+            <Color x:Key="BrandErrorSoftColor">Transparent</Color>
+            <SolidColorBrush x:Key="BrandErrorSoftBrush" Color="Transparent" />
             <Color x:Key="BrandErrorColor">{ThemeResource SystemColorWindowTextColor}</Color>
             <SolidColorBrush x:Key="BrandErrorBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
             <Color x:Key="BrandToggleOnColor">{ThemeResource SystemColorHighlightColor}</Color>

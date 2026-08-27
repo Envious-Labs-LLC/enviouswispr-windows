@@ -343,3 +343,23 @@ can become that first window, and every query then runs against the pill's tree 
 **An empty result reads exactly like a dead app**, and that is the reading it got the first time. Select
 the window by NAME - "EnviousWispr" - not by process. Ref: Windows session, 2026-08-27.
 
+## RULE: every-severity-needs-its-own-tint-and-the-set-is-the-unit
+The four notification severities are the app's whole vocabulary for "how bad is this", and each has to
+be recognisable BEFORE the words are read.
+
+Error and Success both pointed at `BrandCardBgColor`, so an ERROR arrived with no colour behind it at
+all - the same white card as everything else, distinguishable only by a small icon. Warning and
+Informational had tinted backgrounds. **Nobody chose that**: `BrandWarningSoftColor` was the only soft
+tint that existed, so the two severities with no token of their own fell back to the surface colour.
+
+**The gate covers the whole SET - four severities by two properties, eight cells - and not the two that
+were wrong.** Fixing the pair someone noticed leaves the same hole open for whichever cell is added next,
+and the hole is silent by construction: a missing tint renders as the card, which looks deliberate.
+
+Soft tints are the base colour at low alpha: `#1A` in Light, `#24` in Dark. **High Contrast sets every
+soft tint to `Transparent`** so the system's own colours decide, which is what High Contrast is for.
+
+**Read this beside RULE: a-change-that-ships-and-does-nothing.** Those four were changes that ARRIVED and
+had no effect. This is the other half: a token that was never created, whose absence renders as a
+plausible default rather than as a gap.
+
