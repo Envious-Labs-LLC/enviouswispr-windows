@@ -90,6 +90,13 @@ it started no owned polish process and did not stop the external loopback daemon
 readiness, `PolishStarted`, `PolishCompleted`, no degraded fallback, native delivery, and clean shutdown. The
 privacy-safe commands and prerequisites are documented in `tools/app-journey-uat/README.md`.
 
+Founder.11 also passed the paired deterministic-settings journeys. With all four cleanup switches enabled, a
+reviewed custom-word replacement crossed filler removal, spoken emoji, and spoken punctuation and delivered the
+expected transformed marker with the injected filler absent in 4,655 ms. With the identical custom-word entry
+present but all four switches disabled, the original recognized word survived and delivered in 4,561 ms. Both
+exact installed runs exited cleanly and left zero owned workers. Reproduction commands are in
+`tools/app-journey-uat/README.md`.
+
 ```powershell
 & "$env:USERPROFILE\.dotnet\dotnet.exe" run --no-build `
   --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj -c Release -- `

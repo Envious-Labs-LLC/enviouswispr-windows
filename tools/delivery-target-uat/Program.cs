@@ -24,10 +24,13 @@ internal static class Program
             : 0;
         var resultPath = ValidateResultPath(ArgumentValue(args, "--result"));
         var expectedSubstring = ArgumentValue(args, "--expected-substring");
+        var forbiddenSubstring = ArgumentValue(args, "--forbidden-substring");
         if (expectedSubstring is { Length: > 100 } ||
-            expectedSubstring?.Any(char.IsControl) == true)
+            expectedSubstring?.Any(char.IsControl) == true ||
+            forbiddenSubstring is { Length: > 100 } ||
+            forbiddenSubstring?.Any(char.IsControl) == true)
         {
-            throw new ArgumentException("The expected UAT substring is invalid.");
+            throw new ArgumentException("The expected or forbidden UAT substring is invalid.");
         }
 
         using var form = BuildForm(
@@ -35,7 +38,8 @@ internal static class Program
             refocusDelay,
             holdFocus,
             resultPath,
-            expectedSubstring);
+            expectedSubstring,
+            forbiddenSubstring);
         Application.Run(form);
     }
 
@@ -44,7 +48,8 @@ internal static class Program
         int refocusDelay,
         int holdFocus,
         string? resultPath,
-        string? expectedSubstring)
+        string? expectedSubstring,
+        string? forbiddenSubstring)
     {
         var form = new Form
         {
@@ -129,8 +134,9 @@ internal static class Program
                 edit.TextChanged += (_, _) => WriteResult(
                     resultPath,
                     edit.Text,
-                    expectedSubstring);
-                WriteResult(resultPath, edit.Text, expectedSubstring);
+                    expectedSubstring,
+                    forbiddenSubstring);
+                WriteResult(resultPath, edit.Text, expectedSubstring, forbiddenSubstring);
             }
         }
 
@@ -211,12 +217,15 @@ internal static class Program
     private static void WriteResult(
         string path,
         string text,
-        string? expectedSubstring)
+        string? expectedSubstring,
+        string? forbiddenSubstring)
     {
         var result = JsonSerializer.Serialize(new
         {
             containsExpected = !string.IsNullOrWhiteSpace(expectedSubstring) &&
                 text.Contains(expectedSubstring, StringComparison.OrdinalIgnoreCase),
+            containsForbidden = !string.IsNullOrWhiteSpace(forbiddenSubstring) &&
+                text.Contains(forbiddenSubstring, StringComparison.OrdinalIgnoreCase),
             characterCount = text.Length,
         });
         File.WriteAllText(path, result);

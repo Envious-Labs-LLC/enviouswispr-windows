@@ -1,5 +1,24 @@
 # Phase 9 deterministic text and emoji evidence
 
+## 2026-08-27 installed exit
+
+- `MEASURED` Exact installed founder.11 (`0.24.0-founder.11+aa6bd735294d4219321d3240eb00d9a6f7efe89a`,
+  executable SHA-256 `083D4CE340315E6124DE371D2F11CF3E9E1D86618940019AD3FC3BCC05ED42C2`) passed an
+  isolated enabled-profile journey in 4,655 ms. A reviewed custom-word entry replaced the known public
+  Parakeet fixture word with a bounded synthetic phrase; filler removal, spoken-emoji formatting, and spoken
+  punctuation then had to produce the expected transformed marker while the injected filler remained absent
+  from the controlled native edit target.
+- `MEASURED` The same exact installed candidate passed the paired disabled-profile journey in 4,561 ms. The
+  identical custom-word entry remained present, all four user-facing deterministic switches were disabled,
+  and the original recognized fixture word survived into the controlled native edit target.
+- `MEASURED` Both runs used the production shell and one production runtime worker, observed final ASR and
+  deterministic processing, delivered through the native Windows path, exited cleanly, and left zero owned
+  workers. The result records only profile state and pass/fail evidence; the temporary target content and
+  isolated settings profile are removed during cleanup.
+- `MEASURED` Together with the committed 5,840-row exact macOS ITN oracle, curated end-to-end parity corpus,
+  stage ordering, timeout, cancellation, international gating, and fallback tests below, this satisfies the
+  Phase 9 exit contract. Physical microphone/global-hotkey acceptance remains a separate whole-product gate.
+
 ## 2026-08-26
 
 - `READ` The binding contract is final ASR -> custom words -> filler/false-start cleanup -> spoken
@@ -47,7 +66,7 @@
 - `READ` Windows declines a fuzzy spoken-emoji match when an existing glyph interrupts the spoken surface.
   This is a deliberate safety hardening against deleting mixed literal content.
 
-## Still unobserved outside the Phase 9 exit
+## Superseded 2026-08-26 observations
 
 - `MEASURED` The native F8 run contained ambient/no-speech audio, so it proved native stage ordering and
   fallback behavior but did not visibly display transformed transcript content. Exact content behavior is

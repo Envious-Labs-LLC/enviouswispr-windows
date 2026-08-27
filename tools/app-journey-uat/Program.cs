@@ -51,6 +51,15 @@ var livePreview = args.Any(argument => string.Equals(
     argument,
     "--live-preview",
     StringComparison.OrdinalIgnoreCase));
+var deterministicProfileArgument = ArgumentValue(args, "--deterministic-profile");
+var deterministicProfile = deterministicProfileArgument?.ToLowerInvariant() switch
+{
+    null => DeterministicJourneyProfile.None,
+    "enabled" => DeterministicJourneyProfile.Enabled,
+    "disabled" => DeterministicJourneyProfile.Disabled,
+    _ => throw new ArgumentException(
+        "--deterministic-profile must be enabled or disabled."),
+};
 var polishArgument = ArgumentValue(args, "--polish");
 var polishProvider = polishArgument?.ToLowerInvariant() switch
 {
@@ -120,6 +129,13 @@ if (polishProvider != PolishProvider.None &&
     throw new ArgumentException(
         "Local-polish UAT uses the reviewed fixture success journey without Live Preview, live microphone, Escape Recovery, or failure injection.");
 }
+if (deterministicProfile != DeterministicJourneyProfile.None &&
+    (!englishParakeet || liveMicrophone || livePreview || escapeRecovery ||
+     failureMode != JourneyFailureMode.None || polishProvider != PolishProvider.None))
+{
+    throw new ArgumentException(
+        "Deterministic-profile UAT requires --english-parakeet and cannot be combined with local polish, Live Preview, live microphone, Escape Recovery, or failure injection.");
+}
 if (polishProvider == PolishProvider.EgOne)
 {
     RequireAbsoluteFileArgument(
@@ -188,9 +204,17 @@ var engineName = finalEngine.ToString();
 var language = englishParakeet ? "en" : "fr";
 var expectedSubstring = synthesizedAcoustic || manualMicrophone
     ? "microphone"
-    : englishParakeet
-        ? "account"
-        : "adresse";
+    : deterministicProfile == DeterministicJourneyProfile.Enabled
+        ? "👍."
+        : englishParakeet
+            ? "account"
+            : "adresse";
+var forbiddenSubstring = deterministicProfile switch
+{
+    DeterministicJourneyProfile.Enabled => "um ",
+    DeterministicJourneyProfile.Disabled => "👍",
+    _ => null,
+};
 var fixtureFileName = englishParakeet ? "en-US-row0.wav" : "fr-FR-row0.wav";
 var fixtureHash = englishParakeet ? ReviewedEnglishFixtureHash : ReviewedFrenchFixtureHash;
 var fixtureIdentity = manualMicrophone
@@ -267,8 +291,10 @@ if (failureMode == JourneyFailureMode.WorkerStartup)
 Directory.CreateDirectory(Path.Combine(uatDirectory, "no-preview-model"));
 var profileDirectory = Path.Combine(uatDirectory, "profile");
 Directory.CreateDirectory(profileDirectory);
-if (livePreview || escapeRecovery || failureMode == JourneyFailureMode.MicrophoneUnavailable)
+if (livePreview || escapeRecovery || failureMode == JourneyFailureMode.MicrophoneUnavailable ||
+    deterministicProfile != DeterministicJourneyProfile.None)
 {
+    var deterministicFeaturesEnabled = deterministicProfile != DeterministicJourneyProfile.Disabled;
     var journeySettings = AppSettings.Default with
     {
         HasCompletedOnboarding = true,
@@ -279,8 +305,17 @@ if (livePreview || escapeRecovery || failureMode == JourneyFailureMode.Microphon
             Dictation = AppSettings.Default.Preferences.Dictation with
             {
                 EscapeRecoveryEnabled = escapeRecovery,
+                WordCorrectionEnabled = deterministicFeaturesEnabled,
+                FillerRemovalEnabled = deterministicFeaturesEnabled,
+                EmojiFormatterEnabled = deterministicFeaturesEnabled,
+                SpokenPunctuationEnabled = deterministicFeaturesEnabled,
             },
         },
+        UserData = deterministicProfile == DeterministicJourneyProfile.None
+            ? ReusableUserData.Empty
+            : new ReusableUserData(
+                [new CustomWordEntry("account", "um thumbs up emoji period")],
+                []),
     };
     await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"))
         .SaveAsync(journeySettings);
@@ -326,6 +361,11 @@ try
     targetStart.ArgumentList.Add(targetResultPath);
     targetStart.ArgumentList.Add("--expected-substring");
     targetStart.ArgumentList.Add(expectedSubstring);
+    if (forbiddenSubstring is not null)
+    {
+        targetStart.ArgumentList.Add("--forbidden-substring");
+        targetStart.ArgumentList.Add(forbiddenSubstring);
+    }
     target = Process.Start(targetStart) ?? throw new InvalidOperationException(
         "The controlled delivery target did not start.");
     WaitForWindow(target, TimeSpan.FromSeconds(10));
@@ -681,6 +721,12 @@ try
         polishCompleted = polishEvidence.Completed,
         polishDegraded = polishEvidence.Degraded,
         polishElapsedMilliseconds = polishEvidence.ElapsedMilliseconds,
+        deterministicProfile = deterministicProfile == DeterministicJourneyProfile.None
+            ? null
+            : deterministicProfile.ToString(),
+        deterministicFeaturesEnabled = deterministicProfile == DeterministicJourneyProfile.None
+            ? (bool?)null
+            : deterministicProfile == DeterministicJourneyProfile.Enabled,
         inputKind = failureMode switch
         {
             JourneyFailureMode.MicrophoneUnavailable => "SyntheticF8-AllowlistedAccessDeniedAudioFault",
@@ -870,7 +916,9 @@ static bool WaitForExpectedTargetResult(string path, TimeSpan timeout)
             if (File.Exists(path))
             {
                 using var document = JsonDocument.Parse(File.ReadAllText(path));
-                if (document.RootElement.GetProperty("containsExpected").GetBoolean())
+                if (document.RootElement.GetProperty("containsExpected").GetBoolean() &&
+                    (!document.RootElement.TryGetProperty("containsForbidden", out var forbidden) ||
+                     !forbidden.GetBoolean()))
                 {
                     return true;
                 }
@@ -1909,4 +1957,11 @@ internal sealed class ClipboardGuard : IDisposable
     }
 
     private sealed record ClipboardSnapshot(bool IsEmpty, DataObject? Data);
+}
+
+enum DeterministicJourneyProfile
+{
+    None,
+    Enabled,
+    Disabled,
 }
