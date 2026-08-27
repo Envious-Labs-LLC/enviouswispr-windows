@@ -2436,7 +2436,28 @@ public partial class App : Application, IAsyncDisposable
                     transcript.DetectedLanguage,
                     cancellationToken)
                 .ConfigureAwait(false);
-            if (polishResult is not null && !polishResult.UsedFallback)
+            // A model that comes off the rails returns a CONFIDENT string rather than an error, so
+            // polishResult.UsedFallback is false and every check above says the call succeeded.
+            // This is the only place that asks whether what came back is worth showing anyone.
+            //
+            // Polish is a limb and the transcript is the heart: a refusal leaves the user with the
+            // cleaned text they already had, which is the same outcome as any other limb failure.
+            var polishVerdict = polishResult is null || polishResult.UsedFallback
+                ? PolishOutputVerdict.Accepted
+                : PolishOutputGuard.Evaluate(processed.Output.Text, polishResult.Output.Text);
+            if (polishVerdict != PolishOutputVerdict.Accepted)
+            {
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.PolishOutputRefused,
+                    // InvalidData rather than LocalPolish or CloudPolish: the refusal is about
+                    // what came BACK, and either provider can produce it. Attributing it to one
+                    // would make the log claim a cause it does not know.
+                    AppFailureCategory.InvalidData));
+            }
+
+            if (polishResult is not null && !polishResult.UsedFallback &&
+                polishVerdict == PolishOutputVerdict.Accepted)
             {
                 processed = await _deterministicTextPipeline.ApplyPolishedTextAsync(
                     deterministicRequest,
@@ -2482,7 +2503,8 @@ public partial class App : Application, IAsyncDisposable
                     await SaveHistoryAsync(
                         transcript,
                         processed.Output.Text,
-                        polishResult is { Status: PolishAttemptStatus.Polished },
+                        polishResult is { Status: PolishAttemptStatus.Polished } &&
+                            polishVerdict == PolishOutputVerdict.Accepted,
                         delivery.Delivered).ConfigureAwait(false);
                     await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
                     await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
@@ -2495,7 +2517,8 @@ public partial class App : Application, IAsyncDisposable
             await SaveHistoryAsync(
                 transcript,
                 processed.Output.Text,
-                polishResult is { Status: PolishAttemptStatus.Polished },
+                polishResult is { Status: PolishAttemptStatus.Polished } &&
+                    polishVerdict == PolishOutputVerdict.Accepted,
                 wasDelivered: false,
                 expiresAt: recoveryOnly ? DateTimeOffset.UtcNow.AddHours(24) : null,
                 forceSave: recoveryOnly)
