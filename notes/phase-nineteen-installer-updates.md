@@ -71,6 +71,11 @@ the artifacts `signedForProduction: false`.
    Deltas are now disabled in the client to preserve exact artifact admission.
 4. Velopack extracts the package's updater during download before the app's independent publisher check.
    The app now backs up the installed updater and restores it whenever admission fails.
+5. The founder.9 self-contained package carried legacy .NET Framework 4.8 UI Automation assemblies beside the
+   .NET 10 `WindowsBase` facade. The installed app therefore failed safely while freezing a delivery target even
+   though the framework-dependent repository build passed. The services project now uses the current Windows
+   Desktop framework reference, and packaging rejects missing or pre-.NET-10 UI Automation runtime files. The
+   exact installed founder.10 package passed both Parakeet/CPU and Whisper/CUDA native delivery journeys.
 
 ## Source evidence
 

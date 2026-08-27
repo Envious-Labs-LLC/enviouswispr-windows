@@ -110,13 +110,28 @@ sequence, clean app exit, and zero orphan workers. This mode is implemented and 
 been performed by a person, so the physical global-hotkey/microphone requirement remains unobserved.
 
 The guided mode also accepts a fully qualified `EnviousWispr.App.exe` through `--app-executable`, restricted to
-this manual journey. Its content-free result records ProductVersion and executable SHA-256 but never the supplied
+the manual journey and the deterministic reviewed-fixture journeys. Its content-free result records ProductVersion and executable SHA-256 but never the supplied
 path. This permits the physical gate to identify an exact installed founder candidate instead of silently testing
 only the repository build. An unattended run identified founder version
 `0.24.0-founder.8+a32db242f75579fa784b993faf7cd46f4586c95b` and executable SHA-256
 `0A8D688B67C0BEEB41D101FE211485116A028051FE6A241E8AB7735192767D54`, then correctly returned non-zero with
 clean shutdown and zero remaining processes. The installed-candidate mode remains unobserved until the same human
 action passes.
+
+The first deterministic installed-candidate run against founder.9 then exposed a package-only delivery defect.
+The shell and worker became ready, but target capture failed safely before recording because the self-contained
+payload combined .NET Framework 4.8 UI Automation assemblies with the .NET 10 `WindowsBase` facade. The target
+retained its original five characters, no text was delivered, and app and worker cleanup completed. The services
+project now references the current Windows Desktop runtime instead of GAC UI Automation assemblies, optional
+focused-element runtime-ID lookup cannot invalidate the already-frozen target window and process, and packaging
+requires the three matching .NET 10 UI Automation runtime files.
+
+The exact installed founder.10 candidate then passed both deterministic production journeys. Parakeet English on
+CPU completed in 4,454 ms and Whisper French on CUDA completed in 8,615 ms. Both content-free results identified
+ProductVersion `0.24.0-founder.10+3d62a84e87a64e2c9a641ed96998e971b7f8b3bb` and executable SHA-256
+`4BDF447CE23C289026C148A36AAB20C1BF1B950B1C8F71D32FEA6524A545A0A0`; each observed shell and one worker,
+capture, final ASR, deterministic processing, controlled native delivery, clean app exit, and zero remaining
+owned workers. This is exact unsigned-package evidence with reviewed fixtures, not physical microphone proof.
 
 A native visual and UI Automation check at the machine's active display scale found the complete three-line
 public phrase visible, a named instruction element, a named phrase element, and the focused native edit target.
@@ -156,8 +171,8 @@ defect was found in either path. The profile and settings lived under a bounded
 the execution policy blocked recursive deletion outside the workspace, so that directory remains eligible for
 normal OS temporary-file cleanup.
 
-After recording this evidence, canonical validation passed again: the public audit covered 379 tracked files
-and 12 reviewed public audio fixtures; all 34 preserved-proof tests and all 377 production tests passed, every
+After recording this evidence, canonical validation passed again: the public audit covered 380 tracked files
+and 12 reviewed public audio fixtures; all 34 preserved-proof tests and all 378 production tests passed, every
 Release project and UAT harness built,
 and the build reported zero warnings and zero errors. Local model runtime tests were not requested by this gate.
 

@@ -8,10 +8,10 @@ This is the current hands-on guide for the production Windows application. The o
 The founder machine currently has the unsigned, isolated founder channel installed under
 `%LOCALAPPDATA%\EnviousLabs.EnviousWispr.Founder\current`.
 
-- Product version: `0.24.0-founder.9+ce13525d41770c669bb2034c360bb9247bfc7447`
-- Installed executable SHA-256: `131C053C8D60EB5BD1A5BC2272D29B442E46AF92F932CFA5238CFC1B8E38C197`
+- Product version: `0.24.0-founder.10+3d62a84e87a64e2c9a641ed96998e971b7f8b3bb`
+- Installed executable SHA-256: `4BDF447CE23C289026C148A36AAB20C1BF1B950B1C8F71D32FEA6524A545A0A0`
 - Setup: `EnviousLabs.EnviousWispr.Founder-win-x64-founder-Setup.exe`
-- Setup SHA-256: `AA6AAC51413A126BBFDFF8203FF965FF1B95300B35D3BE43122A7C40DF56A0BC`
+- Setup SHA-256: `30CB20B71F6AFA15B4AEE6DA816F4DF5DD4DC1177CC20FC07EF04B8677B2F150`
 - Platform: Windows 11 x64
 - Release status: founder-local and unsigned; not certified or approved for public distribution
 
@@ -76,6 +76,10 @@ $installedApp = Join-Path $env:LOCALAPPDATA `
 Those automated runs prove the installed shell, worker, Parakeet and Whisper paths, deterministic processing,
 controlled Windows delivery, and cleanup. They substitute reviewed audio and named transitions, so physical
 microphone acceptance remains a separate action:
+
+The commands above passed against the exact founder.10 candidate on 2026-08-26. Parakeet English on CPU
+completed in 4,454 ms, and Whisper French on CUDA completed in 8,615 ms. Each run observed the production
+stage sequence, delivered to the controlled native edit field, exited cleanly, and left zero owned workers.
 
 ```powershell
 & "$env:USERPROFILE\.dotnet\dotnet.exe" run --no-build `
