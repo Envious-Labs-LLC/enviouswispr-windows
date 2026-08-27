@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "owner": "Envious Labs LLC",
+  "purpose": "Original EnviousWispr recording start and stop confirmations",
+  "sourceRepository": "https://github.com/saurabhav88/EnviousWispr",
+  "sourceRevision": "5dab8db8abc593dd0c60a06ad877a6304d51563b",
+  "assets": [
+    { "file": "airGlint_start.wav", "sha256": "bc62b9f65f95c08629dec806c87ca40bd50e32176eddf82d3b8fc1e6b5dab50b" },
+    { "file": "airGlint_stop.wav", "sha256": "6ea513f468a9323bbf98a14095859e7caab9338a419b3a3ba5bc07ce4c731805" },
+    { "file": "cloudPop_start.wav", "sha256": "853e7be4997c76cbad7bba876cd1d477433ec46d11b2b53e6cb1702e85598a81" },
+    { "file": "cloudPop_stop.wav", "sha256": "465a77024617cae416a842f553ed420e0e9f69c6b4188b43f3fc45cbb79d6ad8" },
+    { "file": "dustMote_start.wav", "sha256": "9b4ddc7e31bc440e1424e1a819ee400814ac37f650152ebbeb45fd5e15107e6e" },
+    { "file": "dustMote_stop.wav", "sha256": "a1354580579245f64d347b4edbeb4a7e065a809cb3e9dd0e3d3cf525dd832a41" },
+    { "file": "lowNod_start.wav", "sha256": "236c156510f39cfb445070d18102f5e821e65fd0f22cd61e9b48ce4dea40923e" },
+    { "file": "lowNod_stop.wav", "sha256": "c1d46459d7d8a9eb27473e1d9e4b74e01f1ecd11ba21734be3b6d0afd186f018" },
+    { "file": "mutedConfirm_start.wav", "sha256": "8e09d9fc66c5e54dffd572a241ad1e468cd6ef57db86719c29c7450e3f49d988" },
+    { "file": "mutedConfirm_stop.wav", "sha256": "45ccd1a413ece48af02e4ae3efa1fcaf35c5de3041320ab9959e97345a748f56" },
+    { "file": "paperTap_start.wav", "sha256": "cc580bb4ca766b9b301fea9befc56797460d8f295db1280706c853a5dfcce8c6" },
+    { "file": "paperTap_stop.wav", "sha256": "43e655f43940508b54be7b591d5145c3185f338219c75012ec2941921f553b42" },
+    { "file": "roundPebble_start.wav", "sha256": "136238011a1199daf0229427e8c3648482b0abbf92d115b7671c570677f34fdc" },
+    { "file": "roundPebble_stop.wav", "sha256": "304c58cc2b0b43a09020c664b62d5411e4c1a9e4c8006d81d904612a3dc4a081" },
+    { "file": "satinShift_start.wav", "sha256": "fc647c43319ead57e9b2ebd3e737427f74f9dc89ae3f533cc2517d05f612d6ab" },
+    { "file": "satinShift_stop.wav", "sha256": "43a7f659a294762624b57d14275860337e57d7397fbcdc8cb03dfb0cb8ce37b8" },
+    { "file": "softHush_start.wav", "sha256": "6db7e6dd8e2ee8888b2b938e47992543abb3b340055100ddd6580a71080a770d" },
+    { "file": "softHush_stop.wav", "sha256": "38c1ebebf90b5caab8a45ac5a37a683a617099a6ad3abe7d0bcf6cbd50cc458b" },
+    { "file": "velvetHush_start.wav", "sha256": "b7bc04444016b56dc11e6b33abd3923f170281b06cda5fef86caeedc8e6f0f61" },
+    { "file": "velvetHush_stop.wav", "sha256": "687ec43d4e6ac5a19aa98c65a6ff104ab47c880e9bec72d3fa9bb3b3d4d5bfc7" },
+    { "file": "velvetTap_start.wav", "sha256": "defe03fe19bb6e9324d5616754d708c235c0e1fe152b82bef198da326c76039c" },
+    { "file": "velvetTap_stop.wav", "sha256": "90996a6e58acd1b45627af1791d4d41a2fc92b6636d382248c4d8271bf347e02" },
+    { "file": "whisperTick_start.wav", "sha256": "fbca7902812da697f2b63a75d291fa34413b28970a51a69c5544fb78d8808d7e" },
+    { "file": "whisperTick_stop.wav", "sha256": "d37f271fb0123fa067672e4fdc2828980e2a16af9e9203512b4a89bbdf0c131d" }
+  ]
+}

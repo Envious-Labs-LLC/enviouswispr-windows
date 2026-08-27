@@ -1,4 +1,10 @@
-# EnviousWispr for Windows
+<p align="center">
+  <img src="src/Production/EnviousWispr.App/Assets/Brand/EnviousWisprMark.svg" width="80" alt="EnviousWispr rainbow waveform" />
+</p>
+
+<h1 align="center">EnviousWispr for Windows</h1>
+
+<p align="center"><strong>Talk naturally. Paste perfectly.</strong></p>
 
 EnviousWispr is a native Windows 11 dictation app: hold the configured key, speak, release, and continue
 working in the app that was focused when recording began. Audio and local transcription stay on the PC.

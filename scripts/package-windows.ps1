@@ -148,6 +148,9 @@ try {
         '--mainExe', 'EnviousWispr.App.exe',
         '--packAuthors', 'Envious Labs LLC',
         '--packTitle', $identity.DisplayName,
+        '--icon', (Join-Path $publishDirectory 'Assets\Brand\EnviousWispr.ico'),
+        '--splashImage', (Join-Path $publishDirectory 'Assets\Brand\EnviousWisprAppIcon.png'),
+        '--splashProgressColor', '#7C3AED',
         '--channel', $identity.ChannelName,
         '--runtime', 'win-x64',
         '--outputDir', $OutputDirectory,
@@ -218,13 +221,17 @@ try {
         files = @($releaseFiles)
     }
     $manifestPath = Join-Path $OutputDirectory 'distribution-manifest.json'
-    $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding utf8NoBOM
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText(
+        $manifestPath,
+        ($manifest | ConvertTo-Json -Depth 5),
+        $utf8NoBom)
 
     if ($DevelopmentUnsigned) {
-        Set-Content `
-            -LiteralPath (Join-Path $OutputDirectory 'UNSIGNED-DEVELOPMENT-ONLY.txt') `
-            -Value 'This package is for local installer/update testing only. It is not a production release.' `
-            -Encoding utf8NoBOM
+        [IO.File]::WriteAllText(
+            (Join-Path $OutputDirectory 'UNSIGNED-DEVELOPMENT-ONLY.txt'),
+            'This package is for local installer/update testing only. It is not a production release.',
+            $utf8NoBom)
     }
 
     Write-Host "Windows package ready: $OutputDirectory"
@@ -235,8 +242,11 @@ try {
 finally {
     Pop-Location
     $resolvedScratch = [IO.Path]::GetFullPath($scratchRoot)
-    $resolvedTemp = [IO.Path]::TrimEndingDirectorySeparator(
-        [IO.Path]::GetFullPath([IO.Path]::GetTempPath())) + [IO.Path]::DirectorySeparatorChar
+    $separatorChars = [char[]]@(
+        [IO.Path]::DirectorySeparatorChar,
+        [IO.Path]::AltDirectorySeparatorChar)
+    $resolvedTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd(
+        $separatorChars) + [IO.Path]::DirectorySeparatorChar
     if ($resolvedScratch.StartsWith($resolvedTemp, [StringComparison]::OrdinalIgnoreCase) -and
         (Split-Path -Leaf $resolvedScratch).StartsWith('EnviousWisprPackage-', [StringComparison]::Ordinal)) {
         Remove-Item -LiteralPath $resolvedScratch -Recurse -Force -ErrorAction SilentlyContinue

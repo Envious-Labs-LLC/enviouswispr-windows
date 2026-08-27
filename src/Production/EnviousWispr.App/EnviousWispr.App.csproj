@@ -16,6 +16,7 @@
     <DefaultLanguage>en-US</DefaultLanguage>
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <StartupObject>EnviousWispr.App.Program</StartupObject>
+    <ApplicationIcon>Assets\Brand\EnviousWispr.ico</ApplicationIcon>
     <Version>0.19.0</Version>
     <EnviousWisprReleaseChannel Condition="'$(EnviousWisprReleaseChannel)' == ''">stable</EnviousWisprReleaseChannel>
   </PropertyGroup>
@@ -23,6 +24,15 @@
   <ItemGroup>
     <Manifest Include="$(ApplicationManifest)" />
     <AssemblyMetadata Include="EnviousWisprReleaseChannel" Value="$(EnviousWisprReleaseChannel)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="Assets\Brand\EnviousWispr.ico" />
+    <None Remove="Assets\Brand\EnviousWisprAppIcon.png" />
+    <None Remove="Assets\Brand\EnviousWisprMark.svg" />
+    <Content Include="Assets\Brand\EnviousWispr.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\Brand\EnviousWisprAppIcon.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\Brand\EnviousWisprMark.svg" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

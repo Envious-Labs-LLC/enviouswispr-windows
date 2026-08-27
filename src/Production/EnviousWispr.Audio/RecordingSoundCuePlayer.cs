@@ -48,16 +48,22 @@ public sealed class RecordingSoundCueCoordinator
 }
 
 /// <summary>
-/// Plays short, original procedural recording confirmations. The catalog mirrors
-/// the macOS product, while synthesis is performed locally so no sampled or
-/// licensed sound assets are required by the Windows build.
+/// Plays the original EnviousWispr recording confirmations shared with the
+/// macOS product. The files are local, deterministic product assets.
 /// </summary>
 public sealed class RecordingSoundCuePlayer : IDisposable
 {
-    private const int SampleRate = 44_100;
+    private readonly string _assetDirectory;
     private readonly object _gate = new();
     private readonly HashSet<WasapiPlayer> _active = [];
     private bool _disposed;
+
+    public RecordingSoundCuePlayer(string? assetDirectory = null)
+    {
+        _assetDirectory = assetDirectory ?? Path.Combine(
+            AppContext.BaseDirectory,
+            RecordingSoundAssetCatalog.RelativeDirectory);
+    }
 
     public bool Play(RecordingSoundPairing pairing, RecordingSoundMoment moment)
     {
@@ -69,12 +75,15 @@ public sealed class RecordingSoundCuePlayer : IDisposable
         WasapiPlayer? output = null;
         try
         {
-            var samples = RecordingSoundSynthesizer.Create(pairing, moment, SampleRate);
-            var provider = new BufferedWaveProvider(new WaveFormat(SampleRate, 16, 1))
+            var asset = RecordingSoundAssetCatalog.Load(
+                _assetDirectory,
+                pairing,
+                moment);
+            var provider = new BufferedWaveProvider(asset.Format)
             {
                 DiscardOnBufferOverflow = true,
             };
-            provider.AddSamples(samples, 0, samples.Length);
+            provider.AddSamples(asset.Pcm, 0, asset.Pcm.Length);
 
             output = new WasapiPlayerBuilder()
                 .WithSharedMode()
@@ -151,88 +160,79 @@ public sealed class RecordingSoundCuePlayer : IDisposable
     }
 }
 
-internal static class RecordingSoundSynthesizer
+internal sealed record RecordingSoundAsset(WaveFormat Format, byte[] Pcm);
+
+internal static class RecordingSoundAssetCatalog
 {
-    internal static byte[] Create(
+    internal static readonly string RelativeDirectory = Path.Combine(
+        "Assets",
+        "RecordingSounds");
+
+    internal static RecordingSoundAsset Load(
+        string assetDirectory,
         RecordingSoundPairing pairing,
-        RecordingSoundMoment moment,
-        int sampleRate)
+        RecordingSoundMoment moment)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(sampleRate, 8_000);
-        var profile = ProfileFor(pairing);
-        var duration = moment == RecordingSoundMoment.Start
-            ? profile.StartDuration
-            : profile.StopDuration;
-        var sampleCount = Math.Max(1, (int)Math.Round(sampleRate * duration));
-        var bytes = new byte[sampleCount * sizeof(short)];
-        var direction = moment == RecordingSoundMoment.Start ? 1d : -1d;
-        var seed = unchecked((uint)((long)(int)pairing * 2_654_435_761L) +
-            (moment == RecordingSoundMoment.Start ? 0x13579BDFu : 0x2468ACE0u));
-        var filteredNoise = 0d;
-
-        for (var index = 0; index < sampleCount; index++)
+        ArgumentException.ThrowIfNullOrWhiteSpace(assetDirectory);
+        var path = Path.Combine(assetDirectory, FileNameFor(pairing, moment));
+        using var reader = new WaveFileReader(path);
+        if (reader.WaveFormat.Encoding != WaveFormatEncoding.Pcm ||
+            reader.WaveFormat.SampleRate != 44_100 ||
+            reader.WaveFormat.BitsPerSample != 16 ||
+            reader.WaveFormat.Channels != 1)
         {
-            var normalized = index / (double)Math.Max(1, sampleCount - 1);
-            var attack = Math.Min(1d, normalized / Math.Max(0.015, profile.AttackFraction));
-            var release = Math.Pow(Math.Max(0d, 1d - normalized), profile.ReleasePower);
-            var envelope = attack * release;
-            var sweptFrequency = profile.Frequency *
-                (1d + direction * profile.Sweep * (normalized - 0.5));
-            var phase = 2d * Math.PI * sweptFrequency * index / sampleRate;
-            var sine = Math.Sin(phase);
-            var triangle = 2d / Math.PI * Math.Asin(sine);
-            var second = Math.Sin(
-                2d * Math.PI * sweptFrequency * profile.SecondRatio * index / sampleRate);
-
-            seed ^= seed << 13;
-            seed ^= seed >> 17;
-            seed ^= seed << 5;
-            var whiteNoise = seed / (double)uint.MaxValue * 2d - 1d;
-            filteredNoise += profile.NoiseFilter * (whiteNoise - filteredNoise);
-
-            var tonal = sine * (1d - profile.TriangleMix) + triangle * profile.TriangleMix;
-            tonal = tonal * (1d - profile.SecondMix) + second * profile.SecondMix;
-            var value = envelope * profile.Gain *
-                (tonal * (1d - profile.NoiseMix) + filteredNoise * profile.NoiseMix);
-            var sample = (short)Math.Clamp(
-                Math.Round(value * short.MaxValue),
-                short.MinValue,
-                short.MaxValue);
-            bytes[index * 2] = (byte)(sample & 0xFF);
-            bytes[index * 2 + 1] = (byte)((sample >> 8) & 0xFF);
+            throw new InvalidDataException(
+                $"Recording sound asset has an unsupported format: {Path.GetFileName(path)}");
         }
 
-        return bytes;
+        var pcm = new byte[checked((int)reader.Length)];
+        var offset = 0;
+        while (offset < pcm.Length)
+        {
+            var read = reader.Read(pcm, offset, pcm.Length - offset);
+            if (read == 0)
+            {
+                break;
+            }
+
+            offset += read;
+        }
+
+        if (offset != pcm.Length)
+        {
+            throw new EndOfStreamException(
+                $"Recording sound asset ended early: {Path.GetFileName(path)}");
+        }
+
+        return new RecordingSoundAsset(reader.WaveFormat, pcm);
     }
 
-    private static SoundProfile ProfileFor(RecordingSoundPairing pairing) => pairing switch
+    internal static string FileNameFor(
+        RecordingSoundPairing pairing,
+        RecordingSoundMoment moment)
     {
-        RecordingSoundPairing.DustMote => new(0.050, 0.050, 260, 0.00, 0.15, 0.06, 0.95, 0.28, 0.0, 0.0, 0.12, 2.8),
-        RecordingSoundPairing.VelvetHush => new(0.120, 0.120, 420, 0.08, 0.08, 0.10, 0.32, 1.06, 0.35, 0.0, 0.06, 2.0),
-        RecordingSoundPairing.MutedConfirm => new(0.090, 0.075, 520, 0.00, 0.09, 0.08, 0.12, 1.00, 0.0, 0.25, 0.05, 2.4),
-        RecordingSoundPairing.WhisperTick => new(0.055, 0.055, 1_150, 0.03, 0.08, 0.055, 0.42, 1.00, 0.0, 0.25, 0.04, 3.2),
-        RecordingSoundPairing.RoundPebble => new(0.140, 0.140, 340, 0.06, 0.07, 0.11, 0.08, 1.50, 0.15, 0.40, 0.08, 2.1),
-        RecordingSoundPairing.PaperTap => new(0.070, 0.070, 730, 0.01, 0.18, 0.09, 0.60, 1.00, 0.0, 0.55, 0.04, 3.8),
-        RecordingSoundPairing.SoftHush => new(0.130, 0.130, 300, 0.02, 0.10, 0.10, 0.78, 1.00, 0.0, 0.0, 0.10, 1.7),
-        RecordingSoundPairing.LowNod => new(0.150, 0.150, 220, 0.04, 0.07, 0.13, 0.10, 1.25, 0.20, 0.25, 0.08, 1.7),
-        RecordingSoundPairing.CloudPop => new(0.090, 0.100, 480, 0.06, 0.16, 0.12, 0.72, 1.00, 0.0, 0.10, 0.04, 2.8),
-        RecordingSoundPairing.VelvetTap => new(0.110, 0.130, 390, 0.02, 0.08, 0.12, 0.25, 1.00, 0.0, 0.45, 0.05, 2.4),
-        RecordingSoundPairing.SatinShift => new(0.200, 0.220, 510, 0.16, 0.06, 0.12, 0.10, 1.25, 0.30, 0.10, 0.08, 1.6),
-        RecordingSoundPairing.AirGlint => new(0.150, 0.160, 980, 0.18, 0.05, 0.13, 0.30, 1.50, 0.25, 0.10, 0.05, 1.8),
-        _ => throw new ArgumentOutOfRangeException(nameof(pairing)),
-    };
-
-    private sealed record SoundProfile(
-        double StartDuration,
-        double StopDuration,
-        double Frequency,
-        double Sweep,
-        double AttackFraction,
-        double Gain,
-        double NoiseMix,
-        double SecondRatio,
-        double SecondMix,
-        double TriangleMix,
-        double NoiseFilter,
-        double ReleasePower);
+        var stem = pairing switch
+        {
+            RecordingSoundPairing.DustMote => "dustMote",
+            RecordingSoundPairing.VelvetHush => "velvetHush",
+            RecordingSoundPairing.MutedConfirm => "mutedConfirm",
+            RecordingSoundPairing.WhisperTick => "whisperTick",
+            RecordingSoundPairing.RoundPebble => "roundPebble",
+            RecordingSoundPairing.PaperTap => "paperTap",
+            RecordingSoundPairing.SoftHush => "softHush",
+            RecordingSoundPairing.LowNod => "lowNod",
+            RecordingSoundPairing.CloudPop => "cloudPop",
+            RecordingSoundPairing.VelvetTap => "velvetTap",
+            RecordingSoundPairing.SatinShift => "satinShift",
+            RecordingSoundPairing.AirGlint => "airGlint",
+            _ => throw new ArgumentOutOfRangeException(nameof(pairing)),
+        };
+        var suffix = moment switch
+        {
+            RecordingSoundMoment.Start => "start",
+            RecordingSoundMoment.Stop => "stop",
+            _ => throw new ArgumentOutOfRangeException(nameof(moment)),
+        };
+        return $"{stem}_{suffix}.wav";
+    }
 }

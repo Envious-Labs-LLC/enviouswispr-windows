@@ -89,7 +89,11 @@ public sealed partial class MainWindow : Window, IDisposable
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         AppWindow.Resize(new SizeInt32(1120, 760));
-        AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "EnviousWispr.App.exe"));
+        AppWindow.SetIcon(Path.Combine(
+            AppContext.BaseDirectory,
+            "Assets",
+            "Brand",
+            "EnviousWispr.ico"));
         Activated += OnWindowActivated;
 
         ApplyTheme(settings.Preferences.Theme);

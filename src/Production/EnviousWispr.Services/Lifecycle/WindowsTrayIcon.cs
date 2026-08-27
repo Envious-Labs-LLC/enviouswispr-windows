@@ -6,9 +6,10 @@ namespace EnviousWispr.Services.Lifecycle;
 public sealed class WindowsTrayIcon : IDisposable
 {
     private readonly NotifyIcon _notifyIcon;
+    private readonly Icon _icon;
     private bool _disposed;
 
-    public WindowsTrayIcon()
+    public WindowsTrayIcon(string? iconPath = null)
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add("Open EnviousWispr", image: null, (_, _) => ShowWindowRequested?.Invoke());
@@ -16,10 +17,11 @@ public sealed class WindowsTrayIcon : IDisposable
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit EnviousWispr", image: null, (_, _) => ExitRequested?.Invoke());
 
+        _icon = LoadIcon(iconPath);
         _notifyIcon = new NotifyIcon
         {
             ContextMenuStrip = menu,
-            Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ?? SystemIcons.Application,
+            Icon = _icon,
             Text = "EnviousWispr — starting",
             Visible = true,
         };
@@ -55,5 +57,17 @@ public sealed class WindowsTrayIcon : IDisposable
         _disposed = true;
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
+        _icon.Dispose();
+    }
+
+    private static Icon LoadIcon(string? iconPath)
+    {
+        if (!string.IsNullOrWhiteSpace(iconPath) && File.Exists(iconPath))
+        {
+            return new Icon(iconPath);
+        }
+
+        return Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ??
+            (Icon)SystemIcons.Application.Clone();
     }
 }

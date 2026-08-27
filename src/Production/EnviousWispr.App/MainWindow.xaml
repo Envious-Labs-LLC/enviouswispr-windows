@@ -8,14 +8,18 @@
 
     <Grid x:Name="WindowRoot" Background="{ThemeResource ProductCanvasBrush}">
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-        <TitleBar x:Name="AppTitleBar" AutomationProperties.Name="EnviousWispr window title" IsTabStop="False" Title="EnviousWispr" Subtitle="Private voice dictation for Windows" />
+        <TitleBar x:Name="AppTitleBar" AutomationProperties.Name="EnviousWispr window title" IsTabStop="False" Title="EnviousWispr" Subtitle="Private voice dictation for Windows">
+            <TitleBar.IconSource>
+                <ImageIconSource ImageSource="Assets/Brand/EnviousWisprAppIcon.png" />
+            </TitleBar.IconSource>
+        </TitleBar>
 
         <Grid Grid.Row="1">
             <ScrollViewer x:Name="OnboardingView" AutomationProperties.Name="Welcome to EnviousWispr" HorizontalScrollMode="Disabled" Visibility="Collapsed">
                 <Grid MaxWidth="980" Padding="40,28,40,48" HorizontalAlignment="Center">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="1.1*" /><ColumnDefinition Width="0.9*" /></Grid.ColumnDefinitions>
                     <StackPanel Margin="0,28,48,0" Spacing="18">
-                        <Border Width="60" Height="6" HorizontalAlignment="Left" Background="{ThemeResource BrandAccentBrush}" CornerRadius="3" />
+                        <Image Width="72" Height="72" AutomationProperties.AccessibilityView="Raw" HorizontalAlignment="Left" Source="Assets/Brand/EnviousWisprMark.svg" />
                         <TextBlock x:Uid="OnboardingTitle" Style="{StaticResource PageTitleStyle}" Text="Your voice, instantly captured." />
                         <TextBlock FontSize="18" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Speak naturally in any Windows app. EnviousWispr transcribes locally, cleans the result, and delivers it back where you started." TextWrapping="Wrap" />
                         <Border Style="{StaticResource CardStyle}">
@@ -57,6 +61,12 @@
             </ScrollViewer>
 
             <NavigationView x:Name="ProductNavigation" AutomationProperties.Name="EnviousWispr navigation" IsBackButtonVisible="Collapsed" IsSettingsVisible="False" IsTitleBarAutoPaddingEnabled="False" PaneDisplayMode="Auto" SelectionChanged="ProductNavigation_SelectionChanged">
+                <NavigationView.PaneHeader>
+                    <StackPanel Margin="0,8,0,12" Orientation="Horizontal" Spacing="10">
+                        <Image Width="34" Height="34" AutomationProperties.AccessibilityView="Raw" Source="Assets/Brand/EnviousWisprMark.svg" />
+                        <TextBlock FontSize="17" FontWeight="SemiBold" Text="EnviousWispr" VerticalAlignment="Center" />
+                    </StackPanel>
+                </NavigationView.PaneHeader>
                 <NavigationView.MenuItems>
                     <NavigationViewItem x:Name="HomeNavItem" x:Uid="HomeNavItem" AccessKey="M" Content="Home" Icon="Home" Tag="home" />
                     <NavigationViewItemHeader Content="APP" />
