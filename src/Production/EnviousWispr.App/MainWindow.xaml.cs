@@ -1340,7 +1340,14 @@ public sealed partial class MainWindow : Window, IDisposable
         var userData = new ReusableUserData(
             [.. existing, .. plan.Additions],
             _settings.UserData.Snippets);
-        await SaveUserDataAsync(userData, "Words imported").ConfigureAwait(true);
+
+        // THE SAME DESCRIPTION ON BOTH PATHS. The first version used the generic save message here,
+        // so every problem outcome vanished the moment ONE word imported: a hundred-line file with
+        // sixty good rows and forty unreadable ones said "the change was saved locally" and the
+        // user never learned about the forty. That is the INVERSE of the failure the itemised
+        // message was written for, and it survived because the zero-added path was the only one
+        // anyone had looked at.
+        await SaveUserDataAsync(userData, "Words imported", DescribeImport(plan)).ConfigureAwait(true);
     }
 
     private async void ExportWordsButton_Click(object sender, RoutedEventArgs e)
@@ -1408,7 +1415,13 @@ public sealed partial class MainWindow : Window, IDisposable
 
         if (plan.UnreadableCount > 0)
         {
-            parts.Add($"{plan.UnreadableCount} lines could not be read. Each needs a spoken form and a replacement, separated by a comma.");
+            // No trailing full stop: the join below adds one, and the first version produced
+            // "separated by a comma..". And the list of separators is the parser's rather than a
+            // remembered one - it accepts a tab and an equals sign too, and a user with a
+            // tab-separated file was being told the wrong thing about a file it would have taken.
+            parts.Add(
+                $"{plan.UnreadableCount} lines could not be read. Each needs a spoken form and a "
+                + "replacement, separated by a comma, a tab, or an equals sign");
         }
 
         return parts.Count == 0
@@ -1920,9 +1933,12 @@ public sealed partial class MainWindow : Window, IDisposable
     private void ListSelectionChanged(object sender, SelectionChangedEventArgs e) =>
         UpdateSelectionDependentButtons();
 
-    private async Task SaveUserDataAsync(ReusableUserData userData, string title)
+    private async Task SaveUserDataAsync(ReusableUserData userData, string title) =>
+        await SaveUserDataAsync(userData, title, "The change was saved locally.").ConfigureAwait(true);
+
+    private async Task SaveUserDataAsync(ReusableUserData userData, string title, string message)
     {
-        if (await TrySaveAsync(_settings with { UserData = userData }, title, "The change was saved locally.").ConfigureAwait(true))
+        if (await TrySaveAsync(_settings with { UserData = userData }, title, message).ConfigureAwait(true))
         {
             RefreshReusableUserDataViews();
         }
