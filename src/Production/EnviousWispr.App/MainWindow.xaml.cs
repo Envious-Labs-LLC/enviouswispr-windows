@@ -661,8 +661,8 @@ public sealed partial class MainWindow : Window, IDisposable
         const string title = "EnviousWispr did not close properly last time";
         FoundationInfoBar.Title = title;
         FoundationInfoBar.Message = consecutiveInterruptedRuns > 1
-            ? $"That has now happened {consecutiveInterruptedRuns.ToString(CultureInfo.CurrentCulture)} times in a row. Everything was reset and dictation is ready. Unfinished text is never pasted for you."
-            : "Everything was reset and dictation is ready. Unfinished text is never pasted for you.";
+            ? $"That has now happened {consecutiveInterruptedRuns.ToString(CultureInfo.CurrentCulture)} times in a row. Everything was reset and dictation is ready. Unfinished text is never pasted on its own."
+            : "Everything was reset and dictation is ready. Unfinished text is never pasted on its own.";
         FoundationInfoBar.Severity = InfoBarSeverity.Warning;
         SetOnboardingReliabilityNotice(title, FoundationInfoBar.Message);
     }
@@ -759,16 +759,19 @@ public sealed partial class MainWindow : Window, IDisposable
             NullIfBlank(OllamaEndpointTextBox.Text));
         var history = new HistoryPreferences(
             HistoryEnabledToggle.IsOn,
-            (int)Math.Clamp(double.IsNaN(RetentionDaysBox.Value) ? 30 : RetentionDaysBox.Value, 0, 3650));
+            RetentionDays.FromField(
+                RetentionDaysBox.Value,
+                fallback: 30,
+                RetentionDays.HistoryMinimum,
+                RetentionDays.HistoryMaximum));
         var theme = ThemeFromIndex(SelectedIndexOf(ThemeChoices));
         var observability = new ObservabilityPreferences(
             LocalDiagnosticsToggle.IsOn,
-            (int)Math.Clamp(
-                double.IsNaN(DiagnosticRetentionDaysBox.Value)
-                    ? ObservabilityPreferences.Default.DiagnosticRetentionDays
-                    : DiagnosticRetentionDaysBox.Value,
-                1,
-                90),
+            RetentionDays.FromField(
+                DiagnosticRetentionDaysBox.Value,
+                ObservabilityPreferences.Default.DiagnosticRetentionDays,
+                RetentionDays.DiagnosticMinimum,
+                RetentionDays.DiagnosticMaximum),
             _telemetryAvailable && ShareTelemetryToggle.IsOn);
         var microphoneId = (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id;
         var next = _settings with

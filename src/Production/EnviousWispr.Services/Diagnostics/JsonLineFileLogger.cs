@@ -31,7 +31,7 @@ public sealed class JsonLineFileLogger : IAppLogger
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentOutOfRangeException.ThrowIfLessThan(retentionDays, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(retentionDays, 90);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(retentionDays, RetentionDays.DiagnosticMaximum);
         _path = Path.GetFullPath(path);
         _enabled = enabled;
         _retentionDays = retentionDays;
@@ -47,7 +47,9 @@ public sealed class JsonLineFileLogger : IAppLogger
     {
         ArgumentNullException.ThrowIfNull(preferences);
         ArgumentOutOfRangeException.ThrowIfLessThan(preferences.DiagnosticRetentionDays, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(preferences.DiagnosticRetentionDays, 90);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(
+            preferences.DiagnosticRetentionDays,
+            RetentionDays.DiagnosticMaximum);
 
         lock (_writeLock)
         {
