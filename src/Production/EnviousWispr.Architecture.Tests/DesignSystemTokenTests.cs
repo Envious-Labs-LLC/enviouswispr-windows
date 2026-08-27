@@ -547,6 +547,137 @@ public sealed partial class DesignSystemTokenTests
         }
     }
 
+    /// <summary>
+    /// Every measure in the product window comes from a layout token, never from a number typed
+    /// at the site.
+    /// </summary>
+    /// <remarks>
+    /// The defect this exists for is not "a magic number is untidy". Pages that each picked their
+    /// own cap rendered at three different widths (900, 820, 440), so the content card visibly
+    /// changed width as the user clicked from one nav row to the next — the frame appeared to
+    /// twitch rather than hold still. A token cannot disagree with itself.
+    ///
+    /// Enumerated from the DOCUMENT, not from a list of pages kept here. A page added tomorrow is
+    /// covered without anybody remembering to add it, which is the only version of this check that
+    /// stays true.
+    /// </remarks>
+    [Fact]
+    public void EveryMeasureInTheProductWindowComesFromALayoutToken()
+    {
+        var document = LoadMainWindow();
+        var offenders = document.Descendants()
+            .Select(element => (Element: element, MaxWidth: (string?)element.Attribute("MaxWidth")))
+            .Where(pair => pair.MaxWidth is not null)
+            .Where(pair => !pair.MaxWidth!.StartsWith("{StaticResource ", StringComparison.Ordinal))
+            .Select(pair => $"<{pair.Element.Name.LocalName} MaxWidth=\"{pair.MaxWidth}\">")
+            .ToArray();
+
+        Assert.True(
+            offenders.Length == 0,
+            "These elements set MaxWidth to a literal instead of a layout token:\n  "
+                + string.Join("\n  ", offenders)
+                + "\nUse {StaticResource BrandPageContentMaxWidth} for a page's own measure, or "
+                + "{StaticResource BrandInlineContentMaxWidth} for a column nested inside a card. "
+                + "Pages that each choose their own number render at different widths and the frame "
+                + "appears to change size as the user navigates.");
+
+        // Two-way control: the check above is satisfied by a window with no MaxWidth at all, which
+        // would be a different bug wearing this test's green. At least one page must actually be
+        // capped, or the measure is not being applied anywhere.
+        Assert.Contains(
+            document.Descendants(),
+            element => (string?)element.Attribute("MaxWidth")
+                == "{StaticResource BrandPageContentMaxWidth}");
+    }
+
+    /// <summary>
+    /// Every choice list renders as ONE full-width column of equal cards.
+    /// </summary>
+    /// <remarks>
+    /// Letting the layout choose its own column count produced six provider cards at six different
+    /// widths, stacked into a staircase down the page. The Mac stacks engine choices full width and
+    /// always has; multi-column was never the design, so the column count is pinned rather than
+    /// negotiated.
+    ///
+    /// Enumerated from the document. A fifth choice list added later is covered on arrival.
+    /// </remarks>
+    [Fact]
+    public void EveryChoiceListIsOneFullWidthColumn()
+    {
+        var document = LoadMainWindow();
+        var choiceLists = document.Descendants()
+            .Where(element => element.Name.LocalName == "RadioButtons")
+            .ToArray();
+
+        Assert.True(
+            choiceLists.Length > 0,
+            "No RadioButtons were found in MainWindow.xaml. Either the choice lists were replaced "
+                + "with another control — in which case this test's subject is gone and its green "
+                + "means nothing — or the document failed to load as expected.");
+
+        foreach (var list in choiceLists)
+        {
+            var name = (string?)list.Attribute(XName.Get("Name", XamlNamespace)) ?? "(unnamed)";
+            Assert.True(
+                (string?)list.Attribute("MaxColumns") == "1",
+                $"Choice list '{name}' does not pin MaxColumns to 1. A negotiated column count is "
+                    + "what produced cards of six different widths.");
+            Assert.True(
+                (string?)list.Attribute("HorizontalAlignment") == "Stretch",
+                $"Choice list '{name}' does not stretch, so its cards are sized to their own text "
+                    + "and their right edges will not line up.");
+            Assert.True(
+                (string?)list.Attribute("HorizontalContentAlignment") == "Stretch",
+                $"Choice list '{name}' does not stretch its content.");
+        }
+    }
+
+    /// <summary>
+    /// Every setting row's leading icon lines up with the row's first line of text.
+    /// </summary>
+    /// <remarks>
+    /// Centred against the whole row, a glyph beside a label-plus-control-plus-helper-text row
+    /// floats level with the middle of the control and reads as a stray column of marks in the
+    /// gutter rather than as part of the row it belongs to.
+    ///
+    /// Enumerated from the producing structure: any Grid whose first column is the row-icon column
+    /// is a setting row, so a row added later is covered without being listed here.
+    /// </remarks>
+    [Fact]
+    public void EveryRowIconSitsWithItsFirstLineOfText()
+    {
+        var document = LoadMainWindow();
+        var rowGrids = document.Descendants()
+            .Where(element => element.Name.LocalName == "Grid")
+            // The grid's OWN first column, not any column anywhere beneath it. Descendants() walks
+            // into nested grids, so a container wrapping a setting row matched as though it were
+            // one — a row with no icon of its own, reported as a row missing its icon.
+            .Where(grid => grid.Elements()
+                .Where(child => child.Name.LocalName == "Grid.ColumnDefinitions")
+                .SelectMany(definitions => definitions.Elements())
+                .Select(definition => (string?)definition.Attribute("Width"))
+                .FirstOrDefault() == "{StaticResource BrandRowIconColumnWidth}")
+            .ToArray();
+
+        Assert.True(
+            rowGrids.Length > 0,
+            "No setting rows were found. BrandRowIconColumnWidth is the marker for a row, so zero "
+                + "matches means the marker was renamed and this test now checks nothing.");
+
+        foreach (var grid in rowGrids)
+        {
+            var icon = grid.Elements().FirstOrDefault(element => element.Name.LocalName == "FontIcon");
+            Assert.True(
+                icon is not null,
+                "A Grid reserves the row-icon column but has no FontIcon in it, so the row carries "
+                    + "an empty gutter where its icon should be.");
+            Assert.Equal("Top", (string?)icon!.Attribute("VerticalAlignment"));
+            Assert.Equal(
+                "{StaticResource BrandRowIconInset}",
+                (string?)icon.Attribute("Margin"));
+        }
+    }
+
     private static XDocument LoadMainWindow() =>
         XDocument.Load(Path.Combine(
             FindRepositoryRoot(),
