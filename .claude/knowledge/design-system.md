@@ -35,6 +35,7 @@ where the two disagree the tests are what ships.
 | `DesignSystemTokenTests` | a literal colour in any view outside `Theme/`; a token missing from any of the three theme dictionaries; a Light or Dark value that disagrees with the macOS source; an overlay colour that is not a pill token; overlay text below the 14px floor; a `MaxWidth` typed as a number instead of a layout token; a choice list that does not pin itself to one full-width column; a setting row whose glyph is not lifted onto its first line of text |
 | `XamlResourceResolutionTests` | a `Brand*` or `Pill*` key that resolves nowhere; a style applied to a control type it does not target |
 | `WindowMinimumSizeTests` | a window minimum that stops being derived from the sidebar width and the frame inset; a content-card minimum too small to be usable |
+| `DesignSystemTokenTests` (types) | a layout token assigned to a property of a different type - the defect that builds clean and then refuses to start |
 
 **Two of these guard defects that are invisible to the compiler and fatal at runtime.** A mistyped
 `ThemeResource` key does not fail the build; the page throws when it is opened. A minimum size that stops
@@ -49,6 +50,31 @@ removed, all three reported, then reverted byte-identically.
 walk `MainWindow.xaml` and check whatever they find, so a page or a choice list added next month is
 covered on arrival. A gate carrying its own roster silently stops covering the thing it was written
 for the first time somebody adds a page and does not think to update it.
+
+## RULE: a-green-suite-here-is-not-evidence-the-app-starts
+**Every check in this file parses the views as XML. None of them LOADS them as XAML, and those are
+different questions.** A `StaticResource` is assigned without running a type converter, so a token of the
+wrong type builds clean, keeps the XML well-formed, passes every gate - and the app exits about two seconds
+after launch with `E_XAMLPARSEFAILED`, no window, and nothing on stdout or stderr.
+
+Measured 2026-08-27, and it shipped through four commits before anyone saw it: 41 `ColumnDefinition.Width`
+attributes read a token declared `<x:Double>`, where that property is a `GridLength`. Four builds reported
+green on an application that could not start. The only reason it surfaced at all is that a person launched
+it.
+
+Two standing consequences:
+
+- **The first thing after any rebuild is to LAUNCH IT and confirm a window appears**, before capturing
+  anything or drawing any conclusion. A green build is not evidence that the app runs, and a screenshot
+  round begun on that assumption wastes the round.
+- **Hash `EnviousWispr.App.dll` and `MainWindow.xbf`, never `EnviousWispr.App.exe`.** The exe is the native
+  apphost stub and is byte-identical across builds, so comparing it "confirms" delivery of a build that
+  never arrived. Same silent-empty family as everything in the validation rules: the tool answers, the
+  answer is well-formed, and it is about the wrong thing.
+
+`EveryLayoutTokenIsAssignedToAPropertyOfItsOwnType` now catches the decidable half of this from source, and
+reports an unchecked property LOUDLY rather than skipping it - an unknown property is exactly the case
+where a wrong answer looks like a right one.
 
 Known reach limits, stated so a green run is not over-read: the resource gate covers only the `Brand*` and
 `Pill*` prefixes we own, and its type check cannot see custom controls, WinUI inheritance outside its
