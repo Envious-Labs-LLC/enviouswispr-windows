@@ -107,9 +107,9 @@
             <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="{ThemeResource BrandAccentSolidColor}" />
             <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="{ThemeResource BrandAccentSolidColor}" Opacity="0.78" />
 
-            <SolidColorBrush x:Key="InfoBarErrorSeverityBackgroundBrush" Color="{ThemeResource BrandCardBgColor}" />
+            <SolidColorBrush x:Key="InfoBarErrorSeverityBackgroundBrush" Color="{ThemeResource BrandErrorSoftColor}" />
             <SolidColorBrush x:Key="InfoBarWarningSeverityBackgroundBrush" Color="{ThemeResource BrandWarningSoftColor}" />
-            <SolidColorBrush x:Key="InfoBarSuccessSeverityBackgroundBrush" Color="{ThemeResource BrandCardBgColor}" />
+            <SolidColorBrush x:Key="InfoBarSuccessSeverityBackgroundBrush" Color="{ThemeResource BrandSuccessSoftColor}" />
             <SolidColorBrush x:Key="InfoBarInformationalSeverityBackgroundBrush" Color="{ThemeResource BrandAccentLightColor}" />
             <SolidColorBrush x:Key="InfoBarErrorSeverityIconBackground" Color="{ThemeResource BrandErrorColor}" />
             <SolidColorBrush x:Key="InfoBarWarningSeverityIconBackground" Color="{ThemeResource BrandWarningColor}" />

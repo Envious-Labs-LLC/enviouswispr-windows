@@ -301,4 +301,74 @@ public sealed partial class DesignSystemTokenTests
 
     [GeneratedRegex("\"[^\"]*[\u2014\u2013][^\"]*\"")]
     private static partial Regex QuotedDash();
+
+    /// <summary>
+    /// The four notification severities are the app's whole vocabulary for "how bad is this", and
+    /// each one has to be recognisable BEFORE the words are read. Two of them were painted the
+    /// same colour as the card behind them.
+    /// </summary>
+    /// <remarks>
+    /// Error and Success both pointed at BrandCardBgColor, so the most important message the app
+    /// can show - an error - arrived with no colour behind it at all, distinguishable from an
+    /// ordinary card only by a small icon. Warning and Informational had tinted backgrounds.
+    /// Nobody chose that: BrandWarningSoftColor was the only soft tint that existed, so the two
+    /// severities with no token of their own fell back to the card.
+    ///
+    /// This is why the check is over the whole SET rather than over the two that were wrong. Four
+    /// severities times two properties is eight cells, and fixing the two that someone noticed
+    /// leaves the same hole open for whichever cell is added next.
+    ///
+    /// High Contrast is exempt and that is deliberate: it sets every soft tint to Transparent so
+    /// the system's own colours decide, which is what High Contrast is for.
+    /// </remarks>
+    [Fact]
+    public void EverySeverityIsPaintedDifferentlyFromThePlainCard()
+    {
+        var markup = File.ReadAllText(
+            Path.Combine(
+                FindRepositoryRoot(),
+                "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+
+        string[] severities = ["Error", "Warning", "Success", "Informational"];
+
+        var indistinguishable = new List<string>();
+        foreach (var severity in severities)
+        {
+            foreach (var property in new[] { "BackgroundBrush", "IconBackground" })
+            {
+                var key = $"InfoBar{severity}Severity{property}";
+                var declaration = SeverityBrush(key).Match(markup);
+                Assert.True(declaration.Success, $"No brand colour is declared for {key}.");
+
+                if (declaration.Groups[1].Value is "BrandCardBgColor" or "BrandPageBgColor")
+                {
+                    indistinguishable.Add($"{key} -> {declaration.Groups[1].Value}");
+                }
+            }
+        }
+
+        Assert.True(
+            indistinguishable.Count == 0,
+            "These notifications are painted the same colour as the surface behind them: " +
+            string.Join(", ", indistinguishable));
+
+        // Every soft tint the markup asks for must exist in all three themes, or the severity
+        // silently renders with no background at all - which looks exactly like the defect above.
+        var tokens = File.ReadAllText(
+            Path.Combine(
+                FindRepositoryRoot(),
+                "src", "Production", "EnviousWispr.App", "Theme", "DesignTokens.xaml"));
+
+        foreach (var soft in new[] { "BrandErrorSoftColor", "BrandWarningSoftColor", "BrandSuccessSoftColor" })
+        {
+            var declared = ColorToken(soft).Count(tokens);
+            Assert.True(declared == 3, $"{soft} is declared {declared} times; Light, Dark and HighContrast all need it.");
+        }
+    }
+
+    private static Regex SeverityBrush(string key) =>
+        new(@"x:Key=""" + Regex.Escape(key) + @""" Color=""\{ThemeResource (Brand[A-Za-z]+)\}""");
+
+    private static Regex ColorToken(string key) =>
+        new(@"<Color x:Key=""" + Regex.Escape(key) + @""">");
 }
