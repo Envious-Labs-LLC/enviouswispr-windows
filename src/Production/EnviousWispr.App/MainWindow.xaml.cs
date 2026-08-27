@@ -1654,10 +1654,17 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        RefreshPolishModelsButton.IsEnabled = provider is PolishProvider.Ollama or
+        // All three model controls follow the PROVIDER, not just the two that used to. With the
+        // provider set to None the picker and the refresh button were correctly disabled while
+        // the free-text Model ID stayed live and in the tab order, so a user could type a model
+        // id for a provider that does not exist. One of a pair got the guard and its sibling did
+        // not, which is the shape that survives review because the page looks mostly right.
+        var providerUsesAModel = provider is PolishProvider.Ollama or
             PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini;
+        RefreshPolishModelsButton.IsEnabled = providerUsesAModel;
+        PolishModelTextBox.IsEnabled = providerUsesAModel;
         PolishModelPicker.ItemsSource = choices;
-        PolishModelPicker.IsEnabled = choices.Count > 0;
+        PolishModelPicker.IsEnabled = providerUsesAModel && choices.Count > 0;
         var current = PolishModelTextBox.Text.Trim();
         var selectedIndex = choices
             .Select((model, index) => new { model, index })
