@@ -441,4 +441,105 @@ public sealed partial class DesignSystemTokenTests
             .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
             .Select(path => (Path.GetFileName(path), File.ReadAllText(path)))
             .ToArray();
+
+    /// <summary>
+    /// Every page pins its content to the left edge, so the left edge cannot move with content.
+    /// </summary>
+    /// <remarks>
+    /// Measured on the running app: the settings page title is a CONSTANT 1392 wide and sat at nine
+    /// different left edges across the nine settings sub-pages, a 452px spread. A centred panel's
+    /// left edge is a function of how wide the visible section happens to be, so the same title
+    /// moved depending on which section was showing.
+    ///
+    /// Left alignment fixes it BY CONSTRUCTION rather than by tuning: the left edge becomes the
+    /// container's, which no content width can move. It is also what Windows 11 Settings does.
+    ///
+    /// The gate is over the SET, because a page added later that centres itself reproduces the
+    /// original defect on that page alone, which is the version nobody notices.
+    /// </remarks>
+    [Fact]
+    public void EveryPagePinsItsContentToTheLeftEdge()
+    {
+        var markup = File.ReadAllText(
+            Path.Combine(
+                FindRepositoryRoot(),
+                "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+
+        var panels = PageContentPanel().Matches(markup).Select(match => match.Value).ToArray();
+
+        Assert.True(panels.Length >= 7, $"Expected at least the seven page panels, found {panels.Length}.");
+
+        var unpinned = panels
+            .Where(panel => !panel.Contains("HorizontalAlignment=\"Left\"", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            unpinned.Length == 0,
+            $"{unpinned.Length} page panel(s) still centre their content, so their left edge moves with it.");
+
+        // Control, both directions. The matcher must MATCH an unpinned panel - otherwise a matcher
+        // that had stopped matching would report the same clean result - and the unpinned one must
+        // be recognised as unpinned.
+        const string centredPanel = "<StackPanel MaxWidth=\"{StaticResource BrandPageContentMaxWidth}\" Spacing=\"18\">";
+        Assert.Matches(PageContentPanel(), centredPanel);
+        Assert.DoesNotContain("HorizontalAlignment=\"Left\"", centredPanel, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Selecting a choice card must not move anything on the page.
+    /// </summary>
+    /// <remarks>
+    /// Measured: a selected card was 125 tall where its siblings were 123, because the Checked
+    /// state thickened the card's OWN border from 1 to 2. A border's thickness is layout, so
+    /// choosing a different option shifted every card below it by two pixels. Two pixels reads as
+    /// the page twitching under the cursor.
+    ///
+    /// The ring is now a dedicated zero-layout overlay. It has its OWN border rather than reusing
+    /// the hover one, because hover lives in a different VisualStateGroup and two groups writing
+    /// one property have no defined order between them - the shape that made a badge vanish
+    /// earlier in this branch.
+    ///
+    /// So the gate is not "is there a ring" but "does any check state touch a LAYOUT property".
+    /// </remarks>
+    [Fact]
+    public void SelectingAChoiceCardChangesNoLayoutProperty()
+    {
+        var controls = File.ReadAllText(
+            Path.Combine(
+                FindRepositoryRoot(),
+                "src", "Production", "EnviousWispr.App", "Theme", "Controls.xaml"));
+
+        string[] layoutProperties = ["BorderThickness", "Margin", "Padding", "Width", "Height"];
+
+        var checkStates = CheckStateBlock().Matches(controls).Select(match => match.Groups[1].Value).ToArray();
+        Assert.True(checkStates.Length >= 2, $"Expected the Checked and Unchecked states, found {checkStates.Length}.");
+
+        var offenders = checkStates
+            .SelectMany(block => SetterTarget().Matches(block).Select(setter => setter.Groups[1].Value))
+            .Where(target => layoutProperties.Any(property => target.EndsWith("." + property, StringComparison.Ordinal)))
+            .ToArray();
+
+        Assert.True(
+            offenders.Length == 0,
+            "Selecting a card would move the page, because these check-state setters are layout: "
+            + string.Join(", ", offenders));
+
+        // Control: the setter matcher must actually find setters in those blocks, or "no layout
+        // setters" would be true of an empty read.
+        var allTargets = checkStates
+            .SelectMany(block => SetterTarget().Matches(block).Select(setter => setter.Groups[1].Value))
+            .ToArray();
+        Assert.NotEmpty(allTargets);
+
+        Assert.Contains("SelectionBorder", controls, StringComparison.Ordinal);
+    }
+
+    [GeneratedRegex(@"<StackPanel[^>]*BrandPageContentMaxWidth[^>]*>")]
+    private static partial Regex PageContentPanel();
+
+    [GeneratedRegex(@"<VisualState x:Name=""(?:Checked|Unchecked)"">(.*?)</VisualState>", RegexOptions.Singleline)]
+    private static partial Regex CheckStateBlock();
+
+    [GeneratedRegex(@"<Setter Target=""([^""]+)""")]
+    private static partial Regex SetterTarget();
 }

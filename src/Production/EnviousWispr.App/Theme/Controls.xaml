@@ -127,14 +127,14 @@
                                 <VisualState x:Name="Unchecked">
                                     <VisualState.Setters>
                                         <Setter Target="CardBorder.BorderBrush" Value="{ThemeResource BrandDividerBrush}" />
-                                        <Setter Target="CardBorder.BorderThickness" Value="1" />
+                                        <Setter Target="SelectionBorder.Opacity" Value="0" />
                                         <Setter Target="CheckBadge.Visibility" Value="Collapsed" />
                                     </VisualState.Setters>
                                 </VisualState>
                                 <VisualState x:Name="Checked">
                                     <VisualState.Setters>
                                         <Setter Target="CardBorder.BorderBrush" Value="{ThemeResource BrandAccentBrush}" />
-                                        <Setter Target="CardBorder.BorderThickness" Value="2" />
+                                        <Setter Target="SelectionBorder.Opacity" Value="1" />
                                         <Setter Target="CheckBadge.Visibility" Value="Visible" />
                                     </VisualState.Setters>
                                 </VisualState>
@@ -162,6 +162,13 @@
                                 Padding="{TemplateBinding Padding}"
                                 VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
                         </Border>
+                        <Border
+                            x:Name="SelectionBorder"
+                            BorderBrush="{ThemeResource BrandAccentBrush}"
+                            BorderThickness="2"
+                            CornerRadius="{ThemeResource BrandSectionRadius}"
+                            IsHitTestVisible="False"
+                            Opacity="0" />
                         <Border
                             x:Name="InteractionBorder"
                             BorderBrush="{ThemeResource BrandAccentBrush}"

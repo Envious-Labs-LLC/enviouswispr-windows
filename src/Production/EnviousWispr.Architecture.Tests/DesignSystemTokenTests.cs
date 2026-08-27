@@ -450,7 +450,15 @@ public sealed partial class DesignSystemTokenTests
         Assert.Contains("Focused", stateNames);
         Assert.Equal("3", ReadVisualStateSetter(style, "PointerOver", "InteractionBorder.BorderThickness"));
         Assert.Equal("4", ReadVisualStateSetter(style, "Pressed", "InteractionBorder.BorderThickness"));
-        Assert.Equal("2", ReadVisualStateSetter(style, "Checked", "CardBorder.BorderThickness"));
+        // WAS: Checked sets CardBorder.BorderThickness to 2. That assertion pinned a DEFECT.
+        // A border's thickness is layout, so a selected card measured 125 tall where its siblings
+        // were 123 and choosing a different option shifted everything below it by two pixels. The
+        // gate fired when the defect was fixed, which is what a design-pinning gate does: it pins
+        // the design's mistakes with equal force.
+        // The ring is now a dedicated zero-layout overlay, and the stronger successor to this line
+        // is SelectingAChoiceCardChangesNoLayoutProperty, which forbids the whole CLASS rather
+        // than naming one property.
+        Assert.Equal("1", ReadVisualStateSetter(style, "Checked", "SelectionBorder.Opacity"));
         Assert.Contains(style.Descendants(), element =>
             string.Equals(
                 (string?)element.Attribute(XName.Get("Name", XamlNamespace)),
