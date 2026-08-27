@@ -72,4 +72,17 @@
             <SolidColorBrush x:Key="PillNoticeBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
+
+    <Style x:Key="PillModeQuietTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillModeQuietBrush}" />
+    </Style>
+    <Style x:Key="PillNoticeTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillNoticeBrush}" />
+    </Style>
+    <Style x:Key="PillLiveTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillTextBrush}" />
+    </Style>
+    <Style x:Key="PillDimmedTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillTextDimmedBrush}" />
+    </Style>
 </ResourceDictionary>
