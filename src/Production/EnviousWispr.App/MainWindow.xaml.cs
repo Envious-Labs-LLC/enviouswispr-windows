@@ -600,11 +600,24 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public async Task NotifyHistoryChangedAsync() => await ReloadHistoryAsync().ConfigureAwait(true);
 
+    /// <summary>
+    /// Opens settings at the first section rather than at a page listing every section.
+    /// </summary>
+    /// <remarks>
+    /// There used to be an "All Settings" destination that rendered every section at once. It was
+    /// 4076 pixels tall on a 2160-pixel screen, it had no in-page anchors, and every control on it
+    /// was one click away in the sidebar - so it duplicated rather than summarised, and it was the
+    /// page a measured audit called the clunkiest in the app.
+    ///
+    /// Removed on PARITY grounds rather than taste: macOS ships fifteen settings sections and no
+    /// aggregate page. That was a lookup rather than a judgement call, and it had been sitting in
+    /// the founder's queue as a decision until somebody read the other side.
+    /// </remarks>
     public void OpenSettings()
     {
         ShowOnboarding(show: false);
-        ProductNavigation.SelectedItem = SettingsNavItem;
-        ShowPage("settings");
+        ProductNavigation.SelectedItem = AppearanceNavItem;
+        ShowPage("settings-appearance");
     }
 
     public void OpenQuickAdd(string? selection, string? message)
@@ -2102,7 +2115,7 @@ public sealed partial class MainWindow : Window, IDisposable
         // at rather than the one you left.
         OperationInfoBar.IsOpen = false;
 
-        var settingsPage = tag == "settings" || tag.StartsWith("settings-", StringComparison.Ordinal);
+        var settingsPage = tag.StartsWith("settings-", StringComparison.Ordinal);
         var helpPage = tag == "help" || tag.StartsWith("help-", StringComparison.Ordinal);
         HomePage.Visibility = tag == "home" ? Visibility.Visible : Visibility.Collapsed;
         HistoryPage.Visibility = tag == "history" ? Visibility.Visible : Visibility.Collapsed;
@@ -2191,22 +2204,26 @@ public sealed partial class MainWindow : Window, IDisposable
                 "How your transcript reaches the clipboard and the app you're in.",
                 "\uE8C8",
                 (FrameworkElement?)ClipboardSection),
+            // An unrecognised tag lands on a REAL section rather than showing all of them. The
+            // old default returned null, which the loop below read as "show everything" - so a
+            // typo in a tag rendered the aggregate page that no longer exists.
             _ => (
-                "All Settings",
-                "Choose how EnviousWispr records, transcribes, cleans, and stores your dictation.",
-                "\uE713",
-                (FrameworkElement?)null),
+                "Appearance",
+                "The theme, and where the recording pill appears while you dictate.",
+                "\uE771",
+                (FrameworkElement?)AppearanceSection),
         };
 
         SettingsPageTitle.Text = title;
         SettingsPageDescription.Text = description;
         SettingsPageGlyph.Glyph = glyph;
 
-        var showAll = section is null;
+        // No "show everything" branch any more. Every tag resolves to exactly one section, so the
+        // aggregate page cannot be reached by any route rather than merely being unlinked.
         var showTranscriptionCompanion = tag == "settings-transcription";
         foreach (var candidate in SettingsSections())
         {
-            candidate.Visibility = showAll ||
+            candidate.Visibility =
                 ReferenceEquals(candidate, section) ||
                 (showTranscriptionCompanion && ReferenceEquals(candidate, DeterministicCleanupSection))
                     ? Visibility.Visible
@@ -2410,6 +2427,12 @@ public sealed partial class MainWindow : Window, IDisposable
     /// its natural height first would need a layout pass, and a forced layout pass inside a queued
     /// callback is what crashed this app earlier in this branch.
     ///
+    /// AND BECAUSE IT IS A LAYOUT PROPERTY IT NEEDS EnableDependentAnimation. The first version of
+    /// this method did not set it, so the grow was silently skipped while everything around it
+    /// worked - see the comment at the animation itself. The reasoning above was correct about
+    /// WHICH property and silent about what animating it requires, which is the more dangerous
+    /// shape: a justification that reads as settled and is only half the story.
+    ///
     /// The ceiling is deliberately far above any real bar. The row stops at the content's natural
     /// height and the animation runs on past it with no visible effect, so a long message is not
     /// clipped by a number someone guessed. MaxHeight is released entirely when the animation ends,
@@ -2436,6 +2459,25 @@ public sealed partial class MainWindow : Window, IDisposable
             To = NotificationEntranceCeilingPixels,
             Duration = duration,
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            // WITHOUT THIS THE ANIMATION IS SILENTLY SKIPPED AND THE FIRST VERSION WAS.
+            // MaxHeight is a LAYOUT property, which makes this a dependent animation, and WinUI
+            // refuses to run those unless asked - with no error, no exception and no log line.
+            // Measured on the running app: MaxHeight was set to 0, the grow never ran, the fade
+            // animated opacity on an element clamped to zero height, and 220ms later the Completed
+            // handler released MaxHeight and the bar appeared in ONE frame. A dead pause followed
+            // by the exact snap the animation existed to remove.
+            //
+            // The same build animated a page entrance correctly through the same guard, the same
+            // API and the same file, which is what ruled out every other suspect: that one targets
+            // Opacity and a transform, both independent.
+            //
+            // A ScaleTransform would stay off the layout path and is the usual advice, and it is
+            // WRONG HERE: scaling the bar would not move the page below it, because the page's
+            // position comes from this row's height. The bar would grow smoothly while the page
+            // still jumped - worse than either, and it would pass a check on the bar alone.
+            // So the layout animation is the point rather than an oversight, and its cost is one
+            // property for 220ms.
+            EnableDependentAnimation = true,
         };
         Storyboard.SetTarget(grow, OperationInfoBar);
         Storyboard.SetTargetProperty(grow, "MaxHeight");

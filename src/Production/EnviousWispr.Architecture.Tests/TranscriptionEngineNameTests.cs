@@ -654,4 +654,84 @@ public sealed partial class DesignSystemTokenTests
 
     [GeneratedRegex(@"private async Task RunAutoStopWatchAsync.*?\n    \}", RegexOptions.Singleline)]
     private static partial Regex AutoStopWatcherBody();
+
+    /// <summary>
+    /// Any animation of a LAYOUT property must ask to be allowed to run.
+    /// </summary>
+    /// <remarks>
+    /// WinUI refuses to run "dependent" animations - ones that change layout - unless
+    /// EnableDependentAnimation is set. It refuses SILENTLY: no error, no exception, no log line.
+    /// The animation is constructed correctly, added to a storyboard, begun, and does nothing.
+    ///
+    /// Measured on the running app. The notification bar's grow targeted MaxHeight without it, so
+    /// MaxHeight was pinned to 0, the accompanying opacity fade ran perfectly on an element clamped
+    /// to zero height, and 220ms later the completion handler released the clamp and the bar
+    /// appeared in ONE frame. A dead pause followed by exactly the snap the animation existed to
+    /// remove - and every visible symptom pointed at the animation not being reached rather than at
+    /// it being refused.
+    ///
+    /// What ruled out every other explanation was a control inside the same binary: the page
+    /// entrance animated correctly, through the same guard, the same API and the same file. It
+    /// targets opacity and a transform, which are independent. Same everything, different property
+    /// class.
+    ///
+    /// So the gate is the class, not the instance. It costs nothing and the failure it catches has
+    /// no other signal.
+    /// </remarks>
+    [Fact]
+    public void EveryAnimationOfALayoutPropertyAsksToBeAllowedToRun()
+    {
+        var source = File.ReadAllText(
+            Path.Combine(
+                FindRepositoryRoot(),
+                "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+
+        // Properties that change LAYOUT. A transform's X and Y are deliberately absent: those are
+        // render transforms, which are independent and run without asking.
+        string[] layoutProperties =
+        [
+            "Width", "Height", "MaxWidth", "MaxHeight", "MinWidth", "MinHeight", "Margin", "Padding",
+        ];
+
+        var targets = AnimationTarget().Matches(source)
+            .Select(match => (Variable: match.Groups[1].Value, Property: match.Groups[2].Value))
+            .ToArray();
+
+        Assert.NotEmpty(targets);
+
+        var unasked = targets
+            .Where(target => layoutProperties.Contains(target.Property, StringComparer.Ordinal))
+            .Where(target => !AnimationDeclaration(target.Variable).IsMatch(source)
+                || !AnimationDeclaration(target.Variable).Match(source).Value
+                    .Contains("EnableDependentAnimation", StringComparison.Ordinal))
+            .Select(target => $"{target.Variable} -> {target.Property}")
+            .ToArray();
+
+        Assert.True(
+            unasked.Length == 0,
+            "These animations change layout and will be silently skipped: " + string.Join(", ", unasked));
+
+        // Control: the matcher must actually be finding a layout animation, or "none unasked" is
+        // true of a file it failed to read.
+        Assert.Contains(
+            targets,
+            target => layoutProperties.Contains(target.Property, StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// One animation's object initializer, including a nested one.
+    /// </summary>
+    /// <remarks>
+    /// The nesting is not optional. A flat [^}]* stops at the first closing brace, and these
+    /// initializers contain an easing function with its own - so the pattern ended before reaching
+    /// EnableDependentAnimation and the gate reported a correct animation as unasked. It failed
+    /// loudly on its first run, which is the only reason it is right now.
+    /// </remarks>
+    private static Regex AnimationDeclaration(string variable) =>
+        new(
+            @"var " + Regex.Escape(variable) + @" = new DoubleAnimation\s*\{(?:[^{}]|\{[^{}]*\})*\}",
+            RegexOptions.Singleline);
+
+    [GeneratedRegex(@"Storyboard\.SetTargetProperty\(\s*(\w+)\s*,\s*""([^""]+)""")]
+    private static partial Regex AnimationTarget();
 }

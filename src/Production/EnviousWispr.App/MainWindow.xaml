@@ -300,7 +300,7 @@
                     <NavigationViewItemHeader Content="APP" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
                     <NavigationViewItem x:Uid="HistoryNavItem" AccessKey="Y" Content="History" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Clock" Tag="history" />
                     <NavigationViewItem Content="What’s New" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Document" Tag="whats-new" />
-                    <NavigationViewItem Content="Appearance" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Setting" Tag="settings-appearance" />
+                    <NavigationViewItem x:Name="AppearanceNavItem" AccessKey="T" Content="Appearance" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Setting" Tag="settings-appearance" />
                     <NavigationViewItemHeader Content="RECORD" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
                     <NavigationViewItem x:Name="TranscriptionNavItem" Content="Transcription" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-transcription"><NavigationViewItem.Icon><FontIcon Glyph="&#xE8C1;" /></NavigationViewItem.Icon></NavigationViewItem>
                     <NavigationViewItem Content="Live Preview" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-live-preview"><NavigationViewItem.Icon><FontIcon Glyph="&#xE890;" /></NavigationViewItem.Icon></NavigationViewItem>
@@ -319,7 +319,7 @@
                     <NavigationViewItem Content="Open Source Licenses" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="help-licenses"><NavigationViewItem.Icon><FontIcon Glyph="&#xE8A5;" /></NavigationViewItem.Icon></NavigationViewItem>
                 </NavigationView.MenuItems>
                 <NavigationView.FooterMenuItems>
-                    <NavigationViewItem x:Name="SettingsNavItem" x:Uid="SettingsNavItem" AccessKey="T" Content="All Settings" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Setting" Tag="settings" />
+                    
                     <NavigationViewItem x:Uid="HelpNavItem" AccessKey="P" Content="Help and privacy" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Help" Tag="help" />
                 </NavigationView.FooterMenuItems>
                 <Grid Padding="28,18,28,32">
