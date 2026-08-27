@@ -121,6 +121,15 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>Fluent's short-duration band. Long enough to read as motion, short enough to feel instant.</summary>
     private const double PageEntranceMilliseconds = 180;
 
+    /// <summary>The notification bar grows over slightly longer, because it also moves the page.</summary>
+    private const double NotificationEntranceMilliseconds = 220;
+
+    /// <summary>
+    /// A ceiling far above any real notification. The Auto row stops at the bar's natural height,
+    /// so this is not a guess at how tall a bar is - it only has to be larger than one.
+    /// </summary>
+    private const double NotificationEntranceCeilingPixels = 400;
+
     private static readonly SelectableChoiceOption[] FinalEngineChoices =
     [
         new("Automatic", "Chooses the best available local engine for this PC."),
@@ -2355,7 +2364,68 @@ public sealed partial class MainWindow : Window, IDisposable
         OperationInfoBar.Title = title;
         OperationInfoBar.Message = message;
         OperationInfoBar.Severity = severity;
+        var wasAlreadyOpen = OperationInfoBar.IsOpen;
         OperationInfoBar.IsOpen = true;
+        if (!wasAlreadyOpen)
+        {
+            PlayNotificationEntrance();
+        }
+    }
+
+    /// <summary>
+    /// Opens the notification bar by growing it, instead of shoving the page down in one frame.
+    /// </summary>
+    /// <remarks>
+    /// Measured on the running app: the bar arrived in a single frame and the page content below
+    /// jumped down 76 pixels with it. The bar lives in an Auto row above the pages - which is
+    /// deliberate, and fixed a worse defect where it painted OVER the page title - so its arrival
+    /// is a layout change and a layout change is what has to be animated.
+    ///
+    /// MaxHeight IS THE PROPERTY TO ANIMATE, and the choice is not arbitrary. An Auto row takes the
+    /// smaller of its content's natural height and any maximum, so growing the maximum from zero
+    /// grows the row smoothly without anyone needing to know how tall the bar will be. Measuring
+    /// its natural height first would need a layout pass, and a forced layout pass inside a queued
+    /// callback is what crashed this app earlier in this branch.
+    ///
+    /// The ceiling is deliberately far above any real bar. The row stops at the content's natural
+    /// height and the animation runs on past it with no visible effect, so a long message is not
+    /// clipped by a number someone guessed. MaxHeight is released entirely when the animation ends,
+    /// so nothing is left capped - a bar whose message grows later must still be able to grow.
+    ///
+    /// Only the OPEN is animated. Closing is driven by navigation and by the bar's own dismiss
+    /// button, and a page that has already changed underneath a shrinking bar reads as a glitch
+    /// rather than as motion. Stated rather than left as an omission someone will read as a bug.
+    /// </remarks>
+    private void PlayNotificationEntrance()
+    {
+        if (!_animationsEnabled)
+        {
+            return;
+        }
+
+        OperationInfoBar.MaxHeight = 0;
+        OperationInfoBar.Opacity = 0;
+
+        var duration = new Duration(TimeSpan.FromMilliseconds(NotificationEntranceMilliseconds));
+
+        var grow = new DoubleAnimation
+        {
+            To = NotificationEntranceCeilingPixels,
+            Duration = duration,
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+        };
+        Storyboard.SetTarget(grow, OperationInfoBar);
+        Storyboard.SetTargetProperty(grow, "MaxHeight");
+
+        var fade = new DoubleAnimation { To = 1, Duration = duration };
+        Storyboard.SetTarget(fade, OperationInfoBar);
+        Storyboard.SetTargetProperty(fade, "Opacity");
+
+        var storyboard = new Storyboard();
+        storyboard.Children.Add(grow);
+        storyboard.Children.Add(fade);
+        storyboard.Completed += (_, _) => OperationInfoBar.MaxHeight = double.PositiveInfinity;
+        storyboard.Begin();
     }
 
     /// <summary>
