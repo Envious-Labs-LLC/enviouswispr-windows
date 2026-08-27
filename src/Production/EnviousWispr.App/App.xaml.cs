@@ -2258,6 +2258,10 @@ public partial class App : Application, IAsyncDisposable
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
             AppEventCode.DictationTranscriptionStarted));
+        // The whole wait, not the sum of the stages. A sum reports zero for every await and
+        // dispatcher hop BETWEEN them, which is exactly where an unexplained delay would hide.
+        // In a finally, so a path that throws still reports what the user waited before it did.
+        var waitTimer = System.Diagnostics.Stopwatch.StartNew();
         var timer = System.Diagnostics.Stopwatch.StartNew();
         try
         {
@@ -2402,6 +2406,19 @@ public partial class App : Application, IAsyncDisposable
             await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
             _window?.DispatcherQueue.TryEnqueue(() =>
                 _window?.SetSessionStatus("Local transcription failed safely"));
+        }
+        finally
+        {
+            // In a finally rather than beside each return, because this method leaves by several
+            // paths - delivered, held for recovery, and a transcription failure - and a wait the
+            // user sat through is worth the same whichever one it took. Beside the returns, the
+            // failure path is the one that would have been missed, and it is the slowest.
+            waitTimer.Stop();
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DictationCompleted,
+                AppFailureCategory.None,
+                waitTimer.ElapsedMilliseconds));
         }
     }
 
