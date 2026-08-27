@@ -311,7 +311,7 @@
                 </NavigationView.MenuItems>
                 <NavigationView.FooterMenuItems>
                     <NavigationViewItem x:Name="SettingsNavItem" x:Uid="SettingsNavItem" AccessKey="T" Content="All Settings" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Setting" Tag="settings" />
-                    <NavigationViewItem x:Uid="HelpNavItem" AccessKey="P" Content="Help and Privacy" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Help" Tag="help" />
+                    <NavigationViewItem x:Uid="HelpNavItem" AccessKey="P" Content="Help and privacy" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Help" Tag="help" />
                 </NavigationView.FooterMenuItems>
                 <Grid Padding="28,18,28,32">
                     <InfoBar x:Name="OperationInfoBar" Margin="0,0,0,12" Canvas.ZIndex="10" IsOpen="False" IsClosable="True" VerticalAlignment="Top" />
