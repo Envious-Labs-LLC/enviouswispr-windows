@@ -26,6 +26,8 @@
             <SolidColorBrush x:Key="BrandAccentBrush" Color="#7C3AED" />
             <Color x:Key="BrandAccentSolidColor">#7C3AED</Color>
             <SolidColorBrush x:Key="BrandAccentSolidBrush" Color="#7C3AED" />
+            <Color x:Key="BrandOnAccentColor">#FFFFFF</Color>
+            <SolidColorBrush x:Key="BrandOnAccentBrush" Color="#FFFFFF" />
             <Color x:Key="BrandAccentLightColor">#177C3AED</Color>
             <SolidColorBrush x:Key="BrandAccentLightBrush" Color="#177C3AED" />
 
@@ -87,6 +89,8 @@
             <SolidColorBrush x:Key="BrandAccentBrush" Color="#A78BFA" />
             <Color x:Key="BrandAccentSolidColor">#8B46F0</Color>
             <SolidColorBrush x:Key="BrandAccentSolidBrush" Color="#8B46F0" />
+            <Color x:Key="BrandOnAccentColor">#FFFFFF</Color>
+            <SolidColorBrush x:Key="BrandOnAccentBrush" Color="#FFFFFF" />
             <Color x:Key="BrandAccentLightColor">#29A78BFA</Color>
             <SolidColorBrush x:Key="BrandAccentLightBrush" Color="#29A78BFA" />
 
@@ -148,6 +152,8 @@
             <SolidColorBrush x:Key="BrandAccentBrush" Color="{ThemeResource SystemAccentColor}" />
             <Color x:Key="BrandAccentSolidColor">{ThemeResource SystemAccentColor}</Color>
             <SolidColorBrush x:Key="BrandAccentSolidBrush" Color="{ThemeResource SystemAccentColor}" />
+            <Color x:Key="BrandOnAccentColor">{ThemeResource SystemColorHighlightTextColor}</Color>
+            <SolidColorBrush x:Key="BrandOnAccentBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
             <Color x:Key="BrandAccentLightColor">Transparent</Color>
             <SolidColorBrush x:Key="BrandAccentLightBrush" Color="Transparent" />
 

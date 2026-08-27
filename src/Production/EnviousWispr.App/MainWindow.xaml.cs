@@ -20,8 +20,43 @@ using Windows.Storage.Pickers;
 
 namespace EnviousWispr.App;
 
+public sealed record SelectableChoiceOption(string Name, string Description)
+{
+    public override string ToString() => Name;
+}
+
 public sealed partial class MainWindow : Window, IDisposable
 {
+    private static readonly SelectableChoiceOption[] FinalEngineChoices =
+    [
+        new("Automatic", "Chooses the best available local engine for this PC."),
+        new("Parakeet", "Fast local English transcription with automatic hardware selection."),
+        new("Whisper", "Local multilingual transcription using your chosen language."),
+    ];
+
+    private static readonly SelectableChoiceOption[] PolishProviderChoices =
+    [
+        new("None", "Leaves the deterministic transcript unchanged."),
+        new("EG-1", "Polishes locally with the bundled Envious Grammar model."),
+        new("Ollama", "Polishes locally with an Ollama model on this PC."),
+        new("OpenAI", "Sends transcript text directly to your OpenAI account."),
+        new("Anthropic", "Sends transcript text directly to your Anthropic account."),
+        new("Gemini", "Sends transcript text directly to your Google Gemini account."),
+    ];
+
+    private static readonly SelectableChoiceOption[] ThemeChoices =
+    [
+        new("Use Windows setting", "Follows the current Windows light or dark setting."),
+        new("Light", "Uses the light EnviousWispr palette."),
+        new("Dark", "Uses the dark EnviousWispr palette."),
+    ];
+
+    private static readonly SelectableChoiceOption[] OverlayPositionChoices =
+    [
+        new("Top", "Shows the recording pill at the top of the active display."),
+        new("Bottom", "Shows the recording pill at the bottom of the active display."),
+    ];
+
     private readonly ISettingsStore _settingsStore;
     private readonly IPortableProfileService _profileService;
     private readonly IHistoryStore _historyStore;
@@ -77,6 +112,10 @@ public sealed partial class MainWindow : Window, IDisposable
         _telemetryAvailable = telemetryAvailable;
 
         InitializeComponent();
+        EngineComboBox.ItemsSource = FinalEngineChoices;
+        PolishProviderComboBox.ItemsSource = PolishProviderChoices;
+        ThemeComboBox.ItemsSource = ThemeChoices;
+        OverlayPositionComboBox.ItemsSource = OverlayPositionChoices;
         _recordingSoundCoordinator = new RecordingSoundCueCoordinator(
             _recordingSoundPlayer.Play);
         RecordingSoundComboBox.ItemsSource = RecordingSoundCatalog.Choices;
@@ -523,21 +562,6 @@ public sealed partial class MainWindow : Window, IDisposable
             UpdatePillDesignControls();
         }
     }
-
-    private void CapsulePillButton_Click(object sender, RoutedEventArgs e)
-    {
-        CapsulePillButton.IsChecked = true;
-        LevelRailPillButton.IsChecked = false;
-    }
-
-    private void LevelRailPillButton_Click(object sender, RoutedEventArgs e)
-    {
-        CapsulePillButton.IsChecked = false;
-        LevelRailPillButton.IsChecked = true;
-    }
-
-    private void ReadingWellPillButton_Click(object sender, RoutedEventArgs e) =>
-        ReadingWellPillButton.IsChecked = true;
 
     private void RecordingSoundComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -1395,54 +1419,65 @@ public sealed partial class MainWindow : Window, IDisposable
         }
         else if (helpPage)
         {
+            ConfigureHelpPage(tag);
             ScrollSectionIntoView(HelpPage, HelpSectionFor(tag));
         }
     }
 
     private void ConfigureSettingsPage(string tag)
     {
-        var (title, description, section) = tag switch
+        var (title, description, glyph, section) = tag switch
         {
             "settings-appearance" => (
                 "Appearance",
-                "Match EnviousWispr to Windows, choose where the recording pill appears, and control Live Preview.",
+                "How the app looks, and the pill you see while dictating.",
+                "\uE771",
                 (FrameworkElement?)AppearanceSection),
             "settings-transcription" => (
                 "Transcription",
-                "Choose Automatic, Parakeet, or Whisper and configure the recognition language.",
+                "The speech engine that turns your voice into text.",
+                "\uE8C1",
                 (FrameworkElement?)RecordAndTranscribeSection),
             "settings-live-preview" => (
                 "Live Preview",
-                "Show a display-only rough transcript while speaking; final text still comes from the selected final engine.",
+                "See your words on screen while you are still speaking.",
+                "\uE890",
                 (FrameworkElement?)AppearanceSection),
             "settings-microphone" => (
                 "Microphone",
-                "Choose the Windows input device used for dictation and open the system privacy controls.",
+                "Choose your input source and readiness behavior.",
+                "\uE720",
                 (FrameworkElement?)RecordAndTranscribeSection),
             "settings-sounds" => (
                 "Sounds",
-                "Configure audible recording feedback.",
+                "Play a short sound when recording starts and stops.",
+                "\uE767",
                 (FrameworkElement?)SoundSection),
             "settings-keybinds" => (
                 "Keybinds",
-                "Choose the global push-to-talk shortcut used in every Windows app.",
+                "Set the keybinds that start, stop, and cancel dictation.",
+                "\uE765",
                 (FrameworkElement?)RecordAndTranscribeSection),
             "settings-ai-polish" => (
                 "AI Polish",
-                "Choose local EG-1, local Ollama, or a direct cloud provider and model.",
+                "Clean up and rewrite your dictation with AI.",
+                "\uE70F",
                 (FrameworkElement?)AiPolishSection),
             "settings-clipboard" => (
                 "Clipboard",
-                "Review how EnviousWispr safely inserts text without destroying the clipboard you already had.",
+                "How your transcript reaches the clipboard and the app you're in.",
+                "\uE8C8",
                 (FrameworkElement?)ClipboardSection),
             _ => (
                 "All Settings",
                 "Choose how EnviousWispr records, transcribes, cleans, and stores your dictation.",
+                "\uE713",
                 (FrameworkElement?)null),
         };
 
         SettingsPageTitle.Text = title;
         SettingsPageDescription.Text = description;
+        SettingsPageGlyph.Glyph = glyph;
 
         var showAll = section is null;
         var showTranscriptionCompanion = tag == "settings-transcription";
@@ -1456,6 +1491,33 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         ScrollSectionIntoView(SettingsPage, section: null);
+    }
+
+    private void ConfigureHelpPage(string tag)
+    {
+        var (title, description, glyph) = tag switch
+        {
+            "help-permissions" => (
+                "Permissions",
+                "The microphone and accessibility access EnviousWispr needs.",
+                "\uE72E"),
+            "help-updates" => (
+                "Check for Updates",
+                string.Empty,
+                "\uE895"),
+            "help-licenses" => (
+                "Open Source Licenses",
+                "EnviousWispr is GPLv3 open source. The license and third-party notices.",
+                "\uE8A5"),
+            _ => (
+                "Help and privacy",
+                "Find keyboard guidance, privacy details, updates, and licenses.",
+                "\uE897"),
+        };
+
+        HelpPageTitle.Text = title;
+        HelpPageDescription.Text = description;
+        HelpPageGlyph.Glyph = glyph;
     }
 
     private Border[] SettingsSections() =>
