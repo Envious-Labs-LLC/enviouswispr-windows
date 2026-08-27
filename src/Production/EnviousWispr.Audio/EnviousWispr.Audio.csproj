@@ -10,4 +10,13 @@
   <ItemGroup>
     <PackageReference Include="NAudio.Wasapi" Version="3.0.1" />
   </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="Assets\RecordingSounds\*.wav" />
+    <Content Include="Assets\RecordingSounds\*.wav">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <TargetPath>Assets\RecordingSounds\%(Filename)%(Extension)</TargetPath>
+    </Content>
+  </ItemGroup>
 </Project>

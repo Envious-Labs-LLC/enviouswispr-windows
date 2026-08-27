@@ -15,6 +15,7 @@ $requiredFiles = @(
     'docs/distribution/artifact-license-inventory.json',
     'docs/distribution/artifact-license-inventory.md',
     'docs/distribution/public-release.md',
+    'src/Production/EnviousWispr.Audio/Assets/RecordingSounds/manifest.json',
     'tools/whisper-uat/fixtures/manifest.json'
 )
 foreach ($relative in $requiredFiles) {
@@ -163,11 +164,67 @@ try {
         throw "Unreviewed public fixture audio is tracked: $($unreviewedFixtureAudio -join ', ')"
     }
 
+    $recordingSoundRoot = 'src/Production/EnviousWispr.Audio/Assets/RecordingSounds'
+    $recordingSoundManifestPath = Join-Path $repoRoot "$recordingSoundRoot/manifest.json"
+    $recordingSoundManifest = Get-Content -LiteralPath $recordingSoundManifestPath -Raw |
+        ConvertFrom-Json
+    if ($recordingSoundManifest.schemaVersion -ne 1 -or
+        $recordingSoundManifest.owner -cne 'Envious Labs LLC' -or
+        $recordingSoundManifest.purpose -cne 'Original EnviousWispr recording start and stop confirmations' -or
+        $recordingSoundManifest.sourceRepository -cne 'https://github.com/saurabhav88/EnviousWispr' -or
+        $recordingSoundManifest.sourceRevision -cne '5dab8db8abc593dd0c60a06ad877a6304d51563b' -or
+        @($recordingSoundManifest.assets).Count -ne 24) {
+        throw 'The first-party recording sound manifest has unapproved provenance.'
+    }
+
+    $expectedSoundFiles = [System.Collections.Generic.HashSet[string]]::new(
+        [StringComparer]::Ordinal)
+    $soundStems = @(
+        'airGlint', 'cloudPop', 'dustMote', 'lowNod', 'mutedConfirm', 'paperTap',
+        'roundPebble', 'satinShift', 'softHush', 'velvetHush', 'velvetTap', 'whisperTick')
+    foreach ($stem in $soundStems) {
+        [void]$expectedSoundFiles.Add("${stem}_start.wav")
+        [void]$expectedSoundFiles.Add("${stem}_stop.wav")
+    }
+    $reviewedSoundPaths = [System.Collections.Generic.HashSet[string]]::new(
+        [StringComparer]::Ordinal)
+    $reviewedSoundFiles = [System.Collections.Generic.HashSet[string]]::new(
+        [StringComparer]::Ordinal)
+    foreach ($asset in @($recordingSoundManifest.assets)) {
+        if ([string]::IsNullOrWhiteSpace($asset.file) -or
+            [IO.Path]::GetFileName($asset.file) -cne $asset.file -or
+            -not $expectedSoundFiles.Contains($asset.file) -or
+            -not $reviewedSoundFiles.Add($asset.file) -or
+            $asset.sha256 -notmatch '^[a-f0-9]{64}$') {
+            throw "The recording sound manifest contains an invalid asset: $($asset.file)"
+        }
+
+        $relativeSound = "$recordingSoundRoot/$($asset.file)"
+        $soundPath = Join-Path $repoRoot $relativeSound
+        if (-not $reviewedSoundPaths.Add($relativeSound) -or
+            $tracked -cnotcontains $relativeSound -or
+            -not (Test-Path -LiteralPath $soundPath -PathType Leaf)) {
+            throw "A reviewed recording sound is missing, duplicated, or untracked: $relativeSound"
+        }
+        $soundFile = Get-Item -LiteralPath $soundPath
+        if ($soundFile.Length -le 0 -or $soundFile.Length -gt 100KB) {
+            throw "A reviewed recording sound has an unsafe size: $relativeSound"
+        }
+        $actualHash = (Get-FileHash -LiteralPath $soundPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualHash -cne $asset.sha256) {
+            throw "A reviewed recording sound hash does not match its manifest: $relativeSound"
+        }
+    }
+    if (-not $reviewedSoundFiles.SetEquals($expectedSoundFiles)) {
+        throw 'The recording sound manifest does not contain the exact approved asset set.'
+    }
+
     $forbiddenExtensions = @('.gguf', '.onnx', '.ort', '.wav', '.mp3', '.pfx', '.p12', '.pem', '.key')
     $forbiddenTracked = @($tracked | Where-Object {
         $extension = [IO.Path]::GetExtension($_).ToLowerInvariant()
-        $isReviewedPublicFixture = $extension -eq '.wav' -and $reviewedFixturePaths.Contains($_)
-        $forbiddenExtensions -contains $extension -and -not $isReviewedPublicFixture
+        $isReviewedAudio = $extension -eq '.wav' -and
+            ($reviewedFixturePaths.Contains($_) -or $reviewedSoundPaths.Contains($_))
+        $forbiddenExtensions -contains $extension -and -not $isReviewedAudio
     })
     if ($forbiddenTracked.Count -gt 0) {
         throw "Forbidden model/audio/key material is tracked: $($forbiddenTracked -join ', ')"

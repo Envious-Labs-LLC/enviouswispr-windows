@@ -639,7 +639,11 @@ public partial class App : Application, IAsyncDisposable
 
     private void ConfigureTrayIcon()
     {
-        _trayIcon = new WindowsTrayIcon();
+        _trayIcon = new WindowsTrayIcon(Path.Combine(
+            AppContext.BaseDirectory,
+            "Assets",
+            "Brand",
+            "EnviousWispr.ico"));
         _trayIcon.ShowWindowRequested += () => ShowMainWindow(openSettings: false);
         _trayIcon.OpenSettingsRequested += () => ShowMainWindow(openSettings: true);
         _trayIcon.ExitRequested += ExitFromTray;
