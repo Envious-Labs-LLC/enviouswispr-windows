@@ -32,7 +32,7 @@ where the two disagree the tests are what ships.
 
 | Enforcer | Refuses |
 |---|---|
-| `DesignSystemTokenTests` | a literal colour in any view outside `Theme/`; a token missing from any of the three theme dictionaries; a Light or Dark value that disagrees with the macOS source; an overlay colour that is not a pill token; overlay text below the 14px floor |
+| `DesignSystemTokenTests` | a literal colour in any view outside `Theme/`; a token missing from any of the three theme dictionaries; a Light or Dark value that disagrees with the macOS source; an overlay colour that is not a pill token; overlay text below the 14px floor; a `MaxWidth` typed as a number instead of a layout token; a choice list that does not pin itself to one full-width column; a setting row whose glyph is not lifted onto its first line of text |
 | `XamlResourceResolutionTests` | a `Brand*` or `Pill*` key that resolves nowhere; a style applied to a control type it does not target |
 | `WindowMinimumSizeTests` | a window minimum that stops being derived from the sidebar width and the frame inset; a content-card minimum too small to be usable |
 
@@ -41,7 +41,14 @@ where the two disagree the tests are what ships.
 tracking the sidebar does not fail anything; the window just becomes unusable at a width nobody tested.
 Both were caught only because a test was written for them, and both had their ability to fail proven by
 deliberately introducing the defect and watching the test report it. **A gate never observed failing is a
-comment** — if you add a fourth enforcer here, prove it the same way.
+comment** — if you add a fourth enforcer here, prove it the same way. The three layout gates were armed
+the same way: a token swapped back to `820`, a column count back to `2`, and one glyph's alignment
+removed, all three reported, then reverted byte-identically.
+
+**Enumerate from the document, never from a list of pages kept in the test.** All three layout gates
+walk `MainWindow.xaml` and check whatever they find, so a page or a choice list added next month is
+covered on arrival. A gate carrying its own roster silently stops covering the thing it was written
+for the first time somebody adds a page and does not think to update it.
 
 Known reach limits, stated so a green run is not over-read: the resource gate covers only the `Brand*` and
 `Pill*` prefixes we own, and its type check cannot see custom controls, WinUI inheritance outside its
@@ -142,6 +149,10 @@ dim title. Only helper steps down in colour.
 | `BrandContentH` | 24 | Content card horizontal padding |
 | `BrandContentBottom` | 32 | Bottom padding |
 | `BrandPillRadius` | 100 | Pills and tags |
+| `BrandPageContentMaxWidth` | 1040 | The measure of EVERY settings page |
+| `BrandInlineContentMaxWidth` | 440 | A column centred inside a page card |
+| `BrandRowIconColumnWidth` | 28 | The leading icon column on a setting row |
+| `BrandRowIconInset` | 0,2,0,0 | Lifts the glyph onto the row's first text line |
 
 The frame cards' radius is larger than the inner setting cards so the frame clearly contains the content
 rather than competing with it.
@@ -159,6 +170,17 @@ darker canvas:
 - Both cards carry a 1px `BrandDivider` border.
 - Inside the content card, setting cards use `BrandCardBg` at radius 14.
 
+## RULE: one-measure-for-every-page
+Every page caps its content at `BrandPageContentMaxWidth` and centres it in the content card. **No page
+sets its own number.** Measured on Windows before this rule existed: three pages had picked 900, 820 and
+440 independently, so the content column visibly changed width as the user clicked from one nav row to the
+next and the frame appeared to twitch. A column nested inside a page card uses
+`BrandInlineContentMaxWidth`.
+
+The cap is a MEASURE, not a fill: on a maximised window there is meant to be canvas either side, the same
+way the Mac window is not full screen. Widening the cap until the slack disappears trades readable line
+length for the appearance of using the space.
+
 ## RULE: page-header-card
 Every page opens with a header card: a leading icon tile filled `BrandAccentLight` with the glyph in
 `BrandAccent`, the page title in `BrandPageTitleStyle`, and one line of body copy under it. The header is
@@ -169,10 +191,21 @@ Engine, mode and appearance choices render as selectable cards: a card that show
 one-line description, and - when selected - a 2px `BrandAccent` ring plus a filled `BrandAccentSolid`
 check badge carrying a white glyph. A bare `RadioButton` list is not the product.
 
+**One full-width column, always.** Pin the column count rather than letting the layout negotiate
+one: a negotiated count sizes each card to its own text, and six provider cards then render at six
+different widths as a staircase down the page. The Mac stacks engine choices full width and always
+has, so multi-column was never the design.
+
 ## RULE: rows-carry-icons
 Every control row in a setting card leads with a glyph in `BrandTextSecondary`, then the label in
 `BrandRowLabelStyle`, then optional helper text, then the control trailing. A row without an icon reads as
 a form, and the product is not a form.
+
+**The glyph aligns to the row's FIRST LINE OF TEXT, never to the row's vertical centre.** A row is
+usually a label, a control and a line of helper text, so a centred glyph floats level with the middle
+of the control and detaches from the label it belongs to - read down a page, the icons stop being part
+of their rows and become a stray column of marks in the gutter. `BrandRowIconInset` carries the
+correction.
 
 ## RULE: the-brand-mark-is-vector-and-appears-in-the-top-bar
 The rainbow waveform mark sits beside the wordmark in the window top bar and in the recording overlay. It
