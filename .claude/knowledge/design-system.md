@@ -79,9 +79,11 @@ filled selected surfaces take the solid purple.
 `Cyan #00FFFF`, `Blue #1E90FF`, `Royal #4169E1`, `Violet #8A2BE2`. Identical in both themes.
 
 ### HighContrast
-Every token above resolves to the matching `SystemColor*` resource. Accent takes `SystemAccentColor`,
-soft and glow variants collapse to `Transparent`, spectrum colours collapse to `SystemColorWindowTextColor`.
-HighContrast must never invent a colour.
+Every token above resolves to the matching `SystemColor*` resource. Accent takes `SystemAccentColor`.
+Decorative soft washes and glows, including `BrandAccentLight` and `BrandWarningSoft`, collapse to
+`Transparent`. Structural borders, including `BrandDivider`, take `SystemColorWindowTextColor` so their
+boundaries remain visible. Spectrum colours also collapse to `SystemColorWindowTextColor`. HighContrast
+must never invent a colour.
 
 ## FACT: type-scale
 `Segoe UI Variable` is the Windows body face - it is the platform-correct counterpart to the Mac's

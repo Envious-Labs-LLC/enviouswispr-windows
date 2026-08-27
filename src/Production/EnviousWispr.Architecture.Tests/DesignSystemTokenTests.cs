@@ -4,40 +4,53 @@ using System.Xml.Linq;
 
 namespace EnviousWispr.Architecture.Tests;
 
+[AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
+public sealed class MacSnapshotFactAttribute : FactAttribute
+{
+    public MacSnapshotFactAttribute()
+    {
+        var swiftPath = DesignSystemTokenTests.GetMacSnapshotPath();
+        if (!File.Exists(swiftPath))
+        {
+            Skip = $"macOS snapshot not found at '{swiftPath}'; the macOS-parity half did not run.";
+        }
+    }
+}
+
 public sealed partial class DesignSystemTokenTests
 {
     private const string XamlNamespace = "http://schemas.microsoft.com/winfx/2006/xaml";
 
-    private static readonly string[] TokenNames =
-    [
-        "BrandPageBg",
-        "BrandCardBg",
-        "BrandSidebarBg",
-        "BrandWindowBg",
-        "BrandTextPrimary",
-        "BrandTextBody",
-        "BrandTextSecondary",
-        "BrandTextTertiary",
-        "BrandAccent",
-        "BrandAccentSolid",
-        "BrandAccentLight",
-        "BrandSuccess",
-        "BrandWarning",
-        "BrandWarningSoft",
-        "BrandError",
-        "BrandToggleOn",
-        "BrandToggleOff",
-        "BrandDivider",
-        "BrandSpectrumRed",
-        "BrandSpectrumOrange",
-        "BrandSpectrumGold",
-        "BrandSpectrumLime",
-        "BrandSpectrumSpring",
-        "BrandSpectrumCyan",
-        "BrandSpectrumBlue",
-        "BrandSpectrumRoyal",
-        "BrandSpectrumViolet",
-    ];
+    private static readonly Dictionary<string, ThemePair> ExpectedTokenColors = new(StringComparer.Ordinal)
+    {
+        ["BrandPageBg"] = new("#F8F5FF", "#131019"),
+        ["BrandCardBg"] = new("#FFFFFF", "#201B2B"),
+        ["BrandSidebarBg"] = new("#E8E2F5", "#1A1623"),
+        ["BrandWindowBg"] = new("#DDD5EE", "#0D0B12"),
+        ["BrandTextPrimary"] = new("#0F0A1A", "#ECE9F4"),
+        ["BrandTextBody"] = new("#332D47", "#D5D1E2"),
+        ["BrandTextSecondary"] = new("#4A3D60", "#AAA2BF"),
+        ["BrandTextTertiary"] = new("#6B5E86", "#7A7290"),
+        ["BrandAccent"] = new("#7C3AED", "#A78BFA"),
+        ["BrandAccentSolid"] = new("#7C3AED", "#8B46F0"),
+        ["BrandAccentLight"] = new("#177C3AED", "#29A78BFA"),
+        ["BrandSuccess"] = new("#00A366", "#5CC99A"),
+        ["BrandWarning"] = new("#CC7000", "#E6B766"),
+        ["BrandWarningSoft"] = new("#1ACC7000", "#24E6B766"),
+        ["BrandError"] = new("#C0392B", "#EF7C89"),
+        ["BrandToggleOn"] = new("#00A366", "#5CC99A"),
+        ["BrandToggleOff"] = new("#9B8EB8", "#4A4360"),
+        ["BrandDivider"] = new("#148A2BE2", "#24B8AAD6"),
+        ["BrandSpectrumRed"] = new("#FF2A40", "#FF2A40"),
+        ["BrandSpectrumOrange"] = new("#FF8C00", "#FF8C00"),
+        ["BrandSpectrumGold"] = new("#FFD700", "#FFD700"),
+        ["BrandSpectrumLime"] = new("#ADFF2F", "#ADFF2F"),
+        ["BrandSpectrumSpring"] = new("#00FA9A", "#00FA9A"),
+        ["BrandSpectrumCyan"] = new("#00FFFF", "#00FFFF"),
+        ["BrandSpectrumBlue"] = new("#1E90FF", "#1E90FF"),
+        ["BrandSpectrumRoyal"] = new("#4169E1", "#4169E1"),
+        ["BrandSpectrumViolet"] = new("#8A2BE2", "#8A2BE2"),
+    };
 
     private static readonly (string SwiftName, string BrandName)[] SwiftTokenMap =
     [
@@ -80,7 +93,7 @@ public sealed partial class DesignSystemTokenTests
                 .Select(element => (string?)element.Attribute(XName.Get("Key", XamlNamespace)))
                 .Where(key => key is not null)
                 .ToHashSet(StringComparer.Ordinal);
-            foreach (var tokenName in TokenNames)
+            foreach (var tokenName in ExpectedTokenColors.Keys)
             {
                 foreach (var suffix in new[] { "Color", "Brush" })
                 {
@@ -99,33 +112,52 @@ public sealed partial class DesignSystemTokenTests
     }
 
     [Fact]
-    public void LightAndDarkTokensMatchMacDynamicColors()
+    public void LightAndDarkTokensMatchExpectedTable()
     {
         var repositoryRoot = FindRepositoryRoot();
-        var swiftPath = Path.Combine(
-            repositoryRoot,
-            "macos-source",
-            "Sources",
-            "EnviousWisprAppKit",
-            "Views",
-            "Settings",
-            "SettingsDesignTokens.swift");
+        var themeDictionaries = LoadThemeDictionaries(repositoryRoot);
+        foreach (var token in ExpectedTokenColors)
+        {
+            AssertColorMatches(themeDictionaries, "Light", token.Key, token.Value.Light);
+            AssertColorMatches(themeDictionaries, "Dark", token.Key, token.Value.Dark);
+        }
+    }
+
+    [MacSnapshotFact]
+    public void MacDynamicColorsMatchExpectedTable()
+    {
+        var swiftPath = GetMacSnapshotPath();
         Assert.True(
             File.Exists(swiftPath),
-            $"The authoritative Swift token file was not found at '{swiftPath}'.");
+            $"The macOS snapshot disappeared after test discovery at '{swiftPath}'.");
 
         var swiftTokens = ParseSwiftTokens(File.ReadAllText(swiftPath));
-        var themeDictionaries = LoadThemeDictionaries(repositoryRoot);
         foreach (var mapping in SwiftTokenMap)
         {
-            if (!swiftTokens.TryGetValue(mapping.SwiftName, out var expected))
+            if (!swiftTokens.TryGetValue(mapping.SwiftName, out var actual))
             {
                 throw new InvalidOperationException(
                     $"Mapped Swift token '{mapping.SwiftName}' for '{mapping.BrandName}' was not found in '{swiftPath}'.");
             }
 
-            AssertColorMatches(themeDictionaries, "Light", mapping.BrandName, expected.Light);
-            AssertColorMatches(themeDictionaries, "Dark", mapping.BrandName, expected.Dark);
+            if (!ExpectedTokenColors.TryGetValue(mapping.BrandName, out var expected))
+            {
+                throw new InvalidOperationException(
+                    $"Mapped Brand token '{mapping.BrandName}' for '{mapping.SwiftName}' is missing from the expected table.");
+            }
+
+            AssertChannelsMatch(
+                "macOS Light snapshot",
+                mapping.BrandName,
+                ParseHexColor(mapping.BrandName, "expected Light table", expected.Light),
+                actual.Light,
+                mapping.SwiftName);
+            AssertChannelsMatch(
+                "macOS Dark snapshot",
+                mapping.BrandName,
+                ParseHexColor(mapping.BrandName, "expected Dark table", expected.Dark),
+                actual.Dark,
+                mapping.SwiftName);
         }
     }
 
@@ -137,9 +169,20 @@ public sealed partial class DesignSystemTokenTests
         var themeDirectory = Path.Combine(appDirectory, "Theme") + Path.DirectorySeparatorChar;
         var xamlFiles = Directory.GetFiles(appDirectory, "*.xaml", SearchOption.AllDirectories)
             .Where(path => !Path.GetFullPath(path).StartsWith(themeDirectory, StringComparison.OrdinalIgnoreCase))
+            .Where(path => !IsBuildOutput(appDirectory, path))
             .Order(StringComparer.Ordinal)
             .ToArray();
-        Assert.True(xamlFiles.Length > 0, $"No app XAML files were found under '{appDirectory}'.");
+
+        // A shrinking scope is how this check quietly stops checking anything, so
+        // require the two views by name rather than merely requiring a non-empty
+        // set: an exclusion that swallowed everything would still satisfy a count.
+        foreach (var required in new[] { "MainWindow.xaml", "DictationOverlayWindow.xaml" })
+        {
+            Assert.True(
+                xamlFiles.Any(path => Path.GetFileName(path).Equals(required, StringComparison.Ordinal)),
+                $"'{required}' was not in the scanned set under '{appDirectory}'. The scan's scope is wrong, "
+                    + "so a pass would prove nothing.");
+        }
 
         var offenders = new List<string>();
         foreach (var path in xamlFiles)
@@ -162,6 +205,26 @@ public sealed partial class DesignSystemTokenTests
         Assert.True(
             offenders.Count == 0,
             $"Literal colors must use a ThemeResource token:{Environment.NewLine}{string.Join(Environment.NewLine, offenders)}");
+    }
+
+    /// <summary>
+    /// True when the path sits under a build-output directory.
+    /// </summary>
+    /// <remarks>
+    /// The compiler copies every Page-compiled XAML, <c>Theme/</c> included, into
+    /// <c>obj/</c> and <c>bin/</c>. Those copies are the token dictionary itself, so they are
+    /// full of the literal colours this check exists to forbid everywhere else. They are also
+    /// invisible on a machine that has never built, which is why this was not caught until the
+    /// suite ran on Windows.
+    /// </remarks>
+    private static bool IsBuildOutput(string appDirectory, string path)
+    {
+        var relative = Path.GetRelativePath(appDirectory, Path.GetFullPath(path));
+        return relative
+            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Any(segment =>
+                segment.Equals("obj", StringComparison.OrdinalIgnoreCase)
+                || segment.Equals("bin", StringComparison.OrdinalIgnoreCase));
     }
 
     private static Dictionary<string, XElement> LoadThemeDictionaries(string repositoryRoot)
@@ -227,10 +290,10 @@ public sealed partial class DesignSystemTokenTests
     }
 
     private static void AssertColorMatches(
-        IReadOnlyDictionary<string, XElement> themeDictionaries,
+        Dictionary<string, XElement> themeDictionaries,
         string themeName,
         string brandName,
-        Rgba expected)
+        string expectedHex)
     {
         if (!themeDictionaries.TryGetValue(themeName, out var theme))
         {
@@ -249,11 +312,13 @@ public sealed partial class DesignSystemTokenTests
             throw new InvalidOperationException($"Color resource '{resourceKey}' is missing from theme '{themeName}'.");
         }
 
+        var expected = ParseHexColor(resourceKey, $"expected {themeName} table", expectedHex);
         AssertChannelsMatch(
             themeName,
             resourceKey,
-            element.Value.Trim(),
-            expected);
+            expected,
+            ParseHexColor(resourceKey, themeName, element.Value.Trim()),
+            element.Value.Trim());
 
         var brushKey = brandName + "Brush";
         var brush = theme.Elements().SingleOrDefault(candidate =>
@@ -270,17 +335,18 @@ public sealed partial class DesignSystemTokenTests
         AssertChannelsMatch(
             themeName,
             brushKey,
-            (string?)brush.Attribute("Color") ?? string.Empty,
-            expected);
+            expected,
+            ParseHexColor(brushKey, themeName, (string?)brush.Attribute("Color") ?? string.Empty),
+            (string?)brush.Attribute("Color") ?? string.Empty);
     }
 
     private static void AssertChannelsMatch(
-        string themeName,
+        string scope,
         string resourceKey,
-        string value,
-        Rgba expected)
+        Rgba expected,
+        Rgba actual,
+        string actualDescription)
     {
-        var actual = ParseXamlColor(resourceKey, themeName, value);
         var tolerance = 1d / 255d;
         var channels = new[]
         {
@@ -293,18 +359,18 @@ public sealed partial class DesignSystemTokenTests
         {
             Assert.True(
                 Math.Abs(channel.Expected - channel.Actual) <= tolerance + double.Epsilon,
-                $"{themeName}/{resourceKey} {channel.Name} differs from the Swift source. " +
+                $"{scope}/{resourceKey} {channel.Name} differs from the expected table. " +
                 $"Expected {channel.Expected.ToString("0.###", CultureInfo.InvariantCulture)}, " +
-                $"found {channel.Actual.ToString("0.###", CultureInfo.InvariantCulture)} ({value}).");
+                $"found {channel.Actual.ToString("0.###", CultureInfo.InvariantCulture)} ({actualDescription}).");
         }
     }
 
-    private static Rgba ParseXamlColor(string resourceKey, string themeName, string value)
+    private static Rgba ParseHexColor(string resourceKey, string sourceName, string value)
     {
         if (!value.StartsWith('#') || value.Length is not (7 or 9))
         {
             throw new InvalidOperationException(
-                $"{themeName}/{resourceKey} must be a #RRGGBB or #AARRGGBB literal in DesignTokens.xaml, found '{value}'.");
+                $"{sourceName}/{resourceKey} must be a #RRGGBB or #AARRGGBB literal, found '{value}'.");
         }
 
         var offset = value.Length == 9 ? 3 : 1;
@@ -348,6 +414,16 @@ public sealed partial class DesignSystemTokenTests
             "Expected to find EnviousWispr.Windows.slnx.");
     }
 
+    internal static string GetMacSnapshotPath() =>
+        Path.Combine(
+            FindRepositoryRoot(),
+            "macos-source",
+            "Sources",
+            "EnviousWisprAppKit",
+            "Views",
+            "Settings",
+            "SettingsDesignTokens.swift");
+
     private static string DescribeOffender(string repositoryRoot, string path, int line, string value) =>
         $"{Path.GetRelativePath(repositoryRoot, path)}:{line}: {value}";
 
@@ -367,6 +443,8 @@ public sealed partial class DesignSystemTokenTests
     private static partial Regex SwiftDynamicColorRegex();
 
     private readonly record struct DynamicColor(Rgba Light, Rgba Dark);
+
+    private readonly record struct ThemePair(string Light, string Dark);
 
     private readonly record struct Rgba(double Red, double Green, double Blue, double Alpha);
 }
