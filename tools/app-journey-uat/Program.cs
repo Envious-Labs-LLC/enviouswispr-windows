@@ -51,6 +51,18 @@ var livePreview = args.Any(argument => string.Equals(
     argument,
     "--live-preview",
     StringComparison.OrdinalIgnoreCase));
+var polishArgument = ArgumentValue(args, "--polish");
+var polishProvider = polishArgument?.ToLowerInvariant() switch
+{
+    null or "none" => PolishProvider.None,
+    "eg-1" or "eg1" => PolishProvider.EgOne,
+    "ollama" => PolishProvider.Ollama,
+    _ => throw new ArgumentException("--polish must be none, eg-1, or ollama."),
+};
+var egOneServerExecutable = ArgumentValue(args, "--eg1-server");
+var egOneModelFile = ArgumentValue(args, "--eg1-model");
+var ollamaEndpoint = ArgumentValue(args, "--ollama-endpoint") ?? "http://localhost:11434";
+var ollamaModel = ArgumentValue(args, "--ollama-model");
 var escapeRecovery = args.Any(argument => string.Equals(
     argument,
     "--escape-recovery",
@@ -101,6 +113,39 @@ if (failureMode != JourneyFailureMode.None && (liveMicrophone || livePreview || 
 if (failureMode != JourneyFailureMode.None && englishParakeet)
 {
     throw new ArgumentException("Failure journeys use the fixed reviewed Whisper fixture configuration.");
+}
+if (polishProvider != PolishProvider.None &&
+    (liveMicrophone || livePreview || escapeRecovery || failureMode != JourneyFailureMode.None))
+{
+    throw new ArgumentException(
+        "Local-polish UAT uses the reviewed fixture success journey without Live Preview, live microphone, Escape Recovery, or failure injection.");
+}
+if (polishProvider == PolishProvider.EgOne)
+{
+    RequireAbsoluteFileArgument(
+        egOneServerExecutable,
+        "--eg1-server must identify an existing fully qualified llama-server.exe.",
+        expectedFileName: "llama-server.exe");
+    RequireAbsoluteFileArgument(
+        egOneModelFile,
+        "--eg1-model must identify an existing fully qualified GGUF model.",
+        expectedExtension: ".gguf");
+}
+else if (egOneServerExecutable is not null || egOneModelFile is not null)
+{
+    throw new ArgumentException("--eg1-server and --eg1-model require --polish eg-1.");
+}
+if (polishProvider == PolishProvider.Ollama)
+{
+    RequireLoopbackEndpoint(ollamaEndpoint);
+    if (string.IsNullOrWhiteSpace(ollamaModel) || ollamaModel.Length > 256)
+    {
+        throw new ArgumentException("--ollama-model must name one installed local model.");
+    }
+}
+else if (ArgumentValue(args, "--ollama-endpoint") is not null || ollamaModel is not null)
+{
+    throw new ArgumentException("--ollama-endpoint and --ollama-model require --polish ollama.");
 }
 var appExecutableArgument = ArgumentValue(args, "--app-executable");
 if (appExecutableArgument is not null &&
@@ -262,6 +307,8 @@ var targetObserved = false;
 var appExitedCleanly = false;
 var ownedWorkerIds = Array.Empty<int>();
 var ownedWorkerCount = 0;
+var ownedPolishWorkerIds = Array.Empty<int>();
+var ownedPolishWorkerCount = 0;
 ClipboardGuard? clipboardGuard = null;
 var usesPublicFixtureJourney = !liveMicrophone &&
     failureMode is JourneyFailureMode.None or JourneyFailureMode.TargetUnavailable;
@@ -306,7 +353,18 @@ try
     {
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_CANCEL"] = "1";
     }
-    appStart.Environment["ENVIOUSWISPR_POLISH_PROVIDER"] = "None";
+    appStart.Environment["ENVIOUSWISPR_POLISH_PROVIDER"] = polishProvider.ToString();
+    if (polishProvider == PolishProvider.EgOne)
+    {
+        appStart.Environment["ENVIOUSWISPR_EG1_SERVER_EXE"] = egOneServerExecutable!;
+        appStart.Environment["ENVIOUSWISPR_EG1_MODEL_PATH"] = egOneModelFile!;
+        appStart.Environment.Remove("ENVIOUSWISPR_EG1_GPU_LAYERS");
+    }
+    else if (polishProvider == PolishProvider.Ollama)
+    {
+        appStart.Environment["ENVIOUSWISPR_OLLAMA_ENDPOINT"] = ollamaEndpoint;
+        appStart.Environment["ENVIOUSWISPR_OLLAMA_MODEL"] = ollamaModel!;
+    }
     if (failureMode == JourneyFailureMode.MicrophoneUnavailable)
     {
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY"] = "failure-v1";
@@ -359,6 +417,31 @@ try
         throw new InvalidOperationException(
             $"The production journey started {ownedWorkerIds.Length} owned final-ASR workers; " +
             $"expected {expectedWorkerCount}.");
+    }
+
+    if (polishProvider != PolishProvider.None)
+    {
+        var polishReady = WaitForPolishRuntimeReady(
+            diagnosticPath,
+            polishProvider,
+            TimeSpan.FromSeconds(60));
+        if (!polishReady)
+        {
+            throw new InvalidOperationException(
+                $"The {PolishProviderName(polishProvider)} runtime did not become ready; " +
+                $"events={string.Join(',', ReadDiagnosticEvents(diagnosticPath))}.");
+        }
+
+        ownedPolishWorkerIds = polishProvider == PolishProvider.EgOne
+            ? ChildProcessIds(app.Id, "llama-server").ToArray()
+            : [];
+        var expectedPolishWorkerCount = polishProvider == PolishProvider.EgOne ? 1 : 0;
+        if (ownedPolishWorkerIds.Length != expectedPolishWorkerCount)
+        {
+            throw new InvalidOperationException(
+                $"The production journey started {ownedPolishWorkerIds.Length} owned local-polish workers; " +
+                $"expected {expectedPolishWorkerCount}.");
+        }
     }
 
     if (failureMode == JourneyFailureMode.WorkerStartup)
@@ -518,6 +601,11 @@ try
     {
         RequireLivePreviewJourneyEvents(diagnosticEvents);
     }
+    var polishEvidence = ReadPolishJourneyEvidence(diagnosticPath, polishProvider);
+    if (polishProvider != PolishProvider.None)
+    {
+        RequirePolishJourneyEvidence(polishProvider, polishEvidence);
+    }
     var productionStagesObserved = failureMode is JourneyFailureMode.None or JourneyFailureMode.TargetUnavailable;
     var recoveryHistoryObserved = escapeRecovery &&
         ReadEscapeRecoveryHistory(Path.Combine(profileDirectory, "history.json"));
@@ -531,6 +619,11 @@ try
     if (ownedWorkerCount != 0)
     {
         throw new InvalidOperationException("The production journey left an owned runtime worker running.");
+    }
+    ownedPolishWorkerCount = ownedPolishWorkerIds.Count(IsProcessRunning);
+    if (ownedPolishWorkerCount != 0)
+    {
+        throw new InvalidOperationException("The production journey left an owned local-polish worker running.");
     }
 
     var hardware = await new WindowsHardwareDiscovery().ProbeAsync();
@@ -571,6 +664,8 @@ try
         appExitedCleanly,
         ownedWorkerStartedCount = ownedWorkerIds.Length,
         ownedWorkerCount,
+        ownedPolishWorkerStartedCount = ownedPolishWorkerIds.Length,
+        ownedPolishWorkerCount,
         elapsedMilliseconds = timer.ElapsedMilliseconds,
         appVersion,
         appSha256,
@@ -582,7 +677,10 @@ try
         provider,
         modelPack,
         acousticProbe,
-        polish = "None",
+        polish = PolishProviderName(polishProvider),
+        polishCompleted = polishEvidence.Completed,
+        polishDegraded = polishEvidence.Degraded,
+        polishElapsedMilliseconds = polishEvidence.ElapsedMilliseconds,
         inputKind = failureMode switch
         {
             JourneyFailureMode.MicrophoneUnavailable => "SyntheticF8-AllowlistedAccessDeniedAudioFault",
@@ -653,6 +751,48 @@ static void RequireFile(string path, string message)
         throw new FileNotFoundException(message, path);
     }
 }
+
+static void RequireAbsoluteFileArgument(
+    string? path,
+    string message,
+    string? expectedFileName = null,
+    string? expectedExtension = null)
+{
+    if (string.IsNullOrWhiteSpace(path) ||
+        !Path.IsPathFullyQualified(path) ||
+        !File.Exists(path) ||
+        expectedFileName is not null && !string.Equals(
+            Path.GetFileName(path),
+            expectedFileName,
+            StringComparison.OrdinalIgnoreCase) ||
+        expectedExtension is not null && !string.Equals(
+            Path.GetExtension(path),
+            expectedExtension,
+            StringComparison.OrdinalIgnoreCase))
+    {
+        throw new ArgumentException(message);
+    }
+}
+
+static void RequireLoopbackEndpoint(string endpoint)
+{
+    if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ||
+        !uri.IsLoopback ||
+        uri.Scheme is not ("http" or "https") ||
+        !string.IsNullOrEmpty(uri.UserInfo))
+    {
+        throw new ArgumentException(
+            "--ollama-endpoint must be a loopback HTTP or HTTPS address without credentials.");
+    }
+}
+
+static string PolishProviderName(PolishProvider provider) => provider switch
+{
+    PolishProvider.None => "None",
+    PolishProvider.EgOne => "EgOne",
+    PolishProvider.Ollama => "Ollama",
+    _ => throw new ArgumentOutOfRangeException(nameof(provider)),
+};
 
 static void RequireReviewedFixture(string path, string expectedHash)
 {
@@ -773,6 +913,124 @@ static IReadOnlyList<string> ReadDiagnosticEvents(string path)
     }
 
     return events;
+}
+
+static bool WaitForPolishRuntimeReady(
+    string diagnosticPath,
+    PolishProvider provider,
+    TimeSpan timeout)
+{
+    var timer = Stopwatch.StartNew();
+    while (timer.Elapsed < timeout)
+    {
+        var evidence = ReadPolishJourneyEvidence(diagnosticPath, provider);
+        if (evidence.RuntimeReady)
+        {
+            return true;
+        }
+
+        if (evidence.RuntimeDegraded)
+        {
+            return false;
+        }
+
+        Thread.Sleep(100);
+    }
+
+    return false;
+}
+
+static PolishJourneyEvidence ReadPolishJourneyEvidence(
+    string path,
+    PolishProvider provider)
+{
+    if (provider == PolishProvider.None || !File.Exists(path))
+    {
+        return new PolishJourneyEvidence(false, false, false, false, false, null);
+    }
+
+    var expectedProvider = PolishProviderName(provider);
+    var runtimeReady = false;
+    var runtimeDegraded = false;
+    var started = false;
+    var completed = false;
+    var degraded = false;
+    long? elapsedMilliseconds = null;
+    try
+    {
+        foreach (var line in File.ReadLines(path))
+        {
+            using var document = JsonDocument.Parse(line);
+            var root = document.RootElement;
+            var eventName = root.TryGetProperty("event", out var eventElement)
+                ? eventElement.GetString()
+                : null;
+            var diagnosticProvider = root.TryGetProperty("provider", out var providerElement)
+                ? providerElement.GetString()
+                : null;
+            var providerMatches = string.Equals(
+                diagnosticProvider,
+                expectedProvider,
+                StringComparison.Ordinal);
+            switch (eventName)
+            {
+                case "PolishRuntimeReady":
+                    runtimeReady |= providerMatches;
+                    break;
+                case "PolishRuntimeDegraded":
+                    runtimeDegraded |= providerMatches;
+                    break;
+                case "PolishStarted":
+                    started |= providerMatches;
+                    break;
+                case "PolishCompleted":
+                    if (!providerMatches)
+                    {
+                        break;
+                    }
+                    completed = true;
+                    if (root.TryGetProperty("elapsedMilliseconds", out var elapsedElement) &&
+                        elapsedElement.ValueKind == JsonValueKind.Number &&
+                        elapsedElement.TryGetInt64(out var parsedElapsed))
+                    {
+                        elapsedMilliseconds = parsedElapsed;
+                    }
+                    break;
+                case "PolishDegraded":
+                    degraded |= providerMatches;
+                    break;
+            }
+        }
+    }
+    catch (Exception exception) when (exception is IOException or JsonException)
+    {
+        return new PolishJourneyEvidence(false, false, false, false, false, null);
+    }
+
+    return new PolishJourneyEvidence(
+        runtimeReady,
+        runtimeDegraded,
+        started,
+        completed,
+        degraded,
+        elapsedMilliseconds);
+}
+
+static void RequirePolishJourneyEvidence(
+    PolishProvider provider,
+    PolishJourneyEvidence evidence)
+{
+    if (!evidence.RuntimeReady ||
+        evidence.RuntimeDegraded ||
+        !evidence.Started ||
+        !evidence.Completed ||
+        evidence.Degraded)
+    {
+        throw new InvalidOperationException(
+            $"The {PolishProviderName(provider)} journey did not complete healthy local polish " +
+            $"(runtimeReady={evidence.RuntimeReady}, runtimeDegraded={evidence.RuntimeDegraded}, " +
+            $"started={evidence.Started}, completed={evidence.Completed}, degraded={evidence.Degraded}).");
+    }
 }
 
 static int? ReadTargetCharacterCount(string path)
@@ -1473,6 +1731,14 @@ internal enum JourneyFailureMode
     WorkerStartup,
     TargetUnavailable,
 }
+
+internal sealed record PolishJourneyEvidence(
+    bool RuntimeReady,
+    bool RuntimeDegraded,
+    bool Started,
+    bool Completed,
+    bool Degraded,
+    long? ElapsedMilliseconds);
 
 internal sealed record AcousticProbeMetrics(
     bool Started,

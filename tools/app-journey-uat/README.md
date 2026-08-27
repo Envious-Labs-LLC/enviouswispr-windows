@@ -44,6 +44,30 @@ These runs still substitute reviewed fixture capture and named press/release eve
 installed shell, worker, ASR, deterministic pipeline, and controlled native delivery; they do not replace the
 physical global-hotkey and microphone journey below.
 
+The same reviewed-fixture success journey can require healthy local AI polish. These modes wait for provider
+readiness, require `PolishStarted` and `PolishCompleted` from the selected provider, reject degraded fallback,
+and verify native delivery plus exact owned-process cleanup. They never emit the supplied EG-1 paths or the
+selected Ollama model ID:
+
+```powershell
+$founderData = Join-Path $env:LOCALAPPDATA 'Envious Labs\EnviousWispr-Founder'
+$egOneServer = Join-Path $founderData 'runtime\llama.cpp\llama-server.exe'
+$egOneModel = Join-Path $founderData 'models\eg-1\active.gguf'
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --polish eg-1 `
+  --eg1-server $egOneServer --eg1-model $egOneModel --app-executable $installedApp
+
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --polish ollama `
+  --ollama-endpoint http://localhost:11434 --ollama-model <installed-local-model> `
+  --app-executable $installedApp
+```
+
+EG-1 requires an existing local GGUF and app-owned `llama-server.exe`. Ollama requires an already running
+loopback daemon and installed local chat model; the harness never installs or pulls one. Local-polish UAT is
+kept separate from Live Preview, live-microphone, Escape Recovery, and fault-injection modes so one result has
+one unambiguous resource and fallback contract.
+
 Add `--escape-recovery` to exercise the same production pipeline while cancelling with Escape Recovery
 enabled. That mode requires transcription and deterministic processing to finish, requires a 24-hour recovery
 entry in History, and proves that no text reaches the controlled target:
