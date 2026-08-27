@@ -44,6 +44,12 @@ The same isolated worker and public fixtures used for Phase 7 measured the previ
   diagnostics recorded `LivePreviewStopped` 63-70 ms after capture finalization and before
   `DictationTranscriptionStarted`; final CUDA transcription then completed in 76-254 ms.
 - Closing the WinUI shell removed both exact workers. No EnviousWispr worker remained.
+- The exact installed unsigned founder.10 candidate later passed the deterministic production journey with
+  Live Preview enabled in 9,654 ms. The content-free result identified the installed ProductVersion and SHA-256,
+  observed `LivePreviewStarted`, a non-empty `LivePreviewUpdated`, and `LivePreviewStopped`, then completed final
+  Parakeet English/CPU transcription, deterministic processing, controlled native delivery, clean app exit, and
+  zero-worker cleanup. Reviewed fixture capture and named transitions were used, so this is not physical-microphone
+  evidence.
 
 ## Automated evidence
 
@@ -60,7 +66,7 @@ The same isolated worker and public fixtures used for Phase 7 measured the previ
 - The native WinUI test used synthetic F8 input and ambient microphone audio. A physical key with
   controlled spoken English and multilingual phrases, plus a visible non-empty preview assertion, remains
   unobserved.
-- Preview enable/disable and cadence controls are not yet exposed in settings. The current safe behavior is
-  automatic enablement only when the dedicated model pack is installed.
+- Preview enable/disable is exposed in Appearance and Live Preview settings and has an installed-candidate
+  deterministic pass. Cadence remains an internal bounded setting rather than a user-facing control.
 - AMD, Intel integrated graphics, CPU-only laptops, suspend/resume, device removal, and prolonged thermal
   behavior remain unobserved.

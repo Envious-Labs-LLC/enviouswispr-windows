@@ -80,6 +80,8 @@ microphone acceptance remains a separate action:
 The commands above passed against the exact founder.10 candidate on 2026-08-26. Parakeet English on CPU
 completed in 4,454 ms, and Whisper French on CUDA completed in 8,615 ms. Each run observed the production
 stage sequence, delivered to the controlled native edit field, exited cleanly, and left zero owned workers.
+A separate Parakeet English/CPU run with `--live-preview` completed in 9,654 ms and observed a non-empty
+display-only preview update before final transcription and delivery.
 
 ```powershell
 & "$env:USERPROFILE\.dotnet\dotnet.exe" run --no-build `

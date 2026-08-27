@@ -131,7 +131,9 @@ CPU completed in 4,454 ms and Whisper French on CUDA completed in 8,615 ms. Both
 ProductVersion `0.24.0-founder.10+3d62a84e87a64e2c9a641ed96998e971b7f8b3bb` and executable SHA-256
 `4BDF447CE23C289026C148A36AAB20C1BF1B950B1C8F71D32FEA6524A545A0A0`; each observed shell and one worker,
 capture, final ASR, deterministic processing, controlled native delivery, clean app exit, and zero remaining
-owned workers. This is exact unsigned-package evidence with reviewed fixtures, not physical microphone proof.
+owned workers. A third exact installed Parakeet English/CPU journey enabled Live Preview and observed a non-empty
+display-only preview update before final transcription and delivery; it completed in 9,654 ms with the same clean
+shutdown guarantee. This is exact unsigned-package evidence with reviewed fixtures, not physical microphone proof.
 
 A native visual and UI Automation check at the machine's active display scale found the complete three-line
 public phrase visible, a named instruction element, a named phrase element, and the focused native edit target.
