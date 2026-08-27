@@ -135,6 +135,16 @@ owned workers. A third exact installed Parakeet English/CPU journey enabled Live
 display-only preview update before final transcription and delivery; it completed in 9,654 ms with the same clean
 shutdown guarantee. This is exact unsigned-package evidence with reviewed fixtures, not physical microphone proof.
 
+Founder.11 superseded that installed candidate after local-polish journey UAT found and corrected a missing typed
+EG-1 provider field in content-free diagnostics. ProductVersion
+`0.24.0-founder.11+aa6bd735294d4219321d3240eb00d9a6f7efe89a` and executable SHA-256
+`083D4CE340315E6124DE371D2F11CF3E9E1D86618940019AD3FC3BCC05ED42C2` passed exact installed journeys for
+EG-1 (9,270 ms total, 1,714 ms polish), Ollama (5,086 ms total, 667 ms polish), Whisper French/CUDA
+(8,615 ms), and Parakeet English/CPU with a non-empty Live Preview update (9,423 ms). EG-1 started one owned
+llama server and left none; Ollama used the existing loopback daemon without owning or stopping it. Every run
+completed native delivery, clean app exit, and zero-worker cleanup. Fixed reviewed fixtures and named transitions
+were used, so the physical microphone requirement remains open.
+
 A native visual and UI Automation check at the machine's active display scale found the complete three-line
 public phrase visible, a named instruction element, a named phrase element, and the focused native edit target.
 The first layout attempt clipped the sentence and was corrected before handoff. An unattended negative run sent
@@ -174,7 +184,7 @@ the execution policy blocked recursive deletion outside the workspace, so that d
 normal OS temporary-file cleanup.
 
 After recording this evidence, canonical validation passed again: the public audit covered 380 tracked files
-and 12 reviewed public audio fixtures; all 34 preserved-proof tests and all 378 production tests passed, every
+and 12 reviewed public audio fixtures; all 34 preserved-proof tests and all 387 production tests passed, every
 Release project and UAT harness built,
 and the build reported zero warnings and zero errors. Local model runtime tests were not requested by this gate.
 

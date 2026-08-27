@@ -60,3 +60,8 @@
   processes were closed cleanly after inspection.
 - MEASURED 2026-08-26 — the founder-tested proof was not modified. No connection was made to port
   8081 or any unrelated model server; only Ollama's existing port 11434 was queried.
+- MEASURED 2026-08-26 — exact installed founder.11 completed Parakeet English/CPU, deterministic processing,
+  local Ollama polish, protected-token restoration, and controlled native delivery in 5,086 ms. Provider-tagged
+  polish completed in 667 ms with no degraded fallback. The app started and left zero owned polish processes;
+  the pre-existing loopback daemon remained outside app ownership. Reviewed public fixture audio and named
+  transitions were used, so this is not physical-microphone evidence.

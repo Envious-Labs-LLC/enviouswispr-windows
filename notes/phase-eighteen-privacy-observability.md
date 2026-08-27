@@ -53,6 +53,12 @@ carrying dictated text, audio, keys, clipboard, surrounding context, paths, mode
 identifiers. Deliberate unknown-field injection is dropped by reparse rather than copied. Anonymous sharing
 is both consent-gated and endpoint-gated.
 
+Exact installed local-polish UAT later exposed one low-cardinality omission: EG-1's canonical provider ID was
+not mapped to `DiagnosticProvider.EgOne`, so its readiness and attempt records omitted the provider field.
+The mapping is now shared and typed, recognizes canonical and legacy EG-1 IDs, refuses unknown values, and is
+covered for every provider. Founder.11 emitted provider-tagged EG-1 and Ollama readiness/start/completion records
+without adding transcript, model ID, endpoint, path, prompt, or response fields.
+
 This does not claim that a future server is policy-free: a network receiver inherently sees connection
 metadata such as source IP and TLS timing. Production server minimization, access controls, deletion,
 incident response, sampling, regional/data-processing terms, and vetted endpoint ownership remain Phase 22

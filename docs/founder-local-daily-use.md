@@ -8,10 +8,10 @@ This is the current hands-on guide for the production Windows application. The o
 The founder machine currently has the unsigned, isolated founder channel installed under
 `%LOCALAPPDATA%\EnviousLabs.EnviousWispr.Founder\current`.
 
-- Product version: `0.24.0-founder.10+3d62a84e87a64e2c9a641ed96998e971b7f8b3bb`
-- Installed executable SHA-256: `4BDF447CE23C289026C148A36AAB20C1BF1B950B1C8F71D32FEA6524A545A0A0`
+- Product version: `0.24.0-founder.11+aa6bd735294d4219321d3240eb00d9a6f7efe89a`
+- Installed executable SHA-256: `083D4CE340315E6124DE371D2F11CF3E9E1D86618940019AD3FC3BCC05ED42C2`
 - Setup: `EnviousLabs.EnviousWispr.Founder-win-x64-founder-Setup.exe`
-- Setup SHA-256: `30CB20B71F6AFA15B4AEE6DA816F4DF5DD4DC1177CC20FC07EF04B8677B2F150`
+- Setup SHA-256: `01886DE3AF30C98240AC50A52C4BD73C9E867A8A1675BA7DACE307062D51351F`
 - Platform: Windows 11 x64
 - Release status: founder-local and unsigned; not certified or approved for public distribution
 
@@ -77,11 +77,18 @@ Those automated runs prove the installed shell, worker, Parakeet and Whisper pat
 controlled Windows delivery, and cleanup. They substitute reviewed audio and named transitions, so physical
 microphone acceptance remains a separate action:
 
-The commands above passed against the exact founder.10 candidate on 2026-08-26. Parakeet English on CPU
-completed in 4,454 ms, and Whisper French on CUDA completed in 8,615 ms. Each run observed the production
-stage sequence, delivered to the controlled native edit field, exited cleanly, and left zero owned workers.
-A separate Parakeet English/CPU run with `--live-preview` completed in 9,654 ms and observed a non-empty
-display-only preview update before final transcription and delivery.
+The commands above passed against the founder.10 candidate on 2026-08-26. The current founder.11 candidate
+repeated Whisper French/CUDA in 8,615 ms and Parakeet English/CPU with Live Preview in 9,423 ms. Each run
+observed the production stage sequence, delivered to the controlled native edit field, exited cleanly, and
+left zero owned workers. The Live Preview run observed a non-empty display-only update before final
+transcription and delivery.
+
+Founder.11 also passed exact installed local-polish journeys. Parakeet English/CPU with EG-1 completed in
+9,270 ms, including 1,714 ms of polish; it started one app-owned llama server and left none after exit.
+Parakeet English/CPU with an existing local Ollama model completed in 5,086 ms, including 667 ms of polish;
+it started no owned polish process and did not stop the external loopback daemon. Both required provider-tagged
+readiness, `PolishStarted`, `PolishCompleted`, no degraded fallback, native delivery, and clean shutdown. The
+privacy-safe commands and prerequisites are documented in `tools/app-journey-uat/README.md`.
 
 ```powershell
 & "$env:USERPROFILE\.dotnet\dotnet.exe" run --no-build `

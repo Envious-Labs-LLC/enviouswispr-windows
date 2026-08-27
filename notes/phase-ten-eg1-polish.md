@@ -44,6 +44,15 @@
 - `MEASURED` Native diagnostics contain only timestamp, event, failure category, and elapsed
   milliseconds. The provider and server manager have no logging surface for prompt, transcript, model
   file, bearer token, request body, or response body.
+- `MEASURED` Exact installed founder.11 then completed the full Parakeet English/CPU -> deterministic ->
+  EG-1 -> protected-token restoration -> native delivery path in 9,270 ms. Provider-tagged EG-1 polish took
+  1,714 ms with no degraded fallback. The app started one owned llama server; normal app exit removed it and
+  the ASR worker, while unrelated llama/Ollama processes were neither owned nor stopped. This run used a
+  reviewed public audio fixture and named transitions, not a physical microphone.
+- `MEASURED` The installed journey exposed that EG-1's provider ID `eg-one` was absent from diagnostics
+  because the app mapper recognized only the display/model spelling `eg-1`. The shared typed mapper now
+  accepts the provider's canonical ID (and the legacy alias), all local-polish readiness and attempt records
+  identify the provider, and tests cover every known provider plus unknown-value refusal.
 
 ## Scope and limits
 
