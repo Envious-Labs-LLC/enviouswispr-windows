@@ -1,5 +1,4 @@
 using EnviousWispr.Core.Input;
-using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows.Automation;
 
@@ -28,24 +27,12 @@ public sealed class WindowsForegroundTargetProvider : IForegroundTargetProvider
                 ? string.Join('.', focused.GetRuntimeId())
                 : null;
         }
-        catch (ElementNotAvailableException)
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
         {
-            return null;
-        }
-        catch (InvalidOperationException)
-        {
-            return null;
-        }
-        catch (COMException)
-        {
-            return null;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return null;
-        }
-        catch (Win32Exception)
-        {
+            // A focused-element runtime ID improves target-change detection, but it is optional.
+            // UI Automation can fail with provider-specific non-fatal exception types, especially
+            // across application/runtime boundaries. Preserve the frozen HWND/process target and
+            // let delivery fall back safely instead of aborting the recording before capture starts.
             return null;
         }
     }

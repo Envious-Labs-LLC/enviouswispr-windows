@@ -26,6 +26,24 @@ dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.
   -c Release -- --english-parakeet
 ```
 
+Either deterministic success path can identify and exercise an exact installed candidate instead of the
+repository build. Exit the normally running candidate first and supply its fully qualified executable path.
+The harness requires the candidate's companion runtime worker, emits ProductVersion, executable SHA-256, and
+the bounded source label `ExplicitCandidateExecutable`, but never emits the supplied path:
+
+```powershell
+$installedApp = Join-Path $env:LOCALAPPDATA `
+  'EnviousLabs.EnviousWispr.Founder\current\EnviousWispr.App.exe'
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --app-executable $installedApp
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --app-executable $installedApp
+```
+
+These runs still substitute reviewed fixture capture and named press/release events. They prove the exact
+installed shell, worker, ASR, deterministic pipeline, and controlled native delivery; they do not replace the
+physical global-hotkey and microphone journey below.
+
 Add `--escape-recovery` to exercise the same production pipeline while cancelling with Escape Recovery
 enabled. That mode requires transcription and deterministic processing to finish, requires a 24-hour recovery
 entry in History, and proves that no text reaches the controlled target:
@@ -95,8 +113,8 @@ dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.
   -c Release -- --english-parakeet --manual-microphone
 ```
 
-The guided mode can validate an exact installed founder candidate instead of the repository build. Supply a fully
-qualified `EnviousWispr.App.exe` path; the harness never emits that path:
+The guided mode can also validate an exact installed founder candidate. Supply a fully qualified
+`EnviousWispr.App.exe` path; the harness never emits that path:
 
 ```powershell
 $installedApp = Join-Path $env:LOCALAPPDATA `

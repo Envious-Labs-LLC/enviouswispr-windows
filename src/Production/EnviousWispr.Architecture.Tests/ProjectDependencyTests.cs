@@ -65,6 +65,34 @@ public sealed class ProjectDependencyTests
         }
     }
 
+    [Fact]
+    public void WindowsUiAutomationUsesTheCurrentDesktopRuntime()
+    {
+        var servicesProject = Path.Combine(
+            FindProductionDirectory(),
+            "EnviousWispr.Services",
+            "EnviousWispr.Services.csproj");
+        var document = XDocument.Load(servicesProject);
+        var frameworkReferences = document
+            .Descendants("FrameworkReference")
+            .Select(reference => reference.Attribute("Include")?.Value)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToArray();
+        var legacyReferences = document
+            .Descendants("Reference")
+            .Select(reference => reference.Attribute("Include")?.Value)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToArray();
+
+        Assert.Contains("Microsoft.WindowsDesktop.App.WPF", frameworkReferences);
+        Assert.DoesNotContain("UIAutomationClient", legacyReferences);
+        Assert.DoesNotContain("UIAutomationTypes", legacyReferences);
+        Assert.DoesNotContain(
+            "GAC_MSIL",
+            File.ReadAllText(servicesProject),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string FindProductionDirectory()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

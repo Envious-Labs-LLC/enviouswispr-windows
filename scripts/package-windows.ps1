@@ -112,11 +112,25 @@ try {
         'DictationOverlayWindow.xbf',
         'EnviousWispr.RuntimeWorker.exe',
         'EnviousWispr.RuntimeWorker.dll',
-        'Microsoft.WindowsAppRuntime.Bootstrap.dll'
+        'Microsoft.WindowsAppRuntime.Bootstrap.dll',
+        'UIAutomationClient.dll',
+        'UIAutomationTypes.dll',
+        'WindowsBase.dll'
     )
     foreach ($required in $requiredPublishedFiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $publishDirectory $required) -PathType Leaf)) {
             throw "Self-contained publish is missing required file: $required"
+        }
+    }
+
+    foreach ($desktopRuntimeFile in @(
+        'UIAutomationClient.dll',
+        'UIAutomationTypes.dll',
+        'WindowsBase.dll')) {
+        $runtimeFile = Get-Item -LiteralPath (Join-Path $publishDirectory $desktopRuntimeFile)
+        $runtimeVersion = $runtimeFile.VersionInfo.FileVersionRaw
+        if ($null -eq $runtimeVersion -or $runtimeVersion.Major -lt 10) {
+            throw "$desktopRuntimeFile is not from the required current .NET Windows Desktop runtime."
         }
     }
 

@@ -58,13 +58,26 @@ and a spoken emoji command. Judge the configured cleanup result, not the exact w
 
 ## Exact installed-candidate microphone acceptance
 
-The repository harness can launch the installed executable with an isolated temporary profile and record only
-content-free evidence. First exit the normally running app using **Exit EnviousWispr** in its notification-area
-menu. Then run from the repository root:
+The repository harness can first run deterministic public fixtures through the exact installed executable with
+an isolated temporary profile and content-free evidence. Exit the normally running app using **Exit
+EnviousWispr** in its notification-area menu, then run from the repository root:
 
 ```powershell
 $installedApp = Join-Path $env:LOCALAPPDATA `
   'EnviousLabs.EnviousWispr.Founder\current\EnviousWispr.App.exe'
+& "$env:USERPROFILE\.dotnet\dotnet.exe" run --no-build `
+  --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj -c Release -- `
+  --english-parakeet --app-executable $installedApp
+& "$env:USERPROFILE\.dotnet\dotnet.exe" run --no-build `
+  --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj -c Release -- `
+  --app-executable $installedApp
+```
+
+Those automated runs prove the installed shell, worker, Parakeet and Whisper paths, deterministic processing,
+controlled Windows delivery, and cleanup. They substitute reviewed audio and named transitions, so physical
+microphone acceptance remains a separate action:
+
+```powershell
 & "$env:USERPROFILE\.dotnet\dotnet.exe" run --no-build `
   --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj -c Release -- `
   --english-parakeet --manual-microphone --app-executable $installedApp
