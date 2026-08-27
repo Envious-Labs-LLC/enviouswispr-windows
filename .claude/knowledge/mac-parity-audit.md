@@ -34,7 +34,6 @@ Confirmed by two sweeps each. Ordered by what a user loses, not by effort.
 | Hands-free lock mode | A third recording mode beside push-to-talk and toggle | Windows has two of three modes |
 | Modifier-only hotkeys | Bind to a bare modifier | Windows requires a named key |
 | Guarded synthetic Copy when an app publishes no selection | Quick Add still works in apps that publish nothing, clipboard preserved | Quick Add silently does nothing in those apps |
-| Auto-stop on silence (neural VAD) | Recording ends when you stop speaking | Toggle mode needs a second press; no segment filtering |
 | Pre-roll ring buffer | Keeps 500ms before the key press, reducing first-word clipping | First word can be clipped |
 | Bluetooth-aware device routing and wake allowance | Handles a headset waking up mid-press | Untested and unhandled |
 | ASR model-unload policy | Frees the model when idle | Model stays resident |
@@ -52,9 +51,10 @@ The name exists. The behaviour does not match.
 |---|---|---|
 | Streaming (as "Live Preview") | `RunLivePreviewAsync` re-transcribes a rolling 20-second window every 2.5s and shows it in the UI ONLY | The final transcript is computed from scratch on release. The preview never feeds it. |
 | Multi-route paste cascade | One direct value-write route (`TryDirectValueWrite`) plus a clipboard fallback | macOS runs several routes with per-route eligibility |
+| Auto-stop on silence | An ENERGY segmenter with hysteresis drives auto-stop in toggle mode, off by default (`SpeechSegmenter`, `AutoStopPolicy`) | macOS uses a NEURAL detector, which also does speech-segment filtering. This one hears a slammed door as speech. The user-visible behaviour is present; the recogniser is not. |
+| Per-dictation execution metrics | The whole wait is measured and logged as `DictationCompleted` | macOS records a per-dictation breakdown across capture, ASR, polish and delivery in ONE record. Here the stages log separately with nothing tying them to a dictation. |
 | Custom-words import | The PORTABLE PROFILE import carries dictionary entries and snippets (`MainWindow.xaml:540`) | No import from a plain file, from a paste, or from a rival app. A user's existing word list still has to be retyped unless it arrives as one of our own profiles. |
 | Custom-words export | The portable profile export carries them out (`MainWindow.xaml.cs:1263`) | No word-list export, no collision ownership, no bulk edit |
-| Per-dictation execution metrics | `DeterministicStageReceipt` records per-stage elapsed milliseconds for the deterministic pipeline (`DeterministicTextPipeline.cs:25`) | Covers the deterministic stages only. Nothing spans capture, ASR, polish and delivery for one dictation. |
 
 ## FACT: present-on-windows
 Confirmed present, not confirmed equivalent. Depth is unaudited.
@@ -95,6 +95,26 @@ front of it and the inventory in hand.
 
 So the audit was too pessimistic rather than too generous, and it failed toward WORK - toward building
 something already shipped. That is the direction to expect from any parity audit written from one side.
+
+## FACT: what-this-session-closed
+Re-swept 2026-08-27 after the work, so the tables above are not stale.
+
+**Closed as behaviour, not as recogniser:** auto-stop. A toggle-mode recording can now end when the
+speaker stops. It is off by default, and that is the founder's own priority order deciding it rather
+than caution: dictation works every time it physically can, so a switch that can end a recording
+early must not be on for anyone who has not asked.
+
+**The verification limit is stated because it will not go away.** The Windows session can drive the
+state machine - when it arms, whether a pause resets it, whether it fires with a key held, whether
+it fires before anyone speaks - and every one of those is a real defect that needs no voice. It
+CANNOT speak, pause mid-thought and resume, which is the failure that matters. That needs the
+founder's microphone, and an approximation of it would sound confident and mean nothing.
+
+**"All Settings" was REMOVED on parity grounds**, and it is recorded here because it is the shape
+worth remembering: it sat in the founder's queue as a product decision for hours, and macOS
+shipping fifteen sections and no aggregate page answered it in one reading. **It was a lookup
+wearing a decision's clothes.** The reverse held for the Clipboard page, which reads as unfinished
+and stays, because macOS ships the same section.
 
 ## PROC: how-this-was-taken
 Two sweeps per capability from `src/Production`, the second using the CAPABILITY's synonyms rather than
