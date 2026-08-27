@@ -1135,6 +1135,80 @@ public sealed partial class DesignSystemTokenTests
                 + "renders the type name for an object-backed list.");
     }
 
+    /// <summary>
+    /// The Level Rail preview draws the same meter the recording pill actually draws.
+    /// </summary>
+    /// <remarks>
+    /// The pill designs on the Appearance page are the only way a user sees what they are
+    /// choosing before they choose it, so a preview that draws something else is not a cosmetic
+    /// problem - it is the page lying about the product.
+    ///
+    /// It has been wrong twice. First a SOLID ROYAL BLUE bar sat directly beneath its own caption
+    /// promising "a live rainbow meter". Then a smooth rainbow GRADIENT, which matched the caption
+    /// but still not the pill: the real meter is twelve discrete bars of varying height, an audio
+    /// level display rather than a progress bar. Both times the preview was internally plausible,
+    /// which is exactly why neither was caught by looking at the page.
+    ///
+    /// Compared against the OVERLAY's own markup rather than a copy of its values kept here, so
+    /// the two cannot drift: change the pill and this fails until the preview is changed with it.
+    /// </remarks>
+    [Fact]
+    public void TheLevelRailPreviewMatchesTheRecordingPill()
+    {
+        var root = FindRepositoryRoot();
+        var overlay = XDocument.Load(Path.Combine(
+            root, "src", "Production", "EnviousWispr.App", "DictationOverlayWindow.xaml"));
+        var window = LoadMainWindow();
+
+        static (string Height, string Brush)[] BarsUnder(XElement container) => container
+            .Elements()
+            .Where(element => element.Name.LocalName == "Border")
+            .Select(element => (
+                Height: (string?)element.Attribute("Height") ?? string.Empty,
+                Brush: (string?)element.Attribute("Background") ?? string.Empty))
+            .ToArray();
+
+        var realMeter = overlay.Descendants()
+            .SingleOrDefault(element =>
+                (string?)element.Attribute(XName.Get("Name", XamlNamespace)) == "LevelBars");
+        Assert.True(
+            realMeter is not null,
+            "LevelBars was not found in DictationOverlayWindow.xaml. That element is this test's "
+                + "oracle, so its absence means the test is comparing against nothing.");
+
+        var real = BarsUnder(realMeter!);
+        Assert.True(
+            real.Length > 0,
+            "The recording pill's level meter has no bars, so there is nothing to match.");
+
+        // The preview lives inside the Level Rail card, which is identified by its own radio button.
+        var previewCard = window.Descendants()
+            .SingleOrDefault(element =>
+                (string?)element.Attribute(XName.Get("Name", XamlNamespace)) == "LevelRailPillButton");
+        Assert.True(previewCard is not null, "LevelRailPillButton was not found in MainWindow.xaml.");
+
+        // The HORIZONTAL strip, matching how the real meter is declared. Taking the first panel
+        // with any Border children instead picks the preview's outer pill frame, which is a single
+        // Border and reports as a one-bar meter.
+        var previewMeter = previewCard!.Descendants()
+            .Where(element => element.Name.LocalName == "StackPanel"
+                && (string?)element.Attribute("Orientation") == "Horizontal")
+            .Select(BarsUnder)
+            .FirstOrDefault(bars => bars.Length > 1);
+        Assert.True(
+            previewMeter is not null,
+            "The Level Rail preview draws no bar meter at all. It has twice been drawn as a single "
+                + "bar - once solid blue, once a gradient - while the real pill is a row of discrete "
+                + "bars. A user choosing this design would not get what the picture showed.");
+
+        Assert.True(
+            previewMeter!.SequenceEqual(real),
+            "The Level Rail preview does not match the recording pill.\n"
+                + $"  pill    ({real.Length} bars): {string.Join(" ", real.Select(b => b.Height))}\n"
+                + $"  preview ({previewMeter.Length} bars): {string.Join(" ", previewMeter.Select(b => b.Height))}\n"
+                + "The preview is the only view of this design a user gets before choosing it.");
+    }
+
     private static XDocument LoadMainWindow() =>
         XDocument.Load(Path.Combine(
             FindRepositoryRoot(),
