@@ -515,7 +515,7 @@ public partial class App : Application, IAsyncDisposable
         else
         {
             _window?.DispatcherQueue.TryEnqueue(() =>
-                _window?.SetSessionStatus("Windows resumed — EnviousWispr is ready"));
+                _window?.SetSessionStatus("Windows resumed. EnviousWispr is ready"));
         }
     }
 
@@ -627,10 +627,10 @@ public partial class App : Application, IAsyncDisposable
         var requested = Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_OVERLAY_STATE");
         var status = requested?.Trim().ToLowerInvariant() switch
         {
-            "recording" => "Recording — release to finish, Escape to cancel",
+            "recording" => "Recording. Release to finish, Escape to cancel",
             "processing" => "Transcribing locally...",
             "success" => "Inserted safely in the app you started in",
-            "warning" => "Protected field — copied only; paste manually if intended",
+            "warning" => "Protected field: copied only. Paste manually if intended",
             "error" => "Local transcription failed safely",
             _ => null,
         };
@@ -1242,7 +1242,7 @@ public partial class App : Application, IAsyncDisposable
                 }
 
                 _transcriptionEngine = null;
-                _window?.SetSessionStatus("Local transcription worker could not start");
+                _window?.SetSessionStatus("Local transcription could not start");
                 _logger.Write(new AppLogEntry(
                     DateTimeOffset.UtcNow,
                     AppEventCode.DictationTranscriptionFailed,
@@ -1251,7 +1251,7 @@ public partial class App : Application, IAsyncDisposable
             }
 
             ConfigureLivePreview(workerExecutable, hardware, whisperLanguage, forceCpu: true);
-            _window?.SetSessionStatus("Local transcription ready with CPU recovery");
+            _window?.SetSessionStatus("Local transcription ready on the processor");
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionDegraded,
@@ -2028,8 +2028,8 @@ public partial class App : Application, IAsyncDisposable
                     _window?.DispatcherQueue.TryEnqueue(() =>
                         _window?.SetSessionStatus(
                             transition == SystemLifecycleTransition.Suspending
-                                ? "Windows is suspending — captured audio is being preserved"
-                                : "Windows locked — captured audio is being preserved"));
+                                ? "Windows is suspending. Captured audio is being preserved"
+                                : "Windows locked. Captured audio is being preserved"));
                     await TranscribeFinalAsync(
                             controller,
                             result.Session.Id,
@@ -2376,7 +2376,7 @@ public partial class App : Application, IAsyncDisposable
             var status = string.IsNullOrWhiteSpace(processed.Output.Text)
                     ? "No speech detected"
                     : recoveryOnly
-                        ? "Escape Recovery finished — text is ready to copy"
+                        ? "Escape Recovery finished. Text is ready to copy"
                     : processed.IsDegraded
                     ? "Transcribed and cleaned locally with a safe fallback"
                     : polishResult is { UsedFallback: true }
@@ -2649,22 +2649,22 @@ public partial class App : Application, IAsyncDisposable
             "Pasted safely and restored your clipboard",
         { Delivered: true } => "Pasted safely",
         { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.ProtectedField } =>
-            "Protected field — copied only; paste manually if intended",
+            "Protected field: copied only. Paste manually if intended",
         { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.ElevatedTarget } =>
-            "Windows blocked the elevated app — copied only",
+            "Windows blocked the elevated app, so the text was copied only",
         { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.TargetChanged } =>
-            "The target changed — copied only to protect your text",
+            "The target changed, so the text was copied only to protect it",
         { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.UnsafeMultilineTarget } =>
-            "Terminal line break refused — copied only",
+            "Terminal line break refused, so the text was copied only",
         { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.UnsupportedTarget } =>
-            "Automatic paste is unsafe here — copied only",
+            "Automatic paste is unsafe here, so the text was copied only",
         { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.InputStateUnsafe } =>
-            "A key was held — copied only; paste manually",
-        { ClipboardFallback: true } => "Copied — press Ctrl+V",
+            "A key was held, so the text was copied only. Paste manually",
+        { ClipboardFallback: true } => "Copied. Press Ctrl+V",
         { RefusalReason: TextDeliveryRefusalReason.ClipboardUnavailable } =>
-            "Clipboard unavailable — text is held safely in memory",
+            "Clipboard unavailable. Text is held safely in memory",
         { RefusalReason: TextDeliveryRefusalReason.DirectWriteUnverified } =>
-            "Insertion could not be verified — text is held safely in memory",
+            "Insertion could not be verified. Text is held safely in memory",
         _ => "Text delivery stopped safely",
     };
 
@@ -2677,11 +2677,11 @@ public partial class App : Application, IAsyncDisposable
 
     private static string SessionStatus(SessionTransitionResult result) => result.Kind switch
     {
-        SessionTransitionKind.Started => "Recording — release to finish, Escape to cancel",
+        SessionTransitionKind.Started => "Recording. Release to finish, Escape to cancel",
         SessionTransitionKind.FinalizeReady when result.Error is not null =>
             "Capture preserved after a microphone interruption",
-        SessionTransitionKind.FinalizeReady => "Capture complete — transcribing locally",
-        SessionTransitionKind.Cancelled => "Cancelled — nothing will be delivered",
+        SessionTransitionKind.FinalizeReady => "Capture complete. Transcribing locally",
+        SessionTransitionKind.Cancelled => "Cancelled. Nothing will be delivered",
         SessionTransitionKind.Failed => "Session failed safely",
         _ => "Idle",
     };
@@ -2696,7 +2696,7 @@ public partial class App : Application, IAsyncDisposable
     private static string OllamaHealthStatus(OllamaHealth health) => health switch
     {
         OllamaHealth.EndpointInvalid => "Ollama endpoint must point to this PC",
-        OllamaHealth.ServerUnavailable => "Ollama is offline — cleaned text will still be preserved",
+        OllamaHealth.ServerUnavailable => "Ollama is offline. Cleaned text will still be preserved",
         OllamaHealth.ServerUnhealthy => "Ollama did not return a usable health response",
         OllamaHealth.NoLocalModels => "Ollama is running, but no local model is installed",
         _ => "Ollama is ready",
