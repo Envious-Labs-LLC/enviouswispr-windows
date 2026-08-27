@@ -163,8 +163,8 @@
             <SolidColorBrush x:Key="BrandToggleOnBrush" Color="{ThemeResource SystemColorHighlightColor}" />
             <Color x:Key="BrandToggleOffColor">{ThemeResource SystemColorGrayTextColor}</Color>
             <SolidColorBrush x:Key="BrandToggleOffBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
-            <Color x:Key="BrandDividerColor">Transparent</Color>
-            <SolidColorBrush x:Key="BrandDividerBrush" Color="Transparent" />
+            <Color x:Key="BrandDividerColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <SolidColorBrush x:Key="BrandDividerBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
 
             <Color x:Key="BrandSpectrumRedColor">{ThemeResource SystemColorWindowTextColor}</Color>
             <SolidColorBrush x:Key="BrandSpectrumRedBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
