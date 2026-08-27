@@ -3,7 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <CornerRadius x:Key="BrandWindowCardRadius">18</CornerRadius>
-    <x:Double x:Key="BrandWindowFrameInset">14</x:Double>
+    <Thickness x:Key="BrandWindowFrameInset">14</Thickness>
     <x:Double x:Key="BrandContentCardMinimumWidth">480</x:Double>
     <CornerRadius x:Key="BrandSectionRadius">14</CornerRadius>
     <x:Double x:Key="BrandRowPaddingH">14</x:Double>

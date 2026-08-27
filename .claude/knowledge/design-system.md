@@ -75,12 +75,18 @@ Dark primary is capped below pure white to limit halation.
 ### Accent - two tokens, and the split is load-bearing
 | Token | Light | Dark | Use |
 |---|---|---|---|
-| `BrandAccent` | `#7C3AED` | `#A78BFA` | TEXT and OUTLINES only |
-| `BrandAccentSolid` | `#7C3AED` | `#8B46F0` | FILLED surfaces carrying white text or glyphs |
-| `BrandAccentLight` | `#7C3AED` @ 9% | `#A78BFA` @ 16% | Soft accent wash |
+| `BrandAccent` | `#7C3AED` | `#A78BFA` | Text, outlines, and translucent washes behind ordinary text |
+| `BrandAccentSolid` | `#7C3AED` | `#8B46F0` | Opaque fills carrying white or on-accent content |
+| `BrandAccentLight` | `#7C3AED` @ 9% | `#A78BFA` @ 16% | The standard soft accent wash |
 
-The desaturated lavender is for text and outlines. Used as a fill under white it reads washed out, so
-filled selected surfaces take the solid purple.
+**The condition is what the fill sits UNDER, not whether it is a fill.** The desaturated lavender reads
+washed out beneath white text, so an opaque surface carrying white content takes the solid purple. A
+translucent accent wash behind body-coloured text — a navigation row on hover, a selected card's tint —
+is not that case and correctly uses `BrandAccent`; substituting the solid purple there would be wrong.
+
+This was originally written as "TEXT and OUTLINES only", which a careful reviewer read as forbidding the
+hover washes. The rule had not changed, but a rule that a careful reader misapplies is a rule that needs
+rewording. Ref: whole-diff review, 2026-08-27.
 
 ### Status
 | Token | Light | Dark |

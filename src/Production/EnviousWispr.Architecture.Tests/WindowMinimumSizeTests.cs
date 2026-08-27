@@ -47,6 +47,18 @@ public sealed partial class WindowMinimumSizeTests
 
         var body = match.Groups["body"].Value;
 
+        // Assert against the ASSIGNMENT, not against the method body. Checking that three
+        // identifiers appear somewhere in the method is satisfied by reading all three into
+        // unused variables and then assigning something else entirely — which is exactly the
+        // regression this test is supposed to catch, so the weaker form could not catch it.
+        var assignment = MinimumWidthAssignmentRegex().Match(body);
+        Assert.True(
+            assignment.Success,
+            "No assignment to PreferredMinimumWidth was found inside ConfigureMinimumWindowWidth. "
+                + $"Body was:\n{body}");
+
+        var expression = assignment.Groups["expression"].Value;
+
         foreach (var input in new[]
                  {
                      "OpenPaneLength",
@@ -55,10 +67,10 @@ public sealed partial class WindowMinimumSizeTests
                  })
         {
             Assert.True(
-                body.Contains(input, StringComparison.Ordinal),
-                $"The minimum-width computation no longer reads '{input}'. The minimum must be derived "
-                    + "from the frame's own inputs; a value that stops tracking one of them is stale the "
-                    + "next time that input changes.");
+                ExpressionReaches(body, expression, input),
+                $"The value assigned to PreferredMinimumWidth is not derived from '{input}'. The minimum "
+                    + "must track the frame's own inputs; one that stops tracking an input is stale the "
+                    + $"next time that input changes.\nAssigned expression: {expression}");
         }
 
         // A bare numeric literal here is the regression this test exists for: it means somebody
@@ -151,10 +163,52 @@ public sealed partial class WindowMinimumSizeTests
                 + "silently vacuous.");
     }
 
+    /// <summary>
+    /// True when <paramref name="input"/> reaches <paramref name="expression"/>, directly or
+    /// through one local declared earlier in the same method.
+    /// </summary>
+    /// <remarks>
+    /// One hop, deliberately. The real computation reads the two layout tokens into locals and
+    /// then uses those locals in the assignment, which is ordinary and readable code, so a
+    /// direct-substring check would fail on correct source. Following arbitrary chains would
+    /// mean writing a dataflow analyser inside a test; one hop covers the shape this method
+    /// actually has, and anything deeper should make the reader suspicious anyway.
+    /// </remarks>
+    private static bool ExpressionReaches(string body, string expression, string input)
+    {
+        if (expression.Contains(input, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        foreach (Match local in LocalDeclarationRegex().Matches(body))
+        {
+            var name = local.Groups["name"].Value;
+            var initialiser = local.Groups["initialiser"].Value;
+            if (initialiser.Contains(input, StringComparison.Ordinal)
+                && Regex.IsMatch(expression, $@"(?<![A-Za-z0-9_]){Regex.Escape(name)}(?![A-Za-z0-9_])"))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     [GeneratedRegex(
-        @"private\s+void\s+ConfigureMinimumWindowWidth\s*\(\s*\)\s*\{(?<body>[^}]*)\}",
-        RegexOptions.CultureInvariant)]
+        @"private\s+void\s+ConfigureMinimumWindowWidth\s*\(\s*\)\s*\{(?<body>.*?)\n    \}",
+        RegexOptions.CultureInvariant | RegexOptions.Singleline)]
     private static partial Regex ConfigureMinimumWidthBodyRegex();
+
+    [GeneratedRegex(
+        @"PreferredMinimumWidth\s*=\s*(?<expression>[^;]+);",
+        RegexOptions.CultureInvariant | RegexOptions.Singleline)]
+    private static partial Regex MinimumWidthAssignmentRegex();
+
+    [GeneratedRegex(
+        @"var\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<initialiser>[^;]+);",
+        RegexOptions.CultureInvariant | RegexOptions.Singleline)]
+    private static partial Regex LocalDeclarationRegex();
 
     [GeneratedRegex(@"(?<![A-Za-z0-9_.])\d+(\.\d+)?(?![A-Za-z0-9_])", RegexOptions.CultureInvariant)]
     private static partial Regex NumericLiteralRegex();

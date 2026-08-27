@@ -286,15 +286,57 @@ public sealed partial class XamlResourceResolutionTests
 
     private static XamlSource[] LoadAppXamlSources(string repositoryRoot, string appDirectory)
     {
-        var themeDirectory = Path.Combine(appDirectory, "Theme") + Path.DirectorySeparatorChar;
+        var merged = ReadMergedDictionaryPaths(appDirectory);
         return Directory.GetFiles(appDirectory, "*.xaml", SearchOption.AllDirectories)
             .Where(path => !IsBuildOutput(appDirectory, path))
             .Order(StringComparer.Ordinal)
             .Select(path => new XamlSource(
                 Path.GetRelativePath(repositoryRoot, path),
                 File.ReadAllText(path),
-                Path.GetFullPath(path).StartsWith(themeDirectory, StringComparison.OrdinalIgnoreCase)))
+                merged.Contains(Path.GetFullPath(path))))
             .ToArray();
+    }
+
+    /// <summary>
+    /// The dictionaries <c>App.xaml</c> actually merges, as absolute paths.
+    /// </summary>
+    /// <remarks>
+    /// Sitting in <c>Theme/</c> does NOT make a dictionary globally reachable — being merged
+    /// into <c>Application.Resources</c> does. Treating the folder as the authority meant
+    /// dropping a merge entry left this gate green while every view depending on that
+    /// dictionary failed at runtime, which is the precise failure the gate exists to prevent.
+    ///
+    /// Fails loudly on an unreadable App.xaml or an empty merge list rather than returning an
+    /// empty set: an empty set would silently reclassify every theme file as unreachable and
+    /// bury the real findings under hundreds of false ones.
+    /// </remarks>
+    private static HashSet<string> ReadMergedDictionaryPaths(string appDirectory)
+    {
+        var appXamlPath = Path.Combine(appDirectory, "App.xaml");
+        Assert.True(File.Exists(appXamlPath), $"App.xaml was not found at '{appXamlPath}'.");
+
+        var sources = XDocument.Load(appXamlPath)
+            .Descendants()
+            .Where(element => element.Name.LocalName == "ResourceDictionary")
+            .Select(element => (string?)element.Attribute("Source"))
+            .Where(source => !string.IsNullOrWhiteSpace(source))
+            .Select(source => Path.GetFullPath(Path.Combine(appDirectory, source!.Replace('/', Path.DirectorySeparatorChar))))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        Assert.True(
+            sources.Count > 0,
+            $"App.xaml at '{appXamlPath}' merges no ResourceDictionary by Source. Either the app lost its "
+                + "theme dictionaries, or this reader stopped understanding the markup. Both are defects; "
+                + "neither may pass as 'nothing to check'.");
+
+        foreach (var source in sources)
+        {
+            Assert.True(
+                File.Exists(source),
+                $"App.xaml merges '{source}', which does not exist. That is a runtime failure on startup.");
+        }
+
+        return sources;
     }
 
     private static bool IsBuildOutput(string appDirectory, string path)
