@@ -73,6 +73,23 @@
                     <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="{ThemeResource BrandSidebarBgColor}" Opacity="0" />
                     <SolidColorBrush x:Key="NavigationViewContentBackground" Color="{ThemeResource BrandPageBgColor}" />
                     <SolidColorBrush x:Key="NavigationViewContentGridBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+                    <SolidColorBrush x:Key="NavigationViewItemBackground" Color="{ThemeResource BrandSidebarBgColor}" Opacity="0" />
+                    <SolidColorBrush x:Key="NavigationViewItemBackgroundPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.12" />
+                    <SolidColorBrush x:Key="NavigationViewItemBackgroundPressed" Color="{ThemeResource BrandAccentColor}" Opacity="0.20" />
+                    <SolidColorBrush x:Key="NavigationViewItemBackgroundSelected" Color="{ThemeResource BrandAccentSolidColor}" />
+                    <SolidColorBrush x:Key="NavigationViewItemBackgroundSelectedPointerOver" Color="{ThemeResource BrandAccentSolidColor}" />
+                    <SolidColorBrush x:Key="NavigationViewItemBackgroundSelectedPressed" Color="{ThemeResource BrandAccentSolidColor}" />
+                    <SolidColorBrush x:Key="NavigationViewItemForeground" Color="{ThemeResource BrandTextBodyColor}" />
+                    <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="{ThemeResource BrandTextBodyColor}" />
+                    <SolidColorBrush x:Key="NavigationViewItemForegroundPressed" Color="{ThemeResource BrandTextBodyColor}" />
+                    <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="{ThemeResource BrandOnAccentColor}" />
+                    <SolidColorBrush x:Key="NavigationViewItemForegroundSelectedPointerOver" Color="{ThemeResource BrandOnAccentColor}" />
+                    <SolidColorBrush x:Key="NavigationViewItemForegroundSelectedPressed" Color="{ThemeResource BrandOnAccentColor}" />
+                    <SolidColorBrush x:Key="NavigationViewItemHeaderForeground" Color="{ThemeResource BrandAccentColor}" />
+                    <SolidColorBrush x:Key="NavigationViewSelectionIndicatorForeground" Color="{ThemeResource BrandOnAccentColor}" />
+                    <DataTemplate x:Key="BrandNavigationGroupHeaderTemplate">
+                        <TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="{Binding}" />
+                    </DataTemplate>
                     <Thickness x:Key="NavigationViewBorderThickness">0</Thickness>
                     <Thickness x:Key="NavigationViewContentGridBorderThickness">1</Thickness>
                     <CornerRadius x:Key="NavigationViewContentGridCornerRadius">18</CornerRadius>
@@ -86,31 +103,31 @@
                     </StackPanel>
                 </NavigationView.PaneHeader>
                 <NavigationView.MenuItems>
-                    <NavigationViewItem x:Name="HomeNavItem" x:Uid="HomeNavItem" AccessKey="M" Content="Home" Icon="Home" Tag="home" />
-                    <NavigationViewItemHeader Content="APP" />
-                    <NavigationViewItem x:Uid="HistoryNavItem" AccessKey="Y" Content="History" Icon="Clock" Tag="history" />
-                    <NavigationViewItem Content="What’s New" Icon="Document" Tag="whats-new" />
-                    <NavigationViewItem Content="Appearance" Icon="Setting" Tag="settings-appearance" />
-                    <NavigationViewItemHeader Content="RECORD" />
-                    <NavigationViewItem x:Name="TranscriptionNavItem" Content="Transcription" Tag="settings-transcription"><NavigationViewItem.Icon><FontIcon Glyph="&#xE8C1;" /></NavigationViewItem.Icon></NavigationViewItem>
-                    <NavigationViewItem Content="Live Preview" Tag="settings-live-preview"><NavigationViewItem.Icon><FontIcon Glyph="&#xE890;" /></NavigationViewItem.Icon></NavigationViewItem>
-                    <NavigationViewItem Content="Microphone" Tag="settings-microphone"><NavigationViewItem.Icon><FontIcon Glyph="&#xE720;" /></NavigationViewItem.Icon></NavigationViewItem>
-                    <NavigationViewItem Content="Sounds" Tag="settings-sounds"><NavigationViewItem.Icon><FontIcon Glyph="&#xE767;" /></NavigationViewItem.Icon></NavigationViewItem>
-                    <NavigationViewItem Content="Keybinds" Tag="settings-keybinds"><NavigationViewItem.Icon><FontIcon Glyph="&#xE765;" /></NavigationViewItem.Icon></NavigationViewItem>
-                    <NavigationViewItemHeader Content="PROCESS" />
-                    <NavigationViewItem Content="AI Polish" Tag="settings-ai-polish"><NavigationViewItem.Icon><FontIcon Glyph="&#xE70F;" /></NavigationViewItem.Icon></NavigationViewItem>
-                    <NavigationViewItem x:Name="DictionaryNavItem" x:Uid="DictionaryNavItem" AccessKey="D" Content="Your Words" Icon="Character" Tag="dictionary" />
-                    <NavigationViewItem x:Uid="SnippetsNavItem" AccessKey="S" Content="Snippets" Icon="Document" Tag="snippets" />
-                    <NavigationViewItemHeader Content="OUTPUT" />
-                    <NavigationViewItem Content="Clipboard" Tag="settings-clipboard"><NavigationViewItem.Icon><FontIcon Glyph="&#xE8C8;" /></NavigationViewItem.Icon></NavigationViewItem>
-                    <NavigationViewItemHeader Content="SYSTEM" />
-                    <NavigationViewItem Content="Permissions" Tag="help-permissions"><NavigationViewItem.Icon><FontIcon Glyph="&#xE72E;" /></NavigationViewItem.Icon></NavigationViewItem>
-                    <NavigationViewItem Content="Check for Updates" Tag="help-updates"><NavigationViewItem.Icon><FontIcon Glyph="&#xE895;" /></NavigationViewItem.Icon></NavigationViewItem>
-                    <NavigationViewItem Content="Open Source Licenses" Tag="help-licenses"><NavigationViewItem.Icon><FontIcon Glyph="&#xE8A5;" /></NavigationViewItem.Icon></NavigationViewItem>
+                    <NavigationViewItem x:Name="HomeNavItem" x:Uid="HomeNavItem" AccessKey="M" Content="Home" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Home" Tag="home" />
+                    <NavigationViewItemHeader Content="APP" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
+                    <NavigationViewItem x:Uid="HistoryNavItem" AccessKey="Y" Content="History" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Clock" Tag="history" />
+                    <NavigationViewItem Content="What’s New" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Document" Tag="whats-new" />
+                    <NavigationViewItem Content="Appearance" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Setting" Tag="settings-appearance" />
+                    <NavigationViewItemHeader Content="RECORD" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
+                    <NavigationViewItem x:Name="TranscriptionNavItem" Content="Transcription" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-transcription"><NavigationViewItem.Icon><FontIcon Glyph="&#xE8C1;" /></NavigationViewItem.Icon></NavigationViewItem>
+                    <NavigationViewItem Content="Live Preview" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-live-preview"><NavigationViewItem.Icon><FontIcon Glyph="&#xE890;" /></NavigationViewItem.Icon></NavigationViewItem>
+                    <NavigationViewItem Content="Microphone" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-microphone"><NavigationViewItem.Icon><FontIcon Glyph="&#xE720;" /></NavigationViewItem.Icon></NavigationViewItem>
+                    <NavigationViewItem Content="Sounds" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-sounds"><NavigationViewItem.Icon><FontIcon Glyph="&#xE767;" /></NavigationViewItem.Icon></NavigationViewItem>
+                    <NavigationViewItem Content="Keybinds" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-keybinds"><NavigationViewItem.Icon><FontIcon Glyph="&#xE765;" /></NavigationViewItem.Icon></NavigationViewItem>
+                    <NavigationViewItemHeader Content="PROCESS" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
+                    <NavigationViewItem Content="AI Polish" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-ai-polish"><NavigationViewItem.Icon><FontIcon Glyph="&#xE70F;" /></NavigationViewItem.Icon></NavigationViewItem>
+                    <NavigationViewItem x:Name="DictionaryNavItem" x:Uid="DictionaryNavItem" AccessKey="D" Content="Your Words" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Character" Tag="dictionary" />
+                    <NavigationViewItem x:Uid="SnippetsNavItem" AccessKey="S" Content="Snippets" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Document" Tag="snippets" />
+                    <NavigationViewItemHeader Content="OUTPUT" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
+                    <NavigationViewItem Content="Clipboard" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-clipboard"><NavigationViewItem.Icon><FontIcon Glyph="&#xE8C8;" /></NavigationViewItem.Icon></NavigationViewItem>
+                    <NavigationViewItemHeader Content="SYSTEM" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
+                    <NavigationViewItem Content="Permissions" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="help-permissions"><NavigationViewItem.Icon><FontIcon Glyph="&#xE72E;" /></NavigationViewItem.Icon></NavigationViewItem>
+                    <NavigationViewItem Content="Check for Updates" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="help-updates"><NavigationViewItem.Icon><FontIcon Glyph="&#xE895;" /></NavigationViewItem.Icon></NavigationViewItem>
+                    <NavigationViewItem Content="Open Source Licenses" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="help-licenses"><NavigationViewItem.Icon><FontIcon Glyph="&#xE8A5;" /></NavigationViewItem.Icon></NavigationViewItem>
                 </NavigationView.MenuItems>
                 <NavigationView.FooterMenuItems>
-                    <NavigationViewItem x:Name="SettingsNavItem" x:Uid="SettingsNavItem" AccessKey="T" Content="All Settings" Icon="Setting" Tag="settings" />
-                    <NavigationViewItem x:Uid="HelpNavItem" AccessKey="P" Content="Help and Privacy" Icon="Help" Tag="help" />
+                    <NavigationViewItem x:Name="SettingsNavItem" x:Uid="SettingsNavItem" AccessKey="T" Content="All Settings" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Setting" Tag="settings" />
+                    <NavigationViewItem x:Uid="HelpNavItem" AccessKey="P" Content="Help and Privacy" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Help" Tag="help" />
                 </NavigationView.FooterMenuItems>
                 <Grid Padding="28,18,28,32">
                     <InfoBar x:Name="OperationInfoBar" Margin="0,0,0,12" Canvas.ZIndex="10" IsOpen="False" IsClosable="True" VerticalAlignment="Top" />
