@@ -2,22 +2,6 @@
 <ResourceDictionary
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <!-- The recording meter. The spectrum is the brand's signature and the design contract
-         reserves it for the mark and the recording HUD, which this is - the level rail is what a
-         user sees while dictating. Its own caption already promised "a live rainbow meter" while
-         the preview drew a solid royal blue bar, so the picture contradicted the words beside it.
-         The spectrum colours are identical in every theme, so this brush is not theme-scoped. -->
-    <LinearGradientBrush x:Key="BrandSpectrumRailBrush" StartPoint="0,0.5" EndPoint="1,0.5">
-        <GradientStop Offset="0.00" Color="{ThemeResource BrandSpectrumRedColor}" />
-        <GradientStop Offset="0.14" Color="{ThemeResource BrandSpectrumOrangeColor}" />
-        <GradientStop Offset="0.28" Color="{ThemeResource BrandSpectrumGoldColor}" />
-        <GradientStop Offset="0.42" Color="{ThemeResource BrandSpectrumLimeColor}" />
-        <GradientStop Offset="0.56" Color="{ThemeResource BrandSpectrumSpringColor}" />
-        <GradientStop Offset="0.70" Color="{ThemeResource BrandSpectrumCyanColor}" />
-        <GradientStop Offset="0.82" Color="{ThemeResource BrandSpectrumBlueColor}" />
-        <GradientStop Offset="0.91" Color="{ThemeResource BrandSpectrumRoyalColor}" />
-        <GradientStop Offset="1.00" Color="{ThemeResource BrandSpectrumVioletColor}" />
-    </LinearGradientBrush>
     <Style x:Key="BrandWindowCardStyle" TargetType="Border">
         <Setter Property="BorderBrush" Value="{ThemeResource BrandDividerBrush}" />
         <Setter Property="BorderThickness" Value="1" />
