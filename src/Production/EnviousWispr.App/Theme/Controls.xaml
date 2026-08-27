@@ -18,6 +18,18 @@
     <Style x:Key="BrandHeaderCardStyle" TargetType="Border" BasedOn="{StaticResource BrandSectionCardStyle}">
         <Setter Property="Padding" Value="20" />
     </Style>
+    <Style x:Key="BrandPrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
+        <Setter Property="Background" Value="{ThemeResource BrandAccentSolidBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandAccentSolidBrush}" />
+        <Setter Property="CornerRadius" Value="{ThemeResource BrandSectionRadius}" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandOnAccentBrush}" />
+    </Style>
+    <Style x:Key="BrandQuietButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="{ThemeResource BrandAccentLightBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandDividerBrush}" />
+        <Setter Property="CornerRadius" Value="{ThemeResource BrandSectionRadius}" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandAccentBrush}" />
+    </Style>
     <DataTemplate x:Key="BrandControlHeaderTemplate">
         <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding}" TextWrapping="Wrap" />
     </DataTemplate>
