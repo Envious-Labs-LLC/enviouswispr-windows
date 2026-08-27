@@ -678,6 +678,142 @@ public sealed partial class DesignSystemTokenTests
         }
     }
 
+    /// <summary>
+    /// Every sidebar row leads somewhere of its own. No two rows may resolve to the same section.
+    /// </summary>
+    /// <remarks>
+    /// The defect: Transcription, Microphone and Keybinds all resolved to one section, and Live
+    /// Preview resolved to Appearance's. Five sidebar rows rendered two distinct views, with only
+    /// the header card's text differing — so clicking Keybinds showed a microphone picker and an
+    /// engine chooser with "Keybinds" written above them. Nothing failed; each page looked
+    /// deliberate on its own, and the duplication was only visible by opening two rows in turn.
+    /// The Help page had the same shape one level worse: its dispatch set the header and never
+    /// filtered at all, so three rows each showed all five sections.
+    ///
+    /// Enumerated from the NAV, not from a list kept here. The tags come out of MainWindow.xaml and
+    /// the destinations out of the dispatch in MainWindow.xaml.cs, so a sidebar row added next month
+    /// is covered on arrival — and a row added with no destination at all is a failure rather than a
+    /// silent fall-through to the catch-all.
+    /// </remarks>
+    [Fact]
+    public void NoTwoSidebarRowsLeadToTheSameSection()
+    {
+        var document = LoadMainWindow();
+        var codeBehind = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "Production",
+            "EnviousWispr.App",
+            "MainWindow.xaml.cs"));
+
+        var tags = document.Descendants()
+            .Where(element => element.Name.LocalName == "NavigationViewItem")
+            .Select(element => (string?)element.Attribute("Tag"))
+            .Where(tag => tag is not null)
+            .Select(tag => tag!)
+            .Where(tag => tag.StartsWith("settings-", StringComparison.Ordinal)
+                || tag.StartsWith("help-", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            tags.Length > 0,
+            "No settings- or help- nav tags were found in MainWindow.xaml. The sidebar is this test's "
+                + "input, so zero tags means it is checking nothing.");
+
+        // Both dispatches spell a destination the same way: the section's field name, ending in
+        // "Section", on the line that closes the switch arm.
+        var destinations = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var tag in tags)
+        {
+            // A tag can appear in MORE THAN ONE dispatch, and the one that names the section is not
+            // always the first. Help rows carry their title in ConfigureHelpPage and their
+            // destination in HelpSectionFor, so reading only the first arm finds a title, no
+            // section, and reports a row that leads nowhere - a false report in the exact shape of
+            // a real finding. Every arm for the tag is read, and they must agree.
+            var found = new List<string>();
+            var cursor = 0;
+            while (true)
+            {
+                var start = codeBehind.IndexOf($"\"{tag}\"", cursor, StringComparison.Ordinal);
+                if (start < 0)
+                {
+                    break;
+                }
+
+                cursor = start + tag.Length;
+
+                // Only an occurrence followed by "=>" is a dispatch arm. The tag also appears in
+                // ordinary comparisons ( tag == "settings-transcription" ), and slicing from one of
+                // those runs on into unrelated code - it picked up SettingsSections() and reported
+                // the row as resolving to two different destinations.
+                var afterLiteral = start + tag.Length + 2;
+                if (afterLiteral >= codeBehind.Length
+                    || !codeBehind[afterLiteral..].TrimStart().StartsWith("=>", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var rest = codeBehind[start..];
+                var end = rest.Length;
+                foreach (var terminator in new[] { "\"settings-", "\"help-", "_ =>" })
+                {
+                    // From index 1, so the arm's own opening tag literal is not its own terminator.
+                    var next = rest.IndexOf(terminator, 1, StringComparison.Ordinal);
+                    if (next >= 0 && next < end)
+                    {
+                        end = next;
+                    }
+                }
+
+                var match = Regex.Match(rest[..end], @"(?<name>\w+Section)(?![A-Za-z0-9_])");
+                if (match.Success)
+                {
+                    found.Add(match.Groups["name"].Value);
+                }
+            }
+
+            Assert.True(
+                found.Count > 0,
+                $"The nav row tagged '{tag}' resolves to no section in any dispatch. A row that leads "
+                    + "nowhere shows whatever the previous row left on screen.");
+            Assert.True(
+                found.Distinct(StringComparer.Ordinal).Count() == 1,
+                $"The nav row tagged '{tag}' resolves to more than one section depending on which "
+                    + $"dispatch you read: {string.Join(", ", found.Distinct(StringComparer.Ordinal))}. "
+                    + "Two dispatches disagreeing about one row is how a page ends up showing one "
+                    + "thing and claiming another.");
+            destinations[tag] = found[0];
+        }
+
+        var collisions = destinations
+            .GroupBy(pair => pair.Value, StringComparer.Ordinal)
+            .Where(group => group.Count() > 1)
+            .Select(group => $"{group.Key} <- {string.Join(", ", group.Select(pair => pair.Key))}")
+            .ToArray();
+
+        Assert.True(
+            collisions.Length == 0,
+            "These sidebar rows lead to the SAME section, so they render the same page with only the "
+                + "header differing:\n  "
+                + string.Join("\n  ", collisions)
+                + "\nGive each row its own section, or remove the row. A sidebar that promises more "
+                + "destinations than it has is the single loudest way an app reads as unfinished.");
+
+        // Every destination must actually exist in the markup. A dispatch naming a section that was
+        // renamed or deleted would not compile, but one naming a section that exists only in the
+        // dispatch's own text would pass the check above while resolving to nothing.
+        var declared = document.Descendants()
+            .Select(element => (string?)element.Attribute(XName.Get("Name", XamlNamespace)))
+            .Where(name => name is not null)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var (tag, section) in destinations)
+        {
+            Assert.True(
+                declared.Contains(section),
+                $"The row tagged '{tag}' points at '{section}', which is not declared in MainWindow.xaml.");
+        }
+    }
+
     private static XDocument LoadMainWindow() =>
         XDocument.Load(Path.Combine(
             FindRepositoryRoot(),
