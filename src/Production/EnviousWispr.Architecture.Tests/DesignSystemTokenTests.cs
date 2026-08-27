@@ -665,6 +665,15 @@ public sealed partial class DesignSystemTokenTests
                 $"'{name}' must declare exactly one items panel; found {panel.Length}.");
             Assert.Equal("StackPanel", panel[0].Name.LocalName);
 
+            // A single tab stop is only half of the Windows convention; the other half is arrow
+            // movement WITHIN the group. Setting TabFocusNavigation alone made keyboard access
+            // strictly worse than before: the group took one tab stop, and a plain ItemsControl
+            // has no arrow navigation, so every unselected card became unreachable by keyboard
+            // entirely. Measured on the running app - Tab entered the group and Down/Up/Right
+            // moved nothing. Both properties, or neither.
+            Assert.Equal("Once", (string?)list.Attribute("TabFocusNavigation"));
+            Assert.Equal("Enabled", (string?)list.Attribute("XYFocusKeyboardNavigation"));
+
             var orientation = (string?)panel[0].Attribute("Orientation");
             Assert.True(
                 orientation is null or "Vertical",
