@@ -80,8 +80,14 @@ public sealed partial class WindowMinimumSizeTests
         // A bare numeric literal here is the regression this test exists for: it means somebody
         // resolved the arithmetic once and pasted the answer. Loop counts and small multipliers
         // live in named constants, so the body should carry no free-standing number.
+        // Comments are stripped first. This test is about the COMPUTATION, and prose explaining
+        // it legitimately contains numbers - a comment describing behaviour on a 150% display is
+        // not a hardcoded width. Scanning the raw body makes the gate fire on its own
+        // documentation, which trains the next person to delete the comment rather than fix the
+        // code.
+        var executable = CommentRegex().Replace(body, string.Empty);
         var literals = NumericLiteralRegex()
-            .Matches(body)
+            .Matches(executable)
             .Select(m => m.Value)
             .ToArray();
         Assert.True(
@@ -253,6 +259,9 @@ public sealed partial class WindowMinimumSizeTests
 
     [GeneratedRegex(@"(?<![A-Za-z0-9_.])\d+(\.\d+)?(?![A-Za-z0-9_])", RegexOptions.CultureInvariant)]
     private static partial Regex NumericLiteralRegex();
+
+    [GeneratedRegex(@"//[^\r\n]*", RegexOptions.CultureInvariant)]
+    private static partial Regex CommentRegex();
 
     [GeneratedRegex(
         "ProductNavigation\\.Resources\\[\"NavigationViewContentMargin\"\\]\\s*=\\s*new\\s+Thickness\\(\\s*frameInset\\s*,\\s*default\\s*,\\s*default\\s*,\\s*default\\s*\\)",
