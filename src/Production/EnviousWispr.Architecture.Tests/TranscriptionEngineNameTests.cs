@@ -542,4 +542,47 @@ public sealed partial class DesignSystemTokenTests
 
     [GeneratedRegex(@"<Setter Target=""([^""]+)""")]
     private static partial Regex SetterTarget();
+
+    /// <summary>
+    /// The wait a user sat through is reported however the dictation ended.
+    /// </summary>
+    /// <remarks>
+    /// This method leaves by several paths: text delivered, text held for recovery, and a
+    /// transcription failure. A report written beside each return would have missed one, and the
+    /// one it would have missed is the failure path - which is the SLOWEST, so the number would be
+    /// systematically optimistic exactly where it matters.
+    ///
+    /// So the gate is structural rather than a count of call sites: the event must be written
+    /// inside a finally. A finally covers every exit including ones added later and ones that
+    /// throw, which no enumeration of returns can promise.
+    /// </remarks>
+    [Fact]
+    public void TheWaitIsReportedHoweverTheDictationEnds()
+    {
+        var source = File.ReadAllText(
+            Path.Combine(
+                FindRepositoryRoot(),
+                "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+
+        var writes = source.Split("AppEventCode.DictationCompleted").Length - 1;
+        Assert.True(writes == 1, $"Expected exactly one place to report the wait, found {writes}.");
+
+        var block = FinallyBlock().Matches(source)
+            .Select(match => match.Value)
+            .Where(body => body.Contains("AppEventCode.DictationCompleted", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            block.Length == 1,
+            "The wait is not reported from a finally, so an exit path can leave without reporting it.");
+
+        // Control: the matcher must find finally blocks that do NOT report the wait, or a matcher
+        // that matched nothing would fail this test for the wrong reason and one that matched
+        // everything would pass it for the wrong reason.
+        var allFinallys = FinallyBlock().Count(source);
+        Assert.True(allFinallys > 1, $"Expected several finally blocks in this file, found {allFinallys}.");
+    }
+
+    [GeneratedRegex(@"finally\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", RegexOptions.Singleline)]
+    private static partial Regex FinallyBlock();
 }

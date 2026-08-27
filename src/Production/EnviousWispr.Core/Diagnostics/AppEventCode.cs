@@ -61,5 +61,17 @@ public enum AppEventCode
     DiagnosticsExportFailed,
     TelemetryConsentEnabled,
     TelemetryConsentDisabled,
+    /// <summary>
+    /// One dictation, from the moment the user stopped speaking to the moment their text existed
+    /// somewhere they could use it. Its ElapsedMilliseconds is the ONLY number that answers "how
+    /// long did I wait".
+    /// </summary>
+    /// <remarks>
+    /// Every stage already logged its own elapsed time and none of them answered that question.
+    /// Four numbers in four lines cannot be added up afterwards: nothing says which dictation each
+    /// belongs to, and a sum silently reports zero for everything BETWEEN the stages, which is
+    /// where an unexplained wait would hide. This is measured by one stopwatch spanning the path.
+    /// </remarks>
+    DictationCompleted,
     UnhandledFailure,
 }
