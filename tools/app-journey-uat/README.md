@@ -44,6 +44,24 @@ These runs still substitute reviewed fixture capture and named press/release eve
 installed shell, worker, ASR, deterministic pipeline, and controlled native delivery; they do not replace the
 physical global-hotkey and microphone journey below.
 
+The English fixture can also exercise an isolated deterministic settings profile. The enabled profile adds a
+reviewed custom-word entry whose replacement must then pass through filler removal, spoken emoji, and spoken
+punctuation before the controlled target accepts it. The disabled profile keeps the same custom-word entry but
+turns all four user switches off and requires the original recognized word to survive. The result reports only
+the profile name and enabled boolean, never transcript or target content:
+
+```powershell
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --deterministic-profile enabled `
+  --app-executable $installedApp
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --deterministic-profile disabled `
+  --app-executable $installedApp
+```
+
+Deterministic-profile UAT is intentionally isolated from polish, Live Preview, live microphone, Escape Recovery,
+and fault injection so a passing transformation has one unambiguous settings and stage-order contract.
+
 The same reviewed-fixture success journey can require healthy local AI polish. These modes wait for provider
 readiness, require `PolishStarted` and `PolishCompleted` from the selected provider, reject degraded fallback,
 and verify native delivery plus exact owned-process cleanup. They never emit the supplied EG-1 paths or the
