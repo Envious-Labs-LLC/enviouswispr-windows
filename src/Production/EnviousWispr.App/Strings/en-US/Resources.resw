@@ -24,13 +24,13 @@
   <data name="HomeNavItem.AccessKey" xml:space="preserve"><value>M</value></data>
   <data name="HistoryNavItem.Content" xml:space="preserve"><value>History</value></data>
   <data name="HistoryNavItem.AccessKey" xml:space="preserve"><value>Y</value></data>
-  <data name="DictionaryNavItem.Content" xml:space="preserve"><value>Dictionary</value></data>
+  <data name="DictionaryNavItem.Content" xml:space="preserve"><value>Your Words</value></data>
   <data name="DictionaryNavItem.AccessKey" xml:space="preserve"><value>D</value></data>
   <data name="SnippetsNavItem.Content" xml:space="preserve"><value>Snippets</value></data>
   <data name="SnippetsNavItem.AccessKey" xml:space="preserve"><value>S</value></data>
   <data name="HelpNavItem.Content" xml:space="preserve"><value>Help and privacy</value></data>
   <data name="HelpNavItem.AccessKey" xml:space="preserve"><value>P</value></data>
-  <data name="SettingsNavItem.Content" xml:space="preserve"><value>Settings</value></data>
+  <data name="SettingsNavItem.Content" xml:space="preserve"><value>All Settings</value></data>
   <data name="SettingsNavItem.AccessKey" xml:space="preserve"><value>T</value></data>
   <data name="HomeTitle.Text" xml:space="preserve"><value>Speak naturally. Keep working.</value></data>
   <data name="WhisperLanguageComboBox.Header" xml:space="preserve"><value>Whisper language</value></data>

@@ -814,6 +814,76 @@ public sealed partial class DesignSystemTokenTests
         }
     }
 
+    /// <summary>
+    /// Where markup and the resource file both name a control, they must say the same thing.
+    /// </summary>
+    /// <remarks>
+    /// An <c>x:Uid</c> makes the .resw the winner: whatever <c>Content="..."</c> says in the markup
+    /// is dead text that never reaches the screen. So the two can drift apart in total silence, and
+    /// the tell is only visible at runtime, on screen, in two places at once.
+    ///
+    /// Measured: the sidebar read "Dictionary" while the page it opened was headed "Your Words", and
+    /// the rest of the product — the page header, the add-a-word helper — said "Your Words" too. One
+    /// feature, two names, and the name a reader would find by grepping the markup was the one nobody
+    /// ever saw. Editing that dead attribute is the natural repair and changes nothing.
+    ///
+    /// Enumerated from the .resw, which is the authority. An override added later is covered on
+    /// arrival, and this asserts AGREEMENT rather than picking a winner, so it cannot be satisfied by
+    /// deleting one side.
+    /// </remarks>
+    [Fact]
+    public void MarkupAndResourcesAgreeOnEveryOverriddenLabel()
+    {
+        var document = LoadMainWindow();
+        var resources = XDocument.Load(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "Production",
+            "EnviousWispr.App",
+            "Strings",
+            "en-US",
+            "Resources.resw"));
+
+        var overrides = resources.Root!
+            .Elements("data")
+            .Select(entry => (
+                Name: (string?)entry.Attribute("name") ?? string.Empty,
+                Value: entry.Element("value")?.Value ?? string.Empty))
+            .Where(entry => entry.Name.EndsWith(".Content", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            overrides.Length > 0,
+            "No .Content overrides were found in Resources.resw. They are this test's input, so zero "
+                + "means it is checking nothing.");
+
+        var disagreements = new List<string>();
+        foreach (var (name, value) in overrides)
+        {
+            var uid = name[..^".Content".Length];
+            var element = document.Descendants()
+                .FirstOrDefault(candidate =>
+                    (string?)candidate.Attribute(XName.Get("Uid", XamlNamespace)) == uid);
+            if (element is null)
+            {
+                continue;
+            }
+
+            var markup = (string?)element.Attribute("Content");
+            if (markup is not null && !string.Equals(markup, value, StringComparison.Ordinal))
+            {
+                disagreements.Add($"{uid}: markup says \"{markup}\", resource says \"{value}\" (resource wins)");
+            }
+        }
+
+        Assert.True(
+            disagreements.Count == 0,
+            "Markup and resources disagree about what these controls are called:\n  "
+                + string.Join("\n  ", disagreements)
+                + "\nThe resource file wins at runtime, so the markup value is what nobody sees. Make "
+                + "them match — the user should not meet one feature under two names.");
+    }
+
     private static XDocument LoadMainWindow() =>
         XDocument.Load(Path.Combine(
             FindRepositoryRoot(),
