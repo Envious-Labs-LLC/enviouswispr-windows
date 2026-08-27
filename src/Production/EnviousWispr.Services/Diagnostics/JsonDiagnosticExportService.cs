@@ -2,6 +2,7 @@ using System.Security;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Services.Settings;
+using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Services.Diagnostics;
 
@@ -20,7 +21,7 @@ public sealed class JsonDiagnosticExportService(string sourcePath) : IDiagnostic
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
         ArgumentOutOfRangeException.ThrowIfLessThan(retentionDays, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(retentionDays, 90);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(retentionDays, RetentionDays.DiagnosticMaximum);
         var destination = Path.GetFullPath(destinationPath);
         if (string.Equals(destination, _sourcePath, StringComparison.OrdinalIgnoreCase))
         {

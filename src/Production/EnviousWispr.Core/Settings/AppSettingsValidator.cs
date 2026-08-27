@@ -17,7 +17,8 @@ public static class AppSettingsValidator
                 (string.IsNullOrWhiteSpace(settings.PreferredMicrophoneId) ||
                  settings.PreferredMicrophoneId.Length > 2_048)) ||
             settings.Observability is null ||
-            settings.Observability.DiagnosticRetentionDays is < 1 or > 90 ||
+            settings.Observability.DiagnosticRetentionDays
+                is < RetentionDays.DiagnosticMinimum or > RetentionDays.DiagnosticMaximum ||
             !IsValid(settings.Preferences) ||
             !IsValid(settings.UserData))
         {
@@ -58,7 +59,8 @@ public static class AppSettingsValidator
         (preferences.Polish.OllamaEndpoint is null ||
             (!string.IsNullOrWhiteSpace(preferences.Polish.OllamaEndpoint) &&
              preferences.Polish.OllamaEndpoint.Length <= 2_048)) &&
-        preferences.History.RetentionDays is >= 0 and <= 3_650 &&
+        preferences.History.RetentionDays
+            is >= RetentionDays.HistoryMinimum and <= RetentionDays.HistoryMaximum &&
         Enum.IsDefined(preferences.Theme) &&
         Enum.IsDefined(preferences.OverlayPosition) &&
         Enum.IsDefined(preferences.PillDesignWithoutWords) &&
