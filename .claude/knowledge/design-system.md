@@ -51,6 +51,32 @@ walk `MainWindow.xaml` and check whatever they find, so a page or a choice list 
 covered on arrival. A gate carrying its own roster silently stops covering the thing it was written
 for the first time somebody adds a page and does not think to update it.
 
+## RULE: a-change-that-ships-and-does-nothing-looks-like-one-that-never-arrived
+**Four fixes in this repo shipped, built clean, passed every gate, and had ZERO effect on the running
+app.** Each was found only because someone measured the app afterwards and got a number identical to the
+one before.
+
+- A minimum width bound to a list, to equalise cards: measurements byte-identical across two builds. The
+  binding could not resolve from inside a style in a resource dictionary, so the value silently stayed 0.
+- `MinHeight` set BELOW an element's natural height, to make rows denser. A minimum is a FLOOR; it can
+  only push bigger. Inert by construction.
+- A check badge hidden from one visual-state group while another group set the same property. Two groups,
+  one property, no defined order between them - the other group won.
+- A rule implemented on one page when the case it was written for lived on the other page.
+
+**The tell is always the same and it is free: the measurement does not move.** Not "improves a little" -
+IDENTICAL. Ask for the number before and the number after, and treat an unchanged number as evidence the
+change never reached the thing, not as evidence the change was too small.
+
+**And the inverse failure is cheaper, so prefer it.** Replacing `MinHeight` with `Height` fixed the
+density and CLIPPED the group headings - the bottom row of pixels sliced off every glyph. That cost one
+round, because it was visible the moment anyone looked. The three inert changes cost three rounds and
+would all have shipped believed-working. **A fix that fails loudly beats three that fail silently.**
+
+Corollary for sizing a text-bearing container: shorten the BLOCK with margin, never the text box with a
+height. `MinHeight` cannot shrink it and `Height` cannot let it grow, so a fixed height is a clip waiting
+for a longer word or a larger font.
+
 ## RULE: a-green-suite-here-is-not-evidence-the-app-starts
 **Every check in this file parses the views as XML. None of them LOADS them as XAML, and those are
 different questions.** A `StaticResource` is assigned without running a type converter, so a token of the
