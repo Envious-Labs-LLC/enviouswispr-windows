@@ -772,6 +772,11 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
+        // An empty field means the default rather than zero. A zero here would be clamped up by
+        // the policy anyway, but storing it would show the user a threshold they never chose.
+        var autoStopSeconds = double.IsNaN(AutoStopSecondsBox.Value)
+            ? DictationPreferences.Default.AutoStopSilenceSeconds
+            : AutoStopSecondsBox.Value;
         var dictation = new DictationPreferences(
             (FinalAsrEngine)Math.Clamp(SelectedIndexOf(FinalEngineChoices), 0, 2),
             parsedHotkey.Gesture!.Value.ToString(),
@@ -783,7 +788,9 @@ public sealed partial class MainWindow : Window, IDisposable
             (DictationRecordingMode)Math.Clamp(RecordingModeComboBox.SelectedIndex, 0, 1),
             parsedCancelHotkey.Gesture!.Value.ToString(),
             EscapeRecoveryToggle.IsOn,
-            parsedQuickAddHotkey.Gesture!.Value.ToString());
+            parsedQuickAddHotkey.Gesture!.Value.ToString(),
+            AutoStopToggle.IsOn,
+            autoStopSeconds);
         var polish = new PolishPreferences(
             PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)),
             NullIfBlank(PolishModelTextBox.Text),
@@ -1595,6 +1602,19 @@ public sealed partial class MainWindow : Window, IDisposable
     /// here round-trips: letters, digits, F1-F24 and the named keys it normalises. An unsupported
     /// key leaves the field untouched rather than writing something that cannot be parsed.
     /// </remarks>
+    /// <summary>
+    /// The threshold field is only useful when the switch above it is on, and only in Toggle mode.
+    /// </summary>
+    /// <remarks>
+    /// Disabled rather than hidden. A control that vanishes leaves the user wondering whether they
+    /// imagined it; a disabled one with the switch beside it says what turns it back on.
+    /// </remarks>
+    private void AutoStopToggle_Toggled(object sender, RoutedEventArgs e) =>
+        UpdateAutoStopAvailability();
+
+    private void UpdateAutoStopAvailability() =>
+        AutoStopSecondsBox.IsEnabled = AutoStopToggle.IsOn;
+
     private void HotkeyBoxKeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (sender is not TextBox box)
@@ -1861,6 +1881,9 @@ public sealed partial class MainWindow : Window, IDisposable
             FillerRemovalToggle.IsOn = preferences.Dictation.FillerRemovalEnabled;
             EmojiFormatterToggle.IsOn = preferences.Dictation.EmojiFormatterEnabled;
             SpokenPunctuationToggle.IsOn = preferences.Dictation.SpokenPunctuationEnabled;
+            AutoStopToggle.IsOn = preferences.Dictation.AutoStopEnabled;
+            AutoStopSecondsBox.Value = preferences.Dictation.AutoStopSilenceSeconds;
+            UpdateAutoStopAvailability();
             SelectChoice(PolishProviderChoices, PolishProviderIndex(preferences.Polish.Provider));
             PolishModelTextBox.Text = preferences.Polish.ModelId ?? string.Empty;
             OllamaEndpointTextBox.Text = preferences.Polish.OllamaEndpoint ?? string.Empty;
