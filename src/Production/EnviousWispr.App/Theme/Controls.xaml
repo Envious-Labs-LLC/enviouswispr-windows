@@ -63,8 +63,17 @@
          ellipsis, which reads as a rendering fault rather than as a shortened label. Measured at
          the app's own default window size: "Push to Talk - hold to record, release to stop" came
          out as "Push to Talk - hold to reco". -->
+    <!-- For dropdowns whose items ARE strings. Binding the item itself is correct here and
+         wrong for object-backed lists, where it renders the type name. -->
     <DataTemplate x:Key="BrandTrimmedChoiceTemplate">
         <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+    </DataTemplate>
+    <!-- For dropdowns whose items are OBJECTS carrying a DisplayName. These previously used
+         DisplayMemberPath, which cannot coexist with an ItemTemplate: setting both throws when
+         the item containers are REALIZED, so the app starts cleanly and then dies the moment the
+         page holding that dropdown is opened. -->
+    <DataTemplate x:Key="BrandTrimmedDisplayNameTemplate">
+        <TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
     </DataTemplate>
     <DataTemplate x:Key="BrandControlHeaderTemplate">
         <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding}" TextWrapping="Wrap" />
@@ -117,8 +126,16 @@
                                              pill groups are shown at once and only one is in use, so
                                              two cards were reading as selected simultaneously. The
                                              choice is still remembered; it just stops claiming to be
-                                             the current one. -->
-                                        <Setter Target="CheckBadge.Visibility" Value="Collapsed" />
+                                             the current one.
+
+                                             OPACITY, not Visibility. The first attempt set
+                                             Visibility here, which the CheckStates group below also
+                                             sets - two VisualStateGroups writing one property, with
+                                             no defined order between them, so the other group won
+                                             and this did nothing. Measured on the running app: both
+                                             badges still showed. Opacity is touched by no other
+                                             group, so there is nothing to race. -->
+                                        <Setter Target="CheckBadge.Opacity" Value="0" />
                                     </VisualState.Setters>
                                 </VisualState>
                             </VisualStateGroup>

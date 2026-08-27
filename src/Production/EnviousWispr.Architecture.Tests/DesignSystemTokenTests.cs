@@ -34,6 +34,15 @@ public sealed partial class DesignSystemTokenTests
 {
     private const string XamlNamespace = "http://schemas.microsoft.com/winfx/2006/xaml";
 
+    /// <summary>The four card-based choice lists, by name.</summary>
+    private static readonly string[] ChoiceListNames =
+    [
+        "EngineComboBox",
+        "PolishProviderComboBox",
+        "ThemeComboBox",
+        "OverlayPositionComboBox",
+    ];
+
     private static readonly Dictionary<string, ThemePair> ExpectedTokenColors = new(StringComparer.Ordinal)
     {
         ["BrandPageBg"] = new("#F8F5FF", "#131019"),
@@ -493,17 +502,47 @@ public sealed partial class DesignSystemTokenTests
     public void ChoiceSetsKeepPlatformSingleSelectionSemantics()
     {
         var document = LoadMainWindow();
-        foreach (var name in new[]
-                 {
-                     "EngineComboBox",
-                     "PolishProviderComboBox",
-                     "ThemeComboBox",
-                     "OverlayPositionComboBox",
-                 })
+        foreach (var name in ChoiceListNames)
         {
             var element = FindNamedElement(document, name);
-            Assert.Equal("RadioButtons", element.Name.LocalName);
+
+            // Deliberately NOT a RadioButtons control. That control arranges each item at the
+            // item's own desired size and never consults the item's alignment, so the cards came
+            // out at as many different widths as there were descriptions - a visible staircase.
+            // Three attempts to make it hand its width down failed, the last one inertly, giving
+            // byte-identical measurements across two builds. An ItemsControl over a StackPanel
+            // gives every card the panel's full width, which is all that was ever wanted.
+            Assert.Equal("ItemsControl", element.Name.LocalName);
+
+            // Single-selection semantics survive the change: the items are still RadioButtons in
+            // a named group, so exactly one can be checked. Losing that would trade a layout bug
+            // for a behaviour bug.
+            var group = element.Descendants()
+                .Where(child => child.Name.LocalName == "RadioButton")
+                .Select(child => (string?)child.Attribute("GroupName"))
+                .ToArray();
+            Assert.True(
+                group.Length == 1 && !string.IsNullOrWhiteSpace(group[0]),
+                $"'{name}' must render exactly one RadioButton template carrying a GroupName; "
+                    + $"found {group.Length}. Without a group name the cards stop excluding each "
+                    + "other and more than one can appear chosen.");
         }
+
+        // Every CHOICE LIST's group name must be distinct, or two lists share one exclusion set
+        // and choosing in one silently clears the other. Scoped to the four lists on purpose: the
+        // recording-pill cards below deliberately SHARE a group, because Capsule and Level Rail
+        // are two options in one choice, and a blanket distinctness check would call that a bug.
+        var groupNames = ChoiceListNames
+            .Select(name => FindNamedElement(document, name))
+            .SelectMany(list => list.Descendants().Where(child => child.Name.LocalName == "RadioButton"))
+            .Select(element => (string?)element.Attribute("GroupName"))
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToArray();
+        Assert.True(
+            groupNames.Length == groupNames.Distinct(StringComparer.Ordinal).Count(),
+            "Two choice lists share a RadioButton GroupName: "
+                + string.Join(", ", groupNames.GroupBy(v => v, StringComparer.Ordinal)
+                    .Where(g => g.Count() > 1).Select(g => g.Key)));
 
         foreach (var name in new[]
                  {
@@ -594,41 +633,43 @@ public sealed partial class DesignSystemTokenTests
     /// Every choice list renders as ONE full-width column of equal cards.
     /// </summary>
     /// <remarks>
-    /// Letting the layout choose its own column count produced six provider cards at six different
-    /// widths, stacked into a staircase down the page. The Mac stacks engine choices full width and
-    /// always has; multi-column was never the design, so the column count is pinned rather than
-    /// negotiated.
+    /// The PROPERTY is unchanged from when this was written; the mechanism that delivers it is
+    /// not. It used to assert a RadioButtons control pinned to one column - that control arranges
+    /// each item at the item's own desired size, so the cards came out at six different widths and
+    /// three attempts to make it hand its width down all failed. The lists are now ItemsControls
+    /// over a vertical StackPanel, which gives every item the panel's full width.
     ///
-    /// Enumerated from the document. A fifth choice list added later is covered on arrival.
+    /// Re-pointed rather than deleted. A gate whose subject disappears is a gate that passes
+    /// vacuously or fails confusingly, and either way the claim it protected stops being checked.
     /// </remarks>
     [Fact]
     public void EveryChoiceListIsOneFullWidthColumn()
     {
         var document = LoadMainWindow();
-        var choiceLists = document.Descendants()
-            .Where(element => element.Name.LocalName == "RadioButtons")
-            .ToArray();
 
-        Assert.True(
-            choiceLists.Length > 0,
-            "No RadioButtons were found in MainWindow.xaml. Either the choice lists were replaced "
-                + "with another control — in which case this test's subject is gone and its green "
-                + "means nothing — or the document failed to load as expected.");
-
-        foreach (var list in choiceLists)
+        foreach (var name in ChoiceListNames)
         {
-            var name = (string?)list.Attribute(XName.Get("Name", XamlNamespace)) ?? "(unnamed)";
+            var list = FindNamedElement(document, name);
+            Assert.Equal("ItemsControl", list.Name.LocalName);
+            Assert.Equal("Stretch", (string?)list.Attribute("HorizontalAlignment"));
+
+            // The items panel must be a plain StackPanel. Its default orientation is vertical, and
+            // a StackPanel hands each child the full cross-axis width - which is the whole reason
+            // the control was changed.
+            var panel = list.Descendants()
+                .Where(element => element.Name.LocalName == "ItemsPanelTemplate")
+                .SelectMany(template => template.Elements())
+                .ToArray();
             Assert.True(
-                (string?)list.Attribute("MaxColumns") == "1",
-                $"Choice list '{name}' does not pin MaxColumns to 1. A negotiated column count is "
-                    + "what produced cards of six different widths.");
+                panel.Length == 1,
+                $"'{name}' must declare exactly one items panel; found {panel.Length}.");
+            Assert.Equal("StackPanel", panel[0].Name.LocalName);
+
+            var orientation = (string?)panel[0].Attribute("Orientation");
             Assert.True(
-                (string?)list.Attribute("HorizontalAlignment") == "Stretch",
-                $"Choice list '{name}' does not stretch, so its cards are sized to their own text "
-                    + "and their right edges will not line up.");
-            Assert.True(
-                (string?)list.Attribute("HorizontalContentAlignment") == "Stretch",
-                $"Choice list '{name}' does not stretch its content.");
+                orientation is null or "Vertical",
+                $"'{name}' lays its cards out {orientation}. A horizontal run of cards is a "
+                    + "different design and would reintroduce per-item widths.");
         }
     }
 
@@ -969,10 +1010,30 @@ public sealed partial class DesignSystemTokenTests
                     }
 
                     var key = match.Groups["key"].Value;
-                    var required = RequiredType(element.Name.LocalName, attribute.Name.LocalName);
+
+                    // A Setter's Value takes the type of the property it SETS, which is named by
+                    // its own Property attribute. Read through to that, otherwise every token
+                    // applied through a style is invisible to this check - and a style is exactly
+                    // where a token gets applied to many controls at once.
+                    var owner = element.Name.LocalName;
+                    var property = attribute.Name.LocalName;
+                    if (owner == "Setter" && property == "Value")
+                    {
+                        var target = (string?)element.Attribute("Property");
+                        if (target is null)
+                        {
+                            unknown.Add($"{view}: a Setter sets {key} with no Property attribute");
+                            continue;
+                        }
+
+                        owner = string.Empty;
+                        property = target;
+                    }
+
+                    var required = RequiredType(owner, property);
                     if (required is null)
                     {
-                        unknown.Add($"{view}: {element.Name.LocalName}.{attribute.Name.LocalName} <- {key}");
+                        unknown.Add($"{view}: {owner}.{property} <- {key}");
                         continue;
                     }
 
@@ -980,7 +1041,7 @@ public sealed partial class DesignSystemTokenTests
                     if (!string.Equals(required, actual, StringComparison.Ordinal))
                     {
                         mismatches.Add(
-                            $"{view}: {element.Name.LocalName}.{attribute.Name.LocalName} needs {required}, "
+                            $"{view}: {owner}.{property} needs {required}, "
                                 + $"but {key} is declared as {actual}");
                     }
                 }
@@ -1007,6 +1068,71 @@ public sealed partial class DesignSystemTokenTests
                 + "\nA StaticResource is assigned without a type converter, so this builds clean and "
                 + "then fails at LOAD: the app exits seconds after launch with E_XAMLPARSEFAILED and no "
                 + "window. Change the token's declared type, or move it to a property that takes it.");
+    }
+
+    /// <summary>
+    /// No items control declares two attributes that cannot both be honoured.
+    /// </summary>
+    /// <remarks>
+    /// <c>ItemTemplate</c> and <c>DisplayMemberPath</c> are mutually exclusive. Setting both
+    /// throws when the item containers are REALIZED rather than when the page is parsed, so the
+    /// app launches perfectly and then dies the moment the user opens the page holding that
+    /// control. Two of sixteen nav rows were fatal on click for exactly this reason.
+    ///
+    /// Both crashes shipped this way came from the SAME habit: adding one attribute across
+    /// several sites without reading what each site already declared. Forty-one column widths in
+    /// one case, four dropdowns in the other. A bulk edit is a per-site edit that only looks
+    /// uniform, and neither the compiler nor an XML parse can see the conflict.
+    ///
+    /// Enumerated from the markup and checked as PAIRS, so a control added later is covered on
+    /// arrival and a new mutually-exclusive pair only needs a row in the table below.
+    /// </remarks>
+    [Fact]
+    public void NoControlDeclaresMutuallyExclusiveAttributes()
+    {
+        // Each row: the pair that cannot coexist, and why it matters.
+        var forbidden = new[]
+        {
+            ("ItemTemplate", "DisplayMemberPath",
+                "throws when item containers are realized - the page kills the app when opened"),
+        };
+
+        var offenders = new List<string>();
+        var checkedControls = 0;
+
+        foreach (var view in new[] { "MainWindow.xaml", "DictationOverlayWindow.xaml" })
+        {
+            var document = XDocument.Load(Path.Combine(
+                FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", view));
+
+            foreach (var element in document.Descendants())
+            {
+                checkedControls++;
+                foreach (var (first, second, why) in forbidden)
+                {
+                    if (element.Attribute(first) is not null && element.Attribute(second) is not null)
+                    {
+                        var name = (string?)element.Attribute(XName.Get("Name", XamlNamespace))
+                            ?? "(unnamed)";
+                        offenders.Add(
+                            $"{view}: <{element.Name.LocalName} x:Name=\"{name}\"> sets both "
+                                + $"{first} and {second} - {why}");
+                    }
+                }
+            }
+        }
+
+        Assert.True(
+            checkedControls > 0,
+            "No elements were examined, so this test proved nothing about either view.");
+
+        Assert.True(
+            offenders.Count == 0,
+            "These controls declare attributes that cannot both be honoured:\n  "
+                + string.Join("\n  ", offenders)
+                + "\nPick one. To keep an ItemTemplate, bind the property inside the template "
+                + "({Binding DisplayName}) and drop DisplayMemberPath - binding the item itself "
+                + "renders the type name for an object-backed list.");
     }
 
     private static XDocument LoadMainWindow() =>
