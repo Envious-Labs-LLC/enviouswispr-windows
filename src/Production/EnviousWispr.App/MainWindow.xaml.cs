@@ -1794,7 +1794,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 (FrameworkElement?)TranscriptionEngineSection),
             "settings-live-preview" => (
                 "Live Preview",
-                "See your words on screen while you are still speaking.",
+                "See your words on screen while you are still speaking, and choose how the recording pill looks.",
                 "\uE890",
                 (FrameworkElement?)LivePreviewSection),
             "settings-microphone" => (
