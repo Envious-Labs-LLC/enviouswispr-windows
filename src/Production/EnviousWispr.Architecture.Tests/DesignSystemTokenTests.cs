@@ -436,14 +436,57 @@ public sealed partial class DesignSystemTokenTests
             .Where(name => name is not null)
             .ToHashSet(StringComparer.Ordinal);
         Assert.Contains("PointerOver", stateNames);
+        Assert.Contains("Pressed", stateNames);
         Assert.Contains("Checked", stateNames);
         Assert.Contains("Focused", stateNames);
+        Assert.Equal("3", ReadVisualStateSetter(style, "PointerOver", "InteractionBorder.BorderThickness"));
+        Assert.Equal("4", ReadVisualStateSetter(style, "Pressed", "InteractionBorder.BorderThickness"));
+        Assert.Equal("2", ReadVisualStateSetter(style, "Checked", "CardBorder.BorderThickness"));
         Assert.Contains(style.Descendants(), element =>
             string.Equals(
                 (string?)element.Attribute(XName.Get("Name", XamlNamespace)),
                 "CheckBadge",
                 StringComparison.Ordinal) &&
             string.Equals((string?)element.Attribute("Background"), "{ThemeResource BrandAccentSolidBrush}", StringComparison.Ordinal));
+    }
+
+    private static string? ReadVisualStateSetter(XElement style, string stateName, string target)
+    {
+        var state = style.Descendants().Single(element =>
+            element.Name.LocalName == "VisualState"
+            && string.Equals(
+                (string?)element.Attribute(XName.Get("Name", XamlNamespace)),
+                stateName,
+                StringComparison.Ordinal));
+        return (string?)state.Descendants().Single(element =>
+            element.Name.LocalName == "Setter"
+            && string.Equals((string?)element.Attribute("Target"), target, StringComparison.Ordinal))
+            .Attribute("Value");
+    }
+
+    [Fact]
+    public void HistoryDistinguishesLoadingFromLoadedEmptyStates()
+    {
+        var document = LoadMainWindow();
+        Assert.Equal("Collapsed", (string?)FindNamedElement(document, "HistoryList").Attribute("Visibility"));
+        Assert.Null(FindNamedElement(document, "HistoryLoadingState").Attribute("Visibility"));
+        Assert.Equal("Collapsed", (string?)FindNamedElement(document, "HistoryEmptyState").Attribute("Visibility"));
+        Assert.Equal("Collapsed", (string?)FindNamedElement(document, "HistorySearchEmptyState").Attribute("Visibility"));
+        Assert.Equal("Collapsed", (string?)FindNamedElement(document, "HistoryUnavailableState").Attribute("Visibility"));
+
+        var repositoryRoot = FindRepositoryRoot();
+        var codeBehind = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "src",
+            "Production",
+            "EnviousWispr.App",
+            "MainWindow.xaml.cs"));
+        Assert.Contains("private bool _isHistoryLoading = true;", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("_isHistoryLoading = false;", codeBehind, StringComparison.Ordinal);
+        Assert.Contains(
+            "HistoryLoadingState.Visibility = _isHistoryLoading ? Visibility.Visible : Visibility.Collapsed;",
+            codeBehind,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -756,7 +799,11 @@ public sealed partial class DesignSystemTokenTests
     private static partial Regex HexColorRegex();
 
     [GeneratedRegex(
-        @"\b(?:Brush|Background|Foreground|Fill|Stroke|BorderBrush)\s*=\s*[""'](?<color>[A-Za-z]+)[""']",
+        // `Color` belongs here and was missing: <SolidColorBrush Color="Transparent" /> and
+        // <Color>Red</Color>-style attribute forms are literal colours by any reading, and a
+        // detector that lists five sibling attribute names but not the most obvious one is
+        // exactly the shape of gap that reads as covered.
+        @"\b(?:Brush|Background|Foreground|Fill|Stroke|BorderBrush|Color)\s*=\s*[""'](?<color>[A-Za-z]+)[""']",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex NamedColorAttributeRegex();
 

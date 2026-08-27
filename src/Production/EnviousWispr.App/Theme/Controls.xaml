@@ -73,7 +73,7 @@
                                     <VisualState.Setters>
                                         <Setter Target="CardBorder.Background" Value="{ThemeResource BrandAccentLightBrush}" />
                                         <Setter Target="InteractionBorder.BorderBrush" Value="{ThemeResource BrandAccentBrush}" />
-                                        <Setter Target="InteractionBorder.BorderThickness" Value="2" />
+                                        <Setter Target="InteractionBorder.BorderThickness" Value="3" />
                                         <Setter Target="InteractionBorder.Opacity" Value="1" />
                                     </VisualState.Setters>
                                 </VisualState>
@@ -81,7 +81,7 @@
                                     <VisualState.Setters>
                                         <Setter Target="CardBorder.Background" Value="{ThemeResource BrandAccentLightBrush}" />
                                         <Setter Target="InteractionBorder.BorderBrush" Value="{ThemeResource BrandAccentSolidBrush}" />
-                                        <Setter Target="InteractionBorder.BorderThickness" Value="3" />
+                                        <Setter Target="InteractionBorder.BorderThickness" Value="4" />
                                         <Setter Target="InteractionBorder.Opacity" Value="1" />
                                     </VisualState.Setters>
                                 </VisualState>

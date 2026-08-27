@@ -76,6 +76,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private WasapiDeviceCatalog? _deviceCatalog;
     private AppSettings _settings;
     private HistoryLoadStatus _historyLoadStatus = HistoryLoadStatus.Missing;
+    private bool _isHistoryLoading = true;
     private bool _isApplyingSettings;
     private bool _initialFocusAssigned;
     private int _polishModelDiscoveryVersion;
@@ -174,6 +175,14 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         var frameInset = ((Thickness)Application.Current.Resources["BrandWindowFrameInset"]).Left;
         var contentCardMinimumWidth = (double)Application.Current.Resources["BrandContentCardMinimumWidth"];
+
+        // NavigationView's content margin is left-only. Build it from the same frame token
+        // before the control template is applied so all three visible gutters stay in sync.
+        ProductNavigation.Resources["NavigationViewContentMargin"] = new Thickness(
+            frameInset,
+            default,
+            default,
+            default);
 
         // Microsoft.UI.Xaml.Window.MinWidth does not exist in the Windows App SDK this project
         // builds against, so the minimum is set on the window's presenter instead. The
@@ -1152,12 +1161,15 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private async Task ReloadHistoryAsync()
     {
+        _isHistoryLoading = true;
+        UpdateHistoryListVisibility(HistorySearchBox.Text.Trim(), itemCount: 0);
         var result = await _historyStore.LoadAsync(
             _settings.Preferences.History.RetentionDays,
             DateTimeOffset.UtcNow).ConfigureAwait(true);
         _historyLoadStatus = result.Status;
         _history.Clear();
         _history.AddRange(result.Entries.Select(entry => new HistoryItemViewModel(entry)));
+        _isHistoryLoading = false;
         RefreshHistoryView();
         HistorySummaryText.Text = result.Status switch
         {
@@ -1192,14 +1204,15 @@ public sealed partial class MainWindow : Window, IDisposable
         var hasItems = itemCount > 0;
         var hasQuery = !string.IsNullOrWhiteSpace(query);
         var historyUnavailable = _historyLoadStatus is HistoryLoadStatus.Invalid or HistoryLoadStatus.Unavailable;
-        HistoryList.Visibility = hasItems ? Visibility.Visible : Visibility.Collapsed;
-        HistoryEmptyState.Visibility = !hasItems && !hasQuery && !historyUnavailable
+        HistoryLoadingState.Visibility = _isHistoryLoading ? Visibility.Visible : Visibility.Collapsed;
+        HistoryList.Visibility = !_isHistoryLoading && hasItems ? Visibility.Visible : Visibility.Collapsed;
+        HistoryEmptyState.Visibility = !_isHistoryLoading && !hasItems && !hasQuery && !historyUnavailable
             ? Visibility.Visible
             : Visibility.Collapsed;
-        HistorySearchEmptyState.Visibility = !hasItems && hasQuery && !historyUnavailable
+        HistorySearchEmptyState.Visibility = !_isHistoryLoading && !hasItems && hasQuery && !historyUnavailable
             ? Visibility.Visible
             : Visibility.Collapsed;
-        HistoryUnavailableState.Visibility = !hasItems && historyUnavailable
+        HistoryUnavailableState.Visibility = !_isHistoryLoading && !hasItems && historyUnavailable
             ? Visibility.Visible
             : Visibility.Collapsed;
         if (!hasItems && hasQuery && !historyUnavailable)

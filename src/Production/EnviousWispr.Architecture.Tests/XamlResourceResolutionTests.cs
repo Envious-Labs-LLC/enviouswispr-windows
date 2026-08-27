@@ -4,6 +4,14 @@ using System.Xml.Linq;
 
 namespace EnviousWispr.Architecture.Tests;
 
+/// <summary>
+/// Checks the app-owned slice of XAML resource resolution that can be established from source.
+/// </summary>
+/// <remarks>
+/// Known limit: every owned key declared in a view file is treated as visible throughout that file.
+/// WinUI scopes element-level resources to the declaring element and its descendants, so a sibling or
+/// ancestor reference can pass this gate even though it will not resolve at runtime.
+/// </remarks>
 public sealed partial class XamlResourceResolutionTests
 {
     private const string XamlNamespace = "http://schemas.microsoft.com/winfx/2006/xaml";
