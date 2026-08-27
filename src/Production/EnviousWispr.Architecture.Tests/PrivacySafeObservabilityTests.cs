@@ -8,6 +8,29 @@ namespace EnviousWispr.Architecture.Tests;
 
 public sealed class PrivacySafeObservabilityTests
 {
+    [Theory]
+    [InlineData("eg-one", DiagnosticProvider.EgOne)]
+    [InlineData("eg-1", DiagnosticProvider.EgOne)]
+    [InlineData("ollama", DiagnosticProvider.Ollama)]
+    [InlineData("openai", DiagnosticProvider.OpenAi)]
+    [InlineData("anthropic", DiagnosticProvider.Anthropic)]
+    [InlineData("gemini", DiagnosticProvider.Gemini)]
+    public void ProviderIdsMapToLowCardinalityDiagnostics(
+        string providerId,
+        DiagnosticProvider expected)
+    {
+        Assert.Equal(expected, DiagnosticProviderIds.FromProviderId(providerId));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("unknown")]
+    public void UnknownProviderIdsAreNotInvented(string? providerId)
+    {
+        Assert.Null(DiagnosticProviderIds.FromProviderId(providerId));
+    }
+
     private const string Sentinel = "PRIVATE dictated clipboard context api-key C:\\private\\model.gguf";
 
     [Theory]
