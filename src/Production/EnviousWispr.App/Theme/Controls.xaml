@@ -22,13 +22,26 @@
         <Setter Property="Background" Value="{ThemeResource BrandAccentSolidBrush}" />
         <Setter Property="BorderBrush" Value="{ThemeResource BrandAccentSolidBrush}" />
         <Setter Property="CornerRadius" Value="{ThemeResource BrandSectionRadius}" />
+        <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandOnAccentBrush}" />
         <Setter Property="Foreground" Value="{ThemeResource BrandOnAccentBrush}" />
     </Style>
-    <Style x:Key="BrandQuietButtonStyle" TargetType="Button">
+    <Style x:Key="BrandQuietButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
         <Setter Property="Background" Value="{ThemeResource BrandAccentLightBrush}" />
         <Setter Property="BorderBrush" Value="{ThemeResource BrandDividerBrush}" />
         <Setter Property="CornerRadius" Value="{ThemeResource BrandSectionRadius}" />
+        <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
         <Setter Property="Foreground" Value="{ThemeResource BrandAccentBrush}" />
+    </Style>
+    <Style x:Key="BrandHyperlinkButtonStyle" TargetType="HyperlinkButton" BasedOn="{StaticResource DefaultHyperlinkButtonStyle}">
+        <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandAccentBrush}" />
+    </Style>
+    <Style x:Key="BrandToggleSwitchStyle" TargetType="ToggleSwitch" BasedOn="{StaticResource DefaultToggleSwitchStyle}">
+        <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
     </Style>
     <DataTemplate x:Key="BrandControlHeaderTemplate">
         <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding}" TextWrapping="Wrap" />
