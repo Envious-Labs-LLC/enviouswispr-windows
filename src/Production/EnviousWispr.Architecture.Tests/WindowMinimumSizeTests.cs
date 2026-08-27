@@ -18,6 +18,10 @@ namespace EnviousWispr.Architecture.Tests;
 /// test, so what is checked is that the runtime computation is DERIVED from the three
 /// inputs — not that a particular pixel value came out. That distinction is the point: a
 /// test asserting <c>MinWidth == 842</c> would pass forever while the sidebar grew.
+///
+/// Known limit: the source walk proves that each named input reaches the assigned expression,
+/// not that it contributes arithmetically. A cancellation such as
+/// <c>OpenPaneLength - OpenPaneLength</c> can still pass this gate.
 /// </remarks>
 public sealed partial class WindowMinimumSizeTests
 {
@@ -123,6 +127,43 @@ public sealed partial class WindowMinimumSizeTests
             "The derived minimum does not account for the frame gutters.");
     }
 
+    [Fact]
+    public void AllThreeFrameGuttersUseTheFrameInsetToken()
+    {
+        var root = FindRepositoryRoot();
+        var mainWindow = XDocument.Load(Path.Combine(
+            root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var navigation = mainWindow.Descendants()
+            .Single(element =>
+                (string?)element.Attribute(XName.Get("Name", XamlNamespace)) == "ProductNavigation");
+
+        Assert.Equal(
+            "{StaticResource BrandWindowFrameInset}",
+            (string?)navigation.Attribute("Margin"));
+
+        var sidebarCard = mainWindow.Descendants()
+            .SingleOrDefault(element =>
+                element.Name.LocalName == "Border"
+                && string.Equals(
+                    (string?)element.Attribute("Width"),
+                    "{Binding OpenPaneLength, ElementName=ProductNavigation}",
+                    StringComparison.Ordinal));
+        Assert.True(sidebarCard is not null, "The sidebar frame card was not found in MainWindow.xaml.");
+        Assert.Equal(
+            "{StaticResource BrandWindowFrameInset}",
+            (string?)sidebarCard!.Attribute("Margin"));
+
+        var codeBehind = File.ReadAllText(Path.Combine(
+            root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var method = ConfigureMinimumWidthBodyRegex().Match(codeBehind);
+        Assert.True(
+            method.Success,
+            "ConfigureMinimumWindowWidth was not found, so the content-card gutter could not be checked.");
+        Assert.Matches(
+            NavigationContentMarginFromFrameInsetRegex(),
+            method.Groups["body"].Value);
+    }
+
     private static double ReadLayoutDouble(XDocument layout, string key)
     {
         var element = layout.Root!
@@ -212,4 +253,9 @@ public sealed partial class WindowMinimumSizeTests
 
     [GeneratedRegex(@"(?<![A-Za-z0-9_.])\d+(\.\d+)?(?![A-Za-z0-9_])", RegexOptions.CultureInvariant)]
     private static partial Regex NumericLiteralRegex();
+
+    [GeneratedRegex(
+        "ProductNavigation\\.Resources\\[\"NavigationViewContentMargin\"\\]\\s*=\\s*new\\s+Thickness\\(\\s*frameInset\\s*,\\s*default\\s*,\\s*default\\s*,\\s*default\\s*\\)",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex NavigationContentMarginFromFrameInsetRegex();
 }
