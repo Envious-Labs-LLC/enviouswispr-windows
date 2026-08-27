@@ -672,7 +672,14 @@ public sealed partial class DesignSystemTokenTests
             // entirely. Measured on the running app - Tab entered the group and Down/Up/Right
             // moved nothing. Both properties, or neither.
             Assert.Equal("Once", (string?)list.Attribute("TabFocusNavigation"));
-            Assert.Equal("Enabled", (string?)list.Attribute("XYFocusKeyboardNavigation"));
+
+            // Arrow movement is supplied BY HAND, not by a framework property. Two properties
+            // were tried and both were verified inert on the running app: TabFocusNavigation
+            // alone gives a tab stop with nothing to move within, and XYFocusKeyboardNavigation
+            // governs directional/gamepad navigation rather than arrow keys inside a radio group.
+            // A plain ItemsControl has no such key handling, so the handler is the mechanism and
+            // its absence is the regression.
+            Assert.Equal("ChoiceListKeyDown", (string?)list.Attribute("KeyDown"));
 
             var orientation = (string?)panel[0].Attribute("Orientation");
             Assert.True(
