@@ -787,4 +787,42 @@ public sealed partial class DesignSystemTokenTests
     /// </summary>
     [GeneratedRegex(@"<Button[^>]*Click=""Focus[A-Za-z_]*""[^>]*>")]
     private static partial Regex FocusButton();
+
+    /// <summary>
+    /// An import says what happened whether or not anything was added.
+    /// </summary>
+    /// <remarks>
+    /// The first version itemised only when NOTHING was added. One word importing successfully
+    /// replaced the whole description with a generic save message, so a hundred-line file with
+    /// sixty good rows and forty unreadable ones said "the change was saved locally" and the user
+    /// never learned about the forty.
+    ///
+    /// That is the INVERSE of the failure the description was written for, and it survived because
+    /// only the zero-added path had ever been looked at. It was found by a fixture built as a
+    /// CONTROL for the zero case - same shapes, non-zero additions - which is the pairing that
+    /// makes a one-sided result mean something.
+    ///
+    /// Gated structurally: both call sites must pass the description. A gate on the text itself
+    /// would pin wording that should be free to change.
+    /// </remarks>
+    [Fact]
+    public void AnImportSaysWhatHappenedOnBothPaths()
+    {
+        var source = File.ReadAllText(
+            Path.Combine(
+                FindRepositoryRoot(),
+                "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+
+        var uses = source.Split("DescribeImport(plan)").Length - 1;
+
+        Assert.True(
+            uses >= 2,
+            $"The import description is used {uses} time(s). Both the added and the nothing-added "
+            + "path must report it, or one of them silently drops every problem outcome.");
+
+        // Control: the helper must exist and be more than a stub, or "used twice" would be true of
+        // two calls to something that returns nothing.
+        Assert.Contains("private static string DescribeImport", source, StringComparison.Ordinal);
+        Assert.Contains("could not be read", source, StringComparison.Ordinal);
+    }
 }
