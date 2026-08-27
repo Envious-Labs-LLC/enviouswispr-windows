@@ -172,7 +172,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void ConfigureMinimumWindowWidth()
     {
-        var frameInset = (double)Application.Current.Resources["BrandWindowFrameInset"];
+        var frameInset = ((Thickness)Application.Current.Resources["BrandWindowFrameInset"]).Left;
         var contentCardMinimumWidth = (double)Application.Current.Resources["BrandContentCardMinimumWidth"];
 
         // Microsoft.UI.Xaml.Window.MinWidth does not exist in the Windows App SDK this project

@@ -2,6 +2,8 @@
 <ResourceDictionary
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Semantic absence, used where the native control layer must reveal the branded surface below it. -->
+    <Color x:Key="BrandTransparentColor">Transparent</Color>
     <ResourceDictionary.ThemeDictionaries>
         <ResourceDictionary x:Key="Light">
             <Color x:Key="BrandPageBgColor">#F8F5FF</Color>

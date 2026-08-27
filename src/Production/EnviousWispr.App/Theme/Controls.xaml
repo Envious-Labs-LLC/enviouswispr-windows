@@ -72,11 +72,17 @@
                                 <VisualState x:Name="PointerOver">
                                     <VisualState.Setters>
                                         <Setter Target="CardBorder.Background" Value="{ThemeResource BrandAccentLightBrush}" />
+                                        <Setter Target="InteractionBorder.BorderBrush" Value="{ThemeResource BrandAccentBrush}" />
+                                        <Setter Target="InteractionBorder.BorderThickness" Value="2" />
+                                        <Setter Target="InteractionBorder.Opacity" Value="1" />
                                     </VisualState.Setters>
                                 </VisualState>
                                 <VisualState x:Name="Pressed">
                                     <VisualState.Setters>
                                         <Setter Target="CardBorder.Background" Value="{ThemeResource BrandAccentLightBrush}" />
+                                        <Setter Target="InteractionBorder.BorderBrush" Value="{ThemeResource BrandAccentSolidBrush}" />
+                                        <Setter Target="InteractionBorder.BorderThickness" Value="3" />
+                                        <Setter Target="InteractionBorder.Opacity" Value="1" />
                                     </VisualState.Setters>
                                 </VisualState>
                                 <VisualState x:Name="Disabled">
@@ -124,6 +130,13 @@
                                 Padding="{TemplateBinding Padding}"
                                 VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
                         </Border>
+                        <Border
+                            x:Name="InteractionBorder"
+                            BorderBrush="{ThemeResource BrandAccentBrush}"
+                            BorderThickness="2"
+                            CornerRadius="{ThemeResource BrandSectionRadius}"
+                            IsHitTestVisible="False"
+                            Opacity="0" />
                         <Border
                             x:Name="CheckBadge"
                             Width="24"
