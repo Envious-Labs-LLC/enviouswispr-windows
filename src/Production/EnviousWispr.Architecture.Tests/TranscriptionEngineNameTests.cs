@@ -931,4 +931,78 @@ public sealed partial class DesignSystemTokenTests
 
     [GeneratedRegex(@"(\w+)\.Visibility\s*=")]
     private static partial Regex ToggledElement();
+
+    /// <summary>
+    /// Every section the window declares has a nav row that reaches it.
+    /// </summary>
+    /// <remarks>
+    /// THIS IS THE CHECK THAT WOULD HAVE CAUGHT A REAL REGRESSION. Removing the "All Settings"
+    /// aggregate page orphaned THREE sections and nine controls, four of them privacy or retention:
+    /// a user could not turn local diagnostics off, could not withdraw telemetry consent, could not
+    /// change how long diagnostics were kept, and could not stop dictation history being saved. The
+    /// app's own Help page still described a retention control that could no longer be reached.
+    ///
+    /// The verification after that removal asked whether anything still SHOWED the aggregate. It
+    /// did not ask what the aggregate had CARRIED. Those are different properties and only the
+    /// first was checked - by both of us - so the sections were orphaned for several builds while
+    /// the removal was reported clean.
+    ///
+    /// Seventeen sections and seventeen nav rows looked like a clean mapping and was not one: three
+    /// sections had no row and three rows carried more than one section. A count would have agreed
+    /// with itself and been wrong, which is why this pairs them by NAME.
+    /// </remarks>
+    [Fact]
+    public void EverySectionHasANavRowThatReachesIt()
+    {
+        var root = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
+        var markup = File.ReadAllText(Path.Combine(root, "MainWindow.xaml"));
+        var code = File.ReadAllText(Path.Combine(root, "MainWindow.xaml.cs"));
+
+        var sections = SectionName().Matches(markup)
+            .Select(match => match.Groups[1].Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(sections.Length >= 15, $"Expected the window's sections, found {sections.Length}.");
+
+        // THERE ARE THREE MECHANISMS AND I FOUND THEM ONE FAILING RUN AT A TIME. A settings tag
+        // arm; a help tag arm, plus a show-all row that displays every help section at once; and a
+        // COMPANION line that shows the deterministic-cleanup section beside Transcription.
+        // Enumerating them was the wrong approach - each fix passed until the next section proved
+        // there was another way in.
+        //
+        // ONE RULE COVERS ALL THREE, and it comes from the structure rather than from the list of
+        // mechanisms I happened to find. To SHOW a section the code must NAME it. The only place a
+        // name appears without showing anything is the array the settings page iterates to hide
+        // them - which is exactly why the orphaned sections were invisible: they sat in that array
+        // and nowhere else.
+        //
+        // So: strip that one array, and ask whether the name survives anywhere in the file.
+        var reachableCode = SettingsSectionsArray().Replace(code, string.Empty);
+
+        var unreachable = sections
+            .Where(section => !reachableCode.Contains(section, StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            unreachable.Length == 0,
+            "These sections exist and no nav row reaches them: " + string.Join(", ", unreachable));
+
+        // Control: the matcher must be finding sections that ARE reachable too, or "none
+        // unreachable" would be true of a search that matched every section by accident.
+        Assert.Contains(sections, section => code.Contains($"?){section})", StringComparison.Ordinal));
+    }
+
+    [GeneratedRegex(@"x:Name=""(\w+Section)""")]
+    private static partial Regex SectionName();
+
+    /// <summary>
+    /// The array the settings page iterates in order to HIDE sections.
+    /// </summary>
+    /// <remarks>
+    /// The one place a section name appears without showing anything, which is why an orphaned
+    /// section is invisible to a plain search: it sits here and nowhere else.
+    /// </remarks>
+    [GeneratedRegex(@"SettingsSections\(\) =>\s*\[[^\]]*\]", RegexOptions.Singleline)]
+    private static partial Regex SettingsSectionsArray();
 }

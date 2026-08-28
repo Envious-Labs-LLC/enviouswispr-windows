@@ -61,6 +61,13 @@ public sealed class StreamingTranscriptAccumulator
         _text.Append(' ').Append(next);
     }
 
+    /// <summary>Forgets everything, for the start of a new recording.</summary>
+    /// <remarks>
+    /// A recording that inherited the previous one's text would deliver both, and the user would
+    /// see their last dictation prepended to this one with no way to connect the two.
+    /// </remarks>
+    public void Clear() => _text.Clear();
+
     /// <summary>The transcript so far.</summary>
     public override string ToString() => _text.ToString();
 
