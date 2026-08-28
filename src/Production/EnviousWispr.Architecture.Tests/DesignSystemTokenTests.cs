@@ -18,6 +18,19 @@ public sealed class MacSnapshotFactAttribute : FactAttribute
 }
 
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
+public sealed class MacSectionSnapshotFactAttribute : FactAttribute
+{
+    public MacSectionSnapshotFactAttribute()
+    {
+        var swiftPath = DesignSystemTokenTests.GetMacSectionSnapshotPath();
+        if (!File.Exists(swiftPath))
+        {
+            Skip = $"macOS section snapshot not found at '{swiftPath}'; the parity check did not run.";
+        }
+    }
+}
+
+[AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
 public sealed class MacPillSnapshotFactAttribute : FactAttribute
 {
     public MacPillSnapshotFactAttribute()
@@ -349,6 +362,91 @@ public sealed partial class DesignSystemTokenTests
         Assert.NotEmpty(button.Ancestors());
         Assert.Contains(document.Descendants(), e => e.Name.LocalName == "ScrollViewer");
     }
+
+    /// <summary>
+    /// Every settings section macOS offers has a navigation row on Windows.
+    /// </summary>
+    /// <remarks>
+    /// THE PARITY CLAIM, MADE MECHANICAL. "Nothing is missing" was a list somebody wrote from memory
+    /// and then checked against their own memory, which is the weakest possible form of an absence
+    /// claim - and absence claims are the ones that fail silently, because a feature nobody
+    /// remembers is exactly the feature nobody looks for.
+    ///
+    /// macOS declares its sections in one enum with one user-facing label each. That is a CLOSED
+    /// SET from the producing code rather than a description of one, so it can be compared rather
+    /// than believed. Windows may have MORE rows - it does, five of them - and that is parity in
+    /// the direction that matters.
+    ///
+    /// APOSTROPHES ARE NORMALISED, and that is not cosmetic. macOS writes "What's New" with a
+    /// straight quote and Windows with a typographic one; comparing raw would report a missing
+    /// section that is plainly there, which is the kind of false alarm that gets a parity gate
+    /// deleted rather than fixed.
+    ///
+    /// LIMIT, STATED: this compares the SETTINGS SURFACE, which is what the macOS snapshot in this
+    /// repo contains. It is not a whole-product audit and must not be read as one.
+    /// </remarks>
+    [MacSectionSnapshotFact]
+    public void EveryMacSettingsSectionHasAWindowsHome()
+    {
+        var swift = File.ReadAllText(GetMacSectionSnapshotPath());
+        var markup = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+
+        // SLICE TO THE LABEL PROPERTY FIRST. The enum has three switch statements over the same
+        // cases - label, icon and description - all written "case .x: return "y"". Matching the
+        // whole file therefore compared SF Symbol names and marketing sentences against navigation
+        // rows and reported thirty missing sections, none of which was real.
+        //
+        // The pattern was right and the SCOPE was wrong, which is the failure that produces a
+        // confident, complete-looking, entirely false answer. It went red on its first run only
+        // because it was wrong in the loud direction; scoped one switch too NARROW it would have
+        // passed while checking almost nothing.
+        var labelBlock = LabelProperty().Match(swift);
+        Assert.True(labelBlock.Success, "The macOS snapshot has no label property to read.");
+
+        var macLabels = Regex.Matches(labelBlock.Value, @"case \.\w+: return ""([^""]+)""")
+            .Select(match => Normalise(match.Groups[1].Value))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(
+            macLabels.Length >= 14,
+            $"Expected the macOS section labels, found {macLabels.Length}.");
+
+        var windowsRows = Regex.Matches(markup, @"<NavigationViewItem [^>]*Content=""([^""]+)""")
+            .Select(match => Normalise(match.Groups[1].Value))
+            .ToHashSet(StringComparer.Ordinal);
+
+        var missing = macLabels.Where(label => !windowsRows.Contains(label)).ToArray();
+
+        Assert.True(
+            missing.Length == 0,
+            "macOS offers these and Windows has no navigation row for them: "
+                + string.Join(", ", missing));
+
+        // Control. The comparison must be finding real rows on both sides, or "nothing missing"
+        // would be true of two empty sets.
+        Assert.Contains("Transcription", windowsRows);
+        Assert.Contains("Transcription", macLabels);
+    }
+
+    /// <summary>The label property alone, not the icon or description switches beside it.</summary>
+    [GeneratedRegex(@"var label: String \{.*?\n  \}", RegexOptions.Singleline)]
+    private static partial Regex LabelProperty();
+
+    /// <summary>Folds the difference between a straight and a typographic apostrophe.</summary>
+    private static string Normalise(string label) =>
+        label.Replace('\u2019', '\'').Trim();
+
+    internal static string GetMacSectionSnapshotPath() =>
+        Path.Combine(
+            FindRepositoryRoot(),
+            "macos-source",
+            "Sources",
+            "EnviousWisprAppKit",
+            "Views",
+            "Settings",
+            "SettingsSection.swift");
 
     [MacSnapshotFact]
     public void MacDynamicColorsMatchExpectedTable()
