@@ -428,6 +428,17 @@ was on screen.
 past checks: the same question catches an import path using a generic save message while an itemised
 one sits unused a few lines away.
 
+**ITS LIMIT, because the rule oversells itself without one.** It fires only when the right
+instrument is ALREADY IN THE FILE. The class it catches is "someone here already solved this", not
+"someone somewhere knows better" - so it would not have caught a screen sample pointed at the wrong
+surface, or a control set through a path that never commits, because in neither case was a better
+answer sitting a few lines up.
+
+For those, the thing that worked all day was two perspectives holding the expected value for each
+other: **one side knows what the code INTENDS, the other knows what the screen DOES.** Every defect
+that survived one of them was one where the wrong half was doing the checking. This rule is the
+cheap check; that exchange is the expensive one, and neither replaces the other.
+
 Companion to RULE: a-gate-that-pins-the-MECHANISM. That one is about what a check ASSERTS; this is
 about what it asserts it WITH.
 
