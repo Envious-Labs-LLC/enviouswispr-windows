@@ -101,7 +101,7 @@ public sealed class HotkeyGesturePolicyTests
 
         policy.Process(RightControl, true, Ms(0));
         Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Process(RightControl, false, Ms(50)));
-        Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Elapsed(Ms(50) + PastTaps));
+        Assert.Equal(HotkeyGestureOutcome.Nothing, Settle(policy));
     }
 
     [Fact]
@@ -144,7 +144,7 @@ public sealed class HotkeyGesturePolicyTests
         Tap(policy, Ms(0));
         Tap(policy, Ms(100));
 
-        Assert.Equal(HotkeyGestureOutcome.ToggleStarted, policy.Elapsed(Ms(100) + PastTaps));
+        Assert.Equal(HotkeyGestureOutcome.ToggleStarted, Settle(policy));
         Assert.True(policy.IsRecordingHandsFree);
     }
 
@@ -155,7 +155,7 @@ public sealed class HotkeyGesturePolicyTests
 
         Tap(policy, Ms(1_000));
 
-        Assert.Equal(HotkeyGestureOutcome.ToggleStopped, policy.Elapsed(Ms(1_000) + PastTaps));
+        Assert.Equal(HotkeyGestureOutcome.ToggleStopped, Settle(policy));
         Assert.False(policy.IsRecordingHandsFree);
     }
 
@@ -168,7 +168,7 @@ public sealed class HotkeyGesturePolicyTests
         Tap(policy, Ms(1_080));
         Tap(policy, Ms(1_160));
 
-        Assert.Equal(HotkeyGestureOutcome.Cancelled, policy.Elapsed(Ms(1_160) + PastTaps));
+        Assert.Equal(HotkeyGestureOutcome.Cancelled, Settle(policy));
         Assert.False(policy.IsRecordingHandsFree);
     }
 
@@ -185,7 +185,7 @@ public sealed class HotkeyGesturePolicyTests
         Tap(policy, Ms(80));
         Tap(policy, Ms(160));
 
-        Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Elapsed(Ms(160) + PastTaps));
+        Assert.Equal(HotkeyGestureOutcome.Nothing, Settle(policy));
         Assert.False(policy.IsRecordingHandsFree);
     }
 
@@ -201,7 +201,7 @@ public sealed class HotkeyGesturePolicyTests
         Tap(policy, Ms(1_000));
         Tap(policy, Ms(1_080));
 
-        Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Elapsed(Ms(1_080) + PastTaps));
+        Assert.Equal(HotkeyGestureOutcome.Nothing, Settle(policy));
         Assert.True(policy.IsRecordingHandsFree);
     }
 
@@ -214,10 +214,10 @@ public sealed class HotkeyGesturePolicyTests
         var policy = Modifier();
 
         Tap(policy, Ms(0));
-        Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Elapsed(PastTaps));
+        Assert.Equal(HotkeyGestureOutcome.Nothing, Settle(policy));
 
         Tap(policy, Ms(2_000));
-        Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Elapsed(Ms(2_000) + PastTaps));
+        Assert.Equal(HotkeyGestureOutcome.Nothing, Settle(policy));
         Assert.False(policy.IsRecordingHandsFree);
     }
 
@@ -291,12 +291,29 @@ public sealed class HotkeyGesturePolicyTests
         policy.Process(RightControl, false, at + Ms(30));
     }
 
+    /// <summary>Runs the clock to whenever the policy says the gesture completes.</summary>
+    /// <remarks>
+    /// ASK THE POLICY, DO NOT RECOMPUTE ITS ARITHMETIC. The first version of this file worked the
+    /// deadline out from the press time while the policy measures from the RELEASE, so every
+    /// multi-tap test failed by exactly the thirty milliseconds the helper holds the key. Five red
+    /// tests, all of them the test's fault, all of them looking like a broken policy.
+    ///
+    /// Recomputing a value the subject already exposes is a second implementation of the same rule,
+    /// and the two disagreeing is the only thing it can ever prove.
+    /// </remarks>
+    private static HotkeyGestureOutcome Settle(HotkeyGesturePolicy policy)
+    {
+        var deadline = policy.NextDeadline;
+        Assert.True(deadline is not null, "Nothing is pending, so nothing can complete.");
+        return policy.Elapsed(deadline!.Value + Ms(1));
+    }
+
     private static HotkeyGesturePolicy HandsFreeRunning()
     {
         var policy = Modifier();
         Tap(policy, Ms(0));
         Tap(policy, Ms(100));
-        Assert.Equal(HotkeyGestureOutcome.ToggleStarted, policy.Elapsed(Ms(100) + PastTaps));
+        Assert.Equal(HotkeyGestureOutcome.ToggleStarted, Settle(policy));
         return policy;
     }
 }
