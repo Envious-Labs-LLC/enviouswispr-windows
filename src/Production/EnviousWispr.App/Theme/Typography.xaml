@@ -28,6 +28,22 @@
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Foreground" Value="{ThemeResource BrandTextPrimaryBrush}" />
     </Style>
+    <Style x:Key="BrandNavGroupLabelStyle" TargetType="TextBlock">
+        <!--
+            THE SIDEBAR'S GROUP LABELS, WHICH ARE NOT THE SAME THING AS A SECTION HEADING INSIDE A
+            PAGE. They label a region of navigation rather than a block of content, so Windows sets
+            them quieter than the rows beneath them - secondary, not primary, or the label competes
+            with the destinations it is grouping.
+            This exists as its own style because the group-header data template sets a Foreground
+            directly, which silently beats the NavigationViewItemHeaderForeground brush. Two places
+            answering one question is how a palette drifts, so the template now points here and the
+            brush is not the answer for these.
+        -->
+        <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandTextSecondaryBrush}" />
+    </Style>
     <Style x:Key="BrandRowTitleStyle" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="Segoe UI Variable Display, Segoe UI Variable Text, Segoe UI" />
         <Setter Property="FontSize" Value="18" />

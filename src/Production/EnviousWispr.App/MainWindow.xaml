@@ -5,6 +5,15 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="EnviousWispr">
     <Grid x:Name="WindowRoot" Background="{ThemeResource BrandWindowBgBrush}">
+        <!--
+            A ZERO-SIZE SWATCH WHOSE ONLY JOB IS TO RESOLVE A THEME COLOUR TO A NUMBER. The window's
+            caption buttons are drawn by Windows, not by XAML, so their colour has to be handed over
+            as a literal - and hard-coding the two values here would put a second copy of the text
+            colour in the codebase, which is how a palette drifts. Reading it off an element bound to
+            the same ThemeResource keeps one source, and it re-resolves on every theme change for
+            free.
+        -->
+        <Border x:Name="ThemeColorProbe" Width="0" Height="0" IsHitTestVisible="False" Background="{ThemeResource BrandTextPrimaryBrush}" />
         <Grid.Resources>
             <!-- Keep WinUI's native control templates, but feed their documented visual-state resources from the brand palette. -->
             <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="{ThemeResource BrandToggleOnColor}" />
@@ -261,17 +270,38 @@
                     <SolidColorBrush x:Key="NavigationViewItemBackground" Color="{ThemeResource BrandSidebarBgColor}" Opacity="0" />
                     <SolidColorBrush x:Key="NavigationViewItemBackgroundPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.12" />
                     <SolidColorBrush x:Key="NavigationViewItemBackgroundPressed" Color="{ThemeResource BrandAccentColor}" Opacity="0.20" />
-                    <SolidColorBrush x:Key="NavigationViewItemBackgroundSelected" Color="{ThemeResource BrandAccentSolidColor}" />
-                    <SolidColorBrush x:Key="NavigationViewItemBackgroundSelectedPointerOver" Color="{ThemeResource BrandAccentSolidColor}" />
-                    <SolidColorBrush x:Key="NavigationViewItemBackgroundSelectedPressed" Color="{ThemeResource BrandAccentSolidColor}" />
+                    <!--
+                        THE SELECTED ROW IS A SUBTLE RAISE, AND THE ACCENT LIVES IN THE PILL. This
+                        used to be a fully filled accent bar with white text, which is a list-view or
+                        web pattern rather than a Windows one - and it is also why the selection
+                        appeared to teleport between rows. Windows animates the little accent
+                        indicator from the old row to the new one; a filled row has no indicator to
+                        move, so there was nothing to animate and the change read as a jump.
+                        Using the card colour here means the selected row reads as lifted off the
+                        sidebar the same way every card in the window reads as lifted off the page.
+                    -->
+                    <SolidColorBrush x:Key="NavigationViewItemBackgroundSelected" Color="{ThemeResource BrandCardBgColor}" />
+                    <SolidColorBrush x:Key="NavigationViewItemBackgroundSelectedPointerOver" Color="{ThemeResource BrandCardBgColor}" />
+                    <SolidColorBrush x:Key="NavigationViewItemBackgroundSelectedPressed" Color="{ThemeResource BrandCardBgColor}" />
                     <SolidColorBrush x:Key="NavigationViewItemForeground" Color="{ThemeResource BrandTextBodyColor}" />
                     <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="{ThemeResource BrandTextBodyColor}" />
                     <SolidColorBrush x:Key="NavigationViewItemForegroundPressed" Color="{ThemeResource BrandTextBodyColor}" />
-                    <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="{ThemeResource BrandOnAccentColor}" />
-                    <SolidColorBrush x:Key="NavigationViewItemForegroundSelectedPointerOver" Color="{ThemeResource BrandOnAccentColor}" />
-                    <SolidColorBrush x:Key="NavigationViewItemForegroundSelectedPressed" Color="{ThemeResource BrandOnAccentColor}" />
-                    <SolidColorBrush x:Key="NavigationViewItemHeaderForeground" Color="{ThemeResource BrandAccentColor}" />
-                    <SolidColorBrush x:Key="NavigationViewSelectionIndicatorForeground" Color="{ThemeResource BrandOnAccentColor}" />
+                    <!--
+                        A selected label stays the ordinary text colour and is distinguished by the
+                        pill and the raise, not by being repainted. White-on-accent only worked
+                        because the row behind it was filled.
+                    -->
+                    <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="NavigationViewItemForegroundSelectedPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="NavigationViewItemForegroundSelectedPressed" Color="{ThemeResource BrandTextPrimaryColor}" />
+                    <SolidColorBrush x:Key="NavigationViewItemHeaderForeground" Color="{ThemeResource BrandTextSecondaryColor}" />
+                    <!--
+                        THE PILL, AND IT IS THE ONLY ACCENT-COLOURED THING IN THE SIDEBAR NOW. It was
+                        white, which is invisible against a filled accent row - the indicator was
+                        there the whole time and could not be seen, which is the other half of why
+                        the selection looked like it snapped.
+                    -->
+                    <SolidColorBrush x:Key="NavigationViewSelectionIndicatorForeground" Color="{ThemeResource BrandAccentColor}" />
                     <Style TargetType="NavigationViewItem">
                         <Setter Property="Height" Value="{StaticResource BrandNavRowHeight}" />
                         <Setter Property="MinHeight" Value="{StaticResource BrandNavRowHeight}" />
@@ -282,7 +312,7 @@
                         <Setter Property="Margin" Value="{StaticResource BrandNavGroupHeaderMargin}" />
                     </Style>
                     <DataTemplate x:Key="BrandNavigationGroupHeaderTemplate">
-                        <TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="{Binding}" />
+                        <TextBlock Style="{StaticResource BrandNavGroupLabelStyle}" Text="{Binding}" />
                     </DataTemplate>
                     <Thickness x:Key="NavigationViewBorderThickness">0</Thickness>
                     <Thickness x:Key="NavigationViewContentGridBorderThickness">1</Thickness>
@@ -297,23 +327,23 @@
                 </NavigationView.PaneHeader>
                 <NavigationView.MenuItems>
                     <NavigationViewItem x:Name="HomeNavItem" x:Uid="HomeNavItem" AccessKey="M" Content="Home" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Home" Tag="home" />
-                    <NavigationViewItemHeader Content="APP" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
+                    <NavigationViewItemHeader Content="App" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
                     <NavigationViewItem x:Uid="HistoryNavItem" AccessKey="Y" Content="History" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Clock" Tag="history" />
                     <NavigationViewItem Content="What’s New" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Document" Tag="whats-new" />
                     <NavigationViewItem x:Name="AppearanceNavItem" AccessKey="T" Content="Appearance" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Setting" Tag="settings-appearance" />
-                    <NavigationViewItemHeader Content="RECORD" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
+                    <NavigationViewItemHeader Content="Record" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
                     <NavigationViewItem x:Name="TranscriptionNavItem" Content="Transcription" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-transcription"><NavigationViewItem.Icon><FontIcon Glyph="&#xE8C1;" /></NavigationViewItem.Icon></NavigationViewItem>
                     <NavigationViewItem Content="Live Preview" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-live-preview"><NavigationViewItem.Icon><FontIcon Glyph="&#xE890;" /></NavigationViewItem.Icon></NavigationViewItem>
                     <NavigationViewItem Content="Microphone" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-microphone"><NavigationViewItem.Icon><FontIcon Glyph="&#xE720;" /></NavigationViewItem.Icon></NavigationViewItem>
                     <NavigationViewItem Content="Sounds" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-sounds"><NavigationViewItem.Icon><FontIcon Glyph="&#xE767;" /></NavigationViewItem.Icon></NavigationViewItem>
                     <NavigationViewItem Content="Keybinds" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-keybinds"><NavigationViewItem.Icon><FontIcon Glyph="&#xE765;" /></NavigationViewItem.Icon></NavigationViewItem>
-                    <NavigationViewItemHeader Content="PROCESS" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
+                    <NavigationViewItemHeader Content="Process" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
                     <NavigationViewItem Content="AI Polish" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-ai-polish"><NavigationViewItem.Icon><FontIcon Glyph="&#xE70F;" /></NavigationViewItem.Icon></NavigationViewItem>
                     <NavigationViewItem x:Name="DictionaryNavItem" x:Uid="DictionaryNavItem" AccessKey="D" Content="Your Words" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Character" Tag="dictionary" />
                     <NavigationViewItem x:Uid="SnippetsNavItem" AccessKey="S" Content="Snippets" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Icon="Library" Tag="snippets" />
-                    <NavigationViewItemHeader Content="OUTPUT" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
+                    <NavigationViewItemHeader Content="Output" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
                     <NavigationViewItem Content="Clipboard" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-clipboard"><NavigationViewItem.Icon><FontIcon Glyph="&#xE8C8;" /></NavigationViewItem.Icon></NavigationViewItem>
-                    <NavigationViewItemHeader Content="SYSTEM" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
+                    <NavigationViewItemHeader Content="System" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
                     <NavigationViewItem Content="Dictation history" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-history"><NavigationViewItem.Icon><FontIcon Glyph="&#xE81C;" /></NavigationViewItem.Icon></NavigationViewItem><NavigationViewItem Content="Diagnostics" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-diagnostics"><NavigationViewItem.Icon><FontIcon Glyph="&#xE9D9;" /></NavigationViewItem.Icon></NavigationViewItem><NavigationViewItem Content="Backup" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-profile"><NavigationViewItem.Icon><FontIcon Glyph="&#xE78C;" /></NavigationViewItem.Icon></NavigationViewItem><NavigationViewItem Content="Permissions" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="help-permissions"><NavigationViewItem.Icon><FontIcon Glyph="&#xE72E;" /></NavigationViewItem.Icon></NavigationViewItem>
                     <NavigationViewItem Content="Check for Updates" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="help-updates"><NavigationViewItem.Icon><FontIcon Glyph="&#xE895;" /></NavigationViewItem.Icon></NavigationViewItem>
                     <NavigationViewItem Content="Open Source Licenses" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="help-licenses"><NavigationViewItem.Icon><FontIcon Glyph="&#xE8A5;" /></NavigationViewItem.Icon></NavigationViewItem>
@@ -492,7 +522,7 @@
                                 <StackPanel Spacing="{StaticResource BrandSpacingM}">
                                     <TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Appearance" />
                                     <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE771;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Theme" TextWrapping="Wrap" /><ItemsControl x:Name="ThemeComboBox" HorizontalAlignment="Stretch" TabFocusNavigation="Once"><ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="{StaticResource BrandSpacingS}" /></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate><RadioButton GroupName="PillTheme" Checked="ThemeCardChecked" Style="{StaticResource BrandSelectableCardStyle}" IsChecked="{Binding IsSelected, Mode=TwoWay}" ContentTemplate="{StaticResource BrandSelectableChoiceTemplate}" Content="{Binding}" /></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></Grid>
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE707;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Recording pill position" TextWrapping="Wrap" /><ItemsControl x:Name="OverlayPositionComboBox" HorizontalAlignment="Stretch" TabFocusNavigation="Once"><ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="{StaticResource BrandSpacingS}" /></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate><RadioButton GroupName="PillOverlayPosition" Style="{StaticResource BrandSelectableCardStyle}" IsChecked="{Binding IsSelected, Mode=TwoWay}" ContentTemplate="{StaticResource BrandSelectableChoiceTemplate}" Content="{Binding}" /></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></Grid>
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE707;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Recording pill position" TextWrapping="Wrap" /><ItemsControl x:Name="OverlayPositionComboBox" HorizontalAlignment="Stretch" TabFocusNavigation="Once"><ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="{StaticResource BrandSpacingS}" /></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate><RadioButton GroupName="PillOverlayPosition" Checked="AppearanceCardChecked" Style="{StaticResource BrandSelectableCardStyle}" IsChecked="{Binding IsSelected, Mode=TwoWay}" ContentTemplate="{StaticResource BrandSelectableChoiceTemplate}" Content="{Binding}" /></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></Grid>
                                 </StackPanel>
                             </Border>
                             <Border x:Name="LivePreviewSection" Padding="20" Style="{StaticResource BrandSectionCardStyle}">

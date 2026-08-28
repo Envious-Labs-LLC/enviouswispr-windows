@@ -288,6 +288,13 @@ public sealed partial class MainWindow : Window, IDisposable
             settings.Preferences.PillDesignWithWords);
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
+
+        // The caption glyphs follow the theme from here, and from nowhere else. Subscribing to the
+        // resolved theme rather than calling this from each place a theme can change is what makes
+        // it correct for the case nobody remembers: the user leaves the app on "Use Windows
+        // setting" and Windows itself switches at sunset.
+        ApplyCaptionButtonColors();
+        WindowRoot.ActualThemeChanged += (_, _) => ApplyCaptionButtonColors();
         TryUseMicaBackdrop();
         ConfigureMinimumWindowWidth();
         ResizeToDefault();
@@ -867,11 +874,82 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
-    private void ThemeCardChecked(object sender, RoutedEventArgs e)
+    /// <summary>Applies a theme the moment it is chosen, and keeps it.</summary>
+    /// <remarks>
+    /// THIS USED TO APPLY WITHOUT SAVING, WHICH IS THE WORST OF THE TWO WAYS TO GET IT WRONG. The
+    /// window went light instantly, which is the strongest possible signal to a user that their
+    /// choice took, and then it came back as System on the next launch. Every other unsaved-settings
+    /// bug at least announces itself by doing nothing.
+    /// It was invisible to tests because both halves worked: saving a theme round-tripped, and
+    /// choosing a theme repainted the window. Nothing connected them, and a gap between two passing
+    /// tests is not a failure inside either.
+    /// </remarks>
+    private async void ThemeCardChecked(object sender, RoutedEventArgs e)
     {
-        if (!_isApplyingSettings)
+        if (_isApplyingSettings)
         {
-            ApplyTheme(ThemeFromIndex(SelectedIndexOf(ThemeChoices)));
+            return;
+        }
+
+        ApplyTheme(ThemeFromIndex(SelectedIndexOf(ThemeChoices)));
+        await PersistAppearanceChoicesAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>Keeps an Appearance choice that has already taken effect on screen.</summary>
+    private async void AppearanceCardChecked(object sender, RoutedEventArgs e)
+    {
+        if (_isApplyingSettings)
+        {
+            return;
+        }
+
+        await PersistAppearanceChoicesAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Writes the two Appearance choices, and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// ONLY THESE TWO FIELDS, DELIBERATELY. The Save button builds a whole settings object out of
+    /// every control in the window, which is right for a button the user pressed and wrong for a
+    /// side effect of clicking a theme card: it would commit half-finished edits sitting on other
+    /// pages that the user has not chosen to save yet.
+    ///
+    /// SAVED QUIETLY, because the user already has their confirmation - the window changed colour.
+    /// A success banner for something they can plainly see happened is noise. A FAILURE still
+    /// speaks, because that is the case where the screen and the file disagree, which is exactly
+    /// the state this whole change exists to prevent.
+    ///
+    /// Appearance is the only settings page with no Save button, so persisting on selection is what
+    /// makes its two settings behave like the other ten pages' rather than an exception. The
+    /// alternative - adding a Save button - would mean asking a user to confirm a change they can
+    /// already see, which reads as the app not trusting its own preview.
+    /// </remarks>
+    private async Task PersistAppearanceChoicesAsync()
+    {
+        var next = _settings with
+        {
+            Preferences = _settings.Preferences with
+            {
+                Theme = ThemeFromIndex(SelectedIndexOf(ThemeChoices)),
+                OverlayPosition = OverlayPositionFromIndex(SelectedIndexOf(OverlayPositionChoices)),
+            },
+        };
+
+        try
+        {
+            await _settingsStore.SaveAsync(next).ConfigureAwait(true);
+            _settings = next;
+            SettingsChanged?.Invoke(next);
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            ShowMessage(
+                "That choice was not kept",
+                "It is applied for now, but the app will start with your previous appearance until "
+                    + "settings can be written again.",
+                InfoBarSeverity.Warning);
         }
     }
 
@@ -2912,6 +2990,48 @@ public sealed partial class MainWindow : Window, IDisposable
         storyboard.Children.Add(fade);
         storyboard.Completed += (_, _) => OperationInfoBar.MaxHeight = double.PositiveInfinity;
         storyboard.Begin();
+    }
+
+    /// <summary>
+    /// Colours the Minimize, Maximize and Close glyphs for the theme actually on screen.
+    /// </summary>
+    /// <remarks>
+    /// WINDOWS DRAWS THESE, NOT XAML, so setting RequestedTheme on the content does not reach them.
+    /// They follow the MACHINE's theme unless told otherwise, which is invisible while the two
+    /// agree and produces white glyphs on a near-white titlebar the moment a user picks Light on a
+    /// machine set to Dark: 1.11:1, against the 3:1 a control glyph needs. The window offers no
+    /// visible way to close it.
+    ///
+    /// The colour comes from the same token the window's text uses, read off a zero-size swatch
+    /// bound to it, so there is exactly one definition of "the primary text colour in this theme".
+    ///
+    /// Backgrounds stay transparent so the buttons sit on the titlebar rather than on plates of
+    /// their own; only hover and pressed take a wash, which is the Windows behaviour. Inactive
+    /// glyphs are dimmed rather than recoloured, because a dimmed caption button is how Windows
+    /// says the window is not focused, and that signal is worth keeping.
+    /// </remarks>
+    private void ApplyCaptionButtonColors()
+    {
+        if (ThemeColorProbe.Background is not SolidColorBrush probe)
+        {
+            return;
+        }
+
+        var glyph = probe.Color;
+        var wash = WindowRoot.ActualTheme == ElementTheme.Dark ? (byte)0x20 : (byte)0x14;
+        var titleBar = AppWindow.TitleBar;
+        titleBar.ButtonForegroundColor = glyph;
+        titleBar.ButtonHoverForegroundColor = glyph;
+        titleBar.ButtonPressedForegroundColor = glyph;
+        titleBar.ButtonInactiveForegroundColor = Windows.UI.Color.FromArgb(0x9B, glyph.R, glyph.G, glyph.B);
+        titleBar.ButtonBackgroundColor = Windows.UI.Color.FromArgb(0, 0, 0, 0);
+        titleBar.ButtonInactiveBackgroundColor = Windows.UI.Color.FromArgb(0, 0, 0, 0);
+        titleBar.ButtonHoverBackgroundColor = Windows.UI.Color.FromArgb(wash, glyph.R, glyph.G, glyph.B);
+        titleBar.ButtonPressedBackgroundColor = Windows.UI.Color.FromArgb(
+            (byte)(wash + 0x10),
+            glyph.R,
+            glyph.G,
+            glyph.B);
     }
 
     /// <summary>
