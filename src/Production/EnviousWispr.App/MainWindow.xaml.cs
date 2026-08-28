@@ -2607,6 +2607,9 @@ public sealed partial class MainWindow : Window, IDisposable
         DictionaryPage.Visibility = tag == "dictionary" ? Visibility.Visible : Visibility.Collapsed;
         SnippetsPage.Visibility = tag == "snippets" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = settingsPage ? Visibility.Visible : Visibility.Collapsed;
+        // The pinned action bar belongs to the settings page and appears with it. Set on the
+        // same line as the page it serves, so the two cannot drift apart.
+        SaveSettingsBar.Visibility = SettingsPage.Visibility;
         HelpPage.Visibility = helpPage ? Visibility.Visible : Visibility.Collapsed;
 
         if (settingsPage)
