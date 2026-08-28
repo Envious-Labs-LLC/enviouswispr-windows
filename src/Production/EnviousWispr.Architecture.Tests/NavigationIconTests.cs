@@ -122,11 +122,14 @@ public sealed class NavigationIconTests
 
     // ---- parsing ----
 
+    /// <summary>The two methods that build a page header.</summary>
+    private static readonly string[] PageDispatchNames = ["ConfigureSettingsPage", "ConfigureHelpPage"];
+
     /// <summary>The two page dispatches, sliced from their signature to where they set the glyph.</summary>
     private static (string Name, string Body)[] PageDispatches()
     {
         var code = File.ReadAllText(AppSourcePath("MainWindow.xaml.cs"));
-        return new[] { "ConfigureSettingsPage", "ConfigureHelpPage" }
+        return PageDispatchNames
             .Select(name =>
             {
                 var start = code.IndexOf($"private void {name}(string tag)", StringComparison.Ordinal);
