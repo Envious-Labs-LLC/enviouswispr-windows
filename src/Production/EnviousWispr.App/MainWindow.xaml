@@ -5,15 +5,6 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="EnviousWispr">
     <Grid x:Name="WindowRoot" Background="{ThemeResource BrandWindowBgBrush}">
-        <!--
-            A ZERO-SIZE SWATCH WHOSE ONLY JOB IS TO RESOLVE A THEME COLOUR TO A NUMBER. The window's
-            caption buttons are drawn by Windows, not by XAML, so their colour has to be handed over
-            as a literal - and hard-coding the two values here would put a second copy of the text
-            colour in the codebase, which is how a palette drifts. Reading it off an element bound to
-            the same ThemeResource keeps one source, and it re-resolves on every theme change for
-            free.
-        -->
-        <Border x:Name="ThemeColorProbe" Width="0" Height="0" IsHitTestVisible="False" Background="{ThemeResource BrandTextPrimaryBrush}" />
         <Grid.Resources>
             <!-- Keep WinUI's native control templates, but feed their documented visual-state resources from the brand palette. -->
             <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="{ThemeResource BrandToggleOnColor}" />
@@ -139,7 +130,16 @@
             <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPointerOver" Color="{ThemeResource BrandDividerColor}" />
             <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPressed" Color="{ThemeResource BrandAccentColor}" />
         </Grid.Resources>
+        <!--
+            A ZERO-SIZE SWATCH WHOSE ONLY JOB IS TO RESOLVE A THEME COLOUR TO A NUMBER. The window's
+            caption buttons are drawn by Windows, not by XAML, so their colour has to be handed over
+            as a literal - and hard-coding the two values here would put a second copy of the text
+            colour in the codebase, which is how a palette drifts. Reading it off an element bound to
+            the same ThemeResource keeps one source, and it re-resolves on every theme change for
+            free.
+        -->
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+        <Border x:Name="ThemeColorProbe" Width="0" Height="0" IsHitTestVisible="False" Background="{ThemeResource BrandTextPrimaryBrush}" />
         <TitleBar x:Name="AppTitleBar" AutomationProperties.Name="EnviousWispr window title" IsTabStop="False" Title="EnviousWispr" Subtitle="Private voice dictation for Windows">
             <TitleBar.LeftHeader>
                 <Image Width="31" Height="24" AutomationProperties.AccessibilityView="Raw" Source="Assets/Brand/EnviousWisprMark.svg" VerticalAlignment="Center" />
