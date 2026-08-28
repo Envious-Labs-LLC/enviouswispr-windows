@@ -49,6 +49,19 @@
             <SolidColorBrush x:Key="BrandToggleOnBrush" Color="#00A366" />
             <Color x:Key="BrandToggleOffColor">#9B8EB8</Color>
             <SolidColorBrush x:Key="BrandToggleOffBrush" Color="#9B8EB8" />
+            <!--
+                A CONTROL BOUNDARY IS NOT A DIVIDER, AND SHARING A TOKEN MADE THEM ONE. A
+                divider is meant to be faint; the edge of a control the user is supposed to
+                click into is meant to be seen, and WCAG asks 3:1 for one. At the divider
+                value the text fields measured 1.13:1 in light and 1.31:1 in dark - visible
+                only because the fill is a different HUE from the card, which contrast
+                arithmetic is blind to and a colourblind user does not get.
+                #847BA0 is 3.95:1 against the card and 3.66:1 against the field fill, so it
+                clears the floor on BOTH sides of the line rather than only the one that
+                happened to be measured.
+            -->
+            <Color x:Key="BrandControlBorderColor">#847BA0</Color>
+            <SolidColorBrush x:Key="BrandControlBorderBrush" Color="#847BA0" />
             <Color x:Key="BrandDividerColor">#148A2BE2</Color>
             <SolidColorBrush x:Key="BrandDividerBrush" Color="#148A2BE2" />
 
@@ -128,6 +141,9 @@
             <SolidColorBrush x:Key="BrandToggleOnBrush" Color="#5CC99A" />
             <Color x:Key="BrandToggleOffColor">#4A4360</Color>
             <SolidColorBrush x:Key="BrandToggleOffBrush" Color="#4A4360" />
+            <!-- 3.55:1 on the card, 3.99:1 on the field fill. See the light block. -->
+            <Color x:Key="BrandControlBorderColor">#75708C</Color>
+            <SolidColorBrush x:Key="BrandControlBorderBrush" Color="#75708C" />
             <Color x:Key="BrandDividerColor">#24B8AAD6</Color>
             <SolidColorBrush x:Key="BrandDividerBrush" Color="#24B8AAD6" />
 
@@ -195,6 +211,8 @@
             <SolidColorBrush x:Key="BrandToggleOnBrush" Color="{ThemeResource SystemColorHighlightColor}" />
             <Color x:Key="BrandToggleOffColor">{ThemeResource SystemColorGrayTextColor}</Color>
             <SolidColorBrush x:Key="BrandToggleOffBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
+            <Color x:Key="BrandControlBorderColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <SolidColorBrush x:Key="BrandControlBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
             <Color x:Key="BrandDividerColor">{ThemeResource SystemColorWindowTextColor}</Color>
             <SolidColorBrush x:Key="BrandDividerBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
 

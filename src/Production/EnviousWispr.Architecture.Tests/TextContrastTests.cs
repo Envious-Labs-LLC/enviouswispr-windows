@@ -88,6 +88,53 @@ public sealed partial class TextContrastTests
     }
 
     /// <summary>
+    /// The edge of a control the user is meant to click into can be seen.
+    /// </summary>
+    /// <remarks>
+    /// A DIVIDER AND A CONTROL BOUNDARY ARE DIFFERENT THINGS AND ONE TOKEN WAS ANSWERING BOTH. A
+    /// divider is meant to be faint. The edge of a text field is meant to say "type here", and WCAG
+    /// asks 3:1 for it. Sharing a token made the fields nearly edgeless: 1.13:1 in light, 1.31:1 in
+    /// dark.
+    ///
+    /// IT LOOKED FINE, AND FOR A REASON WORTH KNOWING. The field fill is a different HUE from the
+    /// card, so the boundary is visible to most people in a screenshot while measuring near 1:1.
+    /// Contrast arithmetic is blind to hue - and so is a colourblind user, which is exactly who the
+    /// floor exists for. "I can see it" was true and irrelevant.
+    ///
+    /// BOTH SIDES OF THE LINE, because a border sits between two colours and clearing the floor
+    /// against one of them is half a check that looks like a whole one.
+    /// </remarks>
+    [Theory]
+    [InlineData("Light")]
+    [InlineData("Dark")]
+    public void EveryControlBoundaryCanBeSeenAgainstWhatIsOnEitherSideOfIt(string theme)
+    {
+        var colors = ReadTheme(theme);
+
+        Assert.True(
+            colors.TryGetValue("BrandControlBorderColor", out var border),
+            $"{theme} has no BrandControlBorderColor.");
+
+        var failures = new List<string>();
+        foreach (var surface in new[] { "BrandCardBgColor", "BrandPageBgColor" })
+        {
+            var ratio = Contrast(border!, colors[surface]);
+            if (ratio < ControlBoundaryFloor)
+            {
+                failures.Add(
+                    $"{theme}: control border {border} on {surface} {colors[surface]} is "
+                        + $"{ratio.ToString("0.00", CultureInfo.InvariantCulture)}:1, "
+                        + $"below {ControlBoundaryFloor}:1.");
+            }
+        }
+
+        Assert.True(failures.Count == 0, string.Join("\n", failures));
+    }
+
+    /// <summary>The WCAG floor for a boundary that carries meaning rather than decoration.</summary>
+    private const double ControlBoundaryFloor = 3.0;
+
+    /// <summary>
     /// The control. Without it, a reader that returned an empty palette would report every theme as
     /// perfectly legible, because a loop over nothing finds no failures.
     /// </summary>

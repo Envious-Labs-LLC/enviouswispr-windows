@@ -51,10 +51,10 @@
             <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="{ThemeResource BrandAccentLightColor}" />
             <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="{ThemeResource BrandCardBgColor}" />
             <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="{ThemeResource BrandPageBgColor}" Opacity="0.55" />
-            <SolidColorBrush x:Key="TextControlBorderBrush" Color="{ThemeResource BrandDividerColor}" />
+            <SolidColorBrush x:Key="TextControlBorderBrush" Color="{ThemeResource BrandControlBorderColor}" />
             <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{ThemeResource BrandAccentColor}" Opacity="0.72" />
             <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{ThemeResource BrandAccentColor}" />
-            <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="{ThemeResource BrandDividerColor}" Opacity="0.55" />
+            <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="{ThemeResource BrandControlBorderColor}" Opacity="0.55" />
             <SolidColorBrush x:Key="TextControlForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
             <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="{ThemeResource BrandTextPrimaryColor}" />
             <SolidColorBrush x:Key="TextControlForegroundFocused" Color="{ThemeResource BrandTextPrimaryColor}" />
