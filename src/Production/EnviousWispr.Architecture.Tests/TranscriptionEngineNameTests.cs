@@ -1077,6 +1077,74 @@ public sealed partial class DesignSystemTokenTests
     }
 
     /// <summary>
+    /// Every word the recording pill looks for is a word the app actually says.
+    /// </summary>
+    /// <remarks>
+    /// THE PILL'S APPEARANCE IS INFERRED FROM THE STATUS SENTENCE, and the macOS app carries a
+    /// comment saying exactly why that is the wrong way round: inferring a visual from a string is
+    /// how a copy edit silently changes an icon. macOS passes the kind explicitly. This side reads
+    /// the words.
+    ///
+    /// SO A COPY CHANGE CAN MAKE THE PILL VANISH. Rewording "Recording. Release to finish" to
+    /// "Listening..." drops it through every branch to Hidden, and there is no pill at all while
+    /// the user is speaking. No code changes, no test fails, nothing builds differently.
+    ///
+    /// CHECKED IN THE REVERSE DIRECTION, which is what makes it possible at all: rather than
+    /// simulating the mapping, this asks whether every TRIGGER the mapping looks for still appears
+    /// in some status string the app can produce. Reword the sentence and its trigger matches
+    /// nothing, and this goes red naming the orphaned trigger.
+    ///
+    /// A GUARD, NOT THE FIX. The fix is to hand the state in beside the text, as macOS does. Until
+    /// then the coupling between copy and appearance is real and this is what holds it.
+    /// </remarks>
+    [Fact]
+    public void EveryPillTriggerStillMatchesSomethingTheAppSays()
+    {
+        var app = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
+        var window = File.ReadAllText(Path.Combine(app, "MainWindow.xaml.cs"));
+        var shell = File.ReadAllText(Path.Combine(app, "App.xaml.cs"));
+
+        var mapping = OverlayStateMethod().Match(window);
+        Assert.True(mapping.Success, "OverlayStateFor is not where this test expects it.");
+
+        var triggers = StatusTrigger().Matches(mapping.Value)
+            .Select(match => match.Groups[1].Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(triggers.Length >= 10, $"Expected the pill's triggers, found {triggers.Length}.");
+
+        // Every status sentence the app can hand to the pill, from both files that produce them.
+        var said = StatusSentence().Matches(window + shell)
+            .Select(match => match.Groups[1].Value)
+            .ToArray();
+
+        Assert.True(said.Length >= 10, $"Expected the app's status sentences, found {said.Length}.");
+
+        var orphaned = triggers
+            .Where(trigger => !said.Any(sentence =>
+                sentence.Contains(trigger, StringComparison.OrdinalIgnoreCase)))
+            .ToArray();
+
+        Assert.True(
+            orphaned.Length == 0,
+            "The pill watches for these words and nothing the app says contains them any more, so "
+                + "whatever they used to style now shows no pill at all: " + string.Join(", ", orphaned));
+    }
+
+    /// <summary>The body of the method that turns a sentence into a pill appearance.</summary>
+    [GeneratedRegex(@"OverlayStateFor\(string status\).*?\n    \}", RegexOptions.Singleline)]
+    private static partial Regex OverlayStateMethod();
+
+    /// <summary>A word the mapping looks for.</summary>
+    [GeneratedRegex(@"(?:StartsWith|Contains)\(""([^""]+)""")]
+    private static partial Regex StatusTrigger();
+
+    /// <summary>A sentence handed to SetSessionStatus.</summary>
+    [GeneratedRegex(@"SetSessionStatus\(\s*""([^""]+)""")]
+    private static partial Regex StatusSentence();
+
+    /// <summary>
     /// No page arrives with a heading and nothing under it.
     /// </summary>
     /// <remarks>

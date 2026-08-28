@@ -180,3 +180,49 @@ the Mac's symbol, because a name sweep only finds what someone already called by
 **Read the HITS, never the count.** Broad synonym patterns match noise heavily: `Import` matched every
 `using` line, `Pack` matched `WhisperModelPack`, `capitali` matched half the tree. Every row above was
 classified by reading the hits, and several first-pass MISSING results were false.
+
+## FACT: critic-pass-against-the-macos-overlay-source-2026-08-28
+The first parity check done by READING macOS rather than by remembering it. Four gaps, none of which
+was on the feature list, because the list enumerated FEATURES and this compares SURFACES.
+
+Source: `macos-source/Sources/EnviousWisprAppKit/App/Overlay/PillDefinition.swift`, a local snapshot.
+
+**PRESENT ON BOTH, so this is a gap list and not a verdict:** recording / processing / success /
+warning / error states, per-severity dwell, pill designs gated on whether Live Preview is on,
+top-or-bottom position, live preview text, audio level, elapsed time.
+
+### 1. The Windows pill cannot offer an ACTION
+macOS's recovery notice offers **Discard** and its accessibility toast offers **Grant**, on the pill
+itself. The Windows overlay markup contains **zero** buttons - counted, not assumed. So where macOS
+lets a user fix the thing from the notice, Windows tells them and leaves them to find the setting.
+This is the largest of the four and the only one a user would notice unprompted.
+
+### 2. No `advisory` severity, and macOS wrote down why it exists
+macOS separates "your setup needs attention" from "our software failed", with the rationale in the
+source: an error's red mark and "Error" heading say the app broke, and a user-setup advisory is not
+the app breaking. Windows has Warning and Error only, so a setup problem is shown as one or the
+other, and Error blames the wrong party.
+
+### 3. No `distress` severity
+macOS's interruption look. No Windows equivalent.
+
+### 4. THE PILL'S APPEARANCE IS INFERRED FROM THE MESSAGE TEXT
+`OverlayStateFor` in `MainWindow.xaml.cs` reads the status sentence -
+`StartsWith("Recording")`, `Contains("copied only")` - and picks the pill from the words.
+
+macOS is built the other way round and its source says why, verbatim: *inferring a visual from a
+string is how a copy edit silently changes an icon.*
+
+**So a copy change can make the pill vanish.** Rewording "Recording. Release to finish" to
+"Listening..." drops through every branch to Hidden and there is no pill at all while the user
+speaks. No code change, no failing test, no different build.
+
+The fix is to hand the state in beside the text. Until then a source-level guard checks the reverse
+direction - that every trigger word the mapping looks for still appears in something the app says -
+so an orphaned trigger goes red instead of going quiet. That guard is written and NOT YET VERIFIED,
+because builds on the rig are stopped.
+
+### What this says about the method, not the app
+The feature list said 43 present and missed all four. A list of features cannot find a gap in HOW a
+feature behaves; only a comparison of the two implementations can, and that needs the other side's
+source in front of you rather than in memory.
