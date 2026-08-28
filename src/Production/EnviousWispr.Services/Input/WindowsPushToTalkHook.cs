@@ -30,7 +30,9 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
     private readonly Task _dispatchTask;
     private nint _hook;
-    private readonly Timer? _gestureTimer;
+    // Fully qualified: this project also sees System.Windows.Forms.Timer, and a Forms timer
+    // needs a message pump, which the hook thread does not have.
+    private readonly System.Threading.Timer? _gestureTimer;
 
     /// <summary>How often a pending gesture is given a chance to complete.</summary>
     /// <remarks>
@@ -83,7 +85,7 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
         // common path keeps exactly the cost it has today.
         if (_edgeTracker.NextDeadline is not null || IsModifierBinding(gesture, virtualKey))
         {
-            _gestureTimer = new Timer(
+            _gestureTimer = new System.Threading.Timer(
                 _ => PumpGesture(),
                 state: null,
                 dueTime: GestureTickInterval,
