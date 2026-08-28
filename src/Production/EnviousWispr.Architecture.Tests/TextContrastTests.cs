@@ -119,6 +119,58 @@ public sealed partial class TextContrastTests
         Assert.Equal(1.0, Contrast("#7A7290", "#7A7290"), 3);
     }
 
+    /// <summary>
+    /// Every window the app draws is told the theme, not only the settings window.
+    /// </summary>
+    /// <remarks>
+    /// A SECOND TOP-LEVEL WINDOW DOES NOT INHERIT THE FIRST ONE'S THEME. The recording pill is its
+    /// own window, so setting the theme on the settings window never reached it and it followed the
+    /// MACHINE instead - invisible while the two agree, wrong the moment someone picks Light on a
+    /// machine set to Dark.
+    ///
+    /// IT WAS WORSE THAN A MISMATCHED COLOUR. The settings window shows a PREVIEW of that pill, and
+    /// the preview DID follow the app theme. So the preview showed a pill that would never appear,
+    /// which is worse than having no preview at all.
+    ///
+    /// Enumerated from the window files rather than from a list kept here, so a third window is
+    /// covered without anyone remembering to add it - which is the whole failure being guarded
+    /// against.
+    /// </remarks>
+    [Fact]
+    public void EveryWindowTheAppDrawsIsToldTheTheme()
+    {
+        var app = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
+        var code = string.Concat(Directory
+            .EnumerateFiles(app, "*.cs", SearchOption.AllDirectories)
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Select(File.ReadAllText));
+
+        var roots = Directory
+            .EnumerateFiles(app, "*Window.xaml", SearchOption.TopDirectoryOnly)
+            .Select(path => (Window: Path.GetFileName(path), Root: RootName(File.ReadAllText(path))))
+            .ToArray();
+
+        Assert.True(roots.Length >= 2, $"Expected the app's windows, found {roots.Length}.");
+
+        var untold = roots
+            .Where(entry => entry.Root is null ||
+                !code.Contains($"{entry.Root}.RequestedTheme", StringComparison.Ordinal))
+            .Select(entry => entry.Window)
+            .ToArray();
+
+        Assert.True(
+            untold.Length == 0,
+            "These windows are never told the app's theme, so they follow the machine instead: "
+                + string.Join(", ", untold));
+    }
+
+    private static string? RootName(string markup)
+    {
+        var match = Regex.Match(markup, @"<(?:Grid|StackPanel|Border)[^>]*x:Name=""(\w+)""");
+        return match.Success ? match.Groups[1].Value : null;
+    }
+
     private static Dictionary<string, string> ReadTheme(string theme)
     {
         var markup = File.ReadAllText(Path.Combine(

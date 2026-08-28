@@ -7,6 +7,143 @@ namespace EnviousWispr.Architecture.Tests;
 public sealed class HotkeyEdgeTrackerTests
 {
     private const uint F8 = 0x77;
+    private const uint RightControl = 0xA3;
+    private const uint LetterC = 0x43;
+
+    private static HotkeyEdgeTracker ModifierBound() =>
+        new(
+            new HotkeyBinding(RightControl, HotkeyModifiers.None),
+            new HotkeyBinding(0x1B, HotkeyModifiers.None),
+            new HotkeyBinding('W', HotkeyModifiers.Control | HotkeyModifiers.Alt),
+            DictationRecordingMode.PushToTalk);
+
+    /// <summary>
+    /// THE CONTROL FOR THE WHOLE MODIFIER BINDING. A tap must actually start a recording.
+    /// </summary>
+    /// <remarks>
+    /// Without this, every refusal test below would pass against a binding that can never fire -
+    /// which is exactly how the hands-free lock reached ten green tests while being unreachable.
+    /// The policy underneath has its own tests; this one proves the wiring carries them.
+    /// </remarks>
+    [Fact]
+    public void TappingABoundModifierStartsARecording()
+    {
+        var tracker = ModifierBound();
+
+        tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
+        var tap = tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None);
+
+        Assert.Equal(PushToTalkSignal.Pressed, tap.Signal);
+    }
+
+    /// <summary>
+    /// A modifier that does not reach Windows breaks copy, paste, and every shortcut on the machine.
+    /// The failure is total, immediate, and lands on someone who has not opened this app today.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ABoundModifierIsNeverSwallowed(bool isKeyDown)
+    {
+        var tracker = ModifierBound();
+
+        Assert.False(tracker.Process(RightControl, isKeyDown, HotkeyModifiers.Control).Consume);
+    }
+
+    /// <summary>
+    /// The whole reason a modifier binding needs a different gesture. Holding it and pressing a
+    /// letter is a shortcut and must do nothing here.
+    /// </summary>
+    [Fact]
+    public void AShortcutOnTheBoundModifierStartsNothing()
+    {
+        var tracker = ModifierBound();
+
+        tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
+        tracker.Process(LetterC, isKeyDown: true, HotkeyModifiers.Control);
+        tracker.Process(LetterC, isKeyDown: false, HotkeyModifiers.Control);
+        var release = tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None);
+
+        Assert.Null(release.Signal);
+        Assert.False(release.Consume);
+    }
+
+    /// <summary>
+    /// A modifier cannot be held to talk, so a tap has to end the recording as well as start it.
+    /// Push-to-talk has no meaning on this binding and the mode is deliberately ignored.
+    /// </summary>
+    [Fact]
+    public void ASecondTapStopsTheRecording()
+    {
+        var tracker = ModifierBound();
+
+        tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
+        Assert.Equal(
+            PushToTalkSignal.Pressed,
+            tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None).Signal);
+
+        tracker.SetRecordingActive(active: true);
+
+        tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
+        Assert.Equal(
+            PushToTalkSignal.Released,
+            tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None).Signal);
+    }
+
+    /// <summary>
+    /// Escape must still cancel while a modifier binding is in use. The modifier route returns
+    /// early for its own key and must hand every other key back to the ordinary path.
+    /// </summary>
+    [Fact]
+    public void EscapeStillCancelsUnderAModifierBinding()
+    {
+        var tracker = ModifierBound();
+        tracker.SetRecordingActive(active: true);
+
+        var escape = tracker.Process(0x1B, isKeyDown: true, HotkeyModifiers.None);
+
+        Assert.Equal(PushToTalkSignal.Cancelled, escape.Signal);
+    }
+
+    /// <summary>
+    /// Alt is refused as a binding: a lone Alt tap already opens a window's menu bar, so taking it
+    /// would put this app in a fight with the shell over one gesture.
+    /// </summary>
+    [Theory]
+    [InlineData(0xA4u)]
+    [InlineData(0xA5u)]
+    public void AltIsNotAcceptedAsAModifierBinding(uint alt)
+    {
+        Assert.False(HotkeyEdgeTracker.IsModifierKey(alt));
+    }
+
+    /// <summary>
+    /// The control for the refusal above. The keys that ARE accepted must be recognised, or a
+    /// method that always returned false would pass it while disabling the feature entirely.
+    /// </summary>
+    [Theory]
+    [InlineData(0xA0u)]
+    [InlineData(0xA2u)]
+    [InlineData(0xA3u)]
+    [InlineData(0x5Bu)]
+    public void TheModifiersWeDoAcceptAreRecognised(uint key)
+    {
+        Assert.True(HotkeyEdgeTracker.IsModifierKey(key));
+    }
+
+    /// <summary>An ordinary key binding must be untouched by any of this.</summary>
+    [Fact]
+    public void AnOrdinaryKeyStillHoldsToTalk()
+    {
+        var tracker = new HotkeyEdgeTracker(F8, HotkeyModifiers.None);
+
+        Assert.Equal(
+            PushToTalkSignal.Pressed,
+            tracker.Process(F8, isKeyDown: true, HotkeyModifiers.None).Signal);
+        Assert.Equal(
+            PushToTalkSignal.Released,
+            tracker.Process(F8, isKeyDown: false, HotkeyModifiers.None).Signal);
+    }
 
     [Fact]
     public void PressRepeatAndReleaseProduceOneEdgeEach()
