@@ -1050,6 +1050,87 @@ public sealed partial class DesignSystemTokenTests
     }
 
     /// <summary>
+    /// Nothing on the Appearance page can change the window without also being kept.
+    /// </summary>
+    /// <remarks>
+    /// THE DEFECT THIS EXISTS FOR APPLIED INSTANTLY AND SAVED NOTHING. Choosing Light repainted the
+    /// window, which is the strongest signal a user can get that a choice took, and the app came
+    /// back as System on the next launch. Both halves worked in isolation - saving a theme
+    /// round-tripped, choosing one repainted - and nothing joined them. A gap between two passing
+    /// tests is not a failure inside either, which is why no existing test saw it.
+    ///
+    /// APPEARANCE IS THE ONLY SETTINGS PAGE WITH NO SAVE BUTTON, so its controls are the only ones
+    /// in the window that must carry their own persistence. That is what makes this checkable at
+    /// all: the rule is not "every control saves", it is "these controls have nowhere else to save
+    /// from".
+    ///
+    /// LIMIT, STATED RATHER THAN IMPLIED: this checks the WIRING, not the write. It proves each
+    /// choice reaches the persist method and that the method writes through the settings store. It
+    /// cannot prove the file on disk changed - that needs the running app, and it is the check the
+    /// session driving the real app should keep making.
+    /// </remarks>
+    [Fact]
+    public void EveryAppearanceChoiceIsKeptWithoutASaveButton()
+    {
+        var root = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
+        var markup = File.ReadAllText(Path.Combine(root, "MainWindow.xaml"));
+        var code = File.ReadAllText(Path.Combine(root, "MainWindow.xaml.cs"));
+
+        // Both choice controls must report a selection at all. An unwired RadioButton changes the
+        // screen through its binding and tells no one, which is precisely the original defect.
+        foreach (var group in new[] { "PillTheme", "PillOverlayPosition" })
+        {
+            var button = RadioButtonInGroup(group).Match(markup);
+            Assert.True(button.Success, $"No radio button found in the {group} group.");
+            // NOT Contains("Checked=\"") - every one of these carries IsChecked="{Binding ...}",
+            // and that substring satisfies a naive search, so the check passed with the wiring
+            // deliberately removed. The handler attribute has to be matched as its own attribute.
+            Assert.True(
+                CheckedHandler().IsMatch(button.Value),
+                $"The {group} choice changes the window and reports it to nothing, so it cannot be "
+                    + "kept. Appearance has no Save button to fall back on.");
+        }
+
+        // Every handler those controls name must reach the one method that writes.
+        var handlers = RadioButtonInGroup("Pill(Theme|OverlayPosition)").Matches(markup)
+            .Select(match => CheckedHandler().Match(match.Value).Groups[1].Value)
+            .Where(name => name.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(handlers.Length >= 1, "No Checked handlers found on the Appearance choices.");
+
+        foreach (var handler in handlers)
+        {
+            var body = HandlerBody(handler).Match(code);
+            Assert.True(body.Success, $"{handler} is named in the markup and does not exist.");
+            Assert.True(
+                body.Value.Contains("PersistAppearanceChoicesAsync", StringComparison.Ordinal),
+                $"{handler} changes the window without keeping the choice.");
+        }
+
+        // And the method they reach must actually write, rather than merely existing.
+        var persist = HandlerBody("PersistAppearanceChoicesAsync").Match(code);
+        Assert.True(persist.Success, "PersistAppearanceChoicesAsync does not exist.");
+        Assert.Contains("_settingsStore.SaveAsync", persist.Value, StringComparison.Ordinal);
+    }
+
+    private static Regex RadioButtonInGroup(string group) =>
+        new($@"<RadioButton GroupName=""{group}""[^>]*>");
+
+    /// <summary>A Checked handler attribute, and not the IsChecked binding beside it.</summary>
+    /// <remarks>
+    /// The lookbehind is the whole point: IsChecked="{Binding IsSelected}" ends in the same eight
+    /// characters, so without it this matches the binding and reports a handler that is not there.
+    /// </remarks>
+    [GeneratedRegex(@"(?<![A-Za-z])Checked=""(\w+)""")]
+    private static partial Regex CheckedHandler();
+
+    /// <summary>A method and everything up to the next one at the same indentation.</summary>
+    private static Regex HandlerBody(string name) =>
+        new($@"\b{Regex.Escape(name)}\([^)]*\)\s*(?::[^{{]*)?{{.*?\n    }}", RegexOptions.Singleline);
+
+    /// <summary>
     /// Every navigation row has an icon, and no two rows wear the same one.
     /// </summary>
     /// <remarks>
