@@ -104,6 +104,17 @@ public enum AppEventCode
     /// </remarks>
     PolishOutputRefused,
 
+    /// <summary>
+    /// A release used text recognised while the user was still speaking, and transcribed only the
+    /// tail.
+    /// </summary>
+    /// <remarks>
+    /// The event that says streaming actually PAID. Segments being committed says the loop ran;
+    /// only this says the release was shorter for it, and the two can differ - every commit can
+    /// succeed and the head start still be refused at the last check.
+    /// </remarks>
+    StreamingHeadStartUsed,
+
     /// <summary>A stretch of a running recording was transcribed before the user finished.</summary>
     StreamingSegmentCommitted,
 
