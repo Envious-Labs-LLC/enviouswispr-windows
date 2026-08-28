@@ -3191,6 +3191,24 @@ public partial class App : Application, IAsyncDisposable
             SessionTransitionKind.Failed => AppEventCode.DictationSessionFailed,
             _ => (AppEventCode?)null,
         };
+        if (result.Kind == SessionTransitionKind.Started &&
+            _audioCapture is ICaptureStartTimings timings &&
+            timings.LastDeviceOpenMilliseconds is { } openMs)
+        {
+            // THE NUMBER THAT DECIDES A FEATURE. Warming the capture engine removes the OPEN half
+            // and nothing else, so if open is cheap the whole idea is worth nothing and the privacy
+            // question behind it never needs asking. Logged rather than reasoned about, because the
+            // one thing nobody has done is look.
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.CaptureDeviceOpened,
+                ElapsedMilliseconds: openMs));
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.CaptureStreamStarted,
+                ElapsedMilliseconds: timings.LastStreamStartMilliseconds ?? -1));
+        }
+
         if (eventCode is not null)
         {
             _logger.Write(new AppLogEntry(
