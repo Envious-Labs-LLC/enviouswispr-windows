@@ -1509,16 +1509,51 @@ public partial class App : Application, IAsyncDisposable
         var context = await _textTargetAdapter.CaptureContextAsync(
             target.Value,
             TextDeliveryOptions.Default).ConfigureAwait(false);
-        var selection = context.Status == TargetContextStatus.Available &&
-            context.Context?.TargetKind != TextTargetKind.Terminal
-                ? context.Context?.Selection.Trim()
-                : null;
-        var message = !string.IsNullOrWhiteSpace(selection)
-            ? null
-            : context.Context?.TargetKind == TextTargetKind.Terminal
-                ? "Terminal windows do not share their selection. Add the word here by hand."
-                : "No readable selection was found. Select a misheard word, then try the shortcut again.";
-        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.QuickAddPrepared));
+        var published = context.Status == TargetContextStatus.Available
+            ? context.Context?.Selection.Trim()
+            : null;
+
+        // EVERY OUTCOME BELOW SAYS SOMETHING, INCLUDING THE REFUSALS. A refusal that is silent is
+        // indistinguishable from nothing having happened at all - to the user, who is left looking
+        // at an empty box, and to anyone testing it, who would be reporting the absence of an
+        // effect as evidence of a decision.
+        var acquisition = SelectionAcquisitionPolicy.Decide(
+            hasValidTarget: true,
+            published,
+            isDictationRunning: _sessionController?.CurrentSession is not null,
+            isDeliveryInFlight: _activeProcessingCancellation is not null);
+
+        string? selection;
+        string? message;
+        switch (acquisition)
+        {
+            case SelectionAcquisition.UsePublished:
+                selection = published;
+                message = null;
+                break;
+
+            case SelectionAcquisition.SyntheticCopy:
+                // Static because it holds no state - it borrows the clipboard and gives it back.
+                selection = await WindowsTextTargetAdapter
+                    .TryReadSelectionWithCopyAsync(CancellationToken.None)
+                    .ConfigureAwait(false);
+                selection = selection?.Trim();
+                message = string.IsNullOrWhiteSpace(selection)
+                    ? "Nothing was selected in that app. Select a misheard word, then try the shortcut again."
+                    : null;
+                break;
+
+            default:
+                selection = null;
+                message = "EnviousWispr was busy with a dictation, so it left your clipboard alone. Try the shortcut again in a moment.";
+                break;
+        }
+
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            acquisition == SelectionAcquisition.Refuse
+                ? AppEventCode.QuickAddRefused
+                : AppEventCode.QuickAddPrepared));
         _window?.DispatcherQueue.TryEnqueue(() =>
         {
             ShowMainWindow(openSettings: false);

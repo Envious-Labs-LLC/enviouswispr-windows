@@ -73,6 +73,17 @@ public enum AppEventCode
     /// where an unexplained wait would hide. This is measured by one stopwatch spanning the path.
     /// </remarks>
     /// <summary>
+    /// Quick Add declined to borrow the clipboard, because the app was busy.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from QuickAddPrepared with nothing found. A refusal is a DECISION and an empty
+    /// selection is a FACT about the other app, and they have different fixes - one is "wait a
+    /// moment", the other is "select something". A single event for both would make them
+    /// indistinguishable in the one place anyone would look afterwards.
+    /// </remarks>
+    QuickAddRefused,
+
+    /// <summary>
     /// A polish result was refused as nonsense and the cleaned transcript was kept instead.
     /// </summary>
     /// <remarks>
