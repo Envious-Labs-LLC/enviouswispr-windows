@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 
 namespace EnviousWispr.Audio;
 
-public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource
+public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource, ICaptureStartTimings
 {
     private static readonly AudioBufferFormat CaptureFormat = new(
         AudioSampleConverter.TargetSampleRate,
@@ -25,6 +25,8 @@ public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource
     private volatile bool _backendStopped;
     private volatile bool _unexpectedStop;
     private bool _disposed;
+    private long? _lastDeviceOpenMilliseconds;
+    private long? _lastStreamStartMilliseconds;
 
     public WasapiAudioCapture()
         : this(new WasapiRecorderFactory(), TimeSpan.FromSeconds(2))
@@ -43,6 +45,10 @@ public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource
     public event EventHandler<AudioLevel>? LevelChanged;
 
     public bool IsCapturing => _isCapturing;
+
+    public long? LastDeviceOpenMilliseconds => _lastDeviceOpenMilliseconds;
+
+    public long? LastStreamStartMilliseconds => _lastStreamStartMilliseconds;
 
     public AudioSnapshot? GetSnapshot(TimeSpan maximumDuration)
     {
@@ -94,6 +100,12 @@ public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource
                 return Failure(AppErrorCode.CaptureAlreadyActive, canRetry: false);
             }
 
+            // TIMED SEPARATELY BECAUSE THE TWO HALVES ANSWER DIFFERENT QUESTIONS. Opening is the
+            // half a warm device would remove; starting the stream is the half nothing can remove.
+            // The stopwatch starts before the try so a FAILED open is still timed - a device that
+            // takes two seconds to refuse is worth knowing about, and it is exactly the case a
+            // success-only measurement never sees.
+            var openTimer = System.Diagnostics.Stopwatch.StartNew();
             IAudioRecorderSession recorder;
             try
             {
@@ -117,6 +129,14 @@ public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource
             {
                 return Failure(AppErrorCode.AudioDeviceUnavailable, canRetry: true);
             }
+            finally
+            {
+                // ONE PLACE FOR ALL FIVE EXITS. Recording it inside each branch means the next
+                // branch someone adds is the one that quietly stops being measured, and a missing
+                // number here does not look like a defect - it looks like the case never happened.
+                openTimer.Stop();
+                _lastDeviceOpenMilliseconds = openTimer.ElapsedMilliseconds;
+            }
 
             lock (_bufferGate)
             {
@@ -136,7 +156,10 @@ public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource
             try
             {
                 _isCapturing = true;
+                var startTimer = System.Diagnostics.Stopwatch.StartNew();
                 recorder.Start();
+                startTimer.Stop();
+                _lastStreamStartMilliseconds = startTimer.ElapsedMilliseconds;
                 return new AudioOperationResult(Succeeded: true);
             }
             catch (Exception exception) when (

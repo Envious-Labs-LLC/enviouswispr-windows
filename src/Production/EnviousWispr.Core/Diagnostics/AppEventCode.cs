@@ -21,6 +21,25 @@ public enum AppEventCode
     QuickAddRequested,
     QuickAddPrepared,
     DictationRecordingStarted,
+
+    /// <summary>
+    /// How a key press split between opening the microphone and starting the stream.
+    /// </summary>
+    /// <remarks>
+    /// EMITTED TO DECIDE WHETHER HOLDING THE DEVICE OPEN BETWEEN DICTATIONS IS WORTH BUILDING. That
+    /// idea only helps if OPENING is the slow half, and nobody has measured which half is slow. If
+    /// opening turns out to be cheap, the feature buys nothing and the privacy question it raises -
+    /// whether an open microphone lights the Windows in-use indicator - never has to be asked.
+    ///
+    /// TWO CODES RATHER THAN ONE EMITTED TWICE. The same name on consecutive lines with two numbers
+    /// is a puzzle for whoever reads the log, and the order is the only thing distinguishing them -
+    /// which is exactly the sort of detail that survives until someone reverses it.
+    /// </remarks>
+    CaptureDeviceOpened,
+
+    /// <summary>How long the stream took to start, after the device was already open.</summary>
+    /// <remarks>The half that warming CANNOT remove, and therefore the floor on a key press.</remarks>
+    CaptureStreamStarted,
     DictationCaptureFinalized,
     DictationTranscriptionStarted,
     DictationTranscriptionCompleted,
