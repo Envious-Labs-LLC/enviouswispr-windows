@@ -181,6 +181,10 @@ public sealed partial class MainWindow : Window, IDisposable
     private bool _initialFocusAssigned;
     private int _polishModelDiscoveryVersion;
     private DictationOverlayState _currentOverlayState = DictationOverlayState.Hidden;
+
+    // True between asking for a speed check and being handed the answer. Without it, any status
+    // change arriving mid-run hands the button back and lets a second check start over the first.
+    private bool _speedCheckRunning;
     private CancellationTokenSource? _soundPreviewCancellation;
 
     public MainWindow(
@@ -511,6 +515,7 @@ public sealed partial class MainWindow : Window, IDisposable
         HandleRecordingSoundTransition(overlayState);
         _currentOverlayState = overlayState;
         PreviewRecordingSoundButton.IsEnabled = overlayState != DictationOverlayState.Recording;
+        SetSpeedCheckAvailability(overlayState != DictationOverlayState.Recording);
         _overlayWindow.ShowState(overlayState, status);
         if (status.Contains("ready", StringComparison.OrdinalIgnoreCase))
         {
@@ -1532,6 +1537,7 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private void RunSpeedCheckButton_Click(object sender, RoutedEventArgs e)
     {
+        _speedCheckRunning = true;
         RunSpeedCheckButton.IsEnabled = false;
         SpeedCheckResultText.Visibility = Visibility.Visible;
         SpeedCheckResultText.Text = "Running...";
@@ -1543,9 +1549,31 @@ public sealed partial class MainWindow : Window, IDisposable
     /// The refusal says WHY, for the same reason Quick Add's does: a check that silently produces
     /// nothing is indistinguishable from a button that does not work.
     /// </remarks>
+    /// <summary>
+    /// Greys the speed check out while a dictation is running, and says why underneath it.
+    /// </summary>
+    /// <remarks>
+    /// A LIVE BUTTON THAT ANSWERS "NO" IS THE WRONG FEEL ON WINDOWS. The check genuinely cannot run
+    /// during a dictation - it would be measuring a machine that is busy doing the thing being
+    /// measured - so the honest presentation is a control that is visibly unavailable, not one that
+    /// accepts the click and then declines.
+    ///
+    /// THE REASON GETS ITS OWN LINE RATHER THAN REPLACING THE RESULT. A greyed control with no
+    /// explanation is a different bad, and overwriting the last measurement to explain the greying
+    /// would destroy the number the user came back to read.
+    /// </remarks>
+    private void SetSpeedCheckAvailability(bool available)
+    {
+        RunSpeedCheckButton.IsEnabled = available && !_speedCheckRunning;
+        SpeedCheckUnavailableText.Visibility = available ? Visibility.Collapsed : Visibility.Visible;
+    }
+
     public void SetSpeedCheckResult(LatencySummary? summary)
     {
-        RunSpeedCheckButton.IsEnabled = true;
+        // Not an unconditional re-enable. A dictation can begin between the click and the answer,
+        // and handing the button back then would undo the greying the moment it was needed.
+        _speedCheckRunning = false;
+        SetSpeedCheckAvailability(_currentOverlayState != DictationOverlayState.Recording);
         SpeedCheckResultText.Visibility = Visibility.Visible;
         SpeedCheckResultText.Text = summary is null || summary.Count == 0
             ? "The speed check did not run. It is skipped while a dictation is in progress."
