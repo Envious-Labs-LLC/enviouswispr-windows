@@ -4,10 +4,11 @@ using System.Text.Json;
 using EnviousWispr.Core.Credentials;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.LLM;
 
-public abstract class CloudPolishProviderBase : IPolishProvider
+public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvisor
 {
     private static readonly TimeSpan[] RetryDelays =
         [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3)];
@@ -179,6 +180,78 @@ public abstract class CloudPolishProviderBase : IPolishProvider
                 timer,
                 canRetry: false);
         }
+    }
+
+    /// <summary>
+    /// Asks the model what a word is likely to be misheard as.
+    /// </summary>
+    /// <remarks>
+    /// IT REUSES <see cref="SendOnceAsync"/> AND NOTHING ELSE FROM THE POLISH PATH. That method is
+    /// the one seam that is genuinely about talking to this vendor - the URL, the request shape, the
+    /// place the answer lives in the response - and every subclass already has it right. Everything
+    /// above it is polish policy: fallback text, safety comparison against the original, retries
+    /// tuned for a user who is mid-dictation. None of that applies to a button press.
+    ///
+    /// NO RETRIES HERE, ON PURPOSE. Polishing retries because the alternative is the user losing the
+    /// benefit of words they have already spoken. Nothing is at stake in a suggestion, the user is
+    /// looking at the screen, and the honest answer to a failed ask is to say so immediately rather
+    /// than to sit for another four seconds first.
+    ///
+    /// EVERY FAILURE IS THE SAME FAILURE TO THE PERSON WAITING. A missing key, a refused connection,
+    /// a rate limit and a timeout all mean the suggestion did not arrive, so they are caught
+    /// together rather than sorted into messages nobody can act on differently.
+    /// </remarks>
+    public async Task<MishearingAdvice> SuggestAsync(
+        string spokenForm,
+        IReadOnlyList<string> existing,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(existing);
+        if (string.IsNullOrWhiteSpace(spokenForm))
+        {
+            return MishearingAdvice.None(MishearingAdviceStatus.NothingUsable);
+        }
+
+        ApiKeyReadResult keyResult;
+        try
+        {
+            keyResult = _apiKeyStore.Read(Options.Provider);
+        }
+        catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
+        {
+            return MishearingAdvice.None(MishearingAdviceStatus.Failed);
+        }
+
+        if (keyResult.Status != ApiKeyReadStatus.Found || string.IsNullOrWhiteSpace(keyResult.Value))
+        {
+            return MishearingAdvice.None(MishearingAdviceStatus.Failed);
+        }
+
+        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken);
+        timeoutCancellation.CancelAfter(_requestTimeout);
+
+        string? reply;
+        try
+        {
+            reply = await SendOnceAsync(
+                keyResult.Value,
+                AliasSuggestionPrompt.SystemPrompt,
+                AliasSuggestionPrompt.BuildUserMessage(spokenForm, existing),
+                timeoutCancellation.Token).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            exception is CloudPolishException or HttpRequestException or OperationCanceledException
+                or JsonException)
+        {
+            return MishearingAdvice.None(MishearingAdviceStatus.Failed);
+        }
+
+        var suggestions = AliasSuggestions.Parse(reply, spokenForm, existing);
+        return suggestions.Count == 0
+            ? MishearingAdvice.None(MishearingAdviceStatus.NothingUsable)
+            : new MishearingAdvice(MishearingAdviceStatus.Suggested, suggestions);
     }
 
     protected abstract Task<string?> SendOnceAsync(
