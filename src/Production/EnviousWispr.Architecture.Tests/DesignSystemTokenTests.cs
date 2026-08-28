@@ -706,7 +706,13 @@ public sealed partial class DesignSystemTokenTests
                  })
         {
             var page = FindNamedElement(document, name);
-            var stack = page.Elements().Single(element => element.Name.LocalName == "StackPanel");
+
+            // DESCENDANT, NOT CHILD. The property being checked is "the first thing on the page is
+            // its header card", which says nothing about how many containers sit between the page
+            // and its content. Requiring a direct child pinned the nesting instead, so wrapping
+            // every page in a width-capped column broke this test without changing what a user sees
+            // - a gate failing on the shape of a change rather than on its effect.
+            var stack = page.Descendants().First(element => element.Name.LocalName == "StackPanel");
             var firstContent = stack.Elements().First();
             Assert.Equal("Border", firstContent.Name.LocalName);
             Assert.Equal(

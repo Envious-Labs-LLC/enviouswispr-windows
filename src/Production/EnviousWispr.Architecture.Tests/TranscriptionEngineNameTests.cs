@@ -466,24 +466,37 @@ public sealed partial class DesignSystemTokenTests
                 FindRepositoryRoot(),
                 "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
 
-        var panels = PageContentPanel().Matches(markup).Select(match => match.Value).ToArray();
+        var columns = PageContentColumn().Count(markup);
 
-        Assert.True(panels.Length >= 7, $"Expected at least the seven page panels, found {panels.Length}.");
+        Assert.True(
+            columns >= 7,
+            $"Expected at least seven capped content columns, found {columns}. Every page's content "
+                + "must live in a column that is both star-sized and capped, or its edges move.");
 
-        var unpinned = panels
-            .Where(panel => !panel.Contains("HorizontalAlignment=\"Left\"", StringComparison.Ordinal))
+        // The old construction, which fixed the left edge and left the right one loose. A panel
+        // that carries the page width itself is sized by its CONTENT, so every page's cards ended
+        // wherever that page happened to end - measured at a 424px spread across twenty pages, and
+        // the primary Save button swung 391px with them.
+        var selfSized = PageContentPanel().Matches(markup)
+            .Select(match => match.Value)
+            .Where(panel => panel.StartsWith("<StackPanel", StringComparison.Ordinal))
             .ToArray();
 
         Assert.True(
-            unpinned.Length == 0,
-            $"{unpinned.Length} page panel(s) still centre their content, so their left edge moves with it.");
+            selfSized.Length == 0,
+            $"{selfSized.Length} page panel(s) still carry the page width themselves, so their right "
+                + "edge is wherever their content ends: " + string.Join(" | ", selfSized));
 
-        // Control, both directions. The matcher must MATCH an unpinned panel - otherwise a matcher
-        // that had stopped matching would report the same clean result - and the unpinned one must
-        // be recognised as unpinned.
-        const string centredPanel = "<StackPanel MaxWidth=\"{StaticResource BrandPageContentMaxWidth}\" Spacing=\"18\">";
-        Assert.Matches(PageContentPanel(), centredPanel);
-        Assert.DoesNotContain("HorizontalAlignment=\"Left\"", centredPanel, StringComparison.Ordinal);
+        // Control, both directions. The matcher must recognise the old shape - otherwise a matcher
+        // that had stopped matching anything would report the same clean result - and the new shape
+        // must not be mistaken for it.
+        const string selfSizedPanel =
+            "<StackPanel HorizontalAlignment=\"Left\" MaxWidth=\"{StaticResource BrandPageContentMaxWidth}\" Spacing=\"18\">";
+        const string cappedColumn =
+            "<ColumnDefinition Width=\"*\" MaxWidth=\"{StaticResource BrandPageContentMaxWidth}\" />";
+        Assert.Matches(PageContentPanel(), selfSizedPanel);
+        Assert.Matches(PageContentColumn(), cappedColumn);
+        Assert.DoesNotMatch(PageContentPanel(), cappedColumn);
     }
 
     /// <summary>
@@ -535,8 +548,22 @@ public sealed partial class DesignSystemTokenTests
         Assert.Contains("SelectionBorder", controls, StringComparison.Ordinal);
     }
 
+    /// <summary>The superseded shape: a panel that carries the page width on itself.</summary>
     [GeneratedRegex(@"<StackPanel[^>]*BrandPageContentMaxWidth[^>]*>")]
     private static partial Regex PageContentPanel();
+
+    /// <summary>
+    /// The content column: star-sized so it fills, capped so it stops.
+    /// </summary>
+    /// <remarks>
+    /// BOTH HALVES OR IT IS THE OLD BUG WEARING NEW CLOTHES. Star alone lets the content run the
+    /// full width of any monitor. A cap alone on a stretched panel makes the framework CENTRE it,
+    /// which puts the left edge back at the mercy of the content width - the exact defect the
+    /// original left-pin fix was made for, reintroduced by the fix for the right edge.
+    /// A star column with a maximum is the one construction that pins both edges at once.
+    /// </remarks>
+    [GeneratedRegex(@"<ColumnDefinition Width=""\*"" MaxWidth=""\{StaticResource BrandPageContentMaxWidth\}"" />")]
+    private static partial Regex PageContentColumn();
 
     [GeneratedRegex(@"<VisualState x:Name=""(?:Checked|Unchecked)"">(.*?)</VisualState>", RegexOptions.Singleline)]
     private static partial Regex CheckStateBlock();
@@ -1148,6 +1175,17 @@ public sealed partial class DesignSystemTokenTests
     /// build, so the session driving the real app can only see icons by eye, one page at a time.
     /// That makes the markup the only place this is mechanically answerable, and this test the only
     /// thing standing between a new row and a broken indent.
+    ///
+    /// THE FIRST VERSION OF THE DUPLICATE CHECK WAS BLIND TO HALF THE PAIRS, AND THAT IS THE LESSON.
+    /// A row can name a built-in Symbol or a Fluent glyph, and the two forms can render the IDENTICAL
+    /// picture while reading as different declarations - Symbol "Character" and glyph E8C1 are the
+    /// same drawing. Comparing declarations therefore reported a genuinely duplicated pair as
+    /// distinct, and it reported it confidently, because the strings really are different.
+    ///
+    /// The fix is not a lookup table translating one form into the other - that table would be a
+    /// premise nobody executed, and wrong entries in it would be invisible. Every nav row now
+    /// declares a glyph, so there is one axis and the comparison is exact by construction. The ban
+    /// below is what keeps it that way.
     /// </remarks>
     [Fact]
     public void EveryNavigationRowHasItsOwnIcon()
@@ -1175,6 +1213,18 @@ public sealed partial class DesignSystemTokenTests
             "These navigation rows have no icon, so their labels sit in the icon column: "
                 + string.Join(", ", plain));
 
+        // ONE FORM ONLY, OR THE COMPARISON BELOW CANNOT BE TRUSTED. This is the clause that makes
+        // "no two rows share an icon" a real claim rather than a claim about spelling.
+        var builtIn = rows
+            .Where(row => row.Icon?.StartsWith("symbol:", StringComparison.Ordinal) == true)
+            .Select(row => row.Label)
+            .ToArray();
+
+        Assert.True(
+            builtIn.Length == 0,
+            "These navigation rows use a built-in symbol rather than a glyph, so a duplicate against "
+                + "a glyph row cannot be detected: " + string.Join(", ", builtIn));
+
         var shared = rows
             .GroupBy(row => row.Icon, StringComparer.Ordinal)
             .Where(group => group.Count() > 1)
@@ -1185,11 +1235,11 @@ public sealed partial class DesignSystemTokenTests
             shared.Length == 0,
             "These navigation rows wear the same icon as another row: " + string.Join("; ", shared));
 
-        // Control, both ways. At least one row must reach its icon through each of the two forms,
-        // or a regex that silently matched only one of them would report a clean sidebar while
-        // being blind to half of it.
-        Assert.Contains(rows, row => row.Icon?.StartsWith("glyph:", StringComparison.Ordinal) == true);
-        Assert.Contains(rows, row => row.Icon?.StartsWith("symbol:", StringComparison.Ordinal) == true);
+        // Control. Every row reaches its icon as a glyph now, so the matcher must be finding them
+        // that way - a regex that had stopped matching would otherwise report a clean sidebar while
+        // seeing nothing at all. The symbol branch is still read, above, so the ban can fire.
+        Assert.All(rows, row =>
+            Assert.StartsWith("glyph:", row.Icon, StringComparison.Ordinal));
     }
 
     /// <summary>
