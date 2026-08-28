@@ -1140,8 +1140,21 @@ public sealed partial class DesignSystemTokenTests
     [GeneratedRegex(@"(?:StartsWith|Contains)\(""([^""]+)""")]
     private static partial Regex StatusTrigger();
 
-    /// <summary>A sentence handed to SetSessionStatus.</summary>
-    [GeneratedRegex(@"SetSessionStatus\(\s*""([^""]+)""")]
+    /// <summary>
+    /// A sentence the app can show, from anywhere in the two files that produce them.
+    /// </summary>
+    /// <remarks>
+    /// NOT SCOPED TO SetSessionStatus CALLS, and the first version was. Status sentences are also
+    /// produced by switch expressions that RETURN them - "Recording. Release to finish" is one - so
+    /// matching only the call site reported half the pill's triggers as orphaned when every one of
+    /// them was live. The same wrong-scope failure as the macOS parity matcher, an hour apart.
+    ///
+    /// LIMIT, STATED: a sentence here is any quoted string of a few words. That is deliberately
+    /// broad, and broad is the safe direction - a false alarm gets this gate deleted, while the
+    /// failure it guards against needs a trigger to vanish from EVERY string in both files, which a
+    /// reworded sentence does.
+    /// </remarks>
+    [GeneratedRegex(@"""([A-Za-z][^""]{8,}?\s[^""]*?)""")]
     private static partial Regex StatusSentence();
 
     /// <summary>
