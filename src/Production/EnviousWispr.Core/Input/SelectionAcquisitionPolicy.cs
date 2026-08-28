@@ -35,6 +35,17 @@ public enum SelectionAcquisition
 ///  - a delivery is in flight, so the clipboard already holds text on its way into a document;
 ///  - there is no valid target, so the Copy would go somewhere we cannot name.
 ///
+/// THE DICTATION REFUSAL IS A SECOND LINE RATHER THAN THE LIVE ONE, and that is worth stating so
+/// nobody reads it as the working guard. The hotkey hook already refuses to raise a Quick Add
+/// request while a recording is active, so from the only entry point that exists today this branch
+/// cannot be reached - measured on the running app, where firing the shortcut mid-recording
+/// produced no Quick Add event AT ALL rather than a refusal.
+///
+/// It is kept because it costs one boolean and because the hook's refusal is a different mechanism
+/// in a different layer: a second entry point - a menu item, a tray command - would arrive here
+/// without passing the hook at all. The delivery refusal beside it IS reachable today, because a
+/// delivery runs after the recording has ended and the hook has stood down.
+///
 /// REFUSING IS ALWAYS RECOVERABLE and taking the clipboard wrongly is not, which is why anything
 /// unclear resolves to Refuse rather than to an attempt.
 /// </remarks>

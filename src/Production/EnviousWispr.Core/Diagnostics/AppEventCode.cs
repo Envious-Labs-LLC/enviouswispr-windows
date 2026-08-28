@@ -73,6 +73,17 @@ public enum AppEventCode
     /// where an unexplained wait would hide. This is measured by one stopwatch spanning the path.
     /// </remarks>
     /// <summary>
+    /// Quick Add ran and the app had nothing selected.
+    /// </summary>
+    /// <remarks>
+    /// Split from QuickAddPrepared because the two shared one event and the log could not answer
+    /// the only question a support case asks: did the user get their word. The MESSAGE distinguished
+    /// them from the first version; the log did not, which is the half nobody sees until they need
+    /// it. Found by measuring the log rather than the screen.
+    /// </remarks>
+    QuickAddSelectionEmpty,
+
+    /// <summary>
     /// Quick Add declined to borrow the clipboard, because the app was busy.
     /// </summary>
     /// <remarks>
