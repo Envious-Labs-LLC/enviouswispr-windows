@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using EnviousWispr.ASR;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
@@ -869,4 +870,65 @@ public sealed partial class DesignSystemTokenTests
 
     [GeneratedRegex(@"Spacing=""[0-9]")]
     private static partial Regex LiteralSpacing();
+
+    /// <summary>
+    /// Hiding a row hides its icon with it.
+    /// </summary>
+    /// <remarks>
+    /// Rows in this window are a Grid with an icon in column 0 and a control in column 1. Hiding
+    /// the CONTROL left the icon behind - on AI Polish with no provider selected, a lone circular
+    /// arrow floated between two unrelated fields, attached to nothing.
+    ///
+    /// Reported by eye on ONE row. Sweeping the class found THREE: every control whose visibility
+    /// the code toggles, checked for a FontIcon sibling in the same Grid. Fixing the reported
+    /// instance would have left two, and both would have been found later by somebody else looking
+    /// at a different page.
+    ///
+    /// The gate enumerates from the CODE - whatever the file toggles today - rather than from a
+    /// list of three names, so a fourth control collapsed next month is covered without anyone
+    /// remembering this existed.
+    /// </remarks>
+    [Fact]
+    public void HidingARowHidesItsIconWithIt()
+    {
+        var root = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
+        var document = XDocument.Load(Path.Combine(root, "MainWindow.xaml"));
+        var code = File.ReadAllText(Path.Combine(root, "MainWindow.xaml.cs"));
+
+        var toggled = ToggledElement().Matches(code)
+            .Select(match => match.Groups[1].Value)
+            .Where(name => char.IsUpper(name[0]))
+            .Distinct(StringComparer.Ordinal)
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.NotEmpty(toggled);
+
+        // PARSED, NOT SEARCHED. The first version of this used "the nearest preceding <Grid and
+        // <FontIcon in the file text", which is not a question about the element's parent at all -
+        // for a whole page it found a Grid buried inside the PREVIOUS page and reported twelve
+        // false positives including the navigation pane. It failed loudly on its first run, which
+        // is the only reason it is right now.
+        var named = document
+            .Descendants()
+            .Where(element => (string?)element.Attribute(XName.Get("Name", XamlNamespace)) is { } name
+                && toggled.Contains(name));
+
+        var orphaning = named
+            .Where(element => element.Parent?.Name.LocalName == "Grid")
+            .Where(element => element.ElementsBeforeSelf()
+                .Any(sibling => sibling.Name.LocalName == "FontIcon"))
+            .Select(element => (string)element.Attribute(XName.Get("Name", XamlNamespace))!)
+            .ToArray();
+
+        Assert.True(
+            orphaning.Length == 0,
+            "Hiding these would leave their row icon behind: " + string.Join(", ", orphaning));
+
+        // Control: the sweep must be finding real elements, or "none orphaning" would be true of a
+        // search that matched nothing in the tree.
+        Assert.NotEmpty(named);
+    }
+
+    [GeneratedRegex(@"(\w+)\.Visibility\s*=")]
+    private static partial Regex ToggledElement();
 }

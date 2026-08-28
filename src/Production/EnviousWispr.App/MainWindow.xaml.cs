@@ -2160,16 +2160,16 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         var discoveryVersion = Interlocked.Increment(ref _polishModelDiscoveryVersion);
         var isCloudProvider = IsCloudProvider(provider);
-        OllamaEndpointTextBox.Visibility = provider == PolishProvider.Ollama
+        OllamaEndpointTextBoxRow.Visibility = provider == PolishProvider.Ollama
             ? Visibility.Visible
             : Visibility.Collapsed;
-        ApiKeyPasswordBox.Visibility = isCloudProvider
+        ApiKeyPasswordBoxRow.Visibility = isCloudProvider
             ? Visibility.Visible
             : Visibility.Collapsed;
         ApiKeyButtonPanel.Visibility = isCloudProvider
             ? Visibility.Visible
             : Visibility.Collapsed;
-        RefreshPolishModelsButton.Visibility = provider is PolishProvider.Ollama or
+        RefreshPolishModelsButtonRow.Visibility = provider is PolishProvider.Ollama or
             PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini
                 ? Visibility.Visible
                 : Visibility.Collapsed;
