@@ -280,14 +280,75 @@ public sealed class HotkeyGestureParserTests
         Assert.True(HotkeyGestureParser.Parse(typed).Succeeded);
     }
 
-    /// <summary>A bare modifier NAME is still not a binding - it qualifies, it does not stand.</summary>
+    /// <summary>
+    /// ONE unsided modifier is still not a binding - it qualifies, it does not stand.
+    /// </summary>
+    /// <remarks>
+    /// "Ctrl" names two physical keys and a binding has to name one, so a single modifier is bound
+    /// by its side instead: RCtrl, LShift. A PAIR is different and is accepted below.
+    /// </remarks>
     [Theory]
     [InlineData("Ctrl")]
     [InlineData("Shift")]
-    [InlineData("Ctrl+Shift")]
-    public void AnUnsidedModifierIsStillNotABinding(string typed)
+    [InlineData("Win")]
+    public void OneUnsidedModifierIsStillNotABinding(string typed)
     {
         Assert.False(HotkeyGestureParser.Parse(typed).Succeeded);
+    }
+
+    /// <summary>
+    /// Two modifiers together ARE a binding, and Ctrl+Win is the new default.
+    /// </summary>
+    /// <remarks>
+    /// Holding two modifiers together is not how any common shortcut begins, while holding one is
+    /// how most of them begin. That is what makes a pair safe to hold as a record key where a single
+    /// modifier needs the hold threshold to be safe at all.
+    /// </remarks>
+    [Theory]
+    [InlineData("Ctrl+Win")]
+    [InlineData("Win+Ctrl")]
+    [InlineData("Ctrl+Shift")]
+    [InlineData("Shift+Win")]
+    public void TwoModifiersTogetherAreABinding(string typed)
+    {
+        var result = HotkeyGestureParser.Parse(typed);
+
+        Assert.True(result.Succeeded, $"{typed} was refused.");
+        Assert.Equal(string.Empty, result.Gesture!.Value.Key);
+    }
+
+    /// <summary>
+    /// Alt is excluded from a pair as well as on its own. A lone Alt tap opens a window's menu bar
+    /// and Alt+Shift cycles the keyboard layout; both are shell gestures the user would lose.
+    /// </summary>
+    [Theory]
+    [InlineData("Ctrl+Alt")]
+    [InlineData("Alt+Shift")]
+    [InlineData("Alt+Win")]
+    public void AnyPairContainingAltIsRefused(string typed)
+    {
+        Assert.False(HotkeyGestureParser.Parse(typed).Succeeded);
+    }
+
+    /// <summary>
+    /// A modifier-only binding must survive being written down and read back, or it saves as one
+    /// thing and loads as another.
+    /// </summary>
+    [Theory]
+    [InlineData("Ctrl+Win")]
+    [InlineData("RCtrl")]
+    [InlineData("Ctrl+Shift+D")]
+    [InlineData("F8")]
+    public void EveryBindingRoundTripsThroughItsOwnText(string typed)
+    {
+        var first = HotkeyGestureParser.Parse(typed);
+        Assert.True(first.Succeeded, $"{typed} was refused.");
+
+        var written = first.Gesture!.Value.ToString();
+        var second = HotkeyGestureParser.Parse(written);
+
+        Assert.True(second.Succeeded, $"{typed} wrote itself as '{written}', which does not parse.");
+        Assert.Equal(first.Gesture!.Value, second.Gesture!.Value);
     }
 
     private static string FindRepositoryRoot()

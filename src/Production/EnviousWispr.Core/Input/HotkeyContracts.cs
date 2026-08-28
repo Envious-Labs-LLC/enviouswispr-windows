@@ -37,7 +37,13 @@ public readonly record struct HotkeyGesture(HotkeyModifiers Modifiers, string Ke
             parts.Add("Win");
         }
 
-        parts.Add(Key);
+        // A MODIFIER-ONLY BINDING HAS NO KEY, and appending an empty one produces "Ctrl+Win+" -
+        // a string that renders wrong on screen and no longer parses back to itself.
+        if (!string.IsNullOrEmpty(Key))
+        {
+            parts.Add(Key);
+        }
+
         return string.Join('+', parts);
     }
 }
@@ -83,9 +89,23 @@ public static class HotkeyGestureParser
             }
         }
 
-        return key is null
-            ? Failure()
-            : new HotkeyGestureParseResult(true, new HotkeyGesture(modifiers, key));
+        if (key is not null)
+        {
+            return new HotkeyGestureParseResult(true, new HotkeyGesture(modifiers, key));
+        }
+
+        // MODIFIERS ALONE ARE A BINDING NOW, AND TWO IS THE FLOOR. Ctrl+Win is the default because
+        // holding two modifiers together is not how any common shortcut begins, while holding ONE -
+        // Ctrl on its own - is how most of them begin. The hold threshold makes even that safe, but
+        // a single unsided modifier still cannot name a physical key, so the sided names (RCtrl,
+        // LShift) remain the way to bind one of those.
+        //
+        // Alt is excluded from a pair as well as alone: a lone Alt tap opens a window's menu bar,
+        // and Alt+Shift cycles the keyboard layout. Both are shell gestures this app would lose.
+        var modifierCount = System.Numerics.BitOperations.PopCount((uint)modifiers);
+        return modifierCount >= 2 && !modifiers.HasFlag(HotkeyModifiers.Alt)
+            ? new HotkeyGestureParseResult(true, new HotkeyGesture(modifiers, string.Empty))
+            : Failure();
     }
 
     private static bool TryParseModifier(string token, out HotkeyModifiers modifier)

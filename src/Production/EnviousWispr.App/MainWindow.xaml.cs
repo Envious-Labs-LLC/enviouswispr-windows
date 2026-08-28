@@ -3321,7 +3321,19 @@ public sealed partial class MainWindow : Window, IDisposable
         _ => "Windows could not read this profile. The file and current settings were left untouched.",
     };
 
-    private static DictationOverlayState OverlayStateFor(string status)
+    /// <summary>Picks the pill's look from the status sentence.</summary>
+    /// <remarks>
+    /// INFERRING A VISUAL FROM A STRING IS HOW A COPY EDIT SILENTLY CHANGES AN ICON. The macOS app
+    /// carries that sentence as a comment and is built the other way round, passing the kind
+    /// explicitly. This side reads the words, so rewording "Recording. Release to finish" to
+    /// "Listening..." would drop it through every branch to Hidden and the pill would VANISH during
+    /// a recording - a copy change with no code change, and nothing to catch it.
+    ///
+    /// Internal rather than private so the suite can drive the REAL mapping over every status
+    /// string the app can produce. That is a guard, not the fix: the fix is to hand the state in
+    /// beside the text, and this stays a hazard until that happens.
+    /// </remarks>
+    internal static DictationOverlayState OverlayStateFor(string status)
     {
         if (status.StartsWith("Recording", StringComparison.OrdinalIgnoreCase))
         {
