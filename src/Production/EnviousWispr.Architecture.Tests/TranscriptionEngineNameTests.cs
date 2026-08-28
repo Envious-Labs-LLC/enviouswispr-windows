@@ -1049,6 +1049,86 @@ public sealed partial class DesignSystemTokenTests
         Assert.Contains(assignments, control => control.Any(value => value != "false"));
     }
 
+    /// <summary>
+    /// Every navigation row has an icon, and no two rows wear the same one.
+    /// </summary>
+    /// <remarks>
+    /// A ROW WITH NO ICON DOES NOT LOSE A DECORATION, IT LOSES ITS INDENT. Its label starts in the
+    /// icon column, so it sits about thirty points left of every other label and the sidebar reads
+    /// as broken. Three rows shipped that way - the three added to re-home the orphaned controls -
+    /// and it was the most visible thing in the whole window.
+    ///
+    /// THE DUPLICATE HALF MATTERS AS MUCH AS THE MISSING HALF, and is harder to see. Two rows
+    /// wearing one icon is worse than a plain row, because the icon column stops distinguishing
+    /// anything, which is its entire job. This found What's New and Snippets both drawing the
+    /// document symbol.
+    ///
+    /// IT CANNOT BE CHECKED ON SCREEN. FontIcons do not appear in the accessibility tree in this
+    /// build, so the session driving the real app can only see icons by eye, one page at a time.
+    /// That makes the markup the only place this is mechanically answerable, and this test the only
+    /// thing standing between a new row and a broken indent.
+    /// </remarks>
+    [Fact]
+    public void EveryNavigationRowHasItsOwnIcon()
+    {
+        var markup = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+
+        var rows = NavigationRow().Matches(markup)
+            .Select(match => new
+            {
+                Label = match.Groups["label"].Value,
+                Icon = match.Groups["glyph"].Success
+                    ? "glyph:" + match.Groups["glyph"].Value.ToUpperInvariant()
+                    : SymbolIcon().Match(match.Groups["head"].Value) is { Success: true } symbol
+                        ? "symbol:" + symbol.Groups[1].Value
+                        : null,
+            })
+            .ToArray();
+
+        Assert.True(rows.Length >= 15, $"Expected the navigation rows, found {rows.Length}.");
+
+        var plain = rows.Where(row => row.Icon is null).Select(row => row.Label).ToArray();
+        Assert.True(
+            plain.Length == 0,
+            "These navigation rows have no icon, so their labels sit in the icon column: "
+                + string.Join(", ", plain));
+
+        var shared = rows
+            .GroupBy(row => row.Icon, StringComparer.Ordinal)
+            .Where(group => group.Count() > 1)
+            .Select(group => $"{group.Key} on {string.Join(" and ", group.Select(row => row.Label))}")
+            .ToArray();
+
+        Assert.True(
+            shared.Length == 0,
+            "These navigation rows wear the same icon as another row: " + string.Join("; ", shared));
+
+        // Control, both ways. At least one row must reach its icon through each of the two forms,
+        // or a regex that silently matched only one of them would report a clean sidebar while
+        // being blind to half of it.
+        Assert.Contains(rows, row => row.Icon?.StartsWith("glyph:", StringComparison.Ordinal) == true);
+        Assert.Contains(rows, row => row.Icon?.StartsWith("symbol:", StringComparison.Ordinal) == true);
+    }
+
+    /// <summary>
+    /// A navigation row, with the Fluent glyph that follows it when it uses one.
+    /// </summary>
+    /// <remarks>
+    /// BOTH FORMS OR THE TEST IS A LIE. A built-in symbol is an attribute on the element; a Fluent
+    /// glyph is a child element after it. Matching only one form would report every row using the
+    /// other as having no icon, and this window uses both.
+    /// </remarks>
+    [GeneratedRegex(
+        @"<NavigationViewItem\b(?![\w.])(?<head>[^>]*?Content=""(?<label>[^""]*)""[^>]*?)>"
+            + @"(?:\s*<NavigationViewItem\.Icon>\s*<FontIcon Glyph=""&\#x(?<glyph>[0-9A-Fa-f]+);"")?",
+        RegexOptions.Singleline)]
+    private static partial Regex NavigationRow();
+
+    /// <summary>The built-in symbol form, read out of a row's own attributes.</summary>
+    [GeneratedRegex(@"\sIcon=""(\w+)""")]
+    private static partial Regex SymbolIcon();
+
     /// <summary>Every assignment to a control's IsEnabled, with the value it assigns.</summary>
     [GeneratedRegex(@"(\w+)\.IsEnabled\s*=\s*([^;]+);")]
     private static partial Regex EnabledAssignment();

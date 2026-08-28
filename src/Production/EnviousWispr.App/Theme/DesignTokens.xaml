@@ -88,8 +88,20 @@
             <SolidColorBrush x:Key="BrandTextBodyBrush" Color="#D5D1E2" />
             <Color x:Key="BrandTextSecondaryColor">#AAA2BF</Color>
             <SolidColorBrush x:Key="BrandTextSecondaryBrush" Color="#AAA2BF" />
-            <Color x:Key="BrandTextTertiaryColor">#7A7290</Color>
-            <SolidColorBrush x:Key="BrandTextTertiaryBrush" Color="#7A7290" />
+            <!--
+                RAISED FROM #7A7290, WHICH FAILED WCAG AA IN THIS THEME. It measured 3.70:1 on the
+                card and 4.16:1 on the page, against the 4.5:1 normal-size text requires, and it is
+                the colour every helper line in the window is painted in - the sentences that explain
+                what a control does, including the onboarding copy.
+                #9289AD measures 5.11:1 and 5.74:1. Still far dimmer than Windows' own dark secondary
+                text at roughly 9.7:1, which is the intent; it just clears the floor now.
+                NOBODY SAW THIS. Twenty screens were inspected by eye and the text read as fine every
+                time, because eyes adapt to a palette and the person looking at it longest adapts
+                hardest. It is not visible as a defect, only as a number - which is why the number is
+                now asserted in the suite rather than left to a reader.
+            -->
+            <Color x:Key="BrandTextTertiaryColor">#9289AD</Color>
+            <SolidColorBrush x:Key="BrandTextTertiaryBrush" Color="#9289AD" />
 
             <Color x:Key="BrandAccentColor">#A78BFA</Color>
             <SolidColorBrush x:Key="BrandAccentBrush" Color="#A78BFA" />
