@@ -81,6 +81,11 @@ Corollary for sizing a text-bearing container: shorten the BLOCK with margin, ne
 height. `MinHeight` cannot shrink it and `Height` cannot let it grow, so a fixed height is a clip waiting
 for a longer word or a larger font.
 
+**SIBLING FAILURE, DIFFERENT CAUSE:** this rule is about code that RUNS and does nothing. The other half
+of the family is code that is entirely correct and that nobody can REACH -
+RULE: a-feature-is-reachable-only-if-every-set-agrees. Both ship green; the measurement tell above finds
+the first and cannot find the second, because an unreachable feature never runs at all.
+
 ## RULE: a-green-suite-here-is-not-evidence-the-app-starts
 **Every check in this file parses the views as XML. None of them LOADS them as XAML, and those are
 different questions.** A `StaticResource` is assigned without running a type converter, so a token of the
@@ -551,4 +556,9 @@ correct and unreachable, and correctness is what makes it look finished.
 
 **A source-level set comparison proves the NAMES line up and cannot prove a keystroke reaches the
 handler.** State that limit where the gate lives; the second half belongs to whoever drives the real
-app. Ref: modifier-key binding, EnviousWispr Windows (2026-08-28).
+app.
+
+**SIBLING FAILURE, DIFFERENT CAUSE:** RULE: a-change-that-ships-and-does-nothing-looks-like-one-that-never-arrived
+covers code that RUNS and has no effect, which its unchanged-measurement tell catches. This rule covers
+code that is correct and unreachable, which that tell CANNOT catch, because the code never runs.
+Ref: modifier-key binding, EnviousWispr Windows (2026-08-28).
