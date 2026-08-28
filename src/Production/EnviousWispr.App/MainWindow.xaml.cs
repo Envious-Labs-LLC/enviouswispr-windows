@@ -3108,12 +3108,31 @@ public sealed partial class MainWindow : Window, IDisposable
         storyboard.Begin();
     }
 
-    private void ApplyTheme(AppTheme theme) => WindowRoot.RequestedTheme = theme switch
+    /// <summary>Applies a theme to everything the app draws, not only this window.</summary>
+    /// <remarks>
+    /// EVERY TOP-LEVEL SURFACE, NOT JUST THIS ONE. The recording pill is its own window and the
+    /// caption buttons are drawn by Windows; neither is inside this window's visual tree, so
+    /// neither followed a theme set here. Both were wrong in the same way for the same reason, and
+    /// the pill's was worse because this window shows a PREVIEW of it that did follow the theme -
+    /// so the preview showed a pill that would never appear.
+    ///
+    /// The caption buttons are not called from here on purpose: they follow the RESOLVED theme,
+    /// which also changes when Windows switches underneath an app left on "Use Windows setting".
+    /// They listen for that instead. The pill takes the requested theme directly, because it
+    /// inherits the same resolution rules once it has it.
+    /// </remarks>
+    private void ApplyTheme(AppTheme theme)
     {
-        AppTheme.Light => ElementTheme.Light,
-        AppTheme.Dark => ElementTheme.Dark,
-        _ => ElementTheme.Default,
-    };
+        var requested = theme switch
+        {
+            AppTheme.Light => ElementTheme.Light,
+            AppTheme.Dark => ElementTheme.Dark,
+            _ => ElementTheme.Default,
+        };
+
+        WindowRoot.RequestedTheme = requested;
+        _overlayWindow.ApplyTheme(requested);
+    }
 
     private static AppTheme ThemeFromIndex(int index) => index switch
     {

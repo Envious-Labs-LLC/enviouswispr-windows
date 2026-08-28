@@ -66,6 +66,21 @@ public sealed partial class DictationOverlayWindow : Window
         _elapsedTimer.Tick += (_, _) => UpdateElapsed();
     }
 
+    /// <summary>Puts the recording pill in the same theme as the rest of the app.</summary>
+    /// <remarks>
+    /// THE PILL IS A SEPARATE TOP-LEVEL WINDOW, so setting the theme on the settings window never
+    /// reached it. It followed the MACHINE instead - invisible while the two agree, and wrong the
+    /// moment someone picks Light on a machine set to Dark.
+    ///
+    /// It is worse than a mismatched colour, because the settings window shows a PREVIEW of this
+    /// pill and the preview does follow the app theme. So the preview was showing a pill that would
+    /// never appear. A preview that lies is worse than no preview.
+    ///
+    /// Same class as the window's caption buttons: anything that is not inside the settings window's
+    /// visual tree needs the theme handed to it deliberately.
+    /// </remarks>
+    public void ApplyTheme(ElementTheme theme) => OverlayRoot.RequestedTheme = theme;
+
     public void ShowState(DictationOverlayState state, string detail)
     {
         _hideTimer.Stop();

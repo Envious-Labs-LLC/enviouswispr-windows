@@ -1,4 +1,5 @@
 using EnviousWispr.Core.Input;
+using System.Diagnostics;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Services.Input;
@@ -23,6 +24,17 @@ internal sealed class HotkeyEdgeTracker
     private bool _cancelledUntilRecordRelease;
     private bool _capturingKeybind;
 
+    /// <summary>Set only when the recording key is itself a modifier.</summary>
+    /// <remarks>
+    /// A MODIFIER CANNOT BE HELD TO TALK, because holding it is how every shortcut begins, so a
+    /// modifier binding takes a completely different route through this class: a tap toggles, the
+    /// key is NEVER consumed, and the ordinary press/release path is not used at all. Null for every
+    /// normal binding, which is what keeps that path unchanged.
+    /// </remarks>
+    private readonly ModifierTapPolicy? _recordTap;
+
+    private readonly Stopwatch _clock = Stopwatch.StartNew();
+
     public HotkeyEdgeTracker(uint triggerVirtualKey, HotkeyModifiers requiredModifiers)
         : this(
             new HotkeyBinding(triggerVirtualKey, requiredModifiers),
@@ -42,7 +54,22 @@ internal sealed class HotkeyEdgeTracker
         _cancel = cancel;
         _quickAdd = quickAdd;
         _recordingMode = recordingMode;
+        _recordTap = IsModifierKey(record.VirtualKey) && record.Modifiers == HotkeyModifiers.None
+            ? new ModifierTapPolicy(record.VirtualKey)
+            : null;
     }
+
+    /// <summary>The virtual keys that are modifiers, either side.</summary>
+    /// <remarks>
+    /// ALT IS DELIBERATELY ABSENT. A lone Alt tap already opens a window's menu bar in Windows, so
+    /// binding dictation to it would put this app in a fight with the shell over the same gesture -
+    /// and the shell wins in ways nobody can debug. Refusing it costs one binding; taking it costs
+    /// the user their menu key.
+    /// </remarks>
+    internal static bool IsModifierKey(uint virtualKey) => virtualKey is
+        0xA0 or 0xA1 or   // left and right Shift
+        0xA2 or 0xA3 or   // left and right Control
+        0x5B or 0x5C;     // left and right Windows
 
     public void SetRecordingActive(bool active)
     {
@@ -84,6 +111,15 @@ internal sealed class HotkeyEdgeTracker
             if (_capturingKeybind && !IsAnythingInFlight())
             {
                 return new HotkeyEdgeDecision(Consume: false);
+            }
+
+            if (_recordTap is not null)
+            {
+                var decision = ProcessRecordTap(virtualKey, isKeyDown);
+                if (decision is not null)
+                {
+                    return decision.Value;
+                }
             }
 
             if (!isKeyDown)
@@ -131,6 +167,41 @@ internal sealed class HotkeyEdgeTracker
     /// </summary>
     private bool IsAnythingInFlight() =>
         _recordHeld || _cancelHeld || _quickAddHeld || _recordingActive;
+
+    /// <summary>
+    /// The modifier-binding route: every key is offered, and the modifier is never swallowed.
+    /// </summary>
+    /// <remarks>
+    /// EVERY KEY GOES IN, NOT JUST THE BOUND ONE, because the policy decides a tap by what did NOT
+    /// happen during the press. Feeding it only the bound key would leave it unable to tell a tap
+    /// from the start of a shortcut.
+    ///
+    /// IT NEVER CONSUMES. A modifier that does not reach Windows breaks copy, paste and every other
+    /// shortcut on the machine - the failure is total, immediate, and lands on someone who has not
+    /// opened this app today. Returning null lets the ordinary path have its say about cancel and
+    /// Quick Add, which are still normal keys.
+    ///
+    /// A TAP TOGGLES, whatever the recording mode says. Push-to-talk has no meaning here: there is
+    /// no hold to talk through, because holding is the gesture that had to be given up.
+    /// </remarks>
+    private HotkeyEdgeDecision? ProcessRecordTap(uint virtualKey, bool isKeyDown)
+    {
+        var outcome = _recordTap!.Process(virtualKey, isKeyDown, _clock.Elapsed);
+        if (outcome != ModifierTapOutcome.Tap)
+        {
+            return virtualKey == _record.VirtualKey
+                ? new HotkeyEdgeDecision(Consume: false)
+                : null;
+        }
+
+        _cancelledUntilRecordRelease = false;
+        return new HotkeyEdgeDecision(
+            Consume: false,
+            _recordingActive ? PushToTalkSignal.Released : PushToTalkSignal.Pressed);
+    }
+
+    /// <summary>Forgets a modifier press in progress.</summary>
+    public void ResetHeldKeys() => _recordTap?.Reset();
 
     private HotkeyEdgeDecision ProcessRecord(bool isKeyDown, HotkeyModifiers activeModifiers)
     {
