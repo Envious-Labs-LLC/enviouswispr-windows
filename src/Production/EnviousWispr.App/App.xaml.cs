@@ -1549,11 +1549,17 @@ public partial class App : Application, IAsyncDisposable
                 break;
         }
 
+        // THREE OUTCOMES, THREE EVENTS. The first version had two, so "the copy found nothing" and
+        // "the user got their word" logged identically - and the log is where a support case looks
+        // when nobody can reproduce the screen. The messages had been split from the start; the log
+        // had not, which is the half that goes unnoticed until it is needed.
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
             acquisition == SelectionAcquisition.Refuse
                 ? AppEventCode.QuickAddRefused
-                : AppEventCode.QuickAddPrepared));
+                : string.IsNullOrWhiteSpace(selection)
+                    ? AppEventCode.QuickAddSelectionEmpty
+                    : AppEventCode.QuickAddPrepared));
         _window?.DispatcherQueue.TryEnqueue(() =>
         {
             ShowMainWindow(openSettings: false);
