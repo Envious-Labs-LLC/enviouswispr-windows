@@ -413,3 +413,50 @@ value that would not move. This one returned a plausible number with supporting 
 only thing that caught it was knowing what the number SHOULD have been. **Carry the expected VALUE,
 not just the expected variance.**
 
+## RULE: ask-whether-this-file-already-answers-a-question-of-this-kind
+Before writing a check, ask: **is something in this same file already answering a question of this
+kind, and am I about to answer it a different way?**
+
+Measured 2026-08-27. A gate for orphaned row icons asked "what is the nearest preceding `<Grid` and
+`<FontIcon` in the file TEXT" - which is not a question about an element's parent at all. For a
+whole page it found a Grid buried inside the PREVIOUS page and reported twelve false positives,
+including the navigation pane. **`XDocument` was already imported in that same test file and already
+in use by another gate three hundred lines up.** The right instrument was not merely available; it
+was on screen.
+
+**This is checkable rather than a matter of judgement, and it costs nothing.** It also generalises
+past checks: the same question catches an import path using a generic save message while an itemised
+one sits unused a few lines away.
+
+Companion to RULE: a-gate-that-pins-the-MECHANISM. That one is about what a check ASSERTS; this is
+about what it asserts it WITH.
+
+## RULE: the-instrument-that-found-a-problem-may-not-verify-its-fix
+A measurement built to DETECT an inconsistency is frequently the wrong one to CONFIRM the fix, and
+re-running it produces a scattered result that reads as failure.
+
+Measured on the spacing scale. The geometry table that found the problem measures gaps between
+consecutive WIDE CONTROLS and skips every label and paragraph in between, so a "370" is not a gap -
+it is two controls with unmeasured content between them. Re-run after the fix it still returned
+3, 4, 12, 13, 14, 18, 42, 55, 58, 107, 115, 164, 370 and nearly went out as a regression report.
+
+**The confirming measurement was a different question**: every same-column gap between ADJACENT
+elements, histogrammed. Three real values landing exactly on 4, 8 and 12 DIP, against 2, 2.67, 10,
+10.67, 14 and 32.7 before - not one of which was on a grid.
+
+**Ask what the detecting instrument SKIPS before re-running it as a verifier.** A detector can
+afford to skip things; a verifier cannot.
+
+## FACT: a-build-can-report-success-and-deliver-nothing
+`dotnet build` with the app running reports **Build succeeded, 0 errors** and produces no new
+binary. The copies fail as `MSB3026` WARNINGS naming the locking process, msbuild retries, gives up,
+and the summary still says success.
+
+**Not a silent failure - the information is present, in a warning, naming the PID. The verdict
+overrides its own detail.** So the defence is different from the quiet cases: rather than a control
+proving the instrument can see, simply stop reading the summary.
+
+**Stamp the artifact.** `LastWriteTime`, size and MD5 of `EnviousWispr.App.dll` are downstream of
+everything the summary summarises. Both sessions caught the same stale delivery within a minute of
+each other by comparing the triple, from opposite ends.
+
