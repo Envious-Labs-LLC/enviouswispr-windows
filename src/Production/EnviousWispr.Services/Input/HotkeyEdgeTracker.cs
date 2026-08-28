@@ -24,14 +24,25 @@ internal sealed class HotkeyEdgeTracker
     private bool _cancelledUntilRecordRelease;
     private bool _capturingKeybind;
 
-    /// <summary>Set only when the recording key is itself a modifier.</summary>
+    /// <summary>Set only when the recording binding is a modifier, or a set of them.</summary>
     /// <remarks>
-    /// A MODIFIER CANNOT BE HELD TO TALK, because holding it is how every shortcut begins, so a
-    /// modifier binding takes a completely different route through this class: a tap toggles, the
-    /// key is NEVER consumed, and the ordinary press/release path is not used at all. Null for every
-    /// normal binding, which is what keeps that path unchanged.
+    /// A MODIFIER CANNOT BE HELD TO TALK WITHOUT A THRESHOLD, because holding it is how every
+    /// shortcut begins. So a modifier binding takes a different route: it waits, it abandons the
+    /// moment any other key arrives, and the key is NEVER consumed.
+    ///
+    /// NULL FOR EVERY ORDINARY BINDING, AND THAT IS DELIBERATE BLAST-RADIUS CONTROL. This is the
+    /// most dangerous code in the app to get wrong - the failure mode is somebody's whole keyboard -
+    /// and it is being changed on a day when the only verification available is unit tests. An
+    /// ordinary key therefore runs the SAME code it ran before, byte for byte, and only a user who
+    /// chooses a modifier binding is on the new path.
     /// </remarks>
-    private readonly ModifierTapPolicy? _recordTap;
+    private readonly HotkeyGesturePolicy? _recordGesture;
+
+    /// <summary>The modifier set a modifier-only binding waits for, or None.</summary>
+    private readonly HotkeyModifiers _recordModifierSet;
+
+    /// <summary>True while the bound modifier set is fully held.</summary>
+    private bool _modifierSetEngaged;
 
     private readonly Stopwatch _clock = Stopwatch.StartNew();
 
@@ -54,10 +65,30 @@ internal sealed class HotkeyEdgeTracker
         _cancel = cancel;
         _quickAdd = quickAdd;
         _recordingMode = recordingMode;
-        _recordTap = IsModifierKey(record.VirtualKey) && record.Modifiers == HotkeyModifiers.None
-            ? new ModifierTapPolicy(record.VirtualKey)
+        // A binding with no virtual key is a modifier SET - Ctrl+Win and friends. One with a
+        // modifier AS its key is a single sided modifier. Everything else is an ordinary key.
+        var isModifierSet = record.VirtualKey == 0 && record.Modifiers != HotkeyModifiers.None;
+        var isSingleModifier = IsModifierKey(record.VirtualKey) &&
+            record.Modifiers == HotkeyModifiers.None;
+
+        _recordModifierSet = isModifierSet ? record.Modifiers : HotkeyModifiers.None;
+        _recordGesture = isModifierSet || isSingleModifier
+            ? new HotkeyGesturePolicy(
+                isModifierSet ? ModifierSetSentinel : record.VirtualKey,
+                needsHoldThreshold: true)
             : null;
     }
+
+    /// <summary>
+    /// Stands in for "the whole bound modifier set" so one policy handles both shapes.
+    /// </summary>
+    /// <remarks>
+    /// Zero is never a real virtual key, and a modifier SET has no single key to name. Translating
+    /// "the set became complete" into a press of this sentinel means the gesture policy does not
+    /// need to know the difference, and there is one implementation of hold-versus-tap rather than
+    /// two that can drift apart.
+    /// </remarks>
+    private const uint ModifierSetSentinel = 0;
 
     /// <summary>The virtual keys that are modifiers, either side.</summary>
     /// <remarks>
@@ -113,9 +144,9 @@ internal sealed class HotkeyEdgeTracker
                 return new HotkeyEdgeDecision(Consume: false);
             }
 
-            if (_recordTap is not null)
+            if (_recordGesture is not null)
             {
-                var decision = ProcessRecordTap(virtualKey, isKeyDown);
+                var decision = ProcessRecordGesture(virtualKey, isKeyDown, activeModifiers);
                 if (decision is not null)
                 {
                     return decision.Value;
@@ -172,36 +203,107 @@ internal sealed class HotkeyEdgeTracker
     /// The modifier-binding route: every key is offered, and the modifier is never swallowed.
     /// </summary>
     /// <remarks>
-    /// EVERY KEY GOES IN, NOT JUST THE BOUND ONE, because the policy decides a tap by what did NOT
-    /// happen during the press. Feeding it only the bound key would leave it unable to tell a tap
-    /// from the start of a shortcut.
+    /// EVERY KEY GOES IN, NOT JUST THE BOUND ONE, because the policy decides a hold by what did NOT
+    /// happen during it. Feeding it only the bound key would leave it unable to tell a deliberate
+    /// hold from the start of a shortcut.
     ///
     /// IT NEVER CONSUMES. A modifier that does not reach Windows breaks copy, paste and every other
-    /// shortcut on the machine - the failure is total, immediate, and lands on someone who has not
-    /// opened this app today. Returning null lets the ordinary path have its say about cancel and
-    /// Quick Add, which are still normal keys.
+    /// shortcut on the machine - total, immediate, and landing on somebody who has not opened this
+    /// app today. Returning null hands other keys back to the ordinary path, which still owns cancel
+    /// and Quick Add.
     ///
-    /// A TAP TOGGLES, whatever the recording mode says. Push-to-talk has no meaning here: there is
-    /// no hold to talk through, because holding is the gesture that had to be given up.
+    /// A MODIFIER SET IS TRANSLATED INTO ONE SYNTHETIC KEY. "Ctrl+Win became complete" is a press
+    /// and "it stopped being complete" is a release, so the gesture policy sees the same two events
+    /// it sees for a single key and there is one implementation of the timing rather than two.
     /// </remarks>
-    private HotkeyEdgeDecision? ProcessRecordTap(uint virtualKey, bool isKeyDown)
+    private HotkeyEdgeDecision? ProcessRecordGesture(
+        uint virtualKey,
+        bool isKeyDown,
+        HotkeyModifiers activeModifiers)
     {
-        var outcome = _recordTap!.Process(virtualKey, isKeyDown, _clock.Elapsed);
-        if (outcome != ModifierTapOutcome.Tap)
+        var gesture = _recordGesture!;
+        HotkeyGestureOutcome outcome;
+
+        if (_recordModifierSet != HotkeyModifiers.None)
         {
-            return virtualKey == _record.VirtualKey
-                ? new HotkeyEdgeDecision(Consume: false)
-                : null;
+            var complete = (activeModifiers & _recordModifierSet) == _recordModifierSet;
+
+            if (complete != _modifierSetEngaged)
+            {
+                _modifierSetEngaged = complete;
+                outcome = gesture.Process(ModifierSetSentinel, complete, _clock.Elapsed);
+            }
+            else if (isKeyDown && !IsModifierKey(virtualKey))
+            {
+                // An ordinary key pressed while the set is held is a shortcut - Ctrl+Win+D makes a
+                // new desktop - so the gesture is abandoned rather than becoming a recording.
+                outcome = gesture.Process(virtualKey, isKeyDown: true, _clock.Elapsed);
+            }
+            else
+            {
+                return null;
+            }
+        }
+        else
+        {
+            outcome = gesture.Process(virtualKey, isKeyDown, _clock.Elapsed);
         }
 
-        _cancelledUntilRecordRelease = false;
-        return new HotkeyEdgeDecision(
-            Consume: false,
-            _recordingActive ? PushToTalkSignal.Released : PushToTalkSignal.Pressed);
+        return SignalFor(outcome) is { } signal
+            ? new HotkeyEdgeDecision(Consume: false, signal)
+            : null;
+    }
+
+    /// <summary>Lets a pending hold or tap window complete without a key event.</summary>
+    /// <remarks>
+    /// A HOLD AND A TAP WINDOW BOTH FINISH ON TIME RATHER THAN ON A KEYSTROKE, so something has to
+    /// look. Without this call the threshold never elapses and a modifier binding can never start a
+    /// recording at all - a whole feature that builds, tests green at the policy level, and does
+    /// nothing.
+    /// </remarks>
+    public PushToTalkSignal? Tick()
+    {
+        lock (_sync)
+        {
+            return _recordGesture is null ? null : SignalFor(_recordGesture.Elapsed(_clock.Elapsed));
+        }
+    }
+
+    /// <summary>When the caller should next call <see cref="Tick"/>, or null if never.</summary>
+    public TimeSpan? NextDeadline
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _recordGesture?.NextDeadline;
+            }
+        }
+    }
+
+    private PushToTalkSignal? SignalFor(HotkeyGestureOutcome outcome)
+    {
+        switch (outcome)
+        {
+            case HotkeyGestureOutcome.HoldStarted:
+            case HotkeyGestureOutcome.ToggleStarted:
+                _cancelledUntilRecordRelease = false;
+                return PushToTalkSignal.Pressed;
+
+            case HotkeyGestureOutcome.HoldEnded:
+            case HotkeyGestureOutcome.ToggleStopped:
+                return PushToTalkSignal.Released;
+
+            case HotkeyGestureOutcome.Cancelled:
+                return PushToTalkSignal.Cancelled;
+
+            default:
+                return null;
+        }
     }
 
     /// <summary>Forgets a modifier press in progress.</summary>
-    public void ResetHeldKeys() => _recordTap?.Reset();
+    public void ResetHeldKeys() => _recordGesture?.Reset();
 
     private HotkeyEdgeDecision ProcessRecord(bool isKeyDown, HotkeyModifiers activeModifiers)
     {

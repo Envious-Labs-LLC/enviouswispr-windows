@@ -10,6 +10,30 @@ public sealed class HotkeyEdgeTrackerTests
     private const uint RightControl = 0xA3;
     private const uint LetterC = 0x43;
 
+    private const uint LeftControl = 0xA2;
+    private const uint LeftWindows = 0x5B;
+
+    /// <summary>Runs the clock past whatever the tracker is waiting for.</summary>
+    /// <remarks>
+    /// A hold completes on TIME, not on a keystroke, so a test that only sends keys can never see
+    /// one start. Sleeping past the real deadline is the honest way to drive it from here, because
+    /// the tracker owns its own clock.
+    /// </remarks>
+    private static PushToTalkSignal? TickPastDeadline(HotkeyEdgeTracker tracker)
+    {
+        var deadline = tracker.NextDeadline;
+        Assert.True(deadline is not null, "Nothing is pending, so nothing can complete.");
+        Thread.Sleep(HotkeyGesturePolicy.ModifierHoldThreshold + TimeSpan.FromMilliseconds(60));
+        return tracker.Tick();
+    }
+
+    private static HotkeyEdgeTracker ModifierSetBound() =>
+        new(
+            new HotkeyBinding(0, HotkeyModifiers.Control | HotkeyModifiers.Windows),
+            new HotkeyBinding(0x1B, HotkeyModifiers.None),
+            new HotkeyBinding('W', HotkeyModifiers.Control | HotkeyModifiers.Alt),
+            DictationRecordingMode.PushToTalk);
+
     private static HotkeyEdgeTracker ModifierBound() =>
         new(
             new HotkeyBinding(RightControl, HotkeyModifiers.None),
@@ -18,22 +42,62 @@ public sealed class HotkeyEdgeTrackerTests
             DictationRecordingMode.PushToTalk);
 
     /// <summary>
-    /// THE CONTROL FOR THE WHOLE MODIFIER BINDING. A tap must actually start a recording.
+    /// THE CONTROL FOR THE WHOLE MODIFIER BINDING. Holding it must actually start a recording.
     /// </summary>
     /// <remarks>
     /// Without this, every refusal test below would pass against a binding that can never fire -
     /// which is exactly how the hands-free lock reached ten green tests while being unreachable.
-    /// The policy underneath has its own tests; this one proves the wiring carries them.
+    /// The gesture policy has its own tests; this one proves the WIRING carries them, including the
+    /// tick that lets a hold complete without a keystroke.
     /// </remarks>
     [Fact]
-    public void TappingABoundModifierStartsARecording()
+    public void HoldingABoundModifierStartsARecording()
     {
         var tracker = ModifierBound();
 
         tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
-        var tap = tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None);
+        Assert.Equal(PushToTalkSignal.Pressed, TickPastDeadline(tracker));
+    }
 
-        Assert.Equal(PushToTalkSignal.Pressed, tap.Signal);
+    /// <summary>
+    /// Two modifiers together are a binding, and Ctrl+Win is the shape the default will use. The
+    /// tracker sees only that the SET became complete, which is why it works with no key of its own.
+    /// </summary>
+    [Fact]
+    public void HoldingABoundModifierSetStartsARecording()
+    {
+        var tracker = ModifierSetBound();
+
+        // Control alone is not the set, so nothing arms.
+        tracker.Process(LeftControl, isKeyDown: true, HotkeyModifiers.Control);
+        Assert.Null(tracker.NextDeadline);
+
+        // Windows joins it and the set is complete.
+        tracker.Process(LeftWindows, isKeyDown: true, HotkeyModifiers.Control | HotkeyModifiers.Windows);
+        Assert.Equal(PushToTalkSignal.Pressed, TickPastDeadline(tracker));
+
+        // Letting either one go ends it.
+        var released = tracker.Process(LeftWindows, isKeyDown: false, HotkeyModifiers.Control);
+        Assert.Equal(PushToTalkSignal.Released, released.Signal);
+    }
+
+    /// <summary>
+    /// Ctrl+Win+D makes a new desktop. Pressing an ordinary key while the set is held is a shortcut
+    /// and must not become a recording.
+    /// </summary>
+    [Fact]
+    public void AShortcutBuiltOnTheBoundSetStartsNothing()
+    {
+        var tracker = ModifierSetBound();
+
+        tracker.Process(LeftControl, isKeyDown: true, HotkeyModifiers.Control);
+        tracker.Process(LeftWindows, isKeyDown: true, HotkeyModifiers.Control | HotkeyModifiers.Windows);
+        tracker.Process(
+            LetterC,
+            isKeyDown: true,
+            HotkeyModifiers.Control | HotkeyModifiers.Windows);
+
+        Assert.Null(TickPastDeadline(tracker));
     }
 
     /// <summary>
@@ -68,26 +132,23 @@ public sealed class HotkeyEdgeTrackerTests
         Assert.False(release.Consume);
     }
 
-    /// <summary>
-    /// A modifier cannot be held to talk, so a tap has to end the recording as well as start it.
-    /// Push-to-talk has no meaning on this binding and the mode is deliberately ignored.
-    /// </summary>
+    /// <summary>Releasing the hold finishes the recording, with nothing left pending.</summary>
+    /// <remarks>
+    /// The property that makes this feature shippable at all: a hold was never a tap, so its release
+    /// finalises immediately rather than waiting to see whether a second press is coming.
+    /// </remarks>
     [Fact]
-    public void ASecondTapStopsTheRecording()
+    public void ReleasingTheHoldFinishesTheRecordingImmediately()
     {
         var tracker = ModifierBound();
 
         tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
-        Assert.Equal(
-            PushToTalkSignal.Pressed,
-            tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None).Signal);
+        Assert.Equal(PushToTalkSignal.Pressed, TickPastDeadline(tracker));
 
-        tracker.SetRecordingActive(active: true);
+        var released = tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None);
 
-        tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
-        Assert.Equal(
-            PushToTalkSignal.Released,
-            tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None).Signal);
+        Assert.Equal(PushToTalkSignal.Released, released.Signal);
+        Assert.Null(tracker.NextDeadline);
     }
 
     /// <summary>
