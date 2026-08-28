@@ -52,7 +52,9 @@ public sealed partial class DesignSystemTokenTests
         ["BrandTextPrimary"] = new("#0F0A1A", "#ECE9F4"),
         ["BrandTextBody"] = new("#332D47", "#D5D1E2"),
         ["BrandTextSecondary"] = new("#4A3D60", "#AAA2BF"),
-        ["BrandTextTertiary"] = new("#6B5E86", "#7A7290"),
+        // Dark raised from #7A7290, which measured 3.70:1 on the card against a 4.5:1 floor.
+        // TextContrastTests owns the reason and asserts the arithmetic.
+        ["BrandTextTertiary"] = new("#6B5E86", "#9289AD"),
         ["BrandAccent"] = new("#7C3AED", "#A78BFA"),
         ["BrandAccentSolid"] = new("#7C3AED", "#8B46F0"),
         ["BrandOnAccent"] = new("#FFFFFF", "#FFFFFF"),
@@ -110,6 +112,29 @@ public sealed partial class DesignSystemTokenTests
         ("stToggleOff", "BrandToggleOff"),
         ("stDivider", "BrandDivider"),
     ];
+
+    /// <summary>
+    /// Tokens that deliberately differ from macOS, each with the reason it is allowed to.
+    /// </summary>
+    /// <remarks>
+    /// PARITY IS ABOUT WHAT THE PRODUCT DOES, NOT ABOUT COPYING A DEFECT. This table exists so a
+    /// divergence has to be written down and justified rather than achieved by deleting a row from
+    /// the mapping above, which is what makes a parity check quietly stop covering something.
+    ///
+    /// Anything not listed here must still match macOS exactly, and an entry that stops being
+    /// needed - because macOS moved too - should be deleted, which turns this back into a normal
+    /// parity row. Keep it short: a long list means the two apps have drifted, and this file should
+    /// be the place that says so.
+    /// </remarks>
+    private static readonly Dictionary<string, string> AllowedDeviationsFromMac = new(StringComparer.Ordinal)
+    {
+        ["BrandTextTertiary"] = "Dark only. The shared value #7A7290 measures 3.70:1 on the card and "
+            + "4.16:1 on the page, below the 4.5:1 WCAG AA floor for normal-size text, and it is the "
+            + "colour every helper line in the window is painted in. Windows uses #9289AD, which "
+            + "clears every dark surface. The macOS app has the same failing value and should be "
+            + "raised too; until it is, matching it would mean shipping text that is hard to read in "
+            + "order to keep a table green. Ref: dark-theme contrast audit, 2026-08-27.",
+    };
 
     private static readonly (string SwiftName, string PillName)[] SwiftPillTokenMap =
     [
@@ -223,6 +248,72 @@ public sealed partial class DesignSystemTokenTests
         }
     }
 
+    /// <summary>
+    /// Every allowed deviation from macOS is real, named, and still needed.
+    /// </summary>
+    /// <remarks>
+    /// A LIST OF EXCEPTIONS IS A PLACE TO HIDE THINGS UNLESS SOMETHING WATCHES IT. Two ways it rots
+    /// and both are silent: a name that no longer maps to anything, so the entry excuses nothing and
+    /// reads as though it does; and an entry whose values have since converged, which keeps a real
+    /// parity row switched off forever after the reason for it has gone.
+    ///
+    /// The second is the one that matters. Nothing else would ever turn that row back on.
+    /// </remarks>
+    [MacSnapshotFact]
+    public void EveryAllowedDeviationIsRealAndStillNeeded()
+    {
+        var swiftTokens = ParseSwiftTokens(File.ReadAllText(GetMacSnapshotPath()));
+
+        foreach (var (brandName, reason) in AllowedDeviationsFromMac)
+        {
+            Assert.True(
+                reason.Length >= 60,
+                $"{brandName} is excused from macOS parity without a reason worth reading.");
+
+            var mapping = SwiftTokenMap.FirstOrDefault(entry => entry.BrandName == brandName);
+            Assert.True(
+                mapping.BrandName is not null,
+                $"{brandName} is listed as a deviation but is not a mapped token. Delete the entry.");
+
+            Assert.True(
+                ExpectedTokenColors.TryGetValue(brandName, out var expected),
+                $"{brandName} is listed as a deviation but is not in the expected table.");
+            Assert.True(
+                swiftTokens.TryGetValue(mapping.SwiftName, out var actual),
+                $"{brandName} maps to {mapping.SwiftName}, which is not in the macOS snapshot.");
+
+            var lightDiffers = !SameColor(expected!.Light, actual!.Light);
+            var darkDiffers = !SameColor(expected.Dark, actual.Dark);
+            Assert.True(
+                lightDiffers || darkDiffers,
+                $"{brandName} now matches macOS on both themes, so the deviation is spent. Delete "
+                    + "the entry and let the parity check cover it again.");
+        }
+    }
+
+    /// <summary>
+    /// Whether two colours agree, by the same rule the parity assertion uses.
+    /// </summary>
+    /// <remarks>
+    /// THE TOLERANCE IS THE WHOLE POINT AND THE FIRST VERSION OF THIS USED `==`. The macOS values
+    /// are parsed from Swift floats and the Windows ones from hex, so two colours that are the same
+    /// colour are never bit-identical as doubles. Exact equality therefore reported EVERY token as
+    /// differing, which made the stale-deviation branch unreachable: the guard could not fire, and
+    /// it passed on first run looking exactly like a guard that had nothing to report.
+    ///
+    /// One channel step, matching AssertChannelsMatch, because a rule that disagrees with the
+    /// assertion it protects is a second answer to the same question.
+    /// </remarks>
+    private static bool SameColor(string expectedHex, Rgba actual)
+    {
+        var expected = ParseHexColor("deviation check", "expected table", expectedHex);
+        const double tolerance = 1d / 255d;
+        return Math.Abs(expected.Red - actual.Red) <= tolerance + double.Epsilon &&
+            Math.Abs(expected.Green - actual.Green) <= tolerance + double.Epsilon &&
+            Math.Abs(expected.Blue - actual.Blue) <= tolerance + double.Epsilon &&
+            Math.Abs(expected.Alpha - actual.Alpha) <= tolerance + double.Epsilon;
+    }
+
     [MacSnapshotFact]
     public void MacDynamicColorsMatchExpectedTable()
     {
@@ -244,6 +335,11 @@ public sealed partial class DesignSystemTokenTests
             {
                 throw new InvalidOperationException(
                     $"Mapped Brand token '{mapping.BrandName}' for '{mapping.SwiftName}' is missing from the expected table.");
+            }
+
+            if (AllowedDeviationsFromMac.ContainsKey(mapping.BrandName))
+            {
+                continue;
             }
 
             AssertChannelsMatch(
