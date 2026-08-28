@@ -75,7 +75,11 @@ public sealed class NavigationIconTests
         var tags = SidebarRows().Select(row => row.Tag).ToHashSet(StringComparer.Ordinal);
 
         var answered = PageDispatches()
-            .SelectMany(dispatch => Regex.Matches(dispatch.Body, "^\\s*\"([a-z0-9-]+)\" => \\($", RegexOptions.Multiline)
+            // \r? BEFORE THE ANCHOR. `$` in multiline mode matches before the \n, so on a checkout
+            // with Windows line endings the \r sits exactly where this pattern expects the line to
+            // end. It parsed fourteen tags on the development Mac and zero on CI, which reads as a
+            // broken app rather than a broken pattern.
+            .SelectMany(dispatch => Regex.Matches(dispatch.Body, "^\\s*\"([a-z0-9-]+)\" => \\(\\r?$", RegexOptions.Multiline)
                 .Select(match => match.Groups[1].Value))
             .ToArray();
 
