@@ -993,6 +993,66 @@ public sealed partial class DesignSystemTokenTests
         Assert.Contains(sections, section => code.Contains($"?){section})", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// Every control the window greys out, the window can also hand back.
+    /// </summary>
+    /// <remarks>
+    /// THE TWIN OF THE REACHABILITY GATE, FOR THE OTHER WAY A CONTROL DIES. That one asks whether a
+    /// section can be reached at all. This asks whether a control the user CAN reach is still
+    /// usable, because a control disabled on some path and never re-enabled on any is permanently
+    /// dead while remaining perfectly visible - and it looks identical to one that is merely busy.
+    ///
+    /// NOTHING ELSE WOULD CATCH IT. The build is happy, the layout is right, the control is on the
+    /// screen with a label, and the only symptom is a user clicking something that does not respond.
+    /// A screen sweep counts it as present, which is how it survives the checks that exist.
+    ///
+    /// The rule is structural rather than a list of controls: a control turned off must have at
+    /// least one assignment somewhere that is not the constant false. That covers being handed back
+    /// directly, through a helper, or by a condition, without this test needing to know which.
+    /// </remarks>
+    [Fact]
+    public void EveryControlTheWindowGreysOutItCanAlsoHandBack()
+    {
+        var code = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+
+        // READ THE VALUE, DO NOT LOOK AHEAD PAST IT. The first version of this asked whether a
+        // control had any assignment NOT followed by "false", using a negative lookahead after
+        // \s* - and it could never fail. The engine backtracks \s* to zero width, the lookahead
+        // then examines " false;" with its leading space, that does not begin with "false", and the
+        // check passes on the exact text it exists to reject. Proven by injecting a control that is
+        // disabled and never handed back: the suite stayed green.
+        var assignments = EnabledAssignment().Matches(code)
+            .GroupBy(
+                match => match.Groups[1].Value,
+                match => match.Groups[2].Value.Trim(),
+                StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(
+            assignments.Length >= 3,
+            $"Expected the window to set IsEnabled somewhere, found {assignments.Length} controls.");
+
+        var stuck = assignments
+            .Where(control => control.All(value => value == "false"))
+            .Select(control => control.Key)
+            .ToArray();
+
+        Assert.True(
+            stuck.Length == 0,
+            "These controls are greyed out and never handed back: " + string.Join(", ", stuck));
+
+        // Control, two ways. At least one control must be turned off somewhere, or "none stuck"
+        // would be true of a window that never greys anything out; and at least one must be turned
+        // back on, or the value capture is reading something other than what it thinks.
+        Assert.Contains(assignments, control => control.Any(value => value == "false"));
+        Assert.Contains(assignments, control => control.Any(value => value != "false"));
+    }
+
+    /// <summary>Every assignment to a control's IsEnabled, with the value it assigns.</summary>
+    [GeneratedRegex(@"(\w+)\.IsEnabled\s*=\s*([^;]+);")]
+    private static partial Regex EnabledAssignment();
+
     [GeneratedRegex(@"x:Name=""(\w+Section)""")]
     private static partial Regex SectionName();
 

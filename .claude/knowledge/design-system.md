@@ -471,3 +471,29 @@ proving the instrument can see, simply stop reading the summary.
 everything the summary summarises. Both sessions caught the same stale delivery within a minute of
 each other by comparing the triple, from opposite ends.
 
+
+## RULE: a-negative-lookahead-after-a-quantifier-can-never-fire
+A gate that asks "is there an assignment NOT followed by X" using `\s*(?!X)` passes on the exact text
+it exists to reject. The engine backtracks the quantifier to zero width, the lookahead then examines
+a string beginning with the whitespace rather than with `X`, and the check succeeds.
+
+Measured 2026-08-27 on `EveryControlTheWindowGreysOutItCanAlsoHandBack`. The pattern was
+`\.IsEnabled\s*=\s*(?!false\s*;)`. Against `Button.IsEnabled = false;` the trailing `\s*` matched the
+space, the lookahead refused, the engine backtracked `\s*` to empty, the lookahead re-examined
+` false;`, that does not begin with `false`, and the gate reported the control as healthy. The gate
+had no reachable failing branch and passed on first run, which is what made it look finished.
+
+**CAPTURE THE VALUE AND COMPARE IT. Never look PAST a value to ask what it is not.** `([^;]+);` with
+a trimmed comparison has no backtracking surface, reads the same to a human as it does to the engine,
+and produces the offending text in the failure message. A lookahead answers a question about a
+position; a capture answers a question about a value, and every gate of this shape wants the second.
+
+**The failure direction is the dangerous one and it is invisible.** A wrong lookahead does not error,
+does not warn, and does not slow anything down. It reports GREEN, which is indistinguishable from the
+property holding. Nothing in the suite, the build, or a reading of the regex reveals it.
+
+**A GATE THAT PASSES ON ITS FIRST RUN IS UNPROVEN, NOT PROVEN.** This one was caught only by
+injecting a control that is disabled and never re-enabled, running the real suite, and finding it
+still green. That two-way proof costs one round trip and is the only thing that separates a gate from
+a comment. Sibling: RULE: a-gate-that-pins-the-MECHANISM-accuses-a-healthy-app, which is the same
+demand from the loud direction. Ref: warm capture / speed check work (2026-08-27).
