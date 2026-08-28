@@ -803,11 +803,13 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        if (parsedHotkey.Gesture == parsedCancelHotkey.Gesture ||
-            parsedHotkey.Gesture == parsedQuickAddHotkey.Gesture ||
-            parsedCancelHotkey.Gesture == parsedQuickAddHotkey.Gesture)
+        var clashes = HotkeyConflictDetector.Find(KeybindFields()
+            .Select(field => (field.Role, field.Box.Text))
+            .ToArray());
+        if (clashes.Count > 0)
         {
-            ShowMessage("Shortcuts overlap", "Recording, cancel, and Add-a-word must use three different shortcuts.", InfoBarSeverity.Error);
+            ShowMessage("Shortcuts overlap", HotkeyConflictDetector.Describe(clashes), InfoBarSeverity.Error);
+            RefreshKeybindConflicts();
             return;
         }
 
@@ -2112,6 +2114,58 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void UpdateAutoStopAvailability() =>
         AutoStopSecondsBox.IsEnabled = AutoStopToggle.IsOn;
+
+    /// <summary>The three keybind fields, each with the name a person would call it.</summary>
+    private (TextBox Box, string Role)[] KeybindFields() =>
+    [
+        (HotkeyTextBox, "Recording"),
+        (CancelHotkeyTextBox, "Cancel"),
+        (QuickAddHotkeyTextBox, "Add-a-word"),
+    ];
+
+    private void HotkeyBoxTextChanged(object sender, TextChangedEventArgs e) => RefreshKeybindConflicts();
+
+    /// <summary>Names a clash while it is being made, not when Save refuses it.</summary>
+    /// <remarks>
+    /// SAVE ALREADY REFUSED A CLASH, so nothing broken could reach the settings file, and that is
+    /// why this reads as polish rather than a fix. It is not: a rule enforced only at the last
+    /// possible moment lets someone set a shortcut, watch two fields sit there agreeing with each
+    /// other, and be told no after they commit. Both paths now ask the same detector, so the
+    /// warning and the refusal cannot come to different conclusions.
+    /// </remarks>
+    private void RefreshKeybindConflicts()
+    {
+        // No existence guard: every field here is built by InitializeComponent, and the only two
+        // callers are a change event and the Save button, both of which run after it. Settings
+        // load fills the three fields one at a time, which is harmless - a field still holding
+        // its empty starting value does not collide with anything.
+        var fields = KeybindFields();
+        var clashes = HotkeyConflictDetector.Find(fields.Select(field => (field.Role, field.Box.Text)).ToArray());
+        var guilty = clashes
+            .SelectMany(clash => new[] { clash.FirstRole, clash.SecondRole })
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var field in fields)
+        {
+            if (guilty.Contains(field.Role))
+            {
+                // Read off a probe element rather than Application.Current.Resources, because the
+                // error brush lives in a theme dictionary: indexing the app resources for one
+                // throws, and a brush captured once would keep the old theme's colour after a
+                // switch. The probe carries a ThemeResource, so it follows the theme for free.
+                field.Box.BorderBrush = KeybindErrorProbe.Background;
+            }
+            else
+            {
+                // ClearValue rather than null: a null brush is an invisible border, not the
+                // theme's border, so the field would silently lose its outline once fixed.
+                field.Box.ClearValue(Control.BorderBrushProperty);
+            }
+        }
+
+        KeybindConflictText.Text = HotkeyConflictDetector.Describe(clashes);
+        KeybindConflictText.Visibility = clashes.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
 
     private void HotkeyBoxKeyDown(object sender, KeyRoutedEventArgs e)
     {
