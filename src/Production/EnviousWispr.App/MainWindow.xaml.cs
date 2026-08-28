@@ -331,6 +331,13 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>Raised when the user asks for a speed check.</summary>
     public event Action? SpeedCheckRequested;
 
+    /// <summary>Asks the app to find out what a word might be misheard as.</summary>
+    /// <remarks>
+    /// The window does not own the polish provider, so it asks rather than calls, exactly as the
+    /// speed check does. The answer comes back through <see cref="SetAliasSuggestions"/>.
+    /// </remarks>
+    public event Action<string, IReadOnlyList<string>>? MishearingSuggestionsRequested;
+
     /// <summary>
     /// Raised true while a keybind field is waiting for a keystroke, false the moment it is not.
     /// </summary>
@@ -1078,6 +1085,129 @@ public sealed partial class MainWindow : Window, IDisposable
                 "Microphone privacy settings did not open",
                 "Open Windows Settings, then choose Privacy & security > Microphone.",
                 InfoBarSeverity.Warning);
+        }
+    }
+
+    /// <summary>
+    /// Asks what speech recognition is likely to hear instead of the word being taught.
+    /// </summary>
+    /// <remarks>
+    /// THE WORD IT ASKS ABOUT IS THE ONE ON THE RIGHT, NOT THE LEFT. The left field is what the
+    /// recogniser produces and the right one is what should be written instead, so the thing the
+    /// model is being asked about is the CORRECT spelling, and every answer is a candidate for the
+    /// left field. Getting this the wrong way round would ask a model for mishearings of a
+    /// mishearing, which is both useless and completely plausible on screen.
+    ///
+    /// The aliases already pointing at this same word are sent along, so the model does not spend
+    /// its five answers on ones the user already has.
+    /// </remarks>
+    private void SuggestAliasesButton_Click(object sender, RoutedEventArgs e)
+    {
+        var term = ReplacementBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(term))
+        {
+            ShowMessage(
+                "Type the word first",
+                "Put the correct spelling in the Write field, and this will suggest what speech "
+                    + "recognition might hear instead.",
+                InfoBarSeverity.Informational);
+            return;
+        }
+
+        var existing = _settings.UserData.CustomWords
+            .Where(entry => string.Equals(entry.Replacement, term, StringComparison.OrdinalIgnoreCase))
+            .Select(entry => entry.SpokenForm)
+            .ToArray();
+
+        SuggestAliasesButton.IsEnabled = false;
+        SuggestedAliasesPanel.Children.Clear();
+        SuggestedAliasesScroller.Visibility = Visibility.Collapsed;
+        SuggestAliasesStatusText.Visibility = Visibility.Visible;
+        SuggestAliasesStatusText.Text = "Asking...";
+        MishearingSuggestionsRequested?.Invoke(term, existing);
+    }
+
+    /// <summary>Shows what came back, or says why nothing did.</summary>
+    /// <remarks>
+    /// EVERY OUTCOME GETS ITS OWN SENTENCE, because the user's next move differs in each. "The
+    /// model had no ideas" means try a different word; "it did not answer" means check the
+    /// connection and press again; "this option cannot do this" means change the polish choice.
+    /// Collapsing them into one empty list is what makes a feature feel broken.
+    ///
+    /// A SUGGESTION IS A BUTTON, NOT A ROW THAT HAS ALREADY BEEN ADDED. Nothing reaches the user's
+    /// word list until they click one. A wrong alias added quietly is a correction that fires on
+    /// words they never said, and nothing on screen would connect it back to a suggestion.
+    /// </remarks>
+    public void SetAliasSuggestions(string term, MishearingAdvice advice)
+    {
+        ArgumentNullException.ThrowIfNull(advice);
+        SuggestAliasesButton.IsEnabled = true;
+        SuggestedAliasesPanel.Children.Clear();
+        SuggestAliasesStatusText.Visibility = Visibility.Visible;
+
+        if (advice.Status != MishearingAdviceStatus.Suggested)
+        {
+            SuggestedAliasesScroller.Visibility = Visibility.Collapsed;
+            SuggestAliasesStatusText.Text = advice.Status switch
+            {
+                MishearingAdviceStatus.NothingUsable =>
+                    "No likely mishearings came back for that word. Add one yourself when you hear it.",
+                MishearingAdviceStatus.NotSupported =>
+                    "The polish option you have chosen cannot answer this. Pick the built-in model, "
+                        + "Ollama, or a cloud provider to use suggestions.",
+                _ => "The suggestion did not come back. Check your polish settings and try again.",
+            };
+            return;
+        }
+
+        SuggestAliasesStatusText.Text = "Click one to add it. Nothing is saved until you do.";
+        foreach (var suggestion in advice.Suggestions)
+        {
+            var candidate = suggestion;
+            var button = new Button
+            {
+                Content = candidate,
+                Style = (Style)Application.Current.Resources["BrandQuietButtonStyle"],
+            };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+                button, $"Add {candidate} as a mishearing of {term}");
+            button.Click += async (_, _) => await AddSuggestedAliasAsync(candidate, term)
+                .ConfigureAwait(true);
+            SuggestedAliasesPanel.Children.Add(button);
+        }
+
+        SuggestedAliasesScroller.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>Saves one accepted suggestion, and takes it off the screen.</summary>
+    /// <remarks>
+    /// The chip is removed once it is saved, so the panel shows only what is still on offer. Leaving
+    /// an accepted one in place invites a second click that would do nothing visible, which reads as
+    /// the button being broken.
+    /// </remarks>
+    private async Task AddSuggestedAliasAsync(string spokenForm, string replacement)
+    {
+        var words = _settings.UserData.CustomWords
+            .Where(entry => !string.Equals(entry.SpokenForm, spokenForm, StringComparison.OrdinalIgnoreCase))
+            .Append(new CustomWordEntry(spokenForm, replacement))
+            .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray();
+        await SaveUserDataAsync(
+            new ReusableUserData(words, _settings.UserData.Snippets),
+            "Dictionary saved").ConfigureAwait(true);
+
+        var accepted = SuggestedAliasesPanel.Children
+            .OfType<Button>()
+            .FirstOrDefault(button => Equals(button.Content, spokenForm));
+        if (accepted is not null)
+        {
+            SuggestedAliasesPanel.Children.Remove(accepted);
+        }
+
+        if (SuggestedAliasesPanel.Children.Count == 0)
+        {
+            SuggestedAliasesScroller.Visibility = Visibility.Collapsed;
+            SuggestAliasesStatusText.Text = "All of them added.";
         }
     }
 

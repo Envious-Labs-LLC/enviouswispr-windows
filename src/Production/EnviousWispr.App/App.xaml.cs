@@ -284,6 +284,7 @@ public partial class App : Application, IAsyncDisposable
         _window.UpdateApplyRequested += OnUpdateApplyRequested;
         _window.KeybindCaptureActiveChanged += OnKeybindCaptureActiveChanged;
         _window.SpeedCheckRequested += OnSpeedCheckRequested;
+        _window.MishearingSuggestionsRequested += OnMishearingSuggestionsRequested;
         _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosed;
         _window.Activate();
@@ -420,6 +421,7 @@ public partial class App : Application, IAsyncDisposable
             window.UpdateApplyRequested -= OnUpdateApplyRequested;
             window.KeybindCaptureActiveChanged -= OnKeybindCaptureActiveChanged;
             window.SpeedCheckRequested -= OnSpeedCheckRequested;
+            window.MishearingSuggestionsRequested -= OnMishearingSuggestionsRequested;
             window.AppWindow.Closing -= OnAppWindowClosing;
             window.Closed -= OnWindowClosed;
         }
@@ -461,6 +463,46 @@ public partial class App : Application, IAsyncDisposable
     /// benchmark that quietly drops its worst sample is precisely how a speed claim becomes untrue,
     /// so the reason sits beside the line that does it.
     /// </remarks>
+    /// <summary>
+    /// Asks the user's chosen polish model what a word is likely to be misheard as.
+    /// </summary>
+    /// <remarks>
+    /// THE PROVIDER IS WHATEVER POLISH IS SET TO, AND THAT IS THE POINT. The user has already chosen
+    /// a model and, for a cloud one, already provided a key. Asking them to configure a second thing
+    /// for a convenience button would mean almost nobody ever sees it work.
+    ///
+    /// PRIVACY: THE WORD GOES WHERE THEIR POLISHED TEXT ALREADY GOES. It travels to the provider
+    /// they chose, under their own key, with no Envious Labs endpoint in the path - the same
+    /// boundary cloud polish already sits on. Nothing about this reaches us.
+    ///
+    /// A PROVIDER THAT CANNOT BE ASKED SAYS SO RATHER THAN FAILING QUIETLY. Every provider that
+    /// ships today can answer, and a test enumerates them from the type system so a fourth cannot
+    /// arrive without one. This branch is what the user would see if one ever did.
+    /// </remarks>
+    private async void OnMishearingSuggestionsRequested(string term, IReadOnlyList<string> existing)
+    {
+        if (_polishProvider is not IMishearingAdvisor advisor)
+        {
+            _window?.SetAliasSuggestions(
+                term,
+                MishearingAdvice.None(MishearingAdviceStatus.NotSupported));
+            return;
+        }
+
+        MishearingAdvice advice;
+        try
+        {
+            advice = await advisor.SuggestAsync(term, existing).ConfigureAwait(true);
+        }
+        catch (Exception exception) when (
+            exception is not (StackOverflowException or OutOfMemoryException))
+        {
+            advice = MishearingAdvice.None(MishearingAdviceStatus.Failed);
+        }
+
+        _window?.SetAliasSuggestions(term, advice);
+    }
+
     private async void OnSpeedCheckRequested()
     {
         var pipeline = _deterministicTextPipeline;

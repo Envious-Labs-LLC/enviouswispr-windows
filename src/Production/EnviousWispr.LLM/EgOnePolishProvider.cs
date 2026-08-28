@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.LLM;
 
@@ -25,7 +26,7 @@ public sealed record EgOnePolishOptions(
     public TimeSpan EffectiveInferenceTimeout => InferenceTimeout ?? TimeSpan.FromSeconds(15);
 }
 
-public sealed class EgOnePolishProvider : IPolishProvider
+public sealed class EgOnePolishProvider : IPolishProvider, IMishearingAdvisor
 {
     private readonly IEgOneRuntime _runtime;
     private readonly HttpClient _httpClient;
@@ -234,8 +235,89 @@ public sealed class EgOnePolishProvider : IPolishProvider
         return input.Length < 80 || output.Length >= input.Length / 5;
     }
 
+    /// <summary>Asks the built-in model what a word is likely to be misheard as.</summary>
+    /// <remarks>
+    /// The built-in model gets this too, and that decides whether the feature exists for most
+    /// people. It is the default polish choice, so leaving it out would have shipped a button that
+    /// says "not available with this option" to the majority of users while technically counting as
+    /// done.
+    ///
+    /// One attempt, no retry loop, and no context-size check. A word and a short instruction cannot
+    /// approach the context limit, and the polish path's retry exists because a user has already
+    /// spoken and would otherwise lose the benefit of it. Nothing is lost here but a button press.
+    /// </remarks>
+    public async Task<MishearingAdvice> SuggestAsync(
+        string spokenForm,
+        IReadOnlyList<string> existing,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(existing);
+        if (string.IsNullOrWhiteSpace(spokenForm))
+        {
+            return MishearingAdvice.None(MishearingAdviceStatus.NothingUsable);
+        }
+
+        var endpoint = await _runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+        if (endpoint is null)
+        {
+            return MishearingAdvice.None(MishearingAdviceStatus.Failed);
+        }
+
+        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken);
+        timeoutCancellation.CancelAfter(_inferenceTimeout);
+
+        string? reply;
+        try
+        {
+            reply = await SendAsync(
+                endpoint,
+                AliasSuggestionPrompt.SystemPrompt,
+                AliasSuggestionPrompt.BuildUserMessage(spokenForm, existing),
+                maximumOutputTokens: 256,
+                timeoutCancellation.Token).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            exception is HttpRequestException or OperationCanceledException or JsonException)
+        {
+            return MishearingAdvice.None(MishearingAdviceStatus.Failed);
+        }
+
+        if (reply is null)
+        {
+            return MishearingAdvice.None(MishearingAdviceStatus.Failed);
+        }
+
+        var suggestions = AliasSuggestions.Parse(reply, spokenForm, existing);
+        return suggestions.Count == 0
+            ? MishearingAdvice.None(MishearingAdviceStatus.NothingUsable)
+            : new MishearingAdvice(MishearingAdviceStatus.Suggested, suggestions);
+    }
+
     private async Task<string?> SendAsync(
         EgOneEndpoint endpoint,
+        string userMessage,
+        int maximumOutputTokens,
+        CancellationToken cancellationToken) =>
+        await SendAsync(
+            endpoint,
+            EgOnePrompt.SystemPrompt,
+            userMessage,
+            maximumOutputTokens,
+            cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// One call to the built-in model, with the instruction supplied by the caller.
+    /// </summary>
+    /// <remarks>
+    /// The instruction used to be read from a constant inside this method, so the only thing the
+    /// model could be asked was to clean a transcript. Passing it in changes nothing on the polish
+    /// path, which hands over the same constant that was hard-coded here.
+    /// </remarks>
+    private async Task<string?> SendAsync(
+        EgOneEndpoint endpoint,
+        string systemPrompt,
         string userMessage,
         int maximumOutputTokens,
         CancellationToken cancellationToken)
@@ -247,7 +329,7 @@ public sealed class EgOnePolishProvider : IPolishProvider
             model = _modelId,
             messages = new object[]
             {
-                new { role = "system", content = EgOnePrompt.SystemPrompt },
+                new { role = "system", content = systemPrompt },
                 new { role = "user", content = userMessage },
             },
             max_tokens = maximumOutputTokens,
