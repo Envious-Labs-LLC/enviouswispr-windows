@@ -278,6 +278,7 @@ public partial class App : Application, IAsyncDisposable
         _window.UpdateCheckRequested += OnUpdateCheckRequested;
         _window.UpdateApplyRequested += OnUpdateApplyRequested;
         _window.KeybindCaptureActiveChanged += OnKeybindCaptureActiveChanged;
+        _window.SpeedCheckRequested += OnSpeedCheckRequested;
         _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosed;
         _window.Activate();
@@ -413,6 +414,7 @@ public partial class App : Application, IAsyncDisposable
             window.UpdateCheckRequested -= OnUpdateCheckRequested;
             window.UpdateApplyRequested -= OnUpdateApplyRequested;
             window.KeybindCaptureActiveChanged -= OnKeybindCaptureActiveChanged;
+            window.SpeedCheckRequested -= OnSpeedCheckRequested;
             window.AppWindow.Closing -= OnAppWindowClosing;
             window.Closed -= OnWindowClosed;
         }
@@ -424,6 +426,86 @@ public partial class App : Application, IAsyncDisposable
 
         await PrepareForExitAsync().ConfigureAwait(true);
         _window = null;
+    }
+
+    /// <summary>How many times the speed check runs the pipeline.</summary>
+    /// <remarks>
+    /// Chosen so the 95th percentile means something. Below twenty samples it IS the maximum, and a
+    /// tail figure that is secretly the worst single run reads as evidence while being an artefact
+    /// of the sample size.
+    /// </remarks>
+    private const int SpeedCheckRuns = 50;
+
+    /// <summary>
+    /// A repeatable measurement of the text cleanup, with no microphone and no network.
+    /// </summary>
+    /// <remarks>
+    /// WHAT IT MEASURES AND WHAT IT DOES NOT, said in the UI as well as here. It times the
+    /// deterministic pipeline - the cleanup every dictation runs after transcription - which is the
+    /// part of the wait that is entirely ours and entirely repeatable. It does NOT include
+    /// recognition or AI polish: both need resources a speed check should not quietly consume, and
+    /// a number silently including a cloud round trip would be measuring somebody's broadband.
+    ///
+    /// IT REFUSES WHILE A DICTATION IS RUNNING, and it uses the LIVE pipeline rather than a second
+    /// one. Those two facts belong together: measuring a different object from the one every
+    /// dictation uses is the one thing a speed check must not do, and sharing the live object means
+    /// the two must not run at once.
+    ///
+    /// THE FIRST RUN IS DISCARDED and that is stated rather than silent. It pays for every lazy
+    /// initialisation in the pipeline, which no dictation after the first one pays - but a
+    /// benchmark that quietly drops its worst sample is precisely how a speed claim becomes untrue,
+    /// so the reason sits beside the line that does it.
+    /// </remarks>
+    private async void OnSpeedCheckRequested()
+    {
+        var pipeline = _deterministicTextPipeline;
+        if (_sessionController?.CurrentSession is not null)
+        {
+            _window?.SetSpeedCheckResult(null);
+            return;
+        }
+
+        var summary = await Task.Run(() => MeasureDeterministicPipeline(pipeline)).ConfigureAwait(true);
+        _window?.SetSpeedCheckResult(summary);
+    }
+
+    private LatencySummary MeasureDeterministicPipeline(DeterministicTextPipeline pipeline)
+    {
+        // A realistic dictation rather than a word: the cleanup's cost scales with what it is given,
+        // so timing "hello" would produce a number no real dictation resembles.
+        const string spoken =
+            "so i think we should ship the windows build this week comma and see what people say "
+            + "about it period i counted 14 things left on the list and 3 of them need review";
+
+        var request = new DeterministicTextRequest(
+            new Transcript(DictationSessionId.Create(), spoken, "speed-check", []),
+            _customWords,
+            _deterministicTextOptions);
+
+        var timings = new List<double>(SpeedCheckRuns);
+        for (var run = 0; run <= SpeedCheckRuns; run++)
+        {
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                _ = pipeline.ProcessAsync(request).GetAwaiter().GetResult();
+            }
+            catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
+            {
+                return LatencySummary.From([]);
+            }
+
+            timer.Stop();
+
+            // Run zero pays for every lazy initialisation in the pipeline, and no dictation after
+            // the first one pays it.
+            if (run > 0)
+            {
+                timings.Add(timer.Elapsed.TotalMilliseconds);
+            }
+        }
+
+        return LatencySummary.From(timings);
     }
 
     private void OnKeybindCaptureActiveChanged(bool active)
