@@ -1192,9 +1192,15 @@ public sealed partial class DesignSystemTokenTests
             $"Expected the page header table, found {PageHeaderEntry().Count(code)} entries.");
     }
 
-    /// <summary>A page header entry: title, description, glyph.</summary>
+    /// <summary>A page header entry: a title and the sentence under it.</summary>
+    /// <remarks>
+    /// The third element used to be a glyph and this pattern required one. It is now the page's
+    /// section, or nothing at all on the help pages, because the icon is read off the sidebar row
+    /// instead of written here. The arm therefore ends in either a comma or a bracket, and matching
+    /// only the comma form silently skipped every help page.
+    /// </remarks>
     [GeneratedRegex(
-        @"=>\s*\(\s*""(?<title>[^""]+)"",\s*(?<description>string\.Empty|""[^""]*""),\s*""\\u[0-9A-Fa-f]{4}""",
+        @"=>\s*\(\s*""(?<title>[^""]+)"",\s*(?<description>string\.Empty|""[^""]*"")\s*[,)]",
         RegexOptions.Singleline)]
     private static partial Regex PageHeaderEntry();
 

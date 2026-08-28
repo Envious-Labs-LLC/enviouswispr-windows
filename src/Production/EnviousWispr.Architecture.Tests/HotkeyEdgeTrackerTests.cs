@@ -97,7 +97,22 @@ public sealed class HotkeyEdgeTrackerTests
             isKeyDown: true,
             HotkeyModifiers.Control | HotkeyModifiers.Windows);
 
-        Assert.Null(TickPastDeadline(tracker));
+        // THE ORDINARY KEY ABANDONS THE PENDING HOLD OUTRIGHT, so by design there is no deadline
+        // left to run past. This cannot use TickPastDeadline, whose contract is that something IS
+        // pending: asserting on it here failed the test for the reason the feature is correct.
+        Assert.Null(tracker.NextDeadline);
+
+        Thread.Sleep(HotkeyGesturePolicy.ModifierHoldThreshold + TimeSpan.FromMilliseconds(60));
+        Assert.Null(tracker.Tick());
+
+        // And letting go of the shortcut afterwards must not start anything either, which is the
+        // half a "nothing happened yet" assertion would miss.
+        tracker.Process(LetterC, isKeyDown: false, HotkeyModifiers.Control | HotkeyModifiers.Windows);
+        tracker.Process(LeftWindows, isKeyDown: false, HotkeyModifiers.Control);
+        tracker.Process(LeftControl, isKeyDown: false, HotkeyModifiers.None);
+
+        Thread.Sleep(HotkeyGesturePolicy.MultiTapWindow + TimeSpan.FromMilliseconds(60));
+        Assert.Null(tracker.Tick());
     }
 
     /// <summary>
