@@ -1077,6 +1077,47 @@ public sealed partial class DesignSystemTokenTests
     }
 
     /// <summary>
+    /// No page arrives with a heading and nothing under it.
+    /// </summary>
+    /// <remarks>
+    /// AN EMPTY DESCRIPTION IS NOT A BLANK LINE, IT IS A SHORTER CARD. Every other page's header is
+    /// a title plus a sentence, so the one page with an empty string had a header card of a
+    /// different height and the rhythm broke as the user clicked past it. Nothing renders wrong;
+    /// the page is simply a different shape from its siblings for no reason a reader can see.
+    ///
+    /// It is also the cheapest thing in the window to get wrong, because an empty string is a
+    /// perfectly valid value and no compiler, no test and no screen sweep objects to it.
+    /// </remarks>
+    [Fact]
+    public void NoPageHeaderIsMissingItsDescription()
+    {
+        var code = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+
+        var empty = PageHeaderEntry().Matches(code)
+            .Where(match => match.Groups["description"].Value.Trim() is "string.Empty" or "\"\"")
+            .Select(match => match.Groups["title"].Value)
+            .ToArray();
+
+        Assert.True(
+            empty.Length == 0,
+            "These pages arrive with a title and nothing under it, so their header card is a "
+                + "different height from every other page's: " + string.Join(", ", empty));
+
+        // Control. The matcher must be finding real header entries, or "none empty" would be true
+        // of a search that matched nothing at all.
+        Assert.True(
+            PageHeaderEntry().Count(code) >= 6,
+            $"Expected the page header table, found {PageHeaderEntry().Count(code)} entries.");
+    }
+
+    /// <summary>A page header entry: title, description, glyph.</summary>
+    [GeneratedRegex(
+        @"=>\s*\(\s*""(?<title>[^""]+)"",\s*(?<description>string\.Empty|""[^""]*""),\s*""\\u[0-9A-Fa-f]{4}""",
+        RegexOptions.Singleline)]
+    private static partial Regex PageHeaderEntry();
+
+    /// <summary>
     /// Nothing on the Appearance page can change the window without also being kept.
     /// </summary>
     /// <remarks>

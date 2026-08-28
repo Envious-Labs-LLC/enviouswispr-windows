@@ -2785,12 +2785,12 @@ public sealed partial class MainWindow : Window, IDisposable
                 "\uE72E"),
             "help-updates" => (
                 "Check for Updates",
-                string.Empty,
+                "Whether a newer EnviousWispr is available, and how to install it.",
                 "\uE895"),
             "help-licenses" => (
                 "Open Source Licenses",
                 "EnviousWispr is GPLv3 open source. The license and third-party notices.",
-                "\uE8A5"),
+                "\uEB95"),
             _ => (
                 "Help and privacy",
                 "Find keyboard guidance, privacy details, updates, and licenses.",
