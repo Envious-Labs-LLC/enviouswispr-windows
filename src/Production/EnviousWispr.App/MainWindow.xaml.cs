@@ -2821,62 +2821,51 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void ConfigureSettingsPage(string tag)
     {
-        var (title, description, navigationTag, section) = tag switch
+        var (title, description, section) = tag switch
         {
             "settings-appearance" => (
                 "Appearance",
                 "The theme, and where the recording pill appears while you dictate.",
-                "settings-appearance",
                 (FrameworkElement?)AppearanceSection),
             "settings-transcription" => (
                 "Transcription",
                 "The speech engine that turns your voice into text.",
-                "settings-transcription",
                 (FrameworkElement?)TranscriptionEngineSection),
             "settings-live-preview" => (
                 "Live Preview",
                 "See your words on screen while you are still speaking, and choose how the recording pill looks.",
-                "settings-live-preview",
                 (FrameworkElement?)LivePreviewSection),
             "settings-microphone" => (
                 "Microphone",
                 "Choose your input source and readiness behavior.",
-                "settings-microphone",
                 (FrameworkElement?)MicrophoneSection),
             "settings-sounds" => (
                 "Sounds",
                 "Play a short sound when recording starts and stops.",
-                "settings-sounds",
                 (FrameworkElement?)SoundSection),
             "settings-keybinds" => (
                 "Keybinds",
                 "Set the keybinds that start, stop, and cancel dictation.",
-                "settings-keybinds",
                 (FrameworkElement?)KeybindsSection),
             "settings-ai-polish" => (
                 "AI Polish",
                 "Clean up and rewrite your dictation with AI.",
-                "settings-ai-polish",
                 (FrameworkElement?)AiPolishSection),
             "settings-history" => (
                 "Dictation history",
                 "Whether your dictations are saved on this PC, and for how long.",
-                "settings-history",
                 (FrameworkElement?)HistorySettingsSection),
             "settings-diagnostics" => (
                 "Diagnostics",
                 "What EnviousWispr records about how it is running, and what it never records.",
-                "settings-diagnostics",
                 (FrameworkElement?)DiagnosticsSection),
             "settings-profile" => (
                 "Backup",
                 "Move your settings, words, and snippets to another PC.",
-                "settings-profile",
                 (FrameworkElement?)PortableProfileSection),
             "settings-clipboard" => (
                 "Clipboard",
                 "How your transcript reaches the clipboard and the app you're in.",
-                "settings-clipboard",
                 (FrameworkElement?)ClipboardSection),
             // An unrecognised tag lands on a REAL section rather than showing all of them. The
             // old default returned null, which the loop below read as "show everything" - so a
@@ -2884,13 +2873,15 @@ public sealed partial class MainWindow : Window, IDisposable
             _ => (
                 "Appearance",
                 "The theme, and where the recording pill appears while you dictate.",
-                "settings-appearance",
                 (FrameworkElement?)AppearanceSection),
         };
 
         SettingsPageTitle.Text = title;
         SettingsPageDescription.Text = description;
-        SettingsPageGlyph.Glyph = NavigationGlyphFor(navigationTag);
+        // An unrecognised tag lands on the Appearance page above, so it wears Appearance's icon.
+        SettingsPageGlyph.Glyph = NavigationGlyphFor(tag) is { Length: > 0 } settingsGlyph
+            ? settingsGlyph
+            : NavigationGlyphFor("settings-appearance");
 
         // No "show everything" branch any more. Every tag resolves to exactly one section, so the
         // aggregate page cannot be reached by any route rather than merely being unlinked.
@@ -2949,29 +2940,27 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void ConfigureHelpPage(string tag)
     {
-        var (title, description, navigationTag) = tag switch
+        var (title, description) = tag switch
         {
             "help-permissions" => (
                 "Permissions",
-                "The microphone and accessibility access EnviousWispr needs.",
-                "help-permissions"),
+                "The microphone and accessibility access EnviousWispr needs."),
             "help-updates" => (
                 "Check for Updates",
-                "Whether a newer EnviousWispr is available, and how to install it.",
-                "help-updates"),
+                "Whether a newer EnviousWispr is available, and how to install it."),
             "help-licenses" => (
                 "Open Source Licenses",
-                "EnviousWispr is GPLv3 open source. The license and third-party notices.",
-                "help-licenses"),
+                "EnviousWispr is GPLv3 open source. The license and third-party notices."),
             _ => (
                 "Help and privacy",
-                "Find keyboard guidance, privacy details, updates, and licenses.",
-                "help"),
+                "Find keyboard guidance, privacy details, updates, and licenses."),
         };
 
         HelpPageTitle.Text = title;
         HelpPageDescription.Text = description;
-        HelpPageGlyph.Glyph = NavigationGlyphFor(navigationTag);
+        HelpPageGlyph.Glyph = NavigationGlyphFor(tag) is { Length: > 0 } helpGlyph
+            ? helpGlyph
+            : NavigationGlyphFor("help");
 
         // Show only the section the user asked for. Setting the header alone left three sidebar
         // rows rendering all five sections, so "Permissions" opened onto a keyboard guide and the

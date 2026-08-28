@@ -67,88 +67,76 @@ public sealed class NavigationIconTests
 
     /// <summary>
     /// The settings and help headers take their icon from the sidebar at runtime, which is what
-    /// makes them unable to drift. That only holds while every tag they pass has a row to read.
+    /// makes them unable to drift. That only holds while every tag they answer has a row to read.
     /// </summary>
     [Fact]
-    public void EveryPageTagPassedToTheHeaderHasASidebarRowToReadFrom()
+    public void EveryPageTagTheHeaderAnswersHasASidebarRowToReadFrom()
     {
         var tags = SidebarRows().Select(row => row.Tag).ToHashSet(StringComparer.Ordinal);
-        var code = File.ReadAllText(AppSourcePath("MainWindow.xaml.cs"));
 
-        var requested = new List<string>();
-        foreach (var method in new[] { "ConfigureSettingsPage", "ConfigureHelpPage" })
-        {
-            var start = code.IndexOf($"private void {method}(string tag)", StringComparison.Ordinal);
-            Assert.True(start >= 0, $"{method} was not found, so this check verified nothing.");
-            var end = code.IndexOf("NavigationGlyphFor(navigationTag);", start, StringComparison.Ordinal);
-            Assert.True(end > start, $"{method} no longer reads its icon from the sidebar.");
+        var answered = PageDispatches()
+            .SelectMany(dispatch => Regex.Matches(dispatch.Body, "^\\s*\"([a-z0-9-]+)\" => \\($", RegexOptions.Multiline)
+                .Select(match => match.Groups[1].Value))
+            .ToArray();
 
-            // BOTH CLOSING SHAPES, AND THE SECOND ONE IS WHY THIS COMMENT EXISTS. The tag is the
-            // last tuple element on the help pages, so it ends in a bracket rather than a comma.
-            // A comma-only pattern parsed twelve settings tags, zero help tags, and reported a
-            // clean sweep, which is the same shape of miss this whole file is about.
-            requested.AddRange(Regex.Matches(code[start..end], "^\\s*\"([a-z0-9-]+)\"[,)]", RegexOptions.Multiline)
-                .Select(match => match.Groups[1].Value));
-        }
+        Assert.True(answered.Length >= 14,
+            $"Only {answered.Length} page tags were parsed. Eleven settings tags and three help tags are " +
+            "expected, so a lower number means the sweep is reading less than the app.");
 
-        Assert.True(requested.Count >= 16,
-            $"Only {requested.Count} page tags were parsed. Twelve settings tags and four help tags are expected, " +
-            "so a lower number means the sweep is reading less than the app.");
-
-        var orphans = requested.Where(tag => !tags.Contains(tag)).Distinct().ToArray();
+        var orphans = answered.Where(tag => !tags.Contains(tag)).Distinct().ToArray();
         Assert.True(orphans.Length == 0,
-            "A page asks the sidebar for an icon under a tag no sidebar row carries, so its header renders blank: " +
-            string.Join(", ", orphans));
+            "A page asks the sidebar for an icon under a tag no sidebar row carries, so its header " +
+            "renders blank: " + string.Join(", ", orphans));
     }
 
     /// <summary>
-    /// A settings or help page must ask the sidebar for its OWN row.
+    /// Neither header may carry a glyph of its own.
     /// </summary>
     /// <remarks>
-    /// Deriving the header icon from the sidebar removes drift and leaves one way to still be
-    /// wrong: naming the wrong row. Backup pointed at Clipboard's row would render a perfectly
-    /// consistent, perfectly wrong icon, and every other check here would pass it. That is not
-    /// hypothetical: showing Clipboard's icon on Backup is the exact defect this file was
-    /// written for, in its new clothes.
+    /// This is the whole property. A page that writes its own glyph is a second place to change one
+    /// fact, and the five pages that drifted apart all drifted that way. The header must derive the
+    /// icon from the tag it was handed, so the only way to be wrong is to have no row at all, which
+    /// is what the test above covers.
+    ///
+    /// The tag used to be repeated inside each switch arm to carry it to the lookup. That was
+    /// removed: an unrelated gate slices a switch arm at the next tag literal, so the copy ended
+    /// the arm before its own section and reported that Appearance led nowhere. The arm's case
+    /// label was always the tag, so the copy was never needed.
     /// </remarks>
     [Fact]
-    public void EveryPageAsksTheSidebarForItsOwnRow()
+    public void NeitherPageHeaderCarriesAGlyphOfItsOwn()
     {
-        var code = File.ReadAllText(AppSourcePath("MainWindow.xaml.cs"));
-        var mismatched = new List<string>();
-        var checkedBranches = 0;
-
-        foreach (var method in new[] { "ConfigureSettingsPage", "ConfigureHelpPage" })
+        foreach (var dispatch in PageDispatches())
         {
-            var start = code.IndexOf($"private void {method}(string tag)", StringComparison.Ordinal);
-            Assert.True(start >= 0, $"{method} was not found, so this check verified nothing.");
-            var end = code.IndexOf("NavigationGlyphFor(navigationTag);", start, StringComparison.Ordinal);
-            Assert.True(end > start, $"{method} no longer reads its icon from the sidebar.");
+            var literals = Regex.Matches(dispatch.Body, @"""\\u[0-9A-Fa-f]{4}""")
+                .Select(match => match.Value)
+                .ToArray();
 
-            foreach (Match branch in Regex.Matches(
-                code[start..end],
-                // Verbatim, so the regex escapes stay regex escapes. Written as an ordinary
-                // string this line had four single backslashes the C# compiler read as its
-                // own escapes, and CS1009 stopped the whole build.
-                @"""(?<case>[a-z0-9-]+)"" => \(\s*""[^""]*"",\s*""[^""]*"",\s*""(?<asked>[a-z0-9-]+)"""))
-            {
-                checkedBranches++;
-                var declared = branch.Groups["case"].Value;
-                var asked = branch.Groups["asked"].Value;
-                if (declared != asked)
-                {
-                    mismatched.Add($"the '{declared}' page takes its icon from the '{asked}' sidebar row");
-                }
-            }
+            // PageDispatches already refuses to return a body unless the call is there, so the
+            // presence of the lookup is asserted once, where the slice is taken. Repeating it here
+            // would assert against a body that stops just before the call.
+            Assert.True(literals.Length == 0,
+                $"{dispatch.Name} writes its own icon instead of reading the sidebar's: {string.Join(", ", literals)}");
         }
-
-        Assert.True(checkedBranches >= 14,
-            $"Only {checkedBranches} page branches were parsed, so this check swept less than the app.");
-        Assert.True(mismatched.Count == 0,
-            "A page wears a different page's icon:\n  " + string.Join("\n  ", mismatched));
     }
 
     // ---- parsing ----
+
+    /// <summary>The two page dispatches, sliced from their signature to where they set the glyph.</summary>
+    private static (string Name, string Body)[] PageDispatches()
+    {
+        var code = File.ReadAllText(AppSourcePath("MainWindow.xaml.cs"));
+        return new[] { "ConfigureSettingsPage", "ConfigureHelpPage" }
+            .Select(name =>
+            {
+                var start = code.IndexOf($"private void {name}(string tag)", StringComparison.Ordinal);
+                Assert.True(start >= 0, $"{name} was not found, so this check verified nothing.");
+                var end = code.IndexOf("NavigationGlyphFor(tag)", start, StringComparison.Ordinal);
+                Assert.True(end > start, $"{name} no longer reads its icon from the sidebar.");
+                return (name, code[start..end]);
+            })
+            .ToArray();
+    }
 
     private static List<NavigationRow> SidebarRows()
     {
