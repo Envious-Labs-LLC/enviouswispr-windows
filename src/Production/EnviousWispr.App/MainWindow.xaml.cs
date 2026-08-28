@@ -324,6 +324,9 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public event Action? UpdateApplyRequested;
 
+    /// <summary>Raised when the user asks for a speed check.</summary>
+    public event Action? SpeedCheckRequested;
+
     /// <summary>
     /// Raised true while a keybind field is waiting for a keystroke, false the moment it is not.
     /// </summary>
@@ -1517,6 +1520,40 @@ public sealed partial class MainWindow : Window, IDisposable
             result.Succeeded ? "Profile exported" : "Profile export failed safely",
             result.Succeeded ? "Settings, dictionary entries, and snippets were written without private machine data." : "No existing destination data was intentionally replaced with an invalid profile.",
             result.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Error);
+    }
+
+    /// <summary>
+    /// Asks for a repeatable measurement of the text cleanup, and shows the answer.
+    /// </summary>
+    /// <remarks>
+    /// The window does not own the pipeline, so it asks rather than measures. Building a second
+    /// pipeline here to avoid the round trip would measure a DIFFERENT object from the one every
+    /// dictation uses, which is the one thing a speed check must not do.
+    /// </remarks>
+    private void RunSpeedCheckButton_Click(object sender, RoutedEventArgs e)
+    {
+        RunSpeedCheckButton.IsEnabled = false;
+        SpeedCheckResultText.Visibility = Visibility.Visible;
+        SpeedCheckResultText.Text = "Running...";
+        SpeedCheckRequested?.Invoke();
+    }
+
+    /// <summary>Shows a finished speed check, or says why it did not run.</summary>
+    /// <remarks>
+    /// The refusal says WHY, for the same reason Quick Add's does: a check that silently produces
+    /// nothing is indistinguishable from a button that does not work.
+    /// </remarks>
+    public void SetSpeedCheckResult(LatencySummary? summary)
+    {
+        RunSpeedCheckButton.IsEnabled = true;
+        SpeedCheckResultText.Visibility = Visibility.Visible;
+        SpeedCheckResultText.Text = summary is null || summary.Count == 0
+            ? "The speed check did not run. It is skipped while a dictation is in progress."
+            : $"{summary.Count} runs. Typical {summary.MedianMilliseconds:0.0}ms, "
+                + $"fastest {summary.MinMilliseconds:0.0}ms, slowest {summary.MaxMilliseconds:0.0}ms. "
+                + (summary.Percentile95IsJustTheMaximum
+                    ? "Too few runs to report a slow tail separately."
+                    : $"The slowest 5% took {summary.Percentile95Milliseconds:0.0}ms or more.");
     }
 
     private async void ExportDiagnosticsButton_Click(object sender, RoutedEventArgs e)
