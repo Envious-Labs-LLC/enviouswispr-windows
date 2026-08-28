@@ -2436,6 +2436,7 @@ public partial class App : Application, IAsyncDisposable
         // dispatcher hop BETWEEN them, which is exactly where an unexplained delay would hide.
         // In a finally, so a path that throws still reports what the user waited before it did.
         var waitTimer = System.Diagnostics.Stopwatch.StartNew();
+        ArchiveDictationAudio(audio);
         var timer = System.Diagnostics.Stopwatch.StartNew();
         try
         {
@@ -2616,6 +2617,55 @@ public partial class App : Application, IAsyncDisposable
                 AppEventCode.DictationCompleted,
                 AppFailureCategory.None,
                 waitTimer.ElapsedMilliseconds));
+        }
+    }
+
+    /// <summary>
+    /// Keeps the audio of a dictation so a bad transcript can be replayed. DEBUG builds only.
+    /// </summary>
+    /// <remarks>
+    /// WITHOUT THIS, "the app heard that wrong" IS UNREPRODUCIBLE. The audio is gone the moment
+    /// the dictation finishes, so the only evidence is the wrong text and somebody's memory of
+    /// what they said - which is the least reliable input available and the one every report is
+    /// currently built on.
+    ///
+    /// DEBUG ONLY, compiled out entirely rather than gated at runtime. Audio is the most sensitive
+    /// thing this app touches, and a runtime flag is a thing that can be turned on; a conditional
+    /// compile is not present in the binary a user runs at all. It never leaves the machine either
+    /// way - the network boundary is untouched - but "cannot be enabled" is a stronger claim than
+    /// "is not enabled" and it costs nothing here.
+    ///
+    /// FAILURES ARE SWALLOWED, and that is right for this one specifically. A debugging aid that
+    /// can break a dictation is worse than no debugging aid: the archive exists to help diagnose
+    /// the pipeline, so it must never be the reason the pipeline failed.
+    /// </remarks>
+    [System.Diagnostics.Conditional("DEBUG")]
+    private void ArchiveDictationAudio(CapturedAudio audio)
+    {
+        try
+        {
+            var directory = Path.Combine(_dataDirectory, "audio-archive");
+            Directory.CreateDirectory(directory);
+
+            var existing = Directory
+                .EnumerateFiles(directory, "*.wav")
+                .Select(path => (Path: path, Written: (DateTimeOffset)File.GetLastWriteTimeUtc(path)))
+                .ToArray();
+            foreach (var stale in AudioArchiveRetention.ToDelete(existing))
+            {
+                File.Delete(stale);
+            }
+
+            // The session id rather than a timestamp, so the file can be matched to the log lines
+            // for the same dictation. A timestamp would collide with itself on a fast machine and
+            // would have to be matched by eye against a clock.
+            File.WriteAllBytes(
+                Path.Combine(directory, $"{audio.SessionId.Value:N}.wav"),
+                WaveFile.EncodeMono(audio.Samples.Span, audio.SampleRate));
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
         }
     }
 
