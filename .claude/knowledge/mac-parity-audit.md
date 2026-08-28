@@ -33,7 +33,7 @@ need hardware or an environment this machine cannot provide, and two are ordinar
 |---|---|
 | Pre-roll ring buffer | Keeping 500ms before the key press means the microphone is always listening. Within the privacy contract - audio never leaves the machine - but the in-use indicator and the battery cost are visible to the user, so it is the founder's call rather than an implementation detail. |
 | Hands-free lock | Built and REVERTED: the gesture cannot fire without deferring finalisation, which adds up to half a second before every short dictation delivers. Trading latency on the common path for a gesture some users never touch is a product decision. |
-| Modifier-only hotkeys | A bare modifier binding fires on the first key of every shortcut a user types. Making it safe needs tap-versus-hold discrimination, and getting it wrong breaks the keyboard rather than the feature. |
+| Modifier-only hotkeys | BUILT 2026-08-28, NOT YET VERIFIED ON HARDWARE. Not a decision after all: a modifier cannot be held to talk, because holding one is how every shortcut begins, so the gesture is a TAP - press and release alone, quickly. Another key, another modifier, or a long hold all cancel it, and the key is never consumed on any path. Alt is refused: a lone Alt tap already opens the menu bar. Owed before this counts as done: with an ordinary binding, confirm Ctrl+C, Ctrl+V and Alt+Tab are untouched. |
 
 ### Needs hardware or an environment
 
