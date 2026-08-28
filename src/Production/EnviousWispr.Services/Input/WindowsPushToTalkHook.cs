@@ -360,6 +360,15 @@ internal static class WindowsVirtualKeyMap
             "Delete" => 0x2E,
             "ScrollLock" => 0x91,
             "Escape" => 0x1B,
+
+            // The sided modifiers, each naming one physical key. HotkeyEdgeTracker recognises these
+            // codes and routes them through the tap gesture rather than hold-to-talk.
+            "RightCtrl" => 0xA3,
+            "LeftCtrl" => 0xA2,
+            "RightShift" => 0xA1,
+            "LeftShift" => 0xA0,
+            "RightWin" => 0x5C,
+            "LeftWin" => 0x5B,
             _ => 0,
         };
         return virtualKey != 0;

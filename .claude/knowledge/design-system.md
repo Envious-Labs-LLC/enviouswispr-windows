@@ -524,3 +524,31 @@ drew 48; a real bulleted list drew 49. One apart, opposite answers.
 absences, because they stop the next session hunting for them. EB95 is a ruled document with a ribbon
 seal, which is a better picture of a granted permission than either.
 Ref: rig font sweep 2026-08-28.
+
+## RULE: a-feature-is-reachable-only-if-every-set-agrees
+A setting travels through FOUR independent vocabularies, and a feature exists only where all four
+overlap. Enumerated on the hotkey path 2026-08-28, after shipping a binding that worked everywhere
+except where a person could choose it:
+
+1. **The parser** decides what can be SAVED.
+2. **The hook** decides what is LISTENED for.
+3. **The edge tracker** decides which keys take which GESTURE route.
+4. **The keybind field** decides what a user can PRODUCE.
+
+**The engine had 25 passing tests and the feature was unreachable.** Each set's own tests are about
+that set and pass; the defect is that two sets DISAGREE, which lives in neither file and shows up in
+neither suite.
+
+**THREE AGREEING SETS IS THE MOST CONVINCING POSSIBLE ARGUMENT FOR NOT CHECKING THE FOURTH.** The
+parser and hook were compared first, then the tracker was noticed while writing the commit, then the
+field was noticed while reading for something else. Each agreement made the next check feel less
+necessary, and the one nobody reached was the one that was broken.
+
+**Ask which set is the one a PERSON touches, and check that one first.** The other three can agree
+perfectly and describe a feature nobody can select. Same shape as
+RULE: a-negative-lookahead-after-a-quantifier-can-never-fire and the hands-free lock: the artifact is
+correct and unreachable, and correctness is what makes it look finished.
+
+**A source-level set comparison proves the NAMES line up and cannot prove a keystroke reaches the
+handler.** State that limit where the gate lives; the second half belongs to whoever drives the real
+app. Ref: modifier-key binding, EnviousWispr Windows (2026-08-28).
