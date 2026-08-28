@@ -12,15 +12,15 @@
         BorderThickness="1"
         CornerRadius="29"
         Padding="16,12">
-        <StackPanel Spacing="8">
-            <Grid ColumnSpacing="10">
+        <StackPanel Spacing="{StaticResource BrandSpacingS}">
+            <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <Image x:Name="RainbowMark" Width="31" Height="24" AutomationProperties.AccessibilityView="Raw" Source="Assets/Brand/EnviousWisprMark.svg" VerticalAlignment="Center" />
                 <FontIcon x:Name="StateIcon" AutomationProperties.AccessibilityView="Raw" FontSize="20" Foreground="{ThemeResource PillNoticeBrush}" Glyph="&#xE720;" Visibility="Collapsed" />
                 <TextBlock x:Name="StateTitle" Grid.Column="1" FontSize="14" FontWeight="SemiBold" Style="{StaticResource PillModeQuietTextStyle}" Text="Listening" TextWrapping="Wrap" VerticalAlignment="Center" />
                 <TextBlock x:Name="ElapsedText" Grid.Column="2" Foreground="{ThemeResource PillTimerBrush}" FontFamily="Consolas" FontSize="14" Text="00:00" VerticalAlignment="Center" />
             </Grid>
-            <StackPanel x:Name="LevelBars" Height="25" Orientation="Horizontal" Spacing="3" Visibility="Collapsed" VerticalAlignment="Center">
+            <StackPanel x:Name="LevelBars" Height="25" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" Visibility="Collapsed" VerticalAlignment="Center">
                 <Border Width="4" Height="8" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="2" VerticalAlignment="Center" />
                 <Border Width="4" Height="13" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="2" VerticalAlignment="Center" />
                 <Border Width="4" Height="19" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="2" VerticalAlignment="Center" />

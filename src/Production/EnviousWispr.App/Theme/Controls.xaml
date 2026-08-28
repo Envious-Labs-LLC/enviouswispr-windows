@@ -63,7 +63,7 @@
         <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding}" TextWrapping="Wrap" />
     </DataTemplate>
     <DataTemplate x:Key="BrandSelectableChoiceTemplate">
-        <StackPanel Margin="0,0,28,0" Spacing="4">
+        <StackPanel Margin="0,0,28,0" Spacing="{StaticResource BrandSpacingXs}">
             <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding Name}" TextWrapping="Wrap" />
             <TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding Description}" TextWrapping="Wrap" />
         </StackPanel>
