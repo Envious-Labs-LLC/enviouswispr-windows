@@ -2308,7 +2308,7 @@ public partial class App : Application, IAsyncDisposable
 
     private async Task RunStreamingTranscriptionAsync(
         IAudioSnapshotSource snapshots,
-        ITranscriptionEngine engine,
+        RuntimeWorkerTranscriptionEngine engine,
         DictationSessionId sessionId,
         CancellationToken cancellationToken)
     {
@@ -2673,7 +2673,8 @@ public partial class App : Application, IAsyncDisposable
         var timer = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            var transcript = await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+            var transcript = await TranscribeUsingAnyHeadStartAsync(engine, audio, cancellationToken)
+                .ConfigureAwait(false);
             timer.Stop();
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
@@ -2900,6 +2901,56 @@ public partial class App : Application, IAsyncDisposable
             exception is IOException or UnauthorizedAccessException or ArgumentException)
         {
         }
+    }
+
+    /// <summary>
+    /// Transcribes only what streaming did not already cover, and joins the two.
+    /// </summary>
+    /// <remarks>
+    /// THIS IS WHERE STREAMING PAYS. Everything committed while the user was speaking is already
+    /// text, so the release only has to recognise the tail - which is why a long dictation stops
+    /// costing a long wait.
+    ///
+    /// IT FALLS BACK TO THE WHOLE RECORDING ON ANY DOUBT, and the conditions are checked here
+    /// rather than trusted from the loop. No head start, a failure flag, or a tail that would be
+    /// longer than the audio all mean transcribe everything, exactly as before streaming existed.
+    /// Half a dictation is worse than a slow one, and this is the last place to refuse.
+    ///
+    /// THE TAIL'S ENGINE ID AND LANGUAGE ARE THE ONES REPORTED, because they came from the same
+    /// engine on the same audio and the committed pieces cannot disagree about them. The token
+    /// timings are the tail's alone and are already only used for diagnostics.
+    /// </remarks>
+    private async Task<Transcript> TranscribeUsingAnyHeadStartAsync(
+        RuntimeWorkerTranscriptionEngine engine,
+        CapturedAudio audio,
+        CancellationToken cancellationToken)
+    {
+        var headStart = _streamed.ToString();
+        var usable = _streamingUsable &&
+            _streamedThroughSample > 0 &&
+            _streamedThroughSample < audio.Samples.Length &&
+            !string.IsNullOrWhiteSpace(headStart);
+
+        if (!usable)
+        {
+            return await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+        }
+
+        var tailAudio = audio with
+        {
+            Samples = audio.Samples[_streamedThroughSample..],
+        };
+        var tail = await engine.TranscribeAsync(tailAudio, cancellationToken).ConfigureAwait(false);
+
+        var joined = new StreamingTranscriptAccumulator();
+        joined.Append(headStart);
+        joined.Append(tail.Text);
+
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.StreamingHeadStartUsed));
+
+        return tail with { Text = joined.ToString() };
     }
 
     private async Task SaveRecoveryTextAsync(

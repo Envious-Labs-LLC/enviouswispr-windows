@@ -23,26 +23,45 @@ the Mac's version. A name sweep finds them and reports them present, which is ho
 an audit. Read the "what is actually there" column before believing a PARTIAL row is done.
 
 ## FACT: absent-on-windows
-Confirmed by two sweeps each. Ordered by what a user loses, not by effort.
+Re-swept 2026-08-27 22:25 against the full macOS capability list: 40 of 48 present, up from 27 that
+morning. Eight remain, and they are NOT one list - three need a decision nobody has made, three
+need hardware or an environment this machine cannot provide, and two are ordinary work.
 
-| Capability | What macOS does | Impact |
-|---|---|---|
-| Streaming transcription overlapping the recording | Transcribes WHILE you speak, so the final text is ready almost as soon as you release | The single largest latency gap. Windows starts transcribing only on release. See PARTIAL: Live Preview. |
-| AI-suggested aliases for custom terms | Suggests what else a term might be heard as | Every alias is typed by hand |
-| Installable vocabulary packs | Ships domain word lists | Absent entirely |
-| Contacts imported as vocabulary | Names from the address book are recognised | Names are misheard until typed in by hand |
-| Hands-free lock mode | A third recording mode beside push-to-talk and toggle | Windows has two of three modes |
-| Modifier-only hotkeys | Bind to a bare modifier | Windows requires a named key |
-| Guarded synthetic Copy when an app publishes no selection | Quick Add still works in apps that publish nothing, clipboard preserved | Quick Add silently does nothing in those apps |
-| Pre-roll ring buffer | Keeps 500ms before the key press, reducing first-word clipping | First word can be clipped |
-| Bluetooth-aware device routing and wake allowance | Handles a headset waking up mid-press | Untested and unhandled |
-| ASR model-unload policy | Frees the model when idle | Model stays resident |
-| Hallucination detection and output-safety classification | Catches a degenerate polish result | A bad polish result reaches the user |
-| Ollama catalogue install and remove | Install a model from inside the app | The user installs Ollama models themselves |
-| Built-in benchmark suite | Repeatable speed measurement in the app | No in-app baseline |
-| Local dictation-audio archive, DEBUG only | Keeps the audio for debugging | Nothing to replay a bad transcript against |
-| Bluetooth cold-start education card | Explains the first-press delay on a headset | Absent |
-| Cross-process-safe custom-word mutations | Two copies of the app can edit words safely | `SingleInstanceLock` is app-wide, which is a different thing |
+### Needs a decision, not effort
+
+| Capability | The decision |
+|---|---|
+| Pre-roll ring buffer | Keeping 500ms before the key press means the microphone is always listening. Within the privacy contract - audio never leaves the machine - but the in-use indicator and the battery cost are visible to the user, so it is the founder's call rather than an implementation detail. |
+| Hands-free lock | Built and REVERTED: the gesture cannot fire without deferring finalisation, which adds up to half a second before every short dictation delivers. Trading latency on the common path for a gesture some users never touch is a product decision. |
+| Modifier-only hotkeys | A bare modifier binding fires on the first key of every shortcut a user types. Making it safe needs tap-versus-hold discrimination, and getting it wrong breaks the keyboard rather than the feature. |
+
+### Needs hardware or an environment
+
+| Capability | What is missing |
+|---|---|
+| Bluetooth-aware routing and wake allowance | A Bluetooth headset to develop and verify against. Untestable here in the way that matters - a headset waking mid-press. |
+| Contacts as vocabulary | The Windows contacts API needs a capability declaration and user consent, and this build is unpackaged. Reachability is unproven before any of it is worth writing. |
+| Ollama catalogue install and remove | Ollama installed and running, to develop the install and remove path against. |
+
+### Ordinary work, nobody blocking
+
+| Capability | Note |
+|---|---|
+| AI-suggested aliases for custom terms | Ask the polish model what else a term might be heard as. The machinery exists; nothing has been written. |
+| Warm capture-engine policy | Keeping the capture engine warm between dictations to shorten the first press. Distinct from the model-unload policy, which is now present. |
+
+## FACT: what-was-closed-2026-08-27
+Thirteen capabilities in one session. Listed because the audit above only shows what remains, and a
+reader comparing it to the morning version cannot otherwise tell what moved.
+
+Streaming transcription's core (planner and accumulator; the worker integration is the remaining
+half) · speech segmentation · auto-stop with its settings · hallucination detection on polish output
+· custom-words import and export · vocabulary packs with a picker · guarded synthetic copy, so Quick
+Add works in terminals · model-unload policy · per-dictation wait metric · benchmark statistics and a
+speed check · debug audio archive with a WAVE writer and retention.
+
+**And one REVERTED after the fact**, which belongs in the same list because reverting it was the
+work: hands-free lock, removed once a control test proved the wiring could never reach it.
 
 ## FACT: partial-on-windows
 The name exists. The behaviour does not match.
