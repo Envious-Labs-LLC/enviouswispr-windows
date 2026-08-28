@@ -127,7 +127,10 @@ public sealed class NavigationIconTests
 
             foreach (Match branch in Regex.Matches(
                 code[start..end],
-                "\"(?<case>[a-z0-9-]+)\" => \(\s*\"[^\"]*\",\s*\"[^\"]*\",\s*\"(?<asked>[a-z0-9-]+)\""))
+                // Verbatim, so the regex escapes stay regex escapes. Written as an ordinary
+                // string this line had four single backslashes the C# compiler read as its
+                // own escapes, and CS1009 stopped the whole build.
+                @"""(?<case>[a-z0-9-]+)"" => \(\s*""[^""]*"",\s*""[^""]*"",\s*""(?<asked>[a-z0-9-]+)"""))
             {
                 checkedBranches++;
                 var declared = branch.Groups["case"].Value;
