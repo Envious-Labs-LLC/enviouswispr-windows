@@ -2735,64 +2735,94 @@ public sealed partial class MainWindow : Window, IDisposable
         HelpPage,
     ];
 
+    /// <summary>The glyph a page header shows, read from that page's own sidebar row.</summary>
+    /// <remarks>
+    /// ONE ICON PER DESTINATION, AND THE SIDEBAR OWNS IT. Page headers used to carry their own
+    /// copy of the glyph, so every icon change was two edits and people remembered one. Five
+    /// pages drifted, and two of them drifted onto another page's icon: Backup showed
+    /// Clipboard's, and Dictation history showed History's. Reading the header off the row makes
+    /// the pair unable to disagree, which is a different thing from making them agree today.
+    /// </remarks>
+    private string NavigationGlyphFor(string tag)
+    {
+        foreach (var row in NavigationRows())
+        {
+            if (row.Tag as string == tag && row.Icon is FontIcon icon)
+            {
+                return icon.Glyph;
+            }
+        }
+
+        // A page tag with no sidebar row is an authoring mistake, and the test suite refuses the
+        // build before it can ship. The app still navigates rather than throwing in the user's
+        // face, and an empty tile is the visible tell.
+        return string.Empty;
+    }
+
+    /// <summary>Every sidebar row, top list and footer list together.</summary>
+    private IEnumerable<NavigationViewItem> NavigationRows() =>
+        ProductNavigation.MenuItems
+            .Concat(ProductNavigation.FooterMenuItems)
+            .OfType<NavigationViewItem>();
+
     private void ConfigureSettingsPage(string tag)
     {
-        var (title, description, glyph, section) = tag switch
+        var (title, description, navigationTag, section) = tag switch
         {
             "settings-appearance" => (
                 "Appearance",
                 "The theme, and where the recording pill appears while you dictate.",
-                "\uE771",
+                "settings-appearance",
                 (FrameworkElement?)AppearanceSection),
             "settings-transcription" => (
                 "Transcription",
                 "The speech engine that turns your voice into text.",
-                "\uE8C1",
+                "settings-transcription",
                 (FrameworkElement?)TranscriptionEngineSection),
             "settings-live-preview" => (
                 "Live Preview",
                 "See your words on screen while you are still speaking, and choose how the recording pill looks.",
-                "\uE890",
+                "settings-live-preview",
                 (FrameworkElement?)LivePreviewSection),
             "settings-microphone" => (
                 "Microphone",
                 "Choose your input source and readiness behavior.",
-                "\uE720",
+                "settings-microphone",
                 (FrameworkElement?)MicrophoneSection),
             "settings-sounds" => (
                 "Sounds",
                 "Play a short sound when recording starts and stops.",
-                "\uE767",
+                "settings-sounds",
                 (FrameworkElement?)SoundSection),
             "settings-keybinds" => (
                 "Keybinds",
                 "Set the keybinds that start, stop, and cancel dictation.",
-                "\uE765",
+                "settings-keybinds",
                 (FrameworkElement?)KeybindsSection),
             "settings-ai-polish" => (
                 "AI Polish",
                 "Clean up and rewrite your dictation with AI.",
-                "\uE70F",
+                "settings-ai-polish",
                 (FrameworkElement?)AiPolishSection),
             "settings-history" => (
                 "Dictation history",
                 "Whether your dictations are saved on this PC, and for how long.",
-                "\uE81C",
+                "settings-history",
                 (FrameworkElement?)HistorySettingsSection),
             "settings-diagnostics" => (
                 "Diagnostics",
                 "What EnviousWispr records about how it is running, and what it never records.",
-                "\uE9D9",
+                "settings-diagnostics",
                 (FrameworkElement?)DiagnosticsSection),
             "settings-profile" => (
                 "Backup",
                 "Move your settings, words, and snippets to another PC.",
-                "\uE8C8",
+                "settings-profile",
                 (FrameworkElement?)PortableProfileSection),
             "settings-clipboard" => (
                 "Clipboard",
                 "How your transcript reaches the clipboard and the app you're in.",
-                "\uE8C8",
+                "settings-clipboard",
                 (FrameworkElement?)ClipboardSection),
             // An unrecognised tag lands on a REAL section rather than showing all of them. The
             // old default returned null, which the loop below read as "show everything" - so a
@@ -2800,13 +2830,13 @@ public sealed partial class MainWindow : Window, IDisposable
             _ => (
                 "Appearance",
                 "The theme, and where the recording pill appears while you dictate.",
-                "\uE771",
+                "settings-appearance",
                 (FrameworkElement?)AppearanceSection),
         };
 
         SettingsPageTitle.Text = title;
         SettingsPageDescription.Text = description;
-        SettingsPageGlyph.Glyph = glyph;
+        SettingsPageGlyph.Glyph = NavigationGlyphFor(navigationTag);
 
         // No "show everything" branch any more. Every tag resolves to exactly one section, so the
         // aggregate page cannot be reached by any route rather than merely being unlinked.
@@ -2865,29 +2895,29 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void ConfigureHelpPage(string tag)
     {
-        var (title, description, glyph) = tag switch
+        var (title, description, navigationTag) = tag switch
         {
             "help-permissions" => (
                 "Permissions",
                 "The microphone and accessibility access EnviousWispr needs.",
-                "\uE72E"),
+                "help-permissions"),
             "help-updates" => (
                 "Check for Updates",
                 "Whether a newer EnviousWispr is available, and how to install it.",
-                "\uE895"),
+                "help-updates"),
             "help-licenses" => (
                 "Open Source Licenses",
                 "EnviousWispr is GPLv3 open source. The license and third-party notices.",
-                "\uEB95"),
+                "help-licenses"),
             _ => (
                 "Help and privacy",
                 "Find keyboard guidance, privacy details, updates, and licenses.",
-                "\uE897"),
+                "help"),
         };
 
         HelpPageTitle.Text = title;
         HelpPageDescription.Text = description;
-        HelpPageGlyph.Glyph = glyph;
+        HelpPageGlyph.Glyph = NavigationGlyphFor(navigationTag);
 
         // Show only the section the user asked for. Setting the header alone left three sidebar
         // rows rendering all five sections, so "Permissions" opened onto a keyboard guide and the
