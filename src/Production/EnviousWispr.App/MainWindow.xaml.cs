@@ -2447,6 +2447,21 @@ public sealed partial class MainWindow : Window, IDisposable
                 "Clean up and rewrite your dictation with AI.",
                 "\uE70F",
                 (FrameworkElement?)AiPolishSection),
+            "settings-history" => (
+                "Dictation history",
+                "Whether your dictations are saved on this PC, and for how long.",
+                "\uE81C",
+                (FrameworkElement?)HistorySettingsSection),
+            "settings-diagnostics" => (
+                "Diagnostics",
+                "What EnviousWispr records about how it is running, and what it never records.",
+                "\uE9D9",
+                (FrameworkElement?)DiagnosticsSection),
+            "settings-profile" => (
+                "Backup",
+                "Move your settings, words, and snippets to another PC.",
+                "\uE8C8",
+                (FrameworkElement?)PortableProfileSection),
             "settings-clipboard" => (
                 "Clipboard",
                 "How your transcript reaches the clipboard and the app you're in.",

@@ -104,6 +104,19 @@ public enum AppEventCode
     /// </remarks>
     PolishOutputRefused,
 
+    /// <summary>A stretch of a running recording was transcribed before the user finished.</summary>
+    StreamingSegmentCommitted,
+
+    /// <summary>
+    /// Streaming gave up its head start, and the release will transcribe the whole recording.
+    /// </summary>
+    /// <remarks>
+    /// Never a user-visible failure - the dictation completes exactly as it did before streaming
+    /// existed. It is logged because a run of these is the difference between a feature that is
+    /// helping and one that is silently costing the machine work for nothing.
+    /// </remarks>
+    StreamingAbandoned,
+
     /// <summary>The watcher ended a recording because the speaker had stopped.</summary>
     AutoStopTriggered,
     DictationCompleted,
