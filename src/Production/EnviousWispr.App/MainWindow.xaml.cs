@@ -1303,6 +1303,69 @@ public sealed partial class MainWindow : Window, IDisposable
     /// a file they downloaded happened to disagree, is worse than importing nothing at all - so
     /// conflicts are reported and skipped rather than resolved on the user's behalf.
     /// </remarks>
+    /// <summary>
+    /// Offers the shipped word lists, one menu item each.
+    /// </summary>
+    /// <remarks>
+    /// Built from the catalogue rather than declared in markup, so a pack added later appears
+    /// without anyone remembering to add a row - the failure mode of a hand-written menu is that
+    /// it is correct until it silently is not.
+    ///
+    /// Each item carries the pack's DESCRIPTION as its help text rather than its name twice, so a
+    /// screen reader user hears what the list is for rather than a label they already heard.
+    /// </remarks>
+    private void AddPackButton_Click(object sender, RoutedEventArgs e)
+    {
+        PackFlyout.Items.Clear();
+        foreach (var pack in VocabularyPacks.All)
+        {
+            var item = new MenuFlyoutItem { Text = pack.Name, Tag = pack.Id };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(item, pack.Description);
+            item.Click += PackMenuItem_Click;
+            PackFlyout.Items.Add(item);
+        }
+    }
+
+    /// <summary>
+    /// Installs one pack through exactly the path an imported file takes.
+    /// </summary>
+    /// <remarks>
+    /// Same reader, same collision rules, same description. A pack that merged by its own route
+    /// would be a second implementation of adding words, and the two would drift - so a user who
+    /// already corrects one of these words their own way keeps their version and is told, exactly
+    /// as they would be for a file they chose themselves.
+    /// </remarks>
+    private async void PackMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuFlyoutItem { Tag: string id })
+        {
+            return;
+        }
+
+        var pack = VocabularyPacks.All.FirstOrDefault(candidate => candidate.Id == id);
+        if (pack is null)
+        {
+            return;
+        }
+
+        var existing = _settings.UserData.CustomWords;
+        var plan = CustomWordImport.Read(pack.Words, existing);
+        if (plan.Additions.Count == 0)
+        {
+            ShowMessage(
+                $"{pack.Name} is already set up",
+                DescribeImport(plan),
+                InfoBarSeverity.Informational);
+            return;
+        }
+
+        var userData = new ReusableUserData(
+            [.. existing, .. plan.Additions],
+            _settings.UserData.Snippets);
+        await SaveUserDataAsync(userData, $"{pack.Name} added", DescribeImport(plan))
+            .ConfigureAwait(true);
+    }
+
     private async void ImportWordsButton_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FileOpenPicker();
