@@ -8,6 +8,25 @@
     <CornerRadius x:Key="BrandSectionRadius">14</CornerRadius>
     <x:Double x:Key="BrandRowPaddingH">14</x:Double>
     <x:Double x:Key="BrandRowPaddingV">12</x:Double>
+    <!--
+        THE SPACING SCALE. Thirteen different gap values were in use across one window - 3, 4, 5, 6,
+        7, 8, 9, 10, 12, 14, 16, 18 and 20 - which is not a scale, it is noise, and it is what a
+        measured audit reads as inconsistent padding.
+
+        Four-point grid, because that is the one Fluent is built on and the one every first-party
+        Windows surface lines up to. Five steps is enough: anything needing a sixth is usually a
+        layout that wants restructuring rather than a new number.
+
+        Every former literal maps to its NEAREST step, and ties resolve DOWNWARD. Growth is what
+        clips text, and this branch has already shipped one clipping regression from a layout
+        change nobody could see before it shipped.
+    -->
+    <x:Double x:Key="BrandSpacingXs">4</x:Double>
+    <x:Double x:Key="BrandSpacingS">8</x:Double>
+    <x:Double x:Key="BrandSpacingM">12</x:Double>
+    <x:Double x:Key="BrandSpacingL">16</x:Double>
+    <x:Double x:Key="BrandSpacingXl">20</x:Double>
+
     <x:Double x:Key="BrandSectionSpacing">18</x:Double>
     <x:Double x:Key="BrandContentTop">18</x:Double>
     <x:Double x:Key="BrandContentH">24</x:Double>

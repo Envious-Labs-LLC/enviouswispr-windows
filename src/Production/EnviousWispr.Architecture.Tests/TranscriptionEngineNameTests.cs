@@ -825,4 +825,48 @@ public sealed partial class DesignSystemTokenTests
         Assert.Contains("private static string DescribeImport", source, StringComparison.Ordinal);
         Assert.Contains("could not be read", source, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// Every gap in the product comes from the spacing scale.
+    /// </summary>
+    /// <remarks>
+    /// A measured audit of all eighteen pages found gaps that shared no common step, and the markup
+    /// behind it used THIRTEEN different values in one window - 3, 4, 5, 6, 7, 8, 9, 10, 12, 14,
+    /// 16, 18 and 20. That is not a scale, it is noise, and it is what "inconsistent padding" looks
+    /// like from the outside.
+    ///
+    /// Four-point grid, five steps, because that is what Fluent is built on and what every
+    /// first-party Windows surface lines up to.
+    ///
+    /// GATED ON THE LITERAL RATHER THAN ON THE VALUE, deliberately. A gate checking that each
+    /// number is a multiple of four would pass 24, 28, 32 and every other plausible-looking value
+    /// somebody reaches for, and the scale would grow back one defensible step at a time. Requiring
+    /// a token means adding a step is a decision made in one place, where it can be argued with.
+    /// </remarks>
+    [Fact]
+    public void EveryGapComesFromTheSpacingScale()
+    {
+        var app = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
+
+        var offenders = Directory
+            .EnumerateFiles(app, "*.xaml", SearchOption.AllDirectories)
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .SelectMany(path => File.ReadAllLines(path)
+                .Select((line, index) => (path, line, number: index + 1))
+                .Where(row => LiteralSpacing().IsMatch(row.line))
+                .Select(row => $"{Path.GetFileName(row.path)}:{row.number}"))
+            .ToArray();
+
+        Assert.True(
+            offenders.Length == 0,
+            "These gaps are literals rather than steps on the scale: " + string.Join(", ", offenders));
+
+        // Control, both directions: the matcher must see a literal and must not see a token, or a
+        // matcher that had stopped matching would report the same clean result.
+        Assert.Matches(LiteralSpacing(), "<StackPanel Spacing=\"10\" />");
+        Assert.DoesNotMatch(LiteralSpacing(), "<StackPanel Spacing=\"{StaticResource BrandSpacingS}\" />");
+    }
+
+    [GeneratedRegex(@"Spacing=""[0-9]")]
+    private static partial Regex LiteralSpacing();
 }
