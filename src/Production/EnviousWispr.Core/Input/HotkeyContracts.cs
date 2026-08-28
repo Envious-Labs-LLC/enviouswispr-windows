@@ -132,6 +132,25 @@ public static class HotkeyGestureParser
             "PAUSE" => "Pause",
             "SCROLLLOCK" => "ScrollLock",
             "ESC" or "ESCAPE" => "Escape",
+
+            // SIDED MODIFIERS ARE KEYS HERE, NOT MODIFIERS, AND THE DISTINCTION IS THE WHOLE POINT.
+            // "Ctrl" is a modifier: it qualifies another key and cannot stand alone. "RCtrl" names
+            // ONE PHYSICAL KEY, which can. Without this the parser refuses every gesture with no
+            // ordinary key in it, so a modifier binding could not be expressed at all - the engine
+            // would accept one and nothing could ever produce it.
+            //
+            // SIDED ON PURPOSE, not "Ctrl on its own". A binding has to name one physical key, and
+            // it also lets a user keep the left Control they use for shortcuts while giving up the
+            // right one they never press.
+            //
+            // ALT IS ABSENT, matching the engine: a lone Alt tap already opens a window's menu bar,
+            // so binding to it would put this app in a fight with the shell over one gesture.
+            "RCTRL" or "RIGHTCTRL" => "RightCtrl",
+            "LCTRL" or "LEFTCTRL" => "LeftCtrl",
+            "RSHIFT" or "RIGHTSHIFT" => "RightShift",
+            "LSHIFT" or "LEFTSHIFT" => "LeftShift",
+            "RWIN" or "RIGHTWIN" => "RightWin",
+            "LWIN" or "LEFTWIN" => "LeftWin",
             _ => string.Empty,
         };
         return key.Length > 0;

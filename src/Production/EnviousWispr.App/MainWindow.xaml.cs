@@ -185,6 +185,10 @@ public sealed partial class MainWindow : Window, IDisposable
     // True between asking for a speed check and being handed the answer. Without it, any status
     // change arriving mid-run hands the button back and lets a second check start over the first.
     private bool _speedCheckRunning;
+
+    // The lone modifier a keybind field has seen go down with nothing else after it. Null the
+    // moment any ordinary key arrives, because from then on the modifier is qualifying that key.
+    private string? _keybindModifierCandidate;
     private CancellationTokenSource? _soundPreviewCancellation;
 
     public MainWindow(
@@ -2116,14 +2120,23 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        // A modifier on its own is not a gesture. Swallow it so it neither edits the field nor
-        // moves focus while the user is still assembling a combination.
+        // A MODIFIER IS NOT A GESTURE YET, WHICH IS NOT THE SAME AS NOT BEING ONE. On the way down
+        // it is indistinguishable from the start of a combination, so it is still swallowed here -
+        // it must neither edit the field nor move focus while the user is mid-chord. What decides
+        // it is the RELEASE: coming back up with nothing else pressed is a deliberate tap, and that
+        // is handled in HotkeyBoxKeyUp.
         if (e.Key is VirtualKey.Control or VirtualKey.Menu or VirtualKey.Shift
             or VirtualKey.LeftWindows or VirtualKey.RightWindows)
         {
+            _keybindModifierCandidate ??= SidedModifierName();
             e.Handled = true;
             return;
         }
+
+        // Any ordinary key means the modifier was qualifying it. The candidate is dropped here
+        // rather than on the modifier's release, because by then the field already holds the
+        // combination and overwriting it would undo what the user just chose.
+        _keybindModifierCandidate = null;
 
         // Handled regardless of whether the key is usable: the field is capture-driven, so a
         // keystroke must never fall through and be inserted as text. That fall-through is the
@@ -2158,6 +2171,81 @@ public sealed partial class MainWindow : Window, IDisposable
 
         box.Text = new HotkeyGesture(modifiers, key).ToString();
         box.SelectionStart = box.Text.Length;
+    }
+
+    /// <summary>Offers a lone modifier as a binding, once it comes back up untouched.</summary>
+    /// <remarks>
+    /// THE RELEASE IS WHERE A TAP BECOMES DISTINGUISHABLE from the start of a shortcut, which is the
+    /// same reason the running app decides it there. Deciding on the way down would put a binding in
+    /// the field the moment a user reached for Control, before they had pressed the letter they were
+    /// aiming at.
+    ///
+    /// ALT IS NOT OFFERED, matching the engine and the parser. A lone Alt tap already opens a
+    /// window's menu bar, so a user who set it would have a binding that reads correctly, saves
+    /// correctly, and loses every race with the shell.
+    ///
+    /// WITHOUT THIS THE WHOLE MODIFIER BINDING IS UNREACHABLE. The engine accepts one and the
+    /// settings file can carry one; if nothing on screen can produce one, that is a working feature
+    /// wired to nothing - which had already happened once on this project and was caught by reading
+    /// rather than by shipping.
+    /// </remarks>
+    private void HotkeyBoxKeyUp(object sender, KeyRoutedEventArgs e)
+    {
+        if (sender is not TextBox box)
+        {
+            return;
+        }
+
+        var candidate = _keybindModifierCandidate;
+        _keybindModifierCandidate = null;
+
+        if (candidate is null ||
+            e.Key is not (VirtualKey.Control or VirtualKey.Shift
+                or VirtualKey.LeftWindows or VirtualKey.RightWindows))
+        {
+            return;
+        }
+
+        e.Handled = true;
+        box.Text = new HotkeyGesture(HotkeyModifiers.None, candidate).ToString();
+        box.SelectionStart = box.Text.Length;
+    }
+
+    /// <summary>Which physical modifier is down, by side.</summary>
+    /// <remarks>
+    /// A key event reports "Control", not "the right one". A binding has to name ONE PHYSICAL KEY,
+    /// so the side is read from the keyboard state instead. Left is checked first only to make the
+    /// answer deterministic when someone is holding both; either answer would be defensible and an
+    /// undefined one would not.
+    /// </remarks>
+    private static string? SidedModifierName()
+    {
+        if (IsHeld(VirtualKey.LeftControl))
+        {
+            return "LeftCtrl";
+        }
+
+        if (IsHeld(VirtualKey.RightControl))
+        {
+            return "RightCtrl";
+        }
+
+        if (IsHeld(VirtualKey.LeftShift))
+        {
+            return "LeftShift";
+        }
+
+        if (IsHeld(VirtualKey.RightShift))
+        {
+            return "RightShift";
+        }
+
+        if (IsHeld(VirtualKey.LeftWindows))
+        {
+            return "LeftWin";
+        }
+
+        return IsHeld(VirtualKey.RightWindows) ? "RightWin" : null;
     }
 
     private static bool IsHeld(VirtualKey key) =>
