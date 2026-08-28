@@ -497,3 +497,30 @@ injecting a control that is disabled and never re-enabled, running the real suit
 still green. That two-way proof costs one round trip and is the only thing that separates a gate from
 a comment. Sibling: RULE: a-gate-that-pins-the-MECHANISM-accuses-a-healthy-app, which is the same
 demand from the loud direction. Ref: warm capture / speed check work (2026-08-27).
+
+## FACT: the-icon-font-has-a-hole-and-two-codes-can-be-one-picture
+Three facts about Segoe Fluent Icons that no check in this repo can discover, established by rendering
+the font on the rig and looking. Every one of them fails toward a confident wrong answer.
+
+**E700-EDFF is dense, EE00-EFFF is almost empty, F000-F0FF is patchy.** Roughly 25 real glyphs across
+512 codepoints in the empty band. A code guessed in EE00-EFFF is more likely to be nothing than to be
+a picture. Treat a declared glyph in that band as needing a look.
+
+**A codepoint not in the font renders as a hollow box, not as an error.** It builds, it lays out, it
+occupies the right space. The only reliable detector is to carry a KNOWN-missing codepoint - F9FF -
+through the same render and match its signature, which turns "is this a box" from a judgement into a
+comparison. Confirmed absent by that method: EC4B, EB79.
+
+**TWO DIFFERENT CODES CAN BE THE SAME DRAWING.** E8A5 and E7C3 are byte-identical folded-corner
+documents; the built-in Symbol "Character" is glyph E8C1. This is the axis
+`EveryNavigationRowHasItsOwnIcon` CANNOT close: it compares declarations, the declarations genuinely
+differ, and the collision lives in the font file rather than in the markup. The gate closes the
+symbol-versus-glyph axis by banning one form; nothing in this repo can close this one. It needs eyes.
+
+**Counting drawn pixels finds candidates for "blank" and cannot adjudicate them.** A missing codepoint
+drew 48; a real bulleted list drew 49. One apart, opposite answers.
+
+**No scales of justice and no gavel exist in E700-F0FF** - 2048 codepoints, all inspected. Useful
+absences, because they stop the next session hunting for them. EB95 is a ruled document with a ribbon
+seal, which is a better picture of a granted permission than either.
+Ref: rig font sweep 2026-08-28.

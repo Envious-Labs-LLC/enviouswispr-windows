@@ -47,8 +47,41 @@ need hardware or an environment this machine cannot provide, and two are ordinar
 
 | Capability | Note |
 |---|---|
-| AI-suggested aliases for custom terms | Ask the polish model what else a term might be heard as. The machinery exists; nothing has been written. |
-| Warm capture-engine policy | Keeping the capture engine warm between dictations to shorten the first press. Distinct from the model-unload policy, which is now present. |
+| AI-suggested aliases for custom terms | DONE 2026-08-27. Parser, prompt, all three provider families and the screen. |
+| Warm capture-engine policy | MEASURED AND REJECTED 2026-08-28. See below. |
+
+## FACT: warm-capture-engine-was-measured-and-rejected
+Not missing. Measured on the rig against a real build, eight key presses, and deliberately not built.
+
+Holding the microphone open between dictations removes the OPEN half of a key press and nothing else.
+Instrumenting the two halves separately gave:
+
+| | open | start |
+|---|---|---|
+| first press, cold | 6 ms | 22 ms |
+| presses 2-6 | 0-2 ms | 12-16 ms |
+| after 180s idle | 1 ms | 12 ms |
+
+**Opening is already free.** It is 0 or 1 ms in six of eight presses, and 1 ms even after three
+minutes idle - which was the one case where warming could still have justified itself. Starting the
+stream costs 12 ms and never less; that half cannot be removed by holding anything open. Best case
+for the feature is about 1 ms.
+
+**The first press pays on BOTH halves** (6 and 22 against a steady 0 and 12), so the cold-start cost
+is general warmup rather than device opening, and warming the device would not have removed it.
+
+**This also retires a founder decision that was never spent.** The feature raised a real privacy
+question - whether an open microphone lights the Windows in-use indicator - and that question only
+had to be answered if the feature was worth building. It is not.
+
+**What was shown and what was not.** Opening is cheap: shown. WHY it is cheap: not shown. The natural
+reading is that the audio library defers the real work to start, and a genuinely fast open would
+produce identical numbers. The distinction matters for the privacy argument and not at all for the
+build decision, because a 1 ms saving does not need a privacy question answered either way.
+
+The two log lines stay. They are now a latency tripwire: the 12 ms floor is the fastest a key press
+can be, and if it drifts upward nothing else would report it.
+Ref: rig measurement 2026-08-28, build 00:42:35.
 
 ## FACT: what-was-closed-2026-08-27
 Thirteen capabilities in one session. Listed because the audit above only shows what remains, and a

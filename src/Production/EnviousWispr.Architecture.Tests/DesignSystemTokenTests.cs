@@ -314,6 +314,42 @@ public sealed partial class DesignSystemTokenTests
             Math.Abs(expected.Alpha - actual.Alpha) <= tolerance + double.Epsilon;
     }
 
+    /// <summary>
+    /// The primary action is never inside something that scrolls.
+    /// </summary>
+    /// <remarks>
+    /// A BUTTON INSIDE A SCROLL AREA IS ONLY VISIBLE IF THE PAGE HAPPENS TO BE SHORT ENOUGH, and
+    /// "happens to be" is not a property anybody maintains. One settings page was already 2.6% too
+    /// tall, which presented Save as a twelve-pixel sliver until the user scrolled - reachable, and
+    /// invisible as an action.
+    ///
+    /// TRIMMING THAT PAGE WOULD HAVE BEEN THE INSTANCE FIX and it would have looked complete. The
+    /// next page to grow past the viewport rediscovers it, silently, and nothing connects the new
+    /// symptom to the old cause. Moving the button out of every scrolling container is the version
+    /// that cannot come back.
+    /// </remarks>
+    [Fact]
+    public void ThePrimaryActionIsNotInsideAnythingThatScrolls()
+    {
+        var document = LoadMainWindow();
+        var button = FindNamedElement(document, "SaveSettingsButton");
+
+        var scrollers = button.Ancestors()
+            .Where(element => element.Name.LocalName == "ScrollViewer")
+            .Select(element => (string?)element.Attribute(XName.Get("Name", XamlNamespace)) ?? "unnamed")
+            .ToArray();
+
+        Assert.True(
+            scrollers.Length == 0,
+            "Save settings sits inside a scrolling container, so it is only visible when the page "
+                + "is short enough: " + string.Join(" > ", scrollers));
+
+        // Control. The lookup must be finding a real element inside a real tree - otherwise an
+        // element with no ancestors at all would report the same clean result.
+        Assert.NotEmpty(button.Ancestors());
+        Assert.Contains(document.Descendants(), e => e.Name.LocalName == "ScrollViewer");
+    }
+
     [MacSnapshotFact]
     public void MacDynamicColorsMatchExpectedTable()
     {
