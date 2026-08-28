@@ -22,27 +22,27 @@ public sealed class NavigationIconTests
     /// <summary>A page header drawn straight into the markup rather than derived at runtime.</summary>
     private sealed record StaticHeader(string Title, string Glyph);
 
-    [Fact]
-    public void EverySidebarRowDrawsAnIconNoOtherRowDraws()
-    {
-        var rows = SidebarRows();
-        Assert.True(rows.Count >= 18, $"Only {rows.Count} sidebar rows were parsed, so this check swept less than the sidebar.");
-
-        var collisions = rows
-            .GroupBy(row => row.Glyph)
-            .Where(group => group.Count() > 1)
-            .Select(group => $"{Describe(group.Key)} is on: {string.Join(", ", group.Select(row => row.Label))}")
-            .ToArray();
-
-        Assert.True(collisions.Length == 0, "Two sidebar rows draw the same icon:\n  " + string.Join("\n  ", collisions));
-    }
+    // ROW AGAINST ROW IS NOT HERE ON PURPOSE. EveryNavigationRowHasItsOwnIcon in
+    // TranscriptionEngineNameTests already asks it, and asks it better: it also refuses a built-in
+    // symbol, which is the spelling axis a glyph-only comparison silently cannot see. A second,
+    // weaker answer to the same question is how two gates end up disagreeing.
 
     /// <summary>
-    /// The check the old sweep could not perform. A page header and a sidebar row are different
-    /// sites, so a collision between them was invisible to a row-against-row comparison.
+    /// A page header must declare the same icon code as its own sidebar row.
     /// </summary>
+    /// <remarks>
+    /// The check the old sweep could not perform: a page header and a sidebar row are different
+    /// SITES, so a collision between them was invisible to a row-against-row comparison.
+    ///
+    /// WHAT THIS CANNOT CLOSE, STATED BECAUSE THE NAME WOULD OTHERWISE PROMISE IT. Two different
+    /// codes can be the same drawing - E8A5 and E7C3 are byte-identical folded-corner documents.
+    /// This compares declared codes, so a header could name a different code that renders the
+    /// identical picture and pass. That axis lives in the font file, nothing in this repository can
+    /// reach it, and it needs eyes.
+    /// Owner: `.claude/knowledge/design-system.md` FACT: the-icon-font-has-a-hole-and-two-codes-can-be-one-picture.
+    /// </remarks>
     [Fact]
-    public void NoPageHeaderWearsAnotherPagesIcon()
+    public void EveryPageHeaderDeclaresItsOwnSidebarRowsIconCode()
     {
         var rows = SidebarRows();
         var headers = StaticHeaders();
@@ -57,8 +57,8 @@ public sealed class NavigationIconTests
             if (owner!.Glyph != header.Glyph)
             {
                 var thief = rows.FirstOrDefault(row => row.Glyph == header.Glyph && row != owner);
-                var borrowed = thief is null ? "" : $" That icon belongs to {thief.Label}.";
-                wrong.Add($"'{header.Title}' header draws {Describe(header.Glyph)} but its sidebar row draws {Describe(owner.Glyph)}.{borrowed}");
+                var borrowed = thief is null ? "" : $" That code belongs to {thief.Label}.";
+                wrong.Add($"'{header.Title}' header declares {Describe(header.Glyph)} but its sidebar row declares {Describe(owner.Glyph)}.{borrowed}");
             }
         }
 
