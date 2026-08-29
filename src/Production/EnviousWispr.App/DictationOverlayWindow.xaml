@@ -7,6 +7,8 @@
     <Border
         x:Name="OverlayRoot"
         AutomationProperties.LiveSetting="Polite"
+        PointerEntered="OverlayRoot_PointerEntered"
+        PointerExited="OverlayRoot_PointerExited"
         Background="{ThemeResource PillSurfaceBrush}"
         BorderThickness="1"
         CornerRadius="29">
@@ -51,6 +53,12 @@
                     <TextBlock x:Name="PreviewText" AutomationProperties.Name="Live transcription preview" FontSize="14" MaxLines="5" Style="{StaticResource PillDimmedTextStyle}" Text="Listening…" TextAlignment="DetectFromContent" TextWrapping="Wrap" />
                 </Border>
                 <TextBlock x:Name="StateDetail" FontSize="14" MaxLines="2" Style="{StaticResource PillNoticeTextStyle}" Text="Release your key to finish" TextWrapping="Wrap" Visibility="Collapsed" />
+                <!--
+                    THE ONE THING THE USER CAN DO ABOUT IT. Right-aligned rather than full width so
+                    the pill still reads as a notice rather than a dialog, and 14px like everything
+                    else here because the overlay has a floor and this is not an exception to it.
+                -->
+                <Button x:Name="ActionButton" Click="ActionButton_Click" FontSize="14" HorizontalAlignment="Right" Style="{StaticResource PillActionButtonStyle}" Visibility="Collapsed" />
             </StackPanel>
         </Grid>
     </Border>

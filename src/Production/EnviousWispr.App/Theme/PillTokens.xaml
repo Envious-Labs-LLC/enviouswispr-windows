@@ -141,6 +141,28 @@
     </Style>
 
     <!--
+        The pill's own button. It borrows the notice ink rather than the accent, because the pill
+        already carries a severity colour on its edge and its glyph, and a third colour on the one
+        control the user is meant to press would compete with the thing telling them why.
+    -->
+    <Style x:Key="PillActionButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="{ThemeResource PillBadgeFillBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource PillBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{StaticResource BrandPillRadius}" />
+        <!--
+            THE BADGE INK, NOT THE NOTICE INK, AND THE PAIRING IS THE WHOLE REASON. The fill is
+            PillBadgeFill, which High Contrast resolves to SystemColorHighlight; the notice ink
+            resolves to SystemColorWindowText. Those two are not a pair, and a High Contrast theme
+            is free to make them the same colour - black text on a black button. PillBadgeText
+            resolves to SystemColorHighlightText, which is the colour the system guarantees is
+            legible ON that highlight.
+        -->
+        <Setter Property="Foreground" Value="{ThemeResource PillBadgeTextBrush}" />
+        <Setter Property="Padding" Value="14,6" />
+    </Style>
+
+    <!--
         ONE STYLE FAMILY PER SEVERITY, AND A STYLE RATHER THAN A BRUSH SET FROM CODE.
         The pill is a separate top-level window whose theme is set on its root, so a brush pulled
         out of the application dictionary resolves against the MACHINE's theme while everything

@@ -4,6 +4,7 @@ using EnviousWispr.Core.Settings;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Animation;
 using Windows.Graphics;
 
@@ -14,11 +15,28 @@ public sealed partial class DictationOverlayWindow : Window
     private const uint MonitorDefaultToNearest = 2;
     private const int NoticeWidth = 380;
     private const int NoticeHeight = 108;
+
+    /// <summary>The notice height when the pill carries a button.</summary>
+    /// <remarks>
+    /// A PILL IS SIZED BY AN EXPLICIT Resize, NOT BY ITS CONTENTS, so a control added to the stack
+    /// does not make the window taller - it renders outside it and is clipped. A button whose
+    /// bottom half is cut off is the same family as a change that ships and does nothing: it
+    /// builds, it passes every gate, and the user cannot use it.
+    ///
+    /// DERIVED, NOT CHOSEN, so the next person can check it rather than trust it.
+    /// <see cref="NoticeHeight"/> is 108 for a heading and two lines of detail. Adding the button
+    /// costs one <c>BrandSpacingS</c> gap, which is 8, plus the button itself: a 14px line at
+    /// roughly 20, its 14,6 padding at 12, and its 1px border at 2, which is 34 and clears the
+    /// platform Button's own 32 minimum. 108 + 8 + 34 = 150.
+    /// </remarks>
+    private const int ActionNoticeHeight = 150;
     private const int WorkAreaMargin = 28;
 
     private readonly DispatcherTimer _hideTimer = new();
     private readonly DispatcherTimer _elapsedTimer = new();
     private readonly Storyboard _distressPulse = new();
+    private TimeSpan _dwell = TimeSpan.Zero;
+    private bool _pointerIsOver;
     private OverlayPillPosition _position = OverlayPillPosition.Top;
     private bool _livePreviewEnabled;
     private RecordingPillDesign _withoutWordsDesign = RecordingPillDesign.Classic;
@@ -26,6 +44,7 @@ public sealed partial class DictationOverlayWindow : Window
     private RecordingPillDesign _activeDesign = RecordingPillDesign.Classic;
     private DictationOverlayState _state = DictationOverlayState.Hidden;
     private DateTimeOffset _recordingStartedAt;
+    private PillAction? _action;
     private string? _previewText;
     private int _overlayWidth = NoticeWidth;
     private int _overlayHeight = NoticeHeight;
@@ -84,8 +103,16 @@ public sealed partial class DictationOverlayWindow : Window
     /// </remarks>
     public void ApplyTheme(ElementTheme theme) => OverlayRoot.RequestedTheme = theme;
 
-    public void ShowState(DictationOverlayState state, string detail)
+    /// <summary>Puts one status on screen.</summary>
+    /// <remarks>
+    /// TAKES THE STATUS RATHER THAN A STATE AND A SENTENCE, because a status now carries a third
+    /// thing - the one action the user can take about it - and three loose arguments is how the
+    /// third one gets forgotten at a call site.
+    /// </remarks>
+    public void ShowState(DictationStatus status)
     {
+        var state = status.State;
+        var detail = status.Text;
         _hideTimer.Stop();
         if (state == DictationOverlayState.Hidden)
         {
@@ -124,12 +151,16 @@ public sealed partial class DictationOverlayWindow : Window
                 _livePreviewEnabled,
                 _withoutWordsDesign,
                 _withWordsDesign);
+            ApplyAction(action: null);
             ConfigureRecordingDesign();
             _elapsedTimer.Start();
         }
         else
         {
             _elapsedTimer.Stop();
+            // The action is applied before the notice is sized, because the size depends on whether
+            // there is a button. The other order clips it.
+            ApplyAction(status.Action);
             ConfigureNotice();
         }
 
@@ -153,13 +184,17 @@ public sealed partial class DictationOverlayWindow : Window
             // AN ADVISORY DWELLS LONGEST BECAUSE IT ASKS THE USER TO DO SOMETHING. It names a
             // setting they have to go and change, which is more words than "your text is safe" and
             // more thought than a tick. macOS makes the same call and says so in its own source.
-            _hideTimer.Interval = TimeSpan.FromSeconds(state switch
+            _dwell = TimeSpan.FromSeconds(state switch
             {
                 DictationOverlayState.Advisory => 6,
                 DictationOverlayState.Error or DictationOverlayState.Distress => 5,
                 _ => 3,
             });
-            _hideTimer.Start();
+            ArmDwell();
+        }
+        else
+        {
+            _dwell = TimeSpan.Zero;
         }
     }
 
@@ -260,6 +295,75 @@ public sealed partial class DictationOverlayWindow : Window
         }
     }
 
+    /// <summary>Raised when the user presses the pill's button.</summary>
+    public event Action<PillActionKind>? ActionInvoked;
+
+    /// <summary>Shows the one thing the user can do about this status, or nothing.</summary>
+    private void ApplyAction(PillAction? action)
+    {
+        _action = action;
+        if (action is null)
+        {
+            ActionButton.Visibility = Visibility.Collapsed;
+            ActionButton.Content = null;
+            return;
+        }
+
+        ActionButton.Content = action.Label;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ActionButton, action.SpokenLabel);
+        ActionButton.Visibility = Visibility.Visible;
+    }
+
+    private void ActionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_action is not { } action)
+        {
+            return;
+        }
+
+        HideOverlay();
+        ActionInvoked?.Invoke(action.Kind);
+    }
+
+    /// <summary>Starts the dwell clock, unless the pointer is on the pill.</summary>
+    /// <remarks>
+    /// A BUTTON ON A PILL THAT DISMISSES ITSELF IN SIX SECONDS IS A BUTTON NOBODY REACHES. Moving a
+    /// mouse to it is most of that budget, and the pill would leave while the pointer was on its
+    /// way. macOS pairs its action pills with hover-pause for exactly this reason, and shipping the
+    /// button without it would have been a control that renders, builds clean and cannot be used.
+    ///
+    /// The pause applies to every dwelling pill rather than only the ones with a button, because
+    /// the other thing a pointer resting on a notice means is that somebody is reading it.
+    /// </remarks>
+    private void ArmDwell()
+    {
+        _hideTimer.Stop();
+        if (_dwell <= TimeSpan.Zero || _pointerIsOver)
+        {
+            return;
+        }
+
+        _hideTimer.Interval = _dwell;
+        _hideTimer.Start();
+    }
+
+    private void OverlayRoot_PointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        _pointerIsOver = true;
+        _hideTimer.Stop();
+    }
+
+    /// <remarks>
+    /// THE CLOCK RESTARTS FROM THE TOP RATHER THAN RESUMING WHAT WAS LEFT. A pill the user has just
+    /// stopped reading deserves its whole dwell again; resuming a remainder makes a pill they
+    /// looked at vanish faster than one they ignored.
+    /// </remarks>
+    private void OverlayRoot_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        _pointerIsOver = false;
+        ArmDwell();
+    }
+
     /// <summary>Takes the pill off screen and stops everything it left running.</summary>
     /// <remarks>
     /// BOTH HIDE PATHS GO THROUGH HERE, and they did not before. The dwell timer's tick stopped
@@ -275,6 +379,8 @@ public sealed partial class DictationOverlayWindow : Window
     {
         _hideTimer.Stop();
         _elapsedTimer.Stop();
+        _dwell = TimeSpan.Zero;
+        _pointerIsOver = false;
         ApplyDistressPulse(pulsing: false);
         AppWindow.Hide();
     }
@@ -364,7 +470,7 @@ public sealed partial class DictationOverlayWindow : Window
         PreviewWell.Visibility = Visibility.Collapsed;
         OverlayRoot.CornerRadius = new CornerRadius(18);
         ContentPanel.Margin = new Thickness(18, 14, 18, 14);
-        Resize(NoticeWidth, NoticeHeight);
+        Resize(NoticeWidth, _action is null ? NoticeHeight : ActionNoticeHeight);
     }
 
     private void ApplyPreviewInk()

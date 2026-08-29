@@ -286,6 +286,7 @@ public sealed partial class MainWindow : Window, IDisposable
             _recordingSoundPlayer.Play);
         RecordingSoundComboBox.ItemsSource = RecordingSoundCatalog.Choices;
         _overlayWindow = new DictationOverlayWindow();
+        _overlayWindow.ActionInvoked += OnPillActionInvoked;
         _overlayWindow.ApplyPreferences(
             settings.Preferences.OverlayPosition,
             settings.Preferences.LivePreviewEnabled,
@@ -536,7 +537,7 @@ public sealed partial class MainWindow : Window, IDisposable
         _currentOverlayState = overlayState;
         PreviewRecordingSoundButton.IsEnabled = overlayState != DictationOverlayState.Recording;
         SetSpeedCheckAvailability(overlayState != DictationOverlayState.Recording);
-        _overlayWindow.ShowState(overlayState, sentence);
+        _overlayWindow.ShowState(status);
         if (sentence.Contains("ready", StringComparison.OrdinalIgnoreCase))
         {
             EngineReadinessText.Text = sentence;
@@ -641,6 +642,57 @@ public sealed partial class MainWindow : Window, IDisposable
     /// aggregate page. That was a lookup rather than a judgement call, and it had been sitting in
     /// the founder's queue as a decision until somebody read the other side.
     /// </remarks>
+    /// <summary>Answers a press on the pill's button by showing the page that fixes it.</summary>
+    /// <remarks>
+    /// THE INTENT IS TRANSLATED HERE AND NOWHERE ELSE. The overlay's vocabulary lives in Core and
+    /// the pages live in this file's markup, so a page tag travelling through Core would make the
+    /// pill depend on the spelling of a navigation row.
+    ///
+    /// The default arm exists because an enum can hold a value nobody declared, and it lands on
+    /// Appearance rather than throwing: a button that opens the wrong settings page is a bad day,
+    /// and a button that crashes the app during someone's dictation is a worse one. A gate holds
+    /// this switch to naming every declared member, so the default is genuinely unreachable.
+    /// </remarks>
+    private void OnPillActionInvoked(PillActionKind kind)
+    {
+        var tag = kind switch
+        {
+            PillActionKind.OpenPolishSettings => "settings-ai-polish",
+            PillActionKind.OpenTranscriptionSettings => "settings-transcription",
+            _ => "settings-appearance",
+        };
+        // Called directly rather than through the dispatcher. The overlay is created in this
+        // window's constructor, so its click handler already runs on this thread, and TryEnqueue
+        // returns a bool nobody reads - a silent way for a button press to go nowhere.
+        OpenPage(tag);
+    }
+
+    /// <summary>Brings the window forward and shows one page by its tag.</summary>
+    public void OpenPage(string tag)
+    {
+        AppWindow.Show();
+        Activate();
+        ShowOnboarding(show: false);
+        var row = NavigationRows()
+            .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), tag, StringComparison.Ordinal));
+        if (row is null)
+        {
+            // A SILENT RETURN HERE IS A BUTTON THAT DOES NOTHING. The user pressed something,
+            // the pill went away, and the window came forward showing whatever it was showing -
+            // which reads as the app ignoring them. The page name is deliberately not in the
+            // message: it is our vocabulary, not theirs.
+            SetReliabilityNotice(
+                "That settings page could not be opened",
+                "Use the sidebar to find it. Nothing about your dictation was affected.",
+                isError: true);
+            return;
+        }
+
+        // Selecting the row raises SelectionChanged, which is the one path that shows a page.
+        // Calling ShowPage as well would leave the sidebar and the content able to disagree.
+        ProductNavigation.SelectedItem = row;
+    }
+
     public void OpenSettings()
     {
         ShowOnboarding(show: false);

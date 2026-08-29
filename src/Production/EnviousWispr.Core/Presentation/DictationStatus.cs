@@ -35,6 +35,46 @@ public enum DictationOverlayState
     Error,
 }
 
+
+/// <summary>What pressing a pill's button asks the app to do.</summary>
+/// <remarks>
+/// AN INTENT, NOT A DESTINATION. The pill lives in Core and the pages it would send someone to are
+/// named in the app, so a page tag here would make the vocabulary of the overlay depend on the
+/// spelling of a navigation row. The app owns that translation, and a gate holds it to answering
+/// every member.
+/// </remarks>
+public enum PillActionKind
+{
+    /// <summary>Show the page where the cleanup provider is chosen and configured.</summary>
+    OpenPolishSettings,
+
+    /// <summary>Show the page where the speech engine is chosen and installed.</summary>
+    OpenTranscriptionSettings,
+}
+
+/// <summary>The one button a notice may carry.</summary>
+/// <remarks>
+/// WHERE macOS LETS A USER FIX THE THING FROM THE NOTICE, WINDOWS TOLD THEM AND LEFT THEM TO FIND
+/// THE SETTING. The macOS pill offers Discard on a recovery and Grant on a permission toast; the
+/// Windows overlay markup contained zero buttons, counted rather than assumed.
+///
+/// A SPOKEN LABEL SEPARATE FROM THE PRINTED ONE, because a button on a pill has room for two words
+/// and a screen reader has no surrounding context to lend them meaning. macOS learned this the
+/// expensive way: its Discard button spelled its accessibility label as a bare literal inside the
+/// view, with no field behind it, so nothing could read it and nothing could check it.
+/// </remarks>
+/// <param name="Label">What is printed on the button.</param>
+/// <param name="Kind">What pressing it asks for.</param>
+/// <param name="AccessibilityLabel">
+/// What a screen reader says instead, where the printed label is too terse to stand alone.
+/// Null means the label speaks for itself.
+/// </param>
+public sealed record PillAction(string Label, PillActionKind Kind, string? AccessibilityLabel = null)
+{
+    /// <summary>What a screen reader should read, resolved here so two leaves cannot differ.</summary>
+    public string SpokenLabel => AccessibilityLabel ?? Label;
+}
+
 /// <summary>
 /// One sentence for the user, carrying the pill it is meant to appear on.
 /// </summary>
@@ -58,7 +98,11 @@ public enum DictationOverlayState
 /// </remarks>
 /// <param name="Text">The sentence shown to the user.</param>
 /// <param name="State">The pill that carries it.</param>
-public readonly record struct DictationStatus(string Text, DictationOverlayState State)
+/// <param name="Action">The one thing the user can do about it, or null.</param>
+public readonly record struct DictationStatus(
+    string Text,
+    DictationOverlayState State,
+    PillAction? Action = null)
 {
     /// <summary>Shown on the settings status line only. No pill.</summary>
     public static DictationStatus Quiet(string text) => new(text, DictationOverlayState.Hidden);
@@ -76,8 +120,13 @@ public readonly record struct DictationStatus(string Text, DictationOverlayState
         new(text, DictationOverlayState.Success);
 
     /// <summary>The user's setup needs attention, and the app is not what broke.</summary>
-    public static DictationStatus Advisory(string text) =>
-        new(text, DictationOverlayState.Advisory);
+    /// <remarks>
+    /// AN ADVISORY IS THE SEVERITY MOST WORTH A BUTTON, because it is the one whose whole content
+    /// is a thing the user could go and change. Telling someone their cleanup provider is switched
+    /// off and leaving them to find the page is the behaviour this overload exists to replace.
+    /// </remarks>
+    public static DictationStatus Advisory(string text, PillAction? action = null) =>
+        new(text, DictationOverlayState.Advisory, action);
 
     /// <summary>The text is safe, but it did not arrive the way the user asked.</summary>
     public static DictationStatus Warning(string text) =>

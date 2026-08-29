@@ -765,6 +765,15 @@ public partial class App : Application, IAsyncDisposable
             "success" => DictationStatus.Success("Inserted safely in the app you started in"),
             "warning" =>
                 DictationStatus.Warning("Protected field: copied only. Paste manually if intended"),
+            // THE TWO NEW SEVERITIES ARE DRIVABLE FROM HERE OR THEY ARE NOT TESTABLE AT ALL. An
+            // advisory needs a provider to be misconfigured and a distress needs Windows to
+            // interrupt a dictation, neither of which a person can arrange on demand. The advisory
+            // carries its button, because the thing most worth looking at on a real screen is
+            // whether a button on a window shown without activation can actually be pressed.
+            "advisory" => DictationStatus.Advisory(
+                "Ollama is offline. Cleaned text will still be preserved", OpenPolish),
+            "distress" => DictationStatus.Distress(
+                "Windows interrupted the active dictation; recovery is still pending"),
             "error" => DictationStatus.Error("Local transcription failed safely"),
             _ => null,
         };
@@ -1333,7 +1342,8 @@ public partial class App : Application, IAsyncDisposable
         if (modelDirectory is null)
         {
             _window?.SetSessionStatus(
-                DictationStatus.Advisory("Local transcription model is not installed"));
+                DictationStatus.Advisory(
+                    "Local transcription model is not installed", OpenTranscription));
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionFailed,
@@ -1358,7 +1368,8 @@ public partial class App : Application, IAsyncDisposable
         if (_transcriptionEngine is null)
         {
             _window?.SetSessionStatus(
-                DictationStatus.Advisory("Local transcription is unavailable on this machine"));
+                DictationStatus.Advisory(
+                    "Local transcription is unavailable on this machine", OpenTranscription));
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionFailed,
@@ -1385,7 +1396,8 @@ public partial class App : Application, IAsyncDisposable
 
                 _transcriptionEngine = null;
                 _window?.SetSessionStatus(
-                    DictationStatus.Advisory("Local transcription could not start"));
+                    DictationStatus.Advisory(
+                    "Local transcription could not start", OpenTranscription));
                 _logger.Write(new AppLogEntry(
                     DateTimeOffset.UtcNow,
                     AppEventCode.DictationTranscriptionFailed,
@@ -2714,7 +2726,7 @@ public partial class App : Application, IAsyncDisposable
             await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
             _window?.DispatcherQueue.TryEnqueue(() =>
                 _window?.SetSessionStatus(DictationStatus.Advisory(
-                    "Audio captured, but local transcription is unavailable")));
+                    "Audio captured, but local transcription is unavailable", OpenTranscription)));
             return;
         }
 
@@ -3321,19 +3333,33 @@ public partial class App : Application, IAsyncDisposable
         _ => "Global shortcut is unavailable",
     };
 
+    /// <summary>The button an advisory about the cleanup provider carries.</summary>
+    /// <remarks>
+    /// ONE INSTANCE RATHER THAN ONE PER ROW. Four sentences send the user to the same page, and
+    /// four copies of the same two words is how one of them ends up saying something else.
+    /// </remarks>
+    private static readonly PillAction OpenPolish =
+        new("Open settings", PillActionKind.OpenPolishSettings, "Open AI polish settings");
+
+    /// <summary>The button an advisory about the speech engine carries.</summary>
+    private static readonly PillAction OpenTranscription =
+        new("Open settings", PillActionKind.OpenTranscriptionSettings, "Open transcription settings");
+
     private static DictationStatus OllamaHealthStatus(OllamaHealth health) => health switch
     {
         // EVERY UNHEALTHY OLLAMA ROW IS A SETUP PROBLEM THE USER CAN FIX, so it is an advisory
         // rather than an error or, as it was, nothing at all. A user whose polish provider is
         // switched off currently gets a silently plainer result and no pill saying why.
         OllamaHealth.EndpointInvalid =>
-            DictationStatus.Advisory("Ollama endpoint must point to this PC"),
+            DictationStatus.Advisory("Ollama endpoint must point to this PC", OpenPolish),
         OllamaHealth.ServerUnavailable =>
-            DictationStatus.Advisory("Ollama is offline. Cleaned text will still be preserved"),
+            DictationStatus.Advisory(
+                "Ollama is offline. Cleaned text will still be preserved", OpenPolish),
         OllamaHealth.ServerUnhealthy =>
-            DictationStatus.Advisory("Ollama did not return a usable health response"),
+            DictationStatus.Advisory("Ollama did not return a usable health response", OpenPolish),
         OllamaHealth.NoLocalModels =>
-            DictationStatus.Advisory("Ollama is running, but no local model is installed"),
+            DictationStatus.Advisory(
+                "Ollama is running, but no local model is installed", OpenPolish),
         _ => DictationStatus.Quiet("Ollama is ready"),
     };
 
