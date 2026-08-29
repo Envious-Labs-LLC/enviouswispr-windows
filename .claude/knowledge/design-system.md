@@ -67,6 +67,13 @@ one before.
   MINIMUM number of fraction digits, not a maximum: it stops zero-padding and rounds nothing. Measured
   after shipping, "12.7" survived the display AND the value untouched. Rounding needs a `NumberRounder`
   beside the formatter - `IncrementNumberRounder { Increment = 1 }`.
+- A severity WASH added behind the pill's content, to tint the capsule per outcome. It was a `Border`
+  filling a `Grid` inside `OverlayRoot`, and a Border lays its child out INSIDE its own padding - so the
+  wash stopped 16 short of the capsule edge on each side and left an untinted band all the way round.
+  The tint rendered, so it was not invisible; it was simply not the thing the code said it was. Caught
+  by review, not by measurement, because the number that moved was the right number in the wrong place.
+  **Padding on a frame is padding the frame's own background does not share.** Put it on the content
+  layer whenever anything is meant to fill the frame.
 
 **The tell is always the same and it is free: the measurement does not move.** Not "improves a little" -
 IDENTICAL. Ask for the number before and the number after, and treat an unchanged number as evidence the

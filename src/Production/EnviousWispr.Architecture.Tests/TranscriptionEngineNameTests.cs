@@ -1077,85 +1077,208 @@ public sealed partial class DesignSystemTokenTests
     }
 
     /// <summary>
-    /// Every word the recording pill looks for is a word the app actually says.
+    /// No member in the app is handed a sentence and hands back a pill.
     /// </summary>
     /// <remarks>
-    /// THE PILL'S APPEARANCE IS INFERRED FROM THE STATUS SENTENCE, and the macOS app carries a
-    /// comment saying exactly why that is the wrong way round: inferring a visual from a string is
-    /// how a copy edit silently changes an icon. macOS passes the kind explicitly. This side reads
-    /// the words.
+    /// INFERRING A VISUAL FROM A STRING IS HOW A COPY EDIT SILENTLY CHANGES AN ICON. The macOS app
+    /// carries that sentence in its own source. This side used to do exactly that: a
+    /// <c>OverlayStateFor(string)</c> matched the status text - <c>StartsWith("Recording")</c>,
+    /// <c>Contains("copied only")</c> - and picked the pill from the words, so rewording a sentence
+    /// changed what appeared on screen with no code change and nothing able to report it. Two
+    /// sentences were measurably wrong when it was removed: a paused recording and a timed-out one
+    /// both matched "Recording" and wore the live listening pill, timer running.
     ///
-    /// SO A COPY CHANGE CAN MAKE THE PILL VANISH. Rewording "Recording. Release to finish" to
-    /// "Listening..." drops it through every branch to Hidden, and there is no pill at all while
-    /// the user is speaking. No code changes, no test fails, nothing builds differently.
+    /// THIS GATE WAS BYPASSED TWICE, THE SAME WAY BOTH TIMES, AND THE SECOND TIME IS THE LESSON.
+    /// Draft one keyed on the return type alone, so a helper returning <c>DictationStatus</c>
+    /// instead of <c>DictationOverlayState</c> walked past it. Draft two also read the body and
+    /// refused <c>.StartsWith(</c> and <c>.Contains(</c> - and <c>.IndexOf(</c> walked past that.
     ///
-    /// CHECKED IN THE REVERSE DIRECTION, which is what makes it possible at all: rather than
-    /// simulating the mapping, this asks whether every TRIGGER the mapping looks for still appears
-    /// in some status string the app can produce. Reword the sentence and its trigger matches
-    /// nothing, and this goes red naming the orphaned trigger.
+    /// THE SET OF WAYS TO READ A STRING IS NOT ENUMERABLE. IndexOf, a regex, an equality, a
+    /// Substring, a Split, a span comparison, a switch on a prefix. Every draft that lists forbidden
+    /// operations is a draft that is one operation short, and it fails GREEN, which is
+    /// indistinguishable from the property holding.
     ///
-    /// A GUARD, NOT THE FIX. The fix is to hand the state in beside the text, as macOS does. Until
-    /// then the coupling between copy and appearance is real and this is what holds it.
+    /// So this no longer asks what a member DOES. It asks what a member IS: handed a string, hands
+    /// back a pill or a status. There is no legitimate member of that shape in the app. A status is
+    /// built by a named factory in Core - <c>DictationStatus.Warning</c> and its siblings - and Core
+    /// is not in the tree this walks. The signature is the whole assertion, and a signature cannot
+    /// be smuggled past by a method name nobody thought of.
+    ///
+    /// Same correction as the repository's own rule about a lookahead after a quantifier: capture
+    /// the value and compare it, never look past a value to ask what it is not.
     /// </remarks>
     [Fact]
-    public void EveryPillTriggerStillMatchesSomethingTheAppSays()
+    public void NoMemberTurnsAStatusSentenceIntoAPillAppearance()
     {
         var app = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
-        var window = File.ReadAllText(Path.Combine(app, "MainWindow.xaml.cs"));
+        var offenders = new List<string>();
+        foreach (var file in ProductionSourceFiles(app))
+        {
+            var text = File.ReadAllText(file);
+            foreach (Match match in MemberTakingASentence().Matches(text))
+            {
+                // Everything on the line before the member's name is its return type, whatever
+                // shape that type is written in. Asking whether it MENTIONS the type is what makes
+                // the check independent of the spelling.
+                var declaration = text[(text.LastIndexOf('\n', match.Index) + 1)..match.Index];
+                if (declaration.Contains("DictationStatus", StringComparison.Ordinal) ||
+                    declaration.Contains("DictationOverlayState", StringComparison.Ordinal))
+                {
+                    offenders.Add(
+                        $"{Path.GetFileName(file)}: {(declaration + match.Value).Trim()}");
+                }
+            }
+        }
+
+        Assert.True(
+            offenders.Count == 0,
+            "These members are handed a sentence and hand back a pill, which is the shape the "
+                + "appearance-from-text defect always takes. Build the status where the outcome is "
+                + "known and pass DictationStatus through instead: " + string.Join(", ", offenders));
+    }
+
+    /// <summary>
+    /// Every status handed to the window names the pill it wants.
+    /// </summary>
+    /// <remarks>
+    /// THE GATE ABOVE REFUSES THE OLD SHAPE; THIS ONE REFUSES A NEW STATUS FROM SKIPPING THE
+    /// CHOICE. Every call site must name a <c>DictationStatus</c>, including the quiet ones, so a
+    /// status that shows no pill says so on purpose rather than by falling through.
+    ///
+    /// THE CARRIER LIST IS READ OUT OF THE SOURCE, NOT KEPT HERE. The first draft carried a
+    /// hand-written list that included the bare word "status", and a reviewer showed that a helper
+    /// named <c>statusFromSentence</c> would satisfy it - the allowlist was wide enough to admit
+    /// the very defect the pair exists to refuse. Now a carrier is a member this file declares as
+    /// returning <c>DictationStatus</c>, or a parameter or local of that type, so a name only
+    /// counts once the compiler agrees what it is.
+    ///
+    /// IT COUNTS WHAT IT SKIPPED. A regex that walks nested parentheses has a depth, and a call
+    /// nested deeper than that depth is not reported as suspicious - it is not seen at all, which
+    /// is the silent direction. The extracted count is compared against a plain count of the call
+    /// token, so a call this cannot parse fails the gate rather than escaping it.
+    /// </remarks>
+    [Fact]
+    public void EveryStatusHandedToTheWindowNamesItsPill()
+    {
+        var app = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
         var shell = File.ReadAllText(Path.Combine(app, "App.xaml.cs"));
 
-        var mapping = OverlayStateMethod().Match(window);
-        Assert.True(mapping.Success, "OverlayStateFor is not where this test expects it.");
+        const string call = "SetSessionStatus(";
+        var arguments = new List<string>();
+        for (var index = shell.IndexOf(call, StringComparison.Ordinal);
+             index >= 0;
+             index = shell.IndexOf(call, index + call.Length, StringComparison.Ordinal))
+        {
+            var argument = BalancedArgument(shell, index + call.Length);
+            if (argument is not null)
+            {
+                arguments.Add(argument);
+            }
+        }
 
-        var triggers = StatusTrigger().Matches(mapping.Value)
+        var written = CountOccurrences(shell, call);
+        Assert.True(written >= 20, $"Expected the app's status call sites, found {written}.");
+        Assert.True(
+            arguments.Count == written,
+            $"{written - arguments.Count} of {written} SetSessionStatus calls could not be read, so "
+                + "this gate is silently not checking them.");
+
+        // A carrier is a name the compiler already agrees is a DictationStatus: a member declared
+        // to return one, or a parameter or local of that type.
+        var carriers = DictationStatusCarrier().Matches(shell)
             .Select(match => match.Groups[1].Value)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+            .ToHashSet(StringComparer.Ordinal);
 
-        Assert.True(triggers.Length >= 10, $"Expected the pill's triggers, found {triggers.Length}.");
-
-        // Every status sentence the app can hand to the pill, from both files that produce them.
-        var said = StatusSentence().Matches(window + shell)
-            .Select(match => match.Groups[1].Value)
-            .ToArray();
-
-        Assert.True(said.Length >= 10, $"Expected the app's status sentences, found {said.Length}.");
-
-        var orphaned = triggers
-            .Where(trigger => !said.Any(sentence =>
-                sentence.Contains(trigger, StringComparison.OrdinalIgnoreCase)))
+        var unnamed = arguments
+            .Where(argument => !argument.Contains("DictationStatus.", StringComparison.Ordinal))
+            .Where(argument => !carriers.Any(carrier =>
+                IdentifierRegexFor(carrier).IsMatch(argument)))
             .ToArray();
 
         Assert.True(
-            orphaned.Length == 0,
-            "The pill watches for these words and nothing the app says contains them any more, so "
-                + "whatever they used to style now shows no pill at all: " + string.Join(", ", orphaned));
+            unnamed.Length == 0,
+            "These statuses reach the window without naming the pill they want, so the appearance "
+                + "is decided somewhere this suite cannot see: " + string.Join(" | ", unnamed));
     }
 
-    /// <summary>The body of the method that turns a sentence into a pill appearance.</summary>
-    [GeneratedRegex(@"OverlayStateFor\(string status\).*?\n    \}", RegexOptions.Singleline)]
-    private static partial Regex OverlayStateMethod();
+    private static IEnumerable<string> ProductionSourceFiles(string directory) =>
+        Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories)
+            .Where(path =>
+                !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal) &&
+                !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
 
-    /// <summary>A word the mapping looks for.</summary>
-    [GeneratedRegex(@"(?:StartsWith|Contains)\(""([^""]+)""")]
-    private static partial Regex StatusTrigger();
+    /// <summary>The argument between one call's parentheses, or null if they never balance.</summary>
+    private static string? BalancedArgument(string text, int start)
+    {
+        var depth = 1;
+        for (var scan = start; scan < text.Length; scan++)
+        {
+            if (text[scan] == '(')
+            {
+                depth++;
+            }
+            else if (text[scan] == ')' && --depth == 0)
+            {
+                return text[start..scan].Trim();
+            }
+        }
 
-    /// <summary>
-    /// A sentence the app can show, from anywhere in the two files that produce them.
-    /// </summary>
+        return null;
+    }
+
+    private static int CountOccurrences(string text, string token)
+    {
+        var total = 0;
+        for (var index = text.IndexOf(token, StringComparison.Ordinal);
+             index >= 0;
+             index = text.IndexOf(token, index + token.Length, StringComparison.Ordinal))
+        {
+            total++;
+        }
+
+        return total;
+    }
+
+    private static Regex IdentifierRegexFor(string name) =>
+        new(@"\b" + Regex.Escape(name) + @"\b", RegexOptions.CultureInvariant);
+
+    /// <summary>A member declaration that takes a string parameter.</summary>
     /// <remarks>
-    /// NOT SCOPED TO SetSessionStatus CALLS, and the first version was. Status sentences are also
-    /// produced by switch expressions that RETURN them - "Recording. Release to finish" is one - so
-    /// matching only the call site reported half the pill's triggers as orphaned when every one of
-    /// them was live. The same wrong-scope failure as the macOS parity matcher, an hour apart.
+    /// THE RETURN TYPE IS DELIBERATELY NOT IN THIS PATTERN. Three review rounds were spent on this
+    /// gate and every one was walked past by a spelling: first a different type, then a different
+    /// string method, then a nullable. A type has many spellings - <c>T</c>, <c>T?</c>,
+    /// <c>Task&lt;T&gt;</c>, <c>ValueTask&lt;T?&gt;</c>, <c>T[]</c>, <c>(T, bool)</c>, an alias
+    /// introduced by a using - and a pattern that lists them is a pattern that is one spelling
+    /// short, silently and in the green direction.
     ///
-    /// LIMIT, STATED: a sentence here is any quoted string of a few words. That is deliberately
-    /// broad, and broad is the safe direction - a false alarm gets this gate deleted, while the
-    /// failure it guards against needs a trigger to vanish from EVERY string in both files, which a
-    /// reworded sentence does.
+    /// So this matches the member NAME and its parameters, and the caller reads everything before
+    /// it on the line and asks whether that mentions the type at all. Every spelling above says the
+    /// type's name somewhere in the return position, which is the property no alternative spelling
+    /// can avoid.
+    ///
+    /// <c>\bstring\b</c> is what separates a declaration from a call: a call passing a sentence
+    /// carries the sentence, not the word <c>string</c>. A cast or a <c>nameof</c> could produce a
+    /// false alarm, and that is the safe direction - it fails loudly and gets read.
+    ///
+    /// WHAT IT CANNOT SEE, ENUMERATED, BECAUSE AN UNSTATED LIMIT READS AS COVERAGE. This reads
+    /// source text on one line, so it does not see: a declaration whose return type sits on its own
+    /// line above the name; a type reached through a <c>using</c> alias; or a
+    /// <c>Func&lt;string, DictationStatus&gt;</c> assigned to a field or local, which is a member of
+    /// no kind this pattern recognises. An earlier version of this comment claimed aliases were
+    /// covered and that was simply wrong.
+    ///
+    /// Closing those needs the compiler's own view of the code rather than the file's text, which
+    /// is a dependency this suite does not have today - tracked as its own issue. The guard is not
+    /// the reason the defect is gone: <c>OverlayStateFor</c> is deleted and every status is built
+    /// where its outcome is known. This stops the shape reappearing in the forms it has actually
+    /// taken, and says plainly which forms it would miss.
     /// </remarks>
-    [GeneratedRegex(@"""([A-Za-z][^""]{8,}?\s[^""]*?)""")]
-    private static partial Regex StatusSentence();
+    [GeneratedRegex(@"\b\w+\s*(?:<[^>()]*>)?\s*\([^)]*\b(?:string|String)\b[^)]*\)")]
+    private static partial Regex MemberTakingASentence();
+
+    /// <summary>A name the compiler agrees is a DictationStatus: member, parameter, or local.</summary>
+    [GeneratedRegex(@"\bDictationStatus\??\s+(\w+)\s*(?:\(|=|\)|,|;)")]
+    private static partial Regex DictationStatusCarrier();
 
     /// <summary>
     /// No page arrives with a heading and nothing under it.

@@ -1,3 +1,4 @@
+using EnviousWispr.Core.Presentation;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -102,6 +103,28 @@ public sealed partial class DesignSystemTokenTests
         ["PillText"] = new("#FF0F0A1A", "#F7FFFFFF"),
         ["PillTextDimmed"] = new("#990F0A1A", "#80FFFFFF"),
         ["PillNotice"] = new("#E00F0A1A", "#F2FFFFFF"),
+
+        // THE SEVERITY SET IS THE UNIT, not the severity somebody noticed. Before these existed the
+        // pill drew one surface, one border and one ink for every outcome, so an error and a
+        // success were the same capsule differing only by a small glyph - the same hole the app's
+        // notification severities had, one surface over. Every severity the pill can show is listed
+        // here, and a new one that forgets its pair goes red rather than rendering as the neutral
+        // pill and looking deliberate.
+        //
+        // Washes are the base colour at low alpha, matching the design system's soft-tint rule:
+        // #1A in Light, #24 in Dark. Distress carries no ink of its own on purpose - it is the
+        // interruption look and shares the error red, with a deeper wash and a pulse carrying the
+        // difference. That is a chosen reuse, stated here, rather than a token quietly falling back
+        // to a neighbour's value.
+        ["PillSuccessInk"] = new("#FF00A366", "#FF5CC99A"),
+        ["PillSuccessWash"] = new("#1A00A366", "#245CC99A"),
+        ["PillWarningInk"] = new("#FFCC7000", "#FFE6B766"),
+        ["PillWarningWash"] = new("#1ACC7000", "#24E6B766"),
+        ["PillErrorInk"] = new("#FFC0392B", "#FFEF7C89"),
+        ["PillErrorWash"] = new("#1AC0392B", "#24EF7C89"),
+        ["PillAdvisoryInk"] = new("#FF7C3AED", "#FFA78BFA"),
+        ["PillAdvisoryWash"] = new("#1A7C3AED", "#24A78BFA"),
+        ["PillDistressWash"] = new("#3DC0392B", "#4AEF7C89"),
     };
 
     private static readonly (string SwiftName, string BrandName)[] SwiftTokenMap =
@@ -602,6 +625,94 @@ public sealed partial class DesignSystemTokenTests
             undersizedText.Length == 0,
             $"Overlay text must be at least 14px: {string.Join(", ", undersizedText.Select(text => $"{text.Name}={text.FontSize}"))}");
     }
+
+    /// <summary>
+    /// Every state the pill can be in has a look, and every look it names exists.
+    /// </summary>
+    /// <remarks>
+    /// THE SEVERITY SET IS THE UNIT, NOT THE SEVERITY SOMEBODY NOTICED. The app's in-window
+    /// notifications had exactly this hole: two severities had no soft tint of their own, so they
+    /// fell through to the card colour and an error arrived with no colour behind it. Nobody chose
+    /// that - it was what a missing token renders as, and a missing token renders as something
+    /// plausible.
+    ///
+    /// The pill had the same hole one surface over: one capsule for every outcome. So this checks
+    /// the whole set from both ends. Every member of the state enum must be answered by name in
+    /// the overlay's severity switch, including the quiet ones, and every style that switch names
+    /// must exist in the pill theme.
+    ///
+    /// IT ENUMERATES FROM THE SOURCE AT BOTH ENDS. A roster kept here would stop covering a state
+    /// the first time somebody adds one without thinking of this file, which is the same failure
+    /// the code-behind style gate had until it was widened.
+    /// </remarks>
+    [Fact]
+    public void EveryPillStateHasASeverityLookAndEveryLookExists()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var overlay = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App",
+            "DictationOverlayWindow.xaml.cs"));
+
+        // THE REAL ENUM, NOT ITS FORMATTING. The first draft read the members out of the source
+        // with a regex anchored on four spaces, a word and a comma, so writing `Advisory = 4,`
+        // would hide a member from the check while the other seven kept the count control
+        // satisfied. Enum.GetNames cannot be styled around.
+        var states = Enum.GetNames<DictationOverlayState>();
+        Assert.True(states.Length >= 6, $"Expected the pill's states, found {states.Length}.");
+
+        var severityBody = SliceBetween(
+            overlay,
+            "var (icon, edge, wash) = state switch",
+            "\n        };",
+            "the overlay's severity switch");
+
+        var unanswered = states
+            .Where(state => !severityBody.Contains(
+                "DictationOverlayState." + state, StringComparison.Ordinal))
+            .ToArray();
+        Assert.True(
+            unanswered.Length == 0,
+            "These pill states are not answered by name in the severity switch, so they render as "
+                + "the neutral capsule and look deliberate: " + string.Join(", ", unanswered));
+
+        var declaredStyleKeys = XDocument
+            .Load(Path.Combine(
+                repositoryRoot, "src", "Production", "EnviousWispr.App", "Theme", "PillTokens.xaml"))
+            .Descendants()
+            .Select(element => (string?)element.Attribute(XName.Get("Key", XamlNamespace)))
+            .Where(key => key is not null)
+            .ToHashSet(StringComparer.Ordinal);
+        var named = PillStyleNameRegex().Matches(severityBody)
+            .Select(match => match.Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        Assert.True(named.Length >= 15, $"Expected the severity styles, found {named.Length}.");
+        var missing = named.Where(key => !declaredStyleKeys.Contains(key)).ToArray();
+        Assert.True(
+            missing.Length == 0,
+            "The pill asks for styles that the theme does not declare, which throws when the pill "
+                + "is first shown rather than when the app is built: " + string.Join(", ", missing));
+    }
+
+    /// <summary>The text between two markers, or a named failure if either is gone.</summary>
+    /// <remarks>
+    /// A MISSING MARKER USED TO THROW AN INDEX EXCEPTION, which is a failure that names the test
+    /// rather than the thing that moved. The gate still refuses, which is the safe direction, but
+    /// whoever renamed the switch reads a stack trace instead of a sentence telling them what this
+    /// was looking for.
+    /// </remarks>
+    private static string SliceBetween(string text, string opening, string closing, string what)
+    {
+        var start = text.IndexOf(opening, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"Could not find {what}: '{opening}' is no longer in the source.");
+        var rest = text[start..];
+        var end = rest.IndexOf(closing, StringComparison.Ordinal);
+        Assert.True(end >= 0, $"Could not find the end of {what} after '{opening}'.");
+        return rest[..end];
+    }
+
+    [GeneratedRegex(@"Pill\w+Style", RegexOptions.CultureInvariant)]
+    private static partial Regex PillStyleNameRegex();
 
     [Fact]
     public void AppViewsContainNoLiteralColors()
@@ -1938,9 +2049,19 @@ public sealed partial class DesignSystemTokenTests
         RegexOptions.CultureInvariant)]
     private static partial Regex StaticResourceRegex();
 
-    [GeneratedRegex(
-        @"Pill(?:ModeQuiet|Notice|Live|Dimmed)TextStyle",
-        RegexOptions.CultureInvariant)]
+    /// <summary>Any pill style the overlay's code-behind names.</summary>
+    /// <remarks>
+    /// A GATE CARRYING ITS OWN ROSTER STOPS COVERING THE THING IT WAS WRITTEN FOR the first time
+    /// somebody adds a style and does not think to update the list. This used to spell out four
+    /// text styles by name, so the six severity style families added later were invisible to it.
+    /// It now enumerates from the code-behind, which is the same rule the layout gates already
+    /// follow: read the document, never a list kept beside the check.
+    ///
+    /// CONSEQUENCE FOR THE CALLER, and it is deliberate: a style name built by interpolation is
+    /// not matched, because the source text is not the name. That is why the overlay spells every
+    /// style out in full rather than composing one from a severity word.
+    /// </remarks>
+    [GeneratedRegex(@"Pill\w+Style", RegexOptions.CultureInvariant)]
     private static partial Regex CodeBehindPillStyleRegex();
 
     private readonly record struct DynamicColor(Rgba Light, Rgba Dark);

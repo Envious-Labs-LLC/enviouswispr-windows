@@ -11,6 +11,7 @@ using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Distribution;
 using EnviousWispr.Core.History;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Runtime;
 using Microsoft.UI.Composition.SystemBackdrops;
@@ -525,27 +526,28 @@ public sealed partial class MainWindow : Window, IDisposable
         SessionStatusChanged?.Invoke("shortcut unavailable");
     }
 
-    public void SetSessionStatus(string status)
+    public void SetSessionStatus(DictationStatus status)
     {
-        SessionStatusText.Text = status;
-        SessionStatusChanged?.Invoke(status);
-        var overlayState = OverlayStateFor(status);
+        var sentence = status.Text;
+        SessionStatusText.Text = sentence;
+        SessionStatusChanged?.Invoke(sentence);
+        var overlayState = status.State;
         HandleRecordingSoundTransition(overlayState);
         _currentOverlayState = overlayState;
         PreviewRecordingSoundButton.IsEnabled = overlayState != DictationOverlayState.Recording;
         SetSpeedCheckAvailability(overlayState != DictationOverlayState.Recording);
-        _overlayWindow.ShowState(overlayState, status);
-        if (status.Contains("ready", StringComparison.OrdinalIgnoreCase))
+        _overlayWindow.ShowState(overlayState, sentence);
+        if (sentence.Contains("ready", StringComparison.OrdinalIgnoreCase))
         {
-            EngineReadinessText.Text = status;
-            OnboardingModelText.Text = status;
+            EngineReadinessText.Text = sentence;
+            OnboardingModelText.Text = sentence;
         }
-        else if (status.Contains("model is not installed", StringComparison.OrdinalIgnoreCase) ||
-                 status.Contains("transcription is unavailable", StringComparison.OrdinalIgnoreCase) ||
-                 status.Contains("worker could not start", StringComparison.OrdinalIgnoreCase))
+        else if (sentence.Contains("model is not installed", StringComparison.OrdinalIgnoreCase) ||
+                 sentence.Contains("transcription is unavailable", StringComparison.OrdinalIgnoreCase) ||
+                 sentence.Contains("worker could not start", StringComparison.OrdinalIgnoreCase))
         {
-            EngineReadinessText.Text = status;
-            OnboardingModelText.Text = status;
+            EngineReadinessText.Text = sentence;
+            OnboardingModelText.Text = sentence;
         }
     }
 
@@ -3393,56 +3395,6 @@ public sealed partial class MainWindow : Window, IDisposable
         PortableProfileImportStatus.Invalid => "This is not a valid EnviousWispr portable profile. The file and current settings were left untouched.",
         _ => "Windows could not read this profile. The file and current settings were left untouched.",
     };
-
-    /// <summary>Picks the pill's look from the status sentence.</summary>
-    /// <remarks>
-    /// INFERRING A VISUAL FROM A STRING IS HOW A COPY EDIT SILENTLY CHANGES AN ICON. The macOS app
-    /// carries that sentence as a comment and is built the other way round, passing the kind
-    /// explicitly. This side reads the words, so rewording "Recording. Release to finish" to
-    /// "Listening..." would drop it through every branch to Hidden and the pill would VANISH during
-    /// a recording - a copy change with no code change, and nothing to catch it.
-    ///
-    /// Internal rather than private so the suite can drive the REAL mapping over every status
-    /// string the app can produce. That is a guard, not the fix: the fix is to hand the state in
-    /// beside the text, and this stays a hazard until that happens.
-    /// </remarks>
-    internal static DictationOverlayState OverlayStateFor(string status)
-    {
-        if (status.StartsWith("Recording", StringComparison.OrdinalIgnoreCase))
-        {
-            return DictationOverlayState.Recording;
-        }
-
-        if (status.StartsWith("Transcribing", StringComparison.OrdinalIgnoreCase) ||
-            status.StartsWith("Delivering", StringComparison.OrdinalIgnoreCase))
-        {
-            return DictationOverlayState.Processing;
-        }
-
-        if (status.Contains("copied only", StringComparison.OrdinalIgnoreCase) ||
-            status.StartsWith("Copied", StringComparison.OrdinalIgnoreCase) ||
-            status.Contains("held safely", StringComparison.OrdinalIgnoreCase))
-        {
-            return DictationOverlayState.Warning;
-        }
-
-        if (status.StartsWith("Local transcription failed", StringComparison.OrdinalIgnoreCase) ||
-            status.StartsWith("Session failed", StringComparison.OrdinalIgnoreCase) ||
-            status.StartsWith("Text delivery stopped", StringComparison.OrdinalIgnoreCase))
-        {
-            return DictationOverlayState.Error;
-        }
-
-        if (status.StartsWith("Inserted", StringComparison.OrdinalIgnoreCase) ||
-            status.StartsWith("Pasted", StringComparison.OrdinalIgnoreCase) ||
-            status.StartsWith("Transcribed", StringComparison.OrdinalIgnoreCase) ||
-            status.StartsWith("Cleaned", StringComparison.OrdinalIgnoreCase))
-        {
-            return DictationOverlayState.Success;
-        }
-
-        return DictationOverlayState.Hidden;
-    }
 
     private sealed record MicrophoneChoice(string? Id, string DisplayName);
 

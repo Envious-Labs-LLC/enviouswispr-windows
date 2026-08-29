@@ -168,6 +168,39 @@ shipping fifteen sections and no aggregate page answered it in one reading. **It
 wearing a decision's clothes.** The reverse held for the Clipboard page, which reads as unfinished
 and stays, because macOS ships the same section.
 
+## FACT: three-of-the-four-critic-findings-closed-2026-08-29
+Closed on branch `codex/ui-design-system`. The fourth, the pill's ACTION button, is #63 and unbuilt.
+
+**#65, appearance inferred from the message text: CLOSED, and it was hiding two live defects.**
+`OverlayStateFor` is deleted. `DictationStatus` in `EnviousWispr.Core.Presentation` carries the state
+beside the text, so every producer names the pill it wants. The two defects the deletion exposed were
+both sentences beginning "Recording": a memory-pressure PAUSE and a timed-out CANCEL each matched
+`StartsWith("Recording")` and wore the live listening pill with a running timer.
+
+**#64, one severity: CLOSED.** `Advisory` and `Distress` exist, with the macOS rationale carried into
+the enum. Routed: four Ollama health rows, three local-transcription setup rows and the
+audio-captured-but-unavailable row to Advisory; memory-pressure pause and Windows-interrupted to
+Distress.
+
+**And a fifth nobody had filed: the pill drew ONE capsule for every outcome.** Surface, border and ink
+were identical for success, warning and error - the same hole `design-system.md`
+RULE: every-severity-needs-its-own-tint describes for the in-window notifications, one surface over.
+Each severity now has an ink and a wash token in all three themes plus three style families.
+
+**Distress shares the error ink deliberately**, with a deeper wash and a repeating opacity storyboard.
+The reuse is stated in the expected-token table rather than left to look like a token falling back to a
+neighbour, which is how the notification hole was created.
+
+## FACT: the-parity-audit-marks-the-tray-icon-present-and-it-is-not
+Filed 2026-08-29 as #74. `WindowsTrayIcon.SetStatus` sets a TOOLTIP; `_notifyIcon.Icon` is assigned once
+at construction and never again. macOS `MenuBarIconAnimator` renders and swaps five states including
+two animations, and honours Reduce Motion.
+
+**This is the PARTIAL class the audit warns about, caught by reading rather than by sweeping.** The
+capability has the right name on both sides, a name sweep reports it present, and the Windows version
+does a fraction of the work. Read it as evidence that the present-on-windows table is a list of NAMES
+confirmed, exactly as its own heading says, and that every row in it can hide a gap this size.
+
 ## PROC: how-this-was-taken
 Two sweeps per capability from `src/Production`, the second using the CAPABILITY's synonyms rather than
 the Mac's symbol, because a name sweep only finds what someone already called by that name:
