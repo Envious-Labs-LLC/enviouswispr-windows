@@ -168,8 +168,20 @@ shipping fifteen sections and no aggregate page answered it in one reading. **It
 wearing a decision's clothes.** The reverse held for the Clipboard page, which reads as unfinished
 and stays, because macOS ships the same section.
 
-## FACT: three-of-the-four-critic-findings-closed-2026-08-29
-Closed on branch `codex/ui-design-system`. The fourth, the pill's ACTION button, is #63 and unbuilt.
+## FACT: all-four-critic-findings-closed-in-code-2026-08-29
+Closed on branch `codex/ui-design-system`.
+
+**#63, the pill could not offer an ACTION: BUILT, NOT YET PRESSED.** `PillAction` carries a printed
+label, a separate spoken label and an INTENT; the app translates the intent to a page. Eight advisories
+now offer "Open settings". Hover pauses the dwell clock, which is not decoration: an advisory dwells six
+seconds, moving a mouse to a button spends much of that, and macOS pairs its own action pills with
+hover-pause for the same reason.
+
+**Nobody has pressed it.** A session reaching the rig over SSH runs in session 0, and a WinUI app
+launched from there dies in `Microsoft.UI.Input.dll` with `0xc0000602` before drawing. Confirmed
+ENVIRONMENTAL rather than ours by running the same launch against the reviewed commit with no working
+changes: identical death, different `EnviousWispr.App.dll` hash. `ENVIOUSWISPR_UAT_OVERLAY_STATE` now
+accepts `advisory` (carrying the button) and `distress` so whoever is on the desktop can reach it.
 
 **#65, appearance inferred from the message text: CLOSED, and it was hiding two live defects.**
 `OverlayStateFor` is deleted. `DictationStatus` in `EnviousWispr.Core.Presentation` carries the state

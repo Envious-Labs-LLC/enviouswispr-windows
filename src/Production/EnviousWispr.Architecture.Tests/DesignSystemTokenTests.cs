@@ -714,6 +714,75 @@ public sealed partial class DesignSystemTokenTests
     [GeneratedRegex(@"Pill\w+Style", RegexOptions.CultureInvariant)]
     private static partial Regex PillStyleNameRegex();
 
+    /// <summary>Every action the pill can offer goes somewhere the user asked for.</summary>
+    /// <remarks>
+    /// A BUTTON THAT OPENS THE WRONG PAGE IS WORSE THAN NO BUTTON, because the user acted on it and
+    /// now has to work out where they are. The intent-to-page switch has a default arm - an enum
+    /// can hold a value nobody declared, and crashing mid-dictation over a settings page is not a
+    /// trade worth making - so without this the default is where a forgotten action would land,
+    /// silently and looking deliberate.
+    ///
+    /// It reads the real enum and the real page tags, both enumerated from source, so an action
+    /// added next month is covered on arrival and a page renamed next month goes red here.
+    /// </remarks>
+    [Fact]
+    public void EveryPillActionNamesAPageThatExists()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var window = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+
+        var mapping = SliceBetween(
+            window,
+            "var tag = kind switch",
+            "\n        };",
+            "the pill action to page mapping");
+
+        // CAPTURE THE NAME AND COMPARE IT, NEVER ASK WHETHER THE TEXT CONTAINS IT. A substring test
+        // reports an action named OpenPolish as mapped, because OpenPolishSettings contains it -
+        // green on exactly the edit the gate exists to refuse. Same correction the repository's own
+        // rule about a lookahead after a quantifier makes: a question about a VALUE, not a position.
+        var mapped = ActionKindRegex().Matches(mapping)
+            .Select(match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+        var unmapped = Enum.GetNames<PillActionKind>()
+            .Where(name => !mapped.Contains(name))
+            .ToArray();
+        Assert.True(
+            unmapped.Length == 0,
+            "These pill actions are not named in the page mapping, so pressing their button lands "
+                + "on the default page: " + string.Join(", ", unmapped));
+
+        var declaredTags = XDocument
+            .Load(Path.Combine(
+                repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"))
+            .Descendants()
+            .Select(element => (string?)element.Attribute("Tag"))
+            .Where(tag => tag is not null)
+            .ToHashSet(StringComparer.Ordinal);
+        // The whole literal each arm hands back, not a shape a tag happens to start with. A pattern
+        // that matched a known prefix passed on "settings-ai-polish2", which is a page that does
+        // not exist and a button that does nothing.
+        var named = MappedPageTagRegex().Matches(mapping)
+            .Select(match => match.Groups[1].Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        Assert.True(named.Length >= 2, $"Expected the mapped page tags, found {named.Length}.");
+        var missing = named.Where(tag => !declaredTags.Contains(tag)).ToArray();
+        Assert.True(
+            missing.Length == 0,
+            "The pill sends users to pages the window does not have, so the button quietly does "
+                + "nothing: " + string.Join(", ", missing));
+    }
+
+    /// <summary>A whole action name inside the mapping.</summary>
+    [GeneratedRegex(@"PillActionKind\.([A-Za-z_][A-Za-z0-9_]*)\b", RegexOptions.CultureInvariant)]
+    private static partial Regex ActionKindRegex();
+
+    /// <summary>The whole page tag one switch arm hands back.</summary>
+    [GeneratedRegex(@"=>\s*""([^""]+)""", RegexOptions.CultureInvariant)]
+    private static partial Regex MappedPageTagRegex();
+
     [Fact]
     public void AppViewsContainNoLiteralColors()
     {
