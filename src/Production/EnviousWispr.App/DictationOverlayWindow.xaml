@@ -8,36 +8,50 @@
         x:Name="OverlayRoot"
         AutomationProperties.LiveSetting="Polite"
         Background="{ThemeResource PillSurfaceBrush}"
-        BorderBrush="{ThemeResource PillBorderBrush}"
         BorderThickness="1"
-        CornerRadius="29"
-        Padding="16,12">
-        <StackPanel Spacing="{StaticResource BrandSpacingS}">
-            <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                <Image x:Name="RainbowMark" Width="31" Height="24" AutomationProperties.AccessibilityView="Raw" Source="Assets/Brand/EnviousWisprMark.svg" VerticalAlignment="Center" />
-                <FontIcon x:Name="StateIcon" AutomationProperties.AccessibilityView="Raw" FontSize="20" Foreground="{ThemeResource PillNoticeBrush}" Glyph="&#xE720;" Visibility="Collapsed" />
-                <TextBlock x:Name="StateTitle" Grid.Column="1" FontSize="14" FontWeight="SemiBold" Style="{StaticResource PillModeQuietTextStyle}" Text="Listening" TextWrapping="Wrap" VerticalAlignment="Center" />
-                <TextBlock x:Name="ElapsedText" Grid.Column="2" Foreground="{ThemeResource PillTimerBrush}" FontFamily="Consolas" FontSize="14" Text="00:00" VerticalAlignment="Center" />
-            </Grid>
-            <StackPanel x:Name="LevelBars" Height="25" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" Visibility="Collapsed" VerticalAlignment="Center">
-                <Border Width="4" Height="8" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="2" VerticalAlignment="Center" />
-                <Border Width="4" Height="13" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="2" VerticalAlignment="Center" />
-                <Border Width="4" Height="19" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="2" VerticalAlignment="Center" />
-                <Border Width="4" Height="11" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="2" VerticalAlignment="Center" />
-                <Border Width="4" Height="22" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="2" VerticalAlignment="Center" />
-                <Border Width="4" Height="16" Background="{ThemeResource BrandSpectrumLimeBrush}" CornerRadius="2" VerticalAlignment="Center" />
-                <Border Width="4" Height="9" Background="{ThemeResource BrandSpectrumGoldBrush}" CornerRadius="2" VerticalAlignment="Center" />
-                <Border Width="4" Height="20" Background="{ThemeResource BrandSpectrumOrangeBrush}" CornerRadius="2" VerticalAlignment="Center" />
-                <Border Width="4" Height="14" Background="{ThemeResource BrandSpectrumRedBrush}" CornerRadius="2" VerticalAlignment="Center" />
-                <Border Width="4" Height="7" Background="{ThemeResource BrandSpectrumOrangeBrush}" CornerRadius="2" VerticalAlignment="Center" />
-                <Border Width="4" Height="17" Background="{ThemeResource BrandSpectrumGoldBrush}" CornerRadius="2" VerticalAlignment="Center" />
-                <Border Width="4" Height="10" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="2" VerticalAlignment="Center" />
+        CornerRadius="29">
+        <Grid>
+            <!--
+                THE SEVERITY WASH SITS BEHIND THE CONTENT AND IN FRONT OF THE PILL SURFACE.
+                It cannot be the root's own Background: the surface is what keeps the pill legible
+                over somebody else's document, and a soft tint at #1A painted straight onto the
+                desktop would be no tint at all. Its Background is set from code beside the ink, so
+                the pair can never disagree, and it carries no colour here for the same reason.
+
+                THE PILL'S PADDING MOVED OFF THE ROOT AND ONTO THE CONTENT for this to be true. A
+                Border lays its child out INSIDE its padding, so while the frame owned the padding
+                the wash stopped short of the capsule edge and left an untinted band all the way
+                round - a tint that shipped, built clean, passed every gate, and was not the thing
+                the code said it was.
+            -->
+            <Border x:Name="SeverityWash" CornerRadius="29" />
+            <StackPanel x:Name="ContentPanel" Margin="16,12" Spacing="{StaticResource BrandSpacingS}">
+                <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <Image x:Name="RainbowMark" Width="31" Height="24" AutomationProperties.AccessibilityView="Raw" Source="Assets/Brand/EnviousWisprMark.svg" VerticalAlignment="Center" />
+                    <FontIcon x:Name="StateIcon" AutomationProperties.AccessibilityView="Raw" FontSize="20" Glyph="&#xE720;" Visibility="Collapsed" />
+                    <TextBlock x:Name="StateTitle" Grid.Column="1" FontSize="14" FontWeight="SemiBold" Style="{StaticResource PillModeQuietTextStyle}" Text="Listening" TextWrapping="Wrap" VerticalAlignment="Center" />
+                    <TextBlock x:Name="ElapsedText" Grid.Column="2" Foreground="{ThemeResource PillTimerBrush}" FontFamily="Consolas" FontSize="14" Text="00:00" VerticalAlignment="Center" />
+                </Grid>
+                <StackPanel x:Name="LevelBars" Height="25" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" Visibility="Collapsed" VerticalAlignment="Center">
+                    <Border Width="4" Height="8" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="2" VerticalAlignment="Center" />
+                    <Border Width="4" Height="13" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="2" VerticalAlignment="Center" />
+                    <Border Width="4" Height="19" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="2" VerticalAlignment="Center" />
+                    <Border Width="4" Height="11" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="2" VerticalAlignment="Center" />
+                    <Border Width="4" Height="22" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="2" VerticalAlignment="Center" />
+                    <Border Width="4" Height="16" Background="{ThemeResource BrandSpectrumLimeBrush}" CornerRadius="2" VerticalAlignment="Center" />
+                    <Border Width="4" Height="9" Background="{ThemeResource BrandSpectrumGoldBrush}" CornerRadius="2" VerticalAlignment="Center" />
+                    <Border Width="4" Height="20" Background="{ThemeResource BrandSpectrumOrangeBrush}" CornerRadius="2" VerticalAlignment="Center" />
+                    <Border Width="4" Height="14" Background="{ThemeResource BrandSpectrumRedBrush}" CornerRadius="2" VerticalAlignment="Center" />
+                    <Border Width="4" Height="7" Background="{ThemeResource BrandSpectrumOrangeBrush}" CornerRadius="2" VerticalAlignment="Center" />
+                    <Border Width="4" Height="17" Background="{ThemeResource BrandSpectrumGoldBrush}" CornerRadius="2" VerticalAlignment="Center" />
+                    <Border Width="4" Height="10" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="2" VerticalAlignment="Center" />
+                </StackPanel>
+                <Border x:Name="PreviewWell" Background="{ThemeResource PillSurfaceBrush}" CornerRadius="10" Padding="12,9" Visibility="Collapsed">
+                    <TextBlock x:Name="PreviewText" AutomationProperties.Name="Live transcription preview" FontSize="14" MaxLines="5" Style="{StaticResource PillDimmedTextStyle}" Text="Listening…" TextAlignment="DetectFromContent" TextWrapping="Wrap" />
+                </Border>
+                <TextBlock x:Name="StateDetail" FontSize="14" MaxLines="2" Style="{StaticResource PillNoticeTextStyle}" Text="Release your key to finish" TextWrapping="Wrap" Visibility="Collapsed" />
             </StackPanel>
-            <Border x:Name="PreviewWell" Background="{ThemeResource PillSurfaceBrush}" CornerRadius="10" Padding="12,9" Visibility="Collapsed">
-                <TextBlock x:Name="PreviewText" AutomationProperties.Name="Live transcription preview" FontSize="14" MaxLines="5" Style="{StaticResource PillDimmedTextStyle}" Text="Listening…" TextAlignment="DetectFromContent" TextWrapping="Wrap" />
-            </Border>
-            <TextBlock x:Name="StateDetail" FontSize="14" MaxLines="2" Style="{StaticResource PillNoticeTextStyle}" Text="Release your key to finish" TextWrapping="Wrap" Visibility="Collapsed" />
-        </StackPanel>
+        </Grid>
     </Border>
 </Window>

@@ -5,6 +5,7 @@ using EnviousWispr.Core.Distribution;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.History;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Reliability;
@@ -308,7 +309,7 @@ public partial class App : Application, IAsyncDisposable
         _window.FocusInitialControl();
         _window.SetCloudPolishNotice(_cloudPolishConsent?.Notice);
         _window.SetOllamaPolishNotice(_localPolishNotice);
-        _window.SetSessionStatus("Preparing local transcription...");
+        _window.SetSessionStatus(DictationStatus.Quiet("Preparing local transcription..."));
         await ConfigureTranscriptionAsync(settings.Preferences.Dictation.FinalEngine).ConfigureAwait(true);
         ConfigurePushToTalk(settings.Preferences.Dictation);
         if (_polishProvider is EgOnePolishProvider polishProvider)
@@ -646,7 +647,7 @@ public partial class App : Application, IAsyncDisposable
         else
         {
             _window?.DispatcherQueue.TryEnqueue(() =>
-                _window?.SetSessionStatus("Windows resumed. EnviousWispr is ready"));
+                _window?.SetSessionStatus(DictationStatus.Quiet("Windows resumed. EnviousWispr is ready")));
         }
     }
 
@@ -756,18 +757,24 @@ public partial class App : Application, IAsyncDisposable
     private void ApplyOverlayUatState()
     {
         var requested = Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_OVERLAY_STATE");
-        var status = requested?.Trim().ToLowerInvariant() switch
+        DictationStatus? status = requested?.Trim().ToLowerInvariant() switch
         {
-            "recording" => "Recording. Release to finish, Escape to cancel",
-            "processing" => "Transcribing locally...",
-            "success" => "Inserted safely in the app you started in",
-            "warning" => "Protected field: copied only. Paste manually if intended",
-            "error" => "Local transcription failed safely",
+            "recording" =>
+                DictationStatus.Recording("Recording. Release to finish, Escape to cancel"),
+            "processing" => DictationStatus.Processing("Transcribing locally..."),
+            "success" => DictationStatus.Success("Inserted safely in the app you started in"),
+            "warning" =>
+                DictationStatus.Warning("Protected field: copied only. Paste manually if intended"),
+            "error" => DictationStatus.Error("Local transcription failed safely"),
             _ => null,
         };
-        if (status is not null)
+        if (status.HasValue)
         {
-            _window?.SetSessionStatus(status);
+            // Read through the declared local rather than a pattern-bound name. The gate that
+            // checks every status names its pill can see what `status` was declared as; it cannot
+            // see what a name introduced by a pattern is, and a gate that cannot tell has to
+            // refuse. Saying it plainly here is cheaper than widening what the gate accepts.
+            _window?.SetSessionStatus(status.Value);
         }
     }
 
@@ -1298,7 +1305,7 @@ public partial class App : Application, IAsyncDisposable
                 "1",
                 StringComparison.Ordinal))
         {
-            _window?.SetSessionStatus("Local transcription disabled for performance UAT");
+            _window?.SetSessionStatus(DictationStatus.Quiet("Local transcription disabled for performance UAT"));
             return;
         }
 
@@ -1325,7 +1332,8 @@ public partial class App : Application, IAsyncDisposable
             : ParakeetTranscriptionEngine.ModelId);
         if (modelDirectory is null)
         {
-            _window?.SetSessionStatus("Local transcription model is not installed");
+            _window?.SetSessionStatus(
+                DictationStatus.Advisory("Local transcription model is not installed"));
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionFailed,
@@ -1349,7 +1357,8 @@ public partial class App : Application, IAsyncDisposable
             : CreateParakeetEngine(workerExecutable, modelDirectory, hardware);
         if (_transcriptionEngine is null)
         {
-            _window?.SetSessionStatus("Local transcription is unavailable on this machine");
+            _window?.SetSessionStatus(
+                DictationStatus.Advisory("Local transcription is unavailable on this machine"));
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionFailed,
@@ -1375,7 +1384,8 @@ public partial class App : Application, IAsyncDisposable
                 }
 
                 _transcriptionEngine = null;
-                _window?.SetSessionStatus("Local transcription could not start");
+                _window?.SetSessionStatus(
+                    DictationStatus.Advisory("Local transcription could not start"));
                 _logger.Write(new AppLogEntry(
                     DateTimeOffset.UtcNow,
                     AppEventCode.DictationTranscriptionFailed,
@@ -1384,7 +1394,7 @@ public partial class App : Application, IAsyncDisposable
             }
 
             ConfigureLivePreview(workerExecutable, hardware, whisperLanguage, forceCpu: true);
-            _window?.SetSessionStatus("Local transcription ready on the processor");
+            _window?.SetSessionStatus(DictationStatus.Quiet("Local transcription ready on the processor"));
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionDegraded,
@@ -1394,7 +1404,7 @@ public partial class App : Application, IAsyncDisposable
         }
 
         ConfigureLivePreview(workerExecutable, hardware, whisperLanguage);
-        _window?.SetSessionStatus("Local transcription ready");
+        _window?.SetSessionStatus(DictationStatus.Quiet("Local transcription ready"));
     }
 
     private void ConfigureLivePreview(
@@ -1935,7 +1945,7 @@ public partial class App : Application, IAsyncDisposable
                         _window?.SetReliabilityNotice(
                             "Recovered text is waiting",
                             "Copy or delete the unfinished dictation on Home before starting another recording.");
-                        _window?.SetSessionStatus("Review recovered text before recording again");
+                        _window?.SetSessionStatus(DictationStatus.Quiet("Review recovered text before recording again"));
                     });
                     return;
                 }
@@ -1959,7 +1969,8 @@ public partial class App : Application, IAsyncDisposable
                             "Windows memory is critically low",
                             "Close another memory-heavy app, then try dictation again. No recording was started.",
                             isError: true);
-                        _window?.SetSessionStatus("Recording paused because Windows memory is critically low");
+                        _window?.SetSessionStatus(DictationStatus.Distress(
+                            "Recording paused because Windows memory is critically low"));
                     });
                     return;
                 }
@@ -2037,7 +2048,7 @@ public partial class App : Application, IAsyncDisposable
                     AppErrorCode.SessionTimedOut,
                     AppErrorStage.Session,
                     CanRetry: true),
-                "The dictation timed out and was recovered safely").ConfigureAwait(false);
+                DictationStatus.Quiet("The dictation timed out and was recovered safely")).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
         {
@@ -2051,7 +2062,7 @@ public partial class App : Application, IAsyncDisposable
                     AppErrorCode.InvalidTransition,
                     AppErrorStage.Session,
                     CanRetry: true),
-                "Session failed and was reset safely").ConfigureAwait(false);
+                DictationStatus.Error("Session failed and was reset safely")).ConfigureAwait(false);
         }
         finally
         {
@@ -2110,7 +2121,8 @@ public partial class App : Application, IAsyncDisposable
                         AppFailureCategory.Recovery,
                         ErrorCode: error.Code));
                     _window?.DispatcherQueue.TryEnqueue(() =>
-                        _window?.SetSessionStatus("Recording timed out and was cancelled safely"));
+                        _window?.SetSessionStatus(
+                            DictationStatus.Warning("Recording timed out and was cancelled safely")));
                 }
             }
             finally
@@ -2155,7 +2167,7 @@ public partial class App : Application, IAsyncDisposable
     private async Task RecoverFailedSessionAsync(
         PushToTalkSessionController controller,
         AppError error,
-        string status)
+        DictationStatus status)
     {
         await StopRecordingWatchdogAsync().ConfigureAwait(false);
         await StopStreamingTranscriptionAsync().ConfigureAwait(false);
@@ -2182,7 +2194,8 @@ public partial class App : Application, IAsyncDisposable
         if (!await _sessionOperationGate.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false))
         {
             _window?.DispatcherQueue.TryEnqueue(() =>
-                _window?.SetSessionStatus("Windows interrupted the active dictation; recovery is still pending"));
+                _window?.SetSessionStatus(DictationStatus.Distress(
+                    "Windows interrupted the active dictation; recovery is still pending")));
             return;
         }
 
@@ -2212,10 +2225,10 @@ public partial class App : Application, IAsyncDisposable
                 await StopAutoStopWatchAsync().ConfigureAwait(false);
                 await StopLivePreviewAsync().ConfigureAwait(false);
                     _window?.DispatcherQueue.TryEnqueue(() =>
-                        _window?.SetSessionStatus(
+                        _window?.SetSessionStatus(DictationStatus.Quiet(
                             transition == SystemLifecycleTransition.Suspending
                                 ? "Windows is suspending. Captured audio is being preserved"
-                                : "Windows locked. Captured audio is being preserved"));
+                                : "Windows locked. Captured audio is being preserved")));
                     await TranscribeFinalAsync(
                             controller,
                             result.Session.Id,
@@ -2232,7 +2245,8 @@ public partial class App : Application, IAsyncDisposable
                     AppErrorCode.Cancelled,
                     AppErrorStage.SystemLifecycle,
                     CanRetry: true),
-                "Windows interrupted the session; it was reset safely").ConfigureAwait(false);
+                DictationStatus.Quiet(
+                    "Windows interrupted the session; it was reset safely")).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -2244,7 +2258,7 @@ public partial class App : Application, IAsyncDisposable
                         AppErrorCode.SessionTimedOut,
                         AppErrorStage.SystemLifecycle,
                         CanRetry: true),
-                    "Windows interrupted the session; recovery timed out safely").ConfigureAwait(false);
+                    DictationStatus.Quiet("Windows interrupted the session; recovery timed out safely")).ConfigureAwait(false);
             }
         }
         catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
@@ -2261,7 +2275,8 @@ public partial class App : Application, IAsyncDisposable
                         AppErrorCode.InvalidTransition,
                         AppErrorStage.SystemLifecycle,
                         CanRetry: true),
-                    "Windows interrupted the session; it was reset safely").ConfigureAwait(false);
+                    DictationStatus.Quiet(
+                    "Windows interrupted the session; it was reset safely")).ConfigureAwait(false);
             }
         }
         finally
@@ -2698,12 +2713,13 @@ public partial class App : Application, IAsyncDisposable
             await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
             await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
             _window?.DispatcherQueue.TryEnqueue(() =>
-                _window?.SetSessionStatus("Audio captured, but local transcription is unavailable"));
+                _window?.SetSessionStatus(DictationStatus.Advisory(
+                    "Audio captured, but local transcription is unavailable")));
             return;
         }
 
         _window?.DispatcherQueue.TryEnqueue(() =>
-            _window?.SetSessionStatus("Transcribing locally..."));
+            _window?.SetSessionStatus(DictationStatus.Processing("Transcribing locally...")));
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
             AppEventCode.DictationTranscriptionStarted));
@@ -2796,7 +2812,8 @@ public partial class App : Application, IAsyncDisposable
                 if (deliveryTransition.Kind == SessionTransitionKind.Delivering)
                 {
                     _window?.DispatcherQueue.TryEnqueue(() =>
-                        _window?.SetSessionStatus("Delivering to the app you started in..."));
+                        _window?.SetSessionStatus(
+                            DictationStatus.Processing("Delivering to the app you started in...")));
                     _logger.Write(new AppLogEntry(
                         DateTimeOffset.UtcNow,
                         AppEventCode.TextDeliveryStarted));
@@ -2852,20 +2869,21 @@ public partial class App : Application, IAsyncDisposable
                         "The dictation is ready to copy on Home and stays in History for 24 hours unless you Keep it."));
             }
             var status = string.IsNullOrWhiteSpace(processed.Output.Text)
-                    ? "No speech detected"
+                    ? DictationStatus.Quiet("No speech detected")
                     : recoveryOnly
-                        ? "Escape Recovery finished. Text is ready to copy"
+                        ? DictationStatus.Quiet("Escape Recovery finished. Text is ready to copy")
                     : processed.IsDegraded
-                    ? "Transcribed and cleaned locally with a safe fallback"
+                    ? DictationStatus.Success("Transcribed and cleaned locally with a safe fallback")
                     : polishResult is { UsedFallback: true }
-                        ? PolishFallbackStatus(polishResult)
+                        ? DictationStatus.Success(PolishFallbackStatus(polishResult))
                     : polishResult is { UsedFallback: false }
                         ? _cloudPolishConsent is null
-                            ? "Transcribed and polished locally"
-                            : $"Transcribed and polished directly with {_cloudPolishConsent.ProviderName}"
+                            ? DictationStatus.Success("Transcribed and polished locally")
+                            : DictationStatus.Success(
+                                $"Transcribed and polished directly with {_cloudPolishConsent.ProviderName}")
                     : transcript.UsedFallback
-                        ? "Transcribed and cleaned locally with CPU fallback"
-                        : "Transcribed and cleaned locally";
+                        ? DictationStatus.Success("Transcribed and cleaned locally with CPU fallback")
+                        : DictationStatus.Success("Transcribed and cleaned locally");
             _window?.DispatcherQueue.TryEnqueue(() => _window?.SetSessionStatus(status));
         }
         catch (TranscriptionEngineException exception)
@@ -2879,7 +2897,7 @@ public partial class App : Application, IAsyncDisposable
             await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
             await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
             _window?.DispatcherQueue.TryEnqueue(() =>
-                _window?.SetSessionStatus("Local transcription failed safely"));
+                _window?.SetSessionStatus(DictationStatus.Error("Local transcription failed safely")));
         }
         finally
         {
@@ -3249,31 +3267,31 @@ public partial class App : Application, IAsyncDisposable
             ErrorCode: errorCode));
     }
 
-    private static string DeliveryStatus(DeliveryResult result) => result switch
+    private static DictationStatus DeliveryStatus(DeliveryResult result) => result switch
     {
         { Delivered: true, Route: TextDeliveryRoute.UiAutomationValue } =>
-            "Inserted safely in the app you started in",
+            DictationStatus.Success("Inserted safely in the app you started in"),
         { Delivered: true, ClipboardRestored: true } =>
-            "Pasted safely and restored your clipboard",
-        { Delivered: true } => "Pasted safely",
+            DictationStatus.Success("Pasted safely and restored your clipboard"),
+        { Delivered: true } => DictationStatus.Success("Pasted safely"),
         { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.ProtectedField } =>
-            "Protected field: copied only. Paste manually if intended",
+            DictationStatus.Warning("Protected field: copied only. Paste manually if intended"),
         { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.ElevatedTarget } =>
-            "Windows blocked the elevated app, so the text was copied only",
+            DictationStatus.Warning("Windows blocked the elevated app, so the text was copied only"),
         { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.TargetChanged } =>
-            "The target changed, so the text was copied only to protect it",
+            DictationStatus.Warning("The target changed, so the text was copied only to protect it"),
         { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.UnsafeMultilineTarget } =>
-            "Terminal line break refused, so the text was copied only",
+            DictationStatus.Warning("Terminal line break refused, so the text was copied only"),
         { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.UnsupportedTarget } =>
-            "Automatic paste is unsafe here, so the text was copied only",
+            DictationStatus.Warning("Automatic paste is unsafe here, so the text was copied only"),
         { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.InputStateUnsafe } =>
-            "A key was held, so the text was copied only. Paste manually",
-        { ClipboardFallback: true } => "Copied. Press Ctrl+V",
+            DictationStatus.Warning("A key was held, so the text was copied only. Paste manually"),
+        { ClipboardFallback: true } => DictationStatus.Warning("Copied. Press Ctrl+V"),
         { RefusalReason: TextDeliveryRefusalReason.ClipboardUnavailable } =>
-            "Clipboard unavailable. Text is held safely in memory",
+            DictationStatus.Warning("Clipboard unavailable. Text is held safely in memory"),
         { RefusalReason: TextDeliveryRefusalReason.DirectWriteUnverified } =>
-            "Insertion could not be verified. Text is held safely in memory",
-        _ => "Text delivery stopped safely",
+            DictationStatus.Warning("Insertion could not be verified. Text is held safely in memory"),
+        _ => DictationStatus.Error("Text delivery stopped safely"),
     };
 
     private static string? DeliveryLanguage(Transcript transcript) =>
@@ -3283,15 +3301,17 @@ public partial class App : Application, IAsyncDisposable
             ? null
             : transcript.DetectedLanguage;
 
-    private static string SessionStatus(SessionTransitionResult result) => result.Kind switch
+    private static DictationStatus SessionStatus(SessionTransitionResult result) => result.Kind switch
     {
-        SessionTransitionKind.Started => "Recording. Release to finish, Escape to cancel",
+        SessionTransitionKind.Started =>
+            DictationStatus.Recording("Recording. Release to finish, Escape to cancel"),
         SessionTransitionKind.FinalizeReady when result.Error is not null =>
-            "Capture preserved after a microphone interruption",
-        SessionTransitionKind.FinalizeReady => "Capture complete. Transcribing locally",
-        SessionTransitionKind.Cancelled => "Cancelled. Nothing will be delivered",
-        SessionTransitionKind.Failed => "Session failed safely",
-        _ => "Idle",
+            DictationStatus.Quiet("Capture preserved after a microphone interruption"),
+        SessionTransitionKind.FinalizeReady =>
+            DictationStatus.Quiet("Capture complete. Transcribing locally"),
+        SessionTransitionKind.Cancelled => DictationStatus.Quiet("Cancelled. Nothing will be delivered"),
+        SessionTransitionKind.Failed => DictationStatus.Error("Session failed safely"),
+        _ => DictationStatus.Quiet("Idle"),
     };
 
     private static string HotkeyFailureStatus(AppError? error) => error?.Code switch
@@ -3301,13 +3321,20 @@ public partial class App : Application, IAsyncDisposable
         _ => "Global shortcut is unavailable",
     };
 
-    private static string OllamaHealthStatus(OllamaHealth health) => health switch
+    private static DictationStatus OllamaHealthStatus(OllamaHealth health) => health switch
     {
-        OllamaHealth.EndpointInvalid => "Ollama endpoint must point to this PC",
-        OllamaHealth.ServerUnavailable => "Ollama is offline. Cleaned text will still be preserved",
-        OllamaHealth.ServerUnhealthy => "Ollama did not return a usable health response",
-        OllamaHealth.NoLocalModels => "Ollama is running, but no local model is installed",
-        _ => "Ollama is ready",
+        // EVERY UNHEALTHY OLLAMA ROW IS A SETUP PROBLEM THE USER CAN FIX, so it is an advisory
+        // rather than an error or, as it was, nothing at all. A user whose polish provider is
+        // switched off currently gets a silently plainer result and no pill saying why.
+        OllamaHealth.EndpointInvalid =>
+            DictationStatus.Advisory("Ollama endpoint must point to this PC"),
+        OllamaHealth.ServerUnavailable =>
+            DictationStatus.Advisory("Ollama is offline. Cleaned text will still be preserved"),
+        OllamaHealth.ServerUnhealthy =>
+            DictationStatus.Advisory("Ollama did not return a usable health response"),
+        OllamaHealth.NoLocalModels =>
+            DictationStatus.Advisory("Ollama is running, but no local model is installed"),
+        _ => DictationStatus.Quiet("Ollama is ready"),
     };
 
     private static string PolishFallbackStatus(PolishResult result) => result.Error?.Code switch

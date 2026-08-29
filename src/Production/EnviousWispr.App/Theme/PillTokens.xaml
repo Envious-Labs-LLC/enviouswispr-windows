@@ -24,6 +24,24 @@
             <SolidColorBrush x:Key="PillTextDimmedBrush" Color="#990F0A1A" />
             <Color x:Key="PillNoticeColor">#E00F0A1A</Color>
             <SolidColorBrush x:Key="PillNoticeBrush" Color="#E00F0A1A" />
+            <Color x:Key="PillSuccessInkColor">#FF00A366</Color>
+            <SolidColorBrush x:Key="PillSuccessInkBrush" Color="#FF00A366" />
+            <Color x:Key="PillSuccessWashColor">#1A00A366</Color>
+            <SolidColorBrush x:Key="PillSuccessWashBrush" Color="#1A00A366" />
+            <Color x:Key="PillWarningInkColor">#FFCC7000</Color>
+            <SolidColorBrush x:Key="PillWarningInkBrush" Color="#FFCC7000" />
+            <Color x:Key="PillWarningWashColor">#1ACC7000</Color>
+            <SolidColorBrush x:Key="PillWarningWashBrush" Color="#1ACC7000" />
+            <Color x:Key="PillErrorInkColor">#FFC0392B</Color>
+            <SolidColorBrush x:Key="PillErrorInkBrush" Color="#FFC0392B" />
+            <Color x:Key="PillErrorWashColor">#1AC0392B</Color>
+            <SolidColorBrush x:Key="PillErrorWashBrush" Color="#1AC0392B" />
+            <Color x:Key="PillAdvisoryInkColor">#FF7C3AED</Color>
+            <SolidColorBrush x:Key="PillAdvisoryInkBrush" Color="#FF7C3AED" />
+            <Color x:Key="PillAdvisoryWashColor">#1A7C3AED</Color>
+            <SolidColorBrush x:Key="PillAdvisoryWashBrush" Color="#1A7C3AED" />
+            <Color x:Key="PillDistressWashColor">#3DC0392B</Color>
+            <SolidColorBrush x:Key="PillDistressWashBrush" Color="#3DC0392B" />
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="Dark">
@@ -47,6 +65,24 @@
             <SolidColorBrush x:Key="PillTextDimmedBrush" Color="#80FFFFFF" />
             <Color x:Key="PillNoticeColor">#F2FFFFFF</Color>
             <SolidColorBrush x:Key="PillNoticeBrush" Color="#F2FFFFFF" />
+            <Color x:Key="PillSuccessInkColor">#FF5CC99A</Color>
+            <SolidColorBrush x:Key="PillSuccessInkBrush" Color="#FF5CC99A" />
+            <Color x:Key="PillSuccessWashColor">#245CC99A</Color>
+            <SolidColorBrush x:Key="PillSuccessWashBrush" Color="#245CC99A" />
+            <Color x:Key="PillWarningInkColor">#FFE6B766</Color>
+            <SolidColorBrush x:Key="PillWarningInkBrush" Color="#FFE6B766" />
+            <Color x:Key="PillWarningWashColor">#24E6B766</Color>
+            <SolidColorBrush x:Key="PillWarningWashBrush" Color="#24E6B766" />
+            <Color x:Key="PillErrorInkColor">#FFEF7C89</Color>
+            <SolidColorBrush x:Key="PillErrorInkBrush" Color="#FFEF7C89" />
+            <Color x:Key="PillErrorWashColor">#24EF7C89</Color>
+            <SolidColorBrush x:Key="PillErrorWashBrush" Color="#24EF7C89" />
+            <Color x:Key="PillAdvisoryInkColor">#FFA78BFA</Color>
+            <SolidColorBrush x:Key="PillAdvisoryInkBrush" Color="#FFA78BFA" />
+            <Color x:Key="PillAdvisoryWashColor">#24A78BFA</Color>
+            <SolidColorBrush x:Key="PillAdvisoryWashBrush" Color="#24A78BFA" />
+            <Color x:Key="PillDistressWashColor">#4AEF7C89</Color>
+            <SolidColorBrush x:Key="PillDistressWashBrush" Color="#4AEF7C89" />
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="HighContrast">
@@ -70,6 +106,24 @@
             <SolidColorBrush x:Key="PillTextDimmedBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
             <Color x:Key="PillNoticeColor">{ThemeResource SystemColorWindowTextColor}</Color>
             <SolidColorBrush x:Key="PillNoticeBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <Color x:Key="PillSuccessInkColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <SolidColorBrush x:Key="PillSuccessInkBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <Color x:Key="PillWarningInkColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <SolidColorBrush x:Key="PillWarningInkBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <Color x:Key="PillErrorInkColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <SolidColorBrush x:Key="PillErrorInkBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <Color x:Key="PillAdvisoryInkColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <SolidColorBrush x:Key="PillAdvisoryInkBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <Color x:Key="PillSuccessWashColor">Transparent</Color>
+            <SolidColorBrush x:Key="PillSuccessWashBrush" Color="Transparent" />
+            <Color x:Key="PillWarningWashColor">Transparent</Color>
+            <SolidColorBrush x:Key="PillWarningWashBrush" Color="Transparent" />
+            <Color x:Key="PillErrorWashColor">Transparent</Color>
+            <SolidColorBrush x:Key="PillErrorWashBrush" Color="Transparent" />
+            <Color x:Key="PillAdvisoryWashColor">Transparent</Color>
+            <SolidColorBrush x:Key="PillAdvisoryWashBrush" Color="Transparent" />
+            <Color x:Key="PillDistressWashColor">Transparent</Color>
+            <SolidColorBrush x:Key="PillDistressWashBrush" Color="Transparent" />
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 
@@ -84,5 +138,73 @@
     </Style>
     <Style x:Key="PillDimmedTextStyle" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{ThemeResource PillTextDimmedBrush}" />
+    </Style>
+
+    <!--
+        ONE STYLE FAMILY PER SEVERITY, AND A STYLE RATHER THAN A BRUSH SET FROM CODE.
+        The pill is a separate top-level window whose theme is set on its root, so a brush pulled
+        out of the application dictionary resolves against the MACHINE's theme while everything
+        around it follows the app's. Invisible while the two agree, wrong the moment somebody runs
+        the app in Light on a Dark machine. A style's ThemeResource setters resolve against the
+        element they land on, which is the property that makes them correct here, and it is why the
+        pill's text already works this way.
+
+        Neutral is a member of the set rather than the absence of one: recording and processing are
+        states the pill can be in, and naming them here is what stops a future state rendering as a
+        plain capsule and looking like somebody meant it.
+    -->
+    <Style x:Key="PillNeutralIconStyle" TargetType="FontIcon">
+        <Setter Property="Foreground" Value="{ThemeResource PillNoticeBrush}" />
+    </Style>
+    <Style x:Key="PillNeutralEdgeStyle" TargetType="Border">
+        <Setter Property="BorderBrush" Value="{ThemeResource PillBorderBrush}" />
+    </Style>
+    <Style x:Key="PillNeutralWashStyle" TargetType="Border">
+        <!-- No wash. The neutral pill is the surface itself. -->
+    </Style>
+    <Style x:Key="PillSuccessIconStyle" TargetType="FontIcon">
+        <Setter Property="Foreground" Value="{ThemeResource PillSuccessInkBrush}" />
+    </Style>
+    <Style x:Key="PillSuccessEdgeStyle" TargetType="Border">
+        <Setter Property="BorderBrush" Value="{ThemeResource PillSuccessInkBrush}" />
+    </Style>
+    <Style x:Key="PillSuccessWashStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource PillSuccessWashBrush}" />
+    </Style>
+    <Style x:Key="PillAdvisoryIconStyle" TargetType="FontIcon">
+        <Setter Property="Foreground" Value="{ThemeResource PillAdvisoryInkBrush}" />
+    </Style>
+    <Style x:Key="PillAdvisoryEdgeStyle" TargetType="Border">
+        <Setter Property="BorderBrush" Value="{ThemeResource PillAdvisoryInkBrush}" />
+    </Style>
+    <Style x:Key="PillAdvisoryWashStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource PillAdvisoryWashBrush}" />
+    </Style>
+    <Style x:Key="PillWarningIconStyle" TargetType="FontIcon">
+        <Setter Property="Foreground" Value="{ThemeResource PillWarningInkBrush}" />
+    </Style>
+    <Style x:Key="PillWarningEdgeStyle" TargetType="Border">
+        <Setter Property="BorderBrush" Value="{ThemeResource PillWarningInkBrush}" />
+    </Style>
+    <Style x:Key="PillWarningWashStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource PillWarningWashBrush}" />
+    </Style>
+    <Style x:Key="PillErrorIconStyle" TargetType="FontIcon">
+        <Setter Property="Foreground" Value="{ThemeResource PillErrorInkBrush}" />
+    </Style>
+    <Style x:Key="PillErrorEdgeStyle" TargetType="Border">
+        <Setter Property="BorderBrush" Value="{ThemeResource PillErrorInkBrush}" />
+    </Style>
+    <Style x:Key="PillErrorWashStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource PillErrorWashBrush}" />
+    </Style>
+    <Style x:Key="PillDistressIconStyle" TargetType="FontIcon">
+        <Setter Property="Foreground" Value="{ThemeResource PillErrorInkBrush}" />
+    </Style>
+    <Style x:Key="PillDistressEdgeStyle" TargetType="Border">
+        <Setter Property="BorderBrush" Value="{ThemeResource PillErrorInkBrush}" />
+    </Style>
+    <Style x:Key="PillDistressWashStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource PillDistressWashBrush}" />
     </Style>
 </ResourceDictionary>

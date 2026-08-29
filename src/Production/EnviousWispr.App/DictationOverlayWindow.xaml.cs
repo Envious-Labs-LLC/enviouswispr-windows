@@ -4,19 +4,10 @@ using EnviousWispr.Core.Settings;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media.Animation;
 using Windows.Graphics;
 
 namespace EnviousWispr.App;
-
-public enum DictationOverlayState
-{
-    Hidden,
-    Recording,
-    Processing,
-    Success,
-    Warning,
-    Error,
-}
 
 public sealed partial class DictationOverlayWindow : Window
 {
@@ -27,6 +18,7 @@ public sealed partial class DictationOverlayWindow : Window
 
     private readonly DispatcherTimer _hideTimer = new();
     private readonly DispatcherTimer _elapsedTimer = new();
+    private readonly Storyboard _distressPulse = new();
     private OverlayPillPosition _position = OverlayPillPosition.Top;
     private bool _livePreviewEnabled;
     private RecordingPillDesign _withoutWordsDesign = RecordingPillDesign.Classic;
@@ -56,14 +48,25 @@ public sealed partial class DictationOverlayWindow : Window
             presenter.SetBorderAndTitleBar(hasBorder: false, hasTitleBar: false);
         }
 
-        _hideTimer.Tick += (_, _) =>
-        {
-            _hideTimer.Stop();
-            _elapsedTimer.Stop();
-            AppWindow.Hide();
-        };
+        _hideTimer.Tick += (_, _) => HideOverlay();
         _elapsedTimer.Interval = TimeSpan.FromMilliseconds(250);
         _elapsedTimer.Tick += (_, _) => UpdateElapsed();
+
+        // Distress and error share a red, so the breathing is what separates them. Opacity is a
+        // composition property, so this animates off the UI thread and does not need
+        // EnableDependentAnimation - which also means it cannot stutter while a dictation is being
+        // transcribed on the same machine.
+        var breath = new DoubleAnimation
+        {
+            From = 1,
+            To = 0.35,
+            Duration = new Duration(TimeSpan.FromMilliseconds(650)),
+            AutoReverse = true,
+            RepeatBehavior = RepeatBehavior.Forever,
+        };
+        Storyboard.SetTarget(breath, SeverityWash);
+        Storyboard.SetTargetProperty(breath, "Opacity");
+        _distressPulse.Children.Add(breath);
     }
 
     /// <summary>Puts the recording pill in the same theme as the rest of the app.</summary>
@@ -87,8 +90,7 @@ public sealed partial class DictationOverlayWindow : Window
         if (state == DictationOverlayState.Hidden)
         {
             _state = state;
-            _elapsedTimer.Stop();
-            AppWindow.Hide();
+            HideOverlay();
             return;
         }
 
@@ -97,7 +99,16 @@ public sealed partial class DictationOverlayWindow : Window
             DictationOverlayState.Recording => ("Listening", "\uE720", "Release your key to finish · Escape cancels"),
             DictationOverlayState.Processing => ("Working locally", "\uE895", detail),
             DictationOverlayState.Success => ("Dictation complete", "\uE73E", detail),
+            // THE ADVISORY HEADING NAMES THE MACHINE, NOT THE APP, and that is the whole point of
+            // the severity: "Dictation stopped safely" over a sentence about Ollama being switched
+            // off tells the user our software broke when their setup is simply incomplete.
+            DictationOverlayState.Advisory => ("Setup needs attention", "\uE946", detail),
             DictationOverlayState.Warning => ("Your text is safe", "\uE7BA", detail),
+            // Distress reuses the error glyph deliberately. It is the same bad news arriving
+            // louder, and the pulse plus the deeper wash carry the difference. A codepoint chosen
+            // for novelty is a hollow box on a machine whose font does not have it, and nothing in
+            // this repository can see that.
+            DictationOverlayState.Distress => ("Dictation interrupted", "\uEA39", detail),
             DictationOverlayState.Error => ("Dictation stopped safely", "\uEA39", detail),
             _ => ("EnviousWispr", "\uE720", detail),
         };
@@ -123,6 +134,7 @@ public sealed partial class DictationOverlayWindow : Window
         }
 
         _state = state;
+        ApplySeverity(state);
         StateTitle.Text = presentation.Item1;
         StateIcon.Glyph = presentation.Item2;
         StateDetail.Text = presentation.Item3;
@@ -134,9 +146,19 @@ public sealed partial class DictationOverlayWindow : Window
         PositionOnForegroundMonitor();
         AppWindow.Show(activateWindow: false);
 
-        if (state is DictationOverlayState.Success or DictationOverlayState.Warning or DictationOverlayState.Error)
+        if (state is DictationOverlayState.Success or DictationOverlayState.Advisory
+            or DictationOverlayState.Warning or DictationOverlayState.Distress
+            or DictationOverlayState.Error)
         {
-            _hideTimer.Interval = TimeSpan.FromSeconds(state == DictationOverlayState.Error ? 5 : 3);
+            // AN ADVISORY DWELLS LONGEST BECAUSE IT ASKS THE USER TO DO SOMETHING. It names a
+            // setting they have to go and change, which is more words than "your text is safe" and
+            // more thought than a tick. macOS makes the same call and says so in its own source.
+            _hideTimer.Interval = TimeSpan.FromSeconds(state switch
+            {
+                DictationOverlayState.Advisory => 6,
+                DictationOverlayState.Error or DictationOverlayState.Distress => 5,
+                _ => 3,
+            });
             _hideTimer.Start();
         }
     }
@@ -218,7 +240,9 @@ public sealed partial class DictationOverlayWindow : Window
         OverlayRoot.CornerRadius = _activeDesign == RecordingPillDesign.ReadingWell
             ? new CornerRadius(18)
             : new CornerRadius(29);
-        OverlayRoot.Padding = new Thickness(16, 12, 16, 12);
+        // On the CONTENT, not the frame: a Border lays its child out inside its padding, so a
+        // frame that owns the padding insets the severity wash away from the capsule edge.
+        ContentPanel.Margin = new Thickness(16, 12, 16, 12);
 
         switch (_activeDesign)
         {
@@ -236,6 +260,99 @@ public sealed partial class DictationOverlayWindow : Window
         }
     }
 
+    /// <summary>Takes the pill off screen and stops everything it left running.</summary>
+    /// <remarks>
+    /// BOTH HIDE PATHS GO THROUGH HERE, and they did not before. The dwell timer's tick stopped
+    /// two timers; the Hidden state stopped one; neither stopped the distress pulse. So a pill that
+    /// had breathed once went on breathing on an invisible window for as long as the app ran. It
+    /// was invisible and it did not contaminate the next pill, because the next state stops the
+    /// pulse before it draws - which is exactly why nothing would ever have reported it.
+    ///
+    /// One helper rather than three careful call sites, because the next thing added to this window
+    /// that needs stopping will be added by somebody who reads one of them.
+    /// </remarks>
+    private void HideOverlay()
+    {
+        _hideTimer.Stop();
+        _elapsedTimer.Stop();
+        ApplyDistressPulse(pulsing: false);
+        AppWindow.Hide();
+    }
+
+    /// <summary>Colours the pill for how bad the news is.</summary>
+    /// <remarks>
+    /// BEFORE THIS, EVERY OUTCOME DREW THE SAME CAPSULE. An error, a warning and a success shared
+    /// one surface, one border and one ink, and were told apart only by a small glyph most people
+    /// never look at directly. The app's in-window notifications had the identical hole one surface
+    /// over, and it was found the same way: nobody chose it, there was simply one tint token and
+    /// the severities with none of their own fell through to the neutral card.
+    ///
+    /// THE SET IS THE UNIT. Every state that can reach the pill is answered here, including the two
+    /// that take the neutral pair, so a state added later cannot render as a plain pill and look
+    /// deliberate. The wash and the ink are chosen together in one expression for the same reason.
+    /// </remarks>
+    private void ApplySeverity(DictationOverlayState state)
+    {
+        // STYLES RATHER THAN BRUSHES, and spelled out rather than composed. A brush read from the
+        // application dictionary resolves against the MACHINE's theme, while this window follows
+        // the APP's - the trap ApplyTheme exists to close, one property over. A style's setters
+        // resolve against the element they land on, so they follow the pill.
+        //
+        // Every name is written in full because the gate that checks these styles exist reads the
+        // source text; a name built by interpolation is not a name it can see, so it would be
+        // checked by nothing.
+        var (icon, edge, wash) = state switch
+        {
+            DictationOverlayState.Success =>
+                ("PillSuccessIconStyle", "PillSuccessEdgeStyle", "PillSuccessWashStyle"),
+            DictationOverlayState.Advisory =>
+                ("PillAdvisoryIconStyle", "PillAdvisoryEdgeStyle", "PillAdvisoryWashStyle"),
+            DictationOverlayState.Warning =>
+                ("PillWarningIconStyle", "PillWarningEdgeStyle", "PillWarningWashStyle"),
+            DictationOverlayState.Distress =>
+                ("PillDistressIconStyle", "PillDistressEdgeStyle", "PillDistressWashStyle"),
+            DictationOverlayState.Error =>
+                ("PillErrorIconStyle", "PillErrorEdgeStyle", "PillErrorWashStyle"),
+            // The three quiet states are LISTED rather than left to the default arm. A pill with
+            // no severity is a choice about how it looks, and the gate that checks this set is
+            // complete reads these names - an unlisted state would be covered by nothing and would
+            // render as a plain capsule looking exactly as though somebody meant it.
+            DictationOverlayState.Hidden or DictationOverlayState.Recording
+                or DictationOverlayState.Processing =>
+                ("PillNeutralIconStyle", "PillNeutralEdgeStyle", "PillNeutralWashStyle"),
+            // An enum can hold a value nobody declared, so this arm has to exist. It takes the
+            // neutral look rather than throwing, because a pill is not worth crashing a dictation.
+            _ => ("PillNeutralIconStyle", "PillNeutralEdgeStyle", "PillNeutralWashStyle"),
+        };
+
+        StateIcon.Style = GetPillStyle(icon);
+        OverlayRoot.Style = GetPillStyle(edge);
+        SeverityWash.Style = GetPillStyle(wash);
+        // The wash fills the pill, so its corners have to be the pill's corners. Reading them off
+        // the root rather than restating the number is what stops a design change rounding one
+        // layer and not the other.
+        SeverityWash.CornerRadius = OverlayRoot.CornerRadius;
+        ApplyDistressPulse(state == DictationOverlayState.Distress);
+    }
+
+    /// <summary>Breathes the wash while something outside the app is interrupting a dictation.</summary>
+    /// <remarks>
+    /// THE PULSE IS WHAT SEPARATES DISTRESS FROM ERROR, because they share a colour. Stopping it
+    /// explicitly on every other state matters more than starting it: a storyboard left running
+    /// would breathe under the next success pill, and the state that started it would be long gone.
+    /// </remarks>
+    private void ApplyDistressPulse(bool pulsing)
+    {
+        _distressPulse.Stop();
+        SeverityWash.Opacity = 1;
+        if (!pulsing)
+        {
+            return;
+        }
+
+        _distressPulse.Begin();
+    }
+
     private void ConfigureNotice()
     {
         StateTitle.Style = GetPillStyle("PillNoticeTextStyle");
@@ -246,7 +363,7 @@ public sealed partial class DictationOverlayWindow : Window
         LevelBars.Visibility = Visibility.Collapsed;
         PreviewWell.Visibility = Visibility.Collapsed;
         OverlayRoot.CornerRadius = new CornerRadius(18);
-        OverlayRoot.Padding = new Thickness(18, 14, 18, 14);
+        ContentPanel.Margin = new Thickness(18, 14, 18, 14);
         Resize(NoticeWidth, NoticeHeight);
     }
 
@@ -258,6 +375,8 @@ public sealed partial class DictationOverlayWindow : Window
 
     private static Style GetPillStyle(string key) =>
         (Style)Application.Current.Resources[key];
+
+
 
     private void ResizeReadingWell()
     {
