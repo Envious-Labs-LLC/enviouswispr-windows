@@ -787,11 +787,14 @@ public partial class App : Application, IAsyncDisposable
         }
     }
 
-    private void OnSessionStatusChanged(string status)
+    private void OnSessionStatusChanged(DictationStatus status)
     {
         try
         {
-            _trayIcon?.SetStatus(status);
+            _trayIcon?.SetStatus(status.Text);
+            // The tray and the pill are driven from the same status, so the two surfaces cannot
+            // disagree about whether a recording is live.
+            _trayIcon?.SetState(TrayIconStates.For(status.State));
         }
         catch (ObjectDisposedException)
         {
