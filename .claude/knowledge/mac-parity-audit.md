@@ -203,7 +203,31 @@ Each severity now has an ink and a wash token in all three themes plus three sty
 The reuse is stated in the expected-token table rather than left to look like a token falling back to a
 neighbour, which is how the notification hole was created.
 
-## FACT: the-parity-audit-marks-the-tray-icon-present-and-it-is-not
+## FACT: the-tray-icon-now-changes-2026-08-29
+#74, closed in code. Four states matching macOS - idle, recording, processing, error - drawn at runtime
+from the brand mark rather than shipped as .ico files, because the tray asks for a different size at
+every display scale.
+
+**EVERY STATE HAS ITS OWN SHAPE, NOT ONLY ITS OWN COLOUR, AND A TEST FORCED THAT.** macOS tells idle
+from recording by colour alone, which it can afford because the menu bar tints its icons; the Windows
+notification area draws a bitmap exactly as handed over. Under High Contrast every colour collapses to
+one system colour, and the first version then drew three of the four states identically. The icon would
+have stopped saying anything at the moment it mattered most.
+
+**Three review findings had one cause: values read once in a constructor.** Reduce Motion, display DPI
+and High Contrast are all read live now, through `SystemEvents.UserPreferenceChanged` and
+`DisplaySettingsChanged`. `SystemAnimationsAreOn` fails CLOSED - an accessibility preference that cannot
+be read is not one to guess in our own favour.
+
+**Stopping a timer does not unpost the work it has queued.** The sweep's frame callback rechecks the
+state rather than trusting that the timer stopped, or a user turning animations off mid-transcription
+would still see queued frames arrive.
+
+**Not yet seen by anyone**, and tracked with the rest of the unobserved UI: the live path from a system
+setting changing to the icon redrawing needs somebody toggling High Contrast, Reduce Motion and display
+scale on the real desktop.
+
+## FACT: the-parity-audit-marked-the-tray-icon-present-and-it-was-not
 Filed 2026-08-29 as #74. `WindowsTrayIcon.SetStatus` sets a TOOLTIP; `_notifyIcon.Icon` is assigned once
 at construction and never again. macOS `MenuBarIconAnimator` renders and swaps five states including
 two animations, and honours Reduce Motion.

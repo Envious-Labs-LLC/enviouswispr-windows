@@ -329,7 +329,13 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public event Action<AppSettings>? SettingsChanged;
 
-    public event Action<string>? SessionStatusChanged;
+    /// <summary>Raised whenever the app's status changes, for surfaces outside this window.</summary>
+    /// <remarks>
+    /// CARRIES THE WHOLE STATUS, NOT THE SENTENCE. The tray icon is driven from this, and an icon
+    /// that had to work out what was happening by reading the words would be the pill's old defect
+    /// rebuilt one surface over.
+    /// </remarks>
+    public event Action<DictationStatus>? SessionStatusChanged;
 
     public event Action<AudioDeviceChange>? AudioDevicesChanged;
 
@@ -516,7 +522,7 @@ public sealed partial class MainWindow : Window, IDisposable
         // A full stop rather than a middle dot. The tray tooltip is a SENTENCE - it has no
         // layout to separate, and a screen reader either announces a middle dot literally or
         // drops it. Text that is laid out on screen may still use one; this is not.
-        SessionStatusChanged?.Invoke($"ready. {shortcut}");
+        SessionStatusChanged?.Invoke(DictationStatus.Quiet($"ready. {shortcut}"));
     }
 
     public void SetHotkeyUnavailable(string status)
@@ -524,14 +530,17 @@ public sealed partial class MainWindow : Window, IDisposable
         HotkeyStatusText.Text = status;
         OnboardingHotkeyText.Text = status;
         SessionStatusText.Text = "Unavailable";
-        SessionStatusChanged?.Invoke("shortcut unavailable");
+        // AN ERROR FOR THE TRAY, WHICH IS THE ONLY PLACE IT SHOWS. The recording key not being
+        // available means the app cannot be used at all, and unlike a pill the icon stays. It
+        // raises no pill, because SetSessionStatus is not on this path.
+        SessionStatusChanged?.Invoke(DictationStatus.Error("shortcut unavailable"));
     }
 
     public void SetSessionStatus(DictationStatus status)
     {
         var sentence = status.Text;
         SessionStatusText.Text = sentence;
-        SessionStatusChanged?.Invoke(sentence);
+        SessionStatusChanged?.Invoke(status);
         var overlayState = status.State;
         HandleRecordingSoundTransition(overlayState);
         _currentOverlayState = overlayState;
