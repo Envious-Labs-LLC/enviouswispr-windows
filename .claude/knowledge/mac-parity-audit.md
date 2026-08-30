@@ -5,6 +5,19 @@
 already exist on one side. Taken 2026-08-27 against the Mac repo's own
 `.claude/knowledge/capability-map.md`, which is the authoritative list of what macOS ships.
 
+## RULE: query-the-catalog-first
+`~/.claude/knowledge/enviouswispr/catalog.db` now carries both columns, 92 features on macOS and 92 on
+Windows, each row citing the file that decided it. It is the answer to "does Windows have X yet?" and it
+is machine-queryable, which this table is not:
+
+```bash
+sqlite3 -header -column ~/.claude/knowledge/enviouswispr/catalog.db \
+  "SELECT platform_key, status, summary FROM feature_platform WHERE feature_slug='<slug>';"
+```
+
+This file stays for what the catalog does not hold: the ISSUE numbers, the founder decisions still open,
+and the reasoning behind particular parity calls. Where the two disagree, the catalog is newer.
+
 ## RULE: this-audit-expires-and-its-absences-are-claims
 Every PRESENT row was confirmed by a hit in the Windows tree. Every ABSENT row was swept twice, once
 for the Mac's own symbol name and once for the CAPABILITY's synonyms, and both came back empty.
