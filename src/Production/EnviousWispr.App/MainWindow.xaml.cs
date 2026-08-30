@@ -3119,6 +3119,18 @@ public sealed partial class MainWindow : Window, IDisposable
                 (FrameworkElement?)AppearanceSection),
         };
 
+        // THE PAGES WHOSE SETTINGS ARE READ WHEN A RECORDING STARTS, and only those. A banner on a
+        // page whose settings take effect immediately would be a lie, and a lie about this is worse
+        // than silence: it tells somebody to stop and start a recording for no reason.
+        //
+        // Keybinds holds auto-stop and Escape Recovery; Live Preview holds the preview switch. All
+        // three are read at the press and held for that recording - App.xaml.cs reads them in
+        // StartAutoStopWatch, the Started transition and StartLivePreviewAsync respectively.
+        FrozenPerRecordingBanner.Visibility = tag is "settings-keybinds" or "settings-live-preview"
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        FrozenPerRecordingText.Text = FrozenPerRecordingCopy;
+
         SettingsPageTitle.Text = title;
         SettingsPageDescription.Text = description;
         // An unrecognised tag lands on the Appearance page above, so it wears Appearance's icon.
@@ -3304,6 +3316,15 @@ public sealed partial class MainWindow : Window, IDisposable
             }
         });
     }
+
+    /// <summary>What every surface says about settings that freeze when a recording starts.</summary>
+    /// <remarks>
+    /// ONE STRING, LIKE macOS'S OWN `SettingsCopy`, because it appeared in two places and the two
+    /// were already different - a banner and an inline helper line saying the same thing in
+    /// different words is how a user decides one of them means something else.
+    /// </remarks>
+    private const string FrozenPerRecordingCopy =
+        "Changes made during a recording apply to the next recording.";
 
     private void ShowMessage(string title, string message, InfoBarSeverity severity) =>
         ShowMessage(title, message, severity, offer: null);
