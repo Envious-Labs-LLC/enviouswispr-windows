@@ -2914,11 +2914,16 @@ public sealed partial class DesignSystemTokenTests
 
         Assert.True(eyebrows.Length >= 18, $"Expected the section headers, found {eyebrows.Length}.");
 
-        // EVERY ICON THE SIDEBAR DRAWS, which is the set somebody has actually looked at.
+        // EVERY ICON THE SIDEBAR DRAWS, which is the set somebody has actually looked at - and ONLY
+        // the one in a row's icon slot. Anything named anywhere beneath a row would have counted,
+        // including a FontIcon dropped into the row's own content, which nobody has seen and which
+        // would have carried a guessed codepoint straight past this.
         var sidebar = markup.Descendants()
             .Where(element => element.Name.LocalName == "NavigationViewItem")
-            .SelectMany(row => row.Descendants())
-            .Where(element => element.Name.LocalName == "FontIcon")
+            .SelectMany(row => row.Elements())
+            .Where(slot => slot.Name.LocalName == "NavigationViewItem.Icon")
+            .SelectMany(slot => slot.Elements())
+            .Where(icon => icon.Name.LocalName == "FontIcon")
             .Select(icon => (string?)icon.Attribute(xaml + "Name"))
             .Where(name => name is not null)
             .ToHashSet(StringComparer.Ordinal);
@@ -2966,13 +2971,38 @@ public sealed partial class DesignSystemTokenTests
                 faults.Add($"\"{label}\" borrows \"{source}\", which is not an icon on a sidebar row");
             }
 
-            if ((string?)marks[0].Attribute("Style") != "{StaticResource BrandSectionEyebrowGlyphStyle}")
+            // EITHER RESOURCE FORM APPLIES THE SAME STYLE. Insisting on the StaticResource spelling
+            // refused a ThemeResource that does exactly the same thing, which is a rule about typing
+            // rather than about what the header looks like.
+            var styled = (string?)marks[0].Attribute("Style");
+            if (styled is null ||
+                !Regex.IsMatch(styled, @"^\{(?:Static|Theme)Resource\s+BrandSectionEyebrowGlyphStyle\s*\}$"))
             {
                 faults.Add(
                     $"\"{label}\" sizes its own mark. Eighteen headers carry one and a size written "
                         + "eighteen times is a size that will disagree with itself.");
             }
         }
+
+        // THE STYLE'S OWN VALUES, because "they all share one style" says nothing about what the
+        // style says. macOS draws this mark at 16 semibold beside a 14 label, so it sits slightly
+        // proud of the words; a shared style set to 12 would satisfy every rule above.
+        var theme = XDocument.Load(Path.Combine(
+            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "Theme", "Typography.xaml"));
+        var style = theme.Descendants()
+            .SingleOrDefault(element => element.Name.LocalName == "Style"
+                && (string?)element.Attribute(xaml + "Key") == "BrandSectionEyebrowGlyphStyle");
+        Assert.True(style is not null, "The shared mark style is not in the theme.");
+
+        var set = style!.Elements()
+            .Where(setter => setter.Name.LocalName == "Setter")
+            .ToDictionary(
+                setter => (string?)setter.Attribute("Property") ?? string.Empty,
+                setter => (string?)setter.Attribute("Value") ?? string.Empty,
+                StringComparer.Ordinal);
+
+        Assert.Equal("16", set.GetValueOrDefault("FontSize"));
+        Assert.Equal("SemiBold", set.GetValueOrDefault("FontWeight"));
 
         Assert.True(faults.Count == 0, string.Join(Environment.NewLine, faults));
     }
