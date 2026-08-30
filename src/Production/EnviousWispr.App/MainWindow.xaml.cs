@@ -1410,16 +1410,73 @@ public sealed partial class MainWindow : Window, IDisposable
         ReplacementBox.Text = string.Empty;
     }
 
-    private async void RemoveWordButton_Click(object sender, RoutedEventArgs e)
+    /// <summary>Selects every word, or clears the selection when they are all already chosen.</summary>
+    /// <remarks>
+    /// ONE PRESS FOR THE WHOLE LIST, AND THE SAME PRESS TO UNDO IT. Selecting twenty words by hand
+    /// to remove them is the work this button exists to remove; a separate "deselect all" would be a
+    /// second control for the same idea, and macOS uses the one toggle for both.
+    /// </remarks>
+    private void SelectAllWordsButton_Click(object sender, RoutedEventArgs e)
     {
-        if (DictionaryList.SelectedItem is not CustomWordEntry selected)
+        var words = _settings.UserData.CustomWords;
+        if (DictionaryList.SelectedItems.Count == words.Count && words.Count > 0)
         {
-            ShowMessage("Select a word first", "Choose the dictionary row you want to remove.", InfoBarSeverity.Informational);
+            DictionaryList.SelectedItems.Clear();
             return;
         }
 
-        var words = _settings.UserData.CustomWords.Where(entry => entry != selected).ToArray();
-        await SaveUserDataAsync(new ReusableUserData(words, _settings.UserData.Snippets), "Dictionary entry removed").ConfigureAwait(true);
+        DictionaryList.SelectAll();
+    }
+
+    /// <summary>Removes every selected word, asking first when it is more than one.</summary>
+    /// <remarks>
+    /// ONE AT A TIME WAS THE WHOLE FEATURE, AND IT IS NOT ONE macOS HAS. Clearing a list of twenty
+    /// imported words meant twenty selections and twenty presses, and the only thing stopping a
+    /// person doing it in one go was the list refusing to hold more than one selection.
+    ///
+    /// THE CONFIRMATION IS FOR THE PLURAL CASE ONLY. Asking before removing a single word turns the
+    /// ordinary action into two steps for no gain; asking before removing fifteen is the difference
+    /// between a mistake somebody notices and one they have to rebuild by hand.
+    /// </remarks>
+    private async void RemoveWordButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = DictionaryList.SelectedItems.OfType<CustomWordEntry>().ToArray();
+        if (selected.Length == 0)
+        {
+            ShowMessage("Select a word first", "Choose the dictionary rows you want to remove.", InfoBarSeverity.Informational);
+            return;
+        }
+
+        if (selected.Length > 1 && !await ConfirmAsync(
+            $"Remove {selected.Length} words?",
+            "They are deleted from this PC. Nothing else changes, and you can add them again.",
+            "Remove them").ConfigureAwait(true))
+        {
+            return;
+        }
+
+        var removing = selected.ToHashSet();
+        var words = _settings.UserData.CustomWords.Where(entry => !removing.Contains(entry)).ToArray();
+        var notice = selected.Length == 1
+            ? "Dictionary entry removed"
+            : $"{selected.Length} dictionary entries removed";
+        await SaveUserDataAsync(new ReusableUserData(words, _settings.UserData.Snippets), notice).ConfigureAwait(true);
+    }
+
+    /// <summary>Asks before something that cannot be undone.</summary>
+    private async Task<bool> ConfirmAsync(string title, string body, string confirmLabel)
+    {
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Content.XamlRoot,
+            Title = title,
+            Content = body,
+            PrimaryButtonText = confirmLabel,
+            CloseButtonText = "Keep them",
+            DefaultButton = ContentDialogButton.Close,
+        };
+
+        return await dialog.ShowAsync().AsTask().ConfigureAwait(true) == ContentDialogResult.Primary;
     }
 
     private async void AddSnippetButton_Click(object sender, RoutedEventArgs e)
@@ -2237,6 +2294,8 @@ public sealed partial class MainWindow : Window, IDisposable
             || DeleteHistoryButton is null
             || ClearHistoryButton is null
             || RemoveWordButton is null
+            || SelectAllWordsButton is null
+            || WordSelectionCountText is null
             || RemoveSnippetButton is null)
         {
             return;
@@ -2248,7 +2307,18 @@ public sealed partial class MainWindow : Window, IDisposable
         DeleteHistoryButton.IsEnabled = historySelected;
         ClearHistoryButton.IsEnabled = _history.Count > 0;
 
-        RemoveWordButton.IsEnabled = DictionaryList.SelectedItem is not null;
+        var selectedWords = DictionaryList.SelectedItems.Count;
+        RemoveWordButton.IsEnabled = selectedWords > 0;
+        SelectAllWordsButton.IsEnabled = _settings.UserData.CustomWords.Count > 0;
+
+        // THE COUNT IS SHOWN ONLY WHILE MORE THAN ONE IS CHOSEN. With one row selected the row
+        // itself is the answer and a line reading "1 selected" is noise; with fifteen it is the
+        // only thing that says how much the next press removes.
+        SetLiveRegion(
+            WordSelectionCountText,
+            selectedWords > 1 ? $"{selectedWords} selected" : string.Empty,
+            selectedWords > 1 ? Visibility.Visible : Visibility.Collapsed);
+
         // Export needs words rather than a selection - it writes the whole list.
         ExportWordsButton.IsEnabled = _settings.UserData.CustomWords.Count > 0;
         RemoveSnippetButton.IsEnabled = SnippetList.SelectedItem is not null;
