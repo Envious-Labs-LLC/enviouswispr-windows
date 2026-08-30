@@ -172,6 +172,10 @@ public sealed partial class MainWindow : Window, IDisposable
     /// holds a store open mid-save and shows two changes both surviving.
     /// </remarks>
     private SerialSettingsWriter? _settingsWriter;
+
+    /// <summary>The writer, created once and kept for the life of the window.</summary>
+    private SerialSettingsWriter SettingsWriter =>
+        _settingsWriter ??= new SerialSettingsWriter(_settingsStore, _settings);
     private readonly IPortableProfileService _profileService;
     private readonly IHistoryStore _historyStore;
     private readonly IApiKeyStore _apiKeyStore;
@@ -756,8 +760,10 @@ public sealed partial class MainWindow : Window, IDisposable
         // an announcement for a window that is going away.
         _historyAnnounceDebounce.Stop();
         _historyAnnounceDebounce.Tick -= OnHistoryAnnounceDue;
-        _settingsWriter?.Dispose();
-        _settingsWriter = null;
+        // THE WRITER IS NOT DISPOSED HERE, AND THAT IS DELIBERATE. Shutdown is synchronous and a
+        // save may still be inside it; disposing its gate makes the release throw, and clearing the
+        // field makes the continuation dereference null. A semaphore that outlives the window costs
+        // nothing, and a settings write that completes during shutdown is the outcome we want.
         _soundPreviewCancellation?.Cancel();
         _soundPreviewCancellation?.Dispose();
         _soundPreviewCancellation = null;
@@ -1373,13 +1379,14 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private async Task AddSuggestedAliasAsync(string spokenForm, string replacement)
     {
-        var words = _settings.UserData.CustomWords
-            .Where(entry => !string.Equals(entry.SpokenForm, spokenForm, StringComparison.OrdinalIgnoreCase))
-            .Append(new CustomWordEntry(spokenForm, replacement))
-            .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
-            .ToArray();
         if (!await SaveUserDataAsync(
-                data => new ReusableUserData(words, data.Snippets),
+                data => new ReusableUserData(
+                    data.CustomWords
+                        .Where(entry => !string.Equals(entry.SpokenForm, spokenForm, StringComparison.OrdinalIgnoreCase))
+                        .Append(new CustomWordEntry(spokenForm, replacement))
+                        .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
+                        .ToArray(),
+                    data.Snippets),
                 "Dictionary saved").ConfigureAwait(true))
         {
             // THE CHIP STAYS WHEN THE SAVE DID NOT. Removing it says the suggestion was taken, and
@@ -1413,15 +1420,16 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var words = _settings.UserData.CustomWords
-            .Where(entry => !string.Equals(entry.SpokenForm, spoken, StringComparison.OrdinalIgnoreCase))
-            .Append(new CustomWordEntry(spoken, replacement))
-            .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
-            .ToArray();
         // CLEARED ONLY IF IT WAS SAVED. Emptying the boxes after a refused save throws away what
         // the person typed and leaves them looking at an error with nothing to retry.
         if (!await SaveUserDataAsync(
-                data => new ReusableUserData(words, data.Snippets),
+                data => new ReusableUserData(
+                    data.CustomWords
+                        .Where(entry => !string.Equals(entry.SpokenForm, spoken, StringComparison.OrdinalIgnoreCase))
+                        .Append(new CustomWordEntry(spoken, replacement))
+                        .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
+                        .ToArray(),
+                    data.Snippets),
                 "Dictionary saved").ConfigureAwait(true))
         {
             return;
@@ -1476,11 +1484,14 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var words = CustomWordRemoval.Without(_settings.UserData.CustomWords, selected);
         var notice = selected.Length == 1
             ? "Dictionary entry removed"
             : $"{selected.Length} dictionary entries removed";
-        await SaveUserDataAsync(data => new ReusableUserData(words, data.Snippets), notice).ConfigureAwait(true);
+        await SaveUserDataAsync(
+            data => new ReusableUserData(
+                CustomWordRemoval.Without(data.CustomWords, selected),
+                data.Snippets),
+            notice).ConfigureAwait(true);
     }
 
     /// <summary>Asks before something that cannot be undone.</summary>
@@ -1509,15 +1520,16 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var snippets = _settings.UserData.Snippets
-            .Where(entry => !string.Equals(entry.Name, name, StringComparison.OrdinalIgnoreCase))
-            .Append(new SnippetEntry(name, body))
-            .OrderBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase)
-            .ToArray();
         // Same reason as the word boxes above: a refused save must not eat the snippet someone
         // just wrote.
         if (!await SaveUserDataAsync(
-                data => new ReusableUserData(data.CustomWords, snippets),
+                data => new ReusableUserData(
+                    data.CustomWords,
+                    data.Snippets
+                        .Where(entry => !string.Equals(entry.Name, name, StringComparison.OrdinalIgnoreCase))
+                        .Append(new SnippetEntry(name, body))
+                        .OrderBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase)
+                        .ToArray()),
                 "Snippet saved").ConfigureAwait(true))
         {
             return;
@@ -1535,8 +1547,9 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var snippets = _settings.UserData.Snippets.Where(entry => entry != selected).ToArray();
-        await SaveUserDataAsync(data => new ReusableUserData(data.CustomWords, snippets), "Snippet removed").ConfigureAwait(true);
+        await SaveUserDataAsync(data => new ReusableUserData(
+                data.CustomWords,
+                data.Snippets.Where(entry => entry != selected).ToArray()), "Snippet removed").ConfigureAwait(true);
     }
 
     private void HistorySearchBox_TextChanged(object sender, TextChangedEventArgs e) => RefreshHistoryView();
@@ -2947,8 +2960,8 @@ public sealed partial class MainWindow : Window, IDisposable
         Func<AppSettings, AppSettings> change,
         Func<Exception, Task>? onFailure = null)
     {
-        _settingsWriter ??= new SerialSettingsWriter(_settingsStore, _settings);
-        var failure = await _settingsWriter.UpdateAsync(change).ConfigureAwait(true);
+        var writer = SettingsWriter;
+        var failure = await writer.UpdateAsync(change).ConfigureAwait(true);
         if (failure is not null)
         {
             if (onFailure is not null)
@@ -2959,7 +2972,7 @@ public sealed partial class MainWindow : Window, IDisposable
             return false;
         }
 
-        _settings = _settingsWriter.Current;
+        _settings = writer.Current;
         SettingsChanged?.Invoke(_settings);
         return true;
     }

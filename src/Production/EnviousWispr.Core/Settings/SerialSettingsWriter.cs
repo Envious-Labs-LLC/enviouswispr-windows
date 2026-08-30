@@ -63,21 +63,6 @@ public sealed class SerialSettingsWriter : IDisposable
         }
     }
 
-    /// <summary>Adopts a settings record that came from somewhere else, such as a reload.</summary>
-    public async Task AdoptAsync(AppSettings settings, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(settings);
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            _current = settings;
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-
     public void Dispose()
     {
         if (_disposed)
