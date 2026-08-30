@@ -121,28 +121,38 @@ public static class PolishOutputGuard
     /// than imagined ones. The preservation entries are the same idea from the other side: somebody
     /// who says "keep the words exactly" has asked for no transformation at all.
     /// </remarks>
-    private static readonly (string Trigger, string[] Survivors)[] InstructionGuards =
+    /// <remarks>
+    /// THE REQUEST PHRASE HAS TO SURVIVE WHOLE, not its words in any order. Requiring "answer" and
+    /// "question" separately accepted "The answer to this question is Paris", which is the plainest
+    /// execution there is wearing both of the words the guard was watching for. A polish keeps the
+    /// request as a request; an execution replaces it with the result.
+    ///
+    /// ALTERNATIVES ARE LISTED RATHER THAN INFERRED. Polish legitimately rewords, so a small set of
+    /// approved rephrasings is spelled out; anything outside it falls back to the input, which is the
+    /// direction this guard is allowed to be wrong in.
+    /// </remarks>
+    private static readonly (string Trigger, string[] Accepted)[] InstructionGuards =
     [
-        ("write a sql query", ["write", "query"]),
-        ("draft a cron expression", ["draft", "cron"]),
-        ("answer this question", ["answer", "question"]),
-        ("explain the difference", ["explain", "difference"]),
-        ("translate this", ["translate"]),
-        ("summarize this", ["summarize"]),
-        ("rewrite this", ["rewrite"]),
-        ("convert this into json", ["convert", "json"]),
-        ("respond with only markdown", ["respond", "markdown"]),
-        ("turn this into", ["turn"]),
-        ("write a poem", ["write", "poem"]),
+        ("write a sql query", ["write a sql query", "write an sql query"]),
+        ("draft a cron expression", ["draft a cron expression", "write a cron expression"]),
+        ("answer this question", ["answer this question", "answer the question", "respond to this question"]),
+        ("explain the difference", ["explain the difference"]),
+        ("translate this", ["translate this"]),
+        ("summarize this", ["summarize this", "summarise this"]),
+        ("rewrite this", ["rewrite this"]),
+        ("convert this into json", ["convert this into json", "convert this to json"]),
+        ("respond with only markdown", ["respond with only markdown"]),
+        ("turn this into", ["turn this into"]),
+        ("write a poem", ["write a poem"]),
         ("brainstorm", ["brainstorm"]),
-        ("dictate the words", ["dictate"]),
-        ("preserve the words", ["preserve"]),
-        ("keep the words", ["keep"]),
-        ("keep the phrase", ["keep"]),
-        ("create a regex", ["regex"]),
-        ("generate a regex", ["regex"]),
-        ("write a regex", ["regex"]),
-        ("create a pattern", ["pattern"]),
+        ("dictate the words", ["dictate the words"]),
+        ("preserve the words", ["preserve the words"]),
+        ("keep the words", ["keep the words"]),
+        ("keep the phrase", ["keep the phrase"]),
+        ("create a regex", ["create a regex"]),
+        ("generate a regex", ["generate a regex"]),
+        ("write a regex", ["write a regex"]),
+        ("create a pattern", ["create a pattern"]),
     ];
 
     /// <summary>First lines a model writes about the text rather than as the text.</summary>
@@ -200,7 +210,7 @@ public static class PolishOutputGuard
         // STRIPPED BEFORE ANYTHING IS JUDGED, because "Sure, here is the cleaned transcript:" is
         // not something anybody said and every measurement below is about what they did say. It is
         // also what the caller uses, so the chatter cannot reach the document.
-        var wrote = StripPreamble(output ?? string.Empty);
+        var wrote = StripPreamble(input, output ?? string.Empty);
         if (wrote.Length == 0)
         {
             return Refuse(PolishOutputVerdict.RefusedEmpty, input);
@@ -325,19 +335,28 @@ public static class PolishOutputGuard
     /// </remarks>
     private static bool CarriedOutAnInstruction(string said, string wrote)
     {
-        foreach (var (trigger, survivors) in InstructionGuards)
+        foreach (var (trigger, accepted) in InstructionGuards)
         {
-            if (!said.Contains(trigger, StringComparison.OrdinalIgnoreCase))
+            // THE TRIGGER IS A WHOLE PHRASE TOO. As a substring, "brainstorm" fired on somebody
+            // saying "we brainstormed on Tuesday", which is not a request for anything.
+            if (!ContainsWholeWord(said, trigger))
             {
                 continue;
             }
 
-            foreach (var survivor in survivors)
+            var survived = false;
+            foreach (var phrase in accepted)
             {
-                if (!ContainsWholeWord(wrote, survivor))
+                if (ContainsWholeWord(wrote, phrase))
                 {
-                    return true;
+                    survived = true;
+                    break;
                 }
+            }
+
+            if (!survived)
+            {
+                return true;
             }
         }
 
@@ -381,10 +400,12 @@ public static class PolishOutputGuard
     /// begins plenty of real dictation, so it goes only when the rest is either an introduction line
     /// or a short standalone reply. Prose that runs on with commas is somebody speaking and is kept.
     /// </remarks>
-    public static string StripPreamble(string text)
+    public static string StripPreamble(string said, string wrote)
     {
-        ArgumentNullException.ThrowIfNull(text);
-        var result = text.Trim();
+        ArgumentNullException.ThrowIfNull(said);
+        ArgumentNullException.ThrowIfNull(wrote);
+        var spoken = said.Trim();
+        var result = wrote.Trim();
 
         foreach (var acknowledgement in Acknowledgements)
         {
@@ -393,8 +414,18 @@ public static class PolishOutputGuard
                 continue;
             }
 
+            // WHAT THE PERSON SAID DECIDES. Somebody who opened with "Sure," has that word in their
+            // dictation, and removing it from the polish edits their sentence.
+            if (spoken.StartsWith(acknowledgement.TrimEnd('!', ',', '.', ':'), StringComparison.OrdinalIgnoreCase))
+            {
+                break;
+            }
+
+            // ONLY WHEN A WRAPPER LINE FOLLOWS. The looser test - "and the next sentence is short" -
+            // deleted "Sure," from real speech, because a short first sentence is what most speech
+            // has. A line that introduces the text is the only thing that proves a model is talking.
             var rest = result[acknowledgement.Length..].Trim();
-            if (FirstLineIntroducesTheText(rest) || FirstSentenceIsAShortReply(rest))
+            if (FirstLineIntroducesTheText(spoken, rest))
             {
                 result = rest;
             }
@@ -402,55 +433,40 @@ public static class PolishOutputGuard
             break;
         }
 
-        if (FirstLineIntroducesTheText(result))
+        if (FirstLineIntroducesTheText(spoken, result))
         {
             var newline = result.IndexOf('\n', StringComparison.Ordinal);
             result = (newline < 0 ? string.Empty : result[(newline + 1)..]).Trim();
         }
 
-        return result
-            .Replace("<transcript>", string.Empty, StringComparison.OrdinalIgnoreCase)
-            .Replace("</transcript>", string.Empty, StringComparison.OrdinalIgnoreCase)
-            .Trim();
+        return result;
     }
 
-    private static bool FirstLineIntroducesTheText(string text)
+    /// <remarks>
+    /// IT IS ONLY A HEADING IF THE PERSON DID NOT SAY ONE. "Here is the plan:" is a sentence people
+    /// dictate, and deleting their first line because a model also writes lines like it is the same
+    /// mistake in the other direction.
+    /// </remarks>
+    private static bool FirstLineIntroducesTheText(string said, string wrote)
     {
-        var newline = text.IndexOf('\n', StringComparison.Ordinal);
-        var firstLine = (newline < 0 ? text : text[..newline]).Trim();
-        if (firstLine.Length == 0 || firstLine.Length >= 100 ||
-            !firstLine.EndsWith(':'))
+        var newline = wrote.IndexOf('\n', StringComparison.Ordinal);
+        var firstLine = (newline < 0 ? wrote : wrote[..newline]).Trim();
+        if (firstLine.Length == 0 || firstLine.Length >= 100 || !firstLine.EndsWith(':'))
         {
             return false;
         }
 
         foreach (var opening in PreambleOpenings)
         {
-            if (firstLine.StartsWith(opening, StringComparison.OrdinalIgnoreCase))
+            if (!firstLine.StartsWith(opening, StringComparison.OrdinalIgnoreCase))
             {
-                return true;
+                continue;
             }
+
+            return !said.TrimStart().StartsWith(opening, StringComparison.OrdinalIgnoreCase);
         }
 
         return false;
-    }
-
-    private static bool FirstSentenceIsAShortReply(string text)
-    {
-        if (text.Length == 0)
-        {
-            return false;
-        }
-
-        var end = text.AsSpan().IndexOfAny('.', '!', '?');
-        var newline = text.IndexOf('\n', StringComparison.Ordinal);
-        if (newline >= 0 && (end < 0 || newline < end))
-        {
-            end = newline;
-        }
-
-        var firstSentence = end < 0 ? text : text[..(end + 1)];
-        return firstSentence.Length <= 60 && firstSentence.Count(character => character == ',') <= 1;
     }
 
     /// <summary>
