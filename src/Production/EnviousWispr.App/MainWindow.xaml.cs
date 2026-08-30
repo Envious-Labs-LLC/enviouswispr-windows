@@ -959,6 +959,19 @@ public sealed partial class MainWindow : Window, IDisposable
         ProductNavigation.SelectedItem = historyItem;
     }
 
+    /// <summary>Fills the recording keybind with the binding that unlocks the four gestures.</summary>
+    /// <remarks>
+    /// IT FILLS THE FIELD RATHER THAN SAVING. Everything a typed keybind goes through - the parse,
+    /// the conflict check against the other two binds, the Save button - happens the same way, so
+    /// this cannot be the one route into the setting that skips the checks. It also leaves the person
+    /// looking at what they are about to agree to.
+    /// </remarks>
+    private void HandsFreeGestureButton_Click(object sender, RoutedEventArgs e)
+    {
+        HotkeyTextBox.Text = HandsFreeRecordBinding.Suggested;
+        HotkeyTextBox.Focus(FocusState.Programmatic);
+    }
+
     private async void SaveSettingsButton_Click(object sender, RoutedEventArgs e)
     {
         var parsedHotkey = HotkeyGestureParser.Parse(HotkeyTextBox.Text);
