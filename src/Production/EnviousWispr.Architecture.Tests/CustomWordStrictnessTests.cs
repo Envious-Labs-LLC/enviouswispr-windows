@@ -453,4 +453,138 @@ public sealed class CustomWordStrictnessTests
 
         Assert.NotNull(AppSettingsValidator.Validate(settings, AppErrorStage.SettingsLoad));
     }
+
+    [Fact]
+    public void APhraseIsCorrectedWhenWhatWasHeardIsCloseEnough()
+    {
+        var result = CustomWordCorrector.Correct(
+            "I met stenhaus partners today",
+            [new CustomWordEntry("Stenhouse Partners", "Stenhouse Partners")]);
+
+        Assert.Equal("I met Stenhouse Partners today", result.Text);
+        Assert.Equal(1, result.ReplacementCount);
+    }
+
+    [Fact]
+    public void ALoosePhraseIsCorrectedFromFurtherAwayThanTheOrdinaryRuleAllows()
+    {
+        // "stenhaus partnas" is 0.778 from the phrase: above the loose bar of 0.72 and below the
+        // ordinary phrase bar of 0.85.
+        var heard = "I met stenhaus partnas today";
+        var ordinary = CustomWordCorrector.Correct(
+            heard,
+            [new CustomWordEntry("Stenhouse Partners", "Stenhouse Partners")]);
+        var loose = CustomWordCorrector.Correct(
+            heard,
+            [new CustomWordEntry("Stenhouse Partners", "Stenhouse Partners", MatchStrictness.Loose)]);
+
+        Assert.Equal(heard, ordinary.Text);
+        Assert.Equal("I met Stenhouse Partners today", loose.Text);
+    }
+
+    [Fact]
+    public void AStrictPhraseRefusesWhatTheOrdinaryRuleWouldHaveTaken()
+    {
+        // "magnuson holdins" is 0.889 from the phrase: above the ordinary bar of 0.85 and below the
+        // strict bar of 0.92.
+        var heard = "ask magnuson holdins to sign";
+        var ordinary = CustomWordCorrector.Correct(
+            heard,
+            [new CustomWordEntry("Magnusson Holdings", "Magnusson Holdings")]);
+        var strict = CustomWordCorrector.Correct(
+            heard,
+            [new CustomWordEntry("Magnusson Holdings", "Magnusson Holdings", MatchStrictness.Strict)]);
+
+        Assert.Equal("ask Magnusson Holdings to sign", ordinary.Text);
+        Assert.Equal(heard, strict.Text);
+    }
+
+    [Fact]
+    public void APhraseCarryingAnEverydayWordHasToBeACloserMatch()
+    {
+        // The two scores are within six thousandths of each other - 0.882 and 0.889 - and only one
+        // of the phrases contains "of". That word is the whole difference between the outcomes.
+        var withEveryday = CustomWordCorrector.Correct(
+            "send it to bank of stenhaus",
+            [new CustomWordEntry("Bank of Stenhouse", "Bank of Stenhouse")]);
+        var without = CustomWordCorrector.Correct(
+            "ask magnuson holdins to sign",
+            [new CustomWordEntry("Magnusson Holdings", "Magnusson Holdings")]);
+
+        Assert.Equal("send it to bank of stenhaus", withEveryday.Text);
+        Assert.Equal("ask Magnusson Holdings to sign", without.Text);
+    }
+
+    [Fact]
+    public void AChoiceTheUserMadeReplacesTheEverydayWordPenaltyRatherThanAddingToIt()
+    {
+        // Somebody who asked for a generous match on a phrase asked for it knowing what the phrase
+        // contains, so the penalty is not stacked on top of their answer.
+        var result = CustomWordCorrector.Correct(
+            "send it to bank of stenhaus",
+            [new CustomWordEntry("Bank of Stenhouse", "Bank of Stenhouse", MatchStrictness.Loose)]);
+
+        Assert.Equal("send it to Bank of Stenhouse", result.Text);
+        Assert.Equal(1, result.ReplacementCount);
+    }
+
+    [Fact]
+    public void APhraseAlreadyWrittenCorrectlyIsLeftExactlyAsItIs()
+    {
+        var result = CustomWordCorrector.Correct(
+            "send it to Bank of Stenhouse",
+            [new CustomWordEntry("Bank of Stenhouse", "Bank of Stenhouse")]);
+
+        Assert.Equal("send it to Bank of Stenhouse", result.Text);
+        Assert.Equal(0, result.ReplacementCount);
+    }
+
+    [Fact]
+    public void ALongerPhraseWinsOverAShorterOneInsideItWhenNeitherIsExact()
+    {
+        // "red blue sunn" is 0.923 from the three-word phrase and its tail is 0.889 from the
+        // two-word one, so both clear the bar and only the run order decides.
+        var result = CustomWordCorrector.Correct(
+            "the red blue sunn rose",
+            [
+                new CustomWordEntry("red blue sun", "Alpha"),
+                new CustomWordEntry("blue sun", "Beta"),
+            ]);
+
+        Assert.Equal("the Alpha rose", result.Text);
+        Assert.Equal(1, result.ReplacementCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void APhraseThatCouldBeEitherOfTwoIsLeftAloneWhicheverComesFirst(bool reversed)
+    {
+        // "north bae" is 0.889 from both, so nothing in the list says which was meant.
+        CustomWordEntry[] words =
+        [
+            new("north bay", "Alpha"),
+            new("north bax", "Beta"),
+        ];
+        if (reversed)
+        {
+            words = [words[1], words[0]];
+        }
+
+        var result = CustomWordCorrector.Correct("we drove to north bae", words);
+
+        Assert.Equal("we drove to north bae", result.Text);
+        Assert.Equal(0, result.ReplacementCount);
+    }
+
+    [Fact]
+    public void ASingleWordEntryIsUntouchedByThePhrasePass()
+    {
+        var result = CustomWordCorrector.Correct(
+            "ask magnuson to sign it",
+            [new CustomWordEntry("Magnusson", "Magnusson")]);
+
+        Assert.Equal("ask Magnusson to sign it", result.Text);
+        Assert.Equal(1, result.ReplacementCount);
+    }
 }
