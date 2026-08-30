@@ -145,7 +145,11 @@ public static partial class CustomWordCorrector
             .OrderByDescending(rank => rank.Key.Words)
             .ThenByDescending(rank => rank.Key.Length))
         {
-            var here = rank.ToArray();
+            // A MATCH THE HIGHER RANKS ALREADY SPOKE FOR IS OUT OF THE ARGUMENT ENTIRELY, and this
+            // has to happen BEFORE disputes are worked out. Leaving it in let a phrase that could
+            // never apply veto a neighbour that could: with "extraword red" taking the front of the
+            // sentence, "red blue" was already dead and still blocked "blue sun" from applying.
+            var here = rank.Where(match => !IsClaimed(claimed, match)).ToArray();
 
             // TWO PHRASES OF THE SAME STANDING THAT WANT THE SAME WORDS ARE BOTH LEFT ALONE. Longer
             // phrases still beat shorter ones, which is the rule this always had; a tie is the one
@@ -161,7 +165,12 @@ public static partial class CustomWordCorrector
                         StringComparison.Ordinal)))
                 .ToHashSet();
 
-            foreach (var match in disputed.Where(match => !IsClaimed(claimed, match)))
+            // EVERY DISPUTED SPAN, INCLUDING THE PARTS THAT OVERLAP ANOTHER ONE. Adding only the
+            // first left the far end of the second unclaimed, so in "small planet large" the two
+            // phrases arguing about "planet" left "large" free for a shorter rule underneath to
+            // rewrite - the exact words in dispute were protected and the rest of the phrase was
+            // not. Claims are tested by overlap, so adding each span separately is their union.
+            foreach (var match in disputed)
             {
                 claimed.Add(new Span(match.Start, match.Length));
             }

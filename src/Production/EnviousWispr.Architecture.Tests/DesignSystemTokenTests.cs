@@ -1,4 +1,6 @@
 using EnviousWispr.Core.Presentation;
+using EnviousWispr.Core.Settings;
+using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System.Globalization;
@@ -2534,7 +2536,7 @@ public sealed partial class DesignSystemTokenTests
     }
 
     /// <summary>
-    /// Every way of adding a word goes through the one method that reads the picker.
+    /// One place in the app builds a custom word, and it reads the picker to do it.
     /// </summary>
     /// <remarks>
     /// THE PAGE HAS TWO ADD BUTTONS AND ONLY ONE OF THEM USED TO ASK. Accepting a suggested
@@ -2542,52 +2544,80 @@ public sealed partial class DesignSystemTokenTests
     /// said Loose, and nothing about that reads as wrong in a diff - the suggested path simply did
     /// not mention strictness at all, which is what an absence looks like.
     ///
-    /// THE RULE IS ABOUT WHERE A WORD IS BUILT, NOT ABOUT WHAT ARGUMENT IT IS GIVEN. An earlier
-    /// version required the third argument to be the picker's reader, which a third add path could
-    /// slip past simply by building its entry in a helper, or in another file, or by passing a
-    /// variable. One method in the whole app may construct one of these, and every path has to go
-    /// through it, so a new path cannot be written that forgets.
+    /// ASKED OF THE COMPILER RATHER THAN OF THE SPELLING, and that closes a bypass a syntax-only
+    /// version had: "CustomWordEntry entry = new(...)" names the type on the LEFT of the equals sign,
+    /// so a scan for "new CustomWordEntry" cannot see it. Every construction expression is resolved
+    /// to its type symbol instead, which sees both forms and would see a third.
     ///
-    /// THE WHOLE APP IS SCANNED, not one file, because "another file" was one of the ways past it.
+    /// AND THE DOOR ITSELF IS CHECKED, not merely its name. A version that only asked which method
+    /// contained the construction would stay green while that method quietly stopped reading the
+    /// picker, which is the whole thing being protected. The strictness argument has to be a value
+    /// worked out in that method from the picker's own SelectedIndex.
     /// </remarks>
     [Fact]
-    public void EveryWayOfAddingACustomWordGoesThroughTheOneThatReadsThePicker()
+    public void OnePlaceInTheAppBuildsACustomWordAndItReadsThePicker()
     {
         const string door = "SaveCustomWordFromPickerAsync";
+        const string picker = "WordStrictnessComboBox.SelectedIndex";
         var app = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
 
-        var faults = new List<string>();
-        var doors = 0;
-        foreach (var file in Directory.EnumerateFiles(app, "*.cs", SearchOption.AllDirectories))
+        var trees = Directory
+            .EnumerateFiles(app, "*.cs", SearchOption.AllDirectories)
+            .Select(file => CSharpSyntaxTree.ParseText(File.ReadAllText(file), path: file))
+            .ToArray();
+
+        // THE APP'S OWN DEPENDENCIES ARE NOT ALL HERE AND DO NOT NEED TO BE. Only the constructed
+        // type has to resolve, and that type lives in Core, which this test project references - so
+        // the assemblies already loaded around this test are exactly the ones required. WinUI types
+        // stay unresolved and the diagnostics they produce are not read.
+        var references = ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? string.Empty)
+            .Split(Path.PathSeparator)
+            .Where(path => path.Length > 0 && File.Exists(path))
+            .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path))
+            .ToArray();
+        var compilation = CSharpCompilation.Create("app-scan", trees, references);
+
+        var built = new List<(BaseObjectCreationExpressionSyntax Node, MethodDeclarationSyntax? Owner)>();
+        foreach (var tree in trees)
         {
-            var root = CSharpSyntaxTree.ParseText(File.ReadAllText(file)).GetRoot();
-            foreach (var creation in root.DescendantNodes()
-                .OfType<ObjectCreationExpressionSyntax>()
-                .Where(creation => creation.Type.ToString()
-                    .EndsWith("CustomWordEntry", StringComparison.Ordinal)))
+            var model = compilation.GetSemanticModel(tree);
+            foreach (var creation in tree.GetRoot().DescendantNodes()
+                .OfType<BaseObjectCreationExpressionSyntax>())
             {
-                var owner = creation.Ancestors()
-                    .OfType<MethodDeclarationSyntax>()
-                    .FirstOrDefault();
-                if (owner?.Identifier.Text == door)
+                if (model.GetTypeInfo(creation).Type?.Name != nameof(CustomWordEntry))
                 {
-                    doors++;
                     continue;
                 }
 
-                faults.Add(
-                    $"{Path.GetFileName(file)} line " +
-                    $"{creation.GetLocation().GetLineSpan().StartLinePosition.Line + 1}: {creation}");
+                built.Add((creation, creation.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault()));
             }
         }
 
         Assert.True(
-            doors == 1,
-            $"Expected exactly one place in the app to build a custom word, found {doors}.");
+            built.Count == 1,
+            $"Expected exactly one place in the app to build a custom word, found {built.Count}: " +
+                string.Join(
+                    ", ",
+                    built.Select(one => $"{Path.GetFileName(one.Node.SyntaxTree.FilePath)} " +
+                        $"line {one.Node.GetLocation().GetLineSpan().StartLinePosition.Line + 1}")));
+
+        var (node, owner) = built[0];
+        Assert.True(owner?.Identifier.Text == door, $"A word is built outside {door}, so the choice on screen is not the one saved.");
+
+        var arguments = node.ArgumentList?.Arguments;
+        Assert.True(arguments is { Count: 3 }, "A word is built without being told how closely it must match.");
+
+        // The argument is a value worked out earlier in the method, so the check follows it back to
+        // where it was worked out and asks whether the picker was what decided it.
+        var name = (arguments!.Value[2].Expression as IdentifierNameSyntax)?.Identifier.Text;
+        var source = owner!.DescendantNodes()
+            .OfType<VariableDeclaratorSyntax>()
+            .FirstOrDefault(declared => declared.Identifier.Text == name)?
+            .Initializer?.Value.ToString();
+
         Assert.True(
-            faults.Count == 0,
-            $"A word is built outside {door}, so the choice on screen is not the one saved:"
-                + Environment.NewLine + string.Join(Environment.NewLine, faults));
+            source?.Contains(picker, StringComparison.Ordinal) == true,
+            $"{door} does not work its strictness out from {picker}, so the picker on screen decides nothing.");
     }
 
     private readonly record struct DynamicColor(Rgba Light, Rgba Dark);

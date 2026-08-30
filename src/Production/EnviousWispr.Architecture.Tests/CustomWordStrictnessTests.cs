@@ -272,6 +272,58 @@ public sealed class CustomWordStrictnessTests
         Assert.Equal(0, result.ReplacementCount);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TwoPhrasesArguingProtectTheirFarEndsToo(bool reversed)
+    {
+        // "small planet" and "planet large" argue about the middle word. Claiming only the first of
+        // them left the far end of the second unclaimed, so "large" was still free for a shorter
+        // rule underneath - the exact words in dispute were protected and the rest of the phrase
+        // was not.
+        CustomWordEntry[] words =
+        [
+            new("small planet", "Alpha"),
+            new("planet large", "Beta"),
+            new("large", "Gamma"),
+            new("largee", "Delta", MatchStrictness.Loose),
+        ];
+        if (reversed)
+        {
+            words = [words[3], words[2], words[1], words[0]];
+        }
+
+        var result = CustomWordCorrector.Correct("small planet large", words);
+
+        Assert.Equal("small planet large", result.Text);
+        Assert.Equal(0, result.ReplacementCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void APhraseAlreadyBeatenByALongerOneDoesNotVetoItsNeighbour(bool reversed)
+    {
+        // "extraword red" takes the front of the sentence, so "red blue" can never apply. It was
+        // still allowed to argue with "blue sun", and a phrase that was already dead stopped a live
+        // one from correcting anything.
+        CustomWordEntry[] words =
+        [
+            new("extraword red", "Top"),
+            new("red blue", "Alpha"),
+            new("blue sun", "Beta"),
+        ];
+        if (reversed)
+        {
+            words = [words[2], words[1], words[0]];
+        }
+
+        var result = CustomWordCorrector.Correct("extraword red blue sun", words);
+
+        Assert.Equal("Top Beta", result.Text);
+        Assert.Equal(2, result.ReplacementCount);
+    }
+
     [Fact]
     public void ARowThatWouldChangeNothingDoesNotBlockOneThatWould()
     {
