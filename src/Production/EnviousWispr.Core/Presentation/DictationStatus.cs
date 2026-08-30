@@ -20,6 +20,18 @@ public enum DictationOverlayState
     /// they think. macOS separates the two for exactly this reason and writes the reason down.
     /// </remarks>
     Advisory,
+
+    /// <summary>
+    /// The app noticed something it could do better, and is asking.
+    /// </summary>
+    /// <remarks>
+    /// NOT AN ADVISORY, BECAUSE NOTHING NEEDS ATTENTION. An advisory says the setup is incomplete and
+    /// heads its pill that way; this says the app has been listening and has a suggestion, which
+    /// reads as an accusation under that heading. It takes the advisory PALETTE deliberately - the
+    /// violet already means "this is about your setup and nothing is broken" - and differs only in
+    /// what it calls itself.
+    /// </remarks>
+    Suggestion,
     Warning,
 
     /// <summary>
@@ -50,6 +62,19 @@ public enum PillActionKind
 
     /// <summary>Show the page where the speech engine is chosen and installed.</summary>
     OpenTranscriptionSettings,
+
+    /// <summary>Pin recognition to the language the app keeps hearing.</summary>
+    /// <remarks>
+    /// THE ONE ACTION HERE THAT CHANGES A SETTING RATHER THAN SHOWING ONE, and it is safe to do from
+    /// a pill for the same reason the offer exists: recognition has heard the same language three
+    /// times running, the change is one the person can undo in the same place they would have made
+    /// it, and nothing happens at all unless they press it.
+    ///
+    /// WHICH language is not carried here, and that is on purpose. This enum names an intent, so a
+    /// language code in it would make the vocabulary of the pill depend on the list of languages the
+    /// settings page happens to hold. The window that made the offer remembers what it offered.
+    /// </remarks>
+    LockDetectedLanguage,
 }
 
 /// <summary>The one button a notice may carry.</summary>
@@ -127,6 +152,14 @@ public readonly record struct DictationStatus(
     /// </remarks>
     public static DictationStatus Advisory(string text, PillAction? action = null) =>
         new(text, DictationOverlayState.Advisory, action);
+
+    /// <summary>The app has a suggestion about how it is being used, and is asking.</summary>
+    /// <remarks>
+    /// ALWAYS CARRIES THE ONE THING IT IS SUGGESTING. A suggestion with no button is a remark, and a
+    /// remark on a pill that dismisses itself is noise. The action is required for that reason.
+    /// </remarks>
+    public static DictationStatus Suggestion(string text, PillAction action) =>
+        new(text, DictationOverlayState.Suggestion, action);
 
     /// <summary>The text is safe, but it did not arrive the way the user asked.</summary>
     public static DictationStatus Warning(string text) =>

@@ -736,6 +736,14 @@ public sealed partial class DesignSystemTokenTests
         var window = File.ReadAllText(Path.Combine(
             repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
 
+        // THE WHOLE HANDLER, NOT ONLY ITS PAGE TABLE. An action can be answered before the table is
+        // reached - pinning a language is a save rather than a navigation, and reading only the
+        // table would call a fully handled action unmapped while missing the case this exists for.
+        var handler = SliceBetween(
+            window,
+            "private void OnPillActionInvoked(PillActionKind kind)",
+            "\n    }",
+            "the pill action handler");
         var mapping = SliceBetween(
             window,
             "var tag = kind switch",
@@ -746,7 +754,7 @@ public sealed partial class DesignSystemTokenTests
         // reports an action named OpenPolish as mapped, because OpenPolishSettings contains it -
         // green on exactly the edit the gate exists to refuse. Same correction the repository's own
         // rule about a lookahead after a quantifier makes: a question about a VALUE, not a position.
-        var mapped = ActionKindRegex().Matches(mapping)
+        var mapped = ActionKindRegex().Matches(handler)
             .Select(match => match.Groups[1].Value)
             .ToHashSet(StringComparer.Ordinal);
         var unmapped = Enum.GetNames<PillActionKind>()
@@ -754,8 +762,8 @@ public sealed partial class DesignSystemTokenTests
             .ToArray();
         Assert.True(
             unmapped.Length == 0,
-            "These pill actions are not named in the page mapping, so pressing their button lands "
-                + "on the default page: " + string.Join(", ", unmapped));
+            "These pill actions are not answered by name anywhere in the handler, so pressing their "
+                + "button lands on the default page: " + string.Join(", ", unmapped));
 
         var declaredTags = XDocument
             .Load(Path.Combine(

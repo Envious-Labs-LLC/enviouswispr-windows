@@ -52,7 +52,8 @@ public static class TrayIconStates
         DictationOverlayState.Processing => TrayIconState.Processing,
         DictationOverlayState.Error or DictationOverlayState.Distress => TrayIconState.Error,
         DictationOverlayState.Hidden or DictationOverlayState.Success
-            or DictationOverlayState.Advisory or DictationOverlayState.Warning => TrayIconState.Idle,
+            or DictationOverlayState.Advisory or DictationOverlayState.Suggestion
+            or DictationOverlayState.Warning => TrayIconState.Idle,
         _ => TrayIconState.Idle,
     };
 }

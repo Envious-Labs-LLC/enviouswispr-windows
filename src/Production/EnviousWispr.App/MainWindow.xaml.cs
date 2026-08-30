@@ -197,6 +197,9 @@ public sealed partial class MainWindow : Window, IDisposable
     private int _polishModelDiscoveryVersion;
     private DictationOverlayState _currentOverlayState = DictationOverlayState.Hidden;
 
+    /// <summary>The language the pill is currently offering to pin, or null when it offers none.</summary>
+    private WhisperLanguagePreference? _offeredLanguage;
+
     // True between asking for a speed check and being handed the answer. Without it, any status
     // change arriving mid-run hands the button back and lets a second check start over the first.
     private bool _speedCheckRunning;
@@ -694,8 +697,43 @@ public sealed partial class MainWindow : Window, IDisposable
     /// and a button that crashes the app during someone's dictation is a worse one. A gate holds
     /// this switch to naming every declared member, so the default is genuinely unreachable.
     /// </remarks>
+    /// <summary>Offers to pin the language the app keeps hearing.</summary>
+    /// <remarks>
+    /// THE OFFERED LANGUAGE IS REMEMBERED HERE RATHER THAN CARRIED ON THE BUTTON, because the pill's
+    /// vocabulary names intents and a language code in it would tie the overlay to the list of
+    /// languages the settings page happens to hold.
+    /// </remarks>
+    public void ShowLanguageLockOffer(LanguageLockOffer offer)
+    {
+        ArgumentNullException.ThrowIfNull(offer);
+        _offeredLanguage = offer.Language;
+        var (sentence, action) = offer.Kind == LanguageOfferKind.AskToLock
+            ? ($"You keep speaking {offer.DisplayName}. Pin it so recognition stops guessing?",
+                new PillAction(
+                    $"Use {offer.DisplayName}",
+                    PillActionKind.LockDetectedLanguage,
+                    $"Always use {offer.DisplayName} for speech recognition"))
+            : ($"You keep speaking {offer.DisplayName}. Pin it under Transcription whenever you like.",
+                new PillAction(
+                    "Open settings",
+                    PillActionKind.OpenTranscriptionSettings,
+                    "Open transcription settings"));
+        SetSessionStatus(DictationStatus.Suggestion(sentence, action));
+    }
+
+    /// <summary>Raised when somebody pinned a language from the pill.</summary>
+    public event Action<WhisperLanguagePreference>? LanguageLocked;
+
     private void OnPillActionInvoked(PillActionKind kind)
     {
+        // THE ONE ACTION THAT IS NOT NAVIGATION. Sending it through the page table below would open
+        // a settings page and leave the thing the button said it would do undone.
+        if (kind == PillActionKind.LockDetectedLanguage)
+        {
+            LockOfferedLanguage();
+            return;
+        }
+
         var tag = kind switch
         {
             PillActionKind.OpenPolishSettings => "settings-ai-polish",
@@ -706,6 +744,33 @@ public sealed partial class MainWindow : Window, IDisposable
         // window's constructor, so its click handler already runs on this thread, and TryEnqueue
         // returns a bool nobody reads - a silent way for a button press to go nowhere.
         OpenPage(tag);
+    }
+
+    /// <summary>Saves the language the pill offered, and tells the app it was taken.</summary>
+    private async void LockOfferedLanguage()
+    {
+        var language = _offeredLanguage;
+        if (language is null)
+        {
+            return;
+        }
+
+        // CLEARED BEFORE THE SAVE, NOT AFTER. The save awaits, and a second press in that window
+        // would otherwise pin the same language twice and show the notice twice.
+        _offeredLanguage = null;
+        if (await TrySaveAsync(
+            current => current with
+            {
+                Preferences = current.Preferences with
+                {
+                    Dictation = current.Preferences.Dictation with { WhisperLanguage = language.Value },
+                },
+            },
+            "Language pinned",
+            $"Recognition will use {LanguageLockSuggester.DisplayName(language.Value)}.").ConfigureAwait(true))
+        {
+            LanguageLocked?.Invoke(language.Value);
+        }
     }
 
     /// <summary>Brings the window forward and shows one page by its tag.</summary>
