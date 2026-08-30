@@ -1557,6 +1557,12 @@ public sealed partial class MainWindow : Window, IDisposable
         // flat row, so the next useful thing is a count rather than another reading.
         var levelCallbacks = 0;
         var maximumNormalized = 0f;
+        var queuedRejected = 0;
+        var callbacksRan = 0;
+        var skippedByGeneration = 0;
+        var draws = 0;
+        var maximumLit = 0;
+        var lastAssignedHeight = 0d;
         capture.LevelChanged += OnLevel;
         try
         {
@@ -1610,7 +1616,10 @@ public sealed partial class MainWindow : Window, IDisposable
                     capture.LastRootMeanSquare) +
                 $" [diag {levelCallbacks} callbacks, max {maximumNormalized:F3}, " +
                 $"rms {capture.LastRootMeanSquare:F5}, peak {capture.LastPeak:F5}, " +
-                $"bars {MicrophoneTestBars.Children.Count}]");
+                $"bars {MicrophoneTestBars.Children.Count}, rejected {queuedRejected}, " +
+                $"ran {callbacksRan}, skipped {skippedByGeneration}, draws {draws}, " +
+                $"maxlit {maximumLit}, height {lastAssignedHeight:F1}, " +
+                $"gen {generation}/{_microphoneTestGeneration}]");
         }
         finally
         {
@@ -1626,15 +1635,32 @@ public sealed partial class MainWindow : Window, IDisposable
                 maximumNormalized = normalized;
             }
 
-            MicrophoneTestBars.DispatcherQueue.TryEnqueue(() =>
-            {
-                if (generation != _microphoneTestGeneration)
+            if (!MicrophoneTestBars.DispatcherQueue.TryEnqueue(() =>
                 {
-                    return;
-                }
+                    Interlocked.Increment(ref callbacksRan);
+                    if (generation != _microphoneTestGeneration)
+                    {
+                        Interlocked.Increment(ref skippedByGeneration);
+                        return;
+                    }
 
-                DrawMicrophoneTestLevel(normalized);
-            });
+                    Interlocked.Increment(ref draws);
+                    var lit = (int)Math.Round(normalized * MicrophoneTestBars.Children.Count);
+                    if (lit > maximumLit)
+                    {
+                        maximumLit = lit;
+                    }
+
+                    DrawMicrophoneTestLevel(normalized);
+                    if (MicrophoneTestBars.Children.Count > 0 &&
+                        MicrophoneTestBars.Children[0] is Border first)
+                    {
+                        lastAssignedHeight = first.Height;
+                    }
+                }))
+            {
+                Interlocked.Increment(ref queuedRejected);
+            }
         }
     }
 
