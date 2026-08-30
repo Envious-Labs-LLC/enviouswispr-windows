@@ -1213,6 +1213,12 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
+        // A DISTINCT IN-PROGRESS LINE, SO A RETRY IS AUDIBLE. The setter only announces when the
+        // words change, which is right - but a refresh that fails the same way twice then produces
+        // the same sentence twice and says nothing the second time, leaving somebody who pressed the
+        // button with no confirmation it did anything. Saying "refreshing" first guarantees the
+        // result is always a change from what preceded it.
+        SetLiveText(ApiKeyStatusText, "Refreshing the list of available models...");
         await RefreshPolishModelChoicesAsync(provider, chooseDefault: false)
             .ConfigureAwait(true);
     }
@@ -2694,22 +2700,34 @@ public sealed partial class MainWindow : Window, IDisposable
             ? Visibility.Visible
             : Visibility.Collapsed;
 
-        // THE RESULT IS ANNOUNCED, NOT THE WAITING. Announcing the loading card and then hiding it
-        // told a screen reader that history was loading and never that it had finished - the one
-        // sentence a person actually needs. A card appearing or disappearing is not news; what
-        // happened is. Silence while loading is correct, because the terminal line follows.
-        SetLiveRegion(
-            HistoryStatusText,
-            _isHistoryLoading
-                ? string.Empty
-                : historyUnavailable
-                    ? "History is unavailable. Your dictations are safe; this list could not be read."
-                    : hasItems
-                        ? $"History loaded. {itemCount} dictation{(itemCount == 1 ? string.Empty : "s")}."
-                        : hasQuery
-                            ? "No dictations match that search."
-                            : "No dictations yet.",
-            _isHistoryLoading ? Visibility.Collapsed : Visibility.Visible);
+        // THE RESULT IS ANNOUNCED THROUGH WHICHEVER CARD SAYS IT. Announcing the loading card told a
+        // screen reader that history was loading and never that it had finished, which is the one
+        // sentence a person needs. An extra status line would have said the same thing the cards
+        // already say, in a second place, to everybody. So the card that becomes visible is the live
+        // region, and a loaded list announces through the list itself with the count on its name.
+        if (!_isHistoryLoading)
+        {
+            if (historyUnavailable)
+            {
+                AnnounceLiveRegion(HistoryUnavailableTitle);
+            }
+            else if (hasItems)
+            {
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+                    HistoryList,
+                    $"Transcript history, {itemCount} dictation{(itemCount == 1 ? string.Empty : "s")}.");
+                AnnounceLiveRegion(HistoryList);
+            }
+            else if (hasQuery)
+            {
+                AnnounceLiveRegion(HistorySearchEmptyTitle);
+            }
+            else
+            {
+                AnnounceLiveRegion(HistoryEmptyTitle);
+            }
+        }
+
         HistoryUnavailableState.Visibility = !_isHistoryLoading && !hasItems && historyUnavailable
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -3029,12 +3047,54 @@ public sealed partial class MainWindow : Window, IDisposable
         region.Text = text;
         region.Visibility = visibility;
 
-        if (visibility == Visibility.Visible && (textChanged || becameVisible))
+        if (visibility == Visibility.Visible && (textChanged || becameVisible) && IsOnAVisiblePage(region))
         {
             var peer = FrameworkElementAutomationPeer.FromElement(region)
                 ?? FrameworkElementAutomationPeer.CreatePeerForElement(region);
             peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
         }
+    }
+
+    /// <summary>Announces a region that carries its own words, rather than being assigned them.</summary>
+    /// <remarks>
+    /// FOR THE CARDS THAT ALREADY SAY IT. A history card's title is fixed in markup - "No dictations
+    /// yet" never changes - so there is nothing to assign and nothing for the atomic setter to
+    /// compare. What changes is which card is showing, and that is the news.
+    /// </remarks>
+    private static void AnnounceLiveRegion(FrameworkElement region)
+    {
+        if (!IsOnAVisiblePage(region))
+        {
+            return;
+        }
+
+        var peer = FrameworkElementAutomationPeer.FromElement(region)
+            ?? FrameworkElementAutomationPeer.CreatePeerForElement(region);
+        peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+    }
+
+    /// <summary>Whether every ancestor of a region is showing, not just the region itself.</summary>
+    /// <remarks>
+    /// A VISIBLE CONTROL ON A COLLAPSED PAGE IS NOT VISIBLE. Every settings page in this window is
+    /// built once and collapsed until it is chosen, so history finishing its load while the user is
+    /// on Home announced "History loaded" from a page nobody was looking at. The control's own
+    /// Visibility says nothing about that.
+    ///
+    /// PARENTS, NOT IsOffscreen. A status scrolled out of its own viewport is still on the page the
+    /// user is reading and should still announce; a status on a collapsed page should not. Those are
+    /// different questions and only the first one is about ancestry.
+    /// </remarks>
+    private static bool IsOnAVisiblePage(DependencyObject region)
+    {
+        for (var node = region; node is not null; node = VisualTreeHelper.GetParent(node))
+        {
+            if (node is UIElement { Visibility: Visibility.Collapsed })
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Sets a live region's text, leaving its visibility alone.</summary>

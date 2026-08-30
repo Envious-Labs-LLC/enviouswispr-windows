@@ -1096,14 +1096,24 @@ public sealed partial class DesignSystemTokenTests
             var text = File.ReadAllText(codeBehind);
             foreach (var region in regions)
             {
-                // A DIRECT WRITE IS ONLY A DEFECT WHEN NOTHING RAISES FOR THAT REGION. The pill has
+                // A DIRECT WRITE IS ONLY A DEFECT WHEN NOTHING ANNOUNCES THAT REGION BY NAME. Two
+                // shapes are legitimate and neither can be expressed as an atomic assignment: the
+                // pill sets its text and announces AFTER the window is shown, because raising while
+                // hidden announces something nobody can see; and a history card's words are fixed in
+                // markup, so what changes is which card is showing and there is nothing to assign.
+                //
+                // THE ATOMIC SETTERS ARE NOT ON THIS LIST AND THAT IS DELIBERATE. Adding them made
+                // the gate stop catching anything at all: SetLiveText appears once for a region and
+                // then excuses every direct write to that same region elsewhere in the file. Only an
+                // EXPLICIT announcement, naming the region, buys the exemption. The pill has
                 // to set its text and then announce AFTER the window is shown, because raising while
                 // it is still hidden announces something nobody can see - so text-then-raise is
                 // correct there and an atomic setter cannot express it. What must hold is that the
                 // file which writes the region is also the file that announces it.
                 var announced = Regex.IsMatch(
                     text,
-                    @"(FromElement|CreatePeerForElement)\(\s*" + Regex.Escape(region) + @"\s*\)");
+                    @"(FromElement|CreatePeerForElement|AnnounceLiveRegion)\(\s*"
+                        + Regex.Escape(region) + @"\s*\)");
                 if (announced)
                 {
                     continue;
