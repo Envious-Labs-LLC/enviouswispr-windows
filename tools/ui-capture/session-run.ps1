@@ -2,13 +2,18 @@
 #
 # WHY THIS EXISTS. Every gate in this repository reads markup or tokens. Not one of them can see a
 # rendered pixel, so padding, contrast, a clipped glyph and a control nobody can click are all
-# invisible to a green suite. Three open issues say "checked on a real screen" and could not be
-# closed, because the only way in was SSH, and SSH lands in session 0 where a WinUI app dies in
-# Microsoft.UI.Input.dll with 0xc0000602 before it draws anything.
+# invisible to a green suite. The only way in was SSH, and SSH lands in session 0, where a WinUI app
+# dies in Microsoft.UI.Input.dll with 0xc0000602 before it draws anything and a screen capture
+# returns a blank image with no error.
 #
 # ISOLATED DATA, BECAUSE THIS RUNS ON SOMEBODY'S ACTUAL MACHINE. ENVIOUSWISPR_DATA_DIRECTORY points
 # the app at a scratch folder, so a capture run cannot touch the settings, history or custom words
 # of whoever is logged in.
+#
+# A MARKER FILE, NOT A PNG, IS THE SUCCESS SIGNAL. A PNG exists whether the app was on screen or
+# not: a capture of an empty desktop is a valid image of the wrong thing, which is the silent-empty
+# failure this whole file is built to refuse. The marker is written only after the app was seen with
+# a visible window, so the launcher can tell a photograph of the app from a photograph of nothing.
 param(
     [Parameter(Mandatory = $true)][string] $AppExe,
     [Parameter(Mandatory = $true)][string] $OutputDirectory,
@@ -19,8 +24,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$log = Join-Path $OutputDirectory "$Shot.log"
 if (-not (Test-Path $OutputDirectory)) { New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null }
+$log = Join-Path $OutputDirectory "$Shot.log"
+$pidFile = Join-Path $OutputDirectory "$Shot.pid"
+$marker = Join-Path $OutputDirectory "$Shot.ok"
+$final = Join-Path $OutputDirectory "$Shot.png"
+$staging = Join-Path $OutputDirectory "$Shot.png.partial"
 
 function Note($text) { Add-Content -LiteralPath $log -Value "$([DateTime]::Now.ToString('HH:mm:ss')) $text" }
 
@@ -29,26 +38,7 @@ Note "session $((Get-Process -Id $PID).SessionId), shot '$Shot', overlay '$Overl
 $env:ENVIOUSWISPR_DATA_DIRECTORY = $DataDirectory
 if ($OverlayState) { $env:ENVIOUSWISPR_UAT_OVERLAY_STATE = $OverlayState }
 
-$app = $null
-try {
-    $app = Start-Process -FilePath $AppExe -PassThru
-    Note "started pid $($app.Id)"
-
-    # A FIXED WAIT, AND IT IS HONEST ABOUT BEING ONE. The ready event the app signals is a named
-    # event in this session, and waiting on it correctly is more machinery than a screenshot needs.
-    # The log records the wait, so a capture taken too early is visible as a capture taken too early
-    # rather than mistaken for the app looking wrong.
-    Start-Sleep -Milliseconds $SettleMilliseconds
-
-    if ($app.HasExited) {
-        Note "THE APP EXITED BEFORE THE CAPTURE, exit code $($app.ExitCode). The image below is the desktop without it."
-    }
-
-    # EVERY WINDOW THE APP OWNS, BECAUSE A CROPPED SCREENSHOT IS NOT A MEASUREMENT. Reading a
-    # corner radius off a photograph is guesswork; these numbers say exactly how big each window is
-    # and where, which is what a layout bug has to be argued from. MainWindowHandle is not enough -
-    # the pill is a second top-level window and is the one usually being measured.
-    Add-Type -TypeDefinition @'
+Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
@@ -77,16 +67,54 @@ public static class UiCaptureWindows {
     }
 }
 '@ -ErrorAction SilentlyContinue
-    foreach ($line in [UiCaptureWindows]::For([uint32] $app.Id)) { Note "window $line" }
 
-    & (Join-Path $PSScriptRoot 'capture-shot.ps1') -Path (Join-Path $OutputDirectory "$Shot.png") |
-        ForEach-Object { Note $_ }
+$app = $null
+try {
+    $app = Start-Process -FilePath $AppExe -PassThru
+    # THE PID GOES TO DISK IMMEDIATELY. The launcher cannot see this session's processes and must
+    # still be able to stop the app if this script is killed part-way through.
+    Set-Content -LiteralPath $pidFile -Value $app.Id
+    Note "started pid $($app.Id)"
+
+    Start-Sleep -Milliseconds $SettleMilliseconds
+
+    if ($app.HasExited) {
+        throw "The app exited before the capture with code $($app.ExitCode). A photograph now would be of an empty desktop."
+    }
+
+    # EVERY WINDOW THE APP OWNS, BECAUSE A CROPPED SCREENSHOT IS NOT A MEASUREMENT. A corner radius
+    # read off a photograph is a guess; these numbers are what a layout bug has to be argued from.
+    # MainWindowHandle is not enough - the pill is a second top-level window and is usually the one
+    # being measured.
+    $windows = [UiCaptureWindows]::For([uint32] $app.Id)
+    if (-not $windows -or $windows.Count -eq 0) {
+        throw "The app is running but has no visible window. A photograph now would show the desktop and read as a photograph of the app."
+    }
+    foreach ($line in $windows) { Note "window $line" }
+
+    & (Join-Path $PSScriptRoot 'capture-shot.ps1') -Path $staging | ForEach-Object { Note $_ }
+    if (-not (Test-Path -LiteralPath $staging)) { throw "capture-shot.ps1 wrote no file." }
+
+    # RENAMED ONLY ONCE IT IS WHOLE, so a reader never picks up a half-written PNG, and the marker
+    # is written last so its presence means the app was on screen when the shutter fired.
+    Move-Item -LiteralPath $staging -Destination $final -Force
+    Set-Content -LiteralPath $marker -Value "captured"
+    Note "captured $final"
 } catch {
     Note "FAILED: $($_.Exception.Message)"
     throw
 } finally {
+    Remove-Item -LiteralPath $staging -ErrorAction SilentlyContinue
     if ($app -and -not $app.HasExited) {
-        $app | Stop-Process -Force -ErrorAction SilentlyContinue
-        Note "stopped pid $($app.Id)"
+        # ASK BEFORE INSISTING. Force-killing every run made the app report "did not close properly"
+        # on the next launch, ten times in a row - the capture harness manufacturing the very defect
+        # somebody might photograph.
+        $app.CloseMainWindow() | Out-Null
+        if (-not $app.WaitForExit(4000)) {
+            $app | Stop-Process -Force -ErrorAction SilentlyContinue
+            Note "stopped pid $($app.Id) the hard way; it ignored the close request"
+        } else {
+            Note "closed pid $($app.Id)"
+        }
     }
 }

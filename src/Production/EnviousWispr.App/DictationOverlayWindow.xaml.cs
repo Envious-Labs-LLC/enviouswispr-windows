@@ -48,7 +48,27 @@ public sealed partial class DictationOverlayWindow : Window
     private string? _previewText;
     private int _overlayWidth = NoticeWidth;
     private int _overlayHeight = NoticeHeight;
-    private readonly double _rasterScale;
+
+    /// <summary>The size the pill last asked for, in the units the layout is written in.</summary>
+    /// <remarks>
+    /// KEPT SO A SCALE CHANGE CAN BE REPLAYED. The physical size is the logical size times the
+    /// scale, so once the scale moves, the only way back to a correct window is the number the pill
+    /// originally asked for. Without these two, a monitor change could only be recovered by
+    /// re-running whichever state handler happened to have set the size.
+    /// </remarks>
+    private int _logicalWidth = NoticeWidth;
+    private int _logicalHeight = NoticeHeight;
+
+    /// <summary>Physical pixels per layout unit on the monitor the pill is currently on.</summary>
+    /// <remarks>
+    /// NOT READONLY, AND THAT IS THE FIX. This was read once in the constructor, from whichever
+    /// monitor the app happened to start on. The pill then MOVES: it is placed on the monitor of
+    /// whatever app the user is dictating into. On a two-monitor desk with different scales - a
+    /// 150% laptop panel beside a 100% external, which is an ordinary setup - every size, the
+    /// clipping region and the screen margin stayed computed for the monitor the pill had left.
+    /// The pill came out too big or too small, and its clip no longer matched its own corners.
+    /// </remarks>
+    private double _rasterScale;
 
     public DictationOverlayWindow()
     {
@@ -57,6 +77,13 @@ public sealed partial class DictationOverlayWindow : Window
         var dpi = GetDpiForWindow(windowHandle);
         _rasterScale = dpi > 0 ? dpi / 96d : 1d;
         Resize(NoticeWidth, NoticeHeight);
+        OverlayRoot.Loaded += (_, _) =>
+        {
+            if (OverlayRoot.XamlRoot is { } root)
+            {
+                root.Changed += OnXamlRootChanged;
+            }
+        };
         AppWindow.IsShownInSwitchers = false;
         if (AppWindow.Presenter is OverlappedPresenter presenter)
         {
@@ -505,8 +532,29 @@ public sealed partial class DictationOverlayWindow : Window
         }
     }
 
+    /// <summary>Re-applies the pill's own size when the monitor's scale changes under it.</summary>
+    /// <remarks>
+    /// THE SIZE IS REPLAYED, NOT RECOMPUTED FROM THE WINDOW. Reading the current physical size back
+    /// and rescaling it compounds a rounding error every time the pill crosses a monitor boundary.
+    /// The logical size it asked for is exact and does not drift.
+    /// </remarks>
+    private void OnXamlRootChanged(XamlRoot sender, XamlRootChangedEventArgs args)
+    {
+        var scale = sender.RasterizationScale;
+        if (scale <= 0 || Math.Abs(scale - _rasterScale) < 0.001)
+        {
+            return;
+        }
+
+        _rasterScale = scale;
+        Resize(_logicalWidth, _logicalHeight);
+        PositionOnForegroundMonitor();
+    }
+
     private void Resize(int width, int height)
     {
+        _logicalWidth = width;
+        _logicalHeight = height;
         _overlayWidth = Math.Max(1, (int)Math.Ceiling(width * _rasterScale));
         _overlayHeight = Math.Max(1, (int)Math.Ceiling(height * _rasterScale));
         AppWindow.Resize(new SizeInt32(_overlayWidth, _overlayHeight));
@@ -545,9 +593,15 @@ public sealed partial class DictationOverlayWindow : Window
         // clip a soft edge. Pulling the region in by the width of that fringe removes it. The cost
         // is a fraction of a pixel off the pill's own edge, which no one can see; the black halo
         // around a floating notice is the thing people would.
-        var fringe = (int)Math.Ceiling(2 * _rasterScale);
-        var radius = (int)Math.Ceiling(
-            (OverlayRoot.CornerRadius.TopLeft * _rasterScale - fringe) * 2);
+        // CLAMPED SO THE RECTANGLE CANNOT INVERT. Every shipping size stays far clear of this - the
+        // smallest pill is 185 by 92 with a radius of 29 - but a region built from a negative width
+        // is a window clipped to nothing, which is a pill that silently never appears. A guard that
+        // costs two comparisons is cheaper than that failure being possible at all.
+        var fringe = Math.Max(0, Math.Min(
+            (int)Math.Ceiling(2 * _rasterScale),
+            (Math.Min(_overlayWidth, _overlayHeight) - 1) / 2));
+        var radius = Math.Max(0, (int)Math.Ceiling(
+            (OverlayRoot.CornerRadius.TopLeft * _rasterScale - fringe) * 2));
         var region = CreateRoundRectRgn(
             fringe,
             fringe,
