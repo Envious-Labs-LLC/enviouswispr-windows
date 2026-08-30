@@ -1620,6 +1620,16 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>Lights the bars up to the level, so the row reads as a meter rather than a chart.</summary>
+    /// <remarks>
+    /// A LIT SEGMENT IS FULL HEIGHT, AND THE FIRST VERSION MADE IT A STAIRCASE. Height climbed with
+    /// the bar's POSITION rather than with the level, so the segments that light at ordinary speech
+    /// are the ones at the left where the staircase is shortest: four lit bars stood 0.8 to 3.2
+    /// pixels above a floor of six, which on a real screen is a row of identical grey dots. It was
+    /// photographed as a dead meter beside a verdict correctly saying the microphone worked.
+    ///
+    /// SO THE LEVEL IS SHOWN BY HOW MANY, NOT BY HOW TALL. That is what a segment meter is, and it
+    /// is legible at one segment as well as at twenty.
+    /// </remarks>
     private void DrawMicrophoneTestLevel(float level)
     {
         var lit = (int)Math.Round(level * MicrophoneTestBars.Children.Count);
@@ -1631,7 +1641,7 @@ public sealed partial class MainWindow : Window, IDisposable
             }
 
             var on = index < lit;
-            bar.Height = on ? 6 + 16.0 * (index + 1) / MicrophoneTestBars.Children.Count : 6;
+            bar.Height = on ? 22 : 6;
             bar.Opacity = on ? 1 : 0.25;
         }
     }
