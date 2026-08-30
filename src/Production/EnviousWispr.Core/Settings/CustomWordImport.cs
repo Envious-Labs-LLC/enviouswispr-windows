@@ -264,9 +264,12 @@ public static class CustomWordImport
         // "hello" matched strictly is a decision made on behalf of somebody who may well have been
         // writing a replacement with a comma in it. In a file with no header the rule is what it
         // always was - exactly two fields - so no existing line can change meaning.
+        // A FILE THAT DECLARES THREE COLUMNS HAS THREE COLUMNS ON EVERY LINE. A two-field line under
+        // that header is the blank-third-field case wearing a different hat: the file said it would
+        // say how closely each word must match, and on this line it did not, so reading the ordinary
+        // rule there replaces a choice the person may well have made with one they did not.
         var parts = trimmed.Split(Separators);
-        var allowed = hasHeader ? 3 : 2;
-        if (parts.Length < 2 || parts.Length > allowed)
+        if (parts.Length != (hasHeader ? 3 : 2))
         {
             return new ImportedWordLine(lineNumber, raw, null, ImportedWordOutcome.Unreadable);
         }
@@ -284,7 +287,7 @@ public static class CustomWordImport
         // A WORD NOBODY RECOGNISES IS REFUSED, NOT QUIETLY TAKEN AS ORDINARY. Reading "strickt" as
         // default would correct that word more narrowly than the file asked for and say nothing.
         var strictness = MatchStrictness.Default;
-        if (parts.Length == 3 && !TryReadStrictness(parts[2], out strictness))
+        if (hasHeader && !TryReadStrictness(parts[2], out strictness))
         {
             return new ImportedWordLine(lineNumber, raw, null, ImportedWordOutcome.Unreadable);
         }

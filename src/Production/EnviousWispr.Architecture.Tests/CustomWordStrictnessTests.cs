@@ -186,15 +186,6 @@ public sealed class CustomWordStrictnessTests
     }
 
     [Fact]
-    public void AThirdFieldSomebodyEmptiedIsRefusedRatherThanReadAsOrdinary()
-    {
-        var plan = CustomWordImport.Read($"{CustomWordImport.Header}\nMagnusson,Magnusson,", []);
-
-        Assert.Empty(plan.Additions);
-        Assert.Contains(plan.Lines, line => line.Outcome == ImportedWordOutcome.Unreadable);
-    }
-
-    [Fact]
     public void AStrictWordDoesNotStandInFrontOfALooseOneThatWouldHaveMatched()
     {
         // "magnuson" is 0.889 from Magnusson, which is below the strict bar of 0.915, and 0.778 from
@@ -210,6 +201,103 @@ public sealed class CustomWordStrictnessTests
 
         Assert.Equal("ask Magnesson to sign it", result.Text);
         Assert.Equal(1, result.ReplacementCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TwoRowsThatAgreeOnTheWordTakeTheStricterOneWhicheverComesFirst(bool reversed)
+    {
+        CustomWordEntry[] words =
+        [
+            new("Magnusson", "Magnusson", MatchStrictness.Loose),
+            new("Magnusson", "Magnusson", MatchStrictness.Strict),
+        ];
+        if (reversed)
+        {
+            words = [words[1], words[0]];
+        }
+
+        var result = CustomWordCorrector.Correct("ask magnuson to sign it", words);
+
+        Assert.Equal("ask magnuson to sign it", result.Text);
+        Assert.Equal(0, result.ReplacementCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TwoPhrasesThatWantTheSameWordsAreBothLeftAloneWhicheverComesFirst(bool reversed)
+    {
+        // "red blue" and "blue sun" are the same length and the same number of words, and both are
+        // inside "red blue sun". Replacing surface by surface gave whichever row came first.
+        CustomWordEntry[] words =
+        [
+            new("red blue", "Alpha"),
+            new("blue sun", "Beta"),
+        ];
+        if (reversed)
+        {
+            words = [words[1], words[0]];
+        }
+
+        var result = CustomWordCorrector.Correct("the red blue sun rose", words);
+
+        Assert.Equal("the red blue sun rose", result.Text);
+        Assert.Equal(0, result.ReplacementCount);
+    }
+
+    [Fact]
+    public void ALongerPhraseStillWinsOverAShorterOneInsideIt()
+    {
+        var result = CustomWordCorrector.Correct(
+            "the red blue sun rose",
+            [
+                new CustomWordEntry("red blue sun", "Alpha"),
+                new CustomWordEntry("blue sun", "Beta"),
+            ]);
+
+        Assert.Equal("the Alpha rose", result.Text);
+        Assert.Equal(1, result.ReplacementCount);
+    }
+
+    [Fact]
+    public void AWordOneRowWritesIsNotRewrittenAgainByTheNext()
+    {
+        // Replacing in the growing result let the word "Alpha" - written in by the first row - be
+        // found and rewritten by the second, so the text ended up saying something neither row asked
+        // for.
+        var result = CustomWordCorrector.Correct(
+            "the zebracode is ready",
+            [
+                new CustomWordEntry("zebracode", "Alpha"),
+                new CustomWordEntry("Alpha", "Omega"),
+            ]);
+
+        Assert.Equal("the Alpha is ready", result.Text);
+        Assert.Equal(1, result.ReplacementCount);
+    }
+
+    [Theory]
+    [InlineData("WHEN I SAY,WRITE,HOW CLOSELY\nMagnusson,Magnusson,strict", true)]
+    [InlineData("\n\n# a note\nwhen I say,write,how closely\nMagnusson,Magnusson,strict", true)]
+    [InlineData("when I say,write,how closely\nwhen I say,write,how closely\nMagnusson,Magnusson,strict", true)]
+    [InlineData("when I say,write,how closely\nMagnusson,Magnusson", false)]
+    [InlineData("when I say,write,how closely\nMagnusson,Magnusson,", false)]
+    [InlineData("Magnusson,Magnusson,strict", false)]
+    public void AFileIsReadTheWayItsFirstLineSaysItShouldBe(string text, bool reads)
+    {
+        var plan = CustomWordImport.Read(text, []);
+
+        if (reads)
+        {
+            Assert.Equal(MatchStrictness.Strict, Assert.Single(plan.Additions).Strictness);
+        }
+        else
+        {
+            Assert.Empty(plan.Additions);
+            Assert.Contains(plan.Lines, line => line.Outcome == ImportedWordOutcome.Unreadable);
+        }
     }
 
     [Theory]
@@ -241,23 +329,6 @@ public sealed class CustomWordStrictnessTests
             [new CustomWordEntry("zebracode", "Alpha")]);
 
         Assert.Equal("the Alpha is ready", result.Text);
-    }
-
-    [Fact]
-    public void TwoRowsThatAgreeOnTheWordAndNotOnTheRuleTakeTheStricterOne()
-    {
-        // Both rows write Magnusson, so there is nothing ambiguous about the outcome - only about
-        // how much of what somebody said to change. Changing less is the answer that cannot
-        // surprise them.
-        var result = CustomWordCorrector.Correct(
-            "ask magnuson to sign it",
-            [
-                new CustomWordEntry("Magnusson", "Magnusson", MatchStrictness.Loose),
-                new CustomWordEntry("Magnusson", "Magnusson", MatchStrictness.Strict),
-            ]);
-
-        Assert.Equal("ask magnuson to sign it", result.Text);
-        Assert.Equal(0, result.ReplacementCount);
     }
 
     [Fact]

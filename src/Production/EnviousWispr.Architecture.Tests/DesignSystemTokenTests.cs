@@ -1,4 +1,6 @@
 using EnviousWispr.Core.Presentation;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -2529,6 +2531,45 @@ public sealed partial class DesignSystemTokenTests
 
         var match = Regex.Match(binding, @"^\{x:Bind\s+(\w+)\s*,\s*Mode=OneTime\s*\}$");
         return match.Success ? match.Groups[1].Value : null;
+    }
+
+    /// <summary>
+    /// Both ways of adding a word read the same picker.
+    /// </summary>
+    /// <remarks>
+    /// THE PAGE HAS TWO ADD BUTTONS AND ONLY ONE OF THEM USED TO ASK. Accepting a suggested
+    /// mishearing saved a word under the ordinary rule while the picker in front of the person still
+    /// said Loose, and nothing about that reads as wrong in a diff - the suggested path simply did
+    /// not mention strictness at all, which is what an absence looks like.
+    ///
+    /// ASKED OF THE SYNTAX TREE RATHER THAN THE TEXT, so a third argument that merely CONTAINS the
+    /// method's name, or a call written across three lines, both answer the same way.
+    /// </remarks>
+    [Fact]
+    public void EveryWayOfAddingACustomWordReadsTheStrictnessPicker()
+    {
+        var window = Path.Combine(
+            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs");
+        var root = CSharpSyntaxTree.ParseText(File.ReadAllText(window)).GetRoot();
+
+        var creations = root.DescendantNodes()
+            .OfType<ObjectCreationExpressionSyntax>()
+            .Where(creation => creation.Type.ToString().EndsWith("CustomWordEntry", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(creations.Length >= 2, $"Expected the ways a word is added, found {creations.Length}.");
+
+        var faults = creations
+            .Where(creation => creation.ArgumentList?.Arguments is not { Count: 3 } arguments ||
+                arguments[2].Expression is not InvocationExpressionSyntax call ||
+                !call.Expression.ToString().EndsWith("SelectedMatchStrictness", StringComparison.Ordinal))
+            .Select(creation => $"line {creation.GetLocation().GetLineSpan().StartLinePosition.Line + 1}: {creation}")
+            .ToArray();
+
+        Assert.True(
+            faults.Length == 0,
+            "A word is added without reading the strictness picker, so the choice on screen is not the "
+                + "one saved:" + Environment.NewLine + string.Join(Environment.NewLine, faults));
     }
 
     private readonly record struct DynamicColor(Rgba Light, Rgba Dark);
