@@ -10,8 +10,23 @@ Read only the files relevant to the task, but read each selected file completely
 | Anything the user SEES — a screen, a control, a colour, a size, copy on a surface | `design-system.md` |
 | Installer, signing, updates, or release channels | `distribution.md`, `product-contract.md` |
 | Any shipped implementation | `../rules/workflow.md`, `../rules/validation.md`, plus matching contracts above |
-| Parity with the macOS app, or "does Windows have X yet" | `mac-parity-audit.md` |
+| Parity with the macOS app, or "does Windows have X yet" | the catalog first (below), then `mac-parity-audit.md` |
 | Historical measurements or experiments | Matching file under `../../notes/` |
+
+## The cross-platform catalog answers parity questions first
+
+`~/.claude/knowledge/enviouswispr/catalog.db` holds 92 features across macOS and Windows, each row citing
+the file that decided it. Query it before reading a table or grepping the tree:
+
+```bash
+C=~/.claude/knowledge/enviouswispr/catalog.db
+sqlite3 -header -column $C "SELECT platform_key, status, summary FROM feature_platform WHERE feature_slug='<slug>';"
+sqlite3 -header -column $C "SELECT feature_slug FROM feature ORDER BY feature_slug;"   -- the slug list
+sqlite3 -header -column $C "SELECT kind, gap FROM catalog_gap;"                        -- what it cannot prove
+```
+
+Read `catalog_gap` before acting. The Windows column was written by reading source, never by running the
+app, and its `absent` rows rest on a grep that a differently-named feature would slip past.
 
 The forward-looking source of truth is this knowledge folder. `notes/` contains dated evidence. Code and
 tests establish current implementation. When they disagree, stop, identify the drift, and resolve it in
