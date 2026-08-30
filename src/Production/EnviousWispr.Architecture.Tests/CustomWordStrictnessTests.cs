@@ -247,6 +247,64 @@ public sealed class CustomWordStrictnessTests
         Assert.Equal(0, result.ReplacementCount);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void APlainWordDoesNotRewriteWhatTwoPhrasesWereArguingOver(bool reversed)
+    {
+        // "red blue" and "blue sun" dispute the middle word, so neither applies. Removing them from
+        // the argument entirely then let a plain "blue" rule underneath rewrite the very words the
+        // dispute was about, which is not leaving them alone.
+        CustomWordEntry[] words =
+        [
+            new("red blue", "Alpha"),
+            new("blue sun", "Beta"),
+            new("blue", "Gamma"),
+        ];
+        if (reversed)
+        {
+            words = [words[2], words[1], words[0]];
+        }
+
+        var result = CustomWordCorrector.Correct("the red blue sun rose", words);
+
+        Assert.Equal("the red blue sun rose", result.Text);
+        Assert.Equal(0, result.ReplacementCount);
+    }
+
+    [Fact]
+    public void ARowThatWouldChangeNothingDoesNotBlockOneThatWould()
+    {
+        // "red blue" writing "red blue" has nothing at stake. Letting it dispute "blue sun" meant a
+        // real correction lost to a rule that wanted the text left exactly as it already was.
+        var result = CustomWordCorrector.Correct(
+            "the red blue sun rose",
+            [
+                new CustomWordEntry("red blue", "red blue"),
+                new CustomWordEntry("blue sun", "Beta"),
+            ]);
+
+        Assert.Equal("the red Beta rose", result.Text);
+        Assert.Equal(1, result.ReplacementCount);
+    }
+
+    [Fact]
+    public void AWordWrittenInByOneRuleIsNotThenHeardAsAnother()
+    {
+        // The close-enough pass used to read the CORRECTED sentence, so it examined words nobody had
+        // said: "Alphaa" was written in by the first rule and then heard as "Alpha" by the second,
+        // and one span of what the person actually said was counted as two corrections.
+        var result = CustomWordCorrector.Correct(
+            "the zebracode is ready",
+            [
+                new CustomWordEntry("zebracode", "Alphaa"),
+                new CustomWordEntry("Alpha", "Omega", MatchStrictness.Loose),
+            ]);
+
+        Assert.Equal("the Alphaa is ready", result.Text);
+        Assert.Equal(1, result.ReplacementCount);
+    }
+
     [Fact]
     public void ALongerPhraseStillWinsOverAShorterOneInsideIt()
     {

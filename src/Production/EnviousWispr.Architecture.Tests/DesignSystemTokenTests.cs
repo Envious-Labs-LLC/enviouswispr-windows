@@ -2534,7 +2534,7 @@ public sealed partial class DesignSystemTokenTests
     }
 
     /// <summary>
-    /// Both ways of adding a word read the same picker.
+    /// Every way of adding a word goes through the one method that reads the picker.
     /// </summary>
     /// <remarks>
     /// THE PAGE HAS TWO ADD BUTTONS AND ONLY ONE OF THEM USED TO ASK. Accepting a suggested
@@ -2542,34 +2542,52 @@ public sealed partial class DesignSystemTokenTests
     /// said Loose, and nothing about that reads as wrong in a diff - the suggested path simply did
     /// not mention strictness at all, which is what an absence looks like.
     ///
-    /// ASKED OF THE SYNTAX TREE RATHER THAN THE TEXT, so a third argument that merely CONTAINS the
-    /// method's name, or a call written across three lines, both answer the same way.
+    /// THE RULE IS ABOUT WHERE A WORD IS BUILT, NOT ABOUT WHAT ARGUMENT IT IS GIVEN. An earlier
+    /// version required the third argument to be the picker's reader, which a third add path could
+    /// slip past simply by building its entry in a helper, or in another file, or by passing a
+    /// variable. One method in the whole app may construct one of these, and every path has to go
+    /// through it, so a new path cannot be written that forgets.
+    ///
+    /// THE WHOLE APP IS SCANNED, not one file, because "another file" was one of the ways past it.
     /// </remarks>
     [Fact]
-    public void EveryWayOfAddingACustomWordReadsTheStrictnessPicker()
+    public void EveryWayOfAddingACustomWordGoesThroughTheOneThatReadsThePicker()
     {
-        var window = Path.Combine(
-            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs");
-        var root = CSharpSyntaxTree.ParseText(File.ReadAllText(window)).GetRoot();
+        const string door = "SaveCustomWordFromPickerAsync";
+        var app = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
 
-        var creations = root.DescendantNodes()
-            .OfType<ObjectCreationExpressionSyntax>()
-            .Where(creation => creation.Type.ToString().EndsWith("CustomWordEntry", StringComparison.Ordinal))
-            .ToArray();
+        var faults = new List<string>();
+        var doors = 0;
+        foreach (var file in Directory.EnumerateFiles(app, "*.cs", SearchOption.AllDirectories))
+        {
+            var root = CSharpSyntaxTree.ParseText(File.ReadAllText(file)).GetRoot();
+            foreach (var creation in root.DescendantNodes()
+                .OfType<ObjectCreationExpressionSyntax>()
+                .Where(creation => creation.Type.ToString()
+                    .EndsWith("CustomWordEntry", StringComparison.Ordinal)))
+            {
+                var owner = creation.Ancestors()
+                    .OfType<MethodDeclarationSyntax>()
+                    .FirstOrDefault();
+                if (owner?.Identifier.Text == door)
+                {
+                    doors++;
+                    continue;
+                }
 
-        Assert.True(creations.Length >= 2, $"Expected the ways a word is added, found {creations.Length}.");
-
-        var faults = creations
-            .Where(creation => creation.ArgumentList?.Arguments is not { Count: 3 } arguments ||
-                arguments[2].Expression is not InvocationExpressionSyntax call ||
-                !call.Expression.ToString().EndsWith("SelectedMatchStrictness", StringComparison.Ordinal))
-            .Select(creation => $"line {creation.GetLocation().GetLineSpan().StartLinePosition.Line + 1}: {creation}")
-            .ToArray();
+                faults.Add(
+                    $"{Path.GetFileName(file)} line " +
+                    $"{creation.GetLocation().GetLineSpan().StartLinePosition.Line + 1}: {creation}");
+            }
+        }
 
         Assert.True(
-            faults.Length == 0,
-            "A word is added without reading the strictness picker, so the choice on screen is not the "
-                + "one saved:" + Environment.NewLine + string.Join(Environment.NewLine, faults));
+            doors == 1,
+            $"Expected exactly one place in the app to build a custom word, found {doors}.");
+        Assert.True(
+            faults.Count == 0,
+            $"A word is built outside {door}, so the choice on screen is not the one saved:"
+                + Environment.NewLine + string.Join(Environment.NewLine, faults));
     }
 
     private readonly record struct DynamicColor(Rgba Light, Rgba Dark);

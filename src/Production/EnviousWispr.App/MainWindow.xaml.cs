@@ -1379,15 +1379,7 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private async Task AddSuggestedAliasAsync(string spokenForm, string replacement)
     {
-        if (!await SaveUserDataAsync(
-                data => new ReusableUserData(
-                    data.CustomWords
-                        .Where(entry => !string.Equals(entry.SpokenForm, spokenForm, StringComparison.OrdinalIgnoreCase))
-                        .Append(new CustomWordEntry(spokenForm, replacement, SelectedMatchStrictness()))
-                        .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
-                        .ToArray(),
-                    data.Snippets),
-                "Dictionary saved").ConfigureAwait(true))
+        if (!await SaveCustomWordFromPickerAsync(spokenForm, replacement).ConfigureAwait(true))
         {
             // THE CHIP STAYS WHEN THE SAVE DID NOT. Removing it says the suggestion was taken, and
             // the panel then shows a shorter list of offers than the user actually still has - so
@@ -1425,15 +1417,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
         // CLEARED ONLY IF IT WAS SAVED. Emptying the boxes after a refused save throws away what
         // the person typed and leaves them looking at an error with nothing to retry.
-        if (!await SaveUserDataAsync(
-                data => new ReusableUserData(
-                    data.CustomWords
-                        .Where(entry => !string.Equals(entry.SpokenForm, spoken, StringComparison.OrdinalIgnoreCase))
-                        .Append(new CustomWordEntry(spoken, replacement, SelectedMatchStrictness()))
-                        .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
-                        .ToArray(),
-                    data.Snippets),
-                "Dictionary saved").ConfigureAwait(true))
+        if (!await SaveCustomWordFromPickerAsync(spoken, replacement).ConfigureAwait(true))
         {
             return;
         }
@@ -1443,22 +1427,36 @@ public sealed partial class MainWindow : Window, IDisposable
         ResetMatchStrictness();
     }
 
-    /// <summary>What the "How closely it must match" picker is currently set to.</summary>
+    /// <summary>Saves one word under whatever the picker currently says, replacing any twin.</summary>
     /// <remarks>
-    /// ONE READER, BECAUSE THERE ARE TWO WAYS TO ADD A WORD. Suggested mishearings are added by
-    /// their own path, and reading the picker only in the typed one meant a person could set Loose,
-    /// press a suggestion, and get a word under the ordinary rule with the picker still saying
-    /// Loose in front of them.
-    ///
-    /// THE PICKER'S ORDER IS THE ENUM'S ORDER, which is worth stating rather than leaving as a
-    /// coincidence two files apart. A choice nobody has made reads as -1, which is the ordinary rule.
+    /// ONE DOOR, BECAUSE THERE ARE TWO WAYS TO ADD A WORD. Suggested mishearings are accepted by
+    /// their own button, and building the entry separately there meant a person could set Loose,
+    /// press a suggestion, and get a word under the ordinary rule with the picker still saying Loose
+    /// in front of them. Reading the picker inside the one method that saves is what makes the
+    /// second path unable to forget - and it is what a gate can check, because it is the only place
+    /// in the app allowed to build one of these.
     /// </remarks>
-    private MatchStrictness SelectedMatchStrictness() => WordStrictnessComboBox.SelectedIndex switch
+    private Task<bool> SaveCustomWordFromPickerAsync(string spokenForm, string replacement)
     {
-        1 => MatchStrictness.Loose,
-        2 => MatchStrictness.Strict,
-        _ => MatchStrictness.Default,
-    };
+        // THE PICKER'S ORDER IS THE ENUM'S ORDER, which is worth stating rather than leaving as a
+        // coincidence two files apart. A choice nobody has made reads as -1, the ordinary rule.
+        var strictness = WordStrictnessComboBox.SelectedIndex switch
+        {
+            1 => MatchStrictness.Loose,
+            2 => MatchStrictness.Strict,
+            _ => MatchStrictness.Default,
+        };
+
+        return SaveUserDataAsync(
+            data => new ReusableUserData(
+                data.CustomWords
+                    .Where(entry => !string.Equals(entry.SpokenForm, spokenForm, StringComparison.OrdinalIgnoreCase))
+                    .Append(new CustomWordEntry(spokenForm, replacement, strictness))
+                    .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
+                    .ToArray(),
+                data.Snippets),
+            "Dictionary saved");
+    }
 
     /// <summary>Puts the picker back to the ordinary rule after a word is saved.</summary>
     /// <remarks>
