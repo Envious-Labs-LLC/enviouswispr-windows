@@ -99,14 +99,21 @@ work: hands-free lock, removed once a control test proved the wiring could never
 ## FACT: partial-on-windows
 The name exists. The behaviour does not match.
 
+**TWO ROWS IN THIS TABLE WERE ALREADY WRONG WHEN READ ON 2026-08-29, BOTH IN THE SAME DIRECTION.**
+Custom-words import and export were both described as absent and both ship. A session about to build
+plain-file import found it already there, reachable, and better than what it was about to write. That
+is the failure this file's own opening rule predicts - an absence claim expires, and the table failed
+toward WORK - so the correction is recorded here rather than only in the rows. **Re-sweep before
+building against any row in this table.**
+
 | Capability | What is actually there | Gap |
 |---|---|---|
 | Streaming (as "Live Preview") | `RunLivePreviewAsync` re-transcribes a rolling 20-second window every 2.5s and shows it in the UI ONLY | The final transcript is computed from scratch on release. The preview never feeds it. |
 | Multi-route paste cascade | One direct value-write route (`TryDirectValueWrite`) plus a clipboard fallback | macOS runs several routes with per-route eligibility |
 | Auto-stop on silence | An ENERGY segmenter with hysteresis drives auto-stop in toggle mode, off by default (`SpeechSegmenter`, `AutoStopPolicy`) | macOS uses a NEURAL detector, which also does speech-segment filtering. This one hears a slammed door as speech. The user-visible behaviour is present; the recogniser is not. |
 | Per-dictation execution metrics | The whole wait is measured and logged as `DictationCompleted` | macOS records a per-dictation breakdown across capture, ASR, polish and delivery in ONE record. Here the stages log separately with nothing tying them to a dictation. |
-| Custom-words import | The PORTABLE PROFILE import carries dictionary entries and snippets (`MainWindow.xaml:540`) | No import from a plain file, from a paste, or from a rival app. A user's existing word list still has to be retyped unless it arrives as one of our own profiles. |
-| Custom-words export | The portable profile export carries them out (`MainWindow.xaml.cs:1263`) | No word-list export, no collision ownership, no bulk edit |
+| Custom-words import | **BOTH ROWS BELOW WERE STALE AND ARE CORRECTED. Re-swept 2026-08-29.** A plain word list imports from a file today: `CustomWordImport.Read` in Core, reached by an "Import words" button on the Dictionary page (`MainWindow.xaml:442`). It takes a comma, a tab or an equals sign, reports collisions rather than deciding them, and refuses a quoted CSV comma out loud rather than mangling it. | **Closed 2026-08-29: a "Paste a list" button reads the clipboard through the same path, and a conflict is now OFFERED rather than decided - the message carries a button that takes the list's version, in place, keeping the user's order.** Remaining: no import from a rival app's own format. |
+| Custom-words export | `CustomWordImport.Write` behind an "Export words" button, comma-separated so it opens in a spreadsheet | No bulk edit. Collision ownership is now answered on the IMPORT side by the offer above. |
 
 ## FACT: present-on-windows
 Confirmed present, not confirmed equivalent. Depth is unaudited.

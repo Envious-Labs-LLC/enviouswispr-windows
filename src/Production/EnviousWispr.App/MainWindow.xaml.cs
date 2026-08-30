@@ -1339,9 +1339,15 @@ public sealed partial class MainWindow : Window, IDisposable
             .Append(new CustomWordEntry(spokenForm, replacement))
             .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
-        await SaveUserDataAsync(
-            new ReusableUserData(words, _settings.UserData.Snippets),
-            "Dictionary saved").ConfigureAwait(true);
+        if (!await SaveUserDataAsync(
+                new ReusableUserData(words, _settings.UserData.Snippets),
+                "Dictionary saved").ConfigureAwait(true))
+        {
+            // THE CHIP STAYS WHEN THE SAVE DID NOT. Removing it says the suggestion was taken, and
+            // the panel then shows a shorter list of offers than the user actually still has - so
+            // the one thing they could do about the failure disappears along with the failure.
+            return;
+        }
 
         var accepted = SuggestedAliasesPanel.Children
             .OfType<Button>()
@@ -1373,7 +1379,15 @@ public sealed partial class MainWindow : Window, IDisposable
             .Append(new CustomWordEntry(spoken, replacement))
             .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
-        await SaveUserDataAsync(new ReusableUserData(words, _settings.UserData.Snippets), "Dictionary saved").ConfigureAwait(true);
+        // CLEARED ONLY IF IT WAS SAVED. Emptying the boxes after a refused save throws away what
+        // the person typed and leaves them looking at an error with nothing to retry.
+        if (!await SaveUserDataAsync(
+                new ReusableUserData(words, _settings.UserData.Snippets),
+                "Dictionary saved").ConfigureAwait(true))
+        {
+            return;
+        }
+
         SpokenFormBox.Text = string.Empty;
         ReplacementBox.Text = string.Empty;
     }
@@ -1405,7 +1419,15 @@ public sealed partial class MainWindow : Window, IDisposable
             .Append(new SnippetEntry(name, body))
             .OrderBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
-        await SaveUserDataAsync(new ReusableUserData(_settings.UserData.CustomWords, snippets), "Snippet saved").ConfigureAwait(true);
+        // Same reason as the word boxes above: a refused save must not eat the snippet someone
+        // just wrote.
+        if (!await SaveUserDataAsync(
+                new ReusableUserData(_settings.UserData.CustomWords, snippets),
+                "Snippet saved").ConfigureAwait(true))
+        {
+            return;
+        }
+
         SnippetNameBox.Text = string.Empty;
         SnippetBodyBox.Text = string.Empty;
     }
@@ -1637,18 +1659,50 @@ public sealed partial class MainWindow : Window, IDisposable
         var plan = CustomWordImport.Read(pack.Words, existing);
         if (plan.Additions.Count == 0)
         {
+            // THE SAME OFFER A CHOSEN FILE GETS. A pack whose words the user already corrects their
+            // own way would otherwise say "already set up" and leave those corrections unreachable,
+            // which is the exact position a file import was in before this.
             ShowMessage(
                 $"{pack.Name} is already set up",
                 DescribeImport(plan),
-                InfoBarSeverity.Informational);
+                InfoBarSeverity.Informational,
+                ReplaceConflictsAction(plan));
             return;
         }
 
         var userData = new ReusableUserData(
             [.. existing, .. plan.Additions],
             _settings.UserData.Snippets);
-        await SaveUserDataAsync(userData, $"{pack.Name} added", DescribeImport(plan))
-            .ConfigureAwait(true);
+        if (!await SaveUserDataAsync(userData, $"{pack.Name} added", DescribeImport(plan))
+            .ConfigureAwait(true))
+        {
+            return;
+        }
+
+        ShowMessage(
+            $"{pack.Name} added",
+            DescribeImport(plan),
+            InfoBarSeverity.Success,
+            ReplaceConflictsAction(plan));
+    }
+
+    private Button BuildOfferButton(ImportConflictOffer offer)
+    {
+        var button = new Button { Content = offer.Label };
+        button.Click += async (_, _) =>
+        {
+            if (await ReplaceConflictsAsync(offer.Replacements).ConfigureAwait(true))
+            {
+                return;
+            }
+
+            // THE OFFER COMES BACK WHEN THE SAVE DID NOT TAKE. The failure message clears the bar's
+            // button along with the old sentence, so without this a refused replacement leaves the
+            // user reading an error with the one thing that would retry it gone. An earlier draft
+            // cleared the button BEFORE saving, which had the same end state and no way back.
+            OperationInfoBar.ActionButton = BuildOfferButton(offer);
+        };
+        return button;
     }
 
     private async void ImportWordsButton_Click(object sender, RoutedEventArgs e)
@@ -1677,11 +1731,32 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
+        await ApplyWordListAsync(text).ConfigureAwait(true);
+    }
+
+    /// <summary>Reads one word list, adds what is new, and offers what it could not decide.</summary>
+    /// <remarks>
+    /// ONE PATH FOR EVERY WORD LIST, HOWEVER IT ARRIVED. A file and a paste are the same list with
+    /// two ways in, and two copies of this would be two places for the conflict offer to be
+    /// forgotten from.
+    ///
+    /// A CONFLICT IS OFFERED RATHER THAN DECIDED, AND THAT IS THE ROW THIS CLOSES. Until now a word
+    /// the list corrected differently from the user's own was counted and left alone, which tells
+    /// somebody their curated list was ignored and gives them nothing to do about it but retype
+    /// words they already have written down. Silently overwriting a correction tuned by hand is
+    /// worse, so neither is chosen for them: the message carries a button and they pick.
+    /// </remarks>
+    private async Task ApplyWordListAsync(string text)
+    {
         var existing = _settings.UserData.CustomWords;
         var plan = CustomWordImport.Read(text, existing);
         if (plan.Additions.Count == 0)
         {
-            ShowMessage("No new words to add", DescribeImport(plan), InfoBarSeverity.Informational);
+            ShowMessage(
+                "No new words to add",
+                DescribeImport(plan),
+                InfoBarSeverity.Informational,
+                ReplaceConflictsAction(plan));
             return;
         }
 
@@ -1695,8 +1770,93 @@ public sealed partial class MainWindow : Window, IDisposable
         // user never learned about the forty. That is the INVERSE of the failure the itemised
         // message was written for, and it survived because the zero-added path was the only one
         // anyone had looked at.
-        await SaveUserDataAsync(userData, "Words imported", DescribeImport(plan)).ConfigureAwait(true);
+        var saved = await SaveUserDataAsync(userData, "Words imported", DescribeImport(plan))
+            .ConfigureAwait(true);
+        if (!saved)
+        {
+            // The save refused and has already said why. Speaking again here would paint over that
+            // with a success, and offering to replace corrections nothing imported would be worse.
+            return;
+        }
+
+        ShowMessage(
+            "Words imported",
+            DescribeImport(plan),
+            InfoBarSeverity.Success,
+            ReplaceConflictsAction(plan));
     }
+
+    /// <summary>Pastes a word list straight out of the clipboard.</summary>
+    /// <remarks>
+    /// THE SHORTEST ROUTE FROM SOMEBODY ELSE'S LIST INTO THIS ONE. macOS has the same path, and
+    /// without it a person with a list in a spreadsheet or an email has to save a file first for no
+    /// reason the app can explain.
+    ///
+    /// It reads the clipboard and does not touch it: the clipboard is somewhere a dictation product
+    /// has to be a good citizen, and this app already guards it carefully on the delivery path.
+    /// </remarks>
+    private async void PasteWordsButton_Click(object sender, RoutedEventArgs e)
+    {
+        string text;
+        try
+        {
+            var clipboard = Clipboard.GetContent();
+            text = clipboard.Contains(StandardDataFormats.Text)
+                ? await clipboard.GetTextAsync()
+                : string.Empty;
+        }
+        catch (Exception exception) when (
+            exception is COMException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            // Another app can hold the clipboard open, and Windows says so by failing the read.
+            // UnauthorizedAccessException is the one that mattered: .NET maps E_ACCESSDENIED to it
+            // rather than to COMException, so protected clipboard content escaped this handler -
+            // and an async void handler that throws takes the process down with it.
+            ShowMessage(
+                "The clipboard could not be read",
+                "Another app may be using it. Copy the list again and retry. Nothing was changed.",
+                InfoBarSeverity.Error);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            ShowMessage(
+                "There is no text on the clipboard",
+                "Copy a list of word pairs first. Each line needs a spoken form and a replacement, "
+                    + "separated by a comma, a tab, or an equals sign.",
+                InfoBarSeverity.Informational);
+            return;
+        }
+
+        await ApplyWordListAsync(text).ConfigureAwait(true);
+    }
+
+    /// <summary>The offer to take the list's version of the words the user corrects differently.</summary>
+    private static ImportConflictOffer? ReplaceConflictsAction(CustomWordImportPlan plan)
+    {
+        if (plan.Conflicts.Count == 0)
+        {
+            return null;
+        }
+
+        var word = plan.Conflicts.Count == 1 ? "correction" : "corrections";
+        return new ImportConflictOffer($"Replace my {plan.Conflicts.Count} {word}", plan.Conflicts);
+    }
+
+    private async Task<bool> ReplaceConflictsAsync(IReadOnlyList<CustomWordEntry> replacements)
+    {
+        var merged = CustomWordImport.Merge(_settings.UserData.CustomWords, replacements);
+        var word = replacements.Count == 1 ? "correction" : "corrections";
+        return await SaveUserDataAsync(
+            new ReusableUserData(merged, _settings.UserData.Snippets),
+            "Corrections replaced",
+            $"{replacements.Count} {word} now match the list you imported.").ConfigureAwait(true);
+    }
+
+    /// <summary>A button a message can carry, and what pressing it applies.</summary>
+    private sealed record ImportConflictOffer(
+        string Label, IReadOnlyList<CustomWordEntry> Replacements);
 
     private async void ExportWordsButton_Click(object sender, RoutedEventArgs e)
     {
@@ -2479,15 +2639,35 @@ public sealed partial class MainWindow : Window, IDisposable
     private void ListSelectionChanged(object sender, SelectionChangedEventArgs e) =>
         UpdateSelectionDependentButtons();
 
-    private async Task SaveUserDataAsync(ReusableUserData userData, string title) =>
+    /// <summary>Saves with the generic message, and says whether it worked.</summary>
+    /// <remarks>
+    /// IT RETURNS THE OUTCOME FOR THE SAME REASON THE OTHER OVERLOAD DOES. This one used to return a
+    /// bare Task, which is not a decision anybody made - it simply had no reason to report until a
+    /// caller needed to react. Three did: two cleared the user's typing after a refused save, and
+    /// one said "All of them added" and removed the suggestion it had failed to add.
+    /// </remarks>
+    private async Task<bool> SaveUserDataAsync(ReusableUserData userData, string title) =>
         await SaveUserDataAsync(userData, title, "The change was saved locally.").ConfigureAwait(true);
 
-    private async Task SaveUserDataAsync(ReusableUserData userData, string title, string message)
+    /// <summary>Saves the user's words and snippets, and says whether it worked.</summary>
+    /// <remarks>
+    /// IT RETURNS THE OUTCOME BECAUSE A CALLER THAT SPEAKS AFTER IT NEEDS TO KNOW. TrySaveAsync
+    /// already shows an error of its own when the save is refused - the word ceiling, for one - and
+    /// a caller that then showed its own success message would paint over that error with the
+    /// opposite of the truth. Measured on the import path, where a refused save reported "Words
+    /// imported" and offered to replace corrections that had not been imported.
+    /// </remarks>
+    private async Task<bool> SaveUserDataAsync(
+        ReusableUserData userData, string title, string message)
     {
-        if (await TrySaveAsync(_settings with { UserData = userData }, title, message).ConfigureAwait(true))
+        if (!await TrySaveAsync(_settings with { UserData = userData }, title, message)
+            .ConfigureAwait(true))
         {
-            RefreshReusableUserDataViews();
+            return false;
         }
+
+        RefreshReusableUserDataViews();
+        return true;
     }
 
     private void UpdateHistoryListVisibility(string query, int itemCount)
@@ -3125,11 +3305,24 @@ public sealed partial class MainWindow : Window, IDisposable
         });
     }
 
-    private void ShowMessage(string title, string message, InfoBarSeverity severity)
+    private void ShowMessage(string title, string message, InfoBarSeverity severity) =>
+        ShowMessage(title, message, severity, offer: null);
+
+    /// <summary>Shows one message, optionally carrying the one thing the user can do about it.</summary>
+    /// <remarks>
+    /// THE BUTTON IS CLEARED ON EVERY MESSAGE, INCLUDING THE ONES THAT DO NOT WANT ONE. An action
+    /// left on the bar belongs to a message that has gone, and this app has already been bitten by
+    /// exactly that shape - a "Snippet removed" confirmation that stayed visible across four other
+    /// pages, reading as a message about wherever the user now was. A stale BUTTON is worse than a
+    /// stale sentence, because pressing it does something.
+    /// </remarks>
+    private void ShowMessage(
+        string title, string message, InfoBarSeverity severity, ImportConflictOffer? offer)
     {
         OperationInfoBar.Title = title;
         OperationInfoBar.Message = message;
         OperationInfoBar.Severity = severity;
+        OperationInfoBar.ActionButton = offer is null ? null : BuildOfferButton(offer);
         var wasAlreadyOpen = OperationInfoBar.IsOpen;
         OperationInfoBar.IsOpen = true;
         if (!wasAlreadyOpen)

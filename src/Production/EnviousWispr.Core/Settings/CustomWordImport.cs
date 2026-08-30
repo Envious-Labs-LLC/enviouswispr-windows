@@ -34,6 +34,21 @@ public sealed record CustomWordImportPlan(IReadOnlyList<ImportedWordLine> Lines)
         .Select(line => line.Entry!)
         .ToArray();
 
+    /// <summary>The words the file corrects differently from the way the user already does.</summary>
+    /// <remarks>
+    /// CARRIED, NOT JUST COUNTED, AND THAT IS THE WHOLE POINT OF THE ROW. Reporting "3 left alone"
+    /// tells someone their curated list was ignored and gives them nothing to do about it except
+    /// retype three words they already have written down. macOS lets the user decide; this is the
+    /// value that decision needs.
+    ///
+    /// Still not applied by reading a plan. A plan reads and never writes, so choosing to take
+    /// these remains a separate, deliberate act at the call site.
+    /// </remarks>
+    public IReadOnlyList<CustomWordEntry> Conflicts => Lines
+        .Where(line => line.Outcome == ImportedWordOutcome.Conflict && line.Entry is not null)
+        .Select(line => line.Entry!)
+        .ToArray();
+
     public int ConflictCount => Lines.Count(line => line.Outcome == ImportedWordOutcome.Conflict);
 
     public int UnreadableCount => Lines.Count(line => line.Outcome == ImportedWordOutcome.Unreadable);
@@ -122,6 +137,44 @@ public static class CustomWordImport
         return string.Join(
             Environment.NewLine,
             entries.Select(entry => $"{entry.SpokenForm},{entry.Replacement}"));
+    }
+
+    /// <summary>Takes the imported version of words the user already corrects differently.</summary>
+    /// <remarks>
+    /// IN CORE RATHER THAN IN THE WINDOW, SO IT CAN BE MEASURED. The rest of importing is a value
+    /// that a test can drive with no windowing present, and the one step that CHANGES a user's list
+    /// is the one worth holding to that standard hardest.
+    ///
+    /// REPLACED IN PLACE, NOT REMOVED AND APPENDED. A user who has ordered their list has ordered
+    /// it, and an import that quietly moved three words to the bottom would be a change nobody
+    /// asked for arriving alongside one they did.
+    ///
+    /// A replacement whose spoken form is not already present is IGNORED rather than added. This
+    /// answers one question - take their version of a word I already have - and adding is the other
+    /// question, which the plan's additions already answer.
+    /// </remarks>
+    public static IReadOnlyList<CustomWordEntry> Merge(
+        IReadOnlyList<CustomWordEntry> existing,
+        IReadOnlyList<CustomWordEntry> replacements)
+    {
+        ArgumentNullException.ThrowIfNull(existing);
+        ArgumentNullException.ThrowIfNull(replacements);
+        if (replacements.Count == 0)
+        {
+            return existing;
+        }
+
+        var incoming = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in replacements)
+        {
+            incoming[entry.SpokenForm] = entry.Replacement;
+        }
+
+        return existing
+            .Select(entry => incoming.TryGetValue(entry.SpokenForm, out var replacement)
+                ? entry with { Replacement = replacement }
+                : entry)
+            .ToArray();
     }
 
     private static ImportedWordLine ReadLine(

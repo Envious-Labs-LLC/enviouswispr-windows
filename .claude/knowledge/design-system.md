@@ -470,6 +470,28 @@ elements, histogrammed. Three real values landing exactly on 4, 8 and 12 DIP, ag
 **Ask what the detecting instrument SKIPS before re-running it as a verifier.** A detector can
 afford to skip things; a verifier cannot.
 
+## FACT: a-test-RUN-can-execute-fewer-tests-than-were-discovered-and-still-look-green
+Measured on the rig 2026-08-29. One run reported `Failed: 1, Passed: 693, Total: 694, Duration: 1 s`
+against a suite that `dotnet test --list-tests` puts at **733**, and whose every other run that day took
+14 to 17 seconds. Thirty-nine tests did not run. The summary was well-formed, the single failure was the
+usual environmental one, and nothing said anything was missing.
+
+**THE TELL IS THE TOTAL AND THE DURATION, NOT THE VERDICT.** A truncated run reports the tests it DID
+execute, so its pass line is true about a smaller suite and reads identically to a full pass. Carry the
+expected value: this suite's total is 733 and its duration is around fifteen seconds. A run reporting
+materially fewer, or finishing in about a second, is not a pass and is not a failure - it is an
+instrument that did not do the work.
+
+It did not reproduce on the next two runs, so it is intermittent rather than a stuck state. That makes
+it worse, not better: an intermittent short run is one that will eventually happen on the round that
+would have caught something.
+
+**`--list-tests` is the control**, and it costs one command. It answers how many tests EXIST, which the
+run's own summary cannot.
+
+Same family as everything else here: the tool answered, the answer was well-formed, and it was about a
+smaller thing than the question.
+
 ## FACT: a-build-can-report-success-and-deliver-nothing
 `dotnet build` with the app running reports **Build succeeded, 0 errors** and produces no new
 binary. The copies fail as `MSB3026` WARNINGS naming the locking process, msbuild retries, gives up,
