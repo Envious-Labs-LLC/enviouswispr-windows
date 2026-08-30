@@ -9,6 +9,7 @@ Read only the files relevant to the task, but read each selected file completely
 | Dictation behavior, deterministic cleanup, emoji, or fallback | `pipeline.md`, `product-contract.md` |
 | Anything the user SEES — a screen, a control, a colour, a size, copy on a surface | `design-system.md` |
 | Installer, signing, updates, or release channels | `distribution.md`, `product-contract.md` |
+| A crash, hang, silent exit, or any "why did it do that" | `diagnostics.md` FIRST, then the matching contract |
 | Any shipped implementation | `../rules/workflow.md`, `../rules/validation.md`, plus matching contracts above |
 | Parity with the macOS app, or "does Windows have X yet" | the catalog first (below), then `mac-parity-audit.md` |
 | Historical measurements or experiments | Matching file under `../../notes/` |
@@ -31,3 +32,16 @@ app, and its `absent` rows rest on a grep that a differently-named feature would
 The forward-looking source of truth is this knowledge folder. `notes/` contains dated evidence. Code and
 tests establish current implementation. When they disagree, stop, identify the drift, and resolve it in
 the same change or a linked GitHub issue.
+
+## Pathway Triggers
+
+The session hook greps this section and arms each row's `**when:**` words as triggers, so a matching prompt
+surfaces the row without the whole index. One row per line, every row carries a `**when:**`.
+
+- [diagnostics.md](diagnostics.md) — **when:** crash, hang, silent exit, app quit, vanished, app.jsonl, run-state, heartbeat, diagnostic log, why did it do that
+- [design-system.md](design-system.md) — **when:** screen, control, colour, color, size, spacing, copy, icon, theme, anything the user sees
+- [pipeline.md](pipeline.md) — **when:** dictation behaviour, deterministic cleanup, emoji, punctuation, fallback, transcript
+- [distribution.md](distribution.md) — **when:** installer, signing, updates, release channel, Velopack, feed
+- [architecture.md](architecture.md) — **when:** architecture, dependency, platform choice, project layout
+- [product-contract.md](product-contract.md) — **when:** product decision, scope, invariant, privacy boundary
+- [mac-parity-audit.md](mac-parity-audit.md) — **when:** macOS parity, does Windows have, missing feature
