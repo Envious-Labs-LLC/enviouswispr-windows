@@ -187,6 +187,9 @@ public sealed partial class DictationOverlayWindow : Window
             // the severity: "Dictation stopped safely" over a sentence about Ollama being switched
             // off tells the user our software broke when their setup is simply incomplete.
             DictationOverlayState.Advisory => ("Setup needs attention", "\uE946", detail),
+            // THE GLOBE, AND THE HEADING SAYS THE APP WAS LISTENING RATHER THAN THAT SOMETHING IS
+            // WRONG. This is the one pill that asks a question instead of reporting news.
+            DictationOverlayState.Suggestion => ("A suggestion", "\uE774", detail),
             DictationOverlayState.Warning => ("Your text is safe", "\uE7BA", detail),
             // Distress reuses the error glyph deliberately. It is the same bad news arriving
             // louder, and the pulse plus the deeper wash carry the difference. A codepoint chosen
@@ -243,15 +246,18 @@ public sealed partial class DictationOverlayWindow : Window
         AnnounceStateChange(StateTitle, state);
 
         if (state is DictationOverlayState.Success or DictationOverlayState.Advisory
-            or DictationOverlayState.Warning or DictationOverlayState.Distress
-            or DictationOverlayState.Error)
+            or DictationOverlayState.Suggestion or DictationOverlayState.Warning
+            or DictationOverlayState.Distress or DictationOverlayState.Error)
         {
             // AN ADVISORY DWELLS LONGEST BECAUSE IT ASKS THE USER TO DO SOMETHING. It names a
             // setting they have to go and change, which is more words than "your text is safe" and
             // more thought than a tick. macOS makes the same call and says so in its own source.
             _dwell = TimeSpan.FromSeconds(state switch
             {
-                DictationOverlayState.Advisory => 6,
+                // A SUGGESTION DWELLS AS LONG AS AN ADVISORY. It asks a question and offers a
+                // button, and a question the user has not finished reading is a question they
+                // answer by default.
+                DictationOverlayState.Advisory or DictationOverlayState.Suggestion => 6,
                 DictationOverlayState.Error or DictationOverlayState.Distress => 5,
                 _ => 3,
             });
@@ -545,7 +551,10 @@ public sealed partial class DictationOverlayWindow : Window
         {
             DictationOverlayState.Success =>
                 ("PillSuccessIconStyle", "PillSuccessEdgeStyle", "PillSuccessWashStyle"),
-            DictationOverlayState.Advisory =>
+            // SUGGESTION SHARES THE ADVISORY PALETTE ON PURPOSE, and is listed beside it rather than
+            // folded into the neutral arm. The violet already says "this is about your setup and
+            // nothing is broken", which is exactly what a suggestion is.
+            DictationOverlayState.Advisory or DictationOverlayState.Suggestion =>
                 ("PillAdvisoryIconStyle", "PillAdvisoryEdgeStyle", "PillAdvisoryWashStyle"),
             DictationOverlayState.Warning =>
                 ("PillWarningIconStyle", "PillWarningEdgeStyle", "PillWarningWashStyle"),
