@@ -1151,9 +1151,10 @@ public sealed partial class DesignSystemTokenTests
     /// types.
     ///
     /// WHAT THAT LEAVES OPEN, ENUMERATED, BECAUSE AN UNSTATED LIMIT READS AS COVERAGE: a field whose
-    /// type is a named delegate IMPORTED from another file; a lambda assigned to <c>var</c>, whose
-    /// type the compiler infers and the text does not state; a function pointer; and a third-party
-    /// type that happens to share one of these names. Closing those needs a semantic model over a
+    /// type is a named delegate declared OUTSIDE the scanned app tree, in another project or a
+    /// package - one declared anywhere inside the tree is caught at its own declaration; a lambda
+    /// assigned to <c>var</c>, whose type the compiler infers and the text does not state; a function
+    /// pointer; and a third-party type that happens to share one of these names. Closing those needs a semantic model over a
     /// real compilation, or better, an analyser that refuses the code at build time rather than a
     /// test that reports it afterwards. That is issue #82, which also enumerates the four other gates
     /// asking the same unanswerable question.
@@ -1167,11 +1168,21 @@ public sealed partial class DesignSystemTokenTests
         var offenders = new List<string>();
         var root = CSharpSyntaxTree.ParseText(text).GetRoot();
 
+        var aliases = root.DescendantNodes().OfType<UsingDirectiveSyntax>()
+            .Where(directive => directive is { Alias: not null, Name: not null })
+            .ToList();
+
         // A file-local rename of one of these types counts as one of these types.
         var names = new List<string>(AppearanceTypeNames);
-        names.AddRange(root.DescendantNodes().OfType<UsingDirectiveSyntax>()
-            .Where(directive => directive is { Alias: not null, Name: not null } &&
-                AppearanceTypeNames.Any(name => MentionsName(directive.Name!, name)))
+        names.AddRange(aliases
+            .Where(directive => AppearanceTypeNames.Any(name => MentionsName(directive.Name!, name)))
+            .Select(directive => directive.Alias!.Name.Identifier.ValueText));
+
+        // AND SO DOES A RENAME OF STRING, which is the same bypass pointing at the other half of the
+        // shape: `using Str = System.String;` turns the parameter type into a name nothing knew.
+        var stringNames = new List<string> { "String" };
+        stringNames.AddRange(aliases
+            .Where(directive => IsStringType(directive.Name!, stringNames))
             .Select(directive => directive.Alias!.Name.Identifier.ValueText));
 
         // The null check is a STATEMENT rather than part of the expression, because a lambda
@@ -1204,7 +1215,7 @@ public sealed partial class DesignSystemTokenTests
             };
 
             if (IsAppearance(returnType) &&
-                parameters.Any(parameter => IsStringType(parameter.Type)))
+                parameters.Any(parameter => IsStringType(parameter.Type, stringNames)))
             {
                 offenders.Add($"{fileName}: {Describe(node)}");
             }
@@ -1223,15 +1234,21 @@ public sealed partial class DesignSystemTokenTests
         // WHAT THAT LEAVES OPEN, STATED RATHER THAN IMPLIED: a field whose type is an imported
         // named delegate, a lambda assigned to `var`, and a function pointer. Closing those needs a
         // semantic model over a real compilation, which is tracked as its own work.
-        foreach (var declared in DeclaredTypes(root).OfType<GenericNameSyntax>())
+        foreach (var site in DeclaredTypes(root))
         {
-            var arguments = declared.TypeArgumentList.Arguments;
-            if (declared.Identifier.ValueText == "Func" &&
-                arguments.Count >= 2 &&
-                IsAppearance(arguments[^1]) &&
-                arguments.Take(arguments.Count - 1).Any(IsStringType))
+            // INSIDE the written type, not only its outermost name. `System.Func<...>` wraps the
+            // Func in a qualified name, `List<Func<...>>` nests it, and an alias directive's target
+            // is a type site of its own - narrowing to the outer name lost all three.
+            foreach (var declared in site.DescendantNodesAndSelf().OfType<GenericNameSyntax>())
             {
-                offenders.Add($"{fileName}: {declared}");
+                var arguments = declared.TypeArgumentList.Arguments;
+                if (declared.Identifier.ValueText == "Func" &&
+                    arguments.Count >= 2 &&
+                    IsAppearance(arguments[^1]) &&
+                    arguments.Take(arguments.Count - 1).Any(type => IsStringType(type, stringNames)))
+                {
+                    offenders.Add($"{fileName}: {declared}");
+                }
             }
         }
 
@@ -1239,12 +1256,27 @@ public sealed partial class DesignSystemTokenTests
     }
 
     /// <summary>The types written in a declaration, as opposed to used in an expression.</summary>
+    /// <remarks>
+    /// A DECLARATION SITE, NEVER AN EXPRESSION, and that distinction is the whole reason this exists:
+    /// scanning every generic type anywhere accused `Dictionary&lt;string, DictationStatus&gt;`, which
+    /// is legitimate. RETURN types and EVENT types are declaration sites too, and leaving them out
+    /// lost a `Func` returned by a method. A <c>using</c> alias TARGET is one as well, since naming a
+    /// type is how a rename hides it.
+    /// </remarks>
     private static IEnumerable<TypeSyntax> DeclaredTypes(SyntaxNode root) =>
         root.DescendantNodes().Select(node => node switch
         {
             VariableDeclarationSyntax variable => variable.Type,
             PropertyDeclarationSyntax property => property.Type,
             ParameterSyntax parameter => parameter.Type,
+            MethodDeclarationSyntax method => method.ReturnType,
+            LocalFunctionStatementSyntax local => local.ReturnType,
+            DelegateDeclarationSyntax nominal => nominal.ReturnType,
+            OperatorDeclarationSyntax op => op.ReturnType,
+            ConversionOperatorDeclarationSyntax conversion => conversion.Type,
+            IndexerDeclarationSyntax indexer => indexer.Type,
+            EventDeclarationSyntax declared => declared.Type,
+            UsingDirectiveSyntax { Alias: not null } alias => alias.Name,
             _ => null,
         }).OfType<TypeSyntax>();
 
@@ -1255,14 +1287,15 @@ public sealed partial class DesignSystemTokenTests
     /// <c>System.String</c> wraps it in a qualified name, so a parameter written either way slipped
     /// past a check that only looked at the outermost node.
     /// </remarks>
-    private static bool IsStringType(TypeSyntax? type) => type switch
-    {
-        NullableTypeSyntax nullable => IsStringType(nullable.ElementType),
-        QualifiedNameSyntax qualified => IsStringType(qualified.Right),
-        PredefinedTypeSyntax predefined => predefined.Keyword.IsKind(SyntaxKind.StringKeyword),
-        IdentifierNameSyntax identifier => identifier.Identifier.ValueText == "String",
-        _ => false,
-    };
+    private static bool IsStringType(TypeSyntax? type, IReadOnlyCollection<string> stringNames) =>
+        type switch
+        {
+            NullableTypeSyntax nullable => IsStringType(nullable.ElementType, stringNames),
+            QualifiedNameSyntax qualified => IsStringType(qualified.Right, stringNames),
+            PredefinedTypeSyntax predefined => predefined.Keyword.IsKind(SyntaxKind.StringKeyword),
+            IdentifierNameSyntax identifier => stringNames.Contains(identifier.Identifier.ValueText),
+            _ => false,
+        };
 
     /// <summary>Whether a written type names the given type, qualified or not, bare or wrapped.</summary>
     /// <remarks>
@@ -1376,6 +1409,31 @@ public sealed partial class DesignSystemTokenTests
         Assert.NotEmpty(OffendersIn(
             "QualifiedString.cs",
             "    private DictationStatus Read(System.String sentence) => default;"));
+
+        // A rename of STRING is the same bypass aimed at the other half of the shape.
+        Assert.NotEmpty(OffendersIn(
+            "AliasedString.cs",
+            "using Str = System.String;\n\n"
+                + "    private DictationStatus Read(Str sentence) => default;"));
+
+        // The Func can be qualified, nested, returned, or hidden behind its own rename. Narrowing to
+        // the outermost written name lost every one of these.
+        Assert.NotEmpty(OffendersIn(
+            "QualifiedFunc.cs",
+            "    private System.Func<string, DictationStatus> _read = _ => default;"));
+
+        Assert.NotEmpty(OffendersIn(
+            "NestedFunc.cs",
+            "    private List<Func<string, DictationStatus>> _readers = [];"));
+
+        Assert.NotEmpty(OffendersIn(
+            "ReturnedFunc.cs",
+            "    private Func<string, DictationStatus> Reader() => _ => default;"));
+
+        Assert.NotEmpty(OffendersIn(
+            "AliasedFunc.cs",
+            "using Mapper = System.Func<string, DictationStatus>;\n\n"
+                + "    private Mapper _read = _ => default;"));
 
         Assert.Empty(OffendersIn(
             "Innocent.cs", "    private static string Trim(string sentence) => sentence.Trim();"));
