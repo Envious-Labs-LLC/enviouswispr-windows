@@ -31,6 +31,7 @@ public sealed class WasapiAudioCapture :
     private int _packets;
     private int _silentPackets;
     private float _peak;
+    private float _rms;
 
     public WasapiAudioCapture()
         : this(new WasapiRecorderFactory(), TimeSpan.FromSeconds(2))
@@ -59,6 +60,8 @@ public sealed class WasapiAudioCapture :
     public int LastSilentPacketCount => Volatile.Read(ref _silentPackets);
 
     public float LastPeak => _peak;
+
+    public float LastRootMeanSquare => _rms;
 
     public AudioSnapshot? GetSnapshot(TimeSpan maximumDuration)
     {
@@ -156,6 +159,7 @@ public sealed class WasapiAudioCapture :
             _packets = 0;
             _silentPackets = 0;
             _peak = 0f;
+            _rms = 0f;
             _request = request;
             _recordingStopped = new TaskCompletionSource<Exception?>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
@@ -347,6 +351,11 @@ public sealed class WasapiAudioCapture :
             if (converted.Peak > _peak)
             {
                 _peak = converted.Peak;
+            }
+
+            if (converted.RootMeanSquare > _rms)
+            {
+                _rms = converted.RootMeanSquare;
             }
 
             LevelChanged?.Invoke(this, new AudioLevel(converted.Peak, converted.RootMeanSquare));

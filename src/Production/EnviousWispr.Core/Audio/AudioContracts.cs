@@ -104,6 +104,16 @@ public interface ICaptureDiagnostics
 
     /// <summary>The loudest single sample seen during the last capture.</summary>
     float LastPeak { get; }
+
+    /// <summary>The loudest root-mean-square seen during the last capture.</summary>
+    /// <remarks>
+    /// BOTH NUMBERS, BECAUSE A CHECK THAT READS ONE CANNOT SPEAK FOR THE OTHER. The meter is driven
+    /// from the root-mean-square and the audio check reads the peak, so a fault that moved one and
+    /// not the other would leave the check green while the meter sat flat. They come from the same
+    /// converted buffer and should agree; reporting both is what makes a disagreement visible
+    /// instead of a puzzle.
+    /// </remarks>
+    float LastRootMeanSquare { get; }
 }
 
 public interface IAudioSnapshotSource

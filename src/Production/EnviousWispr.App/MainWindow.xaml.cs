@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Security;
 using EnviousWispr.Audio;
 using EnviousWispr.Core.Audio;
+using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Credentials;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Distribution;
@@ -1440,6 +1441,109 @@ public sealed partial class MainWindow : Window, IDisposable
         SetLiveText(ApiKeyStatusText, "Refreshing the list of available models...");
         await RefreshPolishModelChoicesAsync(provider, chooseDefault: false)
             .ConfigureAwait(true);
+    }
+
+    /// <summary>How long a microphone test listens for.</summary>
+    /// <remarks>
+    /// LONG ENOUGH TO SAY SOMETHING AND SHORT ENOUGH THAT NOBODY WAITS. Three seconds is about one
+    /// sentence, which is what somebody naturally does when a button says to speak.
+    /// </remarks>
+    private static readonly TimeSpan MicrophoneTestDuration = TimeSpan.FromSeconds(3);
+
+    private bool _microphoneTestRunning;
+
+    /// <summary>Opens the microphone for a moment and shows what actually arrives.</summary>
+    /// <remarks>
+    /// THIS IS THE PAGE WHERE SOMEBODY CONFIRMS THEIR MICROPHONE WORKS, AND IT COULD NOT TELL THEM.
+    /// It named a device and stopped, so an app receiving pure digital silence looked exactly like
+    /// one that was working. That is not hypothetical: it happened on the development machine, the
+    /// meter sat at its floor for seventy frames, nothing transcribed, and it took a day of measuring
+    /// to find. A person would have seen it here in three seconds.
+    ///
+    /// IT SAYS WHICH KIND OF NOTHING. A device that could not be opened, a device that opened and
+    /// delivered packets Windows marked as deliberately silent, and a device that delivered real
+    /// packets of zeroes are three different faults with three different answers, and a bare "no
+    /// sound" sends somebody to look in the wrong place for all three.
+    /// </remarks>
+    private async void MicrophoneTestButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_microphoneTestRunning)
+        {
+            return;
+        }
+
+        _microphoneTestRunning = true;
+        MicrophoneTestButton.IsEnabled = false;
+        try
+        {
+            await RunMicrophoneTestAsync().ConfigureAwait(true);
+        }
+        finally
+        {
+            _microphoneTestRunning = false;
+            MicrophoneTestButton.IsEnabled = true;
+            DrawMicrophoneTestLevel(0f);
+        }
+    }
+
+    private async Task RunMicrophoneTestAsync()
+    {
+        SetLiveText(MicrophoneTestResultText, "Listening. Say a few words.");
+        await using var capture = new WasapiAudioCapture();
+        capture.LevelChanged += OnMicrophoneTestLevel;
+        try
+        {
+            var started = await capture
+                .StartAsync(new AudioCaptureRequest(
+                    DictationSessionId.Create(),
+                    (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id is { } id
+                        ? new AudioDeviceId(id)
+                        : null))
+                .ConfigureAwait(true);
+            if (!started.Succeeded)
+            {
+                SetLiveText(
+                    MicrophoneTestResultText,
+                    "Windows would not open that microphone. Check it is plugged in and that "
+                        + "microphone privacy allows desktop apps.");
+                return;
+            }
+
+            await Task.Delay(MicrophoneTestDuration).ConfigureAwait(true);
+            await capture.StopAsync().ConfigureAwait(true);
+            // THE ROOT-MEAN-SQUARE, NOT THE PEAK, because that is the number the recording meter is
+            // driven from. A verdict read off the peak could call a microphone healthy while the
+            // meter it is meant to explain sits flat.
+            SetLiveText(MicrophoneTestResultText, MicrophoneTestVerdict.For(
+                capture.LastPacketCount,
+                capture.LastSilentPacketCount,
+                capture.LastRootMeanSquare));
+        }
+        finally
+        {
+            capture.LevelChanged -= OnMicrophoneTestLevel;
+        }
+    }
+
+    private void OnMicrophoneTestLevel(object? sender, AudioLevel level) =>
+        MicrophoneTestBars.DispatcherQueue.TryEnqueue(() =>
+            DrawMicrophoneTestLevel(RecordingLevelHistory.Normalize(level.RootMeanSquare)));
+
+    /// <summary>Lights the bars up to the level, so the row reads as a meter rather than a chart.</summary>
+    private void DrawMicrophoneTestLevel(float level)
+    {
+        var lit = (int)Math.Round(level * MicrophoneTestBars.Children.Count);
+        for (var index = 0; index < MicrophoneTestBars.Children.Count; index++)
+        {
+            if (MicrophoneTestBars.Children[index] is not Border bar)
+            {
+                continue;
+            }
+
+            var on = index < lit;
+            bar.Height = on ? 6 + 16.0 * (index + 1) / MicrophoneTestBars.Children.Count : 6;
+            bar.Opacity = on ? 1 : 0.25;
+        }
     }
 
     private async void OpenMicrophonePrivacyButton_Click(object sender, RoutedEventArgs e)
