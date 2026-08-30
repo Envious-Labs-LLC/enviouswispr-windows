@@ -1623,7 +1623,8 @@ public sealed partial class MainWindow : Window, IDisposable
                 $"maxlit {maximumLit}, litdraws {drawsWithSomethingLit}, " +
                 $"maxheight {maximumAssignedHeight:F1}, " +
                 $"maxactual {maximumActualHeight:F1}, " +
-                $"gen {generation}/{_microphoneTestGeneration}]");
+                $"gen {generation}/{_microphoneTestGeneration}] " +
+                DescribeMicrophoneTestBars());
         }
         finally
         {
@@ -1703,6 +1704,45 @@ public sealed partial class MainWindow : Window, IDisposable
     /// SO THE LEVEL IS SHOWN BY HOW MANY, NOT BY HOW TALL. That is what a segment meter is, and it
     /// is legible at one segment as well as at twenty.
     /// </remarks>
+    /// <summary>Says where the meter's bars actually are, and whether they are on screen at all.</summary>
+    /// <remarks>
+    /// TEMPORARY, AND IT ANSWERS AN IDENTITY QUESTION RATHER THAN A VALUE ONE. Every counter so far
+    /// has described the objects the code holds, and a camera on the screen disagrees with all of
+    /// them - so the next thing worth knowing is whether those objects are the ones being drawn. A
+    /// Border with no Parent, or one whose XamlRoot is not the window's, is never rendered and never
+    /// measured, and would produce exactly the readings taken so far.
+    ///
+    /// IT ALSO PRINTS THE RECTANGLE, which removes the other way this can go wrong. Two separate
+    /// measurements of this row have already landed on the wrong pixels, once on a heading and once
+    /// on a button that had moved, so a camera and a counter can disagree simply by looking at
+    /// different places. A rectangle in window coordinates settles that without another round.
+    /// </remarks>
+    private string DescribeMicrophoneTestBars()
+    {
+        try
+        {
+            var bars = MicrophoneTestBars;
+            var first = bars.Children.Count > 0 ? bars.Children[0] as Border : null;
+            var root = Content as FrameworkElement;
+            var point = root is null
+                ? new Windows.Foundation.Point(-1, -1)
+                : bars.TransformToVisual(root).TransformPoint(new Windows.Foundation.Point(0, 0));
+            var sameRoot = root is not null && ReferenceEquals(bars.XamlRoot, root.XamlRoot);
+            return
+                $"[tree panelparent {(bars.Parent is not null ? "yes" : "no")}, " +
+                $"barparent {(first?.Parent is not null ? "yes" : "no")}, " +
+                $"sameroot {(sameRoot ? "yes" : "no")}, " +
+                $"barid {first?.GetHashCode() ?? 0}, " +
+                $"panelsize {bars.ActualWidth:F0}x{bars.ActualHeight:F0}, " +
+                $"barsize {first?.ActualWidth ?? -1:F0}x{first?.ActualHeight ?? -1:F0}, " +
+                $"at {point.X:F0},{point.Y:F0}]";
+        }
+        catch (Exception exception)
+        {
+            return $"[tree unavailable: {exception.GetType().Name}]";
+        }
+    }
+
     private void DrawMicrophoneTestLevel(float level)
     {
         var lit = (int)Math.Round(level * MicrophoneTestBars.Children.Count);
