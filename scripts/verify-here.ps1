@@ -124,7 +124,17 @@ $ran = Get-Content "$env:TEMP\v-test.log" -ErrorAction SilentlyContinue |
 # a success line below it - and the success line is the one that looks like the answer. Measured:
 # runs of 713 and 730 against an expected 761, each announcing "Passed!", each a minute apart.
 # Failing the script is the only version of this warning that cannot be skimmed.
-if ($ran -and [int]$ran.Matches[0].Groups[1].Value -lt $expected) {
+# AND A RUN THAT PRINTS NO TOTAL AT ALL IS THE WORST VERSION OF THE SAME FAILURE, not an exemption.
+# Guarding on $ran meant a process that died before its summary line skipped the check entirely and
+# the script went on to lane 2 and exited 0. The absence of a count is not a count that passed.
+if (-not $ran) {
+    ''
+    '   NO TEST TOTAL WAS PRINTED. Lane 1 did not reach its own summary line, so nothing is known'
+    "   about how many of the $expected tests ran. Read $env:TEMP\v-test.log before believing anything."
+    exit 2
+}
+
+if ([int]$ran.Matches[0].Groups[1].Value -lt $expected) {
     ''
     "   SHORT RUN: $($ran.Matches[0].Groups[1].Value) tests executed, at least $expected expected."
     '   This is an instrument failure rather than a result. The "Passed!" line above is true about a'

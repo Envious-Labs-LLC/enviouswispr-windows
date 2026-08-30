@@ -3563,14 +3563,41 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var where = e.GetPosition(toggle);
-        if (where.X >= 0 && where.X <= toggle.ActualWidth &&
-            where.Y >= 0 && where.Y <= toggle.ActualHeight)
+        // THE SWITCH OWNS ITS SWITCH AND NOTHING MORE. A ToggleSwitch's own pointer handling lives on
+        // the template part named SwitchAreaGrid, so its HEADER - which is the sentence a person
+        // actually reads and aims at - does nothing when clicked. Suppressing the whole control
+        // rectangle would therefore leave that sentence dead, which is the opposite of the promise
+        // this row makes. Suppress the switch area alone, and let the header travel with the row.
+        var switchArea = FindDescendantByName(toggle, "SwitchAreaGrid") ?? (FrameworkElement)toggle;
+        var where = e.GetPosition(switchArea);
+        if (where.X >= 0 && where.X <= switchArea.ActualWidth &&
+            where.Y >= 0 && where.Y <= switchArea.ActualHeight)
         {
             return;
         }
 
         toggle.IsOn = !toggle.IsOn;
+    }
+
+    private static FrameworkElement? FindDescendantByName(DependencyObject root, string name)
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var index = 0; index < count; index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is FrameworkElement element && string.Equals(element.Name, name, StringComparison.Ordinal))
+            {
+                return element;
+            }
+
+            var found = FindDescendantByName(child, name);
+            if (found is not null)
+            {
+                return found;
+            }
+        }
+
+        return null;
     }
 
     private void ShowOnboarding(bool show)
