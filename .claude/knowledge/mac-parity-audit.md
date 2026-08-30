@@ -326,6 +326,27 @@ the first await.
 
 Ref: Codex review 2026-08-29, which supplied the pack collisions and the Hunspell sample.
 
+## FACT: a-cross-page-link-was-built-and-REVERTED-because-the-pages-are-not-the-same-shape
+Built and reverted 2026-08-29. Recorded because the MISTAKE generalises to every remaining row.
+
+macOS's `RecordingPillAppearancePanel` carries a button to the Live Preview page, and its source says
+why it was a founder decision: picking the pill that shows words switches Live Preview on silently, and
+the user's next question is how to configure it, which lives on another page. Windows has the same
+headings telling somebody to change Live Preview and had no such link, so it read as a clean gap.
+
+**It is not, because the two products lay the page out differently.** On Windows the pill picker AND
+the Live Preview switch are both inside `LivePreviewSection`, which is the `settings-live-preview` page.
+The switch sits immediately above the picker. A link would have navigated from that page to itself.
+
+**THE ERROR WAS REASONING FROM macOS'S LAYOUT INSTEAD OF READING THE WINDOWS MARKUP.** Every fact used
+was true - the headings do point at Live Preview, macOS does link, the link machinery does exist - and
+the conclusion was still wrong, because "which page is this control on" was assumed rather than looked
+up. A parity claim about a SURFACE needs both surfaces read, exactly as
+FACT: critic-pass-against-the-macos-overlay-source says about features.
+
+Sibling of the near-duplicate rejection above and of the four stale rows: this file's failures are
+overwhelmingly toward WORK, and toward work that a few minutes of reading would have refused.
+
 ## PROC: how-this-was-taken
 Two sweeps per capability from `src/Production`, the second using the CAPABILITY's synonyms rather than
 the Mac's symbol, because a name sweep only finds what someone already called by that name:
