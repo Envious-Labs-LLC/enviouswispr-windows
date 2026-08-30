@@ -287,11 +287,7 @@ public sealed partial class MainWindow : Window, IDisposable
             _recordingSoundPlayer.Play);
         RecordingSoundComboBox.ItemsSource = RecordingSoundCatalog.Choices;
         _overlayWindow = new DictationOverlayWindow();
-        _historyAnnounceDebounce.Tick += (_, _) =>
-        {
-            _historyAnnounceDebounce.Stop();
-            AnnounceHistoryOnPageShown();
-        };
+        _historyAnnounceDebounce.Tick += OnHistoryAnnounceDue;
         _overlayWindow.ActionInvoked += OnPillActionInvoked;
         _overlayWindow.ApplyPreferences(
             settings.Preferences.OverlayPosition,
@@ -740,6 +736,10 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public void ShutdownProductWindows()
     {
+        // DETACHED, NOT JUST STOPPED. A timer left attached can still tick during shutdown and raise
+        // an announcement for a window that is going away.
+        _historyAnnounceDebounce.Stop();
+        _historyAnnounceDebounce.Tick -= OnHistoryAnnounceDue;
         _soundPreviewCancellation?.Cancel();
         _soundPreviewCancellation?.Dispose();
         _soundPreviewCancellation = null;
@@ -2793,9 +2793,23 @@ public sealed partial class MainWindow : Window, IDisposable
     /// nothing to re-run it, never happened at all - the page that most needed a spoken result was
     /// the one that never gave one.
     /// </remarks>
+    private void OnHistoryAnnounceDue(object? sender, object e)
+    {
+        _historyAnnounceDebounce.Stop();
+        AnnounceHistoryOnPageShown();
+    }
+
+    /// <summary>Says whatever history result is still waiting, if anything can hear it now.</summary>
+    public void AnnouncePendingHistoryState() => AnnounceHistoryOnPageShown();
+
     private void AnnounceHistoryOnPageShown()
     {
-        if (_isHistoryLoading || _pendingHistoryAnnouncement is null)
+        // A HIDDEN WINDOW IS NOT A VISIBLE PAGE, AND THE XAML TREE CANNOT SEE THE DIFFERENCE. Closing
+        // this window hides it to the notification area without collapsing anything inside it, so the
+        // ancestor check still reports every parent as showing and a debounce landing afterwards
+        // would announce from a window nobody can see. The pending announcement is KEPT, so it
+        // arrives when the window is opened again rather than being lost.
+        if (_isHistoryLoading || _pendingHistoryAnnouncement is null || !AppWindow.IsVisible)
         {
             return;
         }

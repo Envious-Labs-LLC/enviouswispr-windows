@@ -79,13 +79,6 @@ public partial class App : Application, IAsyncDisposable
     private readonly StreamingTranscriptAccumulator _streamed = new();
     private int _streamedThroughSample;
 
-    /// <summary>Where the first committed stretch began, so a lost opening word can be spotted.</summary>
-    /// <remarks>
-    /// EVERYTHING BEFORE THE FIRST COMMIT IS NEVER TRANSCRIBED. The head start begins there and the
-    /// tail begins where the head start ended, so audio ahead of it reaches neither. Remembering the
-    /// figure is what lets SoftOnsetPolicy judge whether a quiet first word was inside it.
-    /// </remarks>
-    private int _streamingLeadingSkippedSamples;
     private bool _streamingUsable;
     private long _previewSequence;
     private MainWindow? _window;
@@ -865,6 +858,10 @@ public partial class App : Application, IAsyncDisposable
 
             _window.AppWindow.Show();
             _window.Activate();
+            // A RESULT THAT ARRIVED WHILE THE WINDOW WAS HIDDEN IS STILL NEWS WHEN IT COMES BACK.
+            // History finishing while the app sits in the notification area is the ordinary case,
+            // and without this the announcement is simply never made.
+            _window.AnnouncePendingHistoryState();
             if (openSettings)
             {
                 _window.OpenSettings();
@@ -2430,7 +2427,6 @@ public partial class App : Application, IAsyncDisposable
     {
         _streamed.Clear();
         _streamedThroughSample = 0;
-        _streamingLeadingSkippedSamples = 0;
         _streamingUsable = false;
 
         if (_settings.Preferences.LivePreviewEnabled ||
@@ -2500,11 +2496,6 @@ public partial class App : Application, IAsyncDisposable
                     cancellationToken).ConfigureAwait(false);
 
                 _streamed.Append(transcript.Text);
-                if (_streamedThroughSample == 0)
-                {
-                    _streamingLeadingSkippedSamples = range.StartSample;
-                }
-
                 _streamedThroughSample = range.EndSample;
                 _logger.Write(new AppLogEntry(
                     DateTimeOffset.UtcNow,
@@ -3114,17 +3105,7 @@ public partial class App : Application, IAsyncDisposable
         var usable = _streamingUsable &&
             _streamedThroughSample > 0 &&
             _streamedThroughSample < audio.Samples.Length &&
-            !string.IsNullOrWhiteSpace(headStart) &&
-            // A SHORT TAKE THAT DROPPED ITS OPENING IS THE ONE CASE WHERE THE HEAD START COSTS MORE
-            // THAN IT SAVES. Speech detection puts a quietly spoken first word in the silence before
-            // the speech, and the head start begins after it - so the word is in neither half and
-            // nothing later can tell. macOS refuses the filtered audio on exactly these four
-            // conditions; this refuses the head start on them.
-            !SoftOnsetPolicy.ShouldUseWholeRecording(
-                audio.Samples.Length,
-                audio.SampleRate,
-                _streamingLeadingSkippedSamples,
-                _streamingLeadingSkippedSamples);
+            !string.IsNullOrWhiteSpace(headStart);
 
         if (!usable)
         {
