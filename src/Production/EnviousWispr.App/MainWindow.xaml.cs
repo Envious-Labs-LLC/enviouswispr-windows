@@ -1484,14 +1484,38 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var notice = selected.Length == 1
-            ? "Dictionary entry removed"
-            : $"{selected.Length} dictionary entries removed";
-        await SaveUserDataAsync(
-            data => new ReusableUserData(
-                CustomWordRemoval.Without(data.CustomWords, selected),
-                data.Snippets),
-            notice).ConfigureAwait(true);
+        // THE COUNT IS WHAT WAS REALLY REMOVED, NOT WHAT WAS SELECTED. Removal matches by identity,
+        // so a row that another change replaced while this was waiting is no longer the row that was
+        // chosen - it is left alone, correctly, and saying "removed" over the top of that tells
+        // somebody a word is gone when it is still there.
+        var removed = await SaveUserDataAsync<string>(data =>
+        {
+            var remaining = CustomWordRemoval.Without(data.CustomWords, selected);
+            var count = data.CustomWords.Count - remaining.Count;
+            return (new ReusableUserData(remaining, data.Snippets), count.ToString(
+                System.Globalization.CultureInfo.InvariantCulture));
+        }).ConfigureAwait(true);
+
+        if (removed is null || !int.TryParse(removed, out var removedCount))
+        {
+            return;
+        }
+
+        if (removedCount == 0)
+        {
+            ShowMessage(
+                "Nothing was removed",
+                "Those words changed while this was saving. Select them again to remove them.",
+                InfoBarSeverity.Warning);
+            return;
+        }
+
+        ShowMessage(
+            removedCount == 1 ? "Dictionary entry removed" : $"{removedCount} dictionary entries removed",
+            removedCount < selected.Length
+                ? $"{selected.Length - removedCount} of them changed while this was saving and were left alone."
+                : "The change was saved locally.",
+            InfoBarSeverity.Success);
     }
 
     /// <summary>Asks before something that cannot be undone.</summary>
@@ -1763,8 +1787,9 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var existing = _settings.UserData.CustomWords;
-        var plan = CustomWordImport.Read(pack.Words, existing);
+        // READ ONCE OUTSIDE ONLY TO DECIDE WHETHER TO OFFER ANYTHING. The plan that is SAVED is
+        // computed again inside the gate, against the words that are really there at that moment.
+        var plan = CustomWordImport.Read(pack.Words, _settings.UserData.CustomWords);
         if (plan.Additions.Count == 0)
         {
             // THE SAME OFFER A CHOSEN FILE GETS. A pack whose words the user already corrects their
@@ -1778,18 +1803,24 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var importedWords = new List<CustomWordEntry>([.. existing, .. plan.Additions]);
-        if (!await SaveUserDataAsync(data => new ReusableUserData(importedWords, data.Snippets), $"{pack.Name} added", DescribeImport(plan))
-            .ConfigureAwait(true))
+        var committed = await SaveUserDataAsync<CustomWordImportPlan>(data =>
+        {
+            var actual = CustomWordImport.Read(pack.Words, data.CustomWords);
+            return (
+                new ReusableUserData([.. data.CustomWords, .. actual.Additions], data.Snippets),
+                actual);
+        }).ConfigureAwait(true);
+
+        if (committed is null)
         {
             return;
         }
 
         ShowMessage(
             $"{pack.Name} added",
-            DescribeImport(plan),
+            DescribeImport(committed),
             InfoBarSeverity.Success,
-            ReplaceConflictsAction(plan));
+            ReplaceConflictsAction(committed));
     }
 
     private Button BuildOfferButton(ImportConflictOffer offer)
@@ -1854,8 +1885,9 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private async Task ApplyWordListAsync(string text)
     {
-        var existing = _settings.UserData.CustomWords;
-        var plan = CustomWordImport.Read(text, existing);
+        // READ ONCE OUTSIDE ONLY TO DECIDE WHETHER TO OFFER ANYTHING. The plan that is SAVED is
+        // computed again inside the gate, against the words that are really there at that moment.
+        var plan = CustomWordImport.Read(text, _settings.UserData.CustomWords);
         if (plan.Additions.Count == 0)
         {
             ShowMessage(
@@ -1866,17 +1898,21 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var importedWords = new List<CustomWordEntry>([.. existing, .. plan.Additions]);
-
         // THE SAME DESCRIPTION ON BOTH PATHS. The first version used the generic save message here,
         // so every problem outcome vanished the moment ONE word imported: a hundred-line file with
         // sixty good rows and forty unreadable ones said "the change was saved locally" and the
         // user never learned about the forty. That is the INVERSE of the failure the itemised
         // message was written for, and it survived because the zero-added path was the only one
         // anyone had looked at.
-        var saved = await SaveUserDataAsync(data => new ReusableUserData(importedWords, data.Snippets), "Words imported", DescribeImport(plan))
-            .ConfigureAwait(true);
-        if (!saved)
+        var committed = await SaveUserDataAsync<CustomWordImportPlan>(data =>
+        {
+            var actual = CustomWordImport.Read(text, data.CustomWords);
+            return (
+                new ReusableUserData([.. data.CustomWords, .. actual.Additions], data.Snippets),
+                actual);
+        }).ConfigureAwait(true);
+
+        if (committed is null)
         {
             // The save refused and has already said why. Speaking again here would paint over that
             // with a success, and offering to replace corrections nothing imported would be worse.
@@ -1885,9 +1921,9 @@ public sealed partial class MainWindow : Window, IDisposable
 
         ShowMessage(
             "Words imported",
-            DescribeImport(plan),
+            DescribeImport(committed),
             InfoBarSeverity.Success,
-            ReplaceConflictsAction(plan));
+            ReplaceConflictsAction(committed));
     }
 
     /// <summary>Pastes a word list straight out of the clipboard.</summary>
@@ -1950,10 +1986,13 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private async Task<bool> ReplaceConflictsAsync(IReadOnlyList<CustomWordEntry> replacements)
     {
-        var merged = CustomWordImport.Merge(_settings.UserData.CustomWords, replacements);
         var word = replacements.Count == 1 ? "correction" : "corrections";
+        // MERGED INSIDE THE GATE, against the words that are there when it happens. Merging outside
+        // built a list from a snapshot, and saving it put back whatever had changed since.
         return await SaveUserDataAsync(
-            data => new ReusableUserData(merged, data.Snippets),
+            data => new ReusableUserData(
+                CustomWordImport.Merge(data.CustomWords, replacements),
+                data.Snippets),
             "Corrections replaced",
             $"{replacements.Count} {word} now match the list you imported.").ConfigureAwait(true);
     }
@@ -2780,6 +2819,54 @@ public sealed partial class MainWindow : Window, IDisposable
     /// opposite of the truth. Measured on the import path, where a refused save reported "Words
     /// imported" and offered to replace corrections that had not been imported.
     /// </remarks>
+    /// <summary>Saves user data and returns what the change worked out while it held the gate.</summary>
+    /// <remarks>
+    /// AN IMPORT DECIDES WHAT TO ADD BY LOOKING AT WHAT IS ALREADY THERE, so that decision is a
+    /// question about the CURRENT words and has to be answered inside the gate. Answered outside, the
+    /// plan describes a list that may have changed - and saving its result then overwrites whatever
+    /// changed it. The value comes back so the message describes what was actually stored.
+    /// </remarks>
+    private async Task<T?> SaveUserDataAsync<T>(
+        Func<ReusableUserData, (ReusableUserData Data, T Value)> change)
+        where T : class
+    {
+        var outcome = await SettingsWriter.UpdateAsync<T?>(current =>
+        {
+            var (data, value) = change(current.UserData);
+            return (current with { UserData = data }, value);
+        }).ConfigureAwait(true);
+
+        if (outcome.Failure is not null)
+        {
+            ShowSettingsFailure(outcome.Failure);
+            return null;
+        }
+
+        _settings = SettingsWriter.Current;
+        SettingsChanged?.Invoke(_settings);
+        ApplySettingsToControls();
+        return outcome.Value;
+    }
+
+    /// <summary>Says why a settings write did not happen.</summary>
+    private void ShowSettingsFailure(Exception exception)
+    {
+        var (title, body) = exception switch
+        {
+            ArgumentException => (
+                "Settings were not saved",
+                "One or more values are invalid. Your previous settings remain active."),
+            UnauthorizedAccessException or SecurityException => (
+                "Windows blocked settings storage",
+                "Your previous settings remain active."),
+            _ => (
+                "Settings storage is unavailable",
+                "Your previous settings remain active."),
+        };
+
+        ShowMessage(title, body, InfoBarSeverity.Error);
+    }
+
     private async Task<bool> SaveUserDataAsync(
         Func<ReusableUserData, ReusableUserData> change, string title, string message)
     {
@@ -2900,6 +2987,14 @@ public sealed partial class MainWindow : Window, IDisposable
         _historyAnnounceDebounce.Stop();
         AnnounceHistoryOnPageShown();
     }
+
+    /// <summary>Waits for any settings write to finish, then stops accepting new ones.</summary>
+    /// <remarks>
+    /// AWAITED AT EXIT, BECAUSE ABANDONING THE WRITER LETS THE PROCESS END MID-WRITE. Synchronous
+    /// teardown cannot wait, so it does not try; this is the asynchronous half that can.
+    /// </remarks>
+    public Task DrainSettingsAsync() =>
+        _settingsWriter?.DrainAsync() ?? Task.CompletedTask;
 
     /// <summary>Says whatever history result is still waiting, if anything can hear it now.</summary>
     public void AnnouncePendingHistoryState() => AnnounceHistoryOnPageShown();

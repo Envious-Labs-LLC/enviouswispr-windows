@@ -103,6 +103,67 @@ public sealed class SerialSettingsWriterTests
     }
 
     [Fact]
+    public async Task AnImportThatOverlapsAWordEditKeepsBothAndCountsWhatItReallyAdded()
+    {
+        // THE CASE THAT LOST DATA. An import decided what to add by reading the words, then saved a
+        // list built from that reading - so a word added while it waited was written back out of
+        // existence, and the count described a list nobody ever had.
+        var store = new BlockingStore();
+        using var writer = new SerialSettingsWriter(store, AppSettings.Default);
+
+        var edit = writer.UpdateAsync(current => current with
+        {
+            UserData = new ReusableUserData(
+                [.. current.UserData.CustomWords, new CustomWordEntry("typed by hand", "Typed")],
+                current.UserData.Snippets),
+        });
+        await store.SaveStarted.Task.ConfigureAwait(true);
+
+        var import = writer.UpdateAsync<int>(current =>
+        {
+            var plan = CustomWordImport.Read("imported\tImported", current.UserData.CustomWords);
+            return (
+                current with
+                {
+                    UserData = new ReusableUserData(
+                        [.. current.UserData.CustomWords, .. plan.Additions],
+                        current.UserData.Snippets),
+                },
+                plan.Additions.Count);
+        });
+
+        store.LetSavesFinish();
+        Assert.Null(await edit.ConfigureAwait(true));
+        var outcome = await import.ConfigureAwait(true);
+        Assert.Null(outcome.Failure);
+
+        var words = writer.Current.UserData.CustomWords.Select(word => word.SpokenForm).ToArray();
+        Assert.Contains("typed by hand", words);
+        Assert.Contains("imported", words);
+        Assert.Equal(1, outcome.Value);
+    }
+
+    [Fact]
+    public async Task DrainWaitsForASaveThatIsStillRunning()
+    {
+        // ABANDONING THE WRITER LETS THE PROCESS END MID-WRITE, which is how a choice somebody just
+        // made disappears on the way out.
+        var store = new BlockingStore();
+        var writer = new SerialSettingsWriter(store, AppSettings.Default);
+
+        var save = writer.UpdateAsync(current => current with { LaunchCount = 4 });
+        await store.SaveStarted.Task.ConfigureAwait(true);
+
+        var drain = writer.DrainAsync();
+        Assert.False(drain.IsCompleted);
+
+        store.LetSavesFinish();
+        Assert.Null(await save.ConfigureAwait(true));
+        await drain.ConfigureAwait(true);
+        Assert.Equal(4, writer.Current.LaunchCount);
+    }
+
+    [Fact]
     public async Task AFailedSaveLeavesTheStoredValueAlone()
     {
         var store = new BlockingStore { FailNext = new IOException("the disk said no") };
