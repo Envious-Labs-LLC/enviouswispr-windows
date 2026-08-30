@@ -1,3 +1,4 @@
+using EnviousWispr.AppJourney.Uat;
 using EnviousWispr.Audio;
 using EnviousWispr.ASR;
 using EnviousWispr.Core.Audio;
@@ -29,6 +30,12 @@ const string ReviewedFrenchFixtureHash =
     "84DEFDC828EF59CEC10364354FBC284BC2CC683FDD4A5EDD5863B7BB2C6123A8";
 const string ReviewedEnglishFixtureHash =
     "0F56F001F964D2288851A5E4063781CB5793D25F1B4FD9B55607E79873B4B20C";
+// THE REPORTER WRAPS THE WHOLE PROGRAM, NOT THE PART SOMEBODY REMEMBERED. Three review rounds each
+// named one more ordinary failure that still terminated the process - a helper below the journey
+// block, then the cleanup, then the preflight that runs before the journey even starts. Positioning
+// a catch around the parts already found has no end; starting it at the first statement does.
+try
+{
 var syntheticMicrophonePlayback = args.Any(argument => string.Equals(
     argument,
     "--live-microphone",
@@ -39,7 +46,7 @@ var manualMicrophone = args.Any(argument => string.Equals(
     StringComparison.OrdinalIgnoreCase));
 if (syntheticMicrophonePlayback && manualMicrophone)
 {
-    throw new ArgumentException(
+    throw new JourneyExpectationException(
         "--live-microphone and --manual-microphone are mutually exclusive.");
 }
 var liveMicrophone = syntheticMicrophonePlayback || manualMicrophone;
@@ -57,7 +64,7 @@ var deterministicProfile = deterministicProfileArgument?.ToLowerInvariant() swit
     null => DeterministicJourneyProfile.None,
     "enabled" => DeterministicJourneyProfile.Enabled,
     "disabled" => DeterministicJourneyProfile.Disabled,
-    _ => throw new ArgumentException(
+    _ => throw new JourneyExpectationException(
         "--deterministic-profile must be enabled or disabled."),
 };
 var polishArgument = ArgumentValue(args, "--polish");
@@ -69,7 +76,7 @@ var polishProvider = polishArgument?.ToLowerInvariant() switch
     "openai" => PolishProvider.OpenAI,
     "anthropic" or "claude" => PolishProvider.Anthropic,
     "gemini" => PolishProvider.Gemini,
-    _ => throw new ArgumentException(
+    _ => throw new JourneyExpectationException(
         "--polish must be none, eg-1, ollama, openai, anthropic, or gemini."),
 };
 var egOneServerExecutable = ArgumentValue(args, "--eg1-server");
@@ -92,17 +99,17 @@ var synthesizedAcoustic = args.Any(argument => string.Equals(
     StringComparison.OrdinalIgnoreCase));
 if (synthesizedAcoustic && (!syntheticMicrophonePlayback || !englishParakeet))
 {
-    throw new ArgumentException(
+    throw new JourneyExpectationException(
         "--synthesized-acoustic requires --english-parakeet --live-microphone.");
 }
 if (manualMicrophone && !englishParakeet)
 {
-    throw new ArgumentException(
+    throw new JourneyExpectationException(
         "--manual-microphone requires --english-parakeet for the fixed English acceptance phrase.");
 }
 if (manualMicrophone && ArgumentValue(args, "--acoustic-gain") is not null)
 {
-    throw new ArgumentException(
+    throw new JourneyExpectationException(
         "--acoustic-gain applies only to synthetic fixture playback, not --manual-microphone.");
 }
 var failureArgument = ArgumentValue(args, "--failure");
@@ -112,32 +119,32 @@ var failureMode = failureArgument?.ToLowerInvariant() switch
     "microphone-unavailable" => JourneyFailureMode.MicrophoneUnavailable,
     "worker-startup" => JourneyFailureMode.WorkerStartup,
     "target-unavailable" => JourneyFailureMode.TargetUnavailable,
-    _ => throw new ArgumentException(
+    _ => throw new JourneyExpectationException(
         "--failure must be microphone-unavailable, worker-startup, or target-unavailable."),
 };
 if (escapeRecovery && liveMicrophone)
 {
-    throw new ArgumentException("Escape Recovery UAT uses the reviewed in-memory fixture, not live microphone mode.");
+    throw new JourneyExpectationException("Escape Recovery UAT uses the reviewed in-memory fixture, not live microphone mode.");
 }
 if (failureMode != JourneyFailureMode.None && (liveMicrophone || livePreview || escapeRecovery))
 {
-    throw new ArgumentException("Failure journeys cannot be combined with live microphone, Live Preview, or Escape Recovery modes.");
+    throw new JourneyExpectationException("Failure journeys cannot be combined with live microphone, Live Preview, or Escape Recovery modes.");
 }
 if (failureMode != JourneyFailureMode.None && englishParakeet)
 {
-    throw new ArgumentException("Failure journeys use the fixed reviewed Whisper fixture configuration.");
+    throw new JourneyExpectationException("Failure journeys use the fixed reviewed Whisper fixture configuration.");
 }
 if (polishProvider != PolishProvider.None &&
     (liveMicrophone || livePreview || escapeRecovery || failureMode != JourneyFailureMode.None))
 {
-    throw new ArgumentException(
+    throw new JourneyExpectationException(
         "Local-polish UAT uses the reviewed fixture success journey without Live Preview, live microphone, Escape Recovery, or failure injection.");
 }
 if (deterministicProfile != DeterministicJourneyProfile.None &&
     (!englishParakeet || liveMicrophone || livePreview || escapeRecovery ||
      failureMode != JourneyFailureMode.None || polishProvider != PolishProvider.None))
 {
-    throw new ArgumentException(
+    throw new JourneyExpectationException(
         "Deterministic-profile UAT requires --english-parakeet and cannot be combined with local polish, Live Preview, live microphone, Escape Recovery, or failure injection.");
 }
 if (polishProvider == PolishProvider.EgOne)
@@ -153,19 +160,19 @@ if (polishProvider == PolishProvider.EgOne)
 }
 else if (egOneServerExecutable is not null || egOneModelFile is not null)
 {
-    throw new ArgumentException("--eg1-server and --eg1-model require --polish eg-1.");
+    throw new JourneyExpectationException("--eg1-server and --eg1-model require --polish eg-1.");
 }
 if (polishProvider == PolishProvider.Ollama)
 {
     RequireLoopbackEndpoint(ollamaEndpoint);
     if (string.IsNullOrWhiteSpace(ollamaModel) || ollamaModel.Length > 256)
     {
-        throw new ArgumentException("--ollama-model must name one installed local model.");
+        throw new JourneyExpectationException("--ollama-model must name one installed local model.");
     }
 }
 else if (ArgumentValue(args, "--ollama-endpoint") is not null || ollamaModel is not null)
 {
-    throw new ArgumentException("--ollama-endpoint and --ollama-model require --polish ollama.");
+    throw new JourneyExpectationException("--ollama-endpoint and --ollama-model require --polish ollama.");
 }
 var appExecutableArgument = ArgumentValue(args, "--app-executable");
 if (appExecutableArgument is not null &&
@@ -175,7 +182,7 @@ if (appExecutableArgument is not null &&
          "EnviousWispr.App.exe",
          StringComparison.OrdinalIgnoreCase)))
 {
-    throw new ArgumentException(
+    throw new JourneyExpectationException(
         "--app-executable must be a fully qualified EnviousWispr.App.exe path.");
 }
 var repositoryRoot = FindRepositoryRoot(AppContext.BaseDirectory);
@@ -254,17 +261,17 @@ var appVersion = FileVersionInfo.GetVersionInfo(appExecutable).ProductVersion ??
 var appSha256 = Sha256Hex(appExecutable);
 if (englishParakeet && !new LocalParakeetModelProbe().Probe(modelDirectory).Int8Complete)
 {
-    throw new DirectoryNotFoundException(
+    throw new JourneyExpectationException(
         "The gitignored Parakeet quantized model is required for English journey UAT.");
 }
 if (!englishParakeet && !new LocalWhisperModelProbe().Probe(modelDirectory).QuantizedComplete)
 {
-    throw new DirectoryNotFoundException(
+    throw new JourneyExpectationException(
         "The gitignored Whisper large-v3-turbo quantized model is required for journey UAT.");
 }
 if (livePreview && !new LocalWhisperModelProbe().Probe(previewModelDirectory).PreviewSmallComplete)
 {
-    throw new DirectoryNotFoundException(
+    throw new JourneyExpectationException(
         "The gitignored Whisper small preview model is required for live-preview journey UAT.");
 }
 
@@ -351,6 +358,11 @@ var ownedPolishWorkerCount = 0;
 ClipboardGuard? clipboardGuard = null;
 var usesPublicFixtureJourney = !liveMicrophone &&
     failureMode is JourneyFailureMode.None or JourneyFailureMode.TargetUnavailable;
+
+// THE CATCH SITS OUTSIDE THE CLEANUP, and the first version did not. A `catch` before a `finally`
+// runs first, so anything the cleanup itself threw - restoring the clipboard, removing the working
+// directory - escaped past the report and replaced exit 2 with the crash this change exists to
+// remove. Cleanup is the part most likely to fail on a machine that is already having a bad day.
 try
 {
     var targetStart = new ProcessStartInfo(targetExecutable)
@@ -370,7 +382,7 @@ try
         targetStart.ArgumentList.Add("--forbidden-substring");
         targetStart.ArgumentList.Add(forbiddenSubstring);
     }
-    target = Process.Start(targetStart) ?? throw new InvalidOperationException(
+    target = StartOrExplain(targetStart) ?? throw new JourneyExpectationException(
         "The controlled delivery target did not start.");
     WaitForWindow(target, TimeSpan.FromSeconds(10));
 
@@ -434,7 +446,7 @@ try
             appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_HOLD_MILLISECONDS"] = "2000";
         }
     }
-    app = Process.Start(appStart) ?? throw new InvalidOperationException(
+    app = StartOrExplain(appStart) ?? throw new JourneyExpectationException(
         "The production WinUI app did not start.");
 
     shellReady = readyEvent.WaitOne(TimeSpan.FromSeconds(30));
@@ -447,7 +459,7 @@ try
         app.HasExited && failureMode != JourneyFailureMode.WorkerStartup)
     {
         var startupEvents = string.Join(",", ReadDiagnosticEvents(diagnosticPath));
-        throw new InvalidOperationException(
+        throw new JourneyExpectationException(
             $"The production shell or final-ASR worker did not become ready " +
             $"(shellReady={shellReady}, runtimeReady={runtimeReady}, " +
             $"appExited={app.HasExited}, exitCode={(app.HasExited ? app.ExitCode : null)}, " +
@@ -458,7 +470,7 @@ try
     var expectedWorkerCount = failureMode == JourneyFailureMode.WorkerStartup ? 0 : 1;
     if (ownedWorkerIds.Length != expectedWorkerCount)
     {
-        throw new InvalidOperationException(
+        throw new JourneyExpectationException(
             $"The production journey started {ownedWorkerIds.Length} owned final-ASR workers; " +
             $"expected {expectedWorkerCount}.");
     }
@@ -471,7 +483,7 @@ try
             TimeSpan.FromSeconds(60));
         if (!polishReady)
         {
-            throw new InvalidOperationException(
+            throw new JourneyExpectationException(
                 $"The {PolishProviderName(polishProvider)} runtime did not become ready; " +
                 $"events={string.Join(',', ReadDiagnosticEvents(diagnosticPath))}.");
         }
@@ -482,7 +494,7 @@ try
         var expectedPolishWorkerCount = polishProvider == PolishProvider.EgOne ? 1 : 0;
         if (ownedPolishWorkerIds.Length != expectedPolishWorkerCount)
         {
-            throw new InvalidOperationException(
+            throw new JourneyExpectationException(
                 $"The production journey started {ownedPolishWorkerIds.Length} owned local-polish workers; " +
                 $"expected {expectedPolishWorkerCount}.");
         }
@@ -553,7 +565,7 @@ try
                         "DictationRecordingStarted/",
                         TimeSpan.FromSeconds(5)))
                 {
-                    throw new TimeoutException(
+                    throw new JourneyExpectationException(
                         "The target-unavailable journey did not reach recording before target teardown.");
                 }
 
@@ -568,7 +580,7 @@ try
             journeyCompleted = completeEvent.WaitOne(TimeSpan.FromSeconds(60));
             if (!journeyCompleted)
             {
-                throw new TimeoutException("The production journey did not complete within 60 seconds.");
+                throw new JourneyExpectationException("The production journey did not complete within 60 seconds.");
             }
 
             targetObserved = WaitForExpectedTargetResult(
@@ -603,7 +615,7 @@ try
             targetCharacterCount = ReadTargetCharacterCount(targetResultPath),
         }));
 
-        throw new InvalidOperationException(
+        throw new JourneyExpectationException(
             manualMicrophone
                 ? "The controlled target did not observe the founder-spoken physical microphone phrase."
                 : liveMicrophone
@@ -614,12 +626,12 @@ try
     appExitedCleanly = app.WaitForExit(liveMicrophone ? 35_000 : 15_000);
     if (!appExitedCleanly)
     {
-        throw new TimeoutException("The production app did not exit cleanly after journey completion.");
+        throw new JourneyExpectationException("The production app did not exit cleanly after journey completion.");
     }
 
     if (app.ExitCode != 0)
     {
-        throw new InvalidOperationException(
+        throw new JourneyExpectationException(
             $"The production app returned exit code {app.ExitCode}; " +
             $"events={string.Join(',', ReadDiagnosticEvents(diagnosticPath))}.");
     }
@@ -630,7 +642,7 @@ try
         RequireFailureJourneyEvents(failureMode, diagnosticEvents);
         if (targetObserved)
         {
-            throw new InvalidOperationException("A failure journey unexpectedly delivered text to the target.");
+            throw new JourneyExpectationException("A failure journey unexpectedly delivered text to the target.");
         }
     }
     else if (escapeRecovery)
@@ -655,19 +667,19 @@ try
         ReadEscapeRecoveryHistory(Path.Combine(profileDirectory, "history.json"));
     if (escapeRecovery && (!recoveryHistoryObserved || targetObserved))
     {
-        throw new InvalidOperationException(
+        throw new JourneyExpectationException(
             "Escape Recovery must save one 24-hour undelivered History entry and deliver nothing to the target.");
     }
 
     ownedWorkerCount = ownedWorkerIds.Count(IsProcessRunning);
     if (ownedWorkerCount != 0)
     {
-        throw new InvalidOperationException("The production journey left an owned runtime worker running.");
+        throw new JourneyExpectationException("The production journey left an owned runtime worker running.");
     }
     ownedPolishWorkerCount = ownedPolishWorkerIds.Count(IsProcessRunning);
     if (ownedPolishWorkerCount != 0)
     {
-        throw new InvalidOperationException("The production journey left an owned local-polish worker running.");
+        throw new JourneyExpectationException("The production journey left an owned local-polish worker running.");
     }
 
     var hardware = await new WindowsHardwareDiscovery().ProbeAsync();
@@ -767,21 +779,10 @@ try
 }
 finally
 {
-    if (app is { HasExited: false })
-    {
-        app.Kill(entireProcessTree: true);
-        app.WaitForExit(10_000);
-    }
-
-    if (target is { HasExited: false })
-    {
-        target.CloseMainWindow();
-        if (!target.WaitForExit(5_000))
-        {
-            target.Kill(entireProcessTree: true);
-            target.WaitForExit(10_000);
-        }
-    }
+    // STOPPING A CHILD CAN THROW, AND FAILING TO STOP ONE IS NOT A FAILED JOURNEY. Kill races the
+    // process exiting on its own and throws when it loses, which was escaping the report entirely.
+    StopQuietly(app, closeFirst: false);
+    StopQuietly(target, closeFirst: true);
 
     app?.Dispose();
     target?.Dispose();
@@ -789,9 +790,114 @@ finally
     {
         clipboardGuard?.Dispose();
     }
+    catch (Exception cleanupFailure) when (cleanupFailure is IOException
+        or UnauthorizedAccessException or COMException or InvalidOperationException)
+    {
+        // A FAILED TIDY-UP IS NOT A FAILED JOURNEY, AND MUST NOT BE ABLE TO SAY IT IS. Restoring a
+        // clipboard and deleting a working directory both fail for reasons that have nothing to do
+        // with what was being tested - a file still open, a virus scanner holding a handle - and
+        // when they threw here they escaped past the report and replaced exit 2 with the crash this
+        // whole change removes. Cleanup is also the part most likely to fail on a machine that is
+        // already having a bad day, which is exactly when the verdict matters most.
+        Console.Error.WriteLine($"  cleanup warning: {cleanupFailure.GetType().Name}: {cleanupFailure.Message}");
+    }
     finally
     {
-        RemoveUatDirectory(uatDirectory);
+        try
+        {
+            RemoveUatDirectory(uatDirectory);
+        }
+        catch (Exception removalFailure) when (removalFailure is IOException
+            or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine(
+                $"  cleanup warning: could not remove {uatDirectory}: {removalFailure.Message}");
+        }
+    }
+}
+}
+catch (JourneyExpectationException expectation)
+{
+    // REPORTED AND RETURNED, NOT THROWN PAST THE END OF THE PROGRAM. A failed expectation used to
+    // escape the top-level statements and terminate the process, and Windows records that in the
+    // event log exactly as it records an application fault - so on 2026-08-28 eleven failing tests
+    // from this harness were counted as evidence that the machine itself was unstable.
+    //
+    // Anything that is NOT an expectation is deliberately not caught here. A null reference or a
+    // genuine fault in the app under test still propagates, still terminates, and still looks like
+    // the crash it is, which is the distinction the whole change exists to restore.
+    Console.Error.WriteLine();
+    Console.Error.WriteLine("JOURNEY EXPECTATION NOT MET");
+    Console.Error.WriteLine($"  {expectation.Message}");
+    if (expectation.InnerException is { } cause)
+    {
+        // The message says what did not happen; this says what Windows said about it.
+        Console.Error.WriteLine($"  caused by: {cause.GetType().Name}: {cause.Message}");
+    }
+
+    Console.Error.WriteLine();
+    Console.Error.WriteLine("The harness stopped for a reason it can name, which is not a crash. The");
+    Console.Error.WriteLine("artifacts written above say what the run observed; compare them with the");
+    Console.Error.WriteLine("message. A genuine fault would have terminated the process instead.");
+    return 2;
+}
+
+/// <summary>Ends a child process, and never lets the ending decide the journey's verdict.</summary>
+/// <remarks>
+/// `Kill` races the process exiting by itself and throws when it loses, and `CloseMainWindow` throws
+/// on a process that has already gone. Neither says anything about what was being tested, and both
+/// were able to replace the harness's own report with a crash.
+/// </remarks>
+/// <summary>Starts a process, and turns an ordinary launch failure into something readable.</summary>
+/// <remarks>
+/// A DIFFERENT CLASS FROM THE DELIBERATE THROWS, AND THE LAST ONE FOUND. Everything the harness
+/// raises itself now carries one type and a gate refuses a stock one. This is the RUNTIME raising
+/// `Win32Exception` because an executable is missing or will not run - an ordinary environment
+/// failure, not a fault in anything, and it was still ending the run as a crash in the event log.
+///
+/// Wrapped HERE rather than by widening the reporter's catch, deliberately. Catching Win32Exception
+/// at the top would also swallow one thrown from somewhere it really does mean a fault, and the
+/// whole point of this work is that the two stay distinguishable.
+/// </remarks>
+static Process? StartOrExplain(ProcessStartInfo startInfo)
+{
+    try
+    {
+        return Process.Start(startInfo);
+    }
+    catch (Exception failure) when (failure is System.ComponentModel.Win32Exception
+        or InvalidOperationException or PlatformNotSupportedException)
+    {
+        throw new JourneyExpectationException(
+            $"Windows would not start {startInfo.FileName}.", failure);
+    }
+}
+
+static void StopQuietly(Process? process, bool closeFirst)
+{
+    try
+    {
+        if (process is null || process.HasExited)
+        {
+            return;
+        }
+
+        if (closeFirst)
+        {
+            process.CloseMainWindow();
+            if (process.WaitForExit(5_000))
+            {
+                return;
+            }
+        }
+
+        process.Kill(entireProcessTree: true);
+        process.WaitForExit(10_000);
+    }
+    catch (Exception failure) when (failure is InvalidOperationException
+        or System.ComponentModel.Win32Exception or NotSupportedException)
+    {
+        Console.Error.WriteLine($"  cleanup warning: could not stop a child process: {failure.Message}");
     }
 }
 
@@ -799,7 +905,7 @@ static void RequireFile(string path, string message)
 {
     if (!File.Exists(path))
     {
-        throw new FileNotFoundException(message, path);
+        throw new JourneyExpectationException($"{message} Looked for: {path}");
     }
 }
 
@@ -821,7 +927,7 @@ static void RequireAbsoluteFileArgument(
             expectedExtension,
             StringComparison.OrdinalIgnoreCase))
     {
-        throw new ArgumentException(message);
+        throw new JourneyExpectationException(message);
     }
 }
 
@@ -832,7 +938,7 @@ static void RequireLoopbackEndpoint(string endpoint)
         uri.Scheme is not ("http" or "https") ||
         !string.IsNullOrEmpty(uri.UserInfo))
     {
-        throw new ArgumentException(
+        throw new JourneyExpectationException(
             "--ollama-endpoint must be a loopback HTTP or HTTPS address without credentials.");
     }
 }
@@ -845,7 +951,7 @@ static string PolishProviderName(PolishProvider provider) => provider switch
     PolishProvider.OpenAI => "OpenAI",
     PolishProvider.Anthropic => "Anthropic",
     PolishProvider.Gemini => "Gemini",
-    _ => throw new ArgumentOutOfRangeException(nameof(provider)),
+    _ => throw new JourneyExpectationException(nameof(provider)),
 };
 
 static string DiagnosticProviderName(PolishProvider provider) => provider switch
@@ -865,14 +971,14 @@ static void RequireReviewedFixture(string path, string expectedHash)
     var file = new FileInfo(path);
     if (file.Length is <= 0 or > 1_000_000)
     {
-        throw new InvalidDataException("The reviewed public fixture has an unexpected size.");
+        throw new JourneyExpectationException("The reviewed public fixture has an unexpected size.");
     }
 
     using var stream = file.OpenRead();
     var actualHash = Convert.ToHexString(SHA256.HashData(stream));
     if (!string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
     {
-        throw new InvalidDataException("The reviewed public fixture hash does not match.");
+        throw new JourneyExpectationException("The reviewed public fixture hash does not match.");
     }
 }
 
@@ -891,7 +997,7 @@ static void EnsureNoUnownedProcesses(params string[] processNames)
     {
         if (existing.Length > 0)
         {
-            throw new InvalidOperationException(
+            throw new JourneyExpectationException(
                 "Journey UAT requires no existing EnviousWispr app or controlled target and will not stop one it did not create.");
         }
     }
@@ -911,7 +1017,7 @@ static void WaitForWindow(Process process, TimeSpan timeout)
     {
         if (process.HasExited)
         {
-            throw new InvalidOperationException("The controlled delivery target exited before it was ready.");
+            throw new JourneyExpectationException("The controlled delivery target exited before it was ready.");
         }
 
         process.Refresh();
@@ -923,7 +1029,7 @@ static void WaitForWindow(Process process, TimeSpan timeout)
         Thread.Sleep(100);
     }
 
-    throw new TimeoutException("The controlled delivery target did not show a window.");
+    throw new JourneyExpectationException("The controlled delivery target did not show a window.");
 }
 
 static bool WaitForExpectedTargetResult(string path, TimeSpan timeout)
@@ -1117,7 +1223,7 @@ static void RequirePolishJourneyEvidence(
                 "PolishCredentialMissing",
                 StringComparison.Ordinal))
         {
-            throw new InvalidOperationException(
+            throw new JourneyExpectationException(
                 $"The {PolishProviderName(provider)} journey did not preserve deterministic text " +
                 $"through the expected isolated missing-credential fallback " +
                 $"(runtimeReady={evidence.RuntimeReady}, runtimeDegraded={evidence.RuntimeDegraded}, " +
@@ -1134,7 +1240,7 @@ static void RequirePolishJourneyEvidence(
         !evidence.Completed ||
         evidence.Degraded)
     {
-        throw new InvalidOperationException(
+        throw new JourneyExpectationException(
             $"The {PolishProviderName(provider)} journey did not complete healthy local polish " +
             $"(runtimeReady={evidence.RuntimeReady}, runtimeDegraded={evidence.RuntimeDegraded}, " +
             $"started={evidence.Started}, completed={evidence.Completed}, degraded={evidence.Degraded}).");
@@ -1195,7 +1301,7 @@ static void RequireProductionJourneyEvents(IReadOnlyList<string> events)
 
     if (missing.Count > 0)
     {
-        throw new InvalidOperationException(
+        throw new JourneyExpectationException(
             $"The production journey omitted required content-free stages: {string.Join(", ", missing)}.");
     }
 }
@@ -1208,7 +1314,7 @@ static void RequireLivePreviewJourneyEvents(IReadOnlyList<string> events)
         StringComparison.Ordinal))).ToArray();
     if (missing.Length > 0)
     {
-        throw new InvalidOperationException(
+        throw new JourneyExpectationException(
             $"The live-preview journey omitted content-free stages: {string.Join(", ", missing)}.");
     }
 }
@@ -1229,7 +1335,7 @@ static void RequireEscapeRecoveryJourneyEvents(IReadOnlyList<string> events)
         StringComparison.Ordinal))).ToArray();
     if (missing.Length > 0 || events.Any(value => value.StartsWith("TextDeliveryStarted/", StringComparison.Ordinal)))
     {
-        throw new InvalidOperationException(
+        throw new JourneyExpectationException(
             $"Escape Recovery journey stages were invalid: missing={string.Join(",", missing)}.");
     }
 }
@@ -1313,7 +1419,7 @@ static async Task PlayPublicFixtureAsync(
     var failure = await completed.Task.WaitAsync(playbackDuration + TimeSpan.FromSeconds(5));
     if (failure is not null)
     {
-        throw new InvalidOperationException("The reviewed public fixture could not be played.", failure);
+        throw new JourneyExpectationException("The reviewed public fixture could not be played.", failure);
     }
 }
 
@@ -1384,9 +1490,9 @@ static async Task SpeakPublicPhraseAsync(string phrase)
         try
         {
             var voiceType = Type.GetTypeFromProgID("SAPI.SpVoice") ??
-                throw new InvalidOperationException("Windows speech synthesis is unavailable.");
+                throw new JourneyExpectationException("Windows speech synthesis is unavailable.");
             voice = Activator.CreateInstance(voiceType) ??
-                throw new InvalidOperationException("Windows speech synthesis could not start.");
+                throw new JourneyExpectationException("Windows speech synthesis could not start.");
             _ = voiceType.InvokeMember(
                 "Volume",
                 BindingFlags.SetProperty,
@@ -1410,8 +1516,28 @@ static async Task SpeakPublicPhraseAsync(string phrase)
                 System.Globalization.CultureInfo.InvariantCulture);
             completion.TrySetResult(null);
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is JourneyExpectationException
+            or COMException or TargetInvocationException
+            or NotSupportedException or UnauthorizedAccessException)
         {
+            // ONLY THE FAILURES SPEECH SYNTHESIS ACTUALLY HAS. Catching every Exception here turned
+            // a NullReferenceException or an OutOfMemoryException on this thread into an ordinary
+            // "could not be synthesized" expectation - which is the reverse of the defect this whole
+            // change exists to fix, and harder to see: a real fault reported as a tidy test failure
+            // is a fault nobody goes looking for.
+            //
+            // JourneyExpectationException is FIRST in the list because the thread throws it itself,
+            // for SAPI being unavailable or refusing to start. A first draft narrowed this filter
+            // without adding the type it had just introduced, so the harness's own expected failure
+            // terminated the process - the exact defect, reintroduced by the fix for it.
+            //
+            // TargetInvocationException because the voice is created by reflection, which wraps
+            // whatever the constructor threw. InvalidOperationException is deliberately NOT here any
+            // more: the conditions that used to raise it now raise the expectation type, so anything
+            // still throwing it on this thread is an implementation fault and should read as one.
+            //
+            // Anything else is left to terminate the process, which is what a fault on a background
+            // thread should do.
             completion.TrySetResult(exception);
         }
         finally
@@ -1431,7 +1557,7 @@ static async Task SpeakPublicPhraseAsync(string phrase)
     var failure = await completion.Task.WaitAsync(TimeSpan.FromSeconds(20));
     if (failure is not null)
     {
-        throw new InvalidOperationException(
+        throw new JourneyExpectationException(
             "The fixed public phrase could not be synthesized through the default speakers.",
             failure);
     }
@@ -1446,7 +1572,7 @@ static (byte[] PcmBytes, int SampleRate) ReadReviewedMuLawFixture(string path, i
         !bytes.AsSpan(0, 4).SequenceEqual("RIFF"u8) ||
         !bytes.AsSpan(8, 4).SequenceEqual("WAVE"u8))
     {
-        throw new InvalidDataException("The reviewed fixture is not a RIFF WAVE file.");
+        throw new JourneyExpectationException("The reviewed fixture is not a RIFF WAVE file.");
     }
 
     byte[]? format = null;
@@ -1458,7 +1584,7 @@ static (byte[] PcmBytes, int SampleRate) ReadReviewedMuLawFixture(string path, i
         position += 8;
         if (chunkSize < 0 || position + chunkSize > bytes.Length)
         {
-            throw new InvalidDataException("The reviewed fixture has an invalid chunk.");
+            throw new JourneyExpectationException("The reviewed fixture has an invalid chunk.");
         }
 
         if (chunkId.SequenceEqual("fmt "u8))
@@ -1473,7 +1599,7 @@ static (byte[] PcmBytes, int SampleRate) ReadReviewedMuLawFixture(string path, i
             var bitsPerSample = BitConverter.ToInt16(format, 14);
             if (audioFormat != 7 || channels != 1 || sampleRate <= 0 || bitsPerSample != 8)
             {
-                throw new InvalidDataException("The reviewed fixture is not mono 8-bit mu-law audio.");
+                throw new JourneyExpectationException("The reviewed fixture is not mono 8-bit mu-law audio.");
             }
 
             var pcmBytes = new byte[checked(chunkSize * sizeof(short))];
@@ -1493,7 +1619,7 @@ static (byte[] PcmBytes, int SampleRate) ReadReviewedMuLawFixture(string path, i
         position += chunkSize + (chunkSize % 2);
     }
 
-    throw new InvalidDataException("The reviewed fixture has no supported audio data.");
+    throw new JourneyExpectationException("The reviewed fixture has no supported audio data.");
 }
 
 static byte[] RepeatPcm(byte[] pcmBytes, int sampleRate, int repetitions)
@@ -1516,7 +1642,7 @@ static void SendKey(byte virtualKey, bool keyDown)
 {
     if (Marshal.SizeOf<Input>() != 40)
     {
-        throw new InvalidOperationException("The synthetic keyboard input does not match the Win64 ABI.");
+        throw new JourneyExpectationException("The synthetic keyboard input does not match the Win64 ABI.");
     }
 
     var input = new Input
@@ -1533,7 +1659,7 @@ static void SendKey(byte virtualKey, bool keyDown)
     };
     if (NativeMethods.SendInput(1, [input], Marshal.SizeOf<Input>()) != 1)
     {
-        throw new InvalidOperationException("Synthetic keyboard input was rejected.");
+        throw new JourneyExpectationException("Synthetic keyboard input was rejected.");
     }
 }
 
@@ -1547,7 +1673,7 @@ static void RemoveUatDirectory(string path)
             "EnviousWispr-AppJourney-Uat-",
             StringComparison.Ordinal))
     {
-        throw new InvalidOperationException("Refusing to remove an unexpected journey UAT directory.");
+        throw new JourneyExpectationException("Refusing to remove an unexpected journey UAT directory.");
     }
 
     if (Directory.Exists(fullPath))
@@ -1564,7 +1690,7 @@ static string FindRepositoryRoot(string startDirectory)
         directory = directory.Parent;
     }
 
-    return directory?.FullName ?? throw new DirectoryNotFoundException(
+    return directory?.FullName ?? throw new JourneyExpectationException(
         "The repository root could not be located.");
 }
 
@@ -1572,7 +1698,7 @@ static void BringToForeground(nint window)
 {
     if (window == 0)
     {
-        throw new InvalidOperationException("The controlled delivery target has no window handle.");
+        throw new JourneyExpectationException("The controlled delivery target has no window handle.");
     }
 
     var foreground = NativeMethods.GetForegroundWindow();
@@ -1631,8 +1757,7 @@ static int ParseBoundedIntArgument(
         parsed < minimum ||
         parsed > maximum)
     {
-        throw new ArgumentOutOfRangeException(
-            name,
+        throw new JourneyExpectationException(
             $"{name} must be an integer from {minimum} through {maximum}.");
     }
 
@@ -1720,7 +1845,7 @@ static void RequireFailureJourneyEvents(
             "TextDeliveryRefused/TextDelivery/DeliveryTargetChanged",
             "ApplicationCleanShutdown/",
         },
-        _ => throw new ArgumentOutOfRangeException(nameof(failureMode)),
+        _ => throw new JourneyExpectationException(nameof(failureMode)),
     };
     var missing = required.Where(expected => !events.Any(value => value.StartsWith(
         expected,
@@ -1763,7 +1888,7 @@ static void RequireFailureJourneyEvents(
     };
     if (missing.Count > 0 || forbiddenObserved)
     {
-        throw new InvalidOperationException(
+        throw new JourneyExpectationException(
             $"The {FailureModeName(failureMode)} journey evidence was invalid: " +
             $"missing={string.Join(',', missing)}, forbiddenObserved={forbiddenObserved}, " +
             $"events={string.Join(',', events)}.");
@@ -1871,7 +1996,7 @@ internal sealed class ClipboardGuard : IDisposable
 
     internal static ClipboardGuard CaptureOrThrow()
     {
-        var snapshot = RunSta(CaptureOnSta) ?? throw new InvalidOperationException(
+        var snapshot = RunSta(CaptureOnSta) ?? throw new JourneyExpectationException(
             "The target-unavailable UAT could not safely snapshot every clipboard format.");
         return new ClipboardGuard(snapshot);
     }
@@ -1886,7 +2011,7 @@ internal sealed class ClipboardGuard : IDisposable
         _disposed = true;
         if (!RunSta(() => RestoreOnSta(_snapshot)))
         {
-            throw new InvalidOperationException(
+            throw new JourneyExpectationException(
                 "The target-unavailable UAT could not restore the original clipboard.");
         }
     }
@@ -2011,7 +2136,7 @@ internal sealed class ClipboardGuard : IDisposable
         thread.Join();
         if (failure is not null)
         {
-            throw new InvalidOperationException("The clipboard guard operation failed.", failure);
+            throw new JourneyExpectationException("The clipboard guard operation failed.", failure);
         }
 
         return result!;
