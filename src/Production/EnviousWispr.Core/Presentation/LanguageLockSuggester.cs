@@ -44,9 +44,11 @@ public sealed record LanguageLockOffer(
 /// can name any language it likes, while the setting holds five, so a run of Italian reaches the end
 /// of this class and stops there rather than showing a button that would do nothing.
 ///
-/// The counters live for as long as the app runs and are not written down, which matches the macOS
-/// DETECTOR. macOS also persists a separate count of offers the person let go by; that is not built
-/// here, so relaunching starts the offers over.
+/// THE RUN IS FORGOTTEN ON RELAUNCH AND THE OFFERS ARE NOT, matching macOS, where the detector's
+/// consecutive count is in memory and the presenter's per-language history is written down. The
+/// split is the meaningful one: a run of three sentences is about the last few minutes, while "we
+/// have asked this person about Spanish three times" is a fact about them, and a promise to go quiet
+/// that a restart undoes is not a promise.
 /// </remarks>
 public sealed class LanguageLockSuggester
 {
@@ -58,6 +60,52 @@ public sealed class LanguageLockSuggester
 
     private readonly Dictionary<string, int> _runs = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _offers = new(StringComparer.Ordinal);
+
+    /// <summary>Starts with no history, as a first run has none.</summary>
+    public LanguageLockSuggester()
+    {
+    }
+
+    /// <summary>Starts from what was written down last time.</summary>
+    /// <param name="offerHistory">
+    /// A value from <see cref="OfferHistory"/>, or null on a first run. Anything unreadable is
+    /// treated as no history: the worst that costs is one more offer, and refusing to start over a
+    /// malformed settings field would be a dictation app that will not dictate.
+    /// </param>
+    public LanguageLockSuggester(string? offerHistory)
+    {
+        foreach (var entry in (offerHistory ?? string.Empty).Split(
+            '|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var separator = entry.LastIndexOf(':');
+            if (separator <= 0 || !int.TryParse(
+                entry.AsSpan(separator + 1),
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var made))
+            {
+                continue;
+            }
+
+            var code = NormalizedBase(entry[..separator]);
+            if (code.Length > 0 && made > 0)
+            {
+                _offers[code] = Math.Min(made, OffersPerLanguage);
+            }
+        }
+    }
+
+    /// <summary>How many offers each language has had, in a form that can be written down.</summary>
+    /// <remarks>
+    /// THE RUN IS NOT IN HERE. It describes the last few sentences and means nothing tomorrow, so
+    /// writing it down would restore a two-thirds-complete run to somebody who has since said
+    /// nothing at all.
+    /// </remarks>
+    public string OfferHistory => string.Join(
+        '|',
+        _offers.Where(entry => entry.Value > 0)
+            .OrderBy(entry => entry.Key, StringComparer.Ordinal)
+            .Select(entry => $"{entry.Key}:{entry.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}"));
 
     /// <summary>Takes one finished dictation's detected language and answers with an offer or nothing.</summary>
     /// <param name="detectedLanguage">What recognition said, or null when it said nothing.</param>

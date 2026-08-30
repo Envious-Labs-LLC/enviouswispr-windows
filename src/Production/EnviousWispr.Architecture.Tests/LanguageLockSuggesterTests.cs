@@ -163,6 +163,85 @@ public sealed class LanguageLockSuggesterTests
         Assert.Equal(LanguageOfferKind.AskToLock, RunToOffer(suggester, "es")?.Kind);
     }
 
+    [Fact]
+    public void GoingQuietSurvivesARestart()
+    {
+        // A promise to stop asking that a relaunch undoes is not a promise.
+        var first = new LanguageLockSuggester();
+        for (var offer = 0; offer < LanguageLockSuggester.OffersPerLanguage; offer++)
+        {
+            RunToOffer(first, "es");
+        }
+
+        var second = new LanguageLockSuggester(first.OfferHistory);
+
+        Assert.Null(RunToOffer(second, "es"));
+    }
+
+    [Fact]
+    public void APartlyUsedLanguageComesBackWhereItLeftOff()
+    {
+        var first = new LanguageLockSuggester();
+        RunToOffer(first, "fr");
+        RunToOffer(first, "fr");
+
+        var second = new LanguageLockSuggester(first.OfferHistory);
+
+        Assert.Equal(LanguageOfferKind.PointAtSettings, RunToOffer(second, "fr")?.Kind);
+        Assert.Null(RunToOffer(second, "fr"));
+    }
+
+    [Fact]
+    public void TheRunItselfIsNotCarriedAcross()
+    {
+        // Two sentences in Spanish yesterday are not two thirds of a reason to ask today.
+        var first = new LanguageLockSuggester();
+        first.Observe("es", WhisperLanguagePreference.Automatic);
+        first.Observe("es", WhisperLanguagePreference.Automatic);
+
+        var second = new LanguageLockSuggester(first.OfferHistory);
+
+        Assert.Null(second.Observe("es", WhisperLanguagePreference.Automatic));
+    }
+
+    [Fact]
+    public void PinningALanguageIsWrittenDownAsForgivingIt()
+    {
+        var first = new LanguageLockSuggester();
+        for (var offer = 0; offer < LanguageLockSuggester.OffersPerLanguage; offer++)
+        {
+            RunToOffer(first, "es");
+        }
+
+        first.Accepted(WhisperLanguagePreference.Spanish);
+        var second = new LanguageLockSuggester(first.OfferHistory);
+
+        Assert.Equal(LanguageOfferKind.AskToLock, RunToOffer(second, "es")?.Kind);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("nonsense")]
+    [InlineData("es:")]
+    [InlineData("es:notanumber")]
+    [InlineData(":3")]
+    [InlineData("es:-4|")]
+    [InlineData("es:3|es:1|fr")]
+    public void AHistoryNobodyCanReadStartsFromNothingRatherThanRefusing(string history)
+    {
+        // A dictation app that will not dictate because a bookkeeping string is malformed is a worse
+        // outcome than one extra offer.
+        var suggester = new LanguageLockSuggester(history);
+
+        Assert.NotNull(RunToOffer(suggester, "fr"));
+    }
+
+    [Fact]
+    public void NothingToRememberIsWrittenAsNothing()
+    {
+        Assert.Equal(string.Empty, new LanguageLockSuggester().OfferHistory);
+    }
+
     private static LanguageLockOffer? RunToOffer(
         LanguageLockSuggester suggester,
         string language,

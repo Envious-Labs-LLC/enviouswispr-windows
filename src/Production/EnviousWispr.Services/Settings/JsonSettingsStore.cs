@@ -66,6 +66,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 11 => MigrateFromV11(json),
                 12 => MigrateFromV12(json),
                 13 => MigrateFromV13(json),
+                14 => MigrateFromV14(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -393,6 +394,21 @@ public sealed class JsonSettingsStore : ISettingsStore
                 SchemaVersion = AppSettings.CurrentSchemaVersion,
                 LastSeenReleaseNotes = null,
             };
+    }
+
+    /// <summary>Takes a settings file written before the app offered to pin a language.</summary>
+    /// <remarks>
+    /// NOTHING IS WRITTEN, AND A MISSING HISTORY IS THE HONEST VALUE. Nobody has been offered
+    /// anything, because there was nothing to offer them, so the count that deserializes from an
+    /// absent field is already correct. The step exists so the file is recorded as read at the new
+    /// shape rather than refused.
+    /// </remarks>
+    private static AppSettings? MigrateFromV14(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
     }
 
     /// <summary>Takes a settings file written before custom words could be matched loosely.</summary>
