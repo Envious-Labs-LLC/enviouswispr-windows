@@ -2406,6 +2406,80 @@ public sealed partial class DesignSystemTokenTests
     [GeneratedRegex(@"Pill\w+Style", RegexOptions.CultureInvariant)]
     private static partial Regex CodeBehindPillStyleRegex();
 
+    /// <summary>
+    /// A settings row that commits its toggle must not put a label inside the toggle.
+    /// </summary>
+    /// <remarks>
+    /// THE ROW HANDLER DRAWS ITS LINE AT THE TOGGLE'S OWN RECTANGLE, so anything inside that
+    /// rectangle is deaf to the row. A ToggleSwitch wires its pointer handling to one template part
+    /// and its Header sits outside that part, which means a header put back on one of these controls
+    /// is a label that responds to neither the switch nor the row - the deadest pixels in the row,
+    /// and exactly the sentence a person aims at. The label therefore lives beside the control as a
+    /// sibling, and the control carries the same words as its accessible name so a screen reader
+    /// still announces what is being switched.
+    ///
+    /// THE THREE PARTS ARE CHECKED TOGETHER BECAUSE ANY ONE OF THEM ALONE PASSES WHILE BROKEN: a
+    /// headerless toggle with no name is anonymous to a screen reader, and a named toggle whose
+    /// sibling text says something else labels it twice, differently.
+    /// </remarks>
+    [Fact]
+    public void EveryRowCommittedToggleKeepsItsLabelOutsideTheSwitch()
+    {
+        var markup = XDocument.Load(Path.Combine(
+            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+
+        var rows = markup.Descendants()
+            .Where(element => (string?)element.Attribute("Tapped") == "SettingRow_Tapped")
+            .ToArray();
+
+        Assert.True(
+            rows.Length >= 11,
+            $"Expected the settings rows that commit a toggle, found {rows.Length}.");
+
+        var faults = new List<string>();
+        foreach (var row in rows)
+        {
+            var toggles = row.Elements().Where(child => child.Name.LocalName == "ToggleSwitch").ToArray();
+            if (toggles.Length != 1)
+            {
+                faults.Add($"a row with {toggles.Length} ToggleSwitch children; the handler commits exactly one");
+                continue;
+            }
+
+            var toggle = toggles[0];
+            var identity = (string?)toggle.Attribute(XName.Get("Name", "http://schemas.microsoft.com/winfx/2006/xaml"))
+                ?? "an unnamed toggle";
+
+            foreach (var banned in new[] { "Header", "HeaderTemplate" })
+            {
+                if (toggle.Attribute(banned) is not null)
+                {
+                    faults.Add($"{identity} carries {banned}, which puts its label inside the switch where the row cannot reach it");
+                }
+            }
+
+            var spoken = (string?)toggle.Attribute("AutomationProperties.Name");
+            if (string.IsNullOrWhiteSpace(spoken))
+            {
+                faults.Add($"{identity} has no AutomationProperties.Name, so a screen reader announces a switch with no subject");
+                continue;
+            }
+
+            var labels = row.Elements()
+                .Where(child => child.Name.LocalName == "TextBlock")
+                .Select(child => (string?)child.Attribute("Text"))
+                .Where(text => !string.IsNullOrWhiteSpace(text))
+                .ToArray();
+
+            if (!labels.Contains(spoken, StringComparer.Ordinal))
+            {
+                faults.Add($"{identity} is announced as \"{spoken}\" but no sibling TextBlock in its row says that");
+            }
+        }
+
+        Assert.True(faults.Count == 0, string.Join(Environment.NewLine, faults));
+    }
+
     private readonly record struct DynamicColor(Rgba Light, Rgba Dark);
 
     private readonly record struct ThemePair(string Light, string Dark);

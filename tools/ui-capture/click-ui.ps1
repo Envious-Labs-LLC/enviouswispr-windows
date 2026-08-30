@@ -22,6 +22,11 @@ param(
     # rectangle the automation tree reports, so a click at the vertical centre cannot say which band
     # it landed in. Measured from the TOP edge when given, rather than from the centre.
     [Nullable[int]] $FromTop = $null,
+    # WHEN THE LABEL AND THE CONTROL SHARE A NAME, WHICH IS THE POINT OF A LABELLED ROW. A settings
+    # row now carries its label as its own Text element and gives the switch the same words as its
+    # accessible name, so a search by name alone matches two elements and takes whichever comes
+    # first. Naming the control type is what makes the target unambiguous.
+    [string] $OfType = '',
     [int] $TimeoutSeconds = 10
 )
 
@@ -34,11 +39,18 @@ Add-Type -Namespace UiCapture -Name Click -MemberDefinition @'
 '@
 
 $root = [System.Windows.Automation.AutomationElement]::RootElement
-$condition = New-Object System.Windows.Automation.AndCondition(
+$clauses = @(
     (New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $ProcessId)),
     (New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::NameProperty, $Name)))
+if ($OfType) {
+    $kind = [System.Windows.Automation.ControlType]::$OfType
+    if (-not $kind) { throw "There is no control type named `"$OfType`"." }
+    $clauses += New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $kind)
+}
+$condition = New-Object System.Windows.Automation.AndCondition($clauses)
 
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 $element = $null

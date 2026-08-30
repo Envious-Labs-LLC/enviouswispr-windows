@@ -190,7 +190,9 @@ Add-Type -Namespace UiCapture -Name Dpi -MemberDefinition @'
         # edge>". The vertical part exists because a ToggleSwitch is two stacked bands inside one
         # reported rectangle - its header sentence above, its switch below - and a click at the
         # vertical centre cannot say which band it reached.
+        # "<name>" or "<name>:<ControlType>", then the position.
         $parts = $spot -split '@'
+        $target = $parts[0] -split ':'
         $where = if ($parts.Count -gt 1) { $parts[1] } else { 'centre' }
         $offset = 0
         $fromTop = $null
@@ -200,7 +202,8 @@ Add-Type -Namespace UiCapture -Name Dpi -MemberDefinition @'
             if ($Matches[5]) { $fromTop = [int] $Matches[5] }
         }
 
-        $clickArgs = @{ ProcessId = $app.Id; Name = $parts[0]; Where = $where; OffsetX = $offset }
+        $clickArgs = @{ ProcessId = $app.Id; Name = $target[0]; Where = $where; OffsetX = $offset }
+        if ($target.Count -gt 1) { $clickArgs['OfType'] = $target[1] }
         if ($null -ne $fromTop) { $clickArgs['FromTop'] = $fromTop }
         & (Join-Path $PSScriptRoot 'click-ui.ps1') @clickArgs | ForEach-Object { Note $_ }
         Start-Sleep -Milliseconds 700
