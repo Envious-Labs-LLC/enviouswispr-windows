@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using EnviousWispr.Core.Settings;
 
@@ -73,12 +74,55 @@ public static partial class CustomWordCorrector
             return new WordCorrectionResult(text, 0);
         }
 
-        // EVERY SURFACE IS LOOKED FOR IN WHAT THE PERSON ACTUALLY SAID, ONCE, and the winners are
-        // written back afterwards. Replacing one surface at a time in the growing result made two
-        // things depend on the order of a list the user sorted for their own reasons: two phrases
-        // that overlap - "red blue" and "blue sun" inside "red blue sun" - gave whichever row came
-        // first, and a word written in by one row could be found and rewritten again by the next.
-        var replacementCount = 0;
+        // EVERYTHING IS DECIDED AGAINST WHAT THE PERSON ACTUALLY SAID, AND WRITTEN BACK ONCE.
+        // Rewriting the text as we go made three separate things depend on order: two phrases that
+        // overlap gave whichever row came first, a word written in by one row could be found and
+        // rewritten again by the next, and the fuzzy pass read a sentence that already contained
+        // words nobody had said - counting one span of the original twice.
+        var claimed = new List<Span>();
+        var proposals = ExactProposals(text, candidates, claimed);
+
+        var fuzzyCandidates = candidates
+            .Where(candidate => WordCount(candidate.Surface) == 1 && candidate.Surface.Length >= 5)
+            .ToArray();
+        if (fuzzyCandidates.Length > 0)
+        {
+            proposals.AddRange(FuzzyProposals(text, fuzzyCandidates, claimed));
+        }
+
+        if (proposals.Count == 0)
+        {
+            return new WordCorrectionResult(text, 0);
+        }
+
+        // RIGHT TO LEFT, so every proposal's position is still the position it was found at.
+        var rewritten = new StringBuilder(text);
+        foreach (var proposal in proposals.OrderByDescending(proposal => proposal.Start))
+        {
+            rewritten.Remove(proposal.Start, proposal.Length).Insert(proposal.Start, proposal.Replacement);
+        }
+
+        return new WordCorrectionResult(rewritten.ToString(), proposals.Count);
+    }
+
+    /// <summary>Finds the phrases and words written exactly as the list spells them.</summary>
+    /// <remarks>
+    /// ARBITRATED RANK BY RANK, and dropping the whole disputed region was not enough on its own.
+    /// With "red blue" and "blue sun" disputing the middle word, removing both let a plain "blue"
+    /// rule underneath them rewrite the very words the dispute was about - so the words that were
+    /// supposed to be left alone were not. A disputed match therefore RESERVES what it covers
+    /// against everything ranked below it, without being applied itself.
+    ///
+    /// A MATCH THAT WOULD CHANGE NOTHING NEVER ENTERS THE ARGUMENT. A row spelling a word the way it
+    /// is already written has nothing at stake, and letting it dispute a row that does have
+    /// something at stake meant a real correction lost to a rule that wanted the text left exactly
+    /// as it was.
+    /// </remarks>
+    private static List<Proposal> ExactProposals(
+        string text,
+        IReadOnlyList<Candidate> candidates,
+        List<Span> claimed)
+    {
         var found = new List<SurfaceMatch>();
         foreach (var candidate in candidates)
         {
@@ -88,64 +132,79 @@ public static partial class CustomWordCorrector
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
                 TimeSpan.FromMilliseconds(250)))
             {
-                found.Add(new SurfaceMatch(match.Index, match.Length, match.Value, candidate));
+                if (!match.Value.Equals(candidate.Replacement, StringComparison.Ordinal))
+                {
+                    found.Add(new SurfaceMatch(match.Index, match.Length, candidate));
+                }
             }
         }
 
-        // TWO PHRASES OF THE SAME STANDING THAT WANT THE SAME WORDS ARE BOTH LEFT ALONE. Longer
-        // phrases still win over shorter ones, which is the rule this already had; the tie is the
-        // only case with no answer in the list itself, and picking one of them silently would be
-        // picking by position.
-        var contested = found
-            .Where(one => found.Any(other =>
-                !ReferenceEquals(one, other) &&
-                Overlaps(one, other) &&
-                Standing(one) == Standing(other) &&
-                !string.Equals(one.Candidate.Replacement, other.Candidate.Replacement, StringComparison.Ordinal)))
-            .ToHashSet();
-
-        var accepted = new List<SurfaceMatch>();
-        foreach (var match in found
-            .Where(match => !contested.Contains(match))
-            .OrderByDescending(match => WordCount(match.Candidate.Surface))
-            .ThenByDescending(match => match.Candidate.Surface.Length)
-            .ThenBy(match => match.Start))
+        var accepted = new List<Proposal>();
+        foreach (var rank in found
+            .GroupBy(Standing)
+            .OrderByDescending(rank => rank.Key.Words)
+            .ThenByDescending(rank => rank.Key.Length))
         {
-            if (!accepted.Any(taken => Overlaps(taken, match)))
+            var here = rank.ToArray();
+
+            // TWO PHRASES OF THE SAME STANDING THAT WANT THE SAME WORDS ARE BOTH LEFT ALONE. Longer
+            // phrases still beat shorter ones, which is the rule this always had; a tie is the one
+            // case the list itself has no answer for, and picking one silently would be picking by
+            // position.
+            var disputed = here
+                .Where(one => here.Any(other =>
+                    !ReferenceEquals(one, other) &&
+                    Overlaps(one, other) &&
+                    !string.Equals(
+                        one.Candidate.Replacement,
+                        other.Candidate.Replacement,
+                        StringComparison.Ordinal)))
+                .ToHashSet();
+
+            foreach (var match in disputed.Where(match => !IsClaimed(claimed, match)))
             {
-                accepted.Add(match);
+                claimed.Add(new Span(match.Start, match.Length));
             }
-        }
 
-        // RIGHT TO LEFT, so an earlier match's position is still the position it was found at.
-        var rewritten = new System.Text.StringBuilder(text);
-        foreach (var match in accepted.OrderByDescending(match => match.Start))
-        {
-            if (match.Text.Equals(match.Candidate.Replacement, StringComparison.Ordinal))
+            foreach (var match in here
+                .Where(match => !disputed.Contains(match))
+                .OrderBy(match => match.Start))
             {
-                continue;
+                if (IsClaimed(claimed, match))
+                {
+                    continue;
+                }
+
+                claimed.Add(new Span(match.Start, match.Length));
+                accepted.Add(new Proposal(match.Start, match.Length, match.Candidate.Replacement));
             }
-
-            rewritten.Remove(match.Start, match.Length).Insert(match.Start, match.Candidate.Replacement);
-            replacementCount++;
         }
 
-        var result = rewritten.ToString();
+        return accepted;
+    }
 
-        var fuzzyCandidates = candidates
-            .Where(candidate => WordCount(candidate.Surface) == 1 && candidate.Surface.Length >= 5)
-            .ToArray();
-        if (fuzzyCandidates.Length == 0)
-        {
-            return new WordCorrectionResult(result, replacementCount);
-        }
-
-        result = WordTokenRegex().Replace(result, match =>
+    /// <summary>Finds single words close enough to a custom word to be that word.</summary>
+    /// <remarks>
+    /// READ FROM THE ORIGINAL SENTENCE, NOT FROM THE CORRECTED ONE. Running this over the rewritten
+    /// text meant it examined words nobody had said - a replacement written in by the exact pass
+    /// could itself be corrected again, and one span of what the person actually said was then
+    /// counted as two corrections.
+    /// </remarks>
+    private static List<Proposal> FuzzyProposals(
+        string text,
+        IReadOnlyList<Candidate> fuzzyCandidates,
+        List<Span> claimed)
+    {
+        var proposals = new List<Proposal>();
+        foreach (Match match in WordTokenRegex().Matches(text))
         {
             var token = match.Value;
-            if (ReservedTriggerWords.Contains(token) || FuzzyStopWords.Contains(token) || token.Length < 5)
+            if (ReservedTriggerWords.Contains(token) ||
+                FuzzyStopWords.Contains(token) ||
+                token.Length < 5 ||
+                IsClaimed(claimed, match.Index, match.Length))
             {
-                return token;
+                continue;
             }
 
             // EACH CANDIDATE IS JUDGED AGAINST ITS OWN BAR BEFORE ANY OF THEM ARE RANKED. Taking the
@@ -170,14 +229,14 @@ public static partial class CustomWordCorrector
                         candidate.Surface.ToLowerInvariant()),
                     Threshold = BaseThreshold(candidate.Strictness)
                         - LengthAwareAdjustment(candidate.Surface.Length)
-                        + LargeVocabularyPenalty(fuzzyCandidates.Length),
+                        + LargeVocabularyPenalty(fuzzyCandidates.Count),
                 })
                 .Where(item => item.Score >= item.Threshold)
                 .OrderByDescending(item => item.Score)
                 .ToArray();
             if (eligible.Length == 0)
             {
-                return token;
+                continue;
             }
 
             // TWO SURFACES THAT WRITE THE SAME WORD ARE NOT RIVALS. The ambiguity check exists to
@@ -192,14 +251,14 @@ public static partial class CustomWordCorrector
                     StringComparison.OrdinalIgnoreCase));
             if (rival is not null && best.Score - rival.Score < AmbiguityMargin)
             {
-                return token;
+                continue;
             }
 
-            replacementCount++;
-            return best.Candidate.Replacement;
-        });
+            claimed.Add(new Span(match.Index, match.Length));
+            proposals.Add(new Proposal(match.Index, match.Length, best.Candidate.Replacement));
+        }
 
-        return new WordCorrectionResult(result, replacementCount);
+        return proposals;
     }
 
     /// <summary>How little of what somebody said this setting is willing to change.</summary>
@@ -259,13 +318,25 @@ public static partial class CustomWordCorrector
     private static bool Overlaps(SurfaceMatch left, SurfaceMatch right) =>
         left.Start < right.Start + right.Length && right.Start < left.Start + left.Length;
 
+    private static bool IsClaimed(List<Span> claimed, SurfaceMatch match) =>
+        IsClaimed(claimed, match.Start, match.Length);
+
+    private static bool IsClaimed(List<Span> claimed, int start, int length) =>
+        claimed.Any(span => start < span.Start + span.Length && span.Start < start + length);
+
     /// <summary>How strong a claim a match has on the words it covers.</summary>
     private static (int Words, int Length) Standing(SurfaceMatch match) =>
         (WordCount(match.Candidate.Surface), match.Candidate.Surface.Length);
 
     private sealed record Candidate(string Surface, string Replacement, MatchStrictness Strictness);
 
-    private sealed record SurfaceMatch(int Start, int Length, string Text, Candidate Candidate);
+    private sealed record SurfaceMatch(int Start, int Length, Candidate Candidate);
+
+    /// <summary>Part of the original sentence that is spoken for, whether or not it is changed.</summary>
+    private readonly record struct Span(int Start, int Length);
+
+    /// <summary>A change to make to the original sentence.</summary>
+    private readonly record struct Proposal(int Start, int Length, string Replacement);
 
     [GeneratedRegex(@"[\p{L}\p{N}][\p{L}\p{N}'\u2019-]*", RegexOptions.CultureInvariant)]
     private static partial Regex WordTokenRegex();
