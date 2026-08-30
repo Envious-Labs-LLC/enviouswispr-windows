@@ -150,7 +150,7 @@ public sealed class NavigationIconTests
         var markup = File.ReadAllText(AppSourcePath("MainWindow.xaml"));
         var rows = Regex.Matches(
                 markup,
-                "<NavigationViewItem\\b(?<attributes>[^>]*?)Tag=\"(?<tag>[^\"]+)\"[^>]*>\\s*<NavigationViewItem.Icon>\\s*<FontIcon Glyph=\"&#x(?<glyph>[0-9A-Fa-f]{4});\"")
+                "<NavigationViewItem\\b(?<attributes>[^>]*?)Tag=\"(?<tag>[^\"]+)\"[^>]*>\\s*<NavigationViewItem.Icon>\\s*<FontIcon\\b[^>]*?Glyph=\"&#x(?<glyph>[0-9A-Fa-f]{4});\"")
             .Select(match => new NavigationRow(
                 match.Groups["tag"].Value,
                 Regex.Match(match.Value, "Content=\"(?<label>[^\"]*)\"").Groups["label"].Value,
