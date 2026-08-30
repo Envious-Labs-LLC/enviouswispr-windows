@@ -216,6 +216,51 @@ public sealed class SerialSettingsWriterTests
     }
 
     [Fact]
+    public async Task DisposingUnderAWriteDoesNotStrandADrain()
+    {
+        // THE DEADLOCK. Disposing while a write held the gate made that write's release throw before
+        // it could leave, so the active count never reached zero and a drain waiting on it waited
+        // for ever - an app that will not close.
+        var store = new BlockingStore();
+        var writer = new SerialSettingsWriter(store, AppSettings.Default);
+
+        var save = writer.UpdateAsync(current => current with { LaunchCount = 2 });
+        await store.SaveStarted.Task.ConfigureAwait(true);
+
+        var drain = writer.DrainAsync();
+        writer.Dispose();
+        store.LetSavesFinish();
+
+        Assert.Null(await save.ConfigureAwait(true));
+        await drain.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(true);
+    }
+
+    [Fact]
+    public async Task CancellationWhileWaitingIsCancellationNotAStorageFailure()
+    {
+        // THE SAME CANCELLATION MEANT TWO THINGS depending on when it arrived: thrown if it landed
+        // during the save, reported as "storage is unavailable" if it landed while queueing.
+        var store = new BlockingStore();
+        using var writer = new SerialSettingsWriter(store, AppSettings.Default);
+        using var cancellation = new CancellationTokenSource();
+
+        var blocking = writer.UpdateAsync(current => current with { LaunchCount = 1 });
+        await store.SaveStarted.Task.ConfigureAwait(true);
+
+        var queued = writer.UpdateAsync(
+            current => current with { LaunchCount = 2 }, cancellation.Token);
+        await cancellation.CancelAsync().ConfigureAwait(true);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => queued).ConfigureAwait(true);
+
+        store.LetSavesFinish();
+        Assert.Null(await blocking.ConfigureAwait(true));
+
+        // AND THE CANCELLED ONE STILL LEFT, or the next drain would wait for a writer that is gone.
+        await writer.DrainAsync().WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(true);
+    }
+
+    [Fact]
     public async Task AFailedSaveLeavesTheStoredValueAlone()
     {
         var store = new BlockingStore { FailNext = new IOException("the disk said no") };
