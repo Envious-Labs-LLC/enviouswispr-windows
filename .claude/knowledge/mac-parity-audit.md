@@ -99,16 +99,22 @@ work: hands-free lock, removed once a control test proved the wiring could never
 ## FACT: partial-on-windows
 The name exists. The behaviour does not match.
 
-**TWO ROWS IN THIS TABLE WERE ALREADY WRONG WHEN READ ON 2026-08-29, BOTH IN THE SAME DIRECTION.**
-Custom-words import and export were both described as absent and both ship. A session about to build
-plain-file import found it already there, reachable, and better than what it was about to write. That
-is the failure this file's own opening rule predicts - an absence claim expires, and the table failed
-toward WORK - so the correction is recorded here rather than only in the rows. **Re-sweep before
-building against any row in this table.**
+**FOUR ROWS IN THIS TABLE WERE WRONG WHEN READ ON 2026-08-29, EVERY ONE IN THE SAME DIRECTION.**
+Custom-words import, custom-words export, per-dictation metrics and streaming-feeds-the-final-transcript
+were all described as absent or partial, and all four ship. A session about to build plain-file import
+found it already there, reachable, and better than what it was about to write.
+
+**THE DIRECTION IS THE FINDING, NOT THE COUNT.** Every error was toward "missing", and the cost of that
+error is rebuilding something that works - which is expensive, and which also REPLACES a tested
+implementation with an untested one. The file's own opening rule predicts this and says an absence
+claim expires; four rows in one reading says the expiry is faster than anyone assumed.
+
+**RE-SWEEP BEFORE BUILDING AGAINST ANY ROW IN THIS TABLE.** Two of the four were caught by reading the
+code for five minutes before writing any. That is the whole cost of the check.
 
 | Capability | What is actually there | Gap |
 |---|---|---|
-| Streaming (as "Live Preview") | `RunLivePreviewAsync` re-transcribes a rolling 20-second window every 2.5s and shows it in the UI ONLY | The final transcript is computed from scratch on release. The preview never feeds it. |
+| Streaming (as "Live Preview") | **STALE ROW, CORRECTED 2026-08-29. The streamed text DOES feed the final transcript.** `TranscribeUsingAnyHeadStartAsync` takes the streamed head start, re-transcribes only the audio AFTER the point streaming reached, and joins the two through `StreamingTranscriptAccumulator`. It falls back to transcribing everything when the head start is unusable. | Whether the JOIN is as good as macOS's is unaudited. The seam between head start and tail is where a duplicated or dropped word would appear, and nothing here has compared the two implementations' seam handling. |
 | Multi-route paste cascade | One direct value-write route (`TryDirectValueWrite`) plus a clipboard fallback | macOS runs several routes with per-route eligibility |
 | Auto-stop on silence | An ENERGY segmenter with hysteresis drives auto-stop in toggle mode, off by default (`SpeechSegmenter`, `AutoStopPolicy`) | macOS uses a NEURAL detector, which also does speech-segment filtering. This one hears a slammed door as speech. The user-visible behaviour is present; the recogniser is not. |
 | Per-dictation execution metrics | **Re-read 2026-08-29: every stage was ALREADY measured**, and the code already argues for measuring the whole wait rather than the sum, so the gap was never the timings. It was the JOIN. `DictationScope` now stamps every line of the post-capture pipeline with one id, ambient rather than threaded, so a helper cannot forget it. | Capture, the streaming worker and auto-stop run before that scope and are not joined - #78. The join is LOCAL only: `PrivacySafeObservabilityTests` refuses any identifier on the record that crosses the network, and it fired on the first attempt. |
@@ -243,6 +249,38 @@ two animations, and honours Reduce Motion.
 capability has the right name on both sides, a name sweep reports it present, and the Windows version
 does a fraction of the work. Read it as evidence that the present-on-windows table is a list of NAMES
 confirmed, exactly as its own heading says, and that every row in it can hide a gap this size.
+
+## FACT: what-actually-stands-between-here-and-parity-2026-08-29
+Re-swept against the tree rather than read off the tables above, because four of those rows were wrong.
+**Almost nothing left is blocked on code.**
+
+### Blocked on a person at the machine
+| Capability | What is needed |
+|---|---|
+| The whole 2026-08-29 UI: pill severities, the pill's action button, four tray icons, High Contrast, Reduce Motion | #76. Nobody has seen any of it. A session over SSH runs in Windows session 0, where a WinUI app dies in `Microsoft.UI.Input.dll` before drawing. Confirmed environmental by running the same launch against a reviewed commit. |
+| The fourth delivery tier, macOS's `menuPaste` | #77. Invoking an app's own Paste command. Getting it wrong presses the wrong control inside somebody's document, so it needs Word, Excel and OneNote open in front of a person. |
+| Modifier-only hotkeys, `Ctrl+Win` as the default | #66. Built. Needs a real keyboard. |
+| Bluetooth-aware routing and wake allowance | A Bluetooth headset. |
+| Ollama catalogue install and remove | Ollama installed and running. |
+
+### Blocked on a decision nobody has made
+| Capability | The decision |
+|---|---|
+| Pre-roll ring buffer | Confirmed still absent by sweep. Keeping 500ms before the key press means the microphone is always listening: within the privacy contract, visible to the user as an in-use indicator and a battery cost. |
+| Hands-free lock | Present in the gesture policy and its tests, absent from production. Was built and reverted: the gesture cannot fire without deferring finalisation, which adds latency to every short dictation. |
+| Contacts as vocabulary | Needs a capability declaration and user consent, and this build is unpackaged. |
+
+### Ordinary work, nobody blocking
+| Capability | Note |
+|---|---|
+| Capture, streaming and auto-stop lines joined to their dictation | #78, with the `AsyncLocal` constraint and the design that survives it recorded on the issue. |
+| Auto-stop's recogniser | Behaviour ships; macOS uses a NEURAL detector and this hears a slammed door as speech. Needs a model, which is closer to ordinary work than to a decision. |
+| The streaming JOIN's quality | The head start feeds the final transcript; whether the seam matches macOS's is unaudited, and the seam is where a duplicated or dropped word would appear. |
+| Import from a rival app's own format, and bulk edit | The last two custom-words rows. |
+
+**THE SHAPE OF WHAT IS LEFT IS THE POINT.** Five of the remaining items need somebody at the machine and
+three need a product decision. A session that can only reach the machine over SSH cannot close them by
+writing more code, and writing more code around them is how the unverified pile grows.
 
 ## PROC: how-this-was-taken
 Two sweeps per capability from `src/Production`, the second using the CAPABILITY's synonyms rather than
