@@ -203,101 +203,9 @@ public sealed class CustomWordStrictnessTests
         Assert.Equal(1, result.ReplacementCount);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void TwoRowsThatAgreeOnTheWordTakeTheStricterOneWhicheverComesFirst(bool reversed)
-    {
-        CustomWordEntry[] words =
-        [
-            new("Magnusson", "Magnusson", MatchStrictness.Loose),
-            new("Magnusson", "Magnusson", MatchStrictness.Strict),
-        ];
-        if (reversed)
-        {
-            words = [words[1], words[0]];
-        }
 
-        var result = CustomWordCorrector.Correct("ask magnuson to sign it", words);
 
-        Assert.Equal("ask magnuson to sign it", result.Text);
-        Assert.Equal(0, result.ReplacementCount);
-    }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void TwoPhrasesThatWantTheSameWordsAreBothLeftAloneWhicheverComesFirst(bool reversed)
-    {
-        // "red blue" and "blue sun" are the same length and the same number of words, and both are
-        // inside "red blue sun". Replacing surface by surface gave whichever row came first.
-        CustomWordEntry[] words =
-        [
-            new("red blue", "Alpha"),
-            new("blue sun", "Beta"),
-        ];
-        if (reversed)
-        {
-            words = [words[1], words[0]];
-        }
-
-        var result = CustomWordCorrector.Correct("the red blue sun rose", words);
-
-        Assert.Equal("the red blue sun rose", result.Text);
-        Assert.Equal(0, result.ReplacementCount);
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void APlainWordDoesNotRewriteWhatTwoPhrasesWereArguingOver(bool reversed)
-    {
-        // "red blue" and "blue sun" dispute the middle word, so neither applies. Removing them from
-        // the argument entirely then let a plain "blue" rule underneath rewrite the very words the
-        // dispute was about, which is not leaving them alone.
-        CustomWordEntry[] words =
-        [
-            new("red blue", "Alpha"),
-            new("blue sun", "Beta"),
-            new("blue", "Gamma"),
-        ];
-        if (reversed)
-        {
-            words = [words[2], words[1], words[0]];
-        }
-
-        var result = CustomWordCorrector.Correct("the red blue sun rose", words);
-
-        Assert.Equal("the red blue sun rose", result.Text);
-        Assert.Equal(0, result.ReplacementCount);
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void TwoPhrasesArguingProtectTheirFarEndsToo(bool reversed)
-    {
-        // "small planet" and "planet large" argue about the middle word. Claiming only the first of
-        // them left the far end of the second unclaimed, so "large" was still free for a shorter
-        // rule underneath - the exact words in dispute were protected and the rest of the phrase
-        // was not.
-        CustomWordEntry[] words =
-        [
-            new("small planet", "Alpha"),
-            new("planet large", "Beta"),
-            new("large", "Gamma"),
-            new("largee", "Delta", MatchStrictness.Loose),
-        ];
-        if (reversed)
-        {
-            words = [words[3], words[2], words[1], words[0]];
-        }
-
-        var result = CustomWordCorrector.Correct("small planet large", words);
-
-        Assert.Equal("small planet large", result.Text);
-        Assert.Equal(0, result.ReplacementCount);
-    }
 
     [Theory]
     [InlineData(false)]
@@ -324,21 +232,6 @@ public sealed class CustomWordStrictnessTests
         Assert.Equal(2, result.ReplacementCount);
     }
 
-    [Fact]
-    public void ARowThatWouldChangeNothingDoesNotBlockOneThatWould()
-    {
-        // "red blue" writing "red blue" has nothing at stake. Letting it dispute "blue sun" meant a
-        // real correction lost to a rule that wanted the text left exactly as it already was.
-        var result = CustomWordCorrector.Correct(
-            "the red blue sun rose",
-            [
-                new CustomWordEntry("red blue", "red blue"),
-                new CustomWordEntry("blue sun", "Beta"),
-            ]);
-
-        Assert.Equal("the red Beta rose", result.Text);
-        Assert.Equal(1, result.ReplacementCount);
-    }
 
     [Fact]
     public void AWordWrittenInByOneRuleIsNotThenHeardAsAnother()
@@ -410,36 +303,7 @@ public sealed class CustomWordStrictnessTests
         }
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void AWordTwoRowsDisagreeAboutIsLeftAloneWhicheverRowComesFirst(bool reversed)
-    {
-        CustomWordEntry[] words =
-        [
-            new("zebracode", "Alpha"),
-            new("zebracode", "Beta"),
-        ];
-        if (reversed)
-        {
-            words = [words[1], words[0]];
-        }
 
-        var result = CustomWordCorrector.Correct("the zebracode is ready", words);
-
-        Assert.Equal("the zebracode is ready", result.Text);
-        Assert.Equal(0, result.ReplacementCount);
-    }
-
-    [Fact]
-    public void OneRowOnItsOwnStillCorrectsTheWordTheTwoDisagreedAbout()
-    {
-        var result = CustomWordCorrector.Correct(
-            "the zebracode is ready",
-            [new CustomWordEntry("zebracode", "Alpha")]);
-
-        Assert.Equal("the Alpha is ready", result.Text);
-    }
 
     [Fact]
     public void ASettingsFileCarryingAStrictnessNobodyDefinedIsRefused()
@@ -616,5 +480,145 @@ public sealed class CustomWordStrictnessTests
 
         Assert.Equal("I Drive from Boston yesterday", result.Text);
         Assert.Equal(1, result.ReplacementCount);
+    }
+
+    [Theory]
+    [InlineData(false, "Beta")]
+    [InlineData(true, "Alpha")]
+    public void TheLastRowToClaimASpokenFormIsTheOneThatOwnsIt(bool reversed, string expected)
+    {
+        // WINDOWS USED TO DROP BOTH, on the reasoning that picking one silently is picking by
+        // position. macOS resolves it - the last row written wins - and dropping both meant the same
+        // word list produced different text on the two platforms. Parity decides this, not safety.
+        CustomWordEntry[] words =
+        [
+            new("zebracode", "Alpha"),
+            new("zebracode", "Beta"),
+        ];
+        if (reversed)
+        {
+            words = [words[1], words[0]];
+        }
+
+        var result = CustomWordCorrector.Correct("the zebracode is ready", words);
+
+        Assert.Equal($"the {expected} is ready", result.Text);
+        Assert.Equal(1, result.ReplacementCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ARowsWrittenFormYieldsToAnyRowThatSaysItAloud(bool reversed)
+    {
+        // "Alpha" is one row's written form and another row's spoken form. macOS gives the spoken
+        // form the surface, so saying "Alpha" reaches the row that listens for it.
+        CustomWordEntry[] words =
+        [
+            new("zebracode", "Alpha"),
+            new("Alpha", "Omega"),
+        ];
+        if (reversed)
+        {
+            words = [words[1], words[0]];
+        }
+
+        var result = CustomWordCorrector.Correct("the Alpha is ready", words);
+
+        Assert.Equal("the Omega is ready", result.Text);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TheLeftmostPhraseWinsAndNothingUnderneathRewritesWhatItTook(bool reversed)
+    {
+        // "red blue" and "blue sun" both fit inside "red blue sun". Windows used to call that a tie
+        // and leave the sentence alone; macOS reads left to right and takes the one that starts
+        // first, so their starting positions are a precedence rule rather than a coincidence. The
+        // plain "blue" rule underneath cannot reach the words the winner took.
+        CustomWordEntry[] words =
+        [
+            new("red blue", "Alpha"),
+            new("blue sun", "Beta"),
+            new("blue", "Gamma"),
+        ];
+        if (reversed)
+        {
+            words = [words[2], words[1], words[0]];
+        }
+
+        var result = CustomWordCorrector.Correct("the red blue sun rose", words);
+
+        Assert.Equal("the Alpha sun rose", result.Text);
+        Assert.Equal(1, result.ReplacementCount);
+    }
+
+    [Fact]
+    public void APhraseWrittenTheWayTheListSpellsItSettlesItsWordsEvenThoughNothingChanges()
+    {
+        // "red blue" writing "red blue" changes nothing, and it still settles those two words:
+        // saying a phrase the way the list spells it is an answer, so a rule overlapping it does not
+        // get to rewrite half of what was said.
+        var result = CustomWordCorrector.Correct(
+            "the red blue sun rose",
+            [
+                new CustomWordEntry("red blue", "red blue"),
+                new CustomWordEntry("blue sun", "Beta"),
+            ]);
+
+        Assert.Equal("the red blue sun rose", result.Text);
+        Assert.Equal(0, result.ReplacementCount);
+    }
+
+    [Theory]
+    [InlineData(false, MatchStrictness.Strict)]
+    [InlineData(true, MatchStrictness.Loose)]
+    public void TwoRowsClaimingOneWordLeaveTheLastOnesChoiceInForce(
+        bool reversed,
+        MatchStrictness owner)
+    {
+        // Windows used to take the strictest of the two. macOS takes the last one written, and its
+        // choice comes with it - so the outcome follows the row that owns the word.
+        CustomWordEntry[] words =
+        [
+            new("Magnusson", "Magnusson", MatchStrictness.Loose),
+            new("Magnusson", "Magnusson", MatchStrictness.Strict),
+        ];
+        if (reversed)
+        {
+            words = [words[1], words[0]];
+        }
+
+        var result = CustomWordCorrector.Correct("ask magnuson to sign it", words);
+
+        // "magnuson" is 0.889 from the word: above the loose bar and below the strict one.
+        var corrected = owner == MatchStrictness.Loose;
+        Assert.Equal(corrected ? "ask Magnusson to sign it" : "ask magnuson to sign it", result.Text);
+        Assert.Equal(corrected ? 1 : 0, result.ReplacementCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void APhraseTakenAtOnePositionLeavesTheWordsAfterItStillReachable(bool reversed)
+    {
+        // "small planet" is taken at the start, and "large" is still corrected on its own. The words
+        // a phrase took are off limits; the words after it are not.
+        CustomWordEntry[] words =
+        [
+            new("small planet", "Alpha"),
+            new("planet large", "Beta"),
+            new("large", "Gamma"),
+        ];
+        if (reversed)
+        {
+            words = [words[2], words[1], words[0]];
+        }
+
+        var result = CustomWordCorrector.Correct("small planet large", words);
+
+        Assert.Equal("Alpha Gamma", result.Text);
+        Assert.Equal(2, result.ReplacementCount);
     }
 }
