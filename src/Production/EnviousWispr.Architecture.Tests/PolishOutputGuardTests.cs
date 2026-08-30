@@ -282,20 +282,86 @@ public sealed class PolishOutputGuardTests
     }
 
     [Fact]
-    public void AnEchoedTranscriptWrapperIsRemoved()
+    public void DictatedTagsAreNotDeletedFromSomebodysWords()
     {
-        var review = PolishOutputGuard.Review(
-            "so um I think the meeting went well today",
-            "<transcript>I think the meeting went well today.</transcript>");
+        // The wrapper belongs to ONE provider's prompt and is stripped there. Deleting those tags
+        // for every provider takes content out of the document of anybody dictating XML, and the
+        // cloud and Ollama prompts never add a wrapper for it to be removing.
+        const string said = "the element is transcript in angle brackets around the text";
+        const string wrote = "The element is <transcript> in angle brackets around the text.";
 
-        Assert.Equal("I think the meeting went well today.", review.Text);
+        Assert.Equal(wrote, PolishOutputGuard.Review(said, wrote).Text);
+    }
+
+    [Fact]
+    public void AHeadingSomebodyActuallyDictatedIsKept()
+    {
+        // "Here is the plan:" is a sentence people say. Deleting their first line because a model
+        // also writes lines like it is the same mistake in the other direction.
+        const string said = "here is the plan we launch on Tuesday and review it on Thursday";
+        const string wrote = "Here is the plan:\n\nWe launch on Tuesday and review it on Thursday.";
+
+        Assert.Equal(wrote, PolishOutputGuard.Review(said, wrote).Text);
+    }
+
+    [Fact]
+    public void AnAcknowledgementIsOnlyDroppedWhenAWrapperLineFollowsIt()
+    {
+        // A short next sentence is what most speech has, so that test deleted "Sure," from real
+        // words. Only a line that introduces the text proves a model is the one talking.
+        const string said = "sure I can help with that";
+
+        Assert.Equal(
+            "Sure! I can help with that.",
+            PolishOutputGuard.Review(said, "Sure! I can help with that.").Text);
+    }
+
+    [Fact]
+    public void SomebodyWhoSaidSureKeepsIt()
+    {
+        const string said = "sure here is the summary we shipped on Tuesday and it went fine";
+        const string wrote = "Sure, here is the summary: we shipped on Tuesday and it went fine.";
+
+        Assert.Equal(wrote, PolishOutputGuard.Review(said, wrote).Text);
+    }
+
+    [Fact]
+    public void TheAnswerToThisQuestionIsStillAnExecution()
+    {
+        // Both watched words survive in any order, so an unordered check accepted the plainest
+        // execution there is. The request phrase has to survive WHOLE.
+        Assert.Equal(
+            PolishOutputVerdict.RefusedInstructionExecuted,
+            PolishOutputGuard.Review(
+                "Ask him to answer this question about the capital of France",
+                "The answer to this question is Paris.").Verdict);
+    }
+
+    [Fact]
+    public void HavingBrainstormedIsNotAskingAnybodyToBrainstorm()
+    {
+        // As a substring the trigger fired on a past-tense verb in an ordinary sentence.
+        Assert.Equal(
+            PolishOutputVerdict.Accepted,
+            PolishOutputGuard.Review(
+                "we brainstormed on Tuesday and landed on the second option",
+                "We brainstormed on Tuesday and landed on the second option.").Verdict);
+    }
+
+    [Fact]
+    public void AnApprovedRewordingOfTheRequestIsAccepted()
+    {
+        Assert.Equal(
+            PolishOutputVerdict.Accepted,
+            PolishOutputGuard.Review(
+                "can you answer this question about the capital of France for me",
+                "Can you answer the question about the capital of France for me?").Verdict);
     }
 
     [Fact]
     public void SureIsKeptWhenItIsSomethingSomebodySaid()
     {
-        // "Sure," begins plenty of real dictation. It goes only when what follows is a model
-        // talking, and prose that runs on with commas is somebody speaking.
+        // "Sure," begins plenty of real dictation.
         var review = PolishOutputGuard.Review(
             "sure I can do that on Tuesday, and then we can review it on Thursday together",
             "Sure, I can do that on Tuesday, and then we can review it on Thursday together.");
