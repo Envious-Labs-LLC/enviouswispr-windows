@@ -1414,6 +1414,16 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         var spoken = SpokenFormBox.Text.Trim();
         var replacement = ReplacementBox.Text.Trim();
+
+        // THE PICKER'S ORDER IS THE ENUM'S ORDER, and that is worth one line to state rather than
+        // leaving as a coincidence two files apart. A choice nobody has made reads as -1, which is
+        // the ordinary rule.
+        var strictness = WordStrictnessComboBox.SelectedIndex switch
+        {
+            1 => MatchStrictness.Loose,
+            2 => MatchStrictness.Strict,
+            _ => MatchStrictness.Default,
+        };
         if (string.IsNullOrWhiteSpace(spoken) || string.IsNullOrWhiteSpace(replacement))
         {
             ShowMessage("Both fields are required", "Enter the spoken form and the exact replacement.", InfoBarSeverity.Warning);
@@ -1426,7 +1436,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 data => new ReusableUserData(
                     data.CustomWords
                         .Where(entry => !string.Equals(entry.SpokenForm, spoken, StringComparison.OrdinalIgnoreCase))
-                        .Append(new CustomWordEntry(spoken, replacement))
+                        .Append(new CustomWordEntry(spoken, replacement, strictness))
                         .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
                         .ToArray(),
                     data.Snippets),
@@ -1437,6 +1447,11 @@ public sealed partial class MainWindow : Window, IDisposable
 
         SpokenFormBox.Text = string.Empty;
         ReplacementBox.Text = string.Empty;
+
+        // AND THE CHOICE GOES BACK TO ORDINARY WITH THEM. A picker that keeps its last answer means
+        // the second word somebody adds is silently strict because the first one was, and the only
+        // sign of it is a column they have no reason to be watching.
+        WordStrictnessComboBox.SelectedIndex = 0;
     }
 
     /// <summary>Selects every word, or clears the selection when they are all already chosen.</summary>

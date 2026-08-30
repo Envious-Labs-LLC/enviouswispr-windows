@@ -106,12 +106,12 @@ public static class CustomWordImport
 
         var known = existing.ToDictionary(
             entry => entry.SpokenForm,
-            entry => entry.Replacement,
+            entry => entry,
             StringComparer.OrdinalIgnoreCase);
 
         // Spoken forms already claimed by an EARLIER line of this same import. Without this, a file
         // listing one word twice adds it twice, and the list gains a duplicate the user never typed.
-        var claimed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var claimed = new Dictionary<string, CustomWordEntry>(StringComparer.OrdinalIgnoreCase);
 
         var lines = new List<ImportedWordLine>();
         var raw = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
@@ -136,7 +136,7 @@ public static class CustomWordImport
         ArgumentNullException.ThrowIfNull(entries);
         return string.Join(
             Environment.NewLine,
-            entries.Select(entry => $"{entry.SpokenForm},{entry.Replacement}"));
+            entries.Select(entry => $"{entry.SpokenForm},{entry.Replacement},{Spell(entry.Strictness)}"));
     }
 
     /// <summary>Takes the imported version of words the user already corrects differently.</summary>
@@ -164,24 +164,61 @@ public static class CustomWordImport
             return existing;
         }
 
-        var incoming = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // THE FILE'S WHOLE ANSWER FOR THAT WORD, not only its replacement. Taking the replacement
+        // and leaving the strictness behind would hand back a word corrected to the file's spelling
+        // by the user's own rule, which is neither of the two things anybody chose.
+        var incoming = new Dictionary<string, CustomWordEntry>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in replacements)
         {
-            incoming[entry.SpokenForm] = entry.Replacement;
+            incoming[entry.SpokenForm] = entry;
         }
 
         return existing
-            .Select(entry => incoming.TryGetValue(entry.SpokenForm, out var replacement)
-                ? entry with { Replacement = replacement }
+            .Select(entry => incoming.TryGetValue(entry.SpokenForm, out var taken)
+                ? entry with { Replacement = taken.Replacement, Strictness = taken.Strictness }
                 : entry)
             .ToArray();
+    }
+
+    /// <summary>The word a person reads in the third column, and types back into it.</summary>
+    /// <remarks>
+    /// SPELLED OUT RATHER THAN NUMBERED. This file opens in a spreadsheet and gets edited by hand,
+    /// and a column reading 0, 1 and 2 asks the reader to look something up before they can change
+    /// it. Written for every row including the ordinary one, so the column never appears and
+    /// disappear depending on which words are in the list.
+    /// </remarks>
+    private static string Spell(MatchStrictness strictness) => strictness switch
+    {
+        MatchStrictness.Loose => "loose",
+        MatchStrictness.Strict => "strict",
+        _ => "default",
+    };
+
+    private static bool TryReadStrictness(string value, out MatchStrictness strictness)
+    {
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "loose":
+                strictness = MatchStrictness.Loose;
+                return true;
+            case "strict":
+                strictness = MatchStrictness.Strict;
+                return true;
+            case "default":
+            case "":
+                strictness = MatchStrictness.Default;
+                return true;
+            default:
+                strictness = MatchStrictness.Default;
+                return false;
+        }
     }
 
     private static ImportedWordLine ReadLine(
         string raw,
         int lineNumber,
-        Dictionary<string, string> known,
-        Dictionary<string, string> claimed)
+        Dictionary<string, CustomWordEntry> known,
+        Dictionary<string, CustomWordEntry> claimed)
     {
         var trimmed = raw.Trim();
         if (trimmed.Length == 0 || trimmed.StartsWith('#'))
@@ -189,8 +226,13 @@ public static class CustomWordImport
             return new ImportedWordLine(lineNumber, raw, null, ImportedWordOutcome.Ignored);
         }
 
+        // TWO COLUMNS OR THREE, AND NOTHING ELSE. The third names how closely the word must match
+        // and a file that omits it is a file written before the column existed or by hand, which is
+        // the ordinary behaviour and needs no ceremony. More than three parts is still refused
+        // rather than guessed at, because a line that splits further is a line the reader cannot
+        // predict the meaning of either.
         var parts = trimmed.Split(Separators);
-        if (parts.Length != 2)
+        if (parts.Length is not (2 or 3))
         {
             return new ImportedWordLine(lineNumber, raw, null, ImportedWordOutcome.Unreadable);
         }
@@ -205,26 +247,40 @@ public static class CustomWordImport
             return new ImportedWordLine(lineNumber, raw, null, ImportedWordOutcome.Unreadable);
         }
 
-        var entry = new CustomWordEntry(spoken, replacement);
+        // A WORD NOBODY RECOGNISES IS REFUSED, NOT QUIETLY TAKEN AS ORDINARY. Reading "strickt" as
+        // default would correct that word more narrowly than the file asked for and say nothing.
+        if (parts.Length == 3 && !TryReadStrictness(parts[2], out _))
+        {
+            return new ImportedWordLine(lineNumber, raw, null, ImportedWordOutcome.Unreadable);
+        }
+
+        var strictness = MatchStrictness.Default;
+        if (parts.Length == 3)
+        {
+            TryReadStrictness(parts[2], out strictness);
+        }
+
+        var entry = new CustomWordEntry(spoken, replacement, strictness);
         if (TryFindExisting(spoken, known, claimed, out var current))
         {
             return new ImportedWordLine(
                 lineNumber,
                 raw,
                 entry,
-                string.Equals(current, replacement, StringComparison.Ordinal)
+                string.Equals(current.Replacement, replacement, StringComparison.Ordinal)
+                    && current.Strictness == strictness
                     ? ImportedWordOutcome.AlreadyPresent
                     : ImportedWordOutcome.Conflict);
         }
 
-        claimed[spoken] = replacement;
+        claimed[spoken] = entry;
         return new ImportedWordLine(lineNumber, raw, entry, ImportedWordOutcome.Added);
     }
 
     private static bool TryFindExisting(
         string spoken,
-        Dictionary<string, string> known,
-        Dictionary<string, string> claimed,
-        out string current) =>
+        Dictionary<string, CustomWordEntry> known,
+        Dictionary<string, CustomWordEntry> claimed,
+        out CustomWordEntry current) =>
         known.TryGetValue(spoken, out current!) || claimed.TryGetValue(spoken, out current!);
 }

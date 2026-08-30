@@ -79,6 +79,7 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 4 => MigrateFromV4(json),
                 5 => MigrateFromV5(json),
                 6 => MigrateFromV6(json),
+                7 => MigrateFromV7(json),
                 PortableProfile.CurrentSchemaVersion => JsonSerializer.Deserialize<PortableProfile>(
                     json,
                     JsonSettingsStore.SerializerOptions),
@@ -211,6 +212,18 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                     RecordingSoundPairing = UserPreferences.Default.RecordingSoundPairing,
                 },
             };
+    }
+
+    /// <summary>Takes a profile written before custom words could be matched loosely.</summary>
+    /// <remarks>See <c>JsonSettingsStore.MigrateFromV12</c>; a missing strictness is the old rule.</remarks>
+    private static PortableProfile? MigrateFromV7(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<PortableProfile>(
+            json,
+            JsonSettingsStore.SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = PortableProfile.CurrentSchemaVersion };
     }
 
     private static PortableProfile? MigrateFromV6(string json)
