@@ -59,6 +59,15 @@ public sealed partial class DictationOverlayWindow : Window
     /// re-running whichever state handler happened to have set the size.
     /// </remarks>
     private int _logicalWidth = NoticeWidth;
+
+    /// <summary>The pointer currently dragging the pill, if one is.</summary>
+    private uint? _dragPointer;
+
+    private PointInt32 _dragFromWindow;
+    private NativePoint _dragFromCursor;
+
+    /// <summary>True once this pill has been moved by hand, so placement leaves it alone.</summary>
+    private bool _draggedThisPresentation;
     private int _logicalHeight = NoticeHeight;
 
     /// <summary>Physical pixels per layout unit on the monitor the pill is currently on.</summary>
@@ -420,6 +429,62 @@ public sealed partial class DictationOverlayWindow : Window
         ArmDwell();
     }
 
+    /// <summary>Starts a drag, so the pill can be moved out of the way of what is underneath it.</summary>
+    /// <remarks>
+    /// THE PILL LANDS WHERE IT LANDS, AND SOMETIMES THAT IS ON TOP OF THE THING BEING DICTATED INTO.
+    /// Top or bottom is a setting, but a setting is the wrong grain for "not there, just now" - the
+    /// obstruction is about this window at this moment, not about a preference. macOS lets the pill
+    /// be dragged for the presentation it is in.
+    ///
+    /// FOR THIS PRESENTATION ONLY, WHICH IS THE WHOLE POINT. Moving it once should not silently
+    /// redefine where every future pill appears; the next one comes back where the setting says. Hide
+    /// clears the override, so the rule is simply "until this pill goes away".
+    ///
+    /// THE POINTER IS CAPTURED so the drag survives leaving the pill's own bounds, which is otherwise
+    /// the first thing that happens when somebody moves it any distance.
+    /// </remarks>
+    private void OverlayRoot_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(null);
+        if (!point.Properties.IsLeftButtonPressed || !OverlayRoot.CapturePointer(e.Pointer))
+        {
+            return;
+        }
+
+        _dragPointer = e.Pointer.PointerId;
+        _dragFromWindow = new PointInt32(AppWindow.Position.X, AppWindow.Position.Y);
+        GetCursorPos(out var cursor);
+        _dragFromCursor = cursor;
+    }
+
+    private void OverlayRoot_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (_dragPointer != e.Pointer.PointerId)
+        {
+            return;
+        }
+
+        // MOVED BY THE CURSOR'S OWN TRAVEL, not by the pointer position inside the pill. Once the
+        // window starts moving, a position measured against the window chases itself and the pill
+        // slides away under the pointer.
+        GetCursorPos(out var cursor);
+        AppWindow.Move(new PointInt32(
+            _dragFromWindow.X + (cursor.X - _dragFromCursor.X),
+            _dragFromWindow.Y + (cursor.Y - _dragFromCursor.Y)));
+        _draggedThisPresentation = true;
+    }
+
+    private void OverlayRoot_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (_dragPointer != e.Pointer.PointerId)
+        {
+            return;
+        }
+
+        OverlayRoot.ReleasePointerCapture(e.Pointer);
+        _dragPointer = null;
+    }
+
     /// <summary>Takes the pill off screen and stops everything it left running.</summary>
     /// <remarks>
     /// BOTH HIDE PATHS GO THROUGH HERE, and they did not before. The dwell timer's tick stopped
@@ -437,6 +502,10 @@ public sealed partial class DictationOverlayWindow : Window
         _elapsedTimer.Stop();
         _dwell = TimeSpan.Zero;
         _pointerIsOver = false;
+        // THE DRAG LASTED AS LONG AS THIS PILL DID. The next one returns to where the setting says,
+        // which is what stops one nudge quietly becoming a new permanent position.
+        _draggedThisPresentation = false;
+        _dragPointer = null;
         ApplyDistressPulse(pulsing: false);
         AppWindow.Hide();
     }
@@ -685,6 +754,14 @@ public sealed partial class DictationOverlayWindow : Window
 
     private void PositionOnForegroundMonitor()
     {
+        // A PILL SOMEBODY HAS MOVED STAYS MOVED. Placement runs again on every status change within
+        // one presentation, so without this the pill would snap back the moment its words changed -
+        // which reads as the drag not having worked at all.
+        if (_draggedThisPresentation)
+        {
+            return;
+        }
+
         var foreground = GetForegroundWindow();
         var monitor = MonitorFromWindow(foreground, MonitorDefaultToNearest);
         var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
@@ -725,6 +802,23 @@ public sealed partial class DictationOverlayWindow : Window
 
     [DllImport("user32.dll")]
     private static extern int SetWindowRgn(nint windowHandle, nint region, bool bRedraw);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out NativePoint point);
+
+    /// <summary>A screen position in physical pixels, which is what the cursor is reported in.</summary>
+    /// <remarks>
+    /// ITS OWN TYPE RATHER THAN ONE OF THE THREE Points ALREADY IN SCOPE. Windows.Foundation.Point is
+    /// doubles in layout units, Windows.Graphics.PointInt32 is a window position, and a using
+    /// directive decides which bare "Point" means what. A name that cannot be confused costs nothing.
+    /// </remarks>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
 
     [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();

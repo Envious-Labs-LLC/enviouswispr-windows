@@ -8,6 +8,10 @@
         x:Name="OverlayRoot"
         PointerEntered="OverlayRoot_PointerEntered"
         PointerExited="OverlayRoot_PointerExited"
+        PointerPressed="OverlayRoot_PointerPressed"
+        PointerMoved="OverlayRoot_PointerMoved"
+        PointerReleased="OverlayRoot_PointerReleased"
+        PointerCaptureLost="OverlayRoot_PointerReleased"
         Background="{ThemeResource PillSurfaceBrush}"
         BorderThickness="1"
         CornerRadius="29">
