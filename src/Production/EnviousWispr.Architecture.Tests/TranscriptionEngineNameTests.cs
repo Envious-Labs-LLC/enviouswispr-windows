@@ -1153,8 +1153,8 @@ public sealed partial class DesignSystemTokenTests
     /// WHAT THAT LEAVES OPEN, ENUMERATED, BECAUSE AN UNSTATED LIMIT READS AS COVERAGE: a field whose
     /// type is a named delegate declared OUTSIDE the scanned app tree, in another project or a
     /// package - one declared anywhere inside the tree is caught at its own declaration; a lambda
-    /// assigned to <c>var</c>, whose type the compiler infers and the text does not state; a function
-    /// pointer; and a third-party type that happens to share one of these names. Closing those needs a semantic model over a
+    /// that states NEITHER type, leaving both to inference, since one that states its return type is
+    /// caught; a function pointer; and a third-party type that happens to share one of these names. Closing those needs a semantic model over a
     /// real compilation, or better, an analyser that refuses the code at build time rather than a
     /// test that reports it afterwards. That is issue #82, which also enumerates the four other gates
     /// asking the same unanswerable question.
@@ -1211,6 +1211,11 @@ public sealed partial class DesignSystemTokenTests
                 ConversionOperatorDeclarationSyntax conversion =>
                     (conversion.Type, conversion.ParameterList.Parameters),
                 DelegateDeclarationSyntax nominal => (nominal.ReturnType, nominal.ParameterList.Parameters),
+                // A LAMBDA MAY STATE ITS RETURN TYPE, which C# 10 allows and which makes
+                // `var read = DictationStatus (string sentence) => default;` a declaration of both
+                // types with no type name anywhere on the left of the assignment.
+                ParenthesizedLambdaExpressionSyntax { ReturnType: not null } lambda =>
+                    (lambda.ReturnType, lambda.ParameterList.Parameters),
                 _ => (null, default),
             };
 
@@ -1429,6 +1434,14 @@ public sealed partial class DesignSystemTokenTests
         Assert.NotEmpty(OffendersIn(
             "ReturnedFunc.cs",
             "    private Func<string, DictationStatus> Reader() => _ => default;"));
+
+        // C# 10 lets a lambda state its return type, so `var` on the left proves nothing.
+        Assert.NotEmpty(OffendersIn(
+            "TypedLambda.cs",
+            "    private void Show()\n"
+                + "    {\n"
+                + "        var read = DictationStatus (string sentence) => default;\n"
+                + "    }"));
 
         Assert.NotEmpty(OffendersIn(
             "AliasedFunc.cs",
