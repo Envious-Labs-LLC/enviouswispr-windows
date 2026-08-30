@@ -96,9 +96,36 @@ public static class UiCaptureWindows {
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr h, System.Text.StringBuilder s, int n);
     delegate bool EnumProc(IntPtr h, IntPtr p);
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+    // A WINDOW THAT HANGS OFF THE DESKTOP MAKES EVERY MEASUREMENT A LIE ABOUT THE DESKTOP INSTEAD.
+    // Windows opens this app wherever it likes, and on a small screen the right and bottom of every
+    // page then reports as clipped - which reads exactly like a layout fault and is not one. An
+    // audit of eight pages produced fourteen "partly outside its bounds" findings this way, all of
+    // them the same window sitting at 156,156 on a 1024x768 desktop.
+    //
+    // MOVED, NEVER RESIZED. The size is the app's own answer and is one of the things being
+    // measured; only where it sits is the tool's business.
+    public static string Anchor(uint target) {
+        var moved = "no window to move";
+        EnumWindows((h, p) => {
+            uint pid; GetWindowThreadProcessId(h, out pid);
+            if (pid == target && IsWindowVisible(h)) {
+                RECT r; GetWindowRect(h, out r);
+                if (r.Right - r.Left > 200 && r.Bottom - r.Top > 200) {
+                    // SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+                    SetWindowPos(h, IntPtr.Zero, 0, 0, 0, 0, 0x0001 | 0x0004 | 0x0010);
+                    moved = string.Format("moved {0}x{1} from {2},{3} to 0,0",
+                        r.Right - r.Left, r.Bottom - r.Top, r.Left, r.Top);
+                }
+            }
+            return true;
+        }, IntPtr.Zero);
+        return moved;
+    }
+
     public static List<string> For(uint target) {
         var found = new List<string>();
         EnumWindows((h, p) => {
@@ -168,6 +195,9 @@ Add-Type -Namespace UiCapture -Name Dpi -MemberDefinition @'
     # read off a photograph is a guess; these numbers are what a layout bug has to be argued from.
     # MainWindowHandle is not enough - the pill is a second top-level window and is usually the one
     # being measured.
+    Note ([UiCaptureWindows]::Anchor([uint32] $app.Id))
+    Start-Sleep -Milliseconds 400
+
     $windows = [UiCaptureWindows]::For([uint32] $app.Id)
     if (-not $windows -or $windows.Count -eq 0) {
         throw "The app is running but has no visible window. A photograph now would show the desktop and read as a photograph of the app."
