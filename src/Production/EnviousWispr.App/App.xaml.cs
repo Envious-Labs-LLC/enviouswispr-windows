@@ -209,6 +209,18 @@ public partial class App : Application, IAsyncDisposable
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ApplicationStarting));
         if (runStart.RecoveredInterruptedRun)
         {
+            // THE LOG IS WHERE THIS BELONGS AND IT IS THE ONLY PLACE IT NOW GOES. A previous run
+            // that did not record a clean exit used to raise a banner on Home saying so, with a
+            // running count beside it - and the app cannot tell WHY a run ended. Closing a laptop,
+            // choosing Restart from the Start menu, logging off, or Task Manager all leave exactly
+            // the same trace as a fault. Counted together, they told one machine it had failed
+            // nineteen times in a row when most of those were a build script releasing a file lock.
+            //
+            // AND THE PERSON READING IT COULD DO NOTHING WITH IT. This branch only runs when there
+            // was no unfinished dictation to restore, so nothing was lost; the case where something
+            // WAS lost is handled by the recovery card, which is untouched. A first-screen banner
+            // that accuses the product of failing, on a number it cannot justify, about an event
+            // that cost the reader nothing, is worse than silence. Support still has the fact here.
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.ApplicationRunRecovered,
@@ -304,9 +316,12 @@ public partial class App : Application, IAsyncDisposable
         _hasPendingRecovery = recovery.Status == RecoveryTextLoadStatus.Found;
         _pendingRecoveryRecord = recovery.Record;
         _window.SetRecoveredText(recovery);
-        if (runStart.RecoveredInterruptedRun && recovery.Status != RecoveryTextLoadStatus.Found)
+        if (StartupNoticeDecision.For(
+                runStart.RecoveredInterruptedRun,
+                runStart.PreviousRunWasDictating,
+                recovery.Status) == StartupNotice.DictationMayBeLost)
         {
-            _window.SetRunRecoveryNotice(runStart.ConsecutiveInterruptedRuns);
+            _window.SetPossiblyLostDictationNotice();
         }
 
         ConfigureSystemLifecycleMonitor();
@@ -2215,6 +2230,7 @@ public partial class App : Application, IAsyncDisposable
             }
 
             processingCancellation?.Dispose();
+            await RecordDictationEdgeAsync().ConfigureAwait(false);
             _sessionOperationGate.Release();
         }
     }
@@ -2277,11 +2293,58 @@ public partial class App : Application, IAsyncDisposable
             }
             finally
             {
+                await RecordDictationEdgeAsync().ConfigureAwait(false);
                 _sessionOperationGate.Release();
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+        }
+    }
+
+    /// <summary>Records whether a dictation is in flight, at every place one can end.</summary>
+    /// <remarks>
+    /// THREE FLOWS OWN SESSION TRANSITIONS AND ALL THREE MUST WRITE THIS. The push-to-talk handler
+    /// is the obvious one; the recording watchdog aborts and resets a session that ran too long, and
+    /// Windows locking or suspending releases, transcribes or resets one on its own callback.
+    /// Writing the edge in only the first leaves the flag stuck true after either of the others, and
+    /// a later ordinary restart then tells somebody their dictation was lost when it was not. A
+    /// warning that fires when nothing happened is how the banner this replaces lost its meaning.
+    ///
+    /// READ OFF THE CONTROLLER RATHER THAN INFERRED. Each flow reaches here by several routes and
+    /// the controller is the only thing that knows the answer on all of them.
+    ///
+    /// IT CANNOT THROW, BECAUSE EVERY CALLER IS A FINALLY HOLDING THE SESSION GATE. An exception
+    /// escaping here would skip the release and deadlock every later dictation, which is a far worse
+    /// outcome than a missing flag - so a failed write is logged and swallowed.
+    /// </remarks>
+    private async Task RecordDictationEdgeAsync()
+    {
+        if (_runId is not { } runId)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!await _runStateStore.SetDictationActiveAsync(
+                    runId,
+                    _sessionController?.CurrentSession is not null,
+                    DateTimeOffset.UtcNow).ConfigureAwait(false))
+            {
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.ApplicationRunStateEdgeFailed,
+                    AppFailureCategory.StorageUnavailable));
+            }
+        }
+        catch (Exception exception) when (
+            exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.ApplicationRunStateEdgeFailed,
+                AppFailureCategory.StorageUnavailable));
         }
     }
 
@@ -2444,6 +2507,7 @@ public partial class App : Application, IAsyncDisposable
             }
 
             processingCancellation?.Dispose();
+            await RecordDictationEdgeAsync().ConfigureAwait(false);
             _sessionOperationGate.Release();
         }
     }

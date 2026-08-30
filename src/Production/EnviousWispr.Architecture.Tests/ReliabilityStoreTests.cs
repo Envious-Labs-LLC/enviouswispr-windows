@@ -28,7 +28,9 @@ public sealed class ReliabilityStoreTests
                 Timestamp(2));
             Assert.Equal(RunStateLoadStatus.PreviousRunInterrupted, recovered.Status);
             Assert.True(recovered.RecoveredInterruptedRun);
-            Assert.Equal(1, recovered.ConsecutiveInterruptedRuns);
+            // NOT DICTATING, because the interrupted run never said it was. That is the difference
+            // between a warning about lost words and silence.
+            Assert.False(recovered.PreviousRunWasDictating);
             Assert.NotEqual(interruptedRunId, recovered.RunId);
             Assert.False(await recoveredStore.CompleteRunAsync(
                 interruptedRunId,
@@ -41,7 +43,45 @@ public sealed class ReliabilityStoreTests
         using var cleanStore = new JsonApplicationRunStateStore(path);
         var clean = await cleanStore.BeginRunAsync(Timestamp(4));
         Assert.Equal(RunStateLoadStatus.Started, clean.Status);
-        Assert.Equal(0, clean.ConsecutiveInterruptedRuns);
+        Assert.False(clean.PreviousRunWasDictating);
+    }
+
+    /// <summary>A run stopped mid-dictation says so to the next one.</summary>
+    /// <remarks>
+    /// THE ONE ROW THAT EARNS A WARNING. Recovery text is written only after transcription finishes,
+    /// so a stop during a dictation leaves nothing to restore and is indistinguishable from an idle
+    /// restart unless the flag survives. This is what makes it survive.
+    ///
+    /// AND THE HEARTBEAT MUST NOT CLEAR IT, which is the half a careless implementation gets wrong.
+    /// The heartbeat runs once a minute and knows nothing about dictations, so it is checked here
+    /// between the mark and the crash.
+    /// </remarks>
+    [Fact]
+    public async Task ARunStoppedWhileDictatingTellsTheNextRunSo()
+    {
+        using var temp = new TemporaryDirectory();
+        var path = Path.Combine(temp.Path, "run-state.json");
+        using (var dictatingStore = new JsonApplicationRunStateStore(path))
+        {
+            var run = await dictatingStore.BeginRunAsync(Timestamp(0));
+            Assert.True(await dictatingStore.SetDictationActiveAsync(run.RunId, true, Timestamp(1)));
+            Assert.True(await dictatingStore.HeartbeatAsync(run.RunId, Timestamp(2)));
+        }
+
+        using (var afterCrash = new JsonApplicationRunStateStore(path))
+        {
+            var recovered = await afterCrash.BeginRunAsync(Timestamp(3));
+            Assert.Equal(RunStateLoadStatus.PreviousRunInterrupted, recovered.Status);
+            Assert.True(recovered.PreviousRunWasDictating);
+            Assert.True(await afterCrash.SetDictationActiveAsync(recovered.RunId, true, Timestamp(4)));
+            Assert.True(await afterCrash.SetDictationActiveAsync(recovered.RunId, false, Timestamp(5)));
+        }
+
+        using var afterFinishedDictation = new JsonApplicationRunStateStore(path);
+        var next = await afterFinishedDictation.BeginRunAsync(Timestamp(6));
+        Assert.Equal(RunStateLoadStatus.PreviousRunInterrupted, next.Status);
+        // THE DICTATION FINISHED, so this interruption costs nobody their words and says nothing.
+        Assert.False(next.PreviousRunWasDictating);
     }
 
     [Fact]
