@@ -6,7 +6,6 @@
     Title="EnviousWispr dictation status">
     <Border
         x:Name="OverlayRoot"
-        AutomationProperties.LiveSetting="Polite"
         PointerEntered="OverlayRoot_PointerEntered"
         PointerExited="OverlayRoot_PointerExited"
         Background="{ThemeResource PillSurfaceBrush}"
@@ -43,7 +42,7 @@
                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <Image x:Name="RainbowMark" Width="31" Height="24" AutomationProperties.AccessibilityView="Raw" Source="Assets/Brand/EnviousWisprMark.svg" VerticalAlignment="Center" />
                     <FontIcon x:Name="StateIcon" AutomationProperties.AccessibilityView="Raw" FontSize="20" Glyph="&#xE720;" Visibility="Collapsed" />
-                    <TextBlock x:Name="StateTitle" Grid.Column="1" FontSize="14" FontWeight="SemiBold" Style="{StaticResource PillModeQuietTextStyle}" Text="Listening" TextWrapping="Wrap" VerticalAlignment="Center" />
+                    <TextBlock x:Name="StateTitle" AutomationProperties.LiveSetting="Polite" Grid.Column="1" FontSize="14" FontWeight="SemiBold" Style="{StaticResource PillModeQuietTextStyle}" Text="Listening" TextWrapping="Wrap" VerticalAlignment="Center" />
                     <TextBlock x:Name="ElapsedText" Grid.Column="2" Foreground="{ThemeResource PillTimerBrush}" FontFamily="Consolas" FontSize="14" Text="00:00" VerticalAlignment="Center" />
                 </Grid>
                 <StackPanel x:Name="LevelBars" Height="25" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" Visibility="Collapsed" VerticalAlignment="Center">

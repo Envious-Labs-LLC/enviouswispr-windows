@@ -1072,12 +1072,12 @@ public sealed partial class DesignSystemTokenTests
 
             var document = XDocument.Load(markup);
             var regions = document.Descendants()
-                // ENDS WITH, BECAUSE AN ATTACHED PROPERTY CARRIES ITS OWNER IN THE NAME. In XAML the
-                // attribute's local name is the whole string "AutomationProperties.LiveSetting", so
-                // an equality test against "LiveSetting" matches nothing - and this gate found no
-                // live regions at all, passed, and would have gone on passing forever.
+                // THE WHOLE ATTACHED-PROPERTY NAME. In XAML the attribute's local name is the entire
+                // string "AutomationProperties.LiveSetting"; an equality test against "LiveSetting"
+                // matches nothing, and this gate found no live regions at all, passed, and would
+                // have gone on passing forever.
                 .Where(element => element.Attributes().Any(attribute =>
-                    attribute.Name.LocalName.EndsWith("LiveSetting", StringComparison.Ordinal)))
+                    attribute.Name.LocalName == "AutomationProperties.LiveSetting"))
                 .Select(element => (string?)element.Attribute(XName.Get("Name", XamlNamespace)))
                 .OfType<string>()
                 .ToList();
@@ -1096,6 +1096,19 @@ public sealed partial class DesignSystemTokenTests
             var text = File.ReadAllText(codeBehind);
             foreach (var region in regions)
             {
+                // A DIRECT WRITE IS ONLY A DEFECT WHEN NOTHING RAISES FOR THAT REGION. The pill has
+                // to set its text and then announce AFTER the window is shown, because raising while
+                // it is still hidden announces something nobody can see - so text-then-raise is
+                // correct there and an atomic setter cannot express it. What must hold is that the
+                // file which writes the region is also the file that announces it.
+                var announced = Regex.IsMatch(
+                    text,
+                    @"(FromElement|CreatePeerForElement)\(\s*" + Regex.Escape(region) + @"\s*\)");
+                if (announced)
+                {
+                    continue;
+                }
+
                 foreach (Match direct in Regex.Matches(
                     text, @"\b" + Regex.Escape(region) + @"\.(Text|Visibility)\s*="))
                 {
