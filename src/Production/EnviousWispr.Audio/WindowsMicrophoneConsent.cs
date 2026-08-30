@@ -3,54 +3,108 @@ using Microsoft.Win32;
 
 namespace EnviousWispr.Audio;
 
-/// <summary>Reads the Windows per-user microphone privacy switch.</summary>
+/// <summary>Reads the Windows switches that decide whether this app may open a microphone.</summary>
 /// <remarks>
-/// READ ONLY, AND FROM THE USER'S OWN HIVE. Nothing here writes, and nothing here asks Windows for
-/// permission: a desktop app cannot raise the microphone consent prompt a packaged app can, so the
-/// honest thing is to report the switch and offer to open the page where it lives.
+/// READ ONLY, AND NOTHING HERE ASKS. A desktop app cannot raise the microphone consent prompt a
+/// packaged app can, so the honest thing is to report the switches and offer to open the page where
+/// they live rather than pretend to request anything.
 ///
-/// UNKNOWN IS A REAL ANSWER AND THE DEFAULT ONE. The key is absent on a machine where nobody has
-/// ever touched the setting, policy can hide it, and a locked-down hive can refuse the read. In all
-/// three the truthful report is that the switch could not be read, which the sentence then avoids
-/// mentioning. Guessing "allowed" would put a cause on screen that nothing checked.
+/// UNKNOWN IS A REAL ANSWER AND THE SAFE ONE. A key is absent on a machine where nobody has touched
+/// the setting, and a locked-down hive can refuse the read. The truthful report is then that the
+/// switch could not be read, which the sentence avoids naming a cause for. Guessing "allowed" would
+/// put a clean bill of health on screen that nothing checked.
 /// </remarks>
 public static class WindowsMicrophoneConsent
 {
     private const string ConsentKey =
         @"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
 
-    /// <summary>What the switches say, or Unknown when neither can be read.</summary>
+    /// <summary>The switch that governs THIS app, because this app is not a packaged one.</summary>
     /// <remarks>
-    /// TWO SWITCHES, AND EITHER ONE CAN REFUSE. The per-user value is the one somebody sets in the
-    /// Settings app. The machine value is the one an administrator or a workplace policy sets, and it
-    /// overrules the user, so a report that read only the user's own hive would tell a managed
-    /// machine the microphone is fine while every attempt to open it is denied.
-    ///
-    /// A DENY ANYWHERE WINS, and an unreadable half is not a yes. Allowed is claimed only when the
-    /// switches that could be read all said Allow and none said Deny.
+    /// "LET DESKTOP APPS ACCESS YOUR MICROPHONE" IS ITS OWN CONTROL, sitting under the global one in
+    /// the Settings app and stored in its own subkey. Reading only the global value missed the switch
+    /// that actually decides whether this app can open a microphone, so somebody who had turned
+    /// desktop apps off was told everything was fine.
     /// </remarks>
-    public static MicrophoneConsent Read() => Combine(
-        ReadFrom(Registry.LocalMachine),
-        ReadFrom(Registry.CurrentUser));
+    private const string DesktopConsentKey = ConsentKey + @"\NonPackaged";
 
-    /// <summary>Resolves two switch readings into one answer. Public so both orders are testable.</summary>
-    public static MicrophoneConsent Combine(MicrophoneConsent machine, MicrophoneConsent user)
+    /// <summary>Where a workplace policy refuses the microphone, which is somewhere else entirely.</summary>
+    /// <remarks>
+    /// NOT THE CONSENT STORE. A managed machine is configured through AppPrivacy, as a number rather
+    /// than a word: 2 refuses every app, 1 allows every app, and 0 or a missing value means the
+    /// policy has no opinion and the person's own switches decide.
+    /// </remarks>
+    private const string PolicyKey =
+        @"Software\Policies\Microsoft\Windows\AppPrivacy";
+
+    /// <summary>What the switches say, or Unknown when the answer is not certain.</summary>
+    /// <remarks>
+    /// A POLICY, IF THERE IS ONE, IS THE WHOLE ANSWER. It is set by an administrator and overrules
+    /// every switch the person can see, in both directions. Its absence is not a refusal and not an
+    /// allowance - it is silence, and the three switches below then decide.
+    ///
+    /// THREE SWITCHES, AND ANY ONE CAN REFUSE. The device-level value covers everybody on the
+    /// machine, the per-user value covers this person, and the desktop-app value covers apps like
+    /// this one. A Deny anywhere wins, and an unreadable one is not a yes.
+    /// </remarks>
+    public static MicrophoneConsent Read()
     {
-        if (machine == MicrophoneConsent.Blocked || user == MicrophoneConsent.Blocked)
+        var policy = ReadPolicy();
+        return policy != MicrophoneConsent.Unknown
+            ? policy
+            : Combine(
+                ReadFrom(Registry.LocalMachine, ConsentKey),
+                ReadFrom(Registry.CurrentUser, ConsentKey),
+                ReadFrom(Registry.CurrentUser, DesktopConsentKey));
+    }
+
+    /// <summary>Resolves several switch readings into one answer. Public so every order is testable.</summary>
+    public static MicrophoneConsent Combine(params MicrophoneConsent[] readings)
+    {
+        ArgumentNullException.ThrowIfNull(readings);
+        if (readings.Length == 0 || Array.IndexOf(readings, MicrophoneConsent.Blocked) >= 0)
         {
             return MicrophoneConsent.Blocked;
         }
 
-        return machine == MicrophoneConsent.Unknown || user == MicrophoneConsent.Unknown
+        return Array.IndexOf(readings, MicrophoneConsent.Unknown) >= 0
             ? MicrophoneConsent.Unknown
             : MicrophoneConsent.Allowed;
     }
 
-    private static MicrophoneConsent ReadFrom(RegistryKey hive)
+    /// <summary>Turns the policy number into an answer, or Unknown for "no policy is set".</summary>
+    /// <remarks>
+    /// UNKNOWN HERE MEANS SILENCE, NOT DOUBT, and that difference is why this is separate from the
+    /// switch reader. A missing policy is the ordinary case on every machine nobody manages, and
+    /// treating it as an unreadable switch would make every home PC uncertain about its microphone.
+    /// </remarks>
+    public static MicrophoneConsent InterpretPolicy(object? storedValue) => storedValue switch
+    {
+        int value when value == 2 => MicrophoneConsent.Blocked,
+        int value when value == 1 => MicrophoneConsent.Allowed,
+        _ => MicrophoneConsent.Unknown,
+    };
+
+    private static MicrophoneConsent ReadPolicy()
     {
         try
         {
-            using var key = hive.OpenSubKey(ConsentKey);
+            using var key = Registry.LocalMachine.OpenSubKey(PolicyKey);
+            return InterpretPolicy(key?.GetValue("LetAppsAccessMicrophone"));
+        }
+        catch (Exception exception) when (
+            exception is System.Security.SecurityException or UnauthorizedAccessException
+                or System.IO.IOException)
+        {
+            return MicrophoneConsent.Unknown;
+        }
+    }
+
+    private static MicrophoneConsent ReadFrom(RegistryKey hive, string path)
+    {
+        try
+        {
+            using var key = hive.OpenSubKey(path);
             return Interpret(key?.GetValue("Value") as string);
         }
         catch (Exception exception) when (

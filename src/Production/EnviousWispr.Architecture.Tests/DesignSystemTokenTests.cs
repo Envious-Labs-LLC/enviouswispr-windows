@@ -794,10 +794,27 @@ public sealed partial class DesignSystemTokenTests
         // THE ARGUMENT THE CALL ACTUALLY PASSES, read off the syntax rather than matched out of the
         // text. A pattern that matched a known prefix passed on "settings-ai-polish2", which is a
         // page that does not exist and a button that quietly does nothing.
-        var named = decision.Sections
+        var destinations = decision.Sections
             .SelectMany(section => section.DescendantNodes().OfType<InvocationExpressionSyntax>())
             .Where(call => call.Expression.ToString() == "OpenPage")
-            .Select(call => call.ArgumentList.Arguments.FirstOrDefault()?.Expression)
+            .ToArray();
+
+        // EVERY CALL HAS TO BE READABLE, and skipping the ones that are not was a hole rather than a
+        // limitation. Dropping a non-literal argument left "OpenPage(page)" checked by nothing while
+        // the two literal calls beside it kept the count satisfied, so a destination that does not
+        // exist could be introduced through a local and pass.
+        var opaque = destinations
+            .Where(call => call.ArgumentList.Arguments.Count != 1 ||
+                call.ArgumentList.Arguments[0].Expression is not LiteralExpressionSyntax)
+            .Select(call => call.ToString())
+            .ToArray();
+        Assert.True(
+            opaque.Length == 0,
+            "These OpenPage calls do not name their page as a plain string, so nothing here can "
+                + "check the page exists: " + string.Join(", ", opaque));
+
+        var named = destinations
+            .Select(call => call.ArgumentList.Arguments[0].Expression)
             .OfType<LiteralExpressionSyntax>()
             .Select(literal => literal.Token.ValueText)
             .Distinct(StringComparer.Ordinal)
