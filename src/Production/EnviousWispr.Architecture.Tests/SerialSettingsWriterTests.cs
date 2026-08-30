@@ -38,6 +38,71 @@ public sealed class SerialSettingsWriterTests
     }
 
     [Fact]
+    public async Task TwoOverlappingWordChangesBothSurvive()
+    {
+        // THE SHAPE THAT ACTUALLY HAPPENS. Two edits to the same list, each deriving its new list
+        // from what is stored - which is the whole reason the list is built inside the gate rather
+        // than handed to it. Built outside, the second would replace a list that never had the
+        // first word in it.
+        var store = new BlockingStore();
+        using var writer = new SerialSettingsWriter(store, AppSettings.Default);
+
+        var first = writer.UpdateAsync(current => current with
+        {
+            UserData = new ReusableUserData(
+                [.. current.UserData.CustomWords, new CustomWordEntry("envy wisper", "EnviousWispr")],
+                current.UserData.Snippets),
+        });
+        await store.SaveStarted.Task.ConfigureAwait(true);
+
+        var second = writer.UpdateAsync(current => current with
+        {
+            UserData = new ReusableUserData(
+                [.. current.UserData.CustomWords, new CustomWordEntry("git hub", "GitHub")],
+                current.UserData.Snippets),
+        });
+
+        store.LetSavesFinish();
+        Assert.Null(await first.ConfigureAwait(true));
+        Assert.Null(await second.ConfigureAwait(true));
+
+        var words = writer.Current.UserData.CustomWords.Select(word => word.SpokenForm).ToArray();
+        Assert.Contains("envy wisper", words);
+        Assert.Contains("git hub", words);
+    }
+
+    [Fact]
+    public async Task AWordChangeAndASnippetChangeDoNotEraseEachOther()
+    {
+        // THE HALF EACH ONE WAS NOT TOUCHING WAS THE HALF THAT DISAPPEARED. A word save read the
+        // snippets from a snapshot taken before it waited, and put the old ones back.
+        var store = new BlockingStore();
+        using var writer = new SerialSettingsWriter(store, AppSettings.Default);
+
+        var word = writer.UpdateAsync(current => current with
+        {
+            UserData = new ReusableUserData(
+                [.. current.UserData.CustomWords, new CustomWordEntry("one", "1")],
+                current.UserData.Snippets),
+        });
+        await store.SaveStarted.Task.ConfigureAwait(true);
+
+        var snippet = writer.UpdateAsync(current => current with
+        {
+            UserData = new ReusableUserData(
+                current.UserData.CustomWords,
+                [.. current.UserData.Snippets, new SnippetEntry("sign off", "Thanks, Saurabh")]),
+        });
+
+        store.LetSavesFinish();
+        Assert.Null(await word.ConfigureAwait(true));
+        Assert.Null(await snippet.ConfigureAwait(true));
+
+        Assert.Single(writer.Current.UserData.CustomWords);
+        Assert.Single(writer.Current.UserData.Snippets);
+    }
+
+    [Fact]
     public async Task AFailedSaveLeavesTheStoredValueAlone()
     {
         var store = new BlockingStore { FailNext = new IOException("the disk said no") };
