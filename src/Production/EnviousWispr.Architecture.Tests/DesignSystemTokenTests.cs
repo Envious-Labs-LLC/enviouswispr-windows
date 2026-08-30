@@ -2884,6 +2884,70 @@ public sealed partial class DesignSystemTokenTests
         $"{Path.GetFileName(node.SyntaxTree.FilePath)} " +
         $"line {node.GetLocation().GetLineSpan().StartLinePosition.Line + 1}";
 
+    /// <summary>
+    /// Every section header carries an accent glyph, and no glyph is a new guess.
+    /// </summary>
+    /// <remarks>
+    /// macOS DRAWS A SECTION HEADER AS A MARK BESIDE A LABEL. Its BrandedPanel takes the icon as
+    /// optional and all seven callers pass one, so it is not optional in practice - it is what a
+    /// section header looks like, and eighteen bare labels read as a different product.
+    ///
+    /// A WRONG ICON CODE DOES NOT FAIL, IT DRAWS A HOLLOW BOX. A codepoint missing from Segoe Fluent
+    /// Icons lays out and takes the right space, and two different codes can be the same drawing, so
+    /// nothing here could tell a bad choice from a good one by reading it. The rule is therefore
+    /// about WHERE a glyph comes from rather than which one it is: every section header reuses a
+    /// glyph already declared on a sidebar row, which is on screen and has been looked at. A section
+    /// header that writes its own Glyph in the markup is refused whether or not the code is real.
+    /// </remarks>
+    [Fact]
+    public void EverySectionHeaderTakesItsGlyphFromOneAlreadyOnScreen()
+    {
+        var markup = XDocument.Load(Path.Combine(
+            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var xaml = XNamespace.Get("http://schemas.microsoft.com/winfx/2006/xaml");
+
+        var eyebrows = markup.Descendants()
+            .Where(element => element.Name.LocalName == "TextBlock"
+                && ((string?)element.Attribute("Style"))?.Contains(
+                    "BrandSectionEyebrowStyle", StringComparison.Ordinal) == true)
+            .ToArray();
+
+        Assert.True(eyebrows.Length >= 18, $"Expected the section headers, found {eyebrows.Length}.");
+
+        var faults = new List<string>();
+        foreach (var eyebrow in eyebrows)
+        {
+            var label = (string?)eyebrow.Attribute("Text") ?? "an unlabelled header";
+            var row = eyebrow.Parent;
+            if (row is null || row.Name.LocalName != "StackPanel")
+            {
+                faults.Add($"\"{label}\" is not in an eyebrow row, so it has nowhere for a glyph");
+                continue;
+            }
+
+            var marks = row.Elements().Where(child => child.Name.LocalName == "FontIcon").ToArray();
+            if (marks.Length != 1)
+            {
+                faults.Add($"\"{label}\" has {marks.Length} glyphs beside it, and exactly one is a header");
+                continue;
+            }
+
+            if (marks[0].Attribute("Glyph") is not null)
+            {
+                faults.Add(
+                    $"\"{label}\" writes its own Glyph, which nothing here can tell from a hollow box. "
+                        + "Take the page's, through NavigationGlyphFor.");
+            }
+
+            if (marks[0].Attribute(xaml + "Name") is null)
+            {
+                faults.Add($"\"{label}\" has a glyph nothing can reach to fill in");
+            }
+        }
+
+        Assert.True(faults.Count == 0, string.Join(Environment.NewLine, faults));
+    }
+
     private readonly record struct DynamicColor(Rgba Light, Rgba Dark);
 
     private readonly record struct ThemePair(string Light, string Dark);

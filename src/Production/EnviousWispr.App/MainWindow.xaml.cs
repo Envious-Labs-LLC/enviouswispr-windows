@@ -245,6 +245,18 @@ public sealed partial class MainWindow : Window, IDisposable
         // item happens to be listed first is the same coupling this feature just removed, wearing
         // the word "default" as a coincidence rather than as a choice.
         ResetMatchStrictness();
+
+        // AN ACCENT GLYPH BESIDE EVERY SECTION HEADER, WHICH IS WHAT ONE LOOKS LIKE ON macOS. Its
+        // BrandedPanel takes the icon as optional and all seven callers pass one, so in practice it
+        // is not optional at all - it is the shape of a section header, and eighteen bare uppercase
+        // labels here read as a different product.
+        //
+        // EVERY GLYPH IS ONE ALREADY ON SCREEN IN THE SIDEBAR, and that is the whole safety of this.
+        // A codepoint missing from Segoe Fluent Icons renders as a hollow box rather than an error,
+        // and two different codes can be the same drawing, so nothing here could tell a wrong choice
+        // from a right one. Choosing none and reusing the page's own verified glyph removes the
+        // question instead of answering it badly. Two pairs share a mark because they share a page.
+        ApplySectionEyebrowGlyphs();
         EngineComboBox.ItemsSource = FinalEngineChoices;
         PolishProviderComboBox.ItemsSource = PolishProviderChoices;
         ThemeComboBox.ItemsSource = ThemeChoices;
@@ -2429,7 +2441,8 @@ public sealed partial class MainWindow : Window, IDisposable
         foreach (var candidate in allSections)
         {
             var eyebrow = EyebrowOf(candidate);
-            if (eyebrow is null)
+            var row = EyebrowRowOf(candidate);
+            if (eyebrow is null || row is null)
             {
                 continue;
             }
@@ -2437,7 +2450,7 @@ public sealed partial class MainWindow : Window, IDisposable
             var redundant = visibleSections.Length == 1
                 && ReferenceEquals(candidate, visibleSections[0])
                 && string.Equals(eyebrow.Text, title, StringComparison.OrdinalIgnoreCase);
-            eyebrow.Visibility = redundant ? Visibility.Collapsed : Visibility.Visible;
+            row.Visibility = redundant ? Visibility.Collapsed : Visibility.Visible;
         }
     }
 
@@ -2450,8 +2463,21 @@ public sealed partial class MainWindow : Window, IDisposable
     /// throwing if a card is ever built differently - a missing eyebrow is not worth a crash.
     /// </remarks>
     private static TextBlock? EyebrowOf(Border section) =>
+        EyebrowRowOf(section)?.Children.OfType<TextBlock>().FirstOrDefault();
+
+    /// <summary>
+    /// The whole eyebrow row of a section card: its accent glyph and its label together.
+    /// </summary>
+    /// <remarks>
+    /// COLLAPSING THE LABEL ALONE WOULD LEAVE THE GLYPH BEHIND. An eyebrow that repeats the page
+    /// title is hidden, and once the eyebrow became two things rather than one, hiding the text
+    /// would have left a small accent mark floating above the card with nothing beside it.
+    /// </remarks>
+    private static StackPanel? EyebrowRowOf(Border section) =>
         section.Child is StackPanel panel
-            ? panel.Children.OfType<TextBlock>().FirstOrDefault()
+            ? panel.Children.OfType<StackPanel>().FirstOrDefault(row =>
+                row.Orientation == Orientation.Horizontal &&
+                row.Children.OfType<TextBlock>().Any())
             : null;
 
     /// <summary>
@@ -3912,6 +3938,43 @@ public sealed partial class MainWindow : Window, IDisposable
         DiagnosticsSection,
         PortableProfileSection,
     ];
+
+    /// <summary>Gives every section header the accent glyph of the page it lives on.</summary>
+    private void ApplySectionEyebrowGlyphs()
+    {
+        (FontIcon Glyph, string Tag)[] eyebrows =
+        [
+            (MicrophoneEyebrowGlyph, "settings-microphone"),
+            (TranscriptionengineEyebrowGlyph, "settings-transcription"),
+            (KeybindsEyebrowGlyph, "settings-keybinds"),
+            (SoundsEyebrowGlyph, "settings-sounds"),
+            (DeterministiccleanupEyebrowGlyph, "settings-transcription"),
+            (AIpolishEyebrowGlyph, "settings-ai-polish"),
+            (HistoryEyebrowGlyph, "settings-history"),
+            (AppearanceEyebrowGlyph, "settings-appearance"),
+            (LivepreviewEyebrowGlyph, "settings-live-preview"),
+            (RecordingpillEyebrowGlyph, "settings-live-preview"),
+            (ClipboardEyebrowGlyph, "settings-clipboard"),
+            (PrivacysafediagnosticsEyebrowGlyph, "settings-diagnostics"),
+            (PortableprofileEyebrowGlyph, "settings-profile"),
+            (KeyboardguideEyebrowGlyph, "help"),
+            (PermissionsandprivacyEyebrowGlyph, "help-permissions"),
+            (LanguagesupportEyebrowGlyph, "help"),
+            (UpdatesEyebrowGlyph, "help-updates"),
+            (OpensourcelicensesEyebrowGlyph, "help-licenses"),
+        ];
+
+        foreach (var (glyph, tag) in eyebrows)
+        {
+            var mark = NavigationGlyphFor(tag);
+
+            // A TAG WITH NO SIDEBAR ROW LEAVES THE SPACE EMPTY RATHER THAN DRAWING A BOX. The gate
+            // refuses that before it can ship; the app not inventing a mark is what it does in the
+            // meantime.
+            glyph.Glyph = mark;
+            glyph.Visibility = mark.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
 
     private Border? HelpSectionFor(string tag) => tag switch
     {
