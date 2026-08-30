@@ -287,6 +287,11 @@ public sealed partial class MainWindow : Window, IDisposable
             _recordingSoundPlayer.Play);
         RecordingSoundComboBox.ItemsSource = RecordingSoundCatalog.Choices;
         _overlayWindow = new DictationOverlayWindow();
+        _historyAnnounceDebounce.Tick += (_, _) =>
+        {
+            _historyAnnounceDebounce.Stop();
+            AnnounceHistoryOnPageShown();
+        };
         _overlayWindow.ActionInvoked += OnPillActionInvoked;
         _overlayWindow.ApplyPreferences(
             settings.Preferences.OverlayPosition,
@@ -2707,13 +2712,55 @@ public sealed partial class MainWindow : Window, IDisposable
         // and the card titles are fixed text, so nothing else stops "No matching dictations" being
         // spoken again on each letter typed. The key carries the count too, because a list that grew
         // is news even though it is still a loaded list.
+        // THE CARDS GET THEIR WORDS BEFORE ANYTHING IS ANNOUNCED, because the announcement reads what
+        // is on screen and a card still carrying the previous search's text would be read out.
+        if (!hasItems && hasQuery && !historyUnavailable)
+        {
+            HistorySearchEmptyDescription.Text = $"No saved dictations match “{query}”. Try another search or clear it.";
+        }
+
+        if (!hasItems && historyUnavailable)
+        {
+            HistoryUnavailableDescription.Text = _historyLoadStatus == HistoryLoadStatus.Invalid
+                ? "The local history file is invalid. It was left untouched for recovery."
+                : "Windows could not open the private history file. It was left untouched.";
+        }
+
+        // THE QUERY IS PART OF THE ANSWER. "No matching dictations" for one search and for a
+        // different search are two different facts, and a key without the query announced only the
+        // first of them. The same is true of a count that happens to repeat under a new search.
+        var normalisedQuery = query.Trim().ToLowerInvariant();
         var terminal = _isHistoryLoading
             ? null
             : historyUnavailable ? "unavailable"
-            : hasItems ? $"loaded:{itemCount}"
-            : hasQuery ? "no-matches"
+            : hasItems ? $"loaded:{itemCount}:{normalisedQuery}"
+            : hasQuery ? $"no-matches:{normalisedQuery}"
             : "empty";
 
+        // A SEARCH ANNOUNCES WHEN THE TYPING STOPS, NOT PER LETTER. Putting the query in the key
+        // makes every keystroke a new answer, which without this would restore exactly the
+        // every-keystroke repetition the key was added to remove. A result the user did not type
+        // their way to - a finished load, a cleared search - is not delayed.
+        _pendingHistoryAnnouncement = terminal;
+        if (hasQuery && terminal is not null)
+        {
+            _historyAnnounceDebounce.Stop();
+            _historyAnnounceDebounce.Start();
+            return;
+        }
+
+        _historyAnnounceDebounce.Stop();
+        AnnounceHistoryStateIfChanged(terminal, historyUnavailable, hasItems, hasQuery, itemCount);
+    }
+
+    /// <summary>Announces the history outcome, if it is one nobody has been told yet.</summary>
+    private void AnnounceHistoryStateIfChanged(
+        string? terminal,
+        bool historyUnavailable,
+        bool hasItems,
+        bool hasQuery,
+        int itemCount)
+    {
         if (terminal is null)
         {
             // CLEARED WHILE LOADING, so an explicit refresh that lands on the same answer still says
@@ -2737,17 +2784,29 @@ public sealed partial class MainWindow : Window, IDisposable
                 _lastAnnouncedHistoryState = terminal;
             }
         }
-        if (!hasItems && hasQuery && !historyUnavailable)
+    }
+
+    /// <summary>Announces the history outcome when the page becomes visible.</summary>
+    /// <remarks>
+    /// A RESULT THAT ARRIVED WHILE YOU WERE ELSEWHERE IS STILL NEWS WHEN YOU GET HERE. History loads
+    /// at startup, so on any other page the announcement is refused by the ancestor check and, with
+    /// nothing to re-run it, never happened at all - the page that most needed a spoken result was
+    /// the one that never gave one.
+    /// </remarks>
+    private void AnnounceHistoryOnPageShown()
+    {
+        if (_isHistoryLoading || _pendingHistoryAnnouncement is null)
         {
-            HistorySearchEmptyDescription.Text = $"No saved dictations match “{query}”. Try another search or clear it.";
+            return;
         }
 
-        if (!hasItems && historyUnavailable)
-        {
-            HistoryUnavailableDescription.Text = _historyLoadStatus == HistoryLoadStatus.Invalid
-                ? "The local history file is invalid. It was left untouched for recovery."
-                : "Windows could not open the private history file. It was left untouched.";
-        }
+        var query = HistorySearchBox.Text.Trim();
+        AnnounceHistoryStateIfChanged(
+            _pendingHistoryAnnouncement,
+            _historyLoadStatus is HistoryLoadStatus.Invalid or HistoryLoadStatus.Unavailable,
+            HistoryList.Visibility == Visibility.Visible,
+            !string.IsNullOrWhiteSpace(query),
+            HistoryList.Items.Count);
     }
 
     private void RefreshReusableUserDataViews()
@@ -3064,6 +3123,15 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>The last history outcome a screen reader was told about.</summary>
     private string? _lastAnnouncedHistoryState;
 
+    /// <summary>The outcome waiting to be announced, if the page or the typing is not ready.</summary>
+    private string? _pendingHistoryAnnouncement;
+
+    /// <summary>Holds a search result back until the typing stops.</summary>
+    private readonly DispatcherTimer _historyAnnounceDebounce = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(600),
+    };
+
     /// <summary>Shows or hides one of the history cards.</summary>
     /// <remarks>
     /// A HELPER SO THE LIVE REGIONS ARE NOT WRITTEN DIRECTLY. HistoryList is a live region and its
@@ -3170,6 +3238,10 @@ public sealed partial class MainWindow : Window, IDisposable
         var helpPage = tag == "help" || tag.StartsWith("help-", StringComparison.Ordinal);
         HomePage.Visibility = tag == "home" ? Visibility.Visible : Visibility.Collapsed;
         HistoryPage.Visibility = tag == "history" ? Visibility.Visible : Visibility.Collapsed;
+        if (tag == "history")
+        {
+            AnnounceHistoryOnPageShown();
+        }
         WhatsNewPage.Visibility = tag == "whats-new" ? Visibility.Visible : Visibility.Collapsed;
         DictionaryPage.Visibility = tag == "dictionary" ? Visibility.Visible : Visibility.Collapsed;
         SnippetsPage.Visibility = tag == "snippets" ? Visibility.Visible : Visibility.Collapsed;

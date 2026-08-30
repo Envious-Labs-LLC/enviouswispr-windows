@@ -1117,7 +1117,8 @@ public sealed partial class DesignSystemTokenTests
                 // gone unnoticed.
                 var announced = Regex.IsMatch(
                     text,
-                    @"(FromElement|CreatePeerForElement|AnnounceLiveRegion|SetLiveRegion|SetLiveText|SetLiveVisibility)\(\s*"
+                    @"(FromElement|CreatePeerForElement|AnnounceLiveRegion|AnnounceStateChange"
+                        + @"|SetLiveRegion|SetLiveText|SetLiveVisibility)\(\s*"
                         + Regex.Escape(region) + @"\s*[,)]");
                 if (!announced)
                 {
@@ -1125,19 +1126,28 @@ public sealed partial class DesignSystemTokenTests
                         $"{Path.GetFileName(codeBehind)}: {region} is declared a live region and nothing ever announces it");
                 }
 
-                // THE OVERLAY IS THE ONE PLACE A DIRECT WRITE IS CORRECT. Its text has to be set
-                // before the window is shown and announced after, because raising while the pill is
-                // still hidden announces something nobody can see. Named, so the exemption cannot
-                // quietly spread.
-                if (region == "StateTitle")
-                {
-                    continue;
-                }
-
+                // A DIRECT WRITE IS ALLOWED ONLY WHEN THE ANNOUNCEMENT FOLLOWS IT. The overlay has
+                // to set its text, show the window, and announce after, because raising while the
+                // pill is still hidden announces something nobody can see. That is a code SEQUENCE,
+                // and it is recognised as one: an earlier draft exempted the control by NAME, which
+                // would have covered any future control that happened to share it.
                 foreach (Match direct in Regex.Matches(
-                    text, @"\b" + Regex.Escape(region) + @"\.(Text|Visibility)\s*="))
+                    // A COMPARISON IS NOT AN ASSIGNMENT. `HistoryList.Visibility ==` reads the
+                    // property and this flagged it as a write. The character after must not be
+                    // another `=`; matched rather than looked past, so the value is compared instead
+                    // of asked what it is not.
+                    text, @"\b" + Regex.Escape(region) + @"\.(Text|Visibility)\s*=[^=]"))
                 {
-                    offenders.Add($"{Path.GetFileName(codeBehind)}: {direct.Value.Trim()}");
+                    var after = text[direct.Index..];
+                    var window = after.Length < 2_000 ? after : after[..2_000];
+                    var announcedAfter = Regex.IsMatch(
+                        window,
+                        @"(FromElement|CreatePeerForElement|AnnounceLiveRegion|AnnounceStateChange)\(\s*"
+                            + Regex.Escape(region) + @"\s*[,)]");
+                    if (!announcedAfter)
+                    {
+                        offenders.Add($"{Path.GetFileName(codeBehind)}: {direct.Value.Trim()}");
+                    }
                 }
             }
         }
