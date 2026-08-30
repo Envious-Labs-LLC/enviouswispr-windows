@@ -78,7 +78,8 @@ static async Task<CaptureMetrics> CaptureAsync(AudioDeviceId? DeviceId, TimeSpan
             Peak: 0,
             AverageRootMeanSquare: 0,
             Packets: 0,
-            SilentPackets: 0);
+            SilentPackets: 0,
+            LoudestRootMeanSquare: 0);
     }
 
     await Task.Delay(duration);
@@ -96,7 +97,8 @@ static async Task<CaptureMetrics> CaptureAsync(AudioDeviceId? DeviceId, TimeSpan
             observedPeak,
             levelEvents == 0 ? 0 : rmsSum / levelEvents,
             capture.LastPacketCount,
-            capture.LastSilentPacketCount);
+            capture.LastSilentPacketCount,
+            capture.LastRootMeanSquare);
     }
 }
 
@@ -114,6 +116,7 @@ static bool CapturePassed(CaptureMetrics result, long minimumDurationMillisecond
     result.DurationMilliseconds >= minimumDurationMilliseconds &&
     result.LevelEvents > 0 &&
     result.Peak > 0 &&
+    result.LoudestRootMeanSquare > 0 &&
     result.SilentPackets < result.Packets;
 
 internal sealed record CaptureMetrics(
@@ -127,4 +130,5 @@ internal sealed record CaptureMetrics(
     float Peak,
     double AverageRootMeanSquare,
     int Packets,
-    int SilentPackets);
+    int SilentPackets,
+    float LoudestRootMeanSquare);
