@@ -24,6 +24,7 @@ param(
     [int] $SettleMilliseconds = 4000,
     [int] $MinimumWidth = 1280,
     [int] $MinimumHeight = 720,
+    [string] $Press = '',
     [switch] $Probe
 )
 
@@ -171,6 +172,14 @@ Add-Type -Namespace UiCapture -Name Dpi -MemberDefinition @'
         throw "The app is running but has no visible window. A photograph now would show the desktop and read as a photograph of the app."
     }
     foreach ($line in $windows) { Note "window $line" }
+
+    # PRESS WHAT WAS ASKED FOR, IN ORDER, BEFORE ANYTHING IS RECORDED. Each press settles before the
+    # next, because a control that appears as a RESULT of the previous press does not exist yet.
+    foreach ($control in @($Press -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+        & (Join-Path $PSScriptRoot 'invoke-ui.ps1') -ProcessId $app.Id -Name $control |
+            ForEach-Object { Note $_ }
+        Start-Sleep -Milliseconds 1200
+    }
 
     # THE TREE BEFORE THE PICTURE, WHILE THE APP IS STILL UP. A screenshot cannot say whether a
     # control is enabled, what a toggle currently reads, or whether anything can be clicked at all.

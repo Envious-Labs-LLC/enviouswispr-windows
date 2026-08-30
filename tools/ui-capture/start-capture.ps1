@@ -22,6 +22,11 @@ param(
     [int] $TimeoutSeconds = 90,
     [int] $MinimumWidth = 1280,
     [int] $MinimumHeight = 720,
+    # A COMMA-SEPARATED LIST, NOT AN ARRAY, BECAUSE OF HOW THIS IS CALLED. Every script here is
+    # invoked with powershell -File, which hands arguments over as plain strings - so -Press "a","b"
+    # arrives as the single string "a,b" and an array parameter never splits it. Taking a string and
+    # splitting it here is what the calling convention actually supports.
+    [string] $Press = '',
     [switch] $Probe
 )
 
@@ -120,6 +125,13 @@ $arguments = @(
     '-MinimumHeight', $MinimumHeight
 )
 if ($OverlayState) { $arguments += @('-OverlayState', $OverlayState) }
+$pressList = @($Press -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+foreach ($control in $pressList) {
+    if ($control -match '"') {
+        throw "-Press cannot take a control name containing a quote. Got '$control'."
+    }
+}
+if ($pressList) { $arguments += @('-Press', "`"$($pressList -join ',')`"") }
 if ($Probe) { $arguments += '-Probe' }
 
 # DECLARED BEFORE THE TRY, because finally runs and THEN the script terminates on an unhandled

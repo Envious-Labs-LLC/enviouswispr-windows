@@ -29,6 +29,12 @@ function Describe($element, $depth, $clip) {
     $rect = $info.BoundingRectangle
     $pad = ' ' * ($depth * 2)
 
+    # THE WORD SAYS WHAT WAS MEASURED, WHICH IS NOT THE SAME AS VISIBLE. This reported "visible",
+    # and it cannot know that: it measures the screen, the window and any scrollable ancestor, and
+    # it does NOT see an ordinary Grid or Border clip, another window sitting on top, or a monitor
+    # that is switched off. A control behind a dialog would have read as visible. The name now
+    # carries its own limit, and every line ends with what was not measured.
+    #
     # VISIBILITY IS MEASURED, NOT ASKED FOR. IsOffscreen answers a narrower question than it sounds
     # like: UI Automation calls a control onscreen when any part of it is, so a button with two
     # pixels showing below a scroll viewport reports exactly the same as one sitting in the middle
@@ -45,9 +51,9 @@ function Describe($element, $depth, $clip) {
         if ($visible.IsEmpty -or $visible.Width -le 0 -or $visible.Height -le 0) {
             $state = 'OFFSCREEN'
         } elseif ([int]$visible.Width -lt [int]$rect.Width -or [int]$visible.Height -lt [int]$rect.Height) {
-            $state = "PARTIALLY_CLIPPED to $([int]$visible.Width)x$([int]$visible.Height)"
+            $state = "PARTIALLY_OUTSIDE_KNOWN_CLIP_BOUNDS, $([int]$visible.Width)x$([int]$visible.Height) survives"
         } else {
-            $state = 'visible'
+            $state = 'WITHIN_KNOWN_CLIP_BOUNDS'
         }
     }
 
@@ -109,6 +115,8 @@ $screen = New-Object System.Windows.Rect(
     [System.Windows.Forms.SystemInformation]::VirtualScreen.Y,
     [System.Windows.Forms.SystemInformation]::VirtualScreen.Width,
     [System.Windows.Forms.SystemInformation]::VirtualScreen.Height)
+
+"clipBasis=screen,window,scroll-ancestors; occlusion-and-other-clips=UNMEASURED"
 
 foreach ($window in $windows) {
     # EACH WINDOW CLIPS ITS OWN CONTENTS, and the screen clips the window.
