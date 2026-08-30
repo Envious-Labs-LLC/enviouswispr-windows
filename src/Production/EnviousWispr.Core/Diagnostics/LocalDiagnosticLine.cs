@@ -1,3 +1,4 @@
+using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 namespace EnviousWispr.Core.Diagnostics;
 
@@ -18,6 +19,14 @@ namespace EnviousWispr.Core.Diagnostics;
 /// `JsonUnmappedMemberHandling.Disallow` and a shape change would make every existing line
 /// unreadable. A line written before this field existed simply has no `dictationId`, which
 /// deserialises as null.
+///
+/// THE FIELD LIST BELOW IS COPIED BY HAND FROM THE OTHER RECORD, AND A FORGOTTEN LINE HERE LOSES
+/// THE FIELD SILENTLY. Measured: stage, status and changed were added to the telemetry record, the
+/// call site wrote all three, the build was clean and 1055 tests passed, and five identical lines
+/// reached the disk carrying none of them. Nothing failed, because nothing was checking. That is why
+/// `LocalDiagnosticLineCarriesEveryTelemetryField` exists: it compares the two property sets by
+/// reflection, so the next omission is a red test rather than a log that quietly says less than it
+/// was asked to.
 /// </remarks>
 public sealed record LocalDiagnosticLine(
     DateTimeOffset Timestamp,
@@ -28,6 +37,9 @@ public sealed record LocalDiagnosticLine(
     AppErrorCode? ErrorCode = null,
     DiagnosticEngineChoice? Engine = null,
     DiagnosticHardwareClass? HardwareClass = null,
+    DeterministicTextStage? Stage = null,
+    DeterministicStageStatus? StageStatus = null,
+    bool? Changed = null,
     Guid? DictationId = null)
 {
     /// <summary>Takes a line that is safe to send and adds what only this machine may know.</summary>
@@ -43,6 +55,9 @@ public sealed record LocalDiagnosticLine(
             record.ErrorCode,
             record.Engine,
             record.HardwareClass,
+            record.Stage,
+            record.StageStatus,
+            record.Changed,
             dictationId);
     }
 }

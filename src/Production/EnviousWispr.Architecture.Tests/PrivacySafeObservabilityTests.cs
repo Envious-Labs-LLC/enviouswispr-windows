@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
@@ -145,6 +146,75 @@ public sealed class PrivacySafeObservabilityTests
                 name.Contains("Path", StringComparison.OrdinalIgnoreCase) ||
                 name.EndsWith("Id", StringComparison.OrdinalIgnoreCase));
         });
+    }
+
+    /// <summary>
+    /// The local log line copies the telemetry record's fields by hand, so a forgotten line there
+    /// drops a field with nothing to show for it. This is the check that turns that into a red test.
+    /// </summary>
+    /// <remarks>
+    /// MEASURED, NOT IMAGINED. Stage, status and changed were added to the telemetry record, the call
+    /// site passed all three, the build was clean and 1055 tests passed, and five identical lines
+    /// reached the disk carrying none of them. Nothing failed because nothing compared the two shapes.
+    /// </remarks>
+    [Fact]
+    public void LocalDiagnosticLineCarriesEveryTelemetryField()
+    {
+        var expected = typeof(PrivacySafeDiagnosticRecord)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(property => property.Name != "EqualityContract")
+            .ToArray();
+        var actual = typeof(LocalDiagnosticLine)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .ToDictionary(property => property.Name, property => property.PropertyType);
+
+        foreach (var property in expected)
+        {
+            Assert.True(
+                actual.TryGetValue(property.Name, out var type),
+                $"LocalDiagnosticLine is missing '{property.Name}'. A field added to the telemetry " +
+                "record has to be copied onto the local line too, or it never reaches the disk.");
+            Assert.Equal(property.PropertyType, type);
+        }
+    }
+
+    /// <summary>Every field the record carries is copied, not merely declared.</summary>
+    /// <remarks>
+    /// The count guard is deliberate. A new field would satisfy the shape check above while
+    /// <see cref="LocalDiagnosticLine.From"/> quietly failed to copy it, so adding one has to fail
+    /// here until somebody sets it below and confirms it survives.
+    /// </remarks>
+    [Fact]
+    public void EveryPopulatedTelemetryFieldSurvivesOntoTheLocalLine()
+    {
+        var record = new PrivacySafeDiagnosticRecord(
+            DateTimeOffset.UtcNow,
+            AppEventCode.DeterministicStageObserved,
+            AppFailureCategory.PostProcessing,
+            ElapsedMilliseconds: 7,
+            Provider: DiagnosticProvider.EgOne,
+            ErrorCode: AppErrorCode.ModelPackUnavailable,
+            Engine: DiagnosticEngineChoice.Whisper,
+            HardwareClass: DiagnosticHardwareClass.NvidiaCuda,
+            Stage: DeterministicTextStage.CustomWords,
+            StageStatus: DeterministicStageStatus.Completed,
+            Changed: true);
+
+        var populated = typeof(PrivacySafeDiagnosticRecord)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(property => property.Name != "EqualityContract")
+            .ToArray();
+        Assert.Equal(11, populated.Length);
+
+        var line = LocalDiagnosticLine.From(record, Guid.NewGuid());
+        foreach (var property in populated)
+        {
+            var carried = typeof(LocalDiagnosticLine).GetProperty(property.Name);
+            Assert.NotNull(carried);
+            Assert.Equal(
+                property.GetValue(record),
+                carried.GetValue(line));
+        }
     }
 
     [Theory]
