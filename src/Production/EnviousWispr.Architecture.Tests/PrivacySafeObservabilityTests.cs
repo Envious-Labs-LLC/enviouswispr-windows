@@ -102,13 +102,12 @@ public sealed class PrivacySafeObservabilityTests
             Assert.DoesNotContain("transcript", exported, StringComparison.OrdinalIgnoreCase);
             using var document = JsonDocument.Parse(exported);
             var names = document.RootElement.EnumerateObject().Select(item => item.Name).ToHashSet();
-            Assert.Subset(
-                new HashSet<string>
-                {
-                    "timestamp", "event", "failure", "elapsedMilliseconds", "provider",
-                    "errorCode", "engine", "hardwareClass",
-                },
-                names);
+            // DERIVED FROM THE EXPORTED SHAPE, NOT LISTED BESIDE IT. This was the last hand-written
+            // copy of the schema in the tree, and it was still eight fields long after three had been
+            // added - passing the whole time, because a subset check cannot notice a field it was
+            // never told about. LocalDiagnosticLine IS what an export contains, so reflecting over it
+            // needs no judgement about which extra names belong.
+            Assert.Subset(LocalLineFieldNames(), names);
         });
     }
 
@@ -204,6 +203,14 @@ public sealed class PrivacySafeObservabilityTests
             $"{string.Join(", ", phantom)}. A stale row makes the disclosure wrong in the other " +
             "direction, so remove it in the same change that removes the field.");
     }
+
+    /// <summary>The camelCase names of every field on the line written to disk and exported.</summary>
+    private static HashSet<string> LocalLineFieldNames() =>
+        typeof(LocalDiagnosticLine)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(property => property.Name != "EqualityContract")
+            .Select(property => JsonNamingPolicy.CamelCase.ConvertName(property.Name))
+            .ToHashSet(StringComparer.Ordinal);
 
     /// <summary>The camelCase names of every field on the record that crosses the network.</summary>
     private static HashSet<string> TelemetryFieldNames() =>
