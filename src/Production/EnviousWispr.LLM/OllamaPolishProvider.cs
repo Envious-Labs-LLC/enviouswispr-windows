@@ -343,25 +343,13 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
 
     internal static string? CleanOutput(string? content)
     {
+        // PREAMBLE STRIPPING LIVES IN ONE PLACE NOW, AND IT IS NOT HERE. This ran before the shared
+        // guard and without the person's own words, so it deleted a heading somebody actually
+        // dictated - "Here is the plan:" - and nothing downstream could tell it had happened.
+        // PolishOutputGuard.StripPreamble knows what was said and is the only place allowed to
+        // remove a line because of how it looks.
         var result = content?.Trim();
-        if (string.IsNullOrWhiteSpace(result))
-        {
-            return null;
-        }
-
-        var firstNewline = result.IndexOf('\n');
-        var firstLine = firstNewline >= 0 ? result[..firstNewline].Trim() : result;
-        var lower = firstLine.ToLowerInvariant();
-        var preamble = firstLine.Length < 100 && firstLine.EndsWith(':') &&
-            (lower.StartsWith("here", StringComparison.Ordinal) ||
-             lower.StartsWith("below", StringComparison.Ordinal) ||
-             lower.StartsWith("the corrected", StringComparison.Ordinal) ||
-             lower.StartsWith("the cleaned", StringComparison.Ordinal) ||
-             lower.StartsWith("the polished", StringComparison.Ordinal) ||
-             lower.StartsWith("corrected version", StringComparison.Ordinal));
-        return preamble && firstNewline >= 0
-            ? result[(firstNewline + 1)..].Trim()
-            : result;
+        return string.IsNullOrWhiteSpace(result) ? null : result;
     }
 
     private static PolishAttemptStatus StatusFor(AppErrorCode errorCode) => errorCode switch

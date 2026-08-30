@@ -130,6 +130,22 @@ public static class PolishOutputGuard
     /// ALTERNATIVES ARE LISTED RATHER THAN INFERRED. Polish legitimately rewords, so a small set of
     /// approved rephrasings is spelled out; anything outside it falls back to the input, which is the
     /// direction this guard is allowed to be wrong in.
+    ///
+    /// THIS IS A HEURISTIC OVER NATURAL LANGUAGE AND IT HAS HOLES IN BOTH DIRECTIONS. Three
+    /// successive tightenings each closed one counterexample and opened another: a single survivor
+    /// word passed "The answer is Paris"; the verb and object as unordered words passed "The answer
+    /// to this question is Paris"; the whole phrase passes "I can answer this question: Paris is the
+    /// capital of France" and refuses "summarize this" reworded to "summarize it". No syntactic rule
+    /// closes this, because whether a sentence IS a request is not a property of which words it
+    /// contains.
+    ///
+    /// SO THE RULE IS DELIBERATELY SIMPLE AND BIASED TO REFUSING, AND THE REAL FIX IS NOT SYNTAX.
+    /// macOS carries a weaker version of this check and does the actual work with a trained
+    /// classifier; Windows has no equivalent model, which is why this guard is the whole defence
+    /// here rather than the cheap first pass it is there. Tightening it further trades a false
+    /// refusal, which costs somebody a tidy-up, against a false acceptance, which pastes a
+    /// fabrication into their document - so it stays biased toward refusing and stops being tuned.
+    /// The classifier is issue #87.
     /// </remarks>
     private static readonly (string Trigger, string[] Accepted)[] InstructionGuards =
     [
@@ -414,9 +430,12 @@ public static class PolishOutputGuard
                 continue;
             }
 
-            // WHAT THE PERSON SAID DECIDES. Somebody who opened with "Sure," has that word in their
-            // dictation, and removing it from the polish edits their sentence.
-            if (spoken.StartsWith(acknowledgement.TrimEnd('!', ',', '.', ':'), StringComparison.OrdinalIgnoreCase))
+            // WHAT THE PERSON SAID DECIDES, AND AS A WHOLE WORD. Somebody who opened with "Sure,"
+            // has that word in their dictation and removing it edits their sentence - but a prefix
+            // test also read "Surely we should ship" as somebody saying "Sure", which is a different
+            // word and a different meaning.
+            var word = acknowledgement.TrimEnd('!', ',', '.', ':');
+            if (StartsWithWholeWord(spoken, word))
             {
                 break;
             }
@@ -456,17 +475,39 @@ public static class PolishOutputGuard
             return false;
         }
 
+        var opensLikeAModel = false;
         foreach (var opening in PreambleOpenings)
         {
-            if (!firstLine.StartsWith(opening, StringComparison.OrdinalIgnoreCase))
+            if (StartsWithWholeWord(firstLine, opening))
             {
-                continue;
+                opensLikeAModel = true;
+                break;
             }
-
-            return !said.TrimStart().StartsWith(opening, StringComparison.OrdinalIgnoreCase);
         }
 
-        return false;
+        if (!opensLikeAModel)
+        {
+            return false;
+        }
+
+        // THE WHOLE HEADING, WHEREVER IT SITS IN WHAT THEY SAID. Comparing only the opening word
+        // failed in both directions: "here we agreed on Tuesday" let a model's "Here is the polished
+        // transcript:" through because both begin with "here", and "Okay, here is the plan" lost its
+        // own dictated heading because the words were not at position zero.
+        return !ContainsWholeWord(said, firstLine.TrimEnd(':').Trim());
+    }
+
+    /// <summary>Whether the text opens with this word, and not merely with these letters.</summary>
+    private static bool StartsWithWholeWord(string text, string word)
+    {
+        var start = text.TrimStart();
+        if (!start.StartsWith(word, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var after = word.Length;
+        return after == start.Length || !char.IsLetterOrDigit(start[after]);
     }
 
     /// <summary>
