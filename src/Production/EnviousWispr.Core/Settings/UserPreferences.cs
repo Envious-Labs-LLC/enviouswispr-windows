@@ -107,7 +107,9 @@ public sealed record DictationPreferences(
     DictationRecordingMode RecordingMode = DictationRecordingMode.PushToTalk,
     string CancelGesture = "Escape",
     bool EscapeRecoveryEnabled = false,
-    string QuickAddGesture = "Ctrl+Alt+W")
+    string QuickAddGesture = "Ctrl+Alt+W",
+    bool AutoStopEnabled = false,
+    double AutoStopSilenceSeconds = 2.0)
 {
     public static DictationPreferences Default { get; } = new(
         FinalAsrEngine.Automatic,
@@ -118,6 +120,9 @@ public sealed record DictationPreferences(
         SpokenPunctuationEnabled: false,
         WhisperLanguage: WhisperLanguagePreference.Automatic,
         RecordingMode: DictationRecordingMode.PushToTalk,
+        // OFF by default, and that is resolved from the founder's priority order rather than
+        // chosen: priority one is that dictation works every time it physically can, and a switch
+        // that can end a recording early must not be on for anyone who has not asked for it.
         CancelGesture: "Escape",
         EscapeRecoveryEnabled: false,
         QuickAddGesture: "Ctrl+Alt+W");
@@ -160,7 +165,8 @@ public sealed record UserPreferences(
     RecordingPillDesign PillDesignWithoutWords = RecordingPillDesign.Classic,
     RecordingPillDesign PillDesignWithWords = RecordingPillDesign.ReadingWell,
     bool PlayRecordingSounds = false,
-    RecordingSoundPairing RecordingSoundPairing = RecordingSoundPairing.WhisperTick)
+    RecordingSoundPairing RecordingSoundPairing = RecordingSoundPairing.WhisperTick,
+    bool CopyInsteadOfPaste = false)
 {
     public static UserPreferences Default { get; } = new(
         DictationPreferences.Default,

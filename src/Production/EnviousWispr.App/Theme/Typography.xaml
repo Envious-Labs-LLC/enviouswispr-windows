@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Style x:Key="BrandPageTitleStyle" TargetType="TextBlock">
+        <!--
+            DISPLAY, NOT TEXT. Segoe UI Variable ships three optical cuts - Small up to 12, Text from
+            12 to 18, Display from 18 up - and a title set in the Text cut at this size has letter
+            shapes drawn for body copy. It is the kind of wrongness nobody can name and everybody
+            reads as "not quite a Windows app".
+            28 rather than 30 puts it on the Fluent ramp, which runs 12, 14, 18, 20, 28, 40, 68.
+        -->
+        <Setter Property="FontFamily" Value="Segoe UI Variable Display, Segoe UI Variable Text, Segoe UI" />
+        <Setter Property="FontSize" Value="28" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandTextPrimaryBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <!--
+        THE MARK BESIDE A SECTION HEADING, SIZED THE WAY THE REFERENCE SIZES ITS OWN. macOS draws it
+        at 16 semibold beside a 14pt label, so it sits slightly proud of the words rather than
+        shrinking under them. It was 12 here, which is smaller than the label it belongs to.
+
+        ONE PLACE, because eighteen headers carry it and a size written eighteen times is a size that
+        will disagree with itself.
+    -->
+    <Style x:Key="BrandSectionEyebrowGlyphStyle" TargetType="FontIcon">
+        <Setter Property="FontSize" Value="16" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="AutomationProperties.AccessibilityView" Value="Raw" />
+    </Style>
+
+    <Style x:Key="BrandSectionEyebrowStyle" TargetType="TextBlock">
+        <!--
+            A WINDOWS SECTION HEADING, NOT A WEB EYEBROW. Accent colour, letter-spacing and literal
+            uppercase together are an editorial pattern; Windows 11 Settings uses body-strong weight
+            in the ordinary text colour, sentence case, no tracking. Accent on a heading also spends
+            the accent colour on something that is not interactive, which is the one job accent has.
+        -->
+        <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandTextPrimaryBrush}" />
+    </Style>
+    <Style x:Key="BrandNavGroupLabelStyle" TargetType="TextBlock">
+        <!--
+            THE SIDEBAR'S GROUP LABELS, WHICH ARE NOT THE SAME THING AS A SECTION HEADING INSIDE A
+            PAGE. They label a region of navigation rather than a block of content, so Windows sets
+            them quieter than the rows beneath them - secondary, not primary, or the label competes
+            with the destinations it is grouping.
+            This exists as its own style because the group-header data template sets a Foreground
+            directly, which silently beats the NavigationViewItemHeaderForeground brush. Two places
+            answering one question is how a palette drifts, so the template now points here and the
+            brush is not the answer for these.
+        -->
+        <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandTextSecondaryBrush}" />
+    </Style>
+    <Style x:Key="BrandRowTitleStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Segoe UI Variable Display, Segoe UI Variable Text, Segoe UI" />
+        <Setter Property="FontSize" Value="18" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandTextPrimaryBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style x:Key="BrandRowLabelStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandTextPrimaryBrush}" />
+    </Style>
+    <Style x:Key="BrandBodyStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandTextBodyBrush}" />
+    </Style>
+    <Style x:Key="BrandHelperStyle" TargetType="TextBlock">
+        <!--
+            STAYS AT 14, DELIBERATELY, AND THIS IS THE ONE PLACE THIS APP DOES NOT FOLLOW FLUENT.
+            Fluent sets helper and caption text at 12. The founder set a 14 floor for the macOS app
+            with the reason that nothing should render smaller than that, and shrinking the smallest
+            text in the window is not the only way to buy hierarchy: the titles above went UP to 18
+            and 28 instead, which widens the same gap without taking anything away from a reader.
+            If the floor is ever lifted for Windows, this is the line to change.
+        -->
+        <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandTextTertiaryBrush}" />
+    </Style>
+</ResourceDictionary>

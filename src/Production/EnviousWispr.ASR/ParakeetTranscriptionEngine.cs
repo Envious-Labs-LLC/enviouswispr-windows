@@ -10,7 +10,7 @@ namespace EnviousWispr.ASR;
 
 public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposable
 {
-    public const string ModelId = "parakeet-tdt-0.6b-v3";
+    public const string ModelId = ParakeetModelIds.Final;
     public const int RequiredSampleRate = 16_000;
 
     private static readonly string[] PreprocessorOutputs = ["features", "features_lens"];

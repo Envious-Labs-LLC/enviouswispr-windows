@@ -5,7 +5,8 @@ using System.Runtime.InteropServices;
 
 namespace EnviousWispr.Audio;
 
-public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource
+public sealed class WasapiAudioCapture :
+    IAudioCapture, IAudioSnapshotSource, ICaptureStartTimings, ICaptureDiagnostics
 {
     private static readonly AudioBufferFormat CaptureFormat = new(
         AudioSampleConverter.TargetSampleRate,
@@ -25,6 +26,12 @@ public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource
     private volatile bool _backendStopped;
     private volatile bool _unexpectedStop;
     private bool _disposed;
+    private long? _lastDeviceOpenMilliseconds;
+    private long? _lastStreamStartMilliseconds;
+    private int _packets;
+    private int _silentPackets;
+    private float _peak;
+    private float _rms;
 
     public WasapiAudioCapture()
         : this(new WasapiRecorderFactory(), TimeSpan.FromSeconds(2))
@@ -43,6 +50,18 @@ public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource
     public event EventHandler<AudioLevel>? LevelChanged;
 
     public bool IsCapturing => _isCapturing;
+
+    public long? LastDeviceOpenMilliseconds => _lastDeviceOpenMilliseconds;
+
+    public long? LastStreamStartMilliseconds => _lastStreamStartMilliseconds;
+
+    public int LastPacketCount => Volatile.Read(ref _packets);
+
+    public int LastSilentPacketCount => Volatile.Read(ref _silentPackets);
+
+    public float LastPeak => _peak;
+
+    public float LastRootMeanSquare => _rms;
 
     public AudioSnapshot? GetSnapshot(TimeSpan maximumDuration)
     {
@@ -94,6 +113,12 @@ public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource
                 return Failure(AppErrorCode.CaptureAlreadyActive, canRetry: false);
             }
 
+            // TIMED SEPARATELY BECAUSE THE TWO HALVES ANSWER DIFFERENT QUESTIONS. Opening is the
+            // half a warm device would remove; starting the stream is the half nothing can remove.
+            // The stopwatch starts before the try so a FAILED open is still timed - a device that
+            // takes two seconds to refuse is worth knowing about, and it is exactly the case a
+            // success-only measurement never sees.
+            var openTimer = System.Diagnostics.Stopwatch.StartNew();
             IAudioRecorderSession recorder;
             try
             {
@@ -117,12 +142,24 @@ public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource
             {
                 return Failure(AppErrorCode.AudioDeviceUnavailable, canRetry: true);
             }
+            finally
+            {
+                // ONE PLACE FOR ALL FIVE EXITS. Recording it inside each branch means the next
+                // branch someone adds is the one that quietly stops being measured, and a missing
+                // number here does not look like a defect - it looks like the case never happened.
+                openTimer.Stop();
+                _lastDeviceOpenMilliseconds = openTimer.ElapsedMilliseconds;
+            }
 
             lock (_bufferGate)
             {
                 _capturedBytes.SetLength(0);
             }
 
+            _packets = 0;
+            _silentPackets = 0;
+            _peak = 0f;
+            _rms = 0f;
             _request = request;
             _recordingStopped = new TaskCompletionSource<Exception?>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
@@ -136,7 +173,10 @@ public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource
             try
             {
                 _isCapturing = true;
+                var startTimer = System.Diagnostics.Stopwatch.StartNew();
                 recorder.Start();
+                startTimer.Stop();
+                _lastStreamStartMilliseconds = startTimer.ElapsedMilliseconds;
                 return new AudioOperationResult(Succeeded: true);
             }
             catch (Exception exception) when (
@@ -293,6 +333,37 @@ public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource
 
     private void OnDataAvailable(object? sender, AudioRecorderData args)
     {
+        // AN EMPTY BUFFER IS NOT A MEASUREMENT OF SILENCE, AND TREATING IT AS ONE BLINDED EVERY
+        // METER IN THE APP. This recorder delivers a zero-length packet on roughly half its
+        // callbacks, and each one arrived within a millisecond of a real one - so the sequence was
+        // always a true level published and then a zero published over the top of it. Anything
+        // reading the latest level, which is what both meters do, therefore read a zero on
+        // virtually every look, and the recording pill sat at its floor through dictations that
+        // transcribed perfectly.
+        //
+        // MEASURED, NOT INFERRED. Ten consecutive packets of a real dictation: 516, 0, 640, 0, 640,
+        // 0, 640, 0, 640, 0 bytes, with the empty ones landing in the same millisecond as the full
+        // one before them, and every one of them flagged NOT silent. The full packets carried a
+        // coherent rising attack from 0.000012 to 0.000509, so nothing about the audio or the
+        // conversion was ever wrong.
+        //
+        // BEFORE THE COUNTERS, DELIBERATELY. An empty packet is not a packet that arrived quietly,
+        // it is a callback with nothing in it. These callbacks are flagged NOT silent, so counting
+        // them would halve the silent RATIO rather than raise it - a capture that was genuinely
+        // half silent would read as a quarter silent, and the microphone test's whole job is to
+        // tell three kinds of nothing apart. LastPacketCount means packets of audio that arrived,
+        // not times the recorder woke up.
+        if (args.Bytes.Length == 0)
+        {
+            return;
+        }
+
+        Interlocked.Increment(ref _packets);
+        if (args.IsSilent)
+        {
+            Interlocked.Increment(ref _silentPackets);
+        }
+
         var bytes = args.IsSilent ? new byte[args.Bytes.Length] : args.Bytes.ToArray();
         try
         {
@@ -300,6 +371,16 @@ public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource
             lock (_bufferGate)
             {
                 _capturedBytes.Write(bytes);
+            }
+
+            if (converted.Peak > _peak)
+            {
+                _peak = converted.Peak;
+            }
+
+            if (converted.RootMeanSquare > _rms)
+            {
+                _rms = converted.RootMeanSquare;
             }
 
             LevelChanged?.Invoke(this, new AudioLevel(converted.Peak, converted.RootMeanSquare));

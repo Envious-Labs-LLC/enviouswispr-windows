@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.History;
+using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Services.History;
 
@@ -257,7 +258,7 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
 
     private static void ValidateRetention(int retentionDays)
     {
-        if (retentionDays is < 0 or > 3_650)
+        if (retentionDays is < RetentionDays.HistoryMinimum or > RetentionDays.HistoryMaximum)
         {
             throw new ArgumentOutOfRangeException(nameof(retentionDays));
         }

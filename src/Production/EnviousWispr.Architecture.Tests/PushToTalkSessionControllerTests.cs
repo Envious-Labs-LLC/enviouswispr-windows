@@ -237,6 +237,55 @@ public sealed class PushToTalkSessionControllerTests
         public TargetWindowId? CaptureForegroundTarget() => Window.IsValid ? Window : null;
     }
 
+    [Fact]
+    public async Task ChangingTheDeliveryChoiceReachesTheVeryNextRecording()
+    {
+        // Read once when the controller was built, the toggle changed a file and nothing else until
+        // the app was relaunched.
+        var audio = new FakeAudioCapture();
+        var copyInsteadOfPaste = false;
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            new FakeTargetProvider(101),
+            deliveryOptions: () =>
+                TextDeliveryOptions.Default with { CopyInsteadOfPaste = copyInsteadOfPaste });
+
+        var first = await controller.PressAsync();
+        await controller.CancelAsync();
+        await controller.ResetAsync();
+        copyInsteadOfPaste = true;
+        var second = await controller.PressAsync();
+
+        Assert.False(first.Session?.DeliveryOptions.CopyInsteadOfPaste);
+        Assert.True(second.Session?.DeliveryOptions.CopyInsteadOfPaste);
+    }
+
+    [Fact]
+    public async Task AChoiceSavedWhileTheMicrophoneIsOpeningWaitsForTheNextRecording()
+    {
+        // The recording that is already starting keeps the answer it was pressed with. Asking after
+        // the microphone opened let a save that landed in that gap change where the words of a
+        // recording already under way were going to be sent.
+        var copyInsteadOfPaste = false;
+        var audio = new FakeAudioCapture
+        {
+            StartResultFactory = _ =>
+            {
+                copyInsteadOfPaste = true;
+                return new AudioOperationResult(Succeeded: true);
+            },
+        };
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            new FakeTargetProvider(101),
+            deliveryOptions: () =>
+                TextDeliveryOptions.Default with { CopyInsteadOfPaste = copyInsteadOfPaste });
+
+        var started = await controller.PressAsync();
+
+        Assert.False(started.Session?.DeliveryOptions.CopyInsteadOfPaste);
+    }
+
     private sealed class FakeAudioCapture : IAudioCapture
     {
         private DictationSessionId _sessionId;

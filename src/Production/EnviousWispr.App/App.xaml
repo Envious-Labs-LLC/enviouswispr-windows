@@ -5,46 +5,14 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Application.Resources>
         <ResourceDictionary>
-            <ResourceDictionary.ThemeDictionaries>
-                <ResourceDictionary x:Key="Light">
-                    <Color x:Key="BrandAccentColor">#7C3AED</Color>
-                    <SolidColorBrush x:Key="BrandAccentBrush" Color="#7C3AED" />
-                    <SolidColorBrush x:Key="BrandAccentSoftBrush" Color="#167C3AED" />
-                    <SolidColorBrush x:Key="ProductCanvasBrush" Color="#FFF8F5FF" />
-                </ResourceDictionary>
-                <ResourceDictionary x:Key="Dark">
-                    <Color x:Key="BrandAccentColor">#A78BFA</Color>
-                    <SolidColorBrush x:Key="BrandAccentBrush" Color="#A78BFA" />
-                    <SolidColorBrush x:Key="BrandAccentSoftBrush" Color="#29A78BFA" />
-                    <SolidColorBrush x:Key="ProductCanvasBrush" Color="#FF131019" />
-                </ResourceDictionary>
-                <ResourceDictionary x:Key="HighContrast">
-                    <Color x:Key="BrandAccentColor">{ThemeResource SystemAccentColor}</Color>
-                    <SolidColorBrush x:Key="BrandAccentBrush" Color="{ThemeResource SystemAccentColor}" />
-                    <SolidColorBrush x:Key="BrandAccentSoftBrush" Color="Transparent" />
-                    <SolidColorBrush x:Key="ProductCanvasBrush" Color="{ThemeResource SystemColorWindowColor}" />
-                </ResourceDictionary>
-            </ResourceDictionary.ThemeDictionaries>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+                <ResourceDictionary Source="Theme/DesignTokens.xaml" />
+                <ResourceDictionary Source="Theme/PillTokens.xaml" />
+                <ResourceDictionary Source="Theme/Typography.xaml" />
+                <ResourceDictionary Source="Theme/Layout.xaml" />
+                <ResourceDictionary Source="Theme/Controls.xaml" />
             </ResourceDictionary.MergedDictionaries>
-            <Style x:Key="PageTitleStyle" TargetType="TextBlock">
-                <Setter Property="FontSize" Value="30" />
-                <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="TextWrapping" Value="Wrap" />
-            </Style>
-            <Style x:Key="SectionTitleStyle" TargetType="TextBlock">
-                <Setter Property="FontSize" Value="18" />
-                <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="TextWrapping" Value="Wrap" />
-            </Style>
-            <Style x:Key="CardStyle" TargetType="Border">
-                <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
-                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
-                <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="14" />
-                <Setter Property="Padding" Value="20" />
-            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

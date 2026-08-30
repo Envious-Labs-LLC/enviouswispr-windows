@@ -30,6 +30,31 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
     private readonly Task _dispatchTask;
     private nint _hook;
+    // Fully qualified: this project also sees System.Windows.Forms.Timer, and a Forms timer
+    // needs a message pump, which the hook thread does not have.
+    private readonly System.Threading.Timer? _gestureTimer;
+
+    /// <summary>How often a pending gesture is given a chance to complete.</summary>
+    /// <remarks>
+    /// Comfortably finer than the shortest deadline it has to catch, so the worst case adds a few
+    /// tens of milliseconds to a gesture that already waits two hundred. Cheap enough to run for the
+    /// life of the app, and it only runs at all for a modifier binding.
+    /// </remarks>
+    private static readonly TimeSpan GestureTickInterval = TimeSpan.FromMilliseconds(40);
+
+    /// <summary>Whether the recording binding needs the gesture clock running.</summary>
+    private static bool IsModifierBinding(HotkeyGesture gesture, uint virtualKey) =>
+        (virtualKey == 0 && gesture.Modifiers != HotkeyModifiers.None) ||
+        HotkeyEdgeTracker.IsModifierKey(virtualKey);
+
+    private void PumpGesture()
+    {
+        var signal = _edgeTracker.Tick();
+        if (signal is not null)
+        {
+            _signals.Writer.TryWrite(signal.Value);
+        }
+    }
 
     private WindowsPushToTalkHook(
         HotkeyGesture gesture,
@@ -51,6 +76,21 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
             recordingMode);
         _procedure = HookCallback;
         _dispatchTask = Task.Run(DispatchAsync);
+
+        // A HOLD COMPLETES ON TIME, NOT ON A KEYSTROKE. Without something looking at the clock, a
+        // modifier binding waits for a threshold that never elapses and can never start a recording
+        // at all - a whole feature that builds, tests green at the policy level, and does nothing.
+        //
+        // Armed only when a modifier binding is in use, so an ordinary key runs no timer and the
+        // common path keeps exactly the cost it has today.
+        if (_edgeTracker.NextDeadline is not null || IsModifierBinding(gesture, virtualKey))
+        {
+            _gestureTimer = new System.Threading.Timer(
+                _ => PumpGesture(),
+                state: null,
+                dueTime: GestureTickInterval,
+                period: GestureTickInterval);
+        }
         _hook = SetWindowsHookEx(
             WhKeyboardLowLevel,
             _procedure,
@@ -166,11 +206,22 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
         }
 
         UnhookWindowsHookEx(hook);
+
+        // Stop the clock BEFORE closing the channel. A tick that lands after the writer completes
+        // would try to write to a closed channel, which is a fault raised on a timer thread nobody
+        // is watching - the kind that shows up as a mysterious process exit rather than an error.
+        if (_gestureTimer is not null)
+        {
+            await _gestureTimer.DisposeAsync().ConfigureAwait(false);
+        }
+
         _signals.Writer.TryComplete();
         await _dispatchTask.ConfigureAwait(false);
     }
 
     public void SetRecordingActive(bool active) => _edgeTracker.SetRecordingActive(active);
+
+    public void SetCapturingKeybind(bool capturing) => _edgeTracker.SetCapturingKeybind(capturing);
 
     private nint HookCallback(int code, nint message, nint data)
     {
@@ -358,6 +409,15 @@ internal static class WindowsVirtualKeyMap
             "Delete" => 0x2E,
             "ScrollLock" => 0x91,
             "Escape" => 0x1B,
+
+            // The sided modifiers, each naming one physical key. HotkeyEdgeTracker recognises these
+            // codes and routes them through the tap gesture rather than hold-to-talk.
+            "RightCtrl" => 0xA3,
+            "LeftCtrl" => 0xA2,
+            "RightShift" => 0xA1,
+            "LeftShift" => 0xA0,
+            "RightWin" => 0x5C,
+            "LeftWin" => 0x5B,
             _ => 0,
         };
         return virtualKey != 0;

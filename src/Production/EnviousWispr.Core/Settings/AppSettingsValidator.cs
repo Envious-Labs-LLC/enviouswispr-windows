@@ -17,7 +17,8 @@ public static class AppSettingsValidator
                 (string.IsNullOrWhiteSpace(settings.PreferredMicrophoneId) ||
                  settings.PreferredMicrophoneId.Length > 2_048)) ||
             settings.Observability is null ||
-            settings.Observability.DiagnosticRetentionDays is < 1 or > 90 ||
+            settings.Observability.DiagnosticRetentionDays
+                is < RetentionDays.DiagnosticMinimum or > RetentionDays.DiagnosticMaximum ||
             !IsValid(settings.Preferences) ||
             !IsValid(settings.UserData))
         {
@@ -58,7 +59,13 @@ public static class AppSettingsValidator
         (preferences.Polish.OllamaEndpoint is null ||
             (!string.IsNullOrWhiteSpace(preferences.Polish.OllamaEndpoint) &&
              preferences.Polish.OllamaEndpoint.Length <= 2_048)) &&
-        preferences.History.RetentionDays is >= 0 and <= 3_650 &&
+        // A stored threshold below the policy floor is not invalid - the policy clamps it up, so
+        // rejecting the file here would reset every setting a user has over one number. Only a
+        // value that cannot be a duration at all is rejected.
+        double.IsFinite(preferences.Dictation.AutoStopSilenceSeconds) &&
+        preferences.Dictation.AutoStopSilenceSeconds >= 0 &&
+        preferences.History.RetentionDays
+            is >= RetentionDays.HistoryMinimum and <= RetentionDays.HistoryMaximum &&
         Enum.IsDefined(preferences.Theme) &&
         Enum.IsDefined(preferences.OverlayPosition) &&
         Enum.IsDefined(preferences.PillDesignWithoutWords) &&
@@ -88,7 +95,12 @@ public static class AppSettingsValidator
             !string.IsNullOrWhiteSpace(entry.SpokenForm) &&
             entry.SpokenForm.Length <= 256 &&
             !string.IsNullOrWhiteSpace(entry.Replacement) &&
-            entry.Replacement.Length <= 256) &&
+            entry.Replacement.Length <= 256 &&
+            // A NUMBER NOBODY DEFINED IS NOT A CHOICE. An enum will hold any integer the file
+            // contains, so "strictness": 99 loads, behaves as the ordinary rule and is exported as
+            // "default" - a file that changed meaning on the way through and said nothing. Refusing
+            // it makes the file visibly wrong instead.
+            Enum.IsDefined(entry.Strictness)) &&
         userData.Snippets.All(entry =>
             entry is not null &&
             !string.IsNullOrWhiteSpace(entry.Name) &&
