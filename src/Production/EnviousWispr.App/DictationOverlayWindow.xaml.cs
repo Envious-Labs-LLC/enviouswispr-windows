@@ -413,9 +413,14 @@ public sealed partial class DictationOverlayWindow : Window
         RainbowMark.Visibility = _activeDesign == RecordingPillDesign.Classic
             ? Visibility.Visible
             : Visibility.Collapsed;
-        LevelBars.Visibility = _activeDesign == RecordingPillDesign.LevelRail
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+
+        // THE TIMER MOVES TO THE FRONT AND THE WORD GOES, so the row reads exactly as the Appearance
+        // page draws it: the time, then the meter. On this design the meter IS the "listening", and
+        // a word beside it would be saying the same thing twice in less room.
+        var rail = _activeDesign == RecordingPillDesign.LevelRail;
+        LevelBars.Visibility = rail ? Visibility.Visible : Visibility.Collapsed;
+        SetLiveVisibility(StateTitle, rail ? Visibility.Collapsed : Visibility.Visible);
+        Grid.SetColumn(ElapsedText, rail ? 0 : 2);
         PreviewWell.Visibility = _activeDesign == RecordingPillDesign.ReadingWell
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -688,6 +693,10 @@ public sealed partial class DictationOverlayWindow : Window
 
     private void ConfigureNotice()
     {
+        // A NOTICE IS NEVER THE RAIL, so the row goes back to its ordinary shape. Leaving the timer
+        // in the first column would put an error's icon and its sentence in the wrong places.
+        SetLiveVisibility(StateTitle, Visibility.Visible);
+        Grid.SetColumn(ElapsedText, 2);
         StateTitle.Style = GetPillStyle("PillNoticeTextStyle");
         RainbowMark.Visibility = Visibility.Collapsed;
         StateIcon.Visibility = Visibility.Visible;
@@ -762,6 +771,26 @@ public sealed partial class DictationOverlayWindow : Window
     /// creates no peer for one, so CreatePeerForElement returned null, the null-safe raise did
     /// nothing, and the pill stayed silent while looking fixed. It is on the title TextBlock now.
     /// </remarks>
+    /// <summary>Shows or hides a live region, and tells a screen reader it changed.</summary>
+    /// <remarks>
+    /// A REGION THAT VANISHES SILENTLY IS WORSE THAN ONE THAT NEVER EXISTED. The Level Rail hides the
+    /// state word because the meter says the same thing in the space the word would need, and a
+    /// screen reader has no meter to read - so the change has to be announced or that user simply
+    /// loses the sentence.
+    /// </remarks>
+    private static void SetLiveVisibility(TextBlock region, Visibility visibility)
+    {
+        if (region.Visibility == visibility)
+        {
+            return;
+        }
+
+        region.Visibility = visibility;
+        var peer = FrameworkElementAutomationPeer.FromElement(region)
+            ?? FrameworkElementAutomationPeer.CreatePeerForElement(region);
+        peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+    }
+
     private static void AnnounceStateChange(TextBlock region, DictationOverlayState state)
     {
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(
