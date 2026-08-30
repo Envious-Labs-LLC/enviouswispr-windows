@@ -1548,12 +1548,17 @@ public sealed partial class MainWindow : Window, IDisposable
         capture.LevelChanged += OnLevel;
         try
         {
+            // THE TOKEN GOES ALL THE WAY IN. A recording cancels a running test, and a test that
+            // does not forward its own cancellation would keep opening a device the app has already
+            // decided somebody else should have.
             var started = await capture
-                .StartAsync(new AudioCaptureRequest(
-                    DictationSessionId.Create(),
-                    (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id is { } id
-                        ? new AudioDeviceId(id)
-                        : null))
+                .StartAsync(
+                    new AudioCaptureRequest(
+                        DictationSessionId.Create(),
+                        (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id is { } id
+                            ? new AudioDeviceId(id)
+                            : null),
+                    cancellationToken)
                 .ConfigureAwait(true);
             if (!started.Succeeded)
             {
@@ -1565,6 +1570,9 @@ public sealed partial class MainWindow : Window, IDisposable
             }
 
             await Task.Delay(MicrophoneTestDuration, cancellationToken).ConfigureAwait(true);
+            // STOPPING IS NOT CANCELLED, DELIBERATELY, AND IT IS THE ONE EXCEPTION. A cancelled stop
+            // leaves the device open, which is the opposite of what a cancel is for: the whole reason
+            // a recording cancels a test is to take the microphone back.
             var captured = await capture.StopAsync(CancellationToken.None).ConfigureAwait(true);
 
             // WHAT THE STOP SAID, BEFORE WHAT THE PACKETS SAID. A device that vanished after one loud
