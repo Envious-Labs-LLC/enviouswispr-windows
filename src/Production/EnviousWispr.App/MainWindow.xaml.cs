@@ -1552,24 +1552,19 @@ public sealed partial class MainWindow : Window, IDisposable
         SetLiveText(MicrophoneTestResultText, "Listening. Say a few words.");
         await using var capture = new WasapiAudioCapture();
         var generation = _microphoneTestGeneration;
-        // TEMPORARY INSTRUMENT, NOT SHIPPABLE. Reading the level path found nothing wrong with it,
-        // and the same capture that fed the recogniser intelligible speech drove this meter to a
-        // flat row, so the next useful thing is a count rather than another reading.
-        var levelCallbacks = 0;
-        var maximumNormalized = 0f;
-        var queuedRejected = 0;
-        var callbacksRan = 0;
-        var skippedByGeneration = 0;
-        var draws = 0;
-        var maximumLit = 0;
-        var drawsWithSomethingLit = 0;
-        var maximumAssignedHeight = 0d;
-        var maximumActualHeight = 0d;
-        var drawnBarIds = new HashSet<int>();
-        var readBackHeight = 0d;
-        var readBackOpacity = 0d;
-        var readBackWasAccent = false;
-        var posted = 0;
+        // ONE POST PER METER FRAME, NOT ONE PER AUDIO PACKET, AND THAT WAS THE WHOLE BUG.
+        // Capture reports a level per audio buffer, about two hundred times a second, and every one
+        // of them was posting its own callback to the UI thread. Layout and render run on that same
+        // dispatcher queue, so a flood at that rate keeps it permanently busy: measured on this
+        // machine as five hundred and ninety-eight draws that each assigned height, opacity and
+        // brush to the correct live Border, against a camera that recorded no change in any of the
+        // three across the entire test. Nothing was ignored and nothing was reverted. No frame was
+        // ever produced. The tell was that the verdict sentence, the one thing on that page written
+        // AFTER the flood stops, was also the only thing that ever appeared.
+        //
+        // FIFTY MILLISECONDS IS THE RATE THE PILL'S RAIL ALREADY USES, for the same reason, and it
+        // is already written down as RecordingLevelHistory.SampleInterval. This meter joins that
+        // answer rather than inventing a second one.
         var meterClock = System.Diagnostics.Stopwatch.StartNew();
         var lastPostedAt = TimeSpan.FromSeconds(-1);
         capture.LevelChanged += OnLevel;
@@ -1617,24 +1612,10 @@ public sealed partial class MainWindow : Window, IDisposable
             // THE ROOT-MEAN-SQUARE, NOT THE PEAK, because that is the number the recording meter is
             // driven from. A verdict read off the peak could call a microphone healthy while the
             // meter it is meant to explain sits flat.
-            SetLiveText(
-                MicrophoneTestResultText,
-                MicrophoneTestVerdict.For(
-                    capture.LastPacketCount,
-                    capture.LastSilentPacketCount,
-                    capture.LastRootMeanSquare) +
-                $" [diag {levelCallbacks} callbacks, max {maximumNormalized:F3}, " +
-                $"rms {capture.LastRootMeanSquare:F5}, peak {capture.LastPeak:F5}, " +
-                $"bars {MicrophoneTestBars.Children.Count}, rejected {queuedRejected}, " +
-                $"ran {callbacksRan}, skipped {skippedByGeneration}, draws {draws}, " +
-                $"maxlit {maximumLit}, litdraws {drawsWithSomethingLit}, " +
-                $"maxheight {maximumAssignedHeight:F1}, " +
-                $"maxactual {maximumActualHeight:F1}, " +
-                $"gen {generation}/{_microphoneTestGeneration}, posted {posted}, " +
-                $"drawnids {drawnBarIds.Count}, " +
-                $"readback h{readBackHeight:F0} o{readBackOpacity:F2} " +
-                $"accent {(readBackWasAccent ? "yes" : "no")}] " +
-                DescribeMicrophoneTestBars());
+            SetLiveText(MicrophoneTestResultText, MicrophoneTestVerdict.For(
+                capture.LastPacketCount,
+                capture.LastSilentPacketCount,
+                capture.LastRootMeanSquare));
         }
         finally
         {
@@ -1643,24 +1624,6 @@ public sealed partial class MainWindow : Window, IDisposable
 
         void OnLevel(object? sender, AudioLevel level)
         {
-            var normalized = RecordingLevelHistory.Normalize(level.RootMeanSquare);
-            Interlocked.Increment(ref levelCallbacks);
-            if (normalized > maximumNormalized)
-            {
-                maximumNormalized = normalized;
-            }
-
-            // ONE POST PER METER FRAME, NOT ONE PER AUDIO PACKET, AND THAT IS THE WHOLE BUG.
-            // Capture reports a level per buffer, about two hundred times a second, and each one
-            // was posting its own callback to the UI thread. Layout and render run on that same
-            // queue, so a flood at that rate keeps it permanently busy: every callback ran, every
-            // property was accepted, and no frame was ever produced. Measured on this machine as
-            // five hundred and ninety-eight draws that assigned height, opacity and brush, against
-            // a camera that recorded no change in any of the three across the whole test.
-            //
-            // FIFTY MILLISECONDS IS THE RATE THE PILL'S RAIL ALREADY USES, for the same reason and
-            // written down in RecordingLevelHistory.SampleInterval. This meter is now on the same
-            // cadence rather than a second answer to the same question.
             var now = meterClock.Elapsed;
             if (now - lastPostedAt < RecordingLevelHistory.SampleInterval)
             {
@@ -1668,131 +1631,16 @@ public sealed partial class MainWindow : Window, IDisposable
             }
 
             lastPostedAt = now;
-            Interlocked.Increment(ref posted);
-
-            if (!MicrophoneTestBars.DispatcherQueue.TryEnqueue(() =>
-                {
-                    Interlocked.Increment(ref callbacksRan);
-                    if (generation != _microphoneTestGeneration)
-                    {
-                        Interlocked.Increment(ref skippedByGeneration);
-                        return;
-                    }
-
-                    Interlocked.Increment(ref draws);
-
-                    // READ BEFORE DRAWING, so this measures the PREVIOUS assignment after layout has
-                    // had a turn. Read straight after the assignment it reports the stale value every
-                    // time, because ActualHeight only changes on the next layout pass - which would
-                    // have accused layout of ignoring a height it had not been asked about yet.
-                    if (MicrophoneTestBars.Children.Count > 0 &&
-                        MicrophoneTestBars.Children[0] is Border previous &&
-                        previous.ActualHeight > maximumActualHeight)
-                    {
-                        maximumActualHeight = previous.ActualHeight;
-                    }
-
-                    var lit = (int)Math.Round(normalized * MicrophoneTestBars.Children.Count);
-                    if (lit > maximumLit)
-                    {
-                        maximumLit = lit;
-                    }
-
-                    if (lit > 0)
-                    {
-                        drawsWithSomethingLit++;
-                    }
-
-                    DrawMicrophoneTestLevel(normalized);
-
-                    // THE MAXIMUM, NOT THE LATEST, AND THE DIFFERENCE DECIDED A WRONG DIAGNOSIS. The
-                    // previous instrument recorded the last height it saw, and the last callback of a
-                    // test arrives after the speaking has stopped - so a meter that had been moving
-                    // all the way through reported the unlit value at the end and read as a meter
-                    // that had never moved at all.
-                    // WHAT THE DRAW ACTUALLY TOUCHED, READ BACK OFF THE SAME OBJECT. Every property
-                    // this loop sets has failed to appear on screen - height, opacity and brush - so
-                    // the question is no longer which property is being ignored but whether the
-                    // object that accepts them is the object being rendered.
-                    if (lit > 0 &&
-                        MicrophoneTestBars.Children.Count > 0 &&
-                        MicrophoneTestBars.Children[0] is Border first)
-                    {
-                        drawnBarIds.Add(first.GetHashCode());
-                        if (first.Height > maximumAssignedHeight)
-                        {
-                            maximumAssignedHeight = first.Height;
-                            readBackHeight = first.Height;
-                            readBackOpacity = first.Opacity;
-                            readBackWasAccent = ReferenceEquals(
-                                first.Background,
-                                Application.Current.Resources["BrandAccentSolidBrush"]);
-                        }
-                    }
-                }))
+            var normalized = RecordingLevelHistory.Normalize(level.RootMeanSquare);
+            MicrophoneTestBars.DispatcherQueue.TryEnqueue(() =>
             {
-                Interlocked.Increment(ref queuedRejected);
-            }
-        }
-    }
+                if (generation != _microphoneTestGeneration)
+                {
+                    return;
+                }
 
-    /// <summary>Lights the bars up to the level, so the row reads as a meter rather than a chart.</summary>
-    /// <remarks>
-    /// A LIT SEGMENT IS FULL HEIGHT, AND THE FIRST VERSION MADE IT A STAIRCASE. Height climbed with
-    /// the bar's POSITION rather than with the level, so the segments that light at ordinary speech
-    /// are the ones at the left where the staircase is shortest: four lit bars stood 0.8 to 3.2
-    /// pixels above a floor of six, which on a real screen is a row of identical grey dots. It was
-    /// photographed as a dead meter beside a verdict correctly saying the microphone worked.
-    ///
-    /// SO THE LEVEL IS SHOWN BY HOW MANY, NOT BY HOW TALL. That is what a segment meter is, and it
-    /// is legible at one segment as well as at twenty.
-    /// </remarks>
-    /// <summary>Says where the meter's bars actually are, and whether they are on screen at all.</summary>
-    /// <remarks>
-    /// TEMPORARY, AND IT ANSWERS AN IDENTITY QUESTION RATHER THAN A VALUE ONE. Every counter so far
-    /// has described the objects the code holds, and a camera on the screen disagrees with all of
-    /// them - so the next thing worth knowing is whether those objects are the ones being drawn. A
-    /// Border with no Parent, or one whose XamlRoot is not the window's, is never rendered and never
-    /// measured, and would produce exactly the readings taken so far.
-    ///
-    /// IT ALSO PRINTS THE RECTANGLE, which removes the other way this can go wrong. Two separate
-    /// measurements of this row have already landed on the wrong pixels, once on a heading and once
-    /// on a button that had moved, so a camera and a counter can disagree simply by looking at
-    /// different places. A rectangle in window coordinates settles that without another round.
-    /// </remarks>
-    private string DescribeMicrophoneTestBars()
-    {
-        try
-        {
-            var bars = MicrophoneTestBars;
-            var first = bars.Children.Count > 0 ? bars.Children[0] as Border : null;
-            var root = Content as FrameworkElement;
-            var point = root is null
-                ? new Windows.Foundation.Point(-1, -1)
-                : bars.TransformToVisual(root).TransformPoint(new Windows.Foundation.Point(0, 0));
-            var sameRoot = root is not null && ReferenceEquals(bars.XamlRoot, root.XamlRoot);
-
-            // THE LOGICAL COLLECTION AGAINST THE VISUAL TREE, which is the one comparison that can
-            // separate an element that accepts values from the element that is drawn. Children is
-            // what the code writes to and VisualTreeHelper is what the renderer walks. In an
-            // ordinary panel they are the same objects, and if they are not, that is the fault.
-            var visualCount = VisualTreeHelper.GetChildrenCount(bars);
-            var visualFirst = visualCount > 0 ? VisualTreeHelper.GetChild(bars, 0) : null;
-            return
-                $"[tree panelparent {(bars.Parent is not null ? "yes" : "no")}, " +
-                $"visualchildren {visualCount}, " +
-                $"visualid {visualFirst?.GetHashCode() ?? 0}, " +
-                $"visualtype {visualFirst?.GetType().Name ?? "none"}, " +
-                $"barparent {(first?.Parent is not null ? "yes" : "no")}, " +
-                $"sameroot {(sameRoot ? "yes" : "no")}, " +
-                $"barid {first?.GetHashCode() ?? 0}, " +
-                $"panelsize {bars.ActualWidth:F0}x{bars.ActualHeight:F0}, " +
-                $"barsize {first?.ActualWidth ?? -1:F0}x{first?.ActualHeight ?? -1:F0}, " +
-                $"at {point.X:F0},{point.Y:F0}]";
-        }
-        catch (Exception exception)
-        {
-            return $"[tree unavailable: {exception.GetType().Name}]";
+                DrawMicrophoneTestLevel(normalized);
+            });
         }
     }
 
@@ -1810,11 +1658,10 @@ public sealed partial class MainWindow : Window, IDisposable
             bar.Height = on ? 22 : 6;
             bar.Opacity = on ? 1 : 0.25;
 
-            // COLOUR AS WELL AS HEIGHT, BECAUSE HEIGHT ALONE CANNOT BE TRUSTED HERE. Measured on
-            // this machine: the loop assigns twenty-two, layout reports six, and a camera on the
-            // screen counts no growth at all across a hundred and eighty frames. A brush does not
-            // depend on layout remeasuring anything, so if the row changes colour and not size the
-            // fault is layout, and if it changes neither then this is not the element being drawn.
+            // COLOUR AS WELL AS HEIGHT, so the row reads at a glance rather than only under
+            // comparison. A lit segment differs from an unlit one in three ways at once - taller,
+            // fully opaque, and accent rather than grey - which is what makes a single lit bar
+            // legible on a quiet microphone.
             bar.Background = on
                 ? (Brush)Application.Current.Resources["BrandAccentSolidBrush"]
                 : (Brush)Application.Current.Resources["BrandTextSecondaryBrush"];
