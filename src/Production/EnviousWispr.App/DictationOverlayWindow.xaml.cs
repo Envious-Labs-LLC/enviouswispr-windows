@@ -152,7 +152,16 @@ public sealed partial class DictationOverlayWindow : Window
         // thread did that work whatever the throttle then decided - and under load the queue backed
         // up so the meter drew samples that were already old. The capture now records a number and
         // this asks for it at the rate the meter actually has.
-        _levelTimer.Interval = RecordingLevelHistory.SampleInterval;
+        //
+        // AND IT TICKS FASTER THAN THE SAMPLE INTERVAL, WHICH IS THE WHOLE REASON THE RAIL WAS DEAD.
+        // Setting the timer to the sample interval put two clocks in series at the same period, and
+        // the history's own gate rejects anything arriving early. Windows quantises timers to about
+        // 15.6 milliseconds, so a fifty millisecond DispatcherTimer fires at 46.9 - reliably three
+        // milliseconds SHORT of the gate, every single time. The rail therefore drew its first
+        // sample and then never again, and sat pinned at its unlit four-DIP floor through
+        // dictations that transcribed perfectly. Ticking at half the interval makes the history's
+        // gate the single pacer, which is what it was written to be.
+        _levelTimer.Interval = RecordingLevelHistory.SampleInterval / 2;
         _levelTimer.Tick += (_, _) => OnLevelTick();
 
         // Distress and error share a red, so the breathing is what separates them. Opacity is a
