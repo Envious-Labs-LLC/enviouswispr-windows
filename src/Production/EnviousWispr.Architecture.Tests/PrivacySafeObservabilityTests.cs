@@ -176,28 +176,56 @@ public sealed class PrivacySafeObservabilityTests
             "Could not find the repository root from the test output directory, so the privacy " +
             "documents could not be checked. Fix the lookup rather than removing this test.");
 
-        // THE DATA DICTIONARY IS THE ONE AUTHORITY, AND IT IS THE ONE CHECKED BY NAME. PRIVACY.md
-        // describes the same promise in plain language for a reader rather than by field
-        // identifier, so it points here instead of keeping a second copy to drift. Two prose lists
-        // of one schema is what drifted twice.
+        // THE TABLE ROWS ARE PARSED, NOT SEARCHED FOR. "does `stage` appear anywhere in this file"
+        // is satisfied by a passing mention in a paragraph, and it says nothing at all about a field
+        // REMOVED from the record and left standing in the dictionary. Comparing the row set against
+        // reflection in both directions is what actually binds the two.
         var dictionary = Path.Combine(root!.FullName, "docs", "privacy", "observability.md");
         Assert.True(File.Exists(dictionary), $"Missing the approved data dictionary: {dictionary}");
-        var text = File.ReadAllText(dictionary);
 
-        var fields = typeof(PrivacySafeDiagnosticRecord)
+        var documented = DocumentedTelemetryFields(File.ReadAllLines(dictionary));
+        var actual = TelemetryFieldNames();
+
+        Assert.False(
+            documented.Count == 0,
+            "No rows were parsed out of the allowed data dictionary table. The table shape changed " +
+            "and this gate stopped checking anything; fix the parser rather than deleting the test.");
+
+        var undisclosed = actual.Except(documented).Order().ToArray();
+        Assert.True(
+            undisclosed.Length == 0,
+            $"These fields cross the network with no row in docs/privacy/observability.md: " +
+            $"{string.Join(", ", undisclosed)}. A field has to be disclosed before it ships.");
+
+        var phantom = documented.Except(actual).Order().ToArray();
+        Assert.True(
+            phantom.Length == 0,
+            $"The data dictionary promises fields the record no longer has: " +
+            $"{string.Join(", ", phantom)}. A stale row makes the disclosure wrong in the other " +
+            "direction, so remove it in the same change that removes the field.");
+    }
+
+    /// <summary>The camelCase names of every field on the record that crosses the network.</summary>
+    private static HashSet<string> TelemetryFieldNames() =>
+        typeof(PrivacySafeDiagnosticRecord)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(property => property.Name != "EqualityContract")
-            .Select(property => JsonNamingPolicy.CamelCase.ConvertName(property.Name));
+            .Select(property => JsonNamingPolicy.CamelCase.ConvertName(property.Name))
+            .ToHashSet(StringComparer.Ordinal);
 
-        foreach (var field in fields)
-        {
-            Assert.True(
-                text.Contains($"`{field}`", StringComparison.Ordinal),
-                $"'{field}' crosses the network and has no row in the approved data dictionary at " +
-                "docs/privacy/observability.md. A field added to the telemetry record has to be " +
-                "disclosed before it ships.");
-        }
-    }
+    /// <summary>The field named by the first cell of each row of the allowed-data table.</summary>
+    /// <remarks>
+    /// Rows look like <c>| `stage` | optional enum | why it exists |</c>. The header and its
+    /// separator have no backticked first cell, so they fall out without being special-cased, and a
+    /// table that stops looking like this produces zero rows rather than a quiet pass.
+    /// </remarks>
+    private static HashSet<string> DocumentedTelemetryFields(IEnumerable<string> lines) => lines
+        .Select(line => line.TrimStart())
+        .Where(line => line.StartsWith('|'))
+        .Select(line => line.Split('|', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim())
+        .Where(cell => cell is not null && cell.StartsWith('`') && cell.EndsWith('`'))
+        .Select(cell => cell!.Trim('`'))
+        .ToHashSet(StringComparer.Ordinal);
 
     /// <summary>
     /// Every nullable enum on the local line is rejected when it arrives out of range.

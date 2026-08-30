@@ -1,4 +1,5 @@
 using System.Net;
+using System.Reflection;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -50,11 +51,16 @@ try
         var telemetryFields = document.RootElement.EnumerateObject()
             .Select(property => property.Name)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "timestamp", "event", "failure", "elapsedMilliseconds", "provider",
-            "errorCode", "engine", "hardwareClass", "stage", "stageStatus", "changed",
-        };
+        // DERIVED FROM THE RECORD, NOT TYPED OUT BESIDE IT. A hand-written copy of this list is a
+        // second place to forget, and forgetting it is exactly how three fields reached the network
+        // while every document and gate still described eight. Reflection cannot fall behind the
+        // type it reflects over, and ContainsForbiddenName below still refuses a field whose NAME
+        // looks like content whatever the record says.
+        var allowed = typeof(PrivacySafeDiagnosticRecord)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(property => property.Name != "EqualityContract")
+            .Select(property => JsonNamingPolicy.CamelCase.ConvertName(property.Name))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var typedTelemetryOnly = telemetryFields.IsSubsetOf(allowed) &&
             !ContainsForbiddenName(telemetryFields);
 

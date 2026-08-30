@@ -24,9 +24,11 @@ the minute even though the log itself stops earlier.
 through `JsonLineFileLogger.Configure`. Assume the log exists and go and read it. Settings can turn it
 off, so an empty file is a fact worth checking rather than proof that nothing happened.
 
-The file is privacy-safe by construction: event codes, failure categories, engine and hardware class,
-elapsed milliseconds. No audio, no transcript, no polished text, no clipboard, no surrounding document.
-The `dictationId` correlates lines within one dictation and is local-only, never sent.
+The file is privacy-safe by construction. **The field-by-field list lives in one place,
+`docs/privacy/observability.md`, and a build gate compares it against the record that crosses the
+network, so do not restate it here.** In shape: typed enums, bounded durations, a timestamp, and one
+boolean. No audio, no transcript, no polished text, no clipboard, no surrounding document. The
+`dictationId` correlates lines within one dictation, exists only on the local line, and is never sent.
 
 ## The three events that decide what kind of ending you are looking at
 
