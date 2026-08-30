@@ -124,6 +124,22 @@ public sealed class HotkeyGesturePolicy
     /// <summary>True while hands-free recording is running.</summary>
     public bool IsRecordingHandsFree => _toggleRecording;
 
+    /// <summary>True while the bound key is being held down as a recording.</summary>
+    public bool IsHolding => _holding;
+
+    /// <summary>Throws away everything, including a hands-free recording that is running.</summary>
+    /// <remarks>
+    /// FOR A CANCEL, WHICH IS THE ONE CASE Reset IS WRONG FOR. Reset deliberately leaves hands-free
+    /// running, because losing focus is not a reason to discard what somebody is still saying. A
+    /// cancel is the opposite: they have said to throw it away, and leaving the hold behind means
+    /// letting go of the key afterwards delivers a recording that was already cancelled.
+    /// </remarks>
+    public void Abandon()
+    {
+        Reset();
+        _toggleRecording = false;
+    }
+
     /// <summary>When the caller should next call <see cref="Elapsed"/>, or null if never.</summary>
     /// <remarks>
     /// A HOLD AND A TAP WINDOW BOTH COMPLETE WITHOUT A KEY EVENT, so the caller has to be told when
