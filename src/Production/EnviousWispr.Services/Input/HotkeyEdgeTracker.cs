@@ -41,6 +41,9 @@ internal sealed class HotkeyEdgeTracker
     /// <summary>The modifier set a modifier-only binding waits for, or None.</summary>
     private readonly HotkeyModifiers _recordModifierSet;
 
+    /// <summary>The modifiers Windows reports as held purely because the record key is down.</summary>
+    private readonly HotkeyModifiers _recordSuppliedModifiers;
+
     /// <summary>True while the bound modifier set is fully held.</summary>
     private bool _modifierSetEngaged;
 
@@ -72,6 +75,14 @@ internal sealed class HotkeyEdgeTracker
             record.Modifiers == HotkeyModifiers.None;
 
         _recordModifierSet = isModifierSet ? record.Modifiers : HotkeyModifiers.None;
+
+        // WHAT WINDOWS WILL REPORT AS HELD WHILE THIS BINDING IS ENGAGED. Binding right Control
+        // means every key pressed during a recording arrives with Control active, and an exact
+        // modifier match then refuses Escape - so taking the offer on the Keybinds page silently
+        // cost the person their cancel key.
+        _recordSuppliedModifiers = isModifierSet
+            ? record.Modifiers
+            : ModifierSuppliedBy(record.VirtualKey);
         _recordGesture = isModifierSet || isSingleModifier
             ? new HotkeyGesturePolicy(
                 isModifierSet ? ModifierSetSentinel : record.VirtualKey,
@@ -101,6 +112,33 @@ internal sealed class HotkeyEdgeTracker
         0xA0 or 0xA1 or   // left and right Shift
         0xA2 or 0xA3 or   // left and right Control
         0x5B or 0x5C;     // left and right Windows
+
+    /// <summary>Which modifier flag Windows raises while one sided modifier key is held.</summary>
+    private static HotkeyModifiers ModifierSuppliedBy(uint virtualKey) => virtualKey switch
+    {
+        0xA0 or 0xA1 => HotkeyModifiers.Shift,
+        0xA2 or 0xA3 => HotkeyModifiers.Control,
+        0x5B or 0x5C => HotkeyModifiers.Windows,
+        _ => HotkeyModifiers.None,
+    };
+
+    /// <summary>
+    /// Whether the keys held right now are the ones a binding asks for, ignoring the record key.
+    /// </summary>
+    /// <remarks>
+    /// THE RECORD KEY'S OWN MODIFIER IS NOT PART OF THE QUESTION WHILE IT IS RECORDING. Escape is
+    /// bound with no modifiers, and holding right Control to talk makes Windows report Control on
+    /// every key that follows - so an exact match refuses the one key that must always work.
+    ///
+    /// ONLY WHILE A RECORDING IS ACTUALLY RUNNING. Outside one, the mask is empty and the match is
+    /// exact again, so binding right Control does not quietly turn Ctrl+Escape into a cancel for the
+    /// rest of the session.
+    /// </remarks>
+    private bool ModifiersMatch(HotkeyModifiers active, HotkeyModifiers required)
+    {
+        var ignored = _recordingActive ? _recordSuppliedModifiers : HotkeyModifiers.None;
+        return (active & ~ignored) == required;
+    }
 
     public void SetRecordingActive(bool active)
     {
@@ -178,7 +216,7 @@ internal sealed class HotkeyEdgeTracker
                 return ProcessRecord(isKeyDown: true, activeModifiers: activeModifiers);
             }
 
-            if (virtualKey == _cancel.VirtualKey && activeModifiers == _cancel.Modifiers)
+            if (virtualKey == _cancel.VirtualKey && ModifiersMatch(activeModifiers, _cancel.Modifiers))
             {
                 return ProcessCancel(isKeyDown: true, activeModifiers: activeModifiers);
             }
@@ -351,13 +389,19 @@ internal sealed class HotkeyEdgeTracker
                 return new HotkeyEdgeDecision(Consume: true);
             }
 
-            if (!_recordingActive || activeModifiers != _cancel.Modifiers)
+            if (!_recordingActive || !ModifiersMatch(activeModifiers, _cancel.Modifiers))
             {
                 return new HotkeyEdgeDecision(Consume: false);
             }
 
             _cancelHeld = true;
             _cancelledUntilRecordRelease = _recordHeld;
+
+            // THE GESTURE FORGETS EVERYTHING, INCLUDING A HANDS-FREE RECORDING. Without this,
+            // letting go of the record key after a cancel ends a hold that is no longer running and
+            // delivers text the person threw away, and a hands-free recording stays believed-in so
+            // the next single tap "stops" something that ended a minute ago.
+            _recordGesture?.Abandon();
             return new HotkeyEdgeDecision(Consume: true, PushToTalkSignal.Cancelled);
         }
 

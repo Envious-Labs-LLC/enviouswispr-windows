@@ -68,30 +68,53 @@ public sealed class LanguageLockSuggester
 
     /// <summary>Starts from what was written down last time.</summary>
     /// <param name="offerHistory">
-    /// A value from <see cref="OfferHistory"/>, or null on a first run. Anything unreadable is
-    /// treated as no history: the worst that costs is one more offer, and refusing to start over a
-    /// malformed settings field would be a dictation app that will not dictate.
+    /// A value from <see cref="OfferHistory"/>, or null on a first run.
     /// </param>
+    /// <remarks>
+    /// ALL OF IT OR NONE OF IT, AND SKIPPING THE BAD PARTS WAS WORSE THAN IT LOOKED. Reading what
+    /// parsed and dropping the rest turned "es:3|es:1|fr" into a Spanish count of one - a number
+    /// nothing ever wrote, standing in for a promise to go quiet that this person may well have
+    /// earned. A count that is wrong is worse than a count that is missing, because a missing one
+    /// costs at most three more offers and a wrong one silently changes what they are owed.
+    ///
+    /// UNREADABLE STARTS EMPTY RATHER THAN REFUSING. A dictation app that will not dictate over a
+    /// bookkeeping string is the larger failure.
+    /// </remarks>
     public LanguageLockSuggester(string? offerHistory)
     {
+        var parsed = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var entry in (offerHistory ?? string.Empty).Split(
-            '|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            '|', StringSplitOptions.TrimEntries))
         {
-            var separator = entry.LastIndexOf(':');
-            if (separator <= 0 || !int.TryParse(
-                entry.AsSpan(separator + 1),
-                System.Globalization.NumberStyles.None,
-                System.Globalization.CultureInfo.InvariantCulture,
-                out var made))
+            if (entry.Length == 0)
             {
-                continue;
+                return;
+            }
+
+            var separator = entry.IndexOf(':');
+            if (separator <= 0 ||
+                entry.IndexOf(':', separator + 1) >= 0 ||
+                !int.TryParse(
+                    entry.AsSpan(separator + 1),
+                    System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var made) ||
+                made < 1 ||
+                made > OffersPerLanguage)
+            {
+                return;
             }
 
             var code = NormalizedBase(entry[..separator]);
-            if (code.Length > 0 && made > 0)
+            if (code.Length == 0 || code == "en" || !TryPin(code, out _) || !parsed.TryAdd(code, made))
             {
-                _offers[code] = Math.Min(made, OffersPerLanguage);
+                return;
             }
+        }
+
+        foreach (var entry in parsed)
+        {
+            _offers[entry.Key] = entry.Value;
         }
     }
 

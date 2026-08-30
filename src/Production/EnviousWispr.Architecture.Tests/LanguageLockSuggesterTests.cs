@@ -225,15 +225,38 @@ public sealed class LanguageLockSuggesterTests
     [InlineData("es:")]
     [InlineData("es:notanumber")]
     [InlineData(":3")]
-    [InlineData("es:-4|")]
-    [InlineData("es:3|es:1|fr")]
-    public void AHistoryNobodyCanReadStartsFromNothingRatherThanRefusing(string history)
+    [InlineData("es:-4")]
+    [InlineData("es:0")]
+    [InlineData("es:4")]
+    [InlineData("es:99")]
+    [InlineData("es:1:2")]
+    [InlineData("es:3|es:1")]
+    [InlineData("es:3|es:3")]
+    [InlineData("es:3|fr")]
+    [InlineData("es:3|")]
+    [InlineData("|es:3")]
+    [InlineData("it:2")]
+    [InlineData("en:2")]
+    public void AHistoryNobodyCanReadIsDroppedWholeRatherThanInPart(string history)
     {
-        // A dictation app that will not dictate because a bookkeeping string is malformed is a worse
-        // outcome than one extra offer.
+        // ALL OF IT OR NONE OF IT. Reading what parsed and skipping the rest turned "es:3|es:1" into
+        // a Spanish count of one - a number nothing ever wrote, standing in for a promise this
+        // person may well have earned. A wrong count silently changes what they are owed; a missing
+        // one costs at most three more offers.
         var suggester = new LanguageLockSuggester(history);
 
+        Assert.Equal(string.Empty, suggester.OfferHistory);
+        Assert.NotNull(RunToOffer(suggester, "es"));
         Assert.NotNull(RunToOffer(suggester, "fr"));
+    }
+
+    [Fact]
+    public void AHistoryThatIsEntirelyReadableIsKeptEntirely()
+    {
+        var suggester = new LanguageLockSuggester("de:1|es:3");
+
+        Assert.Null(RunToOffer(suggester, "es"));
+        Assert.Equal(LanguageOfferKind.AskToLock, RunToOffer(suggester, "de")?.Kind);
     }
 
     [Fact]

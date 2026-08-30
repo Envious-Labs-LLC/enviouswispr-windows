@@ -736,24 +736,34 @@ public sealed partial class DesignSystemTokenTests
         var window = File.ReadAllText(Path.Combine(
             repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
 
-        // CASE LABELS, NOT MENTIONS. An action can be answered without naming a page - pinning a
-        // language is a save rather than a navigation - so the gate has to read the whole handler.
-        // Reading it for any MENTION of a name then passes an action written only in a comment,
-        // which is the failure this looks for wearing a disguise. A case label is the one form that
-        // cannot be written by accident.
-        var handler = SliceBetween(
-            window,
-            "private void OnPillActionInvoked(PillActionKind kind)",
-            "\n    }",
-            "the pill action handler");
-        var mapping = handler;
+        // PARSED, NOT MATCHED. An action can be answered without naming a page - pinning a language
+        // is a save rather than a navigation - so the gate has to read the whole handler, and a
+        // pattern over raw text then counts an action written inside a comment. Both "// case
+        // PillActionKind.X:" and the same words in a block comment satisfy any regex ever written
+        // for this, and both leave the button landing on the default page. Roslyn sees a comment as
+        // trivia and a case label as a label, which no amount of typing can blur.
+        var handlerNode = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(
+                repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs")))
+            .GetRoot()
+            .DescendantNodes()
+            .OfType<MethodDeclarationSyntax>()
+            .FirstOrDefault(method => method.Identifier.ValueText == "OnPillActionInvoked");
+        Assert.True(
+            handlerNode is not null,
+            "MainWindow has no OnPillActionInvoked method, so nothing here is checking anything.");
+
+        var mapping = handlerNode!.ToFullString();
 
         // CAPTURE THE NAME AND COMPARE IT, NEVER ASK WHETHER THE TEXT CONTAINS IT. A substring test
         // reports an action named OpenPolish as mapped, because OpenPolishSettings contains it -
         // green on exactly the edit the gate exists to refuse. Same correction the repository's own
         // rule about a lookahead after a quantifier makes: a question about a VALUE, not a position.
-        var mapped = ActionKindRegex().Matches(handler)
-            .Select(match => match.Groups[1].Value)
+        var mapped = handlerNode.DescendantNodes()
+            .OfType<CaseSwitchLabelSyntax>()
+            .Select(label => label.Value)
+            .OfType<MemberAccessExpressionSyntax>()
+            .Where(access => access.Expression.ToString() == "PillActionKind")
+            .Select(access => access.Name.Identifier.ValueText)
             .ToHashSet(StringComparer.Ordinal);
         Assert.True(
             mapped.Count > 0,
@@ -788,12 +798,6 @@ public sealed partial class DesignSystemTokenTests
             "The pill sends users to pages the window does not have, so the button quietly does "
                 + "nothing: " + string.Join(", ", missing));
     }
-
-    /// <summary>A whole action name on a case LABEL, which a comment cannot produce.</summary>
-    [GeneratedRegex(
-        @"case\s+PillActionKind\.([A-Za-z_][A-Za-z0-9_]*)\s*:",
-        RegexOptions.CultureInvariant)]
-    private static partial Regex ActionKindRegex();
 
     /// <summary>The whole page tag one case opens.</summary>
     /// <remarks>

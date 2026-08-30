@@ -41,6 +41,92 @@ public sealed class HotkeyEdgeTrackerTests
             new HotkeyBinding('W', HotkeyModifiers.Control | HotkeyModifiers.Alt),
             DictationRecordingMode.PushToTalk);
 
+    private const uint EscapeKey = 0x1B;
+
+    [Fact]
+    public void EscapeStillCancelsWhileTheRecordKeyIsRightControl()
+    {
+        // WINDOWS REPORTS CONTROL ON EVERY KEY THAT FOLLOWS while right Control is held, and Escape
+        // is bound with no modifiers, so an exact match refused the one key that must always work.
+        // Taking the offer on the Keybinds page silently cost the person their cancel key.
+        var tracker = ModifierBound();
+        tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
+        Assert.Equal(PushToTalkSignal.Pressed, TickPastDeadline(tracker));
+        tracker.SetRecordingActive(true);
+
+        var cancelled = tracker.Process(EscapeKey, isKeyDown: true, HotkeyModifiers.Control);
+
+        Assert.Equal(PushToTalkSignal.Cancelled, cancelled.Signal);
+    }
+
+    [Fact]
+    public void LettingGoAfterACancelDoesNotDeliverWhatWasThrownAway()
+    {
+        var tracker = ModifierBound();
+        tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
+        TickPastDeadline(tracker);
+        tracker.SetRecordingActive(true);
+        tracker.Process(EscapeKey, isKeyDown: true, HotkeyModifiers.Control);
+        tracker.Process(EscapeKey, isKeyDown: false, HotkeyModifiers.Control);
+
+        var released = tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None);
+
+        Assert.Null(released.Signal);
+    }
+
+    [Fact]
+    public void EscapeCancelsAHandsFreeRecordingAndItStaysCancelled()
+    {
+        // A hands-free recording survives losing focus on purpose, so the ordinary reset leaves it
+        // running. A cancel is the opposite, and leaving it believed-in means the next single tap
+        // "stops" something that ended a minute ago.
+        var tracker = ModifierBound();
+        DoubleTap(tracker);
+        tracker.SetRecordingActive(true);
+
+        var cancelled = tracker.Process(EscapeKey, isKeyDown: true, HotkeyModifiers.None);
+        tracker.Process(EscapeKey, isKeyDown: false, HotkeyModifiers.None);
+        tracker.SetRecordingActive(false);
+        var tap = SingleTap(tracker);
+
+        Assert.Equal(PushToTalkSignal.Cancelled, cancelled.Signal);
+        Assert.Null(tap);
+    }
+
+    [Fact]
+    public void ControlAndEscapeIsNotACancelWhenNothingIsRecording()
+    {
+        // The mask is only lifted while a recording is running. Otherwise binding right Control
+        // would quietly turn Ctrl+Escape into a cancel for the rest of the session.
+        var tracker = ModifierBound();
+
+        var pressed = tracker.Process(EscapeKey, isKeyDown: true, HotkeyModifiers.Control);
+
+        Assert.Null(pressed.Signal);
+    }
+
+    /// <summary>Taps the bound modifier twice, which starts a hands-free recording.</summary>
+    private static void DoubleTap(HotkeyEdgeTracker tracker)
+    {
+        for (var tap = 0; tap < 2; tap++)
+        {
+            tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
+            tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None);
+        }
+
+        Thread.Sleep(HotkeyGesturePolicy.MultiTapWindow + TimeSpan.FromMilliseconds(60));
+        Assert.Equal(PushToTalkSignal.Pressed, tracker.Tick());
+    }
+
+    /// <summary>Taps the bound modifier once and lets the tap window close.</summary>
+    private static PushToTalkSignal? SingleTap(HotkeyEdgeTracker tracker)
+    {
+        tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
+        tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None);
+        Thread.Sleep(HotkeyGesturePolicy.MultiTapWindow + TimeSpan.FromMilliseconds(60));
+        return tracker.Tick();
+    }
+
     /// <summary>
     /// THE CONTROL FOR THE WHOLE MODIFIER BINDING. Holding it must actually start a recording.
     /// </summary>
