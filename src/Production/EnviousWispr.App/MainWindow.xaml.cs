@@ -1455,8 +1455,7 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var removing = selected.ToHashSet();
-        var words = _settings.UserData.CustomWords.Where(entry => !removing.Contains(entry)).ToArray();
+        var words = CustomWordRemoval.Without(_settings.UserData.CustomWords, selected);
         var notice = selected.Length == 1
             ? "Dictionary entry removed"
             : $"{selected.Length} dictionary entries removed";
