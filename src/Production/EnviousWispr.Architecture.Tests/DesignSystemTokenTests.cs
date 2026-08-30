@@ -2536,7 +2536,7 @@ public sealed partial class DesignSystemTokenTests
     }
 
     /// <summary>
-    /// One place in the app builds a custom word, and it reads the picker to do it.
+    /// One place in the app builds a custom word, and it builds it from the picker's own position.
     /// </summary>
     /// <remarks>
     /// THE PAGE HAS TWO ADD BUTTONS AND ONLY ONE OF THEM USED TO ASK. Accepting a suggested
@@ -2544,21 +2544,23 @@ public sealed partial class DesignSystemTokenTests
     /// said Loose, and nothing about that reads as wrong in a diff - the suggested path simply did
     /// not mention strictness at all, which is what an absence looks like.
     ///
-    /// ASKED OF THE COMPILER RATHER THAN OF THE SPELLING, and that closes a bypass a syntax-only
-    /// version had: "CustomWordEntry entry = new(...)" names the type on the LEFT of the equals sign,
-    /// so a scan for "new CustomWordEntry" cannot see it. Every construction expression is resolved
-    /// to its type symbol instead, which sees both forms and would see a third.
+    /// EVERY QUESTION HERE IS PUT TO THE COMPILER, and each of the three was a bypass first. A scan
+    /// for the constructor could not see "CustomWordEntry entry = new(...)", which names the type on
+    /// the LEFT of the equals sign. Comparing a type's NAME could be satisfied by an error symbol,
+    /// so a machine that failed to resolve the type would report one construction and stay green -
+    /// a gate that passes hardest when it is working least. And searching the argument's TEXT for
+    /// the picker was satisfied by a mapping that mentioned the picker and threw its answer away.
     ///
-    /// AND THE DOOR ITSELF IS CHECKED, not merely its name. A version that only asked which method
-    /// contained the construction would stay green while that method quietly stopped reading the
-    /// picker, which is the whole thing being protected. The strictness argument has to be a value
-    /// worked out in that method from the picker's own SelectedIndex.
+    /// SO THE MAPPING ITSELF LIVES IN CORE where a test can call it, and this gate's job is only to
+    /// prove the app uses it, with the picker's own position, in the one place allowed to build a
+    /// word. What the mapping RETURNS is pinned by MatchStrictnessChoiceTests.
     /// </remarks>
     [Fact]
-    public void OnePlaceInTheAppBuildsACustomWordAndItReadsThePicker()
+    public void OnePlaceInTheAppBuildsACustomWordFromThePickersOwnPosition()
     {
         const string door = "SaveCustomWordFromPickerAsync";
-        const string picker = "WordStrictnessComboBox.SelectedIndex";
+        const string mapping = nameof(MatchStrictnessChoice.FromPickerIndex);
+        const string picker = "WordStrictnessComboBox";
         var app = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
 
         var trees = Directory
@@ -2566,59 +2568,84 @@ public sealed partial class DesignSystemTokenTests
             .Select(file => CSharpSyntaxTree.ParseText(File.ReadAllText(file), path: file))
             .ToArray();
 
-        // THE APP'S OWN DEPENDENCIES ARE NOT ALL HERE AND DO NOT NEED TO BE. Only the constructed
-        // type has to resolve, and that type lives in Core, which this test project references - so
-        // the assemblies already loaded around this test are exactly the ones required. WinUI types
-        // stay unresolved and the diagnostics they produce are not read.
+        // CORE IS NAMED EXPLICITLY RATHER THAN HOPED FOR. The rest of the app's dependencies are not
+        // all here and do not need to be; the one type this gate is about has to resolve, and a
+        // machine where it did not would otherwise report a clean scan of nothing.
         var references = ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? string.Empty)
             .Split(Path.PathSeparator)
             .Where(path => path.Length > 0 && File.Exists(path))
+            .Append(typeof(CustomWordEntry).Assembly.Location)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path))
             .ToArray();
         var compilation = CSharpCompilation.Create("app-scan", trees, references);
 
-        var built = new List<(BaseObjectCreationExpressionSyntax Node, MethodDeclarationSyntax? Owner)>();
+        var expected = compilation.GetTypeByMetadataName(typeof(CustomWordEntry).FullName!);
+        Assert.True(
+            expected is { TypeKind: not TypeKind.Error },
+            $"{typeof(CustomWordEntry).FullName} did not resolve, so this gate would have scanned for nothing.");
+
+        var built = new List<(BaseObjectCreationExpressionSyntax Node, SemanticModel Model)>();
         foreach (var tree in trees)
         {
             var model = compilation.GetSemanticModel(tree);
             foreach (var creation in tree.GetRoot().DescendantNodes()
                 .OfType<BaseObjectCreationExpressionSyntax>())
             {
-                if (model.GetTypeInfo(creation).Type?.Name != nameof(CustomWordEntry))
+                if (SymbolEqualityComparer.Default.Equals(model.GetTypeInfo(creation).Type, expected))
                 {
-                    continue;
+                    built.Add((creation, model));
                 }
-
-                built.Add((creation, creation.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault()));
             }
         }
 
         Assert.True(
             built.Count == 1,
             $"Expected exactly one place in the app to build a custom word, found {built.Count}: " +
-                string.Join(
-                    ", ",
-                    built.Select(one => $"{Path.GetFileName(one.Node.SyntaxTree.FilePath)} " +
-                        $"line {one.Node.GetLocation().GetLineSpan().StartLinePosition.Line + 1}")));
+                string.Join(", ", built.Select(one => Where(one.Node))));
 
-        var (node, owner) = built[0];
-        Assert.True(owner?.Identifier.Text == door, $"A word is built outside {door}, so the choice on screen is not the one saved.");
+        var (node, model2) = built[0];
+        var owner = node.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault();
+        Assert.True(
+            owner?.Identifier.Text == door,
+            $"A word is built outside {door}, so the choice on screen is not the one saved.");
 
         var arguments = node.ArgumentList?.Arguments;
         Assert.True(arguments is { Count: 3 }, "A word is built without being told how closely it must match.");
 
-        // The argument is a value worked out earlier in the method, so the check follows it back to
-        // where it was worked out and asks whether the picker was what decided it.
-        var name = (arguments!.Value[2].Expression as IdentifierNameSyntax)?.Identifier.Text;
-        var source = owner!.DescendantNodes()
-            .OfType<VariableDeclaratorSyntax>()
-            .FirstOrDefault(declared => declared.Identifier.Text == name)?
-            .Initializer?.Value.ToString();
+        var call = arguments!.Value[2].Expression as InvocationExpressionSyntax;
+        Assert.True(call is not null, "The strictness a word is built with is not worked out by a method call.");
 
+        // A METHOD GROUP HAS NO SINGLE SYMBOL UNTIL IT IS CALLED, and the call's own arguments cannot
+        // resolve here because they are WinUI. Roslyn answers both of those by putting the method in
+        // CandidateSymbols with Symbol left null, which is not a failure to look at.
+        var named = model2.GetSymbolInfo(call!.Expression);
+        var resolved = named.Symbol ?? named.CandidateSymbols.FirstOrDefault();
+        var wanted = compilation
+            .GetTypeByMetadataName(typeof(MatchStrictnessChoice).FullName!)?
+            .GetMembers(mapping)
+            .FirstOrDefault();
         Assert.True(
-            source?.Contains(picker, StringComparison.Ordinal) == true,
-            $"{door} does not work its strictness out from {picker}, so the picker on screen decides nothing.");
+            wanted is not null,
+            $"{typeof(MatchStrictnessChoice).FullName}.{mapping} did not resolve, so this gate would "
+                + "have scanned for nothing.");
+        Assert.True(
+            SymbolEqualityComparer.Default.Equals(resolved, wanted),
+            $"The strictness a word is built with does not come from {mapping}, so what the picker means "
+                + "is decided somewhere no test can call.");
+
+        var read = call!.ArgumentList.Arguments.Count == 1
+            ? call.ArgumentList.Arguments[0].Expression as MemberAccessExpressionSyntax
+            : null;
+        Assert.True(
+            read?.Name.Identifier.Text == "SelectedIndex" &&
+                (read.Expression as IdentifierNameSyntax)?.Identifier.Text == picker,
+            $"{mapping} is not given {picker}.SelectedIndex, so the picker on screen decides nothing.");
     }
+
+    private static string Where(SyntaxNode node) =>
+        $"{Path.GetFileName(node.SyntaxTree.FilePath)} " +
+        $"line {node.GetLocation().GetLineSpan().StartLinePosition.Line + 1}";
 
     private readonly record struct DynamicColor(Rgba Light, Rgba Dark);
 

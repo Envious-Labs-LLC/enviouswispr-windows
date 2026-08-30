@@ -1438,20 +1438,14 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private Task<bool> SaveCustomWordFromPickerAsync(string spokenForm, string replacement)
     {
-        // THE PICKER'S ORDER IS THE ENUM'S ORDER, which is worth stating rather than leaving as a
-        // coincidence two files apart. A choice nobody has made reads as -1, the ordinary rule.
-        var strictness = WordStrictnessComboBox.SelectedIndex switch
-        {
-            1 => MatchStrictness.Loose,
-            2 => MatchStrictness.Strict,
-            _ => MatchStrictness.Default,
-        };
-
         return SaveUserDataAsync(
             data => new ReusableUserData(
                 data.CustomWords
                     .Where(entry => !string.Equals(entry.SpokenForm, spokenForm, StringComparison.OrdinalIgnoreCase))
-                    .Append(new CustomWordEntry(spokenForm, replacement, strictness))
+                    .Append(new CustomWordEntry(
+                        spokenForm,
+                        replacement,
+                        MatchStrictnessChoice.FromPickerIndex(WordStrictnessComboBox.SelectedIndex)))
                     .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
                     .ToArray(),
                 data.Snippets),
