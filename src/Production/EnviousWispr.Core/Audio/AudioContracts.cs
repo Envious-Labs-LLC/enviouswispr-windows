@@ -52,12 +52,18 @@ public sealed record AudioSnapshot(
 ///   device open   median 0 ms, mean 1.5 ms, worst 15 ms
 ///   stream start  median 13 ms, mean 13.4 ms, worst 20 ms
 ///
-/// OPENING IS FREE, SO WARMING BUYS ALMOST NOTHING. The half a warm device would remove is the one
-/// already costing about a millisecond and a half; the half it cannot remove is the larger one. The
-/// whole start is about fifteen milliseconds, which is a fraction of a syllable, so holding a
-/// microphone open permanently would trade a microphone-in-use light that never goes out for a
-/// saving nobody can perceive. That is why the feature is not built, and this is the number rather
-/// than the opinion.
+/// ON THIS EVIDENCE OPENING IS FREE, SO WARMING BUYS ALMOST NOTHING. The half a warm device would
+/// remove is the one already costing about a millisecond and a half. Fifteen milliseconds in total
+/// is a fraction of a syllable, so holding a microphone open permanently would trade a
+/// microphone-in-use light that never goes out for a saving nobody can perceive.
+///
+/// WHAT THE EVIDENCE IS NOT, STATED BECAUSE A NUMBER READS AS SETTLED AND THIS ONE IS NOT. It is one
+/// USB microphone on one machine, ten starts in a row with the device warm from the run before, and
+/// the second number stops when the stream START RETURNS rather than when the first audio buffer
+/// arrives. A continuously warm stream could in principle remove both calls, and none of this says
+/// anything about a Bluetooth headset, a laptop's built-in microphone, or a device left idle for an
+/// hour. Treat it as reason not to build warming NEXT, not as a closed question: the measurement
+/// that would close it is key press to first buffer, cold and after an idle, across those devices.
 ///
 /// IT DOES NOT SETTLE PRE-ROLL, which is a different question. People begin speaking slightly before
 /// they press, and a ring buffer would help with that however fast the device opens. What this rules

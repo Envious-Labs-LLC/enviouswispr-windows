@@ -90,6 +90,7 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
                 {
                     var output = await SendOnceAsync(
                         request.Input.Text,
+                        request.Vocabulary,
                         readiness.Model,
                         timeout.Token).ConfigureAwait(false);
                     if (LooksLikeCodeOutput(output))
@@ -231,12 +232,13 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
 
     private async Task<string> SendOnceAsync(
         string transcript,
+        IReadOnlyList<string>? vocabulary,
         OllamaModelInfo model,
         CancellationToken cancellationToken) =>
         await SendOnceAsync(
             transcript,
-            OllamaLocalPrompt.SystemPrompt,
-            OllamaLocalPrompt.BuildUserMessage(transcript),
+            OllamaLocalPrompt.BuildSystemPrompt(vocabulary),
+            OllamaLocalPrompt.BuildUserMessage(transcript, vocabulary),
             model,
             cancellationToken).ConfigureAwait(false);
 
