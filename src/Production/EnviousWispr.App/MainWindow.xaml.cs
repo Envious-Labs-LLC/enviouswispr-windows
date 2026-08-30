@@ -1565,8 +1565,12 @@ public sealed partial class MainWindow : Window, IDisposable
         // FIFTY MILLISECONDS IS THE RATE THE PILL'S RAIL ALREADY USES, for the same reason, and it
         // is already written down as RecordingLevelHistory.SampleInterval. This meter joins that
         // answer rather than inventing a second one.
+        //
+        // AND IT KEEPS THE LOUDEST OF EACH FRAME RATHER THAN THE FIRST. Taking the first level after
+        // each boundary chooses at random with respect to loudness, so the attack of a consonant -
+        // which is the thing somebody watches a meter for - disappears whenever it lands mid-frame.
         var meterClock = System.Diagnostics.Stopwatch.StartNew();
-        var lastPostedAt = TimeSpan.FromSeconds(-1);
+        var meterFrames = new MicrophoneMeterFrameSampler();
         capture.LevelChanged += OnLevel;
         try
         {
@@ -1624,14 +1628,12 @@ public sealed partial class MainWindow : Window, IDisposable
 
         void OnLevel(object? sender, AudioLevel level)
         {
-            var now = meterClock.Elapsed;
-            if (now - lastPostedAt < RecordingLevelHistory.SampleInterval)
+            if (!meterFrames.TryTakeFrame(level.RootMeanSquare, meterClock.Elapsed, out var loudest))
             {
                 return;
             }
 
-            lastPostedAt = now;
-            var normalized = RecordingLevelHistory.Normalize(level.RootMeanSquare);
+            var normalized = RecordingLevelHistory.Normalize(loudest);
             MicrophoneTestBars.DispatcherQueue.TryEnqueue(() =>
             {
                 if (generation != _microphoneTestGeneration)

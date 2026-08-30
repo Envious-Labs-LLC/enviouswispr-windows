@@ -348,8 +348,11 @@ public sealed class WasapiAudioCapture :
         // conversion was ever wrong.
         //
         // BEFORE THE COUNTERS, DELIBERATELY. An empty packet is not a packet that arrived quietly,
-        // it is a callback with nothing in it, and counting it would report a capture as half
-        // silent when nothing of the kind happened.
+        // it is a callback with nothing in it. These callbacks are flagged NOT silent, so counting
+        // them would halve the silent RATIO rather than raise it - a capture that was genuinely
+        // half silent would read as a quarter silent, and the microphone test's whole job is to
+        // tell three kinds of nothing apart. LastPacketCount means packets of audio that arrived,
+        // not times the recorder woke up.
         if (args.Bytes.Length == 0)
         {
             return;
