@@ -84,7 +84,10 @@ public partial class App : Application, IAsyncDisposable
     private MainWindow? _window;
     private WindowsTrayIcon? _trayIcon;
     private IReadOnlyList<CustomWordEntry> _customWords = [];
-    private AppSettings _settings = AppSettings.Default;
+    // VOLATILE BECAUSE THE HOTKEY THREAD READS IT AND THE UI THREAD REPLACES IT. The record itself
+    // is immutable and cannot tear, but the REFERENCE can be read stale, and one of its readers is
+    // the delivery-options closure that decides where a recording's words are about to go.
+    private volatile AppSettings _settings = AppSettings.Default;
     private DeterministicTextOptions _deterministicTextOptions =
         DeterministicTextOptions.From(DictationPreferences.Default);
     private bool _disposed;
@@ -2978,7 +2981,7 @@ public partial class App : Application, IAsyncDisposable
                     await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
                     await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
                     _window?.DispatcherQueue.TryEnqueue(() =>
-                        _window?.SetSessionStatus(DeliveryStatus(delivery)));
+                        _window?.SetSessionStatus(DeliveryStatusReport.For(delivery)));
                     return;
                 }
             }
@@ -3384,10 +3387,6 @@ public partial class App : Application, IAsyncDisposable
         var errorCode = result.RefusalReason switch
         {
             TextDeliveryRefusalReason.None => (AppErrorCode?)null,
-
-            // A CHOICE IS NOT AN ERROR CODE. This reason travels with a delivery that SUCCEEDED, and
-            // giving it a code would put a fault in the diagnostics for every intended copy.
-            TextDeliveryRefusalReason.CopyRequested => null,
             TextDeliveryRefusalReason.TargetUnavailable or
                 TextDeliveryRefusalReason.TargetChanged => AppErrorCode.DeliveryTargetChanged,
             TextDeliveryRefusalReason.ProtectedField => AppErrorCode.DeliveryProtectedField,
@@ -3404,33 +3403,6 @@ public partial class App : Application, IAsyncDisposable
             elapsedMilliseconds,
             ErrorCode: errorCode));
     }
-
-    private static DictationStatus DeliveryStatus(DeliveryResult result) => result switch
-    {
-        { Delivered: true, Route: TextDeliveryRoute.UiAutomationValue } =>
-            DictationStatus.Success("Inserted safely in the app you started in"),
-        { Delivered: true, ClipboardRestored: true } =>
-            DictationStatus.Success("Pasted safely and restored your clipboard"),
-        { Delivered: true } => DictationStatus.Success("Pasted safely"),
-        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.ProtectedField } =>
-            DictationStatus.Warning("Protected field: copied only. Paste manually if intended"),
-        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.ElevatedTarget } =>
-            DictationStatus.Warning("Windows blocked the elevated app, so the text was copied only"),
-        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.TargetChanged } =>
-            DictationStatus.Warning("The target changed, so the text was copied only to protect it"),
-        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.UnsafeMultilineTarget } =>
-            DictationStatus.Warning("Terminal line break refused, so the text was copied only"),
-        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.UnsupportedTarget } =>
-            DictationStatus.Warning("Automatic paste is unsafe here, so the text was copied only"),
-        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.InputStateUnsafe } =>
-            DictationStatus.Warning("A key was held, so the text was copied only. Paste manually"),
-        { ClipboardFallback: true } => DictationStatus.Warning("Copied. Press Ctrl+V"),
-        { RefusalReason: TextDeliveryRefusalReason.ClipboardUnavailable } =>
-            DictationStatus.Warning("Clipboard unavailable. Text is held safely in memory"),
-        { RefusalReason: TextDeliveryRefusalReason.DirectWriteUnverified } =>
-            DictationStatus.Warning("Insertion could not be verified. Text is held safely in memory"),
-        _ => DictationStatus.Error("Text delivery stopped safely"),
-    };
 
     private static string? DeliveryLanguage(Transcript transcript) =>
         transcript.EngineId.StartsWith(

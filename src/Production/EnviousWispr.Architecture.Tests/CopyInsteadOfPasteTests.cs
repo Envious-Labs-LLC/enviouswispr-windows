@@ -22,12 +22,13 @@ public sealed class CopyInsteadOfPasteTests
     [Fact]
     public void AskingForTheClipboardIsNotRecordedAsSomethingGoingWrong()
     {
-        // Every other refusal means a paste could not happen. This one means a paste was not wanted,
-        // and a diagnostics file that cannot tell them apart reports a fault every time somebody
-        // uses the setting the way it is meant to be used.
-        Assert.NotEqual(TextDeliveryRefusalReason.None, TextDeliveryRefusalReason.CopyRequested);
-        Assert.NotEqual(TextDeliveryRefusalReason.TargetUnavailable, TextDeliveryRefusalReason.CopyRequested);
-        Assert.NotEqual(TextDeliveryRefusalReason.InputBlocked, TextDeliveryRefusalReason.CopyRequested);
+        // Every value in this enum means a paste could not happen, so a requested copy - which is an
+        // ordinary success - must not have a name among them. Where the text went is carried by the
+        // route instead, which already has a value for the clipboard.
+        Assert.DoesNotContain(
+            Enum.GetNames<TextDeliveryRefusalReason>(),
+            name => name.Contains("Copy", StringComparison.Ordinal));
+        Assert.Contains(TextDeliveryRoute.ClipboardOnly, Enum.GetValues<TextDeliveryRoute>());
     }
 
     [Fact]

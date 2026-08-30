@@ -87,6 +87,11 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
                     CanRetry: true));
             }
 
+            // READ BEFORE THE FIRST AWAIT, WHICH IS THE ONLY MOMENT THAT IS "THE PRESS". Asking for
+            // it after StartAsync meant a setting saved while the microphone was still opening
+            // changed the recording that was already starting, which is the exact thing the frozen
+            // promise says cannot happen.
+            var deliveryOptions = _deliveryOptions();
             var sessionId = DictationSessionId.Create();
             var started = await _audioCapture
                 .StartAsync(new AudioCaptureRequest(sessionId, _preferredAudioDevice), cancellationToken)
@@ -114,7 +119,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
                 sessionId,
                 _timeProvider.GetUtcNow(),
                 target.Value,
-                _deliveryOptions());
+                deliveryOptions);
             RaiseChanged();
             return new SessionTransitionResult(
                 SessionTransitionKind.Started,

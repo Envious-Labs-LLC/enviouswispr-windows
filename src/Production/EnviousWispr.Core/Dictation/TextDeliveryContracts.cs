@@ -33,16 +33,15 @@ public enum TextDeliveryRoute
 
 public enum TextDeliveryRefusalReason
 {
-    None,
-
-    /// <summary>The person asked for the clipboard rather than a paste.</summary>
+    /// <summary>Nothing was refused.</summary>
     /// <remarks>
-    /// A REASON RATHER THAN A FAILURE, and it needs its own name for that. Every other value here
-    /// says something went wrong and the clipboard caught it; this one says the clipboard is where
-    /// the text was going. Folding it into one of the others would report a refusal in the
-    /// diagnostics every time somebody used the setting as intended.
+    /// A REQUESTED COPY ENDS HERE, AND THAT IS THE WHOLE POINT. It briefly had a name of its own,
+    /// which was the wrong shape: every other value in this enum says something went wrong and the
+    /// clipboard caught it, so a member for the ordinary case would have reported a refusal in the
+    /// diagnostics every time somebody used the setting exactly as intended. Where the text went is
+    /// carried by <see cref="TextDeliveryRoute"/>, which already has a value for the clipboard.
     /// </remarks>
-    CopyRequested,
+    None,
     TargetUnavailable,
     TargetChanged,
     ProtectedField,
