@@ -326,15 +326,37 @@ public sealed partial class DictationOverlayWindow : Window
         }
     }
 
-    /// <summary>Takes the newest level from the capture. Draws nothing.</summary>
+    /// <summary>Keeps the loudest level of the current frame. Draws nothing.</summary>
     /// <remarks>
     /// CALLED FROM THE CAPTURE'S OWN THREAD, ONCE PER AUDIO BUFFER. It records a number and returns,
-    /// so a burst of buffers costs a burst of assignments rather than a burst of UI work. The meter
+    /// so a burst of buffers costs a burst of comparisons rather than a burst of UI work. The meter
     /// is drawn by the timer below, on the schedule the meter actually has.
+    ///
+    /// THE LOUDEST OF THE FRAME, NOT THE NEWEST, AND THE DIFFERENCE IS THE ATTACK OF EVERY
+    /// CONSONANT. Capture reports about ten levels per frame and only one of them is ever drawn, so
+    /// keeping the newest chooses at random with respect to loudness: a short loud packet landing
+    /// anywhere but last in its frame was simply never seen. Keeping the loudest costs one compare
+    /// and cannot lose a peak, and the frame is closed by the timer below rather than here, so the
+    /// window this maximises over is exactly the window that gets drawn.
+    ///
+    /// LOCK-FREE BECAUSE OF WHERE IT IS CALLED FROM. A compare-and-swap loop keeps this off any
+    /// lock the UI thread could ever contend for, which matters at two hundred calls a second.
     /// </remarks>
-    public void SetAudioLevel(float rootMeanSquare) => Volatile.Write(
-        ref _latestLevel,
-        RecordingLevelHistory.Normalize(rootMeanSquare));
+    public void SetAudioLevel(float rootMeanSquare)
+    {
+        var level = RecordingLevelHistory.Normalize(rootMeanSquare);
+        var current = Volatile.Read(ref _latestLevel);
+        while (level > current)
+        {
+            var seen = Interlocked.CompareExchange(ref _latestLevel, level, current);
+            if (seen.Equals(current))
+            {
+                return;
+            }
+
+            current = seen;
+        }
+    }
 
     private void OnLevelTick()
     {
@@ -353,10 +375,17 @@ public sealed partial class DictationOverlayWindow : Window
             RainbowMark.Opacity = 0.55 + 0.45 * level;
         }
 
-        if (_activeDesign == RecordingPillDesign.LevelRail &&
-            _levelHistory.Sample(level, _levelClock.Elapsed))
+        // THE FRAME IS CLOSED HERE, FOR EVERY DESIGN, WHICH IS WHY THE GATE IS NO LONGER INSIDE THE
+        // RAIL'S BRANCH. SetAudioLevel accumulates a maximum and something has to reset it; leaving
+        // that to the rail meant a pill with no rail accumulated a running maximum that only ever
+        // grew, so the Classic mark would have brightened once and stayed there.
+        if (_levelHistory.Sample(level, _levelClock.Elapsed))
         {
-            DrawLevelHistory();
+            Volatile.Write(ref _latestLevel, 0f);
+            if (_activeDesign == RecordingPillDesign.LevelRail)
+            {
+                DrawLevelHistory();
+            }
         }
     }
 
