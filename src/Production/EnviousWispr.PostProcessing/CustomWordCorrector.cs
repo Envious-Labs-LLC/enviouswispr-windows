@@ -75,31 +75,35 @@ public static partial class CustomWordCorrector
             return new WordCorrectionResult(text, 0);
         }
 
-        // A SURFACE TWO WORDS DISAGREE ABOUT IS LEFT ALONE, rather than decided by which row came
-        // first. Aliases sharing a replacement, or one word's replacement being another's spoken
-        // form, both reach this - and taking the first meant the correction a person saw depended on
-        // the order of a list they had sorted for their own reasons. Where the rows AGREE on the
-        // replacement and differ only on how forgiving to be, the strictest wins: two rows arguing
-        // about how much to change of what somebody said is settled by changing less.
-        var candidates = customWords
-            .Where(IsUsable)
-            .SelectMany(entry => Surfaces(entry).Select(surface => new Candidate(
-                CollapseSpaces(surface),
-                entry.Replacement,
-                entry.Strictness)))
-            .Where(candidate => !ContainsReservedTrigger(candidate.Surface))
-            .GroupBy(candidate => candidate.Surface, StringComparer.OrdinalIgnoreCase)
-            .Where(group => group
-                .Select(candidate => candidate.Replacement)
-                .Distinct(StringComparer.Ordinal)
-                .Count() == 1)
-            .Select(group => group.First() with
+        // WHO OWNS A SURFACE IS A RULE macOS ALREADY HAS, and this used to answer it differently.
+        // Two rows claiming the same spoken form were BOTH dropped here, on the reasoning that
+        // picking one silently is picking by position. macOS resolves it instead: among ordinary
+        // rows the LAST one written wins, and a row's own replacement yields to any row that claims
+        // it as a spoken form. Dropping both is safer and is not what the reference platform does,
+        // so a person moving between the two would see different text from the same list.
+        var usable = customWords.Where(IsUsable).ToArray();
+        var owners = new Dictionary<string, Candidate>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in usable)
+        {
+            var surface = CollapseSpaces(entry.SpokenForm);
+            if (!ContainsReservedTrigger(surface))
             {
-                Strictness = group
-                    .OrderByDescending(candidate => Caution(candidate.Strictness))
-                    .First()
-                    .Strictness,
-            })
+                owners[surface] = new Candidate(surface, entry.Replacement, entry.Strictness);
+            }
+        }
+
+        // A REPLACEMENT IS MATCHABLE TOO, so saying the written form aloud still finds the row - but
+        // it never takes a surface some row claims as its spoken form.
+        foreach (var entry in usable)
+        {
+            var surface = CollapseSpaces(entry.Replacement);
+            if (!ContainsReservedTrigger(surface) && !owners.ContainsKey(surface))
+            {
+                owners[surface] = new Candidate(surface, entry.Replacement, entry.Strictness);
+            }
+        }
+
+        var candidates = owners.Values
             .OrderByDescending(candidate => WordCount(candidate.Surface))
             .ThenByDescending(candidate => candidate.Surface.Length)
             .ToArray();
@@ -113,17 +117,24 @@ public static partial class CustomWordCorrector
         // overlap gave whichever row came first, a word written in by one row could be found and
         // rewritten again by the next, and the fuzzy pass read a sentence that already contained
         // words nobody had said - counting one span of the original twice.
+        //
+        // PHRASES ARE SETTLED POSITION BY POSITION, LEFT TO RIGHT, which is how macOS reads a
+        // sentence. Resolving every exact phrase in the whole sentence before any near match let a
+        // phrase starting LATER beat one starting earlier: with "north bae sun" and rules for
+        // "north bay" and "bae sun", the exact "bae sun" won and macOS writes "North Bay". Leftmost
+        // is a precedence rule there, not a coincidence, so two overlapping phrases that start in
+        // different places are not a tie and are not treated as one.
         var claimed = new List<Span>();
-        var proposals = ExactProposals(text, candidates, claimed);
+        var proposals = PhraseProposals(text, candidates, claimed);
 
-        // PHRASES BEFORE SINGLE WORDS, for the same reason longer phrases beat shorter ones in the
-        // exact pass: the more of the sentence a rule accounts for, the better it explains it.
-        var phraseCandidates = candidates
-            .Where(candidate => WordCount(candidate.Surface) > 1)
+        // SINGLE WORDS AFTERWARDS, both exact and near, over whatever the phrases left. A rule that
+        // accounts for more of the sentence explains it better, so it settles its words first.
+        var singleWords = candidates
+            .Where(candidate => WordCount(candidate.Surface) == 1)
             .ToArray();
-        if (phraseCandidates.Length > 0)
+        if (singleWords.Length > 0)
         {
-            proposals.AddRange(PhraseProposals(text, phraseCandidates, claimed));
+            proposals.AddRange(ExactProposals(text, singleWords, claimed));
         }
 
         var fuzzyCandidates = candidates
@@ -149,26 +160,25 @@ public static partial class CustomWordCorrector
         return new WordCorrectionResult(rewritten.ToString(), proposals.Count);
     }
 
-    /// <summary>Finds the phrases and words written exactly as the list spells them.</summary>
+    /// <summary>Finds the single words written exactly as the list spells them.</summary>
     /// <remarks>
-    /// ARBITRATED RANK BY RANK, and dropping the whole disputed region was not enough on its own.
-    /// With "red blue" and "blue sun" disputing the middle word, removing both let a plain "blue"
-    /// rule underneath them rewrite the very words the dispute was about - so the words that were
-    /// supposed to be left alone were not. A disputed match therefore RESERVES what it covers
-    /// against everything ranked below it, without being applied itself.
+    /// NO ARBITRATION LEFT TO DO. Every surface has exactly one owner now, decided the way macOS
+    /// decides it, so two rules can no longer compete for the same spelling - and two DIFFERENT
+    /// single words cannot overlap in a sentence, because each match is bounded by the word either
+    /// side of it. What remains is to take each match that the phrases did not already spoken for.
     ///
-    /// A MATCH THAT WOULD CHANGE NOTHING NEVER ENTERS THE ARGUMENT. A row spelling a word the way it
-    /// is already written has nothing at stake, and letting it dispute a row that does have
-    /// something at stake meant a real correction lost to a rule that wanted the text left exactly
-    /// as it was.
+    /// A MATCH THAT WOULD CHANGE NOTHING IS STILL SKIPPED, so a word already written the way the
+    /// list spells it is not counted as a correction.
     /// </remarks>
     private static List<Proposal> ExactProposals(
         string text,
         IReadOnlyList<Candidate> candidates,
         List<Span> claimed)
     {
-        var found = new List<SurfaceMatch>();
-        foreach (var candidate in candidates)
+        var accepted = new List<Proposal>();
+        foreach (var candidate in candidates
+            .OrderByDescending(candidate => candidate.Surface.Length)
+            .ThenBy(candidate => candidate.Surface, StringComparer.Ordinal))
         {
             foreach (Match match in Regex.Matches(
                 text,
@@ -176,60 +186,14 @@ public static partial class CustomWordCorrector
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
                 TimeSpan.FromMilliseconds(250)))
             {
-                if (!match.Value.Equals(candidate.Replacement, StringComparison.Ordinal))
-                {
-                    found.Add(new SurfaceMatch(match.Index, match.Length, candidate));
-                }
-            }
-        }
-
-        var accepted = new List<Proposal>();
-        foreach (var rank in found
-            .GroupBy(Standing)
-            .OrderByDescending(rank => rank.Key.Words)
-            .ThenByDescending(rank => rank.Key.Length))
-        {
-            // A MATCH THE HIGHER RANKS ALREADY SPOKE FOR IS OUT OF THE ARGUMENT ENTIRELY, and this
-            // has to happen BEFORE disputes are worked out. Leaving it in let a phrase that could
-            // never apply veto a neighbour that could: with "extraword red" taking the front of the
-            // sentence, "red blue" was already dead and still blocked "blue sun" from applying.
-            var here = rank.Where(match => !IsClaimed(claimed, match)).ToArray();
-
-            // TWO PHRASES OF THE SAME STANDING THAT WANT THE SAME WORDS ARE BOTH LEFT ALONE. Longer
-            // phrases still beat shorter ones, which is the rule this always had; a tie is the one
-            // case the list itself has no answer for, and picking one silently would be picking by
-            // position.
-            var disputed = here
-                .Where(one => here.Any(other =>
-                    !ReferenceEquals(one, other) &&
-                    Overlaps(one, other) &&
-                    !string.Equals(
-                        one.Candidate.Replacement,
-                        other.Candidate.Replacement,
-                        StringComparison.Ordinal)))
-                .ToHashSet();
-
-            // EVERY DISPUTED SPAN, INCLUDING THE PARTS THAT OVERLAP ANOTHER ONE. Adding only the
-            // first left the far end of the second unclaimed, so in "small planet large" the two
-            // phrases arguing about "planet" left "large" free for a shorter rule underneath to
-            // rewrite - the exact words in dispute were protected and the rest of the phrase was
-            // not. Claims are tested by overlap, so adding each span separately is their union.
-            foreach (var match in disputed)
-            {
-                claimed.Add(new Span(match.Start, match.Length));
-            }
-
-            foreach (var match in here
-                .Where(match => !disputed.Contains(match))
-                .OrderBy(match => match.Start))
-            {
-                if (IsClaimed(claimed, match))
+                if (match.Value.Equals(candidate.Replacement, StringComparison.Ordinal) ||
+                    IsClaimed(claimed, match.Index, match.Length))
                 {
                     continue;
                 }
 
-                claimed.Add(new Span(match.Start, match.Length));
-                accepted.Add(new Proposal(match.Start, match.Length, match.Candidate.Replacement));
+                claimed.Add(new Span(match.Index, match.Length));
+                accepted.Add(new Proposal(match.Index, match.Length, candidate.Replacement));
             }
         }
 
@@ -261,41 +225,61 @@ public static partial class CustomWordCorrector
         List<Span> claimed)
     {
         var byLength = phraseCandidates
+            .Where(candidate => WordCount(candidate.Surface) > 1)
             .GroupBy(candidate => WordCount(candidate.Surface))
             .ToDictionary(group => group.Key, group => group.ToArray());
-        var longest = byLength.Keys.Max();
+        if (byLength.Count == 0)
+        {
+            return [];
+        }
 
+        var longest = byLength.Keys.Max();
         var tokens = WordTokenRegex().Matches(text).ToArray();
         var proposals = new List<Proposal>();
         for (var index = 0; index < tokens.Length; index++)
         {
+            // EXACT FIRST ACROSS EVERY RUN LENGTH, AND ONLY THEN NEAR MATCHES. A phrase written the
+            // way the list spells it settles this position outright; asking "is this near anything"
+            // before "is this exactly something" would let a near miss of a longer phrase beat an
+            // exact shorter one starting in the same place.
+            var settled = false;
+            for (var run = Math.Min(longest, tokens.Length - index); run >= 2 && !settled; run--)
+            {
+                if (!Reachable(byLength, claimed, tokens, index, run, out var rivals, out var here))
+                {
+                    continue;
+                }
+
+                var written = rivals.FirstOrDefault(candidate =>
+                    here.Phrase.Equals(candidate.Surface, StringComparison.OrdinalIgnoreCase));
+                if (written is null)
+                {
+                    continue;
+                }
+
+                if (!here.Phrase.Equals(written.Replacement, StringComparison.Ordinal))
+                {
+                    proposals.Add(new Proposal(here.Start, here.Length, written.Replacement));
+                }
+
+                claimed.Add(new Span(here.Start, here.Length));
+                index += run - 1;
+                settled = true;
+            }
+
+            if (settled)
+            {
+                continue;
+            }
+
             for (var run = Math.Min(longest, tokens.Length - index); run >= 2; run--)
             {
-                if (!byLength.TryGetValue(run, out var rivals))
+                if (!Reachable(byLength, claimed, tokens, index, run, out var rivals, out var found))
                 {
                     continue;
                 }
 
-                var slice = tokens.AsSpan(index, run);
-                var start = slice[0].Index;
-                var length = slice[run - 1].Index + slice[run - 1].Length - start;
-                if (IsClaimed(claimed, start, length))
-                {
-                    continue;
-                }
-
-                var words = new string[run];
-                for (var word = 0; word < run; word++)
-                {
-                    words[word] = slice[word].Value;
-                }
-
-                if (words.Any(ReservedTriggerWords.Contains))
-                {
-                    continue;
-                }
-
-                var phrase = string.Join(' ', words);
+                var (start, length, phrase, words) = found;
 
                 // SAYING IT RIGHT IS A FACT ABOUT WHAT WAS SAID, so it is settled before any
                 // competition between rules and against EVERY rule rather than against whichever
@@ -353,6 +337,54 @@ public static partial class CustomWordCorrector
 
         return proposals;
     }
+
+    /// <summary>One run of words in the sentence, and the rules that could speak for it.</summary>
+    /// <remarks>
+    /// SHARED BY BOTH HALVES OF THE PHRASE PASS so that "which words is this" is answered once. The
+    /// exact half and the near half must be looking at exactly the same run, or the second would be
+    /// deciding about a different piece of the sentence than the first refused.
+    /// </remarks>
+    private static bool Reachable(
+        Dictionary<int, Candidate[]> byLength,
+        List<Span> claimed,
+        Match[] tokens,
+        int index,
+        int run,
+        out Candidate[] rivals,
+        out Run found)
+    {
+        rivals = [];
+        found = default;
+        if (!byLength.TryGetValue(run, out var candidates))
+        {
+            return false;
+        }
+
+        var slice = tokens.AsSpan(index, run);
+        var start = slice[0].Index;
+        var length = slice[run - 1].Index + slice[run - 1].Length - start;
+        if (IsClaimed(claimed, start, length))
+        {
+            return false;
+        }
+
+        var words = new string[run];
+        for (var word = 0; word < run; word++)
+        {
+            words[word] = slice[word].Value;
+        }
+
+        if (words.Any(ReservedTriggerWords.Contains))
+        {
+            return false;
+        }
+
+        rivals = candidates;
+        found = new Run(start, length, string.Join(' ', words), words);
+        return true;
+    }
+
+    private readonly record struct Run(int Start, int Length, string Phrase, string[] Words);
 
     /// <summary>Finds single words close enough to a custom word to be that word.</summary>
     /// <remarks>
@@ -432,19 +464,6 @@ public static partial class CustomWordCorrector
         return proposals;
     }
 
-    /// <summary>How little of what somebody said this setting is willing to change.</summary>
-    /// <remarks>
-    /// The enum's own numbers are ordered for storage, where zero has to mean the ordinary rule so
-    /// that a file written before this existed reads correctly. That is not the order two settings
-    /// are compared in, so the comparison gets its own answer rather than borrowing one.
-    /// </remarks>
-    private static int Caution(MatchStrictness strictness) => strictness switch
-    {
-        MatchStrictness.Loose => 0,
-        MatchStrictness.Strict => 2,
-        _ => 1,
-    };
-
     /// <summary>The bar a heard phrase must clear for a custom phrase at the given strictness.</summary>
     public static double PhraseThreshold(MatchStrictness strictness, bool hasEverydayWord) =>
         strictness switch
@@ -473,15 +492,6 @@ public static partial class CustomWordCorrector
         !string.IsNullOrWhiteSpace(entry.SpokenForm) &&
         !string.IsNullOrWhiteSpace(entry.Replacement);
 
-    private static IEnumerable<string> Surfaces(CustomWordEntry entry)
-    {
-        yield return entry.SpokenForm;
-        if (!string.Equals(entry.SpokenForm, entry.Replacement, StringComparison.OrdinalIgnoreCase))
-        {
-            yield return entry.Replacement;
-        }
-    }
-
     private static bool ContainsReservedTrigger(string surface) =>
         surface.Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Any(ReservedTriggerWords.Contains);
@@ -495,22 +505,10 @@ public static partial class CustomWordCorrector
     private static string SurfacePattern(string surface) =>
         $@"(?<![\p{{L}}\p{{N}}]){string.Join(@"[\s,.!?\u2014\u2013-]+", surface.Split(' ').Select(Regex.Escape))}(?![\p{{L}}\p{{N}}])";
 
-    private static bool Overlaps(SurfaceMatch left, SurfaceMatch right) =>
-        left.Start < right.Start + right.Length && right.Start < left.Start + left.Length;
-
-    private static bool IsClaimed(List<Span> claimed, SurfaceMatch match) =>
-        IsClaimed(claimed, match.Start, match.Length);
-
     private static bool IsClaimed(List<Span> claimed, int start, int length) =>
         claimed.Any(span => start < span.Start + span.Length && span.Start < start + length);
 
-    /// <summary>How strong a claim a match has on the words it covers.</summary>
-    private static (int Words, int Length) Standing(SurfaceMatch match) =>
-        (WordCount(match.Candidate.Surface), match.Candidate.Surface.Length);
-
     private sealed record Candidate(string Surface, string Replacement, MatchStrictness Strictness);
-
-    private sealed record SurfaceMatch(int Start, int Length, Candidate Candidate);
 
     /// <summary>Part of the original sentence that is spoken for, whether or not it is changed.</summary>
     private readonly record struct Span(int Start, int Length);
