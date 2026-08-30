@@ -62,6 +62,26 @@ $logPath = Join-Path $OutputDirectory "$Shot.log"
 $markerPath = Join-Path $OutputDirectory "$Shot.ok"
 $pidPath = Join-Path $OutputDirectory "$Shot.pid"
 $failPath = Join-Path $OutputDirectory "$Shot.fail"
+# ONE CAPTURE AT A TIME, ACROSS THE WHOLE HARNESS. Two runs sharing a -Shot could each clear the
+# control files and start; the second's success marker was then read by the FIRST, which skipped
+# stopping its own runner, unregistered its task while that runner was still going, and printed
+# CAPTURED for a photograph belonging to somebody else. The lock is harness-wide rather than
+# per-shot because every capture shares one desktop and one scratch data directory, so two runs with
+# different shot names still photograph each other's windows.
+#
+# THE HANDLE IS THE LOCK, NOT THE FILE. The file is left in place on purpose - deleting it would let
+# a second run create its own and hold nothing.
+$lockPath = Join-Path $OutputDirectory '.capture.lock'
+try {
+    $captureLock = [System.IO.File]::Open(
+        $lockPath, [System.IO.FileMode]::OpenOrCreate,
+        [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+} catch {
+    throw "Another capture is already running (lock at $lockPath). Captures share one desktop, so they cannot overlap."
+}
+
+try {
+
 # CLEARED LOUDLY, AND VERIFIED GONE. A silent clear leaves a locked file in place, and the next run
 # then reads the PREVIOUS run's verdict as its own - the worst possible failure for a tool whose
 # whole job is telling you what it saw.
@@ -200,3 +220,9 @@ if ($parts.Count -gt 0) { throw ($parts -join '; ') }
 
 $size = (Get-Item -LiteralPath $shotPath).Length
 "CAPTURED $shotPath ($([math]::Round($size / 1KB)) KB)"
+
+} finally {
+    # HELD THROUGH THE VERDICT AND THE TASK CLEANUP, not just the capture, because those are the
+    # steps that read and act on files another run could be writing.
+    $captureLock.Dispose()
+}
