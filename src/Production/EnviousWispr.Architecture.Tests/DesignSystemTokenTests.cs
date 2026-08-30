@@ -736,19 +736,17 @@ public sealed partial class DesignSystemTokenTests
         var window = File.ReadAllText(Path.Combine(
             repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
 
-        // THE WHOLE HANDLER, NOT ONLY ITS PAGE TABLE. An action can be answered before the table is
-        // reached - pinning a language is a save rather than a navigation, and reading only the
-        // table would call a fully handled action unmapped while missing the case this exists for.
+        // CASE LABELS, NOT MENTIONS. An action can be answered without naming a page - pinning a
+        // language is a save rather than a navigation - so the gate has to read the whole handler.
+        // Reading it for any MENTION of a name then passes an action written only in a comment,
+        // which is the failure this looks for wearing a disguise. A case label is the one form that
+        // cannot be written by accident.
         var handler = SliceBetween(
             window,
             "private void OnPillActionInvoked(PillActionKind kind)",
             "\n    }",
             "the pill action handler");
-        var mapping = SliceBetween(
-            window,
-            "var tag = kind switch",
-            "\n        };",
-            "the pill action to page mapping");
+        var mapping = handler;
 
         // CAPTURE THE NAME AND COMPARE IT, NEVER ASK WHETHER THE TEXT CONTAINS IT. A substring test
         // reports an action named OpenPolish as mapped, because OpenPolishSettings contains it -
@@ -757,6 +755,10 @@ public sealed partial class DesignSystemTokenTests
         var mapped = ActionKindRegex().Matches(handler)
             .Select(match => match.Groups[1].Value)
             .ToHashSet(StringComparer.Ordinal);
+        Assert.True(
+            mapped.Count > 0,
+            "No case labels were found in the pill action handler, so this gate is reading nothing "
+                + "and would pass whatever the handler said.");
         var unmapped = Enum.GetNames<PillActionKind>()
             .Where(name => !mapped.Contains(name))
             .ToArray();
@@ -787,12 +789,19 @@ public sealed partial class DesignSystemTokenTests
                 + "nothing: " + string.Join(", ", missing));
     }
 
-    /// <summary>A whole action name inside the mapping.</summary>
-    [GeneratedRegex(@"PillActionKind\.([A-Za-z_][A-Za-z0-9_]*)\b", RegexOptions.CultureInvariant)]
+    /// <summary>A whole action name on a case LABEL, which a comment cannot produce.</summary>
+    [GeneratedRegex(
+        @"case\s+PillActionKind\.([A-Za-z_][A-Za-z0-9_]*)\s*:",
+        RegexOptions.CultureInvariant)]
     private static partial Regex ActionKindRegex();
 
-    /// <summary>The whole page tag one switch arm hands back.</summary>
-    [GeneratedRegex(@"=>\s*""([^""]+)""", RegexOptions.CultureInvariant)]
+    /// <summary>The whole page tag one case opens.</summary>
+    /// <remarks>
+    /// READS THE CALL, NOT AN ARROW. The handler became a switch STATEMENT so its actions could be
+    /// counted from case labels, and a statement has no arms handing values back - a pattern looking
+    /// for one finds nothing and reports every page as unnamed rather than as wrong.
+    /// </remarks>
+    [GeneratedRegex(@"OpenPage\(\s*""([^""]+)""\s*\)", RegexOptions.CultureInvariant)]
     private static partial Regex MappedPageTagRegex();
 
     /// <summary>Every flow that serves a dictation opens the scope for itself.</summary>

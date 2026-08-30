@@ -69,6 +69,11 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
     public async Task<SessionTransitionResult> PressAsync(
         CancellationToken cancellationToken = default)
     {
+        // BEFORE THE GATE, WHICH IS THE FIRST AWAIT AND THEREFORE THE FIRST PLACE TIME CAN PASS.
+        // Reading it after the gate leaves a window under contention: the press happens, another
+        // press or a release holds the gate, a save lands, and the recording that is starting takes
+        // a choice made after the person pressed the key.
+        var deliveryOptions = _deliveryOptions();
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -87,11 +92,6 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
                     CanRetry: true));
             }
 
-            // READ BEFORE THE FIRST AWAIT, WHICH IS THE ONLY MOMENT THAT IS "THE PRESS". Asking for
-            // it after StartAsync meant a setting saved while the microphone was still opening
-            // changed the recording that was already starting, which is the exact thing the frozen
-            // promise says cannot happen.
-            var deliveryOptions = _deliveryOptions();
             var sessionId = DictationSessionId.Create();
             var started = await _audioCapture
                 .StartAsync(new AudioCaptureRequest(sessionId, _preferredAudioDevice), cancellationToken)

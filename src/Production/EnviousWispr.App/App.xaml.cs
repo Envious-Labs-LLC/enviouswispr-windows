@@ -88,9 +88,6 @@ public partial class App : Application, IAsyncDisposable
     // is immutable and cannot tear, but the REFERENCE can be read stale, and one of its readers is
     // the delivery-options closure that decides where a recording's words are about to go.
     private volatile AppSettings _settings = AppSettings.Default;
-
-    /// <summary>Notices a language being spoken over and over, and offers to pin it.</summary>
-    private readonly LanguageLockSuggester _languageSuggestions = new();
     private DeterministicTextOptions _deterministicTextOptions =
         DeterministicTextOptions.From(DictationPreferences.Default);
     private bool _disposed;
@@ -285,7 +282,6 @@ public partial class App : Application, IAsyncDisposable
             _updateService.CurrentVersion);
         _window.SettingsChanged += OnSettingsChanged;
         _window.SessionStatusChanged += OnSessionStatusChanged;
-        _window.LanguageLocked += _languageSuggestions.Accepted;
         _window.AudioDevicesChanged += OnAudioDevicesChanged;
         _window.RecoveryCleared += OnRecoveryCleared;
         _window.DiagnosticsExportCompleted += OnDiagnosticsExportCompleted;
@@ -2985,28 +2981,9 @@ public partial class App : Application, IAsyncDisposable
                     await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
                     await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
                     _window?.DispatcherQueue.TryEnqueue(() =>
-                    {
-                        var status = DeliveryStatusReport.For(delivery);
-
-                        // ONLY OFF THE BACK OF A DICTATION THAT WENT WELL, and the offer takes the
-                        // pill instead of the tick rather than beside it. A warning or an error says
-                        // something the person has to deal with, and stepping on it to ask a
-                        // question about their language settings would replace the news with a
-                        // suggestion nobody asked for at the worst moment to read it.
-                        var offer = status.State == DictationOverlayState.Success
-                            ? _languageSuggestions.Observe(
-                                DeliveryLanguage(transcript),
-                                _settings.Preferences.Dictation.WhisperLanguage)
-                            : null;
-                        if (offer is null)
-                        {
-                            _window?.SetSessionStatus(status);
-                        }
-                        else
-                        {
-                            _window?.ShowLanguageLockOffer(offer);
-                        }
-                    });
+                        _window?.ReportDeliveryAndMaybeOfferLanguage(
+                            DeliveryStatusReport.For(delivery),
+                            DeliveryLanguage(transcript)));
                     return;
                 }
             }

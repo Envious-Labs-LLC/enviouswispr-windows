@@ -200,6 +200,18 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>The language the pill is currently offering to pin, or null when it offers none.</summary>
     private WhisperLanguagePreference? _offeredLanguage;
 
+    /// <summary>Notices a language being spoken over and over, and offers to pin it.</summary>
+    /// <remarks>
+    /// IT LIVES HERE BECAUSE THE ANSWER HAS TO BE WRITTEN DOWN, and this is where the settings and
+    /// the one save path are. Owning it from the app meant the count of offers already made could be
+    /// read at launch and never updated, so the promise to stop after three lasted only until the
+    /// next relaunch.
+    /// </remarks>
+    private readonly LanguageLockSuggester _languageSuggestions;
+
+    /// <summary>True while a pin started from the pill is still being written.</summary>
+    private bool _lockingLanguage;
+
     // True between asking for a speed check and being handed the answer. Without it, any status
     // change arriving mid-run hands the button back and lets a second check start over the first.
     private bool _speedCheckRunning;
@@ -335,6 +347,9 @@ public sealed partial class MainWindow : Window, IDisposable
             "EnviousWispr.ico"));
         Activated += OnWindowActivated;
 
+        // BUILT FROM WHAT WAS WRITTEN DOWN, so somebody who has already been asked three times about
+        // Spanish is not asked three more times because they restarted the app.
+        _languageSuggestions = new LanguageLockSuggester(settings.LanguageOfferHistory);
         ApplyTheme(settings.Preferences.Theme);
         ApplySettingsToControls();
         ShowOnboarding(!settings.HasCompletedOnboarding);
@@ -697,17 +712,59 @@ public sealed partial class MainWindow : Window, IDisposable
     /// and a button that crashes the app during someone's dictation is a worse one. A gate holds
     /// this switch to naming every declared member, so the default is genuinely unreachable.
     /// </remarks>
+    /// <summary>Shows where the words went, and asks about the language if this is the moment to.</summary>
+    /// <remarks>
+    /// ONE ENTRY POINT SO THE PILL CANNOT BE SET TWICE. The offer takes the pill INSTEAD of the
+    /// delivery sentence rather than after it, and it carries that sentence along, so somebody who
+    /// asked for the clipboard is still told the text went to the clipboard.
+    /// </remarks>
+    public void ReportDeliveryAndMaybeOfferLanguage(DictationStatus delivered, string? detectedLanguage)
+    {
+        var offer = delivered.State == DictationOverlayState.Success
+            ? _languageSuggestions.Observe(
+                detectedLanguage,
+                _settings.Preferences.Dictation.WhisperLanguage)
+            : null;
+        if (offer is null)
+        {
+            SetSessionStatus(delivered);
+            return;
+        }
+
+        ShowLanguageLockOffer(offer, delivered.Text);
+
+        // WRITTEN DOWN THE MOMENT IT IS SHOWN, not when it is answered. Most offers are never
+        // answered at all - the pill lapses - and that is exactly the case the count exists to
+        // limit, so waiting for an answer would record only the offers that did not need recording.
+        _ = RememberLanguageOffersAsync();
+    }
+
+    private async Task RememberLanguageOffersAsync()
+    {
+        var history = _languageSuggestions.OfferHistory;
+        if (string.Equals(_settings.LanguageOfferHistory, history, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        // NO NOTICE ON FAILURE, DELIBERATELY. Nobody asked for this write and nobody is waiting on
+        // it; the worst a lost one costs is being asked about a language once more than intended,
+        // which is quieter than an error about bookkeeping over somebody's work.
+        await UpdateSettingsAsync(current => current with { LanguageOfferHistory = history })
+            .ConfigureAwait(true);
+    }
+
     /// <summary>Offers to pin the language the app keeps hearing.</summary>
     /// <remarks>
     /// THE OFFERED LANGUAGE IS REMEMBERED HERE RATHER THAN CARRIED ON THE BUTTON, because the pill's
     /// vocabulary names intents and a language code in it would tie the overlay to the list of
     /// languages the settings page happens to hold.
     /// </remarks>
-    public void ShowLanguageLockOffer(LanguageLockOffer offer)
+    private void ShowLanguageLockOffer(LanguageLockOffer offer, string deliverySentence)
     {
         ArgumentNullException.ThrowIfNull(offer);
         _offeredLanguage = offer.Language;
-        var (sentence, action) = offer.Kind == LanguageOfferKind.AskToLock
+        var (question, action) = offer.Kind == LanguageOfferKind.AskToLock
             ? ($"You keep speaking {offer.DisplayName}. Pin it so recognition stops guessing?",
                 new PillAction(
                     $"Use {offer.DisplayName}",
@@ -718,59 +775,104 @@ public sealed partial class MainWindow : Window, IDisposable
                     "Open settings",
                     PillActionKind.OpenTranscriptionSettings,
                     "Open transcription settings"));
-        SetSessionStatus(DictationStatus.Suggestion(sentence, action));
+
+        // THE OFFER TAKES THE PILL, SO IT HAS TO CARRY WHAT THE PILL WOULD HAVE SAID. Where the
+        // words went is not always the same sentence: somebody using the clipboard setting was told
+        // "Copied to your clipboard", and replacing that with a question about languages leaves them
+        // believing the text was inserted into the window in front of them.
+        SetSessionStatus(DictationStatus.Suggestion(
+            string.IsNullOrWhiteSpace(deliverySentence) ? question : $"{deliverySentence}. {question}",
+            action));
     }
 
-    /// <summary>Raised when somebody pinned a language from the pill.</summary>
-    public event Action<WhisperLanguagePreference>? LanguageLocked;
-
+    /// <summary>Does the one thing a pill button promised.</summary>
+    /// <remarks>
+    /// ONE SWITCH WITH LABELLED CASES, AND THE SHAPE IS WHAT THE GATE CAN READ. An arrangement that
+    /// answered one action with an early return and the rest from an expression left the gate reading
+    /// the whole method for any mention of a name - so an action named only in a comment counted as
+    /// answered while still falling through to the default page. A case label cannot be written by
+    /// accident and cannot be a comment.
+    ///
+    /// Called directly rather than through the dispatcher. The overlay is created in this window's
+    /// constructor, so its click handler already runs on this thread, and TryEnqueue returns a bool
+    /// nobody reads - a silent way for a button press to go nowhere.
+    /// </remarks>
     private void OnPillActionInvoked(PillActionKind kind)
     {
-        // THE ONE ACTION THAT IS NOT NAVIGATION. Sending it through the page table below would open
-        // a settings page and leave the thing the button said it would do undone.
-        if (kind == PillActionKind.LockDetectedLanguage)
+        switch (kind)
         {
-            LockOfferedLanguage();
-            return;
-        }
+            case PillActionKind.OpenPolishSettings:
+                OpenPage("settings-ai-polish");
+                break;
+            case PillActionKind.OpenTranscriptionSettings:
+                OpenPage("settings-transcription");
+                break;
 
-        var tag = kind switch
-        {
-            PillActionKind.OpenPolishSettings => "settings-ai-polish",
-            PillActionKind.OpenTranscriptionSettings => "settings-transcription",
-            _ => "settings-appearance",
-        };
-        // Called directly rather than through the dispatcher. The overlay is created in this
-        // window's constructor, so its click handler already runs on this thread, and TryEnqueue
-        // returns a bool nobody reads - a silent way for a button press to go nowhere.
-        OpenPage(tag);
+            // NOT NAVIGATION. Sending it to a page would open the settings and leave the thing the
+            // button said it would do undone.
+            case PillActionKind.LockDetectedLanguage:
+                LockOfferedLanguage();
+                break;
+
+            // An enum can hold a value nobody declared. Appearance is the harmless page: it changes
+            // nothing and shows the person something they can read.
+            default:
+                OpenPage("settings-appearance");
+                break;
+        }
     }
 
     /// <summary>Saves the language the pill offered, and tells the app it was taken.</summary>
+    /// <remarks>
+    /// THE OFFER IS HELD UNTIL THE SAVE SUCCEEDS. Clearing it first meant a save that failed left
+    /// nothing: the pill was already gone, the setting was unchanged, and the only report was an
+    /// InfoBar inside a window that is usually not on screen when somebody dictates. A guard rather
+    /// than the cleared field is what stops a second press starting a second save.
+    /// </remarks>
     private async void LockOfferedLanguage()
     {
         var language = _offeredLanguage;
-        if (language is null)
+        if (language is null || _lockingLanguage)
         {
             return;
         }
 
-        // CLEARED BEFORE THE SAVE, NOT AFTER. The save awaits, and a second press in that window
-        // would otherwise pin the same language twice and show the notice twice.
-        _offeredLanguage = null;
+        _lockingLanguage = true;
+        try
+        {
+            await LockLanguageAsync(language.Value).ConfigureAwait(true);
+        }
+        finally
+        {
+            _lockingLanguage = false;
+        }
+    }
+
+    private async Task LockLanguageAsync(WhisperLanguagePreference language)
+    {
         if (await TrySaveAsync(
             current => current with
             {
                 Preferences = current.Preferences with
                 {
-                    Dictation = current.Preferences.Dictation with { WhisperLanguage = language.Value },
+                    Dictation = current.Preferences.Dictation with { WhisperLanguage = language },
                 },
             },
             "Language pinned",
-            $"Recognition will use {LanguageLockSuggester.DisplayName(language.Value)}.").ConfigureAwait(true))
+            $"Recognition will use {LanguageLockSuggester.DisplayName(language)}.").ConfigureAwait(true))
         {
-            LanguageLocked?.Invoke(language.Value);
+            _offeredLanguage = null;
+            _languageSuggestions.Accepted(language);
+            await RememberLanguageOffersAsync().ConfigureAwait(true);
+            return;
         }
+
+        // THE PILL SAYS SO, BECAUSE THE PILL IS WHERE THEY WERE LOOKING. A settings page notice is
+        // the right place for a save somebody started on the settings page; this one started on an
+        // overlay over their work, and a button that appears to do nothing is worse than no button.
+        SetSessionStatus(DictationStatus.Warning(
+            $"{LanguageLockSuggester.DisplayName(language)} could not be pinned. Open Transcription "
+                + "settings to set it there."));
     }
 
     /// <summary>Brings the window forward and shows one page by its tag.</summary>
