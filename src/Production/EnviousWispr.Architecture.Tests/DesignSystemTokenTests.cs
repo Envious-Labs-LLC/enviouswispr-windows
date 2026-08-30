@@ -1963,6 +1963,15 @@ public sealed partial class DesignSystemTokenTests
     ///
     /// Compared against the OVERLAY's own markup rather than a copy of its values kept here, so
     /// the two cannot drift: change the pill and this fails until the preview is changed with it.
+    ///
+    /// HEIGHTS ARE NO LONGER COMPARED, AND THE CHECK IS STRONGER FOR IT. The pill's bar heights used
+    /// to be static decoration, so matching them exactly was a fair proxy for matching the design.
+    /// They are now DATA - each bar holds one past level - so the heights in its markup are the
+    /// empty state, and a preview that copied them would draw a flat dead line under a caption
+    /// promising a live meter. What IS the design is the bar count and the colour run, and those are
+    /// compared exactly. The preview must also show more than one height, which is the assertion
+    /// that actually refuses the two failures this test was written for: a solid bar and a gradient
+    /// are each a single height.
     /// </remarks>
     [Fact]
     public void TheLevelRailPreviewMatchesTheRecordingPill()
@@ -2014,11 +2023,23 @@ public sealed partial class DesignSystemTokenTests
                 + "bars. A user choosing this design would not get what the picture showed.");
 
         Assert.True(
-            previewMeter!.SequenceEqual(real),
-            "The Level Rail preview does not match the recording pill.\n"
-                + $"  pill    ({real.Length} bars): {string.Join(" ", real.Select(b => b.Height))}\n"
-                + $"  preview ({previewMeter.Length} bars): {string.Join(" ", previewMeter.Select(b => b.Height))}\n"
+            previewMeter!.Length == real.Length,
+            "The Level Rail preview draws a different number of bars from the recording pill.\n"
+                + $"  pill: {real.Length}, preview: {previewMeter.Length}\n"
                 + "The preview is the only view of this design a user gets before choosing it.");
+
+        Assert.True(
+            previewMeter.Select(bar => bar.Brush).SequenceEqual(real.Select(bar => bar.Brush)),
+            "The Level Rail preview runs different colours from the recording pill.\n"
+                + $"  pill    : {string.Join(" ", real.Select(b => b.Brush))}\n"
+                + $"  preview : {string.Join(" ", previewMeter.Select(b => b.Brush))}");
+
+        // THE ASSERTION THAT REFUSES BOTH ORIGINAL FAILURES. A solid bar and a gradient are each a
+        // single height, and so is a preview that copied the pill's empty resting state.
+        Assert.True(
+            previewMeter.Select(bar => bar.Height).Distinct(StringComparer.Ordinal).Count() > 1,
+            "The Level Rail preview draws every bar at one height, so it shows a bar rather than a "
+                + "meter. A user choosing this design would not get what the picture showed.");
     }
 
     /// <summary>
