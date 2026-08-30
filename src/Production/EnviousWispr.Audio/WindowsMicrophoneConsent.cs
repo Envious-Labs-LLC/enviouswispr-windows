@@ -49,9 +49,17 @@ public static class WindowsMicrophoneConsent
     /// </remarks>
     public static MicrophoneConsent Read()
     {
+        // A POLICY THAT COULD NOT BE READ IS NOT A POLICY THAT IS ABSENT. Both used to come back as
+        // "no opinion", so a hive this app was refused access to fell through to the person's own
+        // switches and could report a clean Allowed over a machine that refuses every app.
         var policy = ReadPolicy();
+        if (policy is null)
+        {
+            return MicrophoneConsent.Unknown;
+        }
+
         return policy != MicrophoneConsent.Unknown
-            ? policy
+            ? policy.Value
             : Combine(
                 ReadFrom(Registry.LocalMachine, ConsentKey),
                 ReadFrom(Registry.CurrentUser, ConsentKey),
@@ -62,7 +70,15 @@ public static class WindowsMicrophoneConsent
     public static MicrophoneConsent Combine(params MicrophoneConsent[] readings)
     {
         ArgumentNullException.ThrowIfNull(readings);
-        if (readings.Length == 0 || Array.IndexOf(readings, MicrophoneConsent.Blocked) >= 0)
+
+        // NO READINGS IS NO EVIDENCE, AND NO EVIDENCE CANNOT NAME WINDOWS AS THE CULPRIT. Answering
+        // Blocked there would put a specific accusation on screen that nothing looked at.
+        if (readings.Length == 0)
+        {
+            return MicrophoneConsent.Unknown;
+        }
+
+        if (Array.IndexOf(readings, MicrophoneConsent.Blocked) >= 0)
         {
             return MicrophoneConsent.Blocked;
         }
@@ -85,7 +101,14 @@ public static class WindowsMicrophoneConsent
         _ => MicrophoneConsent.Unknown,
     };
 
-    private static MicrophoneConsent ReadPolicy()
+    /// <summary>The policy's answer, or null when the policy could not be read at all.</summary>
+    /// <remarks>
+    /// NULL AND UNKNOWN ARE DIFFERENT ANSWERS HERE. Unknown means the policy exists as a concept and
+    /// has nothing to say, which is the ordinary case; null means nobody knows what it says, and
+    /// falling through to the person's own switches on a machine whose policy hive is closed to this
+    /// app would report a clean bill of health over an administrator's refusal.
+    /// </remarks>
+    private static MicrophoneConsent? ReadPolicy()
     {
         try
         {
@@ -96,7 +119,7 @@ public static class WindowsMicrophoneConsent
             exception is System.Security.SecurityException or UnauthorizedAccessException
                 or System.IO.IOException)
         {
-            return MicrophoneConsent.Unknown;
+            return null;
         }
     }
 

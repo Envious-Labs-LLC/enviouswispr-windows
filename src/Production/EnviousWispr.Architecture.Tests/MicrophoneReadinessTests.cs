@@ -149,6 +149,14 @@ public sealed class MicrophoneReadinessTests
     }
 
     [Fact]
+    public void NoReadingsAtAllCannotAccuseWindowsOfAnything()
+    {
+        // No evidence is not evidence of a refusal, and answering Blocked would put a specific
+        // accusation on screen that nothing looked at.
+        Assert.Equal(MicrophoneConsent.Unknown, WindowsMicrophoneConsent.Combine());
+    }
+
+    [Fact]
     public void ReadingTheSwitchOnThisMachineNeverThrows()
     {
         // It runs on a build agent where the key may be absent and the hive may be locked down. The
