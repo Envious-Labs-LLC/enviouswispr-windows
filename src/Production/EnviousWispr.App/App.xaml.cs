@@ -2913,9 +2913,10 @@ public partial class App : Application, IAsyncDisposable
             //
             // Polish is a limb and the transcript is the heart: a refusal leaves the user with the
             // cleaned text they already had, which is the same outcome as any other limb failure.
-            var polishVerdict = polishResult is null || polishResult.UsedFallback
-                ? PolishOutputVerdict.Accepted
-                : PolishOutputGuard.Review(processed.Output.Text, polishResult.Output.Text).Verdict;
+            var polishReview = polishResult is null || polishResult.UsedFallback
+                ? new PolishOutputReview(PolishOutputVerdict.Accepted, string.Empty)
+                : PolishOutputGuard.Review(processed.Output.Text, polishResult.Output.Text);
+            var polishVerdict = polishReview.Verdict;
             if (polishVerdict != PolishOutputVerdict.Accepted)
             {
                 _logger.Write(new AppLogEntry(
@@ -2930,10 +2931,13 @@ public partial class App : Application, IAsyncDisposable
             if (polishResult is not null && !polishResult.UsedFallback &&
                 polishVerdict == PolishOutputVerdict.Accepted)
             {
+                // THE REVIEWED TEXT, NOT WHAT THE PROVIDER SENT. The guard strips what the model
+                // wrote ABOUT the text - "Sure, here is the cleaned transcript:" - and using the
+                // raw string here would put that chatter in somebody's document with their words.
                 processed = await _deterministicTextPipeline.ApplyPolishedTextAsync(
                     deterministicRequest,
                     processed,
-                    polishResult.Output.Text,
+                    polishReview.Text,
                     cancellationToken).ConfigureAwait(false);
                 await SaveRecoveryTextAsync(processed.Output, cancellationToken).ConfigureAwait(false);
             }

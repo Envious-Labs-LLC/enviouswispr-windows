@@ -76,25 +76,22 @@ public static class PolishOutputGuard
     /// </remarks>
     public const int MaximumConsecutiveRepeats = 3;
 
-    /// <summary>
-    /// How much longer than its input a polished result may be.
-    /// </summary>
+    /// <summary>How much longer than its input a polished result may be.</summary>
     /// <remarks>
-    /// Generous on purpose. Polish expands text legitimately - spelling out numbers, adding
-    /// punctuation, splitting run-on sentences - and a tight bound would refuse good work. Doubling
-    /// the length is beyond any of that.
+    /// MULTIPLIED AND THEN ADDED TO, WHICH IS WHAT MAKES IT SAFE FOR A SHORT DICTATION. A bare
+    /// multiplier has to be skipped below some floor, because "ok" becoming "Okay, that works." is
+    /// correct polish that fails any ratio - and skipping it left every short dictation with NO
+    /// ceiling at all, so "ok" could come back as a thousand words of invention and be pasted. The
+    /// fifty characters are the allowance a short input needs; the multiplier handles the rest, so
+    /// nothing has to be exempt.
+    ///
+    /// GENEROUS ON PURPOSE. Polish expands text legitimately - spelling out numbers, adding
+    /// punctuation, splitting run-on sentences - and a tight bound would refuse good work.
     /// </remarks>
-    public const double MaximumGrowthFactor = 2.5;
+    public const double MaximumGrowthFactor = 1.5;
 
-    /// <summary>
-    /// Below this many characters, growth is not measured at all.
-    /// </summary>
-    /// <remarks>
-    /// A three-word dictation can legitimately triple: "ok" becoming "Okay, that works." is correct
-    /// polish and would fail any ratio. Short inputs are protected by the repetition test instead,
-    /// which does not care about length.
-    /// </remarks>
-    public const int MinimumLengthForGrowthCheck = 40;
+    /// <summary>The characters allowed on top of the multiplier, so short inputs need no exemption.</summary>
+    public const int GrowthAllowance = 50;
 
     /// <summary>
     /// How much shorter than its input a polished result may be before it is a summary.
@@ -124,28 +121,42 @@ public static class PolishOutputGuard
     /// than imagined ones. The preservation entries are the same idea from the other side: somebody
     /// who says "keep the words exactly" has asked for no transformation at all.
     /// </remarks>
-    private static readonly (string Trigger, string Survivor)[] InstructionGuards =
+    private static readonly (string Trigger, string[] Survivors)[] InstructionGuards =
     [
-        ("write a sql query", "query"),
-        ("draft a cron expression", "cron expression"),
-        ("answer this question", "answer"),
-        ("explain the difference", "explain"),
-        ("translate this", "translate"),
-        ("summarize this", "summarize"),
-        ("rewrite this", "rewrite"),
-        ("convert this into json", "convert"),
-        ("respond with only markdown", "respond"),
-        ("turn this into", "turn this"),
-        ("write a poem", "poem"),
-        ("brainstorm", "brainstorm"),
-        ("dictate the words", "dictate"),
-        ("preserve the words", "preserve"),
-        ("keep the words", "keep"),
-        ("keep the phrase", "keep"),
-        ("create a regex", "regex"),
-        ("generate a regex", "regex"),
-        ("write a regex", "regex"),
-        ("create a pattern", "pattern"),
+        ("write a sql query", ["write", "query"]),
+        ("draft a cron expression", ["draft", "cron"]),
+        ("answer this question", ["answer", "question"]),
+        ("explain the difference", ["explain", "difference"]),
+        ("translate this", ["translate"]),
+        ("summarize this", ["summarize"]),
+        ("rewrite this", ["rewrite"]),
+        ("convert this into json", ["convert", "json"]),
+        ("respond with only markdown", ["respond", "markdown"]),
+        ("turn this into", ["turn"]),
+        ("write a poem", ["write", "poem"]),
+        ("brainstorm", ["brainstorm"]),
+        ("dictate the words", ["dictate"]),
+        ("preserve the words", ["preserve"]),
+        ("keep the words", ["keep"]),
+        ("keep the phrase", ["keep"]),
+        ("create a regex", ["regex"]),
+        ("generate a regex", ["regex"]),
+        ("write a regex", ["regex"]),
+        ("create a pattern", ["pattern"]),
+    ];
+
+    /// <summary>First lines a model writes about the text rather than as the text.</summary>
+    private static readonly string[] PreambleOpenings =
+    [
+        "here", "below", "the corrected", "the cleaned", "the polished", "the rewritten",
+        "corrected version", "cleaned", "polished",
+    ];
+
+    /// <summary>Pleasantries a model opens with before doing as it was asked.</summary>
+    private static readonly string[] Acknowledgements =
+    [
+        "Certainly!", "Sure!", "Sure,", "Of course!", "Got it.", "Got it!", "Absolutely!",
+        "Here you go:",
     ];
 
     /// <summary>Lines that only appear in code.</summary>
@@ -185,10 +196,22 @@ public static class PolishOutputGuard
         ArgumentNullException.ThrowIfNull(input);
 
         var said = input.Trim();
-        var wrote = (output ?? string.Empty).Trim();
+
+        // STRIPPED BEFORE ANYTHING IS JUDGED, because "Sure, here is the cleaned transcript:" is
+        // not something anybody said and every measurement below is about what they did say. It is
+        // also what the caller uses, so the chatter cannot reach the document.
+        var wrote = StripPreamble(output ?? string.Empty);
         if (wrote.Length == 0)
         {
             return Refuse(PolishOutputVerdict.RefusedEmpty, input);
+        }
+
+        // SIZE FIRST, SO THE WORK IS BOUNDED. Everything below reads the whole output, and the
+        // pattern scan reads it line by line; a model that returned a thousand words to a two-word
+        // dictation has already failed, and measuring that first means nothing else has to walk it.
+        if (wrote.Length > said.Length * MaximumGrowthFactor + GrowthAllowance)
+        {
+            return Refuse(PolishOutputVerdict.RefusedRunaway, input);
         }
 
         if (HasRunawayRepetition(wrote))
@@ -214,19 +237,13 @@ public static class PolishOutputGuard
             return Refuse(PolishOutputVerdict.RefusedInstructionExecuted, input);
         }
 
-        if (said.Length >= MinimumLengthForGrowthCheck &&
-            wrote.Length > said.Length * MaximumGrowthFactor)
-        {
-            return Refuse(PolishOutputVerdict.RefusedRunaway, input);
-        }
-
         if (said.Length >= MinimumLengthForShorteningCheck &&
             wrote.Length < said.Length * MinimumSurvivingFraction)
         {
             return Refuse(PolishOutputVerdict.RefusedGutted, input);
         }
 
-        return new PolishOutputReview(PolishOutputVerdict.Accepted, output!);
+        return new PolishOutputReview(PolishOutputVerdict.Accepted, wrote);
     }
 
     private static PolishOutputReview Refuse(PolishOutputVerdict verdict, string input) =>
@@ -246,27 +263,40 @@ public static class PolishOutputGuard
             return true;
         }
 
+        // NON-BACKTRACKING, WITH A TIMEOUT BEHIND IT, AND A TIMEOUT READS AS CODE. The engine that
+        // cannot backtrack cannot be made to run away by hostile input, and the timeout is the
+        // second line rather than the first. If one ever fires, the honest answer is that this text
+        // could not be judged safe, and the safe direction is refusing the polish - never letting an
+        // exception out of here, which would end the dictation over a pattern scan.
         var hits = 0;
-        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        try
         {
-            foreach (var pattern in CodeLinePatterns)
+            foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
-                if (System.Text.RegularExpressions.Regex.IsMatch(
-                    line,
-                    pattern,
-                    System.Text.RegularExpressions.RegexOptions.IgnoreCase |
-                        System.Text.RegularExpressions.RegexOptions.CultureInvariant,
-                    TimeSpan.FromMilliseconds(100)))
+                foreach (var pattern in CodeLinePatterns)
                 {
-                    hits++;
-                    break;
+                    if (System.Text.RegularExpressions.Regex.IsMatch(
+                        line,
+                        pattern,
+                        System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+                            System.Text.RegularExpressions.RegexOptions.CultureInvariant |
+                            System.Text.RegularExpressions.RegexOptions.NonBacktracking,
+                        TimeSpan.FromMilliseconds(100)))
+                    {
+                        hits++;
+                        break;
+                    }
+                }
+
+                if (hits >= 2)
+                {
+                    return true;
                 }
             }
-
-            if (hits >= 2)
-            {
-                return true;
-            }
+        }
+        catch (System.Text.RegularExpressions.RegexMatchTimeoutException)
+        {
+            return true;
         }
 
         if (text.Length <= 50)
@@ -283,18 +313,144 @@ public static class PolishOutputGuard
         ((text[0] == '{' && text[^1] == '}') || (text[0] == '[' && text[^1] == ']'));
 
     /// <summary>Whether a described instruction was carried out instead of written down.</summary>
+    /// <remarks>
+    /// THE VERB AND ITS OBJECT, NOT ONE WORD. A single survivor let the plainest execution of all
+    /// through: "answer this question about the capital" coming back as "The answer is Paris" still
+    /// contains "answer", so the guard saw the word it was looking for and passed the very thing it
+    /// exists to catch. Requiring the object as well - "question" - refuses it.
+    ///
+    /// WHOLE WORDS, so "answered" and "questionable" do not stand in for the words that were said.
+    /// A legitimate rewording that drops one of them falls back to the input, which is the safe
+    /// direction and the one this guard is allowed to be wrong in.
+    /// </remarks>
     private static bool CarriedOutAnInstruction(string said, string wrote)
     {
-        foreach (var (trigger, survivor) in InstructionGuards)
+        foreach (var (trigger, survivors) in InstructionGuards)
         {
-            if (said.Contains(trigger, StringComparison.OrdinalIgnoreCase) &&
-                !wrote.Contains(survivor, StringComparison.OrdinalIgnoreCase))
+            if (!said.Contains(trigger, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            foreach (var survivor in survivors)
+            {
+                if (!ContainsWholeWord(wrote, survivor))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ContainsWholeWord(string text, string word)
+    {
+        var from = 0;
+        while (from <= text.Length - word.Length)
+        {
+            var at = text.IndexOf(word, from, StringComparison.OrdinalIgnoreCase);
+            if (at < 0)
+            {
+                return false;
+            }
+
+            var beforeIsBoundary = at == 0 || !char.IsLetterOrDigit(text[at - 1]);
+            var after = at + word.Length;
+            var afterIsBoundary = after == text.Length || !char.IsLetterOrDigit(text[after]);
+            if (beforeIsBoundary && afterIsBoundary)
+            {
+                return true;
+            }
+
+            from = at + 1;
+        }
+
+        return false;
+    }
+
+    /// <summary>Removes what a model wrote ABOUT the text before the text itself.</summary>
+    /// <remarks>
+    /// "SURE, HERE IS THE CLEANED TRANSCRIPT:" IS NOT SOMETHING ANYBODY SAID, and without this it
+    /// was pasted into their document along with their words. A first line only counts as a preamble
+    /// when it is short, ends with a colon and opens with one of the phrases a model uses to
+    /// introduce its own work - three conditions together, because any one alone describes sentences
+    /// people really dictate.
+    ///
+    /// AN OPENING PLEASANTRY IS ONLY DROPPED WHEN WHAT FOLLOWS LOOKS LIKE A MODEL TALKING. "Sure,"
+    /// begins plenty of real dictation, so it goes only when the rest is either an introduction line
+    /// or a short standalone reply. Prose that runs on with commas is somebody speaking and is kept.
+    /// </remarks>
+    public static string StripPreamble(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        var result = text.Trim();
+
+        foreach (var acknowledgement in Acknowledgements)
+        {
+            if (!result.StartsWith(acknowledgement, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var rest = result[acknowledgement.Length..].Trim();
+            if (FirstLineIntroducesTheText(rest) || FirstSentenceIsAShortReply(rest))
+            {
+                result = rest;
+            }
+
+            break;
+        }
+
+        if (FirstLineIntroducesTheText(result))
+        {
+            var newline = result.IndexOf('\n', StringComparison.Ordinal);
+            result = (newline < 0 ? string.Empty : result[(newline + 1)..]).Trim();
+        }
+
+        return result
+            .Replace("<transcript>", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("</transcript>", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Trim();
+    }
+
+    private static bool FirstLineIntroducesTheText(string text)
+    {
+        var newline = text.IndexOf('\n', StringComparison.Ordinal);
+        var firstLine = (newline < 0 ? text : text[..newline]).Trim();
+        if (firstLine.Length == 0 || firstLine.Length >= 100 ||
+            !firstLine.EndsWith(':'))
+        {
+            return false;
+        }
+
+        foreach (var opening in PreambleOpenings)
+        {
+            if (firstLine.StartsWith(opening, StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private static bool FirstSentenceIsAShortReply(string text)
+    {
+        if (text.Length == 0)
+        {
+            return false;
+        }
+
+        var end = text.AsSpan().IndexOfAny('.', '!', '?');
+        var newline = text.IndexOf('\n', StringComparison.Ordinal);
+        if (newline >= 0 && (end < 0 || newline < end))
+        {
+            end = newline;
+        }
+
+        var firstSentence = end < 0 ? text : text[..(end + 1)];
+        return firstSentence.Length <= 60 && firstSentence.Count(character => character == ',') <= 1;
     }
 
     /// <summary>
