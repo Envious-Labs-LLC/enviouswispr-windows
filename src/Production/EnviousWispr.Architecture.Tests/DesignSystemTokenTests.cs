@@ -861,6 +861,48 @@ public sealed partial class DesignSystemTokenTests
         RegexOptions.Singleline | RegexOptions.CultureInvariant)]
     private static partial Regex DictationFlowRegex();
 
+    /// <summary>The journey harness reports its own failures instead of crashing.</summary>
+    /// <remarks>
+    /// A FAILING TEST USED TO LOOK EXACTLY LIKE A FAILING MACHINE. Every expectation in the harness
+    /// threw a stock exception type and nothing caught it, so the process died on an unhandled
+    /// exception - which Windows records in the event log the same way it records an application
+    /// fault. On 2026-08-28 eleven such entries were read as evidence that the development machine
+    /// was unstable, alongside real hypervisor faults, while somebody worked out whether the
+    /// hardware was failing. They were failing tests.
+    ///
+    /// FOUR REVIEW ROUNDS EACH NAMED ONE MORE THROW THAT STILL CRASHED - a helper below the journey
+    /// block, the cleanup, the preflight, then the file checks. The answer was not a fifth patch: it
+    /// was that EVERY deliberate throw in this harness is a reason it can name, and only the runtime
+    /// raises the rest. So they all carry one type, the reporter wraps the whole program, and this
+    /// refuses the next stock throw before it can put another crash in the event log.
+    /// </remarks>
+    [Fact]
+    public void TheJourneyHarnessNeverThrowsAStockExceptionType()
+    {
+        var harness = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "tools", "app-journey-uat", "Program.cs"));
+
+        var stock = StockThrowRegex().Matches(harness)
+            .Select(match => match.Groups[1].Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(
+            harness.Contains("throw new JourneyExpectationException(", StringComparison.Ordinal),
+            "The harness throws no JourneyExpectationException at all, so this gate is checking a "
+                + "file that no longer works the way it describes.");
+        Assert.True(
+            stock.Length == 0,
+            "These stock exception types are thrown deliberately in the journey harness, and an "
+                + "uncaught one ends the run as an application crash in the Windows event log: "
+                + string.Join(", ", stock));
+    }
+
+    /// <summary>A deliberately thrown exception type that is not the harness's own.</summary>
+    [GeneratedRegex(@"throw new (?!JourneyExpectationException)(\w*Exception)\(",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex StockThrowRegex();
+
     [Fact]
     public void AppViewsContainNoLiteralColors()
     {
