@@ -1,4 +1,5 @@
 using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Pipeline;
 
@@ -182,7 +183,35 @@ public sealed class ContextAwareTextDeliveryTests
 
         Assert.True(result.Delivered);
         Assert.False(result.ClipboardFallback);
-        Assert.Equal(TextDeliveryRefusalReason.CopyRequested, result.RefusalReason);
+        Assert.Equal(TextDeliveryRefusalReason.None, result.RefusalReason);
+    }
+
+    [Fact]
+    public void TheSentenceForARequestedCopyNamesTheClipboardAndNotAPaste()
+    {
+        // The route is the only thing that says WHERE the text went, so a delivered copy that loses
+        // it falls through to the paste sentences and tells the user it pasted into a window it
+        // never touched.
+        var copied = DeliveryStatusReport.For(new DeliveryResult(
+            SessionId,
+            Delivered: true,
+            ClipboardFallback: false,
+            TextDeliveryRoute.ClipboardOnly));
+
+        Assert.Equal("Copied to your clipboard", copied.Text);
+        Assert.Equal(DictationOverlayState.Success, copied.State);
+    }
+
+    [Fact]
+    public async Task ARequestedCopyCarriesTheClipboardRouteBackToTheUser()
+    {
+        var adapter = new FakeTargetAdapter(AvailableContext("before", "after"));
+        var delivery = new ContextAwareTextDelivery(adapter);
+
+        var result = await delivery.DeliverAsync(CopyRequest("hello"));
+
+        Assert.Equal(TextDeliveryRoute.ClipboardOnly, result.Route);
+        Assert.Equal("Copied to your clipboard", DeliveryStatusReport.For(result).Text);
     }
 
     private static TextDeliveryRequest CopyRequest(string text) => new(
@@ -240,7 +269,7 @@ public sealed class ContextAwareTextDeliveryTests
                 Delivered: true,
                 ClipboardFallback: false,
                 ClipboardRestored: false,
-                TextDeliveryRefusalReason.CopyRequested));
+                TextDeliveryRefusalReason.None));
         }
 
         public Task<TargetContextResult> CaptureContextAsync(

@@ -46,11 +46,16 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
                 RecoveryText = null;
             }
 
+            // THE ROUTE TRAVELS WITH THE RESULT, because the route is the only thing that says
+            // WHERE the text went. Dropping it left a requested copy indistinguishable from an
+            // ordinary paste at the one place that speaks to the user, so the notice read "Pasted
+            // safely" over a delivery that pasted nothing.
             return new DeliveryResult(
                 request.Text.SessionId,
                 copied.Delivered,
                 copied.ClipboardFallback,
-                RefusalReason: copied.RefusalReason);
+                copied.Route,
+                copied.RefusalReason);
         }
 
         if (!request.Target.IsValid)

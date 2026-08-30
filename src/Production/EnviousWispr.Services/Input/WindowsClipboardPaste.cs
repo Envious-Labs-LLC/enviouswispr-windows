@@ -41,7 +41,7 @@ internal static class WindowsClipboardPaste
                         Delivered: true,
                         ClipboardFallback: false,
                         ClipboardRestored: false,
-                        TextDeliveryRefusalReason.CopyRequested)
+                        TextDeliveryRefusalReason.None)
                     : new TextCommitResult(
                         TextDeliveryRoute.None,
                         Delivered: false,
