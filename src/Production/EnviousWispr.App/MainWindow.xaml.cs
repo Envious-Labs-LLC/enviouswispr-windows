@@ -165,7 +165,13 @@ public sealed partial class MainWindow : Window, IDisposable
     private readonly ISettingsStore _settingsStore;
 
     /// <summary>Serialises every settings write this window makes.</summary>
-    private readonly SemaphoreSlim _settingsGate = new(1, 1);
+    /// <remarks>
+    /// THE RULE LIVES IN Core SO IT CAN BE PROVEN. The defect it prevents only appears while two
+    /// saves overlap, which never happens in a test that drives this window one call at a time - so
+    /// a gate written here would be a gate nothing could demonstrate. SerialSettingsWriterTests
+    /// holds a store open mid-save and shows two changes both surviving.
+    /// </remarks>
+    private SerialSettingsWriter? _settingsWriter;
     private readonly IPortableProfileService _profileService;
     private readonly IHistoryStore _historyStore;
     private readonly IApiKeyStore _apiKeyStore;
@@ -750,6 +756,8 @@ public sealed partial class MainWindow : Window, IDisposable
         // an announcement for a window that is going away.
         _historyAnnounceDebounce.Stop();
         _historyAnnounceDebounce.Tick -= OnHistoryAnnounceDue;
+        _settingsWriter?.Dispose();
+        _settingsWriter = null;
         _soundPreviewCancellation?.Cancel();
         _soundPreviewCancellation?.Dispose();
         _soundPreviewCancellation = null;
@@ -1371,7 +1379,7 @@ public sealed partial class MainWindow : Window, IDisposable
             .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
         if (!await SaveUserDataAsync(
-                new ReusableUserData(words, _settings.UserData.Snippets),
+                data => new ReusableUserData(words, data.Snippets),
                 "Dictionary saved").ConfigureAwait(true))
         {
             // THE CHIP STAYS WHEN THE SAVE DID NOT. Removing it says the suggestion was taken, and
@@ -1413,7 +1421,7 @@ public sealed partial class MainWindow : Window, IDisposable
         // CLEARED ONLY IF IT WAS SAVED. Emptying the boxes after a refused save throws away what
         // the person typed and leaves them looking at an error with nothing to retry.
         if (!await SaveUserDataAsync(
-                new ReusableUserData(words, _settings.UserData.Snippets),
+                data => new ReusableUserData(words, data.Snippets),
                 "Dictionary saved").ConfigureAwait(true))
         {
             return;
@@ -1472,7 +1480,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var notice = selected.Length == 1
             ? "Dictionary entry removed"
             : $"{selected.Length} dictionary entries removed";
-        await SaveUserDataAsync(new ReusableUserData(words, _settings.UserData.Snippets), notice).ConfigureAwait(true);
+        await SaveUserDataAsync(data => new ReusableUserData(words, data.Snippets), notice).ConfigureAwait(true);
     }
 
     /// <summary>Asks before something that cannot be undone.</summary>
@@ -1509,7 +1517,7 @@ public sealed partial class MainWindow : Window, IDisposable
         // Same reason as the word boxes above: a refused save must not eat the snippet someone
         // just wrote.
         if (!await SaveUserDataAsync(
-                new ReusableUserData(_settings.UserData.CustomWords, snippets),
+                data => new ReusableUserData(data.CustomWords, snippets),
                 "Snippet saved").ConfigureAwait(true))
         {
             return;
@@ -1528,7 +1536,7 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         var snippets = _settings.UserData.Snippets.Where(entry => entry != selected).ToArray();
-        await SaveUserDataAsync(new ReusableUserData(_settings.UserData.CustomWords, snippets), "Snippet removed").ConfigureAwait(true);
+        await SaveUserDataAsync(data => new ReusableUserData(data.CustomWords, snippets), "Snippet removed").ConfigureAwait(true);
     }
 
     private void HistorySearchBox_TextChanged(object sender, TextChangedEventArgs e) => RefreshHistoryView();
@@ -1757,10 +1765,8 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var userData = new ReusableUserData(
-            [.. existing, .. plan.Additions],
-            _settings.UserData.Snippets);
-        if (!await SaveUserDataAsync(userData, $"{pack.Name} added", DescribeImport(plan))
+        var importedWords = new List<CustomWordEntry>([.. existing, .. plan.Additions]);
+        if (!await SaveUserDataAsync(data => new ReusableUserData(importedWords, data.Snippets), $"{pack.Name} added", DescribeImport(plan))
             .ConfigureAwait(true))
         {
             return;
@@ -1847,9 +1853,7 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var userData = new ReusableUserData(
-            [.. existing, .. plan.Additions],
-            _settings.UserData.Snippets);
+        var importedWords = new List<CustomWordEntry>([.. existing, .. plan.Additions]);
 
         // THE SAME DESCRIPTION ON BOTH PATHS. The first version used the generic save message here,
         // so every problem outcome vanished the moment ONE word imported: a hundred-line file with
@@ -1857,7 +1861,7 @@ public sealed partial class MainWindow : Window, IDisposable
         // user never learned about the forty. That is the INVERSE of the failure the itemised
         // message was written for, and it survived because the zero-added path was the only one
         // anyone had looked at.
-        var saved = await SaveUserDataAsync(userData, "Words imported", DescribeImport(plan))
+        var saved = await SaveUserDataAsync(data => new ReusableUserData(importedWords, data.Snippets), "Words imported", DescribeImport(plan))
             .ConfigureAwait(true);
         if (!saved)
         {
@@ -1936,7 +1940,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var merged = CustomWordImport.Merge(_settings.UserData.CustomWords, replacements);
         var word = replacements.Count == 1 ? "correction" : "corrections";
         return await SaveUserDataAsync(
-            new ReusableUserData(merged, _settings.UserData.Snippets),
+            data => new ReusableUserData(merged, data.Snippets),
             "Corrections replaced",
             $"{replacements.Count} {word} now match the list you imported.").ConfigureAwait(true);
     }
@@ -2751,8 +2755,9 @@ public sealed partial class MainWindow : Window, IDisposable
     /// caller needed to react. Three did: two cleared the user's typing after a refused save, and
     /// one said "All of them added" and removed the suggestion it had failed to add.
     /// </remarks>
-    private async Task<bool> SaveUserDataAsync(ReusableUserData userData, string title) =>
-        await SaveUserDataAsync(userData, title, "The change was saved locally.").ConfigureAwait(true);
+    private async Task<bool> SaveUserDataAsync(
+        Func<ReusableUserData, ReusableUserData> change, string title) =>
+        await SaveUserDataAsync(change, title, "The change was saved locally.").ConfigureAwait(true);
 
     /// <summary>Saves the user's words and snippets, and says whether it worked.</summary>
     /// <remarks>
@@ -2763,9 +2768,9 @@ public sealed partial class MainWindow : Window, IDisposable
     /// imported" and offered to replace corrections that had not been imported.
     /// </remarks>
     private async Task<bool> SaveUserDataAsync(
-        ReusableUserData userData, string title, string message)
+        Func<ReusableUserData, ReusableUserData> change, string title, string message)
     {
-        if (!await TrySaveAsync(current => current with { UserData = userData }, title, message)
+        if (!await TrySaveAsync(current => current with { UserData = change(current.UserData) }, title, message)
             .ConfigureAwait(true))
         {
             return false;
@@ -2942,33 +2947,21 @@ public sealed partial class MainWindow : Window, IDisposable
         Func<AppSettings, AppSettings> change,
         Func<Exception, Task>? onFailure = null)
     {
-        await _settingsGate.WaitAsync().ConfigureAwait(true);
-        try
-        {
-            var next = change(_settings);
-            await _settingsStore.SaveAsync(next).ConfigureAwait(true);
-            _settings = next;
-            SettingsChanged?.Invoke(next);
-            return true;
-        }
-        // SecurityException IS AN ACCESS DENIAL AND THE STORE THROWS IT. Its own load and profile
-        // paths already classify it that way; only the save paths did not, so a settings write
-        // blocked by policy escaped an async void handler and took the app down.
-        catch (Exception exception) when (
-            exception is ArgumentException or IOException or UnauthorizedAccessException
-                or SecurityException)
+        _settingsWriter ??= new SerialSettingsWriter(_settingsStore, _settings);
+        var failure = await _settingsWriter.UpdateAsync(change).ConfigureAwait(true);
+        if (failure is not null)
         {
             if (onFailure is not null)
             {
-                await onFailure(exception).ConfigureAwait(true);
+                await onFailure(failure).ConfigureAwait(true);
             }
 
             return false;
         }
-        finally
-        {
-            _settingsGate.Release();
-        }
+
+        _settings = _settingsWriter.Current;
+        SettingsChanged?.Invoke(_settings);
+        return true;
     }
 
     /// <summary>Applies a change to the stored settings and reports how it went.</summary>
@@ -2988,12 +2981,24 @@ public sealed partial class MainWindow : Window, IDisposable
             change,
             exception =>
             {
-                ShowMessage(
-                    exception is UnauthorizedAccessException or SecurityException
-                        ? "Windows blocked settings storage"
-                        : "Settings storage is unavailable",
-                    "Your previous settings remain active.",
-                    InfoBarSeverity.Error);
+                // THREE CAUSES, THREE ANSWERS, AND FOLDING THEM COST THE MOST USEFUL ONE. The store
+                // reports invalid settings as an ArgumentException; collapsing that into "storage is
+                // unavailable" tells somebody their disk is broken when a value they typed is out of
+                // range, which sends them looking in exactly the wrong place.
+                var (title, body) = exception switch
+                {
+                    ArgumentException => (
+                        "Settings were not saved",
+                        "One or more values are invalid. Your previous settings remain active."),
+                    UnauthorizedAccessException or SecurityException => (
+                        "Windows blocked settings storage",
+                        "Your previous settings remain active."),
+                    _ => (
+                        "Settings storage is unavailable",
+                        "Your previous settings remain active."),
+                };
+
+                ShowMessage(title, body, InfoBarSeverity.Error);
                 return Task.CompletedTask;
             }).ConfigureAwait(true);
 
