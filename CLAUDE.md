@@ -71,3 +71,12 @@ the portable build and contract gate used by CI.
 GitHub Issues are the durable task system. Every implementation ends with relevant validation, a pushed
 branch, and an updated pull request. Codex may submit work but must not merge unless Saurabh explicitly
 requests that exact merge.
+
+Work happens in a git worktree on its own branch, merges to `main`, and the worktree is removed. `main`
+stays buildable and is never edited in place.
+
+`LOG.md` carries the reasoning behind the work at the level of a working session: decisions, defects that
+survived to be found by something other than their author, and facts that would cost somebody a day to
+rediscover. Add an entry when a session produced one of those. A finding caught and fixed inside a session
+is not one; a gate doing its job is the expected case. The file is public, so no machine paths, no personal
+data, no credentials.
