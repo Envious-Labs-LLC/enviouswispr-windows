@@ -231,7 +231,7 @@ public sealed partial class DictationOverlayWindow : Window
         AppWindow.Show(activateWindow: false);
         // AFTER THE WINDOW IS SHOWN. Raising while it is still hidden announces something the user
         // cannot yet see, and the first state of a freshly shown pill is exactly that case.
-        AnnounceStateChange(state);
+        AnnounceStateChange(StateTitle, state);
 
         if (state is DictationOverlayState.Success or DictationOverlayState.Advisory
             or DictationOverlayState.Warning or DictationOverlayState.Distress
@@ -591,16 +591,16 @@ public sealed partial class DictationOverlayWindow : Window
     /// creates no peer for one, so CreatePeerForElement returned null, the null-safe raise did
     /// nothing, and the pill stayed silent while looking fixed. It is on the title TextBlock now.
     /// </remarks>
-    private void AnnounceStateChange(DictationOverlayState state)
+    private static void AnnounceStateChange(TextBlock region, DictationOverlayState state)
     {
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(
-            StateTitle,
+            region,
             state is DictationOverlayState.Error or DictationOverlayState.Distress
                 ? AutomationLiveSetting.Assertive
                 : AutomationLiveSetting.Polite);
 
-        var peer = FrameworkElementAutomationPeer.FromElement(StateTitle)
-            ?? FrameworkElementAutomationPeer.CreatePeerForElement(StateTitle);
+        var peer = FrameworkElementAutomationPeer.FromElement(region)
+            ?? FrameworkElementAutomationPeer.CreatePeerForElement(region);
         peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
     }
 
