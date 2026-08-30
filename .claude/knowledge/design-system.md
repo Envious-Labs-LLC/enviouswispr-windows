@@ -485,10 +485,31 @@ instrument that did not do the work.
 
 **The experiment that settled it costs one command**, and a first guess of "intermittent, ignore it"
 delayed it by a day: run the suite with that class excluded. **734 of 734 pass, zero failures**, every
-time. So the suite is fully green and one test was hiding a third of it at random.
+time.
 
-`verify-here.ps1` now excludes that class, NAMES the exclusion in its output so no handoff can call it
-a full run, and prints a loud SHORT RUN line if the executed total falls below 700 anyway.
+**THAT IS A FILTERED GREEN AND MUST NEVER BE CALLED A FULL ONE.** It was, in a commit message and in an
+earlier draft of this note, and a reviewer caught it against this repository's own rule - `validation.md`
+says a filtered green test is never described as full runtime proof. Six tests were excluded. The right
+sentence is "734 of 734 in the filtered lane, and the credential lane is red", and the right shape is
+two runs producing two receipts so the second cannot truncate the first.
+
+**AND "ENVIRONMENTAL" IS STILL A GUESS.** `CredDelete` has several meaningful failures, including a
+login session with no credential store. Nobody has read the native error code, so nothing yet
+distinguishes a machine quirk from a real defect in the store. Tracked as #79.
+
+`scripts/verify-here.ps1` - **now tracked in the repository, and it was not**, so an earlier version of
+this note described safeguards that existed on one laptop - runs TWO LANES and prints both receipts:
+the suite without that class, then that class alone in its own process, where it can fail without
+deciding anything about the other 734.
+
+**Its short-run control compares against the discovered count rather than a floor**, and only a
+SHORTFALL counts, because a theory is one discovered name and several executed cases. Proved able to
+fire by filtering out an extra class: `SHORT RUN: 677 tests executed, at least 734 expected`.
+
+**Its first draft cried wolf on a healthy run**, counting `^\s+EnviousWispr\.` and so matching the ten
+build lines that read `EnviousWispr.Audio -> C:\...dll`. It reported 750 discovered against 734
+executed. Read the hits, never the count - the same correction the parity audit's own sweep procedure
+makes.
 
 **`--list-tests` is the control and it is one command.** It answers how many tests EXIST, which a run's
 own summary cannot.
