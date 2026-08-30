@@ -783,6 +783,31 @@ public sealed partial class DesignSystemTokenTests
     [GeneratedRegex(@"=>\s*""([^""]+)""", RegexOptions.CultureInvariant)]
     private static partial Regex MappedPageTagRegex();
 
+    /// <summary>The dictation pipeline runs inside a scope, so its lines are joined.</summary>
+    /// <remarks>
+    /// THE FIRST VERSION OF THIS CHECKED THAT NINE LOG WRITES EACH NAMED AN ID, AND A REVIEWER
+    /// ENUMERATED TWENTY MORE THAT BELONG TO A DICTATION AND LIVE IN OTHER METHODS. A gate that
+    /// catches a forgotten argument is worth less than a design with no argument to forget, so the
+    /// id became ambient and this became a check that the scope is opened at all.
+    ///
+    /// One line of source, so it is a tripwire rather than a proof. What the join actually DOES is
+    /// measured in `DictationScopeTests`, which writes real lines through the real logger.
+    /// </remarks>
+    [Fact]
+    public void TheDictationPipelineRunsInsideItsOwnScope()
+    {
+        var shell = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+
+        var method = SliceBetween(
+            shell,
+            "private async Task TranscribeFinalAsync(",
+            "\n    /// <summary>\n    /// Keeps the audio of a dictation",
+            "the final transcription method");
+
+        Assert.Contains("DictationScope.Begin(sessionId.Value)", method, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void AppViewsContainNoLiteralColors()
     {
