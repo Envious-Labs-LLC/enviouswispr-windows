@@ -52,6 +52,32 @@ public enum HotkeyGestureOutcome
 /// lands after the user has stopped speaking, where a quarter of a second is invisible beside the
 /// polish that follows.
 /// </remarks>
+/// <summary>The record binding the Keybinds page offers when somebody wants the four gestures.</summary>
+/// <remarks>
+/// THE GESTURES SHIPPED AND NOBODY COULD REACH THEM. Hold to talk, double tap to record hands-free,
+/// one tap to stop and three taps to throw away are all built and all tested, and every one of them
+/// requires a modifier binding. The shipped default is F8, so on a fresh install the policy that
+/// implements them is never constructed and three macOS features are present in the source and
+/// absent from the product. This is the one-press way across that gap.
+///
+/// RIGHT CONTROL, AND THE CHOICE IS FORCED RATHER THAN PICKED. macOS binds right Option. Alt is
+/// refused by the engine because a lone Alt tap opens a window's menu bar, which rules out the
+/// literal twin. Right Windows opens the Start menu on its own. Right Shift is used by the shell for
+/// sticky keys. Right Control is the one bare right-hand modifier Windows itself does nothing with,
+/// and leaving the LEFT one alone means every shortcut somebody already knows keeps working.
+///
+/// IT IS AN OFFER, NOT THE DEFAULT. Which key a fresh install starts on is a separate question and
+/// belongs to whoever owns the product; this changes nothing for anybody who does not press it.
+/// </remarks>
+public static class HandsFreeRecordBinding
+{
+    /// <summary>The gesture string the offer writes into the recording keybind.</summary>
+    public const string Suggested = "RightCtrl";
+
+    /// <summary>What the button says.</summary>
+    public const string OfferLabel = "Use Right Ctrl";
+}
+
 public sealed class HotkeyGesturePolicy
 {
     /// <summary>How long a bare modifier must be held before it starts recording.</summary>
