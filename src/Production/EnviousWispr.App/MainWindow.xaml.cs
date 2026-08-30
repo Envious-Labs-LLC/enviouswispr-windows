@@ -319,6 +319,15 @@ public sealed partial class MainWindow : Window, IDisposable
         ProductNavigation.SelectedItem = HomeNavItem;
         BuildInfoText.Text = $"{releaseIdentity.DisplayName} {Assembly.GetExecutingAssembly().GetName().Version} · {releaseIdentity.ChannelName}";
         WhatsNewBuildInfoText.Text = BuildInfoText.Text;
+
+        // THE MARK IS ON UNTIL THIS BUILD'S NOTES HAVE BEEN OPENED. Comparing the stored string with
+        // the current one is the whole rule: a fresh install has stored nothing, so the notes are
+        // new to them, which is true; an update changes the string, so the mark comes back.
+        _releaseNotesIdentity = BuildInfoText.Text;
+        WhatsNewBadge.Visibility =
+            ReleaseNotesMark.IsUnread(settings.LastSeenReleaseNotes, _releaseNotesIdentity)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         SetLiveText(
             UpdateStatusText,
     updateConfigured
@@ -3299,6 +3308,28 @@ public sealed partial class MainWindow : Window, IDisposable
     private static void SetLiveVisibility(TextBlock region, Visibility visibility) =>
         SetLiveRegion(region, region.Text, visibility);
 
+    /// <summary>What this build's release notes are called, for the unread mark.</summary>
+    private string _releaseNotesIdentity = string.Empty;
+
+    /// <summary>Records that these notes have been read, and takes the mark off.</summary>
+    /// <remarks>
+    /// THE MARK GOES THE MOMENT THE PAGE OPENS, not when the settings write finishes. A dot that
+    /// lingers while a disk write completes reads as a page that did not register the visit, and if
+    /// the write fails the worst outcome is being shown the notes again after a restart - which is
+    /// the harmless direction.
+    /// </remarks>
+    private async Task MarkReleaseNotesSeenAsync()
+    {
+        WhatsNewBadge.Visibility = Visibility.Collapsed;
+        if (!ReleaseNotesMark.IsUnread(_settings.LastSeenReleaseNotes, _releaseNotesIdentity))
+        {
+            return;
+        }
+
+        _settings = _settings with { LastSeenReleaseNotes = _releaseNotesIdentity };
+        await _settingsStore.SaveAsync(_settings).ConfigureAwait(true);
+    }
+
     private void ShowOnboarding(bool show)
     {
         OnboardingView.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
@@ -3326,6 +3357,10 @@ public sealed partial class MainWindow : Window, IDisposable
             AnnounceHistoryOnPageShown();
         }
         WhatsNewPage.Visibility = tag == "whats-new" ? Visibility.Visible : Visibility.Collapsed;
+        if (tag == "whats-new")
+        {
+            _ = MarkReleaseNotesSeenAsync();
+        }
         DictionaryPage.Visibility = tag == "dictionary" ? Visibility.Visible : Visibility.Collapsed;
         SnippetsPage.Visibility = tag == "snippets" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = settingsPage ? Visibility.Visible : Visibility.Collapsed;
