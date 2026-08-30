@@ -1569,6 +1569,9 @@ public sealed partial class MainWindow : Window, IDisposable
         var readBackHeight = 0d;
         var readBackOpacity = 0d;
         var readBackWasAccent = false;
+        var posted = 0;
+        var meterClock = System.Diagnostics.Stopwatch.StartNew();
+        var lastPostedAt = TimeSpan.FromSeconds(-1);
         capture.LevelChanged += OnLevel;
         try
         {
@@ -1627,7 +1630,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 $"maxlit {maximumLit}, litdraws {drawsWithSomethingLit}, " +
                 $"maxheight {maximumAssignedHeight:F1}, " +
                 $"maxactual {maximumActualHeight:F1}, " +
-                $"gen {generation}/{_microphoneTestGeneration}, " +
+                $"gen {generation}/{_microphoneTestGeneration}, posted {posted}, " +
                 $"drawnids {drawnBarIds.Count}, " +
                 $"readback h{readBackHeight:F0} o{readBackOpacity:F2} " +
                 $"accent {(readBackWasAccent ? "yes" : "no")}] " +
@@ -1646,6 +1649,26 @@ public sealed partial class MainWindow : Window, IDisposable
             {
                 maximumNormalized = normalized;
             }
+
+            // ONE POST PER METER FRAME, NOT ONE PER AUDIO PACKET, AND THAT IS THE WHOLE BUG.
+            // Capture reports a level per buffer, about two hundred times a second, and each one
+            // was posting its own callback to the UI thread. Layout and render run on that same
+            // queue, so a flood at that rate keeps it permanently busy: every callback ran, every
+            // property was accepted, and no frame was ever produced. Measured on this machine as
+            // five hundred and ninety-eight draws that assigned height, opacity and brush, against
+            // a camera that recorded no change in any of the three across the whole test.
+            //
+            // FIFTY MILLISECONDS IS THE RATE THE PILL'S RAIL ALREADY USES, for the same reason and
+            // written down in RecordingLevelHistory.SampleInterval. This meter is now on the same
+            // cadence rather than a second answer to the same question.
+            var now = meterClock.Elapsed;
+            if (now - lastPostedAt < RecordingLevelHistory.SampleInterval)
+            {
+                return;
+            }
+
+            lastPostedAt = now;
+            Interlocked.Increment(ref posted);
 
             if (!MicrophoneTestBars.DispatcherQueue.TryEnqueue(() =>
                 {
