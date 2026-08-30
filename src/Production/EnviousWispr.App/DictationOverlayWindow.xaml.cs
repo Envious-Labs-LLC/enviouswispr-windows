@@ -325,7 +325,7 @@ public sealed partial class DictationOverlayWindow : Window
     /// </remarks>
     public void SetAudioLevel(float rootMeanSquare) => Volatile.Write(
         ref _latestLevel,
-        Math.Clamp(MathF.Sqrt(Math.Max(0, rootMeanSquare) * 4f), 0f, 1f));
+        RecordingLevelHistory.Normalize(rootMeanSquare));
 
     private void OnLevelTick()
     {
@@ -594,6 +594,9 @@ public sealed partial class DictationOverlayWindow : Window
     /// </remarks>
     private void HideOverlay()
     {
+        // THE METER STOPS WHEN THE PILL GOES. Hiding jumps straight here, so leaving it running woke
+        // the app twenty times a second for the rest of the session to look at a pill nobody can see.
+        _levelTimer.Stop();
         _hideTimer.Stop();
         _elapsedTimer.Stop();
         _dwell = TimeSpan.Zero;

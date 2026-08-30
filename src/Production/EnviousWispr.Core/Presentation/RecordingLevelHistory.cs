@@ -32,6 +32,22 @@ public sealed class RecordingLevelHistory
     /// </remarks>
     public static readonly TimeSpan SampleInterval = TimeSpan.FromMilliseconds(50);
 
+    /// <summary>Turns a raw root-mean-square into the nought-to-one a bar height is drawn from.</summary>
+    /// <remarks>
+    /// A SQUARE ROOT BECAUSE HEARING IS NOT LINEAR. Ordinary speech sits low in a raw
+    /// root-mean-square, so drawing it directly gives a meter that barely moves until somebody
+    /// shouts.
+    ///
+    /// NOT-A-NUMBER IS SILENCE, AND IT HAS TO BE CAUGHT HERE RATHER THAN LATER. Math.Max and
+    /// Math.Clamp both hand NaN straight back, so a level nobody could measure would pass every
+    /// range check and arrive as an opacity and a height that no layout can draw. Infinity is the
+    /// same problem wearing a different value.
+    /// </remarks>
+    public static float Normalize(float rootMeanSquare) =>
+        float.IsFinite(rootMeanSquare)
+            ? Math.Clamp(MathF.Sqrt(Math.Max(0f, rootMeanSquare) * 4f), 0f, 1f)
+            : 0f;
+
     private readonly float[] _levels = new float[Capacity];
     private TimeSpan? _lastSampleAt;
 

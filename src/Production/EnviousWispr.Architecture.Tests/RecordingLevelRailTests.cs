@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
 namespace EnviousWispr.Architecture.Tests;
@@ -46,20 +47,68 @@ public sealed class RecordingLevelRailTests
     [Fact]
     public void TheRailFitsInsideThePillItIsDrawnOn()
     {
-        // WIDTH WAS CHANGED TO 360 ON A GUESS AND PUT BACK. macOS returns 288 for this design, and
-        // the arithmetic says it always fitted: what a guess costs is the parity number, silently.
+        // WIDTH WAS CHANGED TO 360 ON A GUESS AND PUT BACK, so this does the sum instead of holding
+        // an opinion. The rail is its OWN ROW under the title and timer rather than beside them -
+        // measuring it against the timer's width was arithmetic about a layout that does not exist,
+        // and it happened to pass, which is the worst way for a geometry test to be wrong.
         var bars = LevelBars();
-        var barWidth = bars.Sum(bar => double.Parse(
-            (string?)bar.Attribute("Width") ?? "0", CultureInfo.InvariantCulture));
-        const double spacing = 4;
-        const double timer = 52;
-        const double gap = 8;
-        const double padding = 32;
-        var content = barWidth + spacing * (bars.Count - 1) + timer + gap + padding;
+        var railWidth = bars.Sum(bar => double.Parse(
+            (string?)bar.Attribute("Width") ?? "0", CultureInfo.InvariantCulture))
+            + BarSpacing * (bars.Count - 1);
+        var pillWidth = DeclaredPillWidth();
 
         Assert.True(
-            content <= 288,
-            $"The Level Rail needs {content} but the pill is 288 wide, so the newest bars clip.");
+            railWidth + ContentMargin <= pillWidth,
+            $"The Level Rail needs {railWidth + ContentMargin} but the pill is declared {pillWidth} "
+                + "wide, so the newest bars clip.");
+    }
+
+    [Fact]
+    public void ThePreviewIsTheWidthOfThePillItIsAPictureOf()
+    {
+        // Hardcoding the number let either side shrink while this stayed green. Both are read.
+        Assert.Equal(DeclaredPillWidth(), DeclaredPreviewWidth());
+    }
+
+    /// <summary>The gap between bars, from the token the markup uses.</summary>
+    private const double BarSpacing = 4;
+
+    /// <summary>The overlay content panel's horizontal margin, both sides.</summary>
+    private const double ContentMargin = 32;
+
+    /// <summary>The width the overlay actually resizes the Level Rail pill to.</summary>
+    private static double DeclaredPillWidth()
+    {
+        var overlay = File.ReadAllText(Path.Combine(
+            RepositoryRoot(), "src", "Production", "EnviousWispr.App", "DictationOverlayWindow.xaml.cs"));
+        var match = Regex.Match(
+            overlay,
+            @"case RecordingPillDesign\.LevelRail:\s*Resize\((?<width>\d+),",
+            RegexOptions.Singleline);
+        Assert.True(
+            match.Success,
+            "The overlay no longer resizes the Level Rail to a literal width, so this test is "
+                + "measuring against nothing.");
+        return double.Parse(match.Groups["width"].Value, CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>The width of the capsule drawn on the Appearance page for this design.</summary>
+    private static double DeclaredPreviewWidth()
+    {
+        var markup = XDocument.Load(Path.Combine(
+            RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var card = markup.Descendants().FirstOrDefault(element =>
+            (string?)element.Attribute(XName.Get("Name", XamlNamespace)) == "LevelRailPillButton");
+        Assert.True(card is not null, "LevelRailPillButton was not found in MainWindow.xaml.");
+
+        var capsule = card!.Descendants()
+            .FirstOrDefault(element => element.Name.LocalName == "Border"
+                && element.Attribute("CornerRadius") is not null
+                && element.Attribute("Width") is not null);
+        Assert.True(capsule is not null, "The Level Rail preview draws no capsule to measure.");
+        return double.Parse(
+            (string?)capsule!.Attribute("Width") ?? "0",
+            CultureInfo.InvariantCulture);
     }
 
     private static List<XElement> LevelBars()

@@ -1206,7 +1206,11 @@ public partial class App : Application, IAsyncDisposable
 
     private void OnAudioLevelChanged(object? sender, AudioLevel level)
     {
-        _window?.DispatcherQueue.TryEnqueue(() => _window?.SetAudioLevel(level));
+        // STRAIGHT THROUGH, ON THE CAPTURE'S OWN THREAD. This arrives once per audio buffer, roughly
+        // two hundred times a second, and SetAudioLevel only records a number - so posting each one
+        // to the UI thread did that scheduling work for a value the meter's own timer would ask for
+        // when it was ready. Every UI touch stays inside that tick.
+        _window?.SetAudioLevel(level);
     }
 
     private void ConfigurePolish(PolishPreferences preferences)
