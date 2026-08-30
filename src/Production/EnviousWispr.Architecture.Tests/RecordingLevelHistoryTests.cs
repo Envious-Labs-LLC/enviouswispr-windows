@@ -191,4 +191,34 @@ public sealed class RecordingLevelHistoryTests
                 $"Level {index} normalised to {steps[index]}, barely above {steps[index - 1]}.");
         }
     }
+
+    /// <summary>A poller running at half the interval keeps the history accepting samples.</summary>
+    /// <remarks>
+    /// THE PILL'S RAIL WAS DEAD FOR EXACTLY THIS REASON AND NOTHING CAUGHT IT. Its DispatcherTimer
+    /// was set to the sample interval, putting two clocks in series at the same period, and this
+    /// gate rejects anything arriving early. Windows quantises timer callbacks to about 15.625
+    /// milliseconds, so a fifty millisecond timer fires at 46.9 - reliably early, every single tick
+    /// - and the rail drew its first sample and then never again. The timer now polls at half the
+    /// interval so this gate is the single pacer, and that pairing is what this holds.
+    /// </remarks>
+    [Fact]
+    public void HalfIntervalPollingCannotPhaseLockTheHistoryGate()
+    {
+        var history = new RecordingLevelHistory();
+        var poll = RecordingLevelHistory.SampleInterval / 2;
+        var accepted = 0;
+
+        // Twenty polls, and deliberately a shade early on every one, which is what a quantised
+        // timer actually does. An equal-period timer accepts one of these and then nothing.
+        for (var tick = 1; tick <= 20; tick++)
+        {
+            var now = (poll * tick) - TimeSpan.FromMilliseconds(3);
+            if (history.Sample(0.5f, now))
+            {
+                accepted++;
+            }
+        }
+
+        Assert.True(accepted >= 9, $"expected about ten accepted samples, got {accepted}");
+    }
 }
