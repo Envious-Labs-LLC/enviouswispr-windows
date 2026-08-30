@@ -64,6 +64,39 @@ public sealed class RecordingLevelRailTests
     }
 
     [Fact]
+    public void TheMeterSitsBesideTheTimerOnBothThePillAndItsPicture()
+    {
+        // THE PAGE DESCRIBED A PILL THE APP DID NOT BUILD. The preview drew the meter alongside the
+        // timer under a caption saying "beside the timer", and the real pill drew it on its own row
+        // underneath. Somebody choosing this design got a different shape from the one they picked.
+        Assert.True(
+            TimerAndRailAreSiblings(
+                XDocument.Load(Path.Combine(RepositoryRoot(), "src", "Production",
+                    "EnviousWispr.App", "DictationOverlayWindow.xaml"))),
+            "The recording pill draws its level meter somewhere other than beside the timer.");
+
+        Assert.True(
+            TimerAndRailAreSiblings(
+                XDocument.Load(Path.Combine(RepositoryRoot(), "src", "Production",
+                    "EnviousWispr.App", "MainWindow.xaml"))),
+            "The Level Rail preview draws its meter somewhere other than beside the timer.");
+    }
+
+    /// <summary>Whether a timer and a bar strip share one row container in this markup.</summary>
+    private static bool TimerAndRailAreSiblings(XDocument markup) => markup
+        .Descendants()
+        .Any(container =>
+        {
+            var children = container.Elements().ToArray();
+            var hasRail = children.Any(child => child.Name.LocalName == "StackPanel"
+                && (string?)child.Attribute("Orientation") == "Horizontal"
+                && child.Elements().Count(bar => bar.Name.LocalName == "Border") > 1);
+            var hasTimer = children.Any(child => child.Name.LocalName == "TextBlock"
+                && (string?)child.Attribute("FontFamily") == "Consolas");
+            return hasRail && hasTimer;
+        });
+
+    [Fact]
     public void ThePreviewIsTheWidthOfThePillItIsAPictureOf()
     {
         // Hardcoding the number let either side shrink while this stayed green. Both are read.
