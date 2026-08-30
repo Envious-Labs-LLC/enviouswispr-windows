@@ -18,7 +18,7 @@ public sealed record AppSettings(
     /// </remarks>
     string? LastSeenReleaseNotes = null)
 {
-    public const int CurrentSchemaVersion = 11;
+    public const int CurrentSchemaVersion = 12;
 
     public static AppSettings Default { get; } = new(
         CurrentSchemaVersion,

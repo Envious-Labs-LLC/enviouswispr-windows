@@ -163,6 +163,9 @@ public sealed partial class MainWindow : Window, IDisposable
     ];
 
     private readonly ISettingsStore _settingsStore;
+
+    /// <summary>Serialises every settings write this window makes.</summary>
+    private readonly SemaphoreSlim _settingsGate = new(1, 1);
     private readonly IPortableProfileService _profileService;
     private readonly IHistoryStore _historyStore;
     private readonly IApiKeyStore _apiKeyStore;
@@ -324,10 +327,8 @@ public sealed partial class MainWindow : Window, IDisposable
         // the current one is the whole rule: a fresh install has stored nothing, so the notes are
         // new to them, which is true; an update changes the string, so the mark comes back.
         _releaseNotesIdentity = BuildInfoText.Text;
-        WhatsNewBadge.Visibility =
-            ReleaseNotesMark.IsUnread(settings.LastSeenReleaseNotes, _releaseNotesIdentity)
-                ? Visibility.Visible
-                : Visibility.Collapsed;
+        ShowReleaseNotesMark(
+            ReleaseNotesMark.IsUnread(settings.LastSeenReleaseNotes, _releaseNotesIdentity));
         SetLiveText(
             UpdateStatusText,
     updateConfigured
@@ -1015,30 +1016,26 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private async Task PersistAppearanceChoicesAsync()
     {
-        var next = _settings with
-        {
-            Preferences = _settings.Preferences with
+        // DERIVED INSIDE THE GATE, so a save that overlaps another writer builds on what is actually
+        // stored rather than on a snapshot taken before the wait.
+        await UpdateSettingsAsync(
+            current => current with
             {
-                Theme = ThemeFromIndex(SelectedIndexOf(ThemeChoices)),
-                OverlayPosition = OverlayPositionFromIndex(SelectedIndexOf(OverlayPositionChoices)),
+                Preferences = current.Preferences with
+                {
+                    Theme = ThemeFromIndex(SelectedIndexOf(ThemeChoices)),
+                    OverlayPosition = OverlayPositionFromIndex(SelectedIndexOf(OverlayPositionChoices)),
+                },
             },
-        };
-
-        try
-        {
-            await _settingsStore.SaveAsync(next).ConfigureAwait(true);
-            _settings = next;
-            SettingsChanged?.Invoke(next);
-        }
-        catch (Exception exception) when (
-            exception is ArgumentException or IOException or UnauthorizedAccessException)
-        {
-            ShowMessage(
-                "That choice was not kept",
-                "It is applied for now, but the app will start with your previous appearance until "
-                    + "settings can be written again.",
-                InfoBarSeverity.Warning);
-        }
+            _ =>
+            {
+                ShowMessage(
+                    "That choice was not kept",
+                    "It is applied for now, but the app will start with your previous appearance until "
+                        + "settings can be written again.",
+                    InfoBarSeverity.Warning);
+                return Task.CompletedTask;
+            }).ConfigureAwait(true);
     }
 
     private void LivePreviewToggle_Toggled(object sender, RoutedEventArgs e)
@@ -2921,8 +2918,56 @@ public sealed partial class MainWindow : Window, IDisposable
         emptyState.Visibility = itemCount == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    /// <summary>One at a time, and each change derived from what is actually stored.</summary>
+    /// <remarks>
+    /// EVERY WRITER HERE BUILT ITS RECORD FIRST AND SAVED SECOND, so two of them overlapping wrote
+    /// two different whole-settings snapshots and whichever finished last won - silently discarding
+    /// the other person's change. Saving atomically does not help: each save was atomic and still
+    /// complete, so it replaced everything the other had just written.
+    ///
+    /// THE FIX IS TO DERIVE INSIDE THE GATE, NOT TO PASS A RECORD ACROSS IT. A snapshot built before
+    /// the wait is stale by the time the wait ends, and writing it back is exactly the loss this
+    /// prevents. Callers hand over a function of the CURRENT settings instead.
+    /// </remarks>
+    private async Task<bool> UpdateSettingsAsync(
+        Func<AppSettings, AppSettings> change,
+        Func<Exception, Task>? onFailure = null)
+    {
+        await _settingsGate.WaitAsync().ConfigureAwait(true);
+        try
+        {
+            var next = change(_settings);
+            await _settingsStore.SaveAsync(next).ConfigureAwait(true);
+            _settings = next;
+            SettingsChanged?.Invoke(next);
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            if (onFailure is not null)
+            {
+                await onFailure(exception).ConfigureAwait(true);
+            }
+
+            return false;
+        }
+        finally
+        {
+            _settingsGate.Release();
+        }
+    }
+
+    /// <summary>Saves a whole settings record, through the gate that serialises every writer.</summary>
+    /// <remarks>
+    /// THE RECORD IS STILL BUILT BY THE CALLER HERE, and that is a narrower risk than it looks: these
+    /// callers replace the WHOLE settings deliberately - a profile import, a reset - so deriving from
+    /// the current value would defeat what they are for. The gate still stops two of them, or one of
+    /// them and a field-level change, from interleaving.
+    /// </remarks>
     private async Task<bool> TrySaveAsync(AppSettings next, string title, string message)
     {
+        await _settingsGate.WaitAsync().ConfigureAwait(true);
         try
         {
             await _settingsStore.SaveAsync(next).ConfigureAwait(true);
@@ -2943,6 +2988,11 @@ public sealed partial class MainWindow : Window, IDisposable
         catch (UnauthorizedAccessException)
         {
             ShowMessage("Windows blocked settings storage", "Your previous settings remain active.", InfoBarSeverity.Error);
+        }
+
+        finally
+        {
+            _settingsGate.Release();
         }
 
         return false;
@@ -3311,6 +3361,21 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>What this build's release notes are called, for the unread mark.</summary>
     private string _releaseNotesIdentity = string.Empty;
 
+    /// <summary>Shows or hides the unread mark, and says so to a screen reader.</summary>
+    /// <remarks>
+    /// THE ANNOUNCEMENT GOES ON THE NAVIGATION ITEM, NOT ON THE BADGE. An InfoBadge has no standalone
+    /// screen-reader presence, so a name set on it is read by nobody - the mark was visible and
+    /// silent. Microsoft's own guidance is to put the status on the parent, which is also where it
+    /// belongs: what has news is the destination, not the dot.
+    /// </remarks>
+    private void ShowReleaseNotesMark(bool unread)
+    {
+        WhatsNewBadge.Visibility = unread ? Visibility.Visible : Visibility.Collapsed;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(
+            WhatsNewNavItem,
+            unread ? "New release notes you have not read" : string.Empty);
+    }
+
     /// <summary>Records that these notes have been read, and takes the mark off.</summary>
     /// <remarks>
     /// THE MARK GOES THE MOMENT THE PAGE OPENS, not when the settings write finishes. A dot that
@@ -3320,14 +3385,16 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private async Task MarkReleaseNotesSeenAsync()
     {
-        WhatsNewBadge.Visibility = Visibility.Collapsed;
+        ShowReleaseNotesMark(false);
         if (!ReleaseNotesMark.IsUnread(_settings.LastSeenReleaseNotes, _releaseNotesIdentity))
         {
             return;
         }
 
-        _settings = _settings with { LastSeenReleaseNotes = _releaseNotesIdentity };
-        await _settingsStore.SaveAsync(_settings).ConfigureAwait(true);
+        await UpdateSettingsAsync(current => current with
+        {
+            LastSeenReleaseNotes = _releaseNotesIdentity,
+        }).ConfigureAwait(true);
     }
 
     private void ShowOnboarding(bool show)

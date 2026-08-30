@@ -365,7 +365,7 @@
                         what the mark has to say is only "there is something here you have not seen".
                         It uses the platform's own InfoBadge so it sits where Windows puts unread
                         marks everywhere else, rather than being a shape this app invented.
-                    --><NavigationViewItem.InfoBadge><InfoBadge x:Name="WhatsNewBadge" AutomationProperties.Name="New release notes you have not read" Visibility="Collapsed" /></NavigationViewItem.InfoBadge></NavigationViewItem>
+                    --><NavigationViewItem.InfoBadge><InfoBadge x:Name="WhatsNewBadge" Visibility="Collapsed" /></NavigationViewItem.InfoBadge></NavigationViewItem>
                     <NavigationViewItem x:Name="AppearanceNavItem" AccessKey="T" Content="Appearance" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-appearance"><NavigationViewItem.Icon><FontIcon Glyph="&#xE790;" /></NavigationViewItem.Icon></NavigationViewItem>
                     <NavigationViewItemHeader Content="Record" ContentTemplate="{StaticResource BrandNavigationGroupHeaderTemplate}" />
                     <NavigationViewItem x:Name="TranscriptionNavItem" Content="Transcription" FocusVisualPrimaryBrush="{ThemeResource BrandOnAccentBrush}" FocusVisualSecondaryBrush="{ThemeResource BrandTextPrimaryBrush}" Tag="settings-transcription"><NavigationViewItem.Icon><FontIcon Glyph="&#xE8BD;" /></NavigationViewItem.Icon></NavigationViewItem>
