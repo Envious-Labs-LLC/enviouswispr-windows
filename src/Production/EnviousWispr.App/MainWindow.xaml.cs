@@ -592,6 +592,14 @@ public sealed partial class MainWindow : Window, IDisposable
         SessionStatusChanged?.Invoke(status);
         var overlayState = status.State;
         HandleRecordingSoundTransition(overlayState);
+        if (overlayState == DictationOverlayState.Recording)
+        {
+            // A DICTATION OUTRANKS A TEST, ALWAYS. Somebody who presses their record key wants to
+            // dictate, and a test still holding the device would either fail their recording or be
+            // failed by it.
+            CancelMicrophoneTest();
+        }
+
         _currentOverlayState = overlayState;
         PreviewRecordingSoundButton.IsEnabled = overlayState != DictationOverlayState.Recording;
         SetSpeedCheckAvailability(overlayState != DictationOverlayState.Recording);
@@ -1452,6 +1460,19 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private bool _microphoneTestRunning;
 
+    /// <summary>Cancels a microphone test that a recording, a page change or shutdown has overtaken.</summary>
+    private CancellationTokenSource? _microphoneTest;
+
+    /// <summary>Which test a queued meter update belongs to.</summary>
+    /// <remarks>
+    /// AN UPDATE ALREADY ON THE QUEUE OUTLIVES THE UNSUBSCRIBE. Removing the handler stops new ones
+    /// being posted and does nothing about the ones already waiting, so a late update could relight
+    /// the meter after the test had finished and cleared it, or during the next one. A generation
+    /// read inside the callback is the only thing that can refuse a message that is already in
+    /// flight.
+    /// </remarks>
+    private int _microphoneTestGeneration;
+
     /// <summary>Opens the microphone for a moment and shows what actually arrives.</summary>
     /// <remarks>
     /// THIS IS THE PAGE WHERE SOMEBODY CONFIRMS THEIR MICROPHONE WORKS, AND IT COULD NOT TELL THEM.
@@ -1472,25 +1493,59 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
+        // A TEST AND A DICTATION MUST NOT BOTH OPEN THE MICROPHONE. The button guard only stopped a
+        // second press; nothing stopped somebody pressing the record key while a test held the
+        // device. Refusing here and cancelling from the other side is the pair that closes it.
+        if (_currentOverlayState == DictationOverlayState.Recording)
+        {
+            SetLiveText(
+                MicrophoneTestResultText,
+                "A recording is running. Finish it, then test the microphone.");
+            return;
+        }
+
         _microphoneTestRunning = true;
+        _microphoneTestGeneration++;
+        using var cancellation = new CancellationTokenSource();
+        _microphoneTest = cancellation;
         MicrophoneTestButton.IsEnabled = false;
         try
         {
-            await RunMicrophoneTestAsync().ConfigureAwait(true);
+            await RunMicrophoneTestAsync(cancellation.Token).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            SetLiveText(MicrophoneTestResultText, "Microphone test stopped.");
         }
         finally
         {
+            _microphoneTest = null;
             _microphoneTestRunning = false;
+            _microphoneTestGeneration++;
             MicrophoneTestButton.IsEnabled = true;
             DrawMicrophoneTestLevel(0f);
         }
     }
 
-    private async Task RunMicrophoneTestAsync()
+    /// <summary>Stops a microphone test, because something with a better claim wants the device.</summary>
+    private void CancelMicrophoneTest()
+    {
+        try
+        {
+            _microphoneTest?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The test finished between the read and the call, which is the outcome asked for.
+        }
+    }
+
+    private async Task RunMicrophoneTestAsync(CancellationToken cancellationToken)
     {
         SetLiveText(MicrophoneTestResultText, "Listening. Say a few words.");
         await using var capture = new WasapiAudioCapture();
-        capture.LevelChanged += OnMicrophoneTestLevel;
+        var generation = _microphoneTestGeneration;
+        capture.LevelChanged += OnLevel;
         try
         {
             var started = await capture
@@ -1509,8 +1564,21 @@ public sealed partial class MainWindow : Window, IDisposable
                 return;
             }
 
-            await Task.Delay(MicrophoneTestDuration).ConfigureAwait(true);
-            await capture.StopAsync().ConfigureAwait(true);
+            await Task.Delay(MicrophoneTestDuration, cancellationToken).ConfigureAwait(true);
+            var captured = await capture.StopAsync(CancellationToken.None).ConfigureAwait(true);
+
+            // WHAT THE STOP SAID, BEFORE WHAT THE PACKETS SAID. A device that vanished after one loud
+            // packet leaves counts that read as healthy, so throwing away the outcome let an
+            // interrupted test report a working microphone.
+            if (captured.Outcome != AudioCaptureOutcome.Completed)
+            {
+                SetLiveText(
+                    MicrophoneTestResultText,
+                    "The microphone stopped part way through the test. It may have been unplugged, "
+                        + "or taken by another app.");
+                return;
+            }
+
             // THE ROOT-MEAN-SQUARE, NOT THE PEAK, because that is the number the recording meter is
             // driven from. A verdict read off the peak could call a microphone healthy while the
             // meter it is meant to explain sits flat.
@@ -1521,13 +1589,20 @@ public sealed partial class MainWindow : Window, IDisposable
         }
         finally
         {
-            capture.LevelChanged -= OnMicrophoneTestLevel;
+            capture.LevelChanged -= OnLevel;
         }
-    }
 
-    private void OnMicrophoneTestLevel(object? sender, AudioLevel level) =>
-        MicrophoneTestBars.DispatcherQueue.TryEnqueue(() =>
-            DrawMicrophoneTestLevel(RecordingLevelHistory.Normalize(level.RootMeanSquare)));
+        void OnLevel(object? sender, AudioLevel level) =>
+            MicrophoneTestBars.DispatcherQueue.TryEnqueue(() =>
+            {
+                if (generation != _microphoneTestGeneration)
+                {
+                    return;
+                }
+
+                DrawMicrophoneTestLevel(RecordingLevelHistory.Normalize(level.RootMeanSquare));
+            });
+    }
 
     /// <summary>Lights the bars up to the level, so the row reads as a meter rather than a chart.</summary>
     private void DrawMicrophoneTestLevel(float level)
