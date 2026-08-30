@@ -2447,21 +2447,36 @@ public sealed partial class MainWindow : Window, IDisposable
             MicrophoneComboBox.SelectedItem = selected;
             var defaultDevice = devices.FirstOrDefault(device => device.IsDefault) ??
                 (devices.Count == 0 ? null : devices[0]);
-            var status = defaultDevice is null
-                ? "No active recording device found. Windows microphone privacy or device settings may need attention."
-                : $"{defaultDevice.DisplayName} is available.";
-            MicrophoneReadinessText.Text = status;
-            OnboardingMicrophoneText.Text = status;
+            ApplyMicrophoneReadiness(MicrophoneReadinessReport.For(
+                WindowsMicrophoneConsent.Read(),
+                defaultDevice?.DisplayName));
         }
         catch
         {
             _microphones = [new MicrophoneChoice(null, "Use the Windows default microphone")];
             MicrophoneComboBox.ItemsSource = _microphones;
             MicrophoneComboBox.SelectedIndex = 0;
-            const string status = "Windows could not enumerate microphones. Settings remain available and dictation will fail safely.";
-            MicrophoneReadinessText.Text = status;
-            OnboardingMicrophoneText.Text = status;
+            ApplyMicrophoneReadiness(MicrophoneReadinessReport.For(
+                MicrophoneConsent.Unknown,
+                defaultDeviceName: null,
+                enumerationFailed: true));
         }
+    }
+
+    /// <summary>Puts one microphone verdict on both places that report it.</summary>
+    /// <remarks>
+    /// THE BUTTON APPEARS ONLY WHERE IT WOULD HELP. Offering "open microphone privacy settings"
+    /// beside a working microphone is noise, and offering it beside a missing one sends somebody to
+    /// a page that will tell them everything is fine.
+    /// </remarks>
+    private void ApplyMicrophoneReadiness(MicrophoneReadiness readiness)
+    {
+        SetLiveText(MicrophoneReadinessText, readiness.Sentence);
+        OnboardingMicrophoneText.Text = readiness.Sentence;
+        MicrophonePrivacyFixButton.Visibility = readiness.OffersPrivacySettings
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        OnboardingMicrophonePrivacyButton.Visibility = MicrophonePrivacyFixButton.Visibility;
     }
 
     private void OnAudioDevicesChanged(object? sender, AudioDeviceChange change)
