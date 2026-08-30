@@ -1129,7 +1129,7 @@ public sealed partial class DesignSystemTokenTests
     /// <remarks>
     /// SEPARATED FROM THE FACT SO THE FACT CAN BE PROVEN. Walking the app tree, this returns
     /// nothing, and a gate that has only ever returned nothing has never demonstrated it can
-    /// return anything. <c>DetectsEveryShapeOfSentenceToAppearance</c> feeds it each shape that
+    /// return anything. <c>DetectsKnownShapesOfSentenceToAppearance</c> feeds it each shape that
     /// has actually walked past a draft of this gate and requires a hit for every one.
     /// </remarks>
     private static List<string> SentenceToAppearanceOffenders(string fileName, string text)
@@ -1144,12 +1144,18 @@ public sealed partial class DesignSystemTokenTests
 
         foreach (Match match in MemberTakingASentence().Matches(text))
         {
-            // The return type is whatever precedes the member's name. Reading the PREVIOUS line as
-            // well is what catches a declaration whose return type sits on its own line, which is
-            // ordinary formatting for a long generic type.
+            // The return type is whatever precedes the member's name, and it sometimes sits on the
+            // line ABOVE, which is ordinary formatting for a long generic type. Reading that line
+            // UNCONDITIONALLY accuses innocent code: a member whose predecessor happens to return a
+            // status, or whose preceding line is a comment naming one, is not itself of this shape.
+            // The previous line is read only when the current line holds nothing but indentation,
+            // which is exactly the wrapped-return case and nothing else.
             var lineStart = text.LastIndexOf('\n', match.Index) + 1;
-            var previousStart = lineStart > 1 ? text.LastIndexOf('\n', lineStart - 2) + 1 : 0;
-            var declaration = text[previousStart..match.Index];
+            var onThisLine = text[lineStart..match.Index];
+            var declarationStart = string.IsNullOrWhiteSpace(onThisLine) && lineStart > 1
+                ? text.LastIndexOf('\n', lineStart - 2) + 1
+                : lineStart;
+            var declaration = text[declarationStart..match.Index];
             if (names.Any(name => declaration.Contains(name, StringComparison.Ordinal)))
             {
                 offenders.Add($"{fileName}: {(declaration + match.Value).Trim().Replace("\n", " ")}");
@@ -1167,7 +1173,7 @@ public sealed partial class DesignSystemTokenTests
     }
 
     /// <summary>
-    /// The gate above can see every shape that has ever walked past one of its drafts.
+    /// The gate above can see every shape that has so far walked past one of its drafts.
     /// </summary>
     /// <remarks>
     /// A GATE THAT PASSES ON ITS FIRST RUN IS UNPROVEN, and this one passes by finding nothing in a
@@ -1178,7 +1184,7 @@ public sealed partial class DesignSystemTokenTests
     /// flagged, because a gate that accuses ordinary code gets deleted.
     /// </remarks>
     [Fact]
-    public void DetectsEveryShapeOfSentenceToAppearance()
+    public void DetectsKnownShapesOfSentenceToAppearance()
     {
         Assert.NotEmpty(SentenceToAppearanceOffenders(
             "Plain.cs", "    private static DictationStatus Read(string sentence) => default;"));
@@ -1196,8 +1202,22 @@ public sealed partial class DesignSystemTokenTests
         Assert.NotEmpty(SentenceToAppearanceOffenders(
             "Delegated.cs", "    private Func<string, DictationStatus> _read = _ => default;"));
 
+        Assert.NotEmpty(SentenceToAppearanceOffenders(
+            "Indexed.cs",
+            "    private DictationStatus this[string sentence] =>\n"
+                + "        DictationStatus.Warning(sentence);"));
+
         Assert.Empty(SentenceToAppearanceOffenders(
             "Innocent.cs", "    private static string Trim(string sentence) => sentence.Trim();"));
+
+        // THE NEIGHBOUR CASE. Reading the previous line unconditionally accused this pair, because
+        // Normalize's two-line slice reached back into the method above it and found the type name
+        // there. A gate that accuses ordinary adjacent methods gets switched off.
+        Assert.Empty(SentenceToAppearanceOffenders(
+            "Neighbours.cs",
+            "    private static DictationStatus ExistingStatus() =>\n"
+                + "        DictationStatus.Quiet(\"Ready\");\n"
+                + "    private static string Normalize(string sentence) => sentence.Trim();"));
     }
 
     /// <summary>
@@ -1336,7 +1356,9 @@ public sealed partial class DesignSystemTokenTests
     /// where its outcome is known. This stops the shape reappearing in the forms it has actually
     /// taken, and says plainly which forms it would miss.
     /// </remarks>
-    [GeneratedRegex(@"\b\w+\s*(?:<[^>()]*>)?\s*\([^)]*\b(?:string|String)\b[^)]*\)")]
+    [GeneratedRegex(
+        @"(?:\b\w+\s*(?:<[^>()]*>)?\s*\([^)]*\b(?:string|String)\b[^)]*\)"
+            + @"|\bthis\s*\[[^\]]*\b(?:string|String)\b[^\]]*\])")]
     private static partial Regex MemberTakingASentence();
 
     /// <summary>A using alias for one of the types this gate is about.</summary>
