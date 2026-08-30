@@ -2615,13 +2615,50 @@ public sealed partial class DesignSystemTokenTests
         // THE PICKER'S OWN SELECTED VALUE, taken as it is. Nothing is looked up from a position, so
         // there is no order for this file and the markup to disagree about.
         var fallback = arguments!.Value[2].Expression as BinaryExpressionSyntax;
-        var taken = (fallback?.Left as BinaryExpressionSyntax)?.Left as MemberAccessExpressionSyntax;
+        var cast = fallback?.Left as BinaryExpressionSyntax;
+        var taken = cast?.Left as MemberAccessExpressionSyntax;
         Assert.True(
             fallback?.IsKind(SyntaxKind.CoalesceExpression) == true &&
-                (fallback.Left as BinaryExpressionSyntax)?.IsKind(SyntaxKind.AsExpression) == true &&
+                cast?.IsKind(SyntaxKind.AsExpression) == true &&
                 taken?.Name.Identifier.Text == "SelectedValue" &&
                 (taken.Expression as IdentifierNameSyntax)?.Identifier.Text == picker,
             $"A word is not built from {picker}.SelectedValue, so the picker on screen decides nothing.");
+
+        // AND WHAT IT FALLS BACK TO WHEN NOTHING IS CHOSEN IS PART OF THE PROMISE. A fallback of
+        // Strict would read as an ordinary line and would quietly correct less of what everyone
+        // says. Both the type asked for and the value fallen back to are read as symbols.
+        var strictness = compilation.GetTypeByMetadataName(typeof(MatchStrictness).FullName!);
+        Assert.True(
+            strictness is { TypeKind: not TypeKind.Error },
+            $"{typeof(MatchStrictness).FullName} did not resolve, so this gate would have checked nothing.");
+        Assert.True(
+            SymbolEqualityComparer.Default.Equals(
+                (model2.GetTypeInfo(cast!.Right).Type as INamedTypeSymbol)?.TypeArguments.FirstOrDefault(),
+                strictness),
+            $"A word's strictness is not read as a {nameof(MatchStrictness)}, so anything the picker "
+                + "holds would be taken.");
+
+        // AND THE PICKER IS PUT BACK BY NAME TOO. A reset to position zero is the same coupling
+        // wearing the word "default" as a coincidence rather than as a choice.
+        var resets = trees
+            .SelectMany(tree => tree.GetRoot().DescendantNodes().OfType<AssignmentExpressionSyntax>())
+            .Where(assignment => assignment.Left is MemberAccessExpressionSyntax member
+                && (member.Expression as IdentifierNameSyntax)?.Identifier.Text == picker)
+            .ToArray();
+        Assert.True(resets.Length > 0, $"Nothing ever puts {picker} back, so a choice sticks to the next word.");
+        Assert.True(
+            resets.All(assignment =>
+                (assignment.Left as MemberAccessExpressionSyntax)!.Name.Identifier.Text == "SelectedValue"),
+            $"{picker} is put back by position rather than by value, so reordering its choices changes "
+                + "what everyone starts on.");
+
+        var fell = model2.GetSymbolInfo(fallback!.Right).Symbol;
+        Assert.True(
+            fell is IFieldSymbol field &&
+                SymbolEqualityComparer.Default.Equals(field.ContainingType, strictness) &&
+                field.Name == nameof(MatchStrictness.Default),
+            $"A word with nothing chosen does not fall back to {nameof(MatchStrictness)}."
+                + $"{nameof(MatchStrictness.Default)}.");
     }
 
     /// <summary>
@@ -2650,29 +2687,61 @@ public sealed partial class DesignSystemTokenTests
         Assert.True(box is not null, "The strictness picker is not in the markup.");
         Assert.Equal("Tag", (string?)box!.Attribute("SelectedValuePath"));
 
+        Assert.True(
+            box.Attribute("SelectedIndex") is null,
+            "The picker starts on a POSITION, so reordering its choices silently changes what everyone "
+                + "gets. It should start on a value by name.");
+
+        // THE VALUE HAS TO BE IN THE TAG, WHICH IS THE ONLY PLACE SelectedValuePath READS. An enum
+        // written anywhere else under the item - a resource, say - looks correct beside a Tag="Loose"
+        // attribute that is a STRING, and every selection then falls through to the ordinary rule
+        // while this file appears to say otherwise.
+        var settings = XNamespace.Get("using:EnviousWispr.Core.Settings");
         var choices = box.Elements().Where(child => child.Name.LocalName == "ComboBoxItem").ToArray();
-        var offered = choices
-            .Select(choice => choice.Descendants()
-                .FirstOrDefault(node => node.Name.LocalName == nameof(MatchStrictness))?.Value.Trim())
-            .ToArray();
-
-        Assert.Equal(
-            Enum.GetNames<MatchStrictness>().OrderBy(name => name, StringComparer.Ordinal),
-            offered.OrderBy(name => name, StringComparer.Ordinal));
-
+        var offered = new List<(string Value, string Label)>();
         foreach (var choice in choices)
         {
-            var value = choice.Descendants()
-                .First(node => node.Name.LocalName == nameof(MatchStrictness)).Value.Trim();
+            Assert.True(
+                choice.Attribute("Tag") is null,
+                "A choice carries its Tag as an attribute, which makes it a string rather than a "
+                    + $"{nameof(MatchStrictness)}, so what it is worth is not what it says.");
+
+            var tag = choice.Elements()
+                .Where(child => child.Name.LocalName == "ComboBoxItem.Tag")
+                .ToArray();
+            Assert.True(tag.Length == 1, $"A choice has {tag.Length} tags, and exactly one is its value.");
+
+            var held = tag[0].Elements().ToArray();
+            Assert.True(
+                held.Length == 1 && held[0].Name == settings + nameof(MatchStrictness),
+                $"A choice's tag does not hold exactly one {nameof(MatchStrictness)}.");
+
+            Assert.True(
+                choice.Descendants().Count(node => node.Name == settings + nameof(MatchStrictness)) == 1,
+                $"A choice mentions {nameof(MatchStrictness)} somewhere other than its tag, which is "
+                    + "the only place the picker reads.");
+
             var label = choice.Descendants()
                 .Where(node => node.Name.LocalName == "TextBlock")
                 .Select(node => (string?)node.Attribute("Text"))
                 .FirstOrDefault(text => !string.IsNullOrWhiteSpace(text));
-
             Assert.True(
-                label?.StartsWith(value, StringComparison.Ordinal) == true,
-                $"The choice worth {value} reads \"{label}\", so the words on screen are not the rule applied.");
+                label is not null,
+                $"The choice worth {held[0].Value.Trim()} shows no words, so nobody can tell what it does.");
+
+            offered.Add((held[0].Value.Trim(), label!));
         }
+
+        // THE WHOLE SENTENCE, NOT ITS FIRST WORD. "Loose: correct it only when exact" begins with the
+        // right word and describes the opposite rule.
+        Assert.Equal(
+            new[]
+            {
+                (nameof(MatchStrictness.Default), "Default: the balance every word had before"),
+                (nameof(MatchStrictness.Loose), "Loose: correct it even when what I said was some way off"),
+                (nameof(MatchStrictness.Strict), "Strict: correct it only when I said it almost exactly"),
+            }.OrderBy(pair => pair.Item1, StringComparer.Ordinal),
+            offered.Select(pair => (pair.Value, pair.Label)).OrderBy(pair => pair.Item1, StringComparer.Ordinal));
     }
 
     private static string Where(SyntaxNode node) =>
