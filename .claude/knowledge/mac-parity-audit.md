@@ -275,12 +275,26 @@ Re-swept against the tree rather than read off the tables above, because four of
 |---|---|
 | ~~Capture, streaming and auto-stop lines joined to their dictation~~ | **CLOSED 2026-08-29.** Every flow that serves a dictation opens the scope for itself, and the paths that arrive on their own Windows callbacks - lock, suspend, device change, teardown - open one from the controller. Six review rounds, each naming one more unscoped line, ended when the last was answered by scoping the PATH rather than the line. |
 | Auto-stop's recogniser | Behaviour ships; macOS uses a NEURAL detector and this hears a slammed door as speech. Needs a model, which is closer to ordinary work than to a decision. |
-| The streaming JOIN's quality | The head start feeds the final transcript; whether the seam matches macOS's is unaudited, and the seam is where a duplicated or dropped word would appear. |
+| ~~The streaming JOIN's quality~~ | **AUDITED 2026-08-29, NO GAP.** The seam is safe by CONSTRUCTION rather than by repair. `_streamedThroughSample` only ever advances to a `StreamingCommitPlanner` commit, and the planner refuses to end a commit anywhere but in silence and never commits the last segment - a segment at the end of the audio so far is indistinguishable from the first half of a word still being said. So the final split between head start and tail falls in silence, and no word can straddle it. `StreamingTranscriptAccumulator` then handles the one thing that IS a seam artefact: a recogniser handed the middle of a sentence capitalises its first word, so that word is lowered unless it is a name, an acronym or "I". |
 | Import from a rival app's own format, and bulk edit | The last two custom-words rows. |
 
 **THE SHAPE OF WHAT IS LEFT IS THE POINT.** Five of the remaining items need somebody at the machine and
 three need a product decision. A session that can only reach the machine over SSH cannot close them by
 writing more code, and writing more code around them is how the unverified pile grows.
+
+## FACT: a-claimed-uncertainty-is-worth-closing-before-it-becomes-a-rebuild
+The streaming seam was recorded as "unaudited" on the morning of 2026-08-29 and closed the same day by
+reading two files. It cost five minutes and it removes a row that, left standing, is exactly the shape
+that gets rebuilt: an uncertainty about a shipping path reads as a defect to the next person, and the
+cheapest way to resolve a suspected defect looks like reimplementing it.
+
+**The seam was not merely acceptable, it was designed.** The planner's own remarks name the failure it
+avoids - committing the last segment, which "is the single most tempting mistake here and it is the one
+that corrupts words". Nothing about that is visible from the parity table; it is visible from the code
+in about a page.
+
+Same lesson as the four stale rows above, arriving from the other direction: **the table's uncertainty
+is as expensive as its errors.** Both resolve by reading.
 
 ## PROC: how-this-was-taken
 Two sweeps per capability from `src/Production`, the second using the CAPABILITY's synonyms rather than
