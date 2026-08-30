@@ -1114,20 +1114,8 @@ public sealed partial class DesignSystemTokenTests
         var offenders = new List<string>();
         foreach (var file in ProductionSourceFiles(app))
         {
-            var text = File.ReadAllText(file);
-            foreach (Match match in MemberTakingASentence().Matches(text))
-            {
-                // Everything on the line before the member's name is its return type, whatever
-                // shape that type is written in. Asking whether it MENTIONS the type is what makes
-                // the check independent of the spelling.
-                var declaration = text[(text.LastIndexOf('\n', match.Index) + 1)..match.Index];
-                if (declaration.Contains("DictationStatus", StringComparison.Ordinal) ||
-                    declaration.Contains("DictationOverlayState", StringComparison.Ordinal))
-                {
-                    offenders.Add(
-                        $"{Path.GetFileName(file)}: {(declaration + match.Value).Trim()}");
-                }
-            }
+            offenders.AddRange(
+                SentenceToAppearanceOffenders(Path.GetFileName(file), File.ReadAllText(file)));
         }
 
         Assert.True(
@@ -1135,6 +1123,81 @@ public sealed partial class DesignSystemTokenTests
             "These members are handed a sentence and hand back a pill, which is the shape the "
                 + "appearance-from-text defect always takes. Build the status where the outcome is "
                 + "known and pass DictationStatus through instead: " + string.Join(", ", offenders));
+    }
+
+    /// <summary>Finds members in one file that turn a sentence into a pill appearance.</summary>
+    /// <remarks>
+    /// SEPARATED FROM THE FACT SO THE FACT CAN BE PROVEN. Walking the app tree, this returns
+    /// nothing, and a gate that has only ever returned nothing has never demonstrated it can
+    /// return anything. <c>DetectsEveryShapeOfSentenceToAppearance</c> feeds it each shape that
+    /// has actually walked past a draft of this gate and requires a hit for every one.
+    /// </remarks>
+    private static List<string> SentenceToAppearanceOffenders(string fileName, string text)
+    {
+        var offenders = new List<string>();
+
+        // A `using` alias renames the type for this file, so the names to look for are not fixed.
+        // Every alias FOR one of them counts as one of them; a gate that only knows the real names
+        // is closed by one line at the top of a file.
+        var names = new List<string> { "DictationStatus", "DictationOverlayState" };
+        names.AddRange(AliasRegex().Matches(text).Select(match => match.Groups[1].Value));
+
+        foreach (Match match in MemberTakingASentence().Matches(text))
+        {
+            // The return type is whatever precedes the member's name. Reading the PREVIOUS line as
+            // well is what catches a declaration whose return type sits on its own line, which is
+            // ordinary formatting for a long generic type.
+            var lineStart = text.LastIndexOf('\n', match.Index) + 1;
+            var previousStart = lineStart > 1 ? text.LastIndexOf('\n', lineStart - 2) + 1 : 0;
+            var declaration = text[previousStart..match.Index];
+            if (names.Any(name => declaration.Contains(name, StringComparison.Ordinal)))
+            {
+                offenders.Add($"{fileName}: {(declaration + match.Value).Trim().Replace("\n", " ")}");
+            }
+        }
+
+        // A delegate FIELD is a member of no kind the pattern above recognises, and it is the
+        // shape somebody reaches for when a method has just been refused.
+        foreach (Match match in SentenceToStatusDelegateRegex().Matches(text))
+        {
+            offenders.Add($"{fileName}: {match.Value.Trim()}");
+        }
+
+        return offenders;
+    }
+
+    /// <summary>
+    /// The gate above can see every shape that has ever walked past one of its drafts.
+    /// </summary>
+    /// <remarks>
+    /// A GATE THAT PASSES ON ITS FIRST RUN IS UNPROVEN, and this one passes by finding nothing in a
+    /// clean tree, which is exactly what a gate that can find nothing at all also does. Each case
+    /// here is a real bypass: the plain method, the return type spelled through an alias, the type
+    /// on its own line above the name, and the delegate field. The last case is the control - a
+    /// member that takes a sentence and returns a sentence is not this defect and must not be
+    /// flagged, because a gate that accuses ordinary code gets deleted.
+    /// </remarks>
+    [Fact]
+    public void DetectsEveryShapeOfSentenceToAppearance()
+    {
+        Assert.NotEmpty(SentenceToAppearanceOffenders(
+            "Plain.cs", "    private static DictationStatus Read(string sentence) => default;"));
+
+        Assert.NotEmpty(SentenceToAppearanceOffenders(
+            "Aliased.cs",
+            "using Pill = EnviousWispr.Core.Presentation.DictationStatus;\n\n"
+                + "    private static Pill Read(string sentence) => default;"));
+
+        Assert.NotEmpty(SentenceToAppearanceOffenders(
+            "Wrapped.cs",
+            "    private static IReadOnlyList<DictationOverlayState>\n"
+                + "        Read(string sentence) => [];"));
+
+        Assert.NotEmpty(SentenceToAppearanceOffenders(
+            "Delegated.cs", "    private Func<string, DictationStatus> _read = _ => default;"));
+
+        Assert.Empty(SentenceToAppearanceOffenders(
+            "Innocent.cs", "    private static string Trim(string sentence) => sentence.Trim();"));
     }
 
     /// <summary>
@@ -1275,6 +1338,19 @@ public sealed partial class DesignSystemTokenTests
     /// </remarks>
     [GeneratedRegex(@"\b\w+\s*(?:<[^>()]*>)?\s*\([^)]*\b(?:string|String)\b[^)]*\)")]
     private static partial Regex MemberTakingASentence();
+
+    /// <summary>A using alias for one of the types this gate is about.</summary>
+    [GeneratedRegex(@"using\s+(\w+)\s*=\s*[\w.]*(?:DictationStatus|DictationOverlayState)\s*;")]
+    private static partial Regex AliasRegex();
+
+    /// <summary>A delegate that takes a sentence and hands back a status.</summary>
+    /// <remarks>
+    /// NOT A MEMBER DECLARATION, WHICH IS WHY THE OTHER PATTERN CANNOT SEE IT. A
+    /// `Func&lt;string, DictationStatus&gt;` field or local does exactly what the refused method
+    /// does and is the obvious next thing to write once the method is refused.
+    /// </remarks>
+    [GeneratedRegex(@"Func\s*<\s*(?:string|String)\s*,\s*[\w.<>?\[\]]*(?:DictationStatus|DictationOverlayState)[\w<>?\[\]]*\s*>")]
+    private static partial Regex SentenceToStatusDelegateRegex();
 
     /// <summary>A name the compiler agrees is a DictationStatus: member, parameter, or local.</summary>
     [GeneratedRegex(@"\bDictationStatus\??\s+(\w+)\s*(?:\(|=|\)|,|;)")]
