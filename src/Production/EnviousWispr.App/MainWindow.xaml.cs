@@ -1383,7 +1383,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 data => new ReusableUserData(
                     data.CustomWords
                         .Where(entry => !string.Equals(entry.SpokenForm, spokenForm, StringComparison.OrdinalIgnoreCase))
-                        .Append(new CustomWordEntry(spokenForm, replacement))
+                        .Append(new CustomWordEntry(spokenForm, replacement, SelectedMatchStrictness()))
                         .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
                         .ToArray(),
                     data.Snippets),
@@ -1394,6 +1394,8 @@ public sealed partial class MainWindow : Window, IDisposable
             // the one thing they could do about the failure disappears along with the failure.
             return;
         }
+
+        ResetMatchStrictness();
 
         var accepted = SuggestedAliasesPanel.Children
             .OfType<Button>()
@@ -1415,15 +1417,6 @@ public sealed partial class MainWindow : Window, IDisposable
         var spoken = SpokenFormBox.Text.Trim();
         var replacement = ReplacementBox.Text.Trim();
 
-        // THE PICKER'S ORDER IS THE ENUM'S ORDER, and that is worth one line to state rather than
-        // leaving as a coincidence two files apart. A choice nobody has made reads as -1, which is
-        // the ordinary rule.
-        var strictness = WordStrictnessComboBox.SelectedIndex switch
-        {
-            1 => MatchStrictness.Loose,
-            2 => MatchStrictness.Strict,
-            _ => MatchStrictness.Default,
-        };
         if (string.IsNullOrWhiteSpace(spoken) || string.IsNullOrWhiteSpace(replacement))
         {
             ShowMessage("Both fields are required", "Enter the spoken form and the exact replacement.", InfoBarSeverity.Warning);
@@ -1436,7 +1429,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 data => new ReusableUserData(
                     data.CustomWords
                         .Where(entry => !string.Equals(entry.SpokenForm, spoken, StringComparison.OrdinalIgnoreCase))
-                        .Append(new CustomWordEntry(spoken, replacement, strictness))
+                        .Append(new CustomWordEntry(spoken, replacement, SelectedMatchStrictness()))
                         .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
                         .ToArray(),
                     data.Snippets),
@@ -1447,12 +1440,33 @@ public sealed partial class MainWindow : Window, IDisposable
 
         SpokenFormBox.Text = string.Empty;
         ReplacementBox.Text = string.Empty;
-
-        // AND THE CHOICE GOES BACK TO ORDINARY WITH THEM. A picker that keeps its last answer means
-        // the second word somebody adds is silently strict because the first one was, and the only
-        // sign of it is a column they have no reason to be watching.
-        WordStrictnessComboBox.SelectedIndex = 0;
+        ResetMatchStrictness();
     }
+
+    /// <summary>What the "How closely it must match" picker is currently set to.</summary>
+    /// <remarks>
+    /// ONE READER, BECAUSE THERE ARE TWO WAYS TO ADD A WORD. Suggested mishearings are added by
+    /// their own path, and reading the picker only in the typed one meant a person could set Loose,
+    /// press a suggestion, and get a word under the ordinary rule with the picker still saying
+    /// Loose in front of them.
+    ///
+    /// THE PICKER'S ORDER IS THE ENUM'S ORDER, which is worth stating rather than leaving as a
+    /// coincidence two files apart. A choice nobody has made reads as -1, which is the ordinary rule.
+    /// </remarks>
+    private MatchStrictness SelectedMatchStrictness() => WordStrictnessComboBox.SelectedIndex switch
+    {
+        1 => MatchStrictness.Loose,
+        2 => MatchStrictness.Strict,
+        _ => MatchStrictness.Default,
+    };
+
+    /// <summary>Puts the picker back to the ordinary rule after a word is saved.</summary>
+    /// <remarks>
+    /// A picker that keeps its last answer means the second word somebody adds is silently strict
+    /// because the first one was, and the only sign of it is a column they have no reason to be
+    /// watching.
+    /// </remarks>
+    private void ResetMatchStrictness() => WordStrictnessComboBox.SelectedIndex = 0;
 
     /// <summary>Selects every word, or clears the selection when they are all already chosen.</summary>
     /// <remarks>

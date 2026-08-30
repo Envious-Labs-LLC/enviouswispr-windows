@@ -95,7 +95,12 @@ public static class AppSettingsValidator
             !string.IsNullOrWhiteSpace(entry.SpokenForm) &&
             entry.SpokenForm.Length <= 256 &&
             !string.IsNullOrWhiteSpace(entry.Replacement) &&
-            entry.Replacement.Length <= 256) &&
+            entry.Replacement.Length <= 256 &&
+            // A NUMBER NOBODY DEFINED IS NOT A CHOICE. An enum will hold any integer the file
+            // contains, so "strictness": 99 loads, behaves as the ordinary rule and is exported as
+            // "default" - a file that changed meaning on the way through and said nothing. Refusing
+            // it makes the file visibly wrong instead.
+            Enum.IsDefined(entry.Strictness)) &&
         userData.Snippets.All(entry =>
             entry is not null &&
             !string.IsNullOrWhiteSpace(entry.Name) &&

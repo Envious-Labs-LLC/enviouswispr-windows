@@ -1,3 +1,4 @@
+using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.PostProcessing;
 
@@ -81,9 +82,10 @@ public sealed class CustomWordStrictnessTests
         ]);
 
         var lines = written.Split(Environment.NewLine);
-        Assert.Equal("envy wisper,EnviousWispr,default", lines[0]);
-        Assert.Equal("Stenhouse,Stenhouse,loose", lines[1]);
-        Assert.Equal("Magnusson,Magnusson,strict", lines[2]);
+        Assert.Equal(CustomWordImport.Header, lines[0]);
+        Assert.Equal("envy wisper,EnviousWispr,default", lines[1]);
+        Assert.Equal("Stenhouse,Stenhouse,loose", lines[2]);
+        Assert.Equal("Magnusson,Magnusson,strict", lines[3]);
     }
 
     [Fact]
@@ -115,10 +117,12 @@ public sealed class CustomWordStrictnessTests
     {
         // Reading "strickt" as the ordinary rule would correct that word MORE widely than the file
         // asked for, and say nothing about having done so.
-        var plan = CustomWordImport.Read("Magnusson,Magnusson,strickt", []);
+        var plan = CustomWordImport.Read($"{CustomWordImport.Header}\nMagnusson,Magnusson,strickt", []);
 
         Assert.Empty(plan.Additions);
-        Assert.Equal(ImportedWordOutcome.Unreadable, Assert.Single(plan.Lines).Outcome);
+        Assert.Equal(
+            ImportedWordOutcome.Unreadable,
+            Assert.Single(plan.Lines, line => line.Outcome != ImportedWordOutcome.Ignored).Outcome);
     }
 
     [Fact]
@@ -126,7 +130,7 @@ public sealed class CustomWordStrictnessTests
     {
         var existing = new CustomWordEntry("Magnusson", "Magnusson");
 
-        var plan = CustomWordImport.Read("Magnusson,Magnusson,strict", [existing]);
+        var plan = CustomWordImport.Read($"{CustomWordImport.Header}\nMagnusson,Magnusson,strict", [existing]);
 
         Assert.Empty(plan.Additions);
         var conflict = Assert.Single(plan.Conflicts);
@@ -137,7 +141,7 @@ public sealed class CustomWordStrictnessTests
     public void TakingAConflictTakesTheRuleWithTheSpelling()
     {
         CustomWordEntry[] existing = [new("Magnusson", "Magnuson")];
-        var plan = CustomWordImport.Read("Magnusson,Magnusson,strict", existing);
+        var plan = CustomWordImport.Read($"{CustomWordImport.Header}\nMagnusson,Magnusson,strict", existing);
 
         var taken = CustomWordImport.Merge(existing, plan.Conflicts);
 
@@ -158,5 +162,114 @@ public sealed class CustomWordStrictnessTests
         Assert.Equal(
             "Magnusson becomes Magnusson, matched strictly",
             new CustomWordEntry("Magnusson", "Magnusson", MatchStrictness.Strict).ToString());
+    }
+
+    [Fact]
+    public void AFileWithNoHeaderCannotHaveOneOfItsLinesReinterpreted()
+    {
+        // "say,hello,strict" was refused before this column existed. Reading it now as "hello"
+        // matched strictly would be a decision made for somebody who may well have been writing a
+        // replacement with a comma in it, on a line that never worked either way.
+        var plan = CustomWordImport.Read("say,hello,strict", []);
+
+        Assert.Empty(plan.Additions);
+        Assert.Equal(ImportedWordOutcome.Unreadable, Assert.Single(plan.Lines).Outcome);
+    }
+
+    [Fact]
+    public void AHeaderFoundHalfwayDownDoesNotReachTheLinesAboveIt()
+    {
+        var plan = CustomWordImport.Read($"say,hello,strict\n{CustomWordImport.Header}", []);
+
+        Assert.Empty(plan.Additions);
+        Assert.Contains(plan.Lines, line => line.Outcome == ImportedWordOutcome.Unreadable);
+    }
+
+    [Fact]
+    public void AThirdFieldSomebodyEmptiedIsRefusedRatherThanReadAsOrdinary()
+    {
+        var plan = CustomWordImport.Read($"{CustomWordImport.Header}\nMagnusson,Magnusson,", []);
+
+        Assert.Empty(plan.Additions);
+        Assert.Contains(plan.Lines, line => line.Outcome == ImportedWordOutcome.Unreadable);
+    }
+
+    [Fact]
+    public void AStrictWordDoesNotStandInFrontOfALooseOneThatWouldHaveMatched()
+    {
+        // "magnuson" is 0.889 from Magnusson, which is below the strict bar of 0.915, and 0.778 from
+        // Magnesson, which is above the loose bar of 0.715. Ranking by score before checking each
+        // bar let the strict word - which was never going to be corrected - decide the outcome for
+        // the loose one.
+        var result = CustomWordCorrector.Correct(
+            "ask magnuson to sign it",
+            [
+                new CustomWordEntry("Magnusson", "Magnusson", MatchStrictness.Strict),
+                new CustomWordEntry("Magnesson", "Magnesson", MatchStrictness.Loose),
+            ]);
+
+        Assert.Equal("ask Magnesson to sign it", result.Text);
+        Assert.Equal(1, result.ReplacementCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AWordTwoRowsDisagreeAboutIsLeftAloneWhicheverRowComesFirst(bool reversed)
+    {
+        CustomWordEntry[] words =
+        [
+            new("zebracode", "Alpha"),
+            new("zebracode", "Beta"),
+        ];
+        if (reversed)
+        {
+            words = [words[1], words[0]];
+        }
+
+        var result = CustomWordCorrector.Correct("the zebracode is ready", words);
+
+        Assert.Equal("the zebracode is ready", result.Text);
+        Assert.Equal(0, result.ReplacementCount);
+    }
+
+    [Fact]
+    public void OneRowOnItsOwnStillCorrectsTheWordTheTwoDisagreedAbout()
+    {
+        var result = CustomWordCorrector.Correct(
+            "the zebracode is ready",
+            [new CustomWordEntry("zebracode", "Alpha")]);
+
+        Assert.Equal("the Alpha is ready", result.Text);
+    }
+
+    [Fact]
+    public void TwoRowsThatAgreeOnTheWordAndNotOnTheRuleTakeTheStricterOne()
+    {
+        // Both rows write Magnusson, so there is nothing ambiguous about the outcome - only about
+        // how much of what somebody said to change. Changing less is the answer that cannot
+        // surprise them.
+        var result = CustomWordCorrector.Correct(
+            "ask magnuson to sign it",
+            [
+                new CustomWordEntry("Magnusson", "Magnusson", MatchStrictness.Loose),
+                new CustomWordEntry("Magnusson", "Magnusson", MatchStrictness.Strict),
+            ]);
+
+        Assert.Equal("ask magnuson to sign it", result.Text);
+        Assert.Equal(0, result.ReplacementCount);
+    }
+
+    [Fact]
+    public void ASettingsFileCarryingAStrictnessNobodyDefinedIsRefused()
+    {
+        var settings = AppSettings.Default with
+        {
+            UserData = new ReusableUserData(
+                [new CustomWordEntry("envy wisper", "EnviousWispr", (MatchStrictness)99)],
+                []),
+        };
+
+        Assert.NotNull(AppSettingsValidator.Validate(settings, AppErrorStage.SettingsLoad));
     }
 }
