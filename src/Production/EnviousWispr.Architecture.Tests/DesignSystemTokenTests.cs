@@ -2638,20 +2638,6 @@ public sealed partial class DesignSystemTokenTests
             $"A word's strictness is not read as a {nameof(MatchStrictness)}, so anything the picker "
                 + "holds would be taken.");
 
-        // AND THE PICKER IS PUT BACK BY NAME TOO. A reset to position zero is the same coupling
-        // wearing the word "default" as a coincidence rather than as a choice.
-        var resets = trees
-            .SelectMany(tree => tree.GetRoot().DescendantNodes().OfType<AssignmentExpressionSyntax>())
-            .Where(assignment => assignment.Left is MemberAccessExpressionSyntax member
-                && (member.Expression as IdentifierNameSyntax)?.Identifier.Text == picker)
-            .ToArray();
-        Assert.True(resets.Length > 0, $"Nothing ever puts {picker} back, so a choice sticks to the next word.");
-        Assert.True(
-            resets.All(assignment =>
-                (assignment.Left as MemberAccessExpressionSyntax)!.Name.Identifier.Text == "SelectedValue"),
-            $"{picker} is put back by position rather than by value, so reordering its choices changes "
-                + "what everyone starts on.");
-
         var fell = model2.GetSymbolInfo(fallback!.Right).Symbol;
         Assert.True(
             fell is IFieldSymbol field &&
@@ -2687,10 +2673,19 @@ public sealed partial class DesignSystemTokenTests
         Assert.True(box is not null, "The strictness picker is not in the markup.");
         Assert.Equal("Tag", (string?)box!.Attribute("SelectedValuePath"));
 
+        // NEITHER FORM OF IT. An attribute and a property element are the same setting written two
+        // ways, and a rule that knows only one of them is a rule with a spelling for a loophole.
         Assert.True(
-            box.Attribute("SelectedIndex") is null,
+            box.Attribute("SelectedIndex") is null &&
+                !box.Elements().Any(child => child.Name.LocalName == "ComboBox.SelectedIndex"),
             "The picker starts on a POSITION, so reordering its choices silently changes what everyone "
                 + "gets. It should start on a value by name.");
+
+        Assert.True(
+            box.Attribute("ItemsSource") is null &&
+                !box.Elements().Any(child => child.Name.LocalName == "ComboBox.ItemsSource"),
+            "The picker is filled from somewhere else, so the choices checked below are not the choices "
+                + "a person sees.");
 
         // THE VALUE HAS TO BE IN THE TAG, WHICH IS THE ONLY PLACE SelectedValuePath READS. An enum
         // written anywhere else under the item - a resource, say - looks correct beside a Tag="Loose"
@@ -2721,13 +2716,25 @@ public sealed partial class DesignSystemTokenTests
                 $"A choice mentions {nameof(MatchStrictness)} somewhere other than its tag, which is "
                     + "the only place the picker reads.");
 
-            var label = choice.Descendants()
-                .Where(node => node.Name.LocalName == "TextBlock")
-                .Select(node => (string?)node.Attribute("Text"))
-                .FirstOrDefault(text => !string.IsNullOrWhiteSpace(text));
+            // ONE LABEL, AND ITS WORDS WRITTEN HERE. Reading the FIRST label meant a second one
+            // beside it could say anything; an x:Uid means the words on screen come from a resource
+            // file this gate never opens, so the sentence pinned below would be checked against text
+            // nobody ever sees.
             Assert.True(
-                label is not null,
-                $"The choice worth {held[0].Value.Trim()} shows no words, so nobody can tell what it does.");
+                choice.Descendants().All(node => node.Attribute(xaml + "Uid") is null),
+                $"A choice carries an x:Uid, so its words are replaced at run time and what is written "
+                    + "here is not what anybody reads.");
+
+            var labels = choice.Descendants().Where(node => node.Name.LocalName == "TextBlock").ToArray();
+            Assert.True(
+                labels.Length == 1,
+                $"A choice shows {labels.Length} pieces of text, and exactly one of them is what it means.");
+
+            var label = (string?)labels[0].Attribute("Text");
+            Assert.True(
+                !string.IsNullOrWhiteSpace(label),
+                $"The choice worth {held[0].Value.Trim()} shows no words written here, so nobody can tell "
+                    + "what it does from this file.");
 
             offered.Add((held[0].Value.Trim(), label!));
         }
@@ -2743,6 +2750,103 @@ public sealed partial class DesignSystemTokenTests
             }.OrderBy(pair => pair.Item1, StringComparer.Ordinal),
             offered.Select(pair => (pair.Value, pair.Label)).OrderBy(pair => pair.Item1, StringComparer.Ordinal));
     }
+
+    /// <summary>
+    /// The strictness picker starts on the ordinary rule, and nothing replaces what it offers.
+    /// </summary>
+    /// <remarks>
+    /// THE MARKUP CAN ONLY PROMISE WHAT THE CODE DOES NOT UNDO. Three choices carrying their own
+    /// values are worth nothing if the window fills the picker from a list built in C#, points it at
+    /// a position, or is simply never told where to start - and each of those is a single ordinary
+    /// line that reads as housekeeping.
+    ///
+    /// THE BANNED WRITES ARE NAMED, RATHER THAN EVERY OTHER WRITE BEING FORBIDDEN. An earlier version
+    /// required every assignment to this control to target SelectedValue, which would have refused a
+    /// perfectly reasonable IsEnabled and still missed the same write made through "this.".
+    /// </remarks>
+    [Fact]
+    public void TheStrictnessPickerStartsOnTheOrdinaryRuleAndNothingReplacesItsChoices()
+    {
+        const string picker = "WordStrictnessComboBox";
+        const string reset = "ResetMatchStrictness";
+        string[] banned = ["SelectedIndex", "SelectedItem", "ItemsSource", "SelectedValuePath"];
+
+        var window = Path.Combine(
+            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs");
+        var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(window), path: window);
+        var root = tree.GetRoot();
+
+        var constructor = root.DescendantNodes().OfType<ConstructorDeclarationSyntax>()
+            .FirstOrDefault(one => one.Body is not null &&
+                Calls(one.Body, "InitializeComponent") is not null);
+        Assert.True(constructor is not null, "The window has no constructor that builds its own controls.");
+
+        var built = Calls(constructor!.Body!, "InitializeComponent")!;
+        var started = Calls(constructor.Body!, reset);
+        Assert.True(
+            started is not null && started.SpanStart > built.SpanStart,
+            $"The window never calls {reset} after building its controls, so the picker starts on "
+                + "whatever the markup happened to leave selected.");
+
+        var resetBody = root.DescendantNodes().OfType<MethodDeclarationSyntax>()
+            .FirstOrDefault(method => method.Identifier.Text == reset);
+        Assert.True(resetBody is not null, $"{reset} is not in the window.");
+
+        var assigned = resetBody!.DescendantNodes().OfType<AssignmentExpressionSyntax>().ToArray();
+        Assert.True(assigned.Length == 1, $"{reset} makes {assigned.Length} changes, and exactly one is its job.");
+        Assert.True(
+            (assigned[0].Left as MemberAccessExpressionSyntax)?.Name.Identifier.Text == "SelectedValue",
+            $"{reset} puts the picker back by something other than its value.");
+        Assert.Equal(
+            $"{nameof(MatchStrictness)}.{nameof(MatchStrictness.Default)}",
+            assigned[0].Right.ToString());
+
+        // BARE OR THROUGH "this.", because the same write spelled two ways is one write.
+        var writes = root.DescendantNodes().OfType<AssignmentExpressionSyntax>()
+            .Select(assignment => assignment.Left as MemberAccessExpressionSyntax)
+            .Where(member => member is not null && Receiver(member) == picker)
+            .Where(member => banned.Contains(member!.Name.Identifier.Text, StringComparer.Ordinal))
+            .Select(member => $"{member!.Name.Identifier.Text} at line " +
+                $"{member.GetLocation().GetLineSpan().StartLinePosition.Line + 1}")
+            .ToArray();
+        Assert.True(
+            writes.Length == 0,
+            $"{picker} is written to in a way that replaces or reorders what it offers: "
+                + string.Join(", ", writes));
+
+        var bound = root.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Select(call => call.Expression as MemberAccessExpressionSyntax)
+            .Where(member => member is not null && Receiver(member) == picker)
+            .Where(member => member!.Name.Identifier.Text is "SetBinding" or "SetValue")
+            .Select(member => $"line {member!.GetLocation().GetLineSpan().StartLinePosition.Line + 1}")
+            .ToArray();
+        Assert.True(
+            bound.Length == 0,
+            $"{picker} is bound or set through the property system, which the markup gate cannot see: "
+                + string.Join(", ", bound));
+
+        Assert.True(
+            !root.ToString().Contains($"{picker}.Items.", StringComparison.Ordinal),
+            $"{picker}.Items is changed in code, so the choices a person sees are not the ones in the markup.");
+    }
+
+    /// <summary>The call to a named method inside a block, or null if it is not there.</summary>
+    private static InvocationExpressionSyntax? Calls(SyntaxNode body, string name) =>
+        body.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .FirstOrDefault(call => call.Expression switch
+            {
+                IdentifierNameSyntax identifier => identifier.Identifier.Text == name,
+                MemberAccessExpressionSyntax member => member.Name.Identifier.Text == name,
+                _ => false,
+            });
+
+    /// <summary>The control a member access is reading, whether or not it says "this".</summary>
+    private static string? Receiver(MemberAccessExpressionSyntax? member) => member?.Expression switch
+    {
+        IdentifierNameSyntax identifier => identifier.Identifier.Text,
+        MemberAccessExpressionSyntax { Expression: ThisExpressionSyntax } inner => inner.Name.Identifier.Text,
+        _ => null,
+    };
 
     private static string Where(SyntaxNode node) =>
         $"{Path.GetFileName(node.SyntaxTree.FilePath)} " +
