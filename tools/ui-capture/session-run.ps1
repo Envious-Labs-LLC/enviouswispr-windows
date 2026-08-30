@@ -30,6 +30,7 @@ if (-not (Test-Path $OutputDirectory)) { New-Item -ItemType Directory -Path $Out
 $log = Join-Path $OutputDirectory "$Shot.log"
 $pidFile = Join-Path $OutputDirectory "$Shot.pid"
 $marker = Join-Path $OutputDirectory "$Shot.ok"
+$failMarker = Join-Path $OutputDirectory "$Shot.fail"
 $final = Join-Path $OutputDirectory "$Shot.png"
 $staging = Join-Path $OutputDirectory "$Shot.png.partial"
 
@@ -85,6 +86,7 @@ public static class UiCaptureWindows {
 
 $app = $null
 $captured = $false
+$failure = $null
 try {
     # THE DPI CHECK IS INSIDE THE TRY, AND THE LOG ALREADY EXISTS. Thrown from the top of the file it
     # happened before there was anywhere to write it, and outside any catch - so the launcher simply
@@ -148,7 +150,8 @@ Add-Type -Namespace UiCapture -Name Dpi -MemberDefinition @'
     $captured = $true
     Note "captured $final"
 } catch {
-    Note "FAILED: $($_.Exception.Message)"
+    $failure = $_.Exception.Message
+    Note "FAILED: $failure"
     throw
 } finally {
     Remove-Item -LiteralPath $staging -ErrorAction SilentlyContinue
@@ -167,8 +170,20 @@ Add-Type -Namespace UiCapture -Name Dpi -MemberDefinition @'
     # app was closed, it told the launcher to tidy up - and the launcher's Stop-ScheduledTask killed
     # this script mid-shutdown, so the polite close never ran and the app was force-killed anyway.
     # A success signal that cancels the work it is signalling is worse than no signal.
+    # EITHER WAY, A MARKER, AND BOTH ARE WRITTEN AFTER THE APP HAS GONE. Only success was ever
+    # signalled, so a failed run said nothing and the launcher sat out its full ninety seconds before
+    # reporting a timeout - even when the runner had known the real reason within a second. Signalling
+    # from the catch instead would let the launcher stop the task before this cleanup finished, which
+    # is the race that made the polite shutdown never happen.
     if ($captured) {
         Remove-Item -LiteralPath $pidFile -ErrorAction SilentlyContinue
         Set-Content -LiteralPath $marker -Value "captured"
+    } else {
+        # WRITTEN THE LONG WAY ON PURPOSE. These scripts are launched by powershell.exe, which is
+        # Windows PowerShell 5.1, and the null-coalescing operator arrived in PowerShell 7. Using it
+        # here did not fail at that line - it stopped the whole file parsing, so no marker of either
+        # kind was written and the failure surfaced as the ninety-second timeout this change removes.
+        $reason = if ($failure) { $failure } else { "the run ended without capturing" }
+        Set-Content -LiteralPath $failMarker -Value $reason
     }
 }
