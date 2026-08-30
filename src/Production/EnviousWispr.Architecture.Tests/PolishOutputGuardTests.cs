@@ -369,4 +369,38 @@ public sealed class PolishOutputGuardTests
         Assert.Equal(PolishOutputVerdict.Accepted, review.Verdict);
         Assert.StartsWith("Sure,", review.Text, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void SurelyIsNotSomebodySayingSure()
+    {
+        // A prefix test read "Surely" as the word "Sure", which is a different word and a different
+        // meaning, so a model's acknowledgement survived on the strength of somebody else's adverb.
+        var review = PolishOutputGuard.Review(
+            "surely we should ship the Windows build this week",
+            "Sure, here is the polished transcript:\n\nSurely we should ship the Windows build.");
+
+        Assert.Equal("Surely we should ship the Windows build.", review.Text);
+    }
+
+    [Fact]
+    public void SharingAnOpeningWordDoesNotSaveAModelsHeading()
+    {
+        // "here we agreed" and "Here is the polished transcript:" both begin with "here", and
+        // comparing only that word let the chatter through.
+        var review = PolishOutputGuard.Review(
+            "here we agreed on Tuesday that the build ships this week",
+            "Here is the polished transcript:\n\nHere we agreed on Tuesday that the build ships.");
+
+        Assert.Equal("Here we agreed on Tuesday that the build ships.", review.Text);
+    }
+
+    [Fact]
+    public void ADictatedHeadingIsKeptEvenWhenItIsNotTheFirstThingSaid()
+    {
+        // Comparing position zero lost a heading somebody dictated after one other word.
+        const string said = "okay here is the plan we launch on Tuesday and review on Thursday";
+        const string wrote = "Here is the plan:\n\nWe launch on Tuesday and review on Thursday.";
+
+        Assert.Equal(wrote, PolishOutputGuard.Review(said, wrote).Text);
+    }
 }
