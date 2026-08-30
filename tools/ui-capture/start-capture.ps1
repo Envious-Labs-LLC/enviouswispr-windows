@@ -61,7 +61,8 @@ $shotPath = Join-Path $OutputDirectory "$Shot.png"
 $logPath = Join-Path $OutputDirectory "$Shot.log"
 $markerPath = Join-Path $OutputDirectory "$Shot.ok"
 $pidPath = Join-Path $OutputDirectory "$Shot.pid"
-Remove-Item -LiteralPath $shotPath, $logPath, $markerPath, $pidPath -ErrorAction SilentlyContinue
+$failPath = Join-Path $OutputDirectory "$Shot.fail"
+Remove-Item -LiteralPath $shotPath, $logPath, $markerPath, $pidPath, $failPath -ErrorAction SilentlyContinue
 
 # A NAME NOBODY ELSE OWNS. A fixed name plus -Force replaces whatever task already had it, and the
 # unregister at the end would then delete a task this script never created - including a concurrent
@@ -97,8 +98,12 @@ try {
     # powershell.exe exits, which happens whether the capture succeeded, threw, or never found a
     # desktop; and a PNG exists even when it is a photograph of an empty desktop. The runner writes
     # the marker last, only after it saw the app on screen.
+    # EITHER MARKER ENDS THE WAIT. Watching only for success meant a run that had already failed,
+    # and knew why within a second, still cost the full timeout before reporting one.
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath $markerPath)) {
+    while ((Get-Date) -lt $deadline -and
+           -not (Test-Path -LiteralPath $markerPath) -and
+           -not (Test-Path -LiteralPath $failPath)) {
         Start-Sleep -Milliseconds 500
     }
 } catch {
@@ -159,6 +164,11 @@ try {
 }
 
 if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath | ForEach-Object { "   $_" } }
+
+if (Test-Path -LiteralPath $failPath) {
+    $reason = (Get-Content -LiteralPath $failPath -Raw -ErrorAction SilentlyContinue).Trim()
+    throw "The capture failed in the desktop session: $reason"
+}
 
 if (-not $runFailure -and -not (Test-Path -LiteralPath $markerPath)) {
     throw "No capture was confirmed within $TimeoutSeconds seconds. The log above, if any, says how far it got. A PNG may exist and must not be trusted: the marker is written only after the app was seen on screen. Nobody logged in means no desktop to photograph."
