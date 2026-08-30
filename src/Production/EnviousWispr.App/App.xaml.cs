@@ -903,6 +903,43 @@ public partial class App : Application, IAsyncDisposable
         });
     }
 
+    /// <summary>Writes one line per deterministic stage, so a skipped step is visible.</summary>
+    /// <remarks>
+    /// SPLIT IN TWO CALLS AROUND THE OPTIONAL POLISH. The summary line says only that the pass
+    /// finished and what it cost, so a pass that skipped all five stages and one that did five jobs
+    /// quickly are the same record - and "do custom words work" is exactly the question that
+    /// difference answers. An empty custom-word list makes correction vanish with no trace.
+    ///
+    /// EmojiRestoration is the one stage that runs on the far side of polish, where
+    /// <c>ApplyPolishedTextAsync</c> replaces its receipt. Reporting it early recorded Skipped and
+    /// hid a later failure; reporting everything late put older lines after newer ones in a file
+    /// that is appended to and read oldest-first. Each half is written when it is true.
+    /// </remarks>
+    private void EmitStageReceipts(
+        IReadOnlyList<DeterministicStageReceipt> receipts,
+        bool emojiRestorationOnly)
+    {
+        foreach (var receipt in receipts)
+        {
+            if ((receipt.Stage == DeterministicTextStage.EmojiRestoration) != emojiRestorationOnly)
+            {
+                continue;
+            }
+
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DeterministicStageObserved,
+                receipt.Status is DeterministicStageStatus.Failed
+                    or DeterministicStageStatus.TimedOut
+                    ? AppFailureCategory.PostProcessing
+                    : AppFailureCategory.None,
+                receipt.ElapsedMilliseconds,
+                Stage: receipt.Stage,
+                StageStatus: receipt.Status,
+                Changed: receipt.Changed));
+        }
+    }
+
     private void ExitFromTray()
     {
         _window?.DispatcherQueue.TryEnqueue(() => _ = ExitFromTrayAsync());
@@ -3054,14 +3091,18 @@ public partial class App : Application, IAsyncDisposable
                 deterministicRequest,
                 cancellationToken).ConfigureAwait(false);
             processingTimer.Stop();
-            // NOTHING IS WRITTEN ABOUT THE PASS YET, AND THE DELAY IS THE POINT. EmojiRestoration
-            // does not run here: ApplyPolishedTextAsync runs it further down and REPLACES its
-            // receipt, and it can turn IsDegraded true. Reporting from this point recorded that
-            // stage as Skipped and left a later restoration failure invisible behind a healthy
-            // line - the same defect this whole change exists to remove, reintroduced by the fix
-            // for it. So the pass is reported once, after the last thing that can alter it.
             var deterministicMilliseconds = processingTimer.ElapsedMilliseconds;
-            var deterministicCompletedAt = DateTimeOffset.UtcNow;
+            // THE FOUR STAGES THAT ARE FINISHED REPORT NOW; THE ONE THAT IS NOT WAITS.
+            // ApplyPolishedTextAsync runs EmojiRestoration further down and REPLACES its receipt, so
+            // reporting that stage from here recorded Skipped and left a later restoration failure
+            // hidden behind a healthy line. The other four cannot change after this point.
+            //
+            // SPLIT RATHER THAN ALL-AFTER-POLISH, because this file is append-ordered and read
+            // oldest-first by retention and pruning. Holding these four back and stamping them with
+            // an earlier time put older lines after newer ones whenever polish was slow, which
+            // breaks that contract to fix a different one. Every line now carries the moment it was
+            // written, and the ordering holds.
+            EmitStageReceipts(processed.Receipts, emojiRestorationOnly: false);
             await SaveRecoveryTextAsync(processed.Output, cancellationToken).ConfigureAwait(false);
             var polishResult = await TryPolishAsync(
                     processed.Output,
@@ -3103,41 +3144,23 @@ public partial class App : Application, IAsyncDisposable
                 await SaveRecoveryTextAsync(processed.Output, cancellationToken).ConfigureAwait(false);
             }
 
+            EmitStageReceipts(processed.Receipts, emojiRestorationOnly: true);
+            var restorationMilliseconds = processed.Receipts
+                .Where(receipt => receipt.Stage == DeterministicTextStage.EmojiRestoration)
+                .Sum(receipt => receipt.ElapsedMilliseconds);
+            // THE SUMMARY IS LAST, BECAUSE IT IS THE ONLY LINE THAT CAN STILL BE WRONG. IsDegraded
+            // turns true when restoration times out or fails, and the duration has to include the
+            // restoration that a failure happened inside. Written before polish, a degraded pass
+            // reported itself as clean.
             _logger.Write(new AppLogEntry(
-                deterministicCompletedAt,
+                DateTimeOffset.UtcNow,
                 processed.IsDegraded
                     ? AppEventCode.DeterministicProcessingDegraded
                     : AppEventCode.DeterministicProcessingCompleted,
                 processed.IsDegraded
                     ? AppFailureCategory.PostProcessing
                     : AppFailureCategory.None,
-                deterministicMilliseconds));
-            // EVERY STAGE REPORTS, AND A SKIPPED ONE REPORTS LOUDEST. The summary line above says
-            // only that the pass finished and what it cost, so a pass that skipped all five stages
-            // and one that did five jobs quickly are the same line - and "do custom words work" is
-            // exactly the question that difference answers. An empty custom-word list makes
-            // correction vanish with no trace, which is the case worth being able to see.
-            //
-            // TIMESTAMPED WHEN THE WORK HAPPENED, NOT WHEN THE LINE WAS WRITTEN. These are emitted
-            // after an optional polish that can take seconds, so UtcNow here would date four stages
-            // to a moment long after they ran. EmojiRestoration is the exception: it is the only
-            // stage that runs on the far side of polish, so it carries the current time honestly.
-            foreach (var receipt in processed.Receipts)
-            {
-                _logger.Write(new AppLogEntry(
-                    receipt.Stage == DeterministicTextStage.EmojiRestoration
-                        ? DateTimeOffset.UtcNow
-                        : deterministicCompletedAt,
-                    AppEventCode.DeterministicStageObserved,
-                    receipt.Status is DeterministicStageStatus.Failed
-                        or DeterministicStageStatus.TimedOut
-                        ? AppFailureCategory.PostProcessing
-                        : AppFailureCategory.None,
-                    receipt.ElapsedMilliseconds,
-                    Stage: receipt.Stage,
-                    StageStatus: receipt.Status,
-                    Changed: receipt.Changed));
-            }
+                deterministicMilliseconds + restorationMilliseconds));
 
             if (!recoveryOnly &&
                 !string.IsNullOrWhiteSpace(processed.Output.Text) &&
