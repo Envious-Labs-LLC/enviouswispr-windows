@@ -43,9 +43,11 @@ public sealed class MicrophoneMeterFrameSampler
     /// <returns>True when a frame is due and <paramref name="frameLevel"/> should be drawn.</returns>
     public bool TryTakeFrame(float level, TimeSpan now, out float frameLevel)
     {
-        // NOT-A-NUMBER IS SILENCE, and it is caught before the comparison rather than after. A
-        // greater-than against NaN is false, so an unchecked NaN would neither raise the loudest nor
-        // be rejected, and would then be carried into a frame the moment anything else did.
+        // INFINITY IS WHY THIS GUARD EXISTS, NOT NOT-A-NUMBER. A greater-than against NaN is false,
+        // so a NaN is already ignored by the comparison and needs no help. Positive infinity would
+        // win it, become the running maximum, and be published as the frame's level - which arrives
+        // as a bar height no layout can draw. A level nobody could measure is discarded, and the
+        // valid levels in the same frame are kept, so one bad reading costs nothing.
         if (float.IsFinite(level) && level > _loudestSinceFrame)
         {
             _loudestSinceFrame = level;

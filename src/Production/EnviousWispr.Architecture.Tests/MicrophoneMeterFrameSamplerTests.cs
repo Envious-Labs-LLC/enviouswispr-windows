@@ -64,4 +64,38 @@ public sealed class MicrophoneMeterFrameSamplerTests
         Assert.True(sampler.TryTakeFrame(0f, TimeSpan.FromMilliseconds(50), out var frame));
         Assert.Equal(0.02f, frame);
     }
+
+    /// <summary>A level nobody could measure, arriving exactly when a frame is due.</summary>
+    /// <remarks>
+    /// ISOLATED FROM THE MID-FRAME CASE, DELIBERATELY. The other guard test also carries a valid
+    /// peak through the frame, so it fails on the previous implementation for the peak rather than
+    /// for the guard, and would go on passing if the guard were removed. Here the bad value IS the
+    /// due sample, so nothing else can carry the assertion.
+    /// </remarks>
+    [Theory]
+    [InlineData(float.NaN)]
+    [InlineData(float.PositiveInfinity)]
+    [InlineData(float.NegativeInfinity)]
+    public void AnUnmeasurableLevelOnTheBoundaryDrawsSilenceRatherThanItself(float unmeasurable)
+    {
+        var sampler = new MicrophoneMeterFrameSampler(Interval);
+        Assert.True(sampler.TryTakeFrame(0f, TimeSpan.Zero, out _));
+
+        Assert.True(sampler.TryTakeFrame(unmeasurable, Interval, out var frame));
+        Assert.Equal(0f, frame);
+    }
+
+    /// <summary>The same, with a real level already banked in that frame.</summary>
+    [Theory]
+    [InlineData(float.NaN)]
+    [InlineData(float.PositiveInfinity)]
+    public void AnUnmeasurableLevelOnTheBoundaryCannotOutrankAValidPeak(float unmeasurable)
+    {
+        var sampler = new MicrophoneMeterFrameSampler(Interval);
+        Assert.True(sampler.TryTakeFrame(0f, TimeSpan.Zero, out _));
+        Assert.False(sampler.TryTakeFrame(0.4f, TimeSpan.FromMilliseconds(20), out _));
+
+        Assert.True(sampler.TryTakeFrame(unmeasurable, Interval, out var frame));
+        Assert.Equal(0.4f, frame);
+    }
 }
