@@ -81,6 +81,31 @@ public interface ICaptureStartTimings
     long? LastStreamStartMilliseconds { get; }
 }
 
+/// <summary>Counts what the microphone actually delivered, so silence can be told from failure.</summary>
+/// <remarks>
+/// AN ALL-SILENT RECORDING LOOKS EXACTLY LIKE A GOOD ONE FROM OUTSIDE. It starts, it runs for the
+/// right duration, it produces the right sample rate and the right number of samples, and every one
+/// of them is zero. The audio check shipped for months asserting all of that and never once asking
+/// whether anything was HEARD, so a capture path handing the app digital silence passed it.
+///
+/// THE FLAG IS THE HALF THAT SAYS WHY. Windows marks a packet AUDCLNT_BUFFERFLAGS_SILENT when it is
+/// handing over zeroes on purpose, and the capture honours that by writing zeroes. Silence WITH the
+/// flag is Windows saying there is nothing to hear; silence WITHOUT it is a microphone that is on
+/// and delivering nothing, which is a different fault with a different cause. Counting both is what
+/// makes the difference visible in one run instead of a day of guessing.
+/// </remarks>
+public interface ICaptureDiagnostics
+{
+    /// <summary>Audio packets delivered during the last capture.</summary>
+    int LastPacketCount { get; }
+
+    /// <summary>How many of those Windows marked as deliberately silent.</summary>
+    int LastSilentPacketCount { get; }
+
+    /// <summary>The loudest single sample seen during the last capture.</summary>
+    float LastPeak { get; }
+}
+
 public interface IAudioSnapshotSource
 {
     AudioSnapshot? GetSnapshot(TimeSpan maximumDuration);

@@ -5,7 +5,8 @@ using System.Runtime.InteropServices;
 
 namespace EnviousWispr.Audio;
 
-public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource, ICaptureStartTimings
+public sealed class WasapiAudioCapture :
+    IAudioCapture, IAudioSnapshotSource, ICaptureStartTimings, ICaptureDiagnostics
 {
     private static readonly AudioBufferFormat CaptureFormat = new(
         AudioSampleConverter.TargetSampleRate,
@@ -27,6 +28,9 @@ public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource, IC
     private bool _disposed;
     private long? _lastDeviceOpenMilliseconds;
     private long? _lastStreamStartMilliseconds;
+    private int _packets;
+    private int _silentPackets;
+    private float _peak;
 
     public WasapiAudioCapture()
         : this(new WasapiRecorderFactory(), TimeSpan.FromSeconds(2))
@@ -49,6 +53,12 @@ public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource, IC
     public long? LastDeviceOpenMilliseconds => _lastDeviceOpenMilliseconds;
 
     public long? LastStreamStartMilliseconds => _lastStreamStartMilliseconds;
+
+    public int LastPacketCount => Volatile.Read(ref _packets);
+
+    public int LastSilentPacketCount => Volatile.Read(ref _silentPackets);
+
+    public float LastPeak => _peak;
 
     public AudioSnapshot? GetSnapshot(TimeSpan maximumDuration)
     {
@@ -143,6 +153,9 @@ public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource, IC
                 _capturedBytes.SetLength(0);
             }
 
+            _packets = 0;
+            _silentPackets = 0;
+            _peak = 0f;
             _request = request;
             _recordingStopped = new TaskCompletionSource<Exception?>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
@@ -316,6 +329,12 @@ public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource, IC
 
     private void OnDataAvailable(object? sender, AudioRecorderData args)
     {
+        Interlocked.Increment(ref _packets);
+        if (args.IsSilent)
+        {
+            Interlocked.Increment(ref _silentPackets);
+        }
+
         var bytes = args.IsSilent ? new byte[args.Bytes.Length] : args.Bytes.ToArray();
         try
         {
@@ -323,6 +342,11 @@ public sealed class WasapiAudioCapture : IAudioCapture, IAudioSnapshotSource, IC
             lock (_bufferGate)
             {
                 _capturedBytes.Write(bytes);
+            }
+
+            if (converted.Peak > _peak)
+            {
+                _peak = converted.Peak;
             }
 
             LevelChanged?.Invoke(this, new AudioLevel(converted.Peak, converted.RootMeanSquare));
