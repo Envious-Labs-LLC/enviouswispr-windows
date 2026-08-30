@@ -5,23 +5,6 @@ using EnviousWispr.PostProcessing;
 
 namespace EnviousWispr.Pipeline;
 
-public enum DeterministicTextStage
-{
-    CustomWords,
-    FillerAndFalseStarts,
-    SpokenEmoji,
-    InverseTextNormalization,
-    EmojiRestoration,
-}
-
-public enum DeterministicStageStatus
-{
-    Completed,
-    Skipped,
-    TimedOut,
-    Failed,
-}
-
 public sealed record DeterministicStageReceipt(
     DeterministicTextStage Stage,
     DeterministicStageStatus Status,

@@ -1,3 +1,4 @@
+using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 
 namespace EnviousWispr.Core.Diagnostics;
@@ -10,4 +11,7 @@ public sealed record AppLogEntry(
     DiagnosticProvider? Provider = null,
     AppErrorCode? ErrorCode = null,
     DiagnosticEngineChoice? Engine = null,
-    DiagnosticHardwareClass? HardwareClass = null);
+    DiagnosticHardwareClass? HardwareClass = null,
+    DeterministicTextStage? Stage = null,
+    DeterministicStageStatus? StageStatus = null,
+    bool? Changed = null);

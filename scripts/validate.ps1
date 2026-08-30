@@ -202,6 +202,14 @@ try {
     Write-Host "Building privacy-safe observability UAT harness (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/observability-uat/EnviousWispr.Observability.Uat.csproj", "-c", "Release", "--nologo")
 
+    # RUN, NOT MERELY BUILD, AND IN BOTH LANES. This harness proves the hardest promise the product
+    # makes - that no dictated content crosses the network - and it was compiled by this gate and
+    # executed by nothing, here or in CI. A privacy gate that only has to compile is not a gate.
+    # It needs no model, no microphone and no GPU: it stands up a loopback listener and reads back a
+    # file, so there is no reason for it to sit behind -IncludeLocalRuntime.
+    Write-Host "Running the privacy-safe observability acceptance..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/observability-uat/EnviousWispr.Observability.Uat.csproj", "-c", "Release", "--no-build")
+
     Write-Host "Building privacy-safe compatibility UAT harness (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/compatibility-uat/EnviousWispr.Compatibility.Uat.csproj", "-c", "Release", "--nologo")
 

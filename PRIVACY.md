@@ -24,8 +24,15 @@ deterministic result.
 ## Diagnostics and operational sharing
 
 Local diagnostics contain only sealed enums, bounded durations, timestamps, coarse engine/hardware classes,
-and typed failure/error categories. They cannot carry transcript, audio, keys, clipboard, surrounding text,
-paths, model IDs, account names, device names/IDs, exception messages, or stack traces. Local diagnostics
+typed failure/error categories, which deterministic text-cleanup step a record is about, whether that step
+completed or was skipped, and one boolean saying whether it altered the text. They cannot carry transcript,
+audio, keys, clipboard, surrounding text, paths, model IDs, account names, device names/IDs, exception
+messages, or stack traces. The step name and its status are fixed enum members and the alteration flag is a
+single bit, so none of the three can carry a word that was said, and the flag says only THAT text changed.
+
+The field-by-field list is the approved data dictionary in `docs/privacy/observability.md`, and that
+document is authoritative. A build gate compares it against the record that crosses the network, so a
+field cannot ship undisclosed. The paragraph above is the plain-language summary of the same promise. Local diagnostics
 default on with a 14-day retention setting that the user can disable or change from 1–90 days.
 
 Anonymous operational sharing defaults off and remains unavailable until an approved HTTPS endpoint and

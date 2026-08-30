@@ -1,3 +1,4 @@
+using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 
 namespace EnviousWispr.Core.Diagnostics;
@@ -47,7 +48,10 @@ public sealed record PrivacySafeDiagnosticRecord(
     DiagnosticProvider? Provider = null,
     AppErrorCode? ErrorCode = null,
     DiagnosticEngineChoice? Engine = null,
-    DiagnosticHardwareClass? HardwareClass = null)
+    DiagnosticHardwareClass? HardwareClass = null,
+    DeterministicTextStage? Stage = null,
+    DeterministicStageStatus? StageStatus = null,
+    bool? Changed = null)
 {
     public const long MaximumElapsedMilliseconds = 86_400_000;
 
@@ -66,6 +70,12 @@ public sealed record PrivacySafeDiagnosticRecord(
             entry.Engine is { } engine && Enum.IsDefined(engine) ? engine : null,
             entry.HardwareClass is { } hardwareClass && Enum.IsDefined(hardwareClass)
                 ? hardwareClass
-                : null);
+                : null,
+            // ALL THREE ARE CATEGORIES, WHICH IS WHY THEY MAY CROSS THE NETWORK. A stage name and a
+            // status are fixed enum members and Changed is a boolean; none of them can carry a word
+            // somebody said.
+            entry.Stage is { } stage && Enum.IsDefined(stage) ? stage : null,
+            entry.StageStatus is { } stageStatus && Enum.IsDefined(stageStatus) ? stageStatus : null,
+            entry.Changed);
     }
 }
