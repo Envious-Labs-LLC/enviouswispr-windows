@@ -148,7 +148,24 @@
         </TitleBar>
 
         <Grid Grid.Row="1">
-            <ScrollViewer x:Name="OnboardingView" AutomationProperties.Name="Welcome to EnviousWispr" Background="{ThemeResource BrandPageBgBrush}" HorizontalScrollMode="Disabled" Visibility="Collapsed">
+            <!--
+                THE PRIMARY ACTION IS PINNED, NOT SCROLLED. Read out of the app's own accessibility
+                tree on a 1024x768 desktop: "Get started" was OFFSCREEN, and so were the microphone
+                status and the push-to-talk explanation. Any laptop 768 pixels tall lands there, and
+                a first-run screen whose only way forward is below the fold reads as a screen with
+                no way forward. There was a Ctrl+Enter accelerator and an access key, which help
+                somebody who already knows they exist.
+
+                The window height cannot solve this: it is already clamped to the work area, so on a
+                short screen the content is what has to give. Pinning the action means what gives is
+                the reading matter above it, which is the right way round.
+            -->
+            <Grid x:Name="OnboardingView" Background="{ThemeResource BrandPageBgBrush}" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <ScrollViewer x:Name="OnboardingScroll" AutomationProperties.Name="Welcome to EnviousWispr" HorizontalScrollMode="Disabled">
                 <Grid MaxWidth="{StaticResource BrandOnboardingContentMaxWidth}" Padding="{StaticResource BrandOnboardingContentPadding}" HorizontalAlignment="Center">
                     <StackPanel Spacing="{StaticResource BrandSectionSpacing}">
                         <Border Style="{StaticResource BrandHeaderCardStyle}">
@@ -243,15 +260,20 @@
                                         </StackPanel>
                                     </Grid>
                                 </Grid>
-                                <Button x:Name="FinishOnboardingButton" x:Uid="FinishOnboardingButton" AccessKey="G" AutomationProperties.HelpText="Completes setup and opens the EnviousWispr home page. Press Control plus Enter from anywhere on this screen." Click="FinishOnboardingButton_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Style="{StaticResource BrandPrimaryButtonStyle}" Content="Get started" TabIndex="0">
-                                    <Button.KeyboardAccelerators><KeyboardAccelerator Key="Enter" Modifiers="Control" /></Button.KeyboardAccelerators>
-                                </Button>
-                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="You can change every choice later in Settings. No account is required." TextAlignment="Center" TextWrapping="Wrap" />
-                            </StackPanel>
+                                                            </StackPanel>
                         </Border>
                     </StackPanel>
                 </Grid>
-            </ScrollViewer>
+                </ScrollViewer>
+                <Border Grid.Row="1" Padding="{StaticResource BrandOnboardingFooterPadding}" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="0,1,0,0">
+                    <StackPanel MaxWidth="{StaticResource BrandOnboardingContentMaxWidth}" Spacing="{StaticResource BrandSpacingS}">
+                        <Button x:Name="FinishOnboardingButton" x:Uid="FinishOnboardingButton" AccessKey="G" AutomationProperties.HelpText="Completes setup and opens the EnviousWispr home page. Press Control plus Enter from anywhere on this screen." Click="FinishOnboardingButton_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Style="{StaticResource BrandPrimaryButtonStyle}" Content="Get started" TabIndex="0">
+                            <Button.KeyboardAccelerators><KeyboardAccelerator Key="Enter" Modifiers="Control" /></Button.KeyboardAccelerators>
+                        </Button>
+                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="You can change every choice later in Settings. No account is required." TextAlignment="Center" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+            </Grid>
 
             <Border
                 Width="{Binding OpenPaneLength, ElementName=ProductNavigation}"
