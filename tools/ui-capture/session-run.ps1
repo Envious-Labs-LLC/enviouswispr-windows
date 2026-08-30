@@ -20,10 +20,23 @@ param(
     [Parameter(Mandatory = $true)][string] $DataDirectory,
     [string] $OverlayState = "",
     [string] $Shot = "shot",
+    [ValidateRange(0, 28000)]
     [int] $SettleMilliseconds = 4000
 )
 
 $ErrorActionPreference = 'Stop'
+
+# BEFORE ANYTHING MEASURES A WINDOW. Process DPI awareness must be set first or Windows keeps
+# handing this process virtualised coordinates: on a 3840x2160 display at 150% every rectangle came
+# back two-thirds of its real size, which made the pill's 278-pixel width read as 185 and sent a
+# window-size diagnosis badly wrong. capture-shot.ps1 sets it too, for when it is run on its own.
+Add-Type -Namespace UiCapture -Name DpiEarly -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+'@ -ErrorAction SilentlyContinue
+try { [void][UiCapture.DpiEarly]::SetProcessDpiAwarenessContext([IntPtr] -4) } catch { }
+try { [void][UiCapture.DpiEarly]::SetProcessDPIAware() } catch { }
+
 if (-not (Test-Path $OutputDirectory)) { New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null }
 $log = Join-Path $OutputDirectory "$Shot.log"
 $pidFile = Join-Path $OutputDirectory "$Shot.pid"
@@ -44,8 +57,11 @@ if ($OverlayState) { $env:ENVIOUSWISPR_UAT_OVERLAY_STATE = $OverlayState }
 # "EnviousWispr did not close properly last time" on the next launch, ten times in a row, in a
 # screenshot. ENVIOUSWISPR_UAT_EXIT_AFTER_MILLISECONDS runs the real shutdown path instead, so the
 # harness stops manufacturing the defect it exists to photograph. It is clamped to the 500..30000
-# window the app accepts; outside that the app ignores it and we are back to the hard stop below.
-$exitAfter = [Math]::Min(30000, [Math]::Max(500, $SettleMilliseconds + 2000))
+# window the app accepts. SettleMilliseconds is RANGE-CHECKED rather than clamped here: silently
+# capping the exit timer while Start-Sleep honoured the larger settle would fire the app's shutdown
+# BEFORE the shutter, and a harness that quietly changes the timing it was asked for is worse than
+# one that refuses it.
+$exitAfter = $SettleMilliseconds + 2000
 $env:ENVIOUSWISPR_UAT_EXIT_AFTER_MILLISECONDS = $exitAfter
 
 Add-Type -TypeDefinition @'

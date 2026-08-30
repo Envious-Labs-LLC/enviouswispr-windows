@@ -13,6 +13,25 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+# TRUE PIXELS, NOT THE SCALED-DOWN VERSION WINDOWS OFFERS AN OLD PROGRAM. PowerShell is not
+# per-monitor DPI aware, so Windows lies to it kindly: on this 3840x2160 display at 150% every
+# measurement came back 2560x1440 and the capture was a DOWNSCALED image of the desktop. It looks
+# like a screenshot and is one, of a screen that does not exist.
+#
+# THAT IS FATAL FOR THE JOB THIS TOOL DOES. The whole point is judging padding, a hairline border,
+# an antialiased corner and a one-pixel misalignment - every one of which is destroyed by a 0.67x
+# resample. It also made window rectangles read in the wrong units, and cost a wrong diagnosis:
+# a window 1590 pixels tall on a 2160-pixel screen was measured as running off the bottom of a
+# 1440-pixel one, and nearly got a fix for a bug that was not there.
+Add-Type -Namespace UiCapture -Name Dpi -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+'@ -ErrorAction SilentlyContinue
+# -4 is DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2. The older call is the fallback for a host that
+# refuses it; either one stops the virtualisation, and both are no-ops once awareness is set.
+try { [void][UiCapture.Dpi]::SetProcessDpiAwarenessContext([IntPtr] -4) } catch { }
+try { [void][UiCapture.Dpi]::SetProcessDPIAware() } catch { }
+
 # REFUSE RATHER THAN WRITE A BLANK. This is the check that turns the silent-empty failure into a
 # loud one, and it is the whole reason this file is not three lines long.
 $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
