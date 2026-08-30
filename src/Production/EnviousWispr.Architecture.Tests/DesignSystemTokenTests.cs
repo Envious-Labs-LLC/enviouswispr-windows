@@ -2414,13 +2414,21 @@ public sealed partial class DesignSystemTokenTests
     /// rectangle is deaf to the row. A ToggleSwitch wires its pointer handling to one template part
     /// and its Header sits outside that part, which means a header put back on one of these controls
     /// is a label that responds to neither the switch nor the row - the deadest pixels in the row,
-    /// and exactly the sentence a person aims at. The label therefore lives beside the control as a
-    /// sibling, and the control carries the same words as its accessible name so a screen reader
-    /// still announces what is being switched.
+    /// and exactly the sentence a person aims at. The label therefore lives beside the control, and
+    /// the control points at it with LabeledBy so a screen reader still announces what is being
+    /// switched while the words themselves are read once rather than twice.
     ///
-    /// THE THREE PARTS ARE CHECKED TOGETHER BECAUSE ANY ONE OF THEM ALONE PASSES WHILE BROKEN: a
-    /// headerless toggle with no name is anonymous to a screen reader, and a named toggle whose
-    /// sibling text says something else labels it twice, differently.
+    /// THE SEARCH STARTS FROM THE TOGGLES, NOT FROM THE ROWS, and that direction is the whole
+    /// difference between a gate and a decoration. Counting rows can only find a row that went
+    /// wrong; it cannot find a TWELFTH toggle added with no row around it at all, which is the
+    /// cheapest way to ship a dead one. Every toggle in the file is enumerated and each one must
+    /// have a row, so a new toggle is in this gate's scope the moment it exists.
+    ///
+    /// AND A ROW OWNS EXACTLY ONE TOGGLE ANYWHERE BENEATH IT, not merely one directly under it. A
+    /// second toggle nested deeper is still inside the row's tapped area, so a tap meant for it
+    /// bubbles up and flips the FIRST one - a control that changes a different setting than the one
+    /// under the pointer. Direct children and descendants are counted separately and compared,
+    /// because agreement between them is what rules that out.
     /// </remarks>
     [Fact]
     public void EveryRowCommittedToggleKeepsItsLabelOutsideTheSwitch()
@@ -2428,56 +2436,87 @@ public sealed partial class DesignSystemTokenTests
         var markup = XDocument.Load(Path.Combine(
             FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
 
-        var rows = markup.Descendants()
-            .Where(element => (string?)element.Attribute("Tapped") == "SettingRow_Tapped")
+        var xaml = XNamespace.Get("http://schemas.microsoft.com/winfx/2006/xaml");
+        var toggles = markup.Descendants()
+            .Where(element => element.Name.LocalName == "ToggleSwitch")
             .ToArray();
 
-        Assert.True(
-            rows.Length >= 11,
-            $"Expected the settings rows that commit a toggle, found {rows.Length}.");
+        Assert.True(toggles.Length >= 11, $"Expected the settings toggles, found {toggles.Length}.");
 
         var faults = new List<string>();
-        foreach (var row in rows)
+        foreach (var toggle in toggles)
         {
-            var toggles = row.Elements().Where(child => child.Name.LocalName == "ToggleSwitch").ToArray();
-            if (toggles.Length != 1)
+            var identity = (string?)toggle.Attribute(xaml + "Name") ?? "an unnamed toggle";
+            var row = toggle.Parent;
+            if (row is null || (string?)row.Attribute("Tapped") != "SettingRow_Tapped")
             {
-                faults.Add($"a row with {toggles.Length} ToggleSwitch children; the handler commits exactly one");
+                faults.Add($"{identity} is not inside a row that commits it, so only its switch responds");
                 continue;
             }
 
-            var toggle = toggles[0];
-            var identity = (string?)toggle.Attribute(XName.Get("Name", "http://schemas.microsoft.com/winfx/2006/xaml"))
-                ?? "an unnamed toggle";
-
-            foreach (var banned in new[] { "Header", "HeaderTemplate" })
+            foreach (var banned in new[] { "Header", "HeaderTemplate", "AutomationProperties.Name" })
             {
                 if (toggle.Attribute(banned) is not null)
                 {
-                    faults.Add($"{identity} carries {banned}, which puts its label inside the switch where the row cannot reach it");
+                    faults.Add(banned == "AutomationProperties.Name"
+                        ? $"{identity} names itself as well as pointing at its label, which reads the words twice"
+                        : $"{identity} carries {banned}, which puts its label inside the switch where the row cannot reach it");
                 }
             }
 
-            var spoken = (string?)toggle.Attribute("AutomationProperties.Name");
-            if (string.IsNullOrWhiteSpace(spoken))
+            var direct = row.Elements().Count(child => child.Name.LocalName == "ToggleSwitch");
+            var beneath = row.Descendants().Count(child => child.Name.LocalName == "ToggleSwitch");
+            if (direct != 1 || beneath != 1)
             {
-                faults.Add($"{identity} has no AutomationProperties.Name, so a screen reader announces a switch with no subject");
+                faults.Add(
+                    $"the row around {identity} holds {beneath} toggles ({direct} of them directly); a tap anywhere " +
+                    "in it commits the first, so a second one flips a setting the pointer was not over");
                 continue;
             }
 
-            var labels = row.Elements()
-                .Where(child => child.Name.LocalName == "TextBlock")
-                .Select(child => (string?)child.Attribute("Text"))
-                .Where(text => !string.IsNullOrWhiteSpace(text))
-                .ToArray();
-
-            if (!labels.Contains(spoken, StringComparer.Ordinal))
+            var labelName = ReferencedElementName((string?)toggle.Attribute("AutomationProperties.LabeledBy"));
+            if (labelName is null)
             {
-                faults.Add($"{identity} is announced as \"{spoken}\" but no sibling TextBlock in its row says that");
+                faults.Add($"{identity} has no AutomationProperties.LabeledBy, so a screen reader announces a switch with no subject");
+                continue;
+            }
+
+            var labels = row.Descendants()
+                .Where(child => child.Name.LocalName == "TextBlock"
+                    && (string?)child.Attribute(xaml + "Name") == labelName)
+                .ToArray();
+            if (labels.Length != 1)
+            {
+                faults.Add($"{identity} points at \"{labelName}\", and its row holds {labels.Length} elements by that name");
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace((string?)labels[0].Attribute("Text")))
+            {
+                faults.Add($"the label {labelName} has no text, so {identity} is announced as nothing");
+            }
+
+            if ((string?)labels[0].Attribute("AutomationProperties.AccessibilityView") != "Raw")
+            {
+                faults.Add(
+                    $"the label {labelName} is not AccessibilityView=Raw, so a screen reader reads its words once as " +
+                    $"text and again as {identity}'s name");
             }
         }
 
         Assert.True(faults.Count == 0, string.Join(Environment.NewLine, faults));
+    }
+
+    /// <summary>Reads the element name out of an ElementName binding, or null if it is not one.</summary>
+    private static string? ReferencedElementName(string? binding)
+    {
+        if (string.IsNullOrWhiteSpace(binding))
+        {
+            return null;
+        }
+
+        var match = Regex.Match(binding, @"ElementName\s*=\s*(\w+)");
+        return match.Success ? match.Groups[1].Value : null;
     }
 
     private readonly record struct DynamicColor(Rgba Light, Rgba Dark);

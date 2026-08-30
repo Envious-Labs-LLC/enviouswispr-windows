@@ -190,10 +190,18 @@ Add-Type -Namespace UiCapture -Name Dpi -MemberDefinition @'
         # edge>". The vertical part exists because a ToggleSwitch is two stacked bands inside one
         # reported rectangle - its header sentence above, its switch below - and a click at the
         # vertical centre cannot say which band it reached.
-        # "<name>" or "<name>:<ControlType>", then the position.
-        $parts = $spot -split '@'
-        $target = $parts[0] -split ':'
+        # "<name>@<position>", and the position may carry ":<ControlType>". THE TYPE GOES ON THE
+        # RIGHT OF THE @, NEVER THE LEFT: an accessible name is a sentence a user reads and several
+        # in this app contain a colon - "Push to Talk: hold to record, release to stop" - so a
+        # separator on the name side splits a real name and searches for a control that is not
+        # there. The name is everything before the first @ and is not parsed further.
+        $parts = $spot -split '@', 2
         $where = if ($parts.Count -gt 1) { $parts[1] } else { 'centre' }
+        $ofType = ''
+        if ($where -match '^([^:]*):(.*)$') {
+            $where = $Matches[1]
+            $ofType = $Matches[2].Trim()
+        }
         $offset = 0
         $fromTop = $null
         if ($where -match '^([a-z]+)(\+(\d+))?(/(\d+))?$') {
@@ -202,8 +210,8 @@ Add-Type -Namespace UiCapture -Name Dpi -MemberDefinition @'
             if ($Matches[5]) { $fromTop = [int] $Matches[5] }
         }
 
-        $clickArgs = @{ ProcessId = $app.Id; Name = $target[0]; Where = $where; OffsetX = $offset }
-        if ($target.Count -gt 1) { $clickArgs['OfType'] = $target[1] }
+        $clickArgs = @{ ProcessId = $app.Id; Name = $parts[0]; Where = $where; OffsetX = $offset }
+        if ($ofType) { $clickArgs['OfType'] = $ofType }
         if ($null -ne $fromTop) { $clickArgs['FromTop'] = $fromTop }
         & (Join-Path $PSScriptRoot 'click-ui.ps1') @clickArgs | ForEach-Object { Note $_ }
         Start-Sleep -Milliseconds 700
