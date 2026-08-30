@@ -3,6 +3,8 @@ using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Settings;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Animation;
@@ -220,6 +222,7 @@ public sealed partial class DictationOverlayWindow : Window
             state == DictationOverlayState.Recording
                 ? $"{RecordingPillCatalog.DisplayName(_activeDesign)} recording pill. {presentation.Item1}."
                 : $"{presentation.Item1}. {presentation.Item3}");
+        AnnounceStateChange(state);
         PositionOnForegroundMonitor();
         AppWindow.Show(activateWindow: false);
 
@@ -561,6 +564,36 @@ public sealed partial class DictationOverlayWindow : Window
         _rasterScale = scale;
         Resize(_logicalWidth, _logicalHeight);
         PositionOnForegroundMonitor();
+    }
+
+    /// <summary>Tells a screen reader the pill has changed, and how urgently.</summary>
+    /// <remarks>
+    /// MARKING A LIVE REGION IS NOT ANNOUNCING IT. The pill has carried
+    /// <c>AutomationProperties.LiveSetting</c> since it was written, and Narrator said nothing:
+    /// WinUI raises no event of its own when the text inside a live region changes, so the app has
+    /// to raise <c>LiveRegionChanged</c> itself or the setting is decoration. Every live region in
+    /// this app was silent for the same reason.
+    ///
+    /// THE URGENCY IS PART OF THE MESSAGE, WHICH IS WHY IT IS SET HERE AND NOT IN MARKUP. A failure
+    /// and an interrupted dictation are the two states where waiting for a gap in speech means
+    /// hearing about it after the moment has passed, so those interrupt; everything else waits its
+    /// turn, because a pill that talks over the user is worse than one that waits. macOS tags its
+    /// announcements by priority for the same reason.
+    ///
+    /// A MISSING PEER IS NOT AN ERROR. A window that has not been shown yet has no automation peer,
+    /// and the next state change raises the event once it has one.
+    /// </remarks>
+    private void AnnounceStateChange(DictationOverlayState state)
+    {
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(
+            OverlayRoot,
+            state is DictationOverlayState.Error or DictationOverlayState.Distress
+                ? AutomationLiveSetting.Assertive
+                : AutomationLiveSetting.Polite);
+
+        var peer = FrameworkElementAutomationPeer.FromElement(OverlayRoot)
+            ?? FrameworkElementAutomationPeer.CreatePeerForElement(OverlayRoot);
+        peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
     }
 
     private void Resize(int width, int height)
