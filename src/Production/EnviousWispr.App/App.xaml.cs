@@ -209,6 +209,18 @@ public partial class App : Application, IAsyncDisposable
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ApplicationStarting));
         if (runStart.RecoveredInterruptedRun)
         {
+            // THE LOG IS WHERE THIS BELONGS AND IT IS THE ONLY PLACE IT NOW GOES. A previous run
+            // that did not record a clean exit used to raise a banner on Home saying so, with a
+            // running count beside it - and the app cannot tell WHY a run ended. Closing a laptop,
+            // choosing Restart from the Start menu, logging off, or Task Manager all leave exactly
+            // the same trace as a fault. Counted together, they told one machine it had failed
+            // nineteen times in a row when most of those were a build script releasing a file lock.
+            //
+            // AND THE PERSON READING IT COULD DO NOTHING WITH IT. This branch only runs when there
+            // was no unfinished dictation to restore, so nothing was lost; the case where something
+            // WAS lost is handled by the recovery card, which is untouched. A first-screen banner
+            // that accuses the product of failing, on a number it cannot justify, about an event
+            // that cost the reader nothing, is worse than silence. Support still has the fact here.
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.ApplicationRunRecovered,
@@ -304,11 +316,6 @@ public partial class App : Application, IAsyncDisposable
         _hasPendingRecovery = recovery.Status == RecoveryTextLoadStatus.Found;
         _pendingRecoveryRecord = recovery.Record;
         _window.SetRecoveredText(recovery);
-        if (runStart.RecoveredInterruptedRun && recovery.Status != RecoveryTextLoadStatus.Found)
-        {
-            _window.SetRunRecoveryNotice(runStart.ConsecutiveInterruptedRuns);
-        }
-
         ConfigureSystemLifecycleMonitor();
         _window.FocusInitialControl();
         _window.SetCloudPolishNotice(_cloudPolishConsent?.Notice);
