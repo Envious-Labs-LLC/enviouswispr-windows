@@ -1649,6 +1649,18 @@ public sealed partial class MainWindow : Window, IDisposable
                     }
 
                     Interlocked.Increment(ref draws);
+
+                    // READ BEFORE DRAWING, so this measures the PREVIOUS assignment after layout has
+                    // had a turn. Read straight after the assignment it reports the stale value every
+                    // time, because ActualHeight only changes on the next layout pass - which would
+                    // have accused layout of ignoring a height it had not been asked about yet.
+                    if (MicrophoneTestBars.Children.Count > 0 &&
+                        MicrophoneTestBars.Children[0] is Border previous &&
+                        previous.ActualHeight > maximumActualHeight)
+                    {
+                        maximumActualHeight = previous.ActualHeight;
+                    }
+
                     var lit = (int)Math.Round(normalized * MicrophoneTestBars.Children.Count);
                     if (lit > maximumLit)
                     {
@@ -1668,20 +1680,10 @@ public sealed partial class MainWindow : Window, IDisposable
                     // all the way through reported the unlit value at the end and read as a meter
                     // that had never moved at all.
                     if (MicrophoneTestBars.Children.Count > 0 &&
-                        MicrophoneTestBars.Children[0] is Border first)
+                        MicrophoneTestBars.Children[0] is Border first &&
+                        first.Height > maximumAssignedHeight)
                     {
-                        if (first.Height > maximumAssignedHeight)
-                        {
-                            maximumAssignedHeight = first.Height;
-                        }
-
-                        // WHAT LAYOUT ACTUALLY GAVE IT, which is the only number that can disagree
-                        // with the assignment. A height that is set and never measured is the one
-                        // way a correct assignment still draws nothing.
-                        if (first.ActualHeight > maximumActualHeight)
-                        {
-                            maximumActualHeight = first.ActualHeight;
-                        }
+                        maximumAssignedHeight = first.Height;
                     }
                 }))
             {
@@ -1714,6 +1716,15 @@ public sealed partial class MainWindow : Window, IDisposable
             var on = index < lit;
             bar.Height = on ? 22 : 6;
             bar.Opacity = on ? 1 : 0.25;
+
+            // COLOUR AS WELL AS HEIGHT, BECAUSE HEIGHT ALONE CANNOT BE TRUSTED HERE. Measured on
+            // this machine: the loop assigns twenty-two, layout reports six, and a camera on the
+            // screen counts no growth at all across a hundred and eighty frames. A brush does not
+            // depend on layout remeasuring anything, so if the row changes colour and not size the
+            // fault is layout, and if it changes neither then this is not the element being drawn.
+            bar.Background = on
+                ? (Brush)Application.Current.Resources["BrandAccentSolidBrush"]
+                : (Brush)Application.Current.Resources["BrandTextSecondaryBrush"];
         }
     }
 
