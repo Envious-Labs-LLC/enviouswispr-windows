@@ -149,6 +149,57 @@ public sealed class PrivacySafeObservabilityTests
     }
 
     /// <summary>
+    /// Every field that crosses the network is named in the documents that promise what crosses it.
+    /// </summary>
+    /// <remarks>
+    /// THE DOCUMENTS ARE A HAND-MAINTAINED LIST AND THEY HAVE ALREADY DRIFTED TWICE. Three fields
+    /// were added to the telemetry record; the first pass missed the data dictionary, the in-app
+    /// disclosure and the UAT allowlist, and the pass that fixed those missed `PRIVACY.md`, whose own
+    /// closing paragraph requires it to be updated before any telemetry-schema change. Nothing was
+    /// comparing the record to the promise, so each omission was found by a reviewer rather than by
+    /// the build.
+    ///
+    /// FAILS RATHER THAN SKIPS WHEN THE REPOSITORY IS NOT FOUND, because a privacy guard that
+    /// quietly opts out on an unfamiliar layout is the same as not having one.
+    /// </remarks>
+    [Fact]
+    public void EveryTelemetryFieldIsNamedInThePrivacyDocuments()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "EnviousWispr.Windows.slnx")))
+        {
+            root = root.Parent;
+        }
+
+        Assert.True(
+            root is not null,
+            "Could not find the repository root from the test output directory, so the privacy " +
+            "documents could not be checked. Fix the lookup rather than removing this test.");
+
+        // THE DATA DICTIONARY IS THE ONE AUTHORITY, AND IT IS THE ONE CHECKED BY NAME. PRIVACY.md
+        // describes the same promise in plain language for a reader rather than by field
+        // identifier, so it points here instead of keeping a second copy to drift. Two prose lists
+        // of one schema is what drifted twice.
+        var dictionary = Path.Combine(root!.FullName, "docs", "privacy", "observability.md");
+        Assert.True(File.Exists(dictionary), $"Missing the approved data dictionary: {dictionary}");
+        var text = File.ReadAllText(dictionary);
+
+        var fields = typeof(PrivacySafeDiagnosticRecord)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(property => property.Name != "EqualityContract")
+            .Select(property => JsonNamingPolicy.CamelCase.ConvertName(property.Name));
+
+        foreach (var field in fields)
+        {
+            Assert.True(
+                text.Contains($"`{field}`", StringComparison.Ordinal),
+                $"'{field}' crosses the network and has no row in the approved data dictionary at " +
+                "docs/privacy/observability.md. A field added to the telemetry record has to be " +
+                "disclosed before it ships.");
+        }
+    }
+
+    /// <summary>
     /// Every nullable enum on the local line is rejected when it arrives out of range.
     /// </summary>
     /// <remarks>
