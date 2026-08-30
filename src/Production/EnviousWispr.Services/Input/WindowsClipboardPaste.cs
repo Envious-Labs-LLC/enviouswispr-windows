@@ -19,6 +19,38 @@ internal static class WindowsClipboardPaste
     internal static int NativeKeyboardFlagsOffset =>
         Marshal.OffsetOf<NativeKeyboardInput>(nameof(NativeKeyboardInput.Flags)).ToInt32();
 
+    /// <summary>Copies because somebody asked to, and reports it as the delivery it is.</summary>
+    /// <remarks>
+    /// SEPARATE FROM THE FALLBACK ON PURPOSE, and the difference is the whole point. CopyOnlyAsync
+    /// answers a paste that could not happen: Delivered false, ClipboardFallback true, a refusal
+    /// reason. Every reader downstream treats that shape as a failure that was caught - the log
+    /// writes TextDeliveryRefused, an error code is assigned, a warning notice appears, and the
+    /// history entry reads "held safely". Reusing it for a deliberate copy would report a fault
+    /// every single time somebody used the setting exactly as intended.
+    /// </remarks>
+    public static Task<TextCommitResult> CopyRequestedAsync(
+        string text,
+        CancellationToken cancellationToken) =>
+        RunStaAsync(
+            () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return TrySetClipboardText(text)
+                    ? new TextCommitResult(
+                        TextDeliveryRoute.ClipboardOnly,
+                        Delivered: true,
+                        ClipboardFallback: false,
+                        ClipboardRestored: false,
+                        TextDeliveryRefusalReason.CopyRequested)
+                    : new TextCommitResult(
+                        TextDeliveryRoute.None,
+                        Delivered: false,
+                        ClipboardFallback: false,
+                        ClipboardRestored: false,
+                        TextDeliveryRefusalReason.ClipboardUnavailable);
+            },
+            cancellationToken);
+
     public static Task<TextCommitResult> CopyOnlyAsync(
         string text,
         TextDeliveryRefusalReason refusalReason,

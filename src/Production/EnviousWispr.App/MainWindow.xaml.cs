@@ -3793,10 +3793,12 @@ public sealed partial class MainWindow : Window, IDisposable
         // page whose settings take effect immediately would be a lie, and a lie about this is worse
         // than silence: it tells somebody to stop and start a recording for no reason.
         //
-        // Keybinds holds auto-stop and Escape Recovery; Live Preview holds the preview switch. All
-        // three are read at the press and held for that recording - App.xaml.cs reads them in
-        // StartAutoStopWatch, the Started transition and StartLivePreviewAsync respectively.
-        FrozenPerRecordingBanner.Visibility = tag is "settings-keybinds" or "settings-live-preview"
+        // Keybinds holds auto-stop and Escape Recovery; Live Preview holds the preview switch;
+        // Clipboard holds whether the words are pasted or copied. All are read at the press and held
+        // for that recording - App.xaml.cs reads them in StartAutoStopWatch, the Started transition,
+        // StartLivePreviewAsync, and the delivery options the session controller asks for.
+        FrozenPerRecordingBanner.Visibility =
+            tag is "settings-keybinds" or "settings-live-preview" or "settings-clipboard"
             ? Visibility.Visible
             : Visibility.Collapsed;
         FrozenPerRecordingText.Text = FrozenPerRecordingCopy;

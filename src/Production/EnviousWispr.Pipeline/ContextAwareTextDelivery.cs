@@ -29,6 +29,30 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
         }
 
         RecoveryText = request.Text;
+
+        // ANSWERED BEFORE ANYTHING IS TOUCHED. Putting this after the target check meant a choice to
+        // copy still validated a window, still read its caret, and still repaired the spacing for a
+        // place the text was never going - so an unavailable target could refuse a copy that needed
+        // no target, the old window could be brought back to the front on the way, and what landed
+        // on the clipboard was the repaired text rather than the words that were said. "hello"
+        // arrived as "hello ".
+        if (request.Options.CopyInsteadOfPaste)
+        {
+            var copied = await _targetAdapter
+                .CopyOnlyAsync(request.Text, cancellationToken)
+                .ConfigureAwait(false);
+            if (copied.Delivered || copied.ClipboardFallback)
+            {
+                RecoveryText = null;
+            }
+
+            return new DeliveryResult(
+                request.Text.SessionId,
+                copied.Delivered,
+                copied.ClipboardFallback,
+                RefusalReason: copied.RefusalReason);
+        }
+
         if (!request.Target.IsValid)
         {
             return new DeliveryResult(
@@ -68,9 +92,7 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
         // alone whenever a paste is refused, and that path is the one every delivery test covers.
         // Somebody choosing copy-only wants exactly that outcome, so the honest implementation is to
         // say so in the refusal rather than to build a second way of arriving at the same place.
-        var forcedRefusal = request.Options.CopyInsteadOfPaste
-            ? TextDeliveryRefusalReason.CopyRequested
-            : RefusalFor(capture);
+        var forcedRefusal = RefusalFor(capture);
         var repair = CursorInsertionRepair.Apply(
             request.Text,
             capture.Status == TargetContextStatus.Available ? capture.Context : null,

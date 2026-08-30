@@ -1181,7 +1181,7 @@ public partial class App : Application, IAsyncDisposable
         _sessionController = new PushToTalkSessionController(
             audioCapture,
             new WindowsForegroundTargetProvider(),
-            deliveryOptions: TextDeliveryOptions.Default with
+            deliveryOptions: () => TextDeliveryOptions.Default with
             {
                 CopyInsteadOfPaste = _settings.Preferences.CopyInsteadOfPaste,
             },
@@ -3384,6 +3384,10 @@ public partial class App : Application, IAsyncDisposable
         var errorCode = result.RefusalReason switch
         {
             TextDeliveryRefusalReason.None => (AppErrorCode?)null,
+
+            // A CHOICE IS NOT AN ERROR CODE. This reason travels with a delivery that SUCCEEDED, and
+            // giving it a code would put a fault in the diagnostics for every intended copy.
+            TextDeliveryRefusalReason.CopyRequested => null,
             TextDeliveryRefusalReason.TargetUnavailable or
                 TextDeliveryRefusalReason.TargetChanged => AppErrorCode.DeliveryTargetChanged,
             TextDeliveryRefusalReason.ProtectedField => AppErrorCode.DeliveryProtectedField,

@@ -137,6 +137,20 @@ public interface ITextTargetAdapter
     Task<TextCommitResult> CommitAsync(
         TextCommitRequest request,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Puts the text on the clipboard and leaves every window alone.</summary>
+    /// <remarks>
+    /// A DELIVERY IN ITS OWN RIGHT, NOT A FALLBACK. The fallback path reaches the clipboard THROUGH
+    /// the target: it validates the window, reads the caret context, repairs the spacing for where
+    /// the text was going to land, and only then gives up. Somebody who asked for the clipboard is
+    /// not going anywhere, so all of that is work done for a destination that does not exist - and
+    /// it is not free. Capturing the context can bring the old window back to the front, it can fail
+    /// and stop the copy that was the whole point, and the repaired text is not the text that was
+    /// said.
+    /// </remarks>
+    Task<TextCommitResult> CopyOnlyAsync(
+        ProcessedText text,
+        CancellationToken cancellationToken = default);
 }
 
 public interface ITextDelivery
