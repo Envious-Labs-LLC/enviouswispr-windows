@@ -44,6 +44,11 @@ public sealed partial class DictationOverlayWindow : Window
     private RecordingPillDesign _withoutWordsDesign = RecordingPillDesign.Classic;
     private RecordingPillDesign _withWordsDesign = RecordingPillDesign.ReadingWell;
     private RecordingPillDesign _activeDesign = RecordingPillDesign.Classic;
+
+    /// <summary>One level per bar, oldest first, so the rail is a history rather than a mirror.</summary>
+    private readonly float[] _levelHistory = new float[24];
+
+    private DateTimeOffset _lastLevelSampleAt = DateTimeOffset.MinValue;
     private DictationOverlayState _state = DictationOverlayState.Hidden;
     private DateTimeOffset _recordingStartedAt;
     private PillAction? _action;
@@ -211,6 +216,13 @@ public sealed partial class DictationOverlayWindow : Window
                 _livePreviewEnabled,
                 _withoutWordsDesign,
                 _withWordsDesign);
+            if (_state != DictationOverlayState.Recording)
+            {
+                // A NEW RECORDING STARTS EMPTY. Leaving the last one's shape on screen would show
+                // somebody the sentence before this one as though they were still saying it.
+                ResetLevelHistory();
+            }
+
             ApplyAction(action: null);
             ConfigureRecordingDesign();
             _elapsedTimer.Start();
@@ -281,15 +293,56 @@ public sealed partial class DictationOverlayWindow : Window
         }
     }
 
+    /// <summary>How often a level is taken, which is what makes the rail a history.</summary>
+    /// <remarks>
+    /// FIFTY MILLISECONDS, WHICH IS macOS'S FIGURE AND ALSO THE ONLY ONE THAT WORKS. The capture
+    /// reports a level per audio buffer, measured at roughly two hundred times a second on this
+    /// hardware, so drawing every one would scroll a second of speech past in an eighth of a second
+    /// and read as noise. Twenty-four bars at this rate is about the last second, which is the span
+    /// somebody can actually recognise as the sentence they just said.
+    /// </remarks>
+    private static readonly TimeSpan LevelSampleInterval = TimeSpan.FromMilliseconds(50);
+
     public void SetAudioLevel(float rootMeanSquare)
     {
-        if (_state != DictationOverlayState.Recording ||
-            _activeDesign != RecordingPillDesign.LevelRail)
+        if (_state != DictationOverlayState.Recording)
         {
             return;
         }
 
         var normalized = Math.Clamp(MathF.Sqrt(Math.Max(0, rootMeanSquare) * 4f), 0f, 1f);
+
+        // THE MARK BREATHES ON EVERY DESIGN THAT SHOWS IT, and that is the Classic pill's meter. It
+        // showed a fixed logo while somebody was talking, so the one pill with no preview and no rail
+        // was also the one that gave no sign it could hear them.
+        if (RainbowMark.Visibility == Visibility.Visible)
+        {
+            RainbowMark.Opacity = 0.55 + 0.45 * normalized;
+        }
+
+        if (_activeDesign != RecordingPillDesign.LevelRail)
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        if (now - _lastLevelSampleAt < LevelSampleInterval)
+        {
+            return;
+        }
+
+        _lastLevelSampleAt = now;
+
+        // OLDEST FALLS OFF THE LEFT, NEWEST ARRIVES ON THE RIGHT, so the rail reads the way the
+        // sentence was said. Every bar carrying the same current number was a decoration that looked
+        // alive and told nobody anything.
+        Array.Copy(_levelHistory, 1, _levelHistory, 0, _levelHistory.Length - 1);
+        _levelHistory[^1] = normalized;
+        DrawLevelHistory();
+    }
+
+    private void DrawLevelHistory()
+    {
         for (var index = 0; index < LevelBars.Children.Count; index++)
         {
             if (LevelBars.Children[index] is not Border bar)
@@ -297,10 +350,24 @@ public sealed partial class DictationOverlayWindow : Window
                 continue;
             }
 
-            var wave = 0.45f + 0.55f * MathF.Abs(MathF.Sin(index * 1.7f + normalized * 5.1f));
-            bar.Height = 5 + 20 * normalized * wave;
-            bar.Opacity = 0.35 + 0.65 * normalized;
+            var sample = index < _levelHistory.Length ? _levelHistory[index] : 0f;
+            bar.Height = 4 + 21 * sample;
+
+            // THE OLDEST BARS FADE, so which end is now is obvious without reading the heights. A
+            // rail of equally bright bars is a chart with no time axis.
+            var age = LevelBars.Children.Count <= 1
+                ? 1.0
+                : (double)index / (LevelBars.Children.Count - 1);
+            bar.Opacity = (0.30 + 0.70 * age) * (0.35 + 0.65 * sample);
         }
+    }
+
+    private void ResetLevelHistory()
+    {
+        Array.Clear(_levelHistory);
+        _lastLevelSampleAt = DateTimeOffset.MinValue;
+        RainbowMark.Opacity = 1;
+        DrawLevelHistory();
     }
 
     public void ApplyPreferences(
@@ -355,8 +422,11 @@ public sealed partial class DictationOverlayWindow : Window
             case RecordingPillDesign.Classic:
                 Resize(185, 92);
                 break;
+            // WIDER FOR TWENTY-FOUR BARS. Twelve fitted in 288; leaving that width would have
+            // squeezed the rail against the timer or clipped the newest samples, which are the ones
+            // somebody is actually looking at.
             case RecordingPillDesign.LevelRail:
-                Resize(288, 92);
+                Resize(360, 92);
                 break;
             case RecordingPillDesign.ReadingWell:
                 ResizeReadingWell();
