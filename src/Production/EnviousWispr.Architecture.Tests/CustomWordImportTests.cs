@@ -177,4 +177,74 @@ public sealed class CustomWordImportTests
         Assert.Equal(5, plan.Lines.Count);
         Assert.Equal(Enumerable.Range(1, 5), plan.Lines.Select(line => line.LineNumber));
     }
+
+    /// <summary>A conflict carries the version the LIST wanted, not the one already there.</summary>
+    /// <remarks>
+    /// THE DIRECTION IS THE WHOLE VALUE. The offer is "take their version", so carrying the user's
+    /// own replacement would make the button replace three words with what they already say - a
+    /// change that ships, reports success, and does nothing, which is a family this repository has
+    /// hit repeatedly.
+    /// </remarks>
+    [Fact]
+    public void AConflictCarriesTheImportedReplacement()
+    {
+        var existing = new[] { new CustomWordEntry("jira", "Jira") };
+        var plan = CustomWordImport.Read("jira,JIRA", existing);
+
+        var conflict = Assert.Single(plan.Conflicts);
+        Assert.Equal("jira", conflict.SpokenForm);
+        Assert.Equal("JIRA", conflict.Replacement);
+    }
+
+    [Fact]
+    public void MergeReplacesInPlaceAndKeepsTheOrder()
+    {
+        var existing = new[]
+        {
+            new CustomWordEntry("alpha", "Alpha"),
+            new CustomWordEntry("jira", "Jira"),
+            new CustomWordEntry("zeta", "Zeta"),
+        };
+
+        var merged = CustomWordImport.Merge(existing, [new CustomWordEntry("jira", "JIRA")]);
+
+        Assert.Equal(["alpha", "jira", "zeta"], merged.Select(entry => entry.SpokenForm));
+        Assert.Equal(["Alpha", "JIRA", "Zeta"], merged.Select(entry => entry.Replacement));
+    }
+
+    /// <summary>A replacement for a word the user does not have is not an addition.</summary>
+    [Fact]
+    public void MergeIgnoresAWordTheUserDoesNotHave()
+    {
+        var existing = new[] { new CustomWordEntry("alpha", "Alpha") };
+
+        var merged = CustomWordImport.Merge(existing, [new CustomWordEntry("beta", "Beta")]);
+
+        Assert.Equal(existing, merged);
+    }
+
+    /// <summary>Merging nothing changes nothing, including the list's identity.</summary>
+    [Fact]
+    public void MergingNothingChangesNothing()
+    {
+        var existing = new[] { new CustomWordEntry("alpha", "Alpha") };
+
+        Assert.Same(existing, CustomWordImport.Merge(existing, []));
+    }
+
+    /// <summary>The spoken form matches however it was capitalised.</summary>
+    /// <remarks>
+    /// READ AND MERGE HAVE TO AGREE ABOUT WHAT "THE SAME WORD" MEANS, or a conflict is reported and
+    /// then not replaced: the offer would appear, the user would press it, and nothing would change.
+    /// Both use an ordinal case-insensitive comparison, and this is the test that says so.
+    /// </remarks>
+    [Fact]
+    public void MergeMatchesTheSpokenFormWhateverItsCase()
+    {
+        var existing = new[] { new CustomWordEntry("Jira", "Jira") };
+
+        var merged = CustomWordImport.Merge(existing, [new CustomWordEntry("JIRA", "JIRA")]);
+
+        Assert.Equal("JIRA", Assert.Single(merged).Replacement);
+    }
 }
