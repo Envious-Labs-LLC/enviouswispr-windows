@@ -17,6 +17,7 @@ param(
     [string] $AppExe = "",
     [string] $OutputDirectory = "",
     [string] $DataDirectory = "",
+    [ValidateRange(0, 28000)]
     [int] $SettleMilliseconds = 4000,
     [int] $TimeoutSeconds = 90
 )
@@ -78,7 +79,12 @@ $arguments = @(
 )
 if ($OverlayState) { $arguments += @('-OverlayState', $OverlayState) }
 
+# DECLARED BEFORE THE TRY, because finally runs and THEN the script terminates on an unhandled
+# error - so a check written after the try/finally never executes on that path, and every cleanup
+# failure vanished exactly when something had already gone wrong.
 $registered = $false
+$cleanupFailures = @()
+$runFailure = $null
 try {
     $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ($arguments -join ' ')
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
@@ -95,14 +101,14 @@ try {
     while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath $markerPath)) {
         Start-Sleep -Milliseconds 500
     }
+} catch {
+    $runFailure = $_.Exception.Message
 } finally {
     # THREE STAGES, EACH PROTECTED ON ITS OWN, AND UNREGISTER ALWAYS ATTEMPTED. A single try around
     # all three meant one failure skipped the rest, and a swallowed unregister failure let the run
     # print CAPTURED while its task was still registered. Deleting a task does NOT stop the program
     # it started, which Microsoft documents plainly, so the order is: stop the task, stop the app,
     # then remove the task - and any failure is carried out and reported rather than discarded.
-    $cleanupFailures = @()
-
     # ONLY ON A RUN THAT DID NOT SIGNAL SUCCESS. The runner writes its marker AFTER closing the app
     # politely; stopping its task on a successful run killed it mid-shutdown, so the polite close
     # never happened and the app was force-killed anyway - the harness defeating its own fix.
@@ -133,22 +139,33 @@ try {
 
         # VERIFIED GONE, NOT ASSUMED GONE. An unregister that reports nothing and leaves the task
         # behind is how a machine accumulates one scheduled task per screenshot.
-        if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
-            $cleanupFailures += "the task $taskName is still registered"
+        # -ErrorAction Stop, so "the task is gone" cannot be confused with "the check itself
+        # failed". SilentlyContinue reports both as absence, which is the reassuring answer.
+        try {
+            if (Get-ScheduledTask -TaskName $taskName -ErrorAction Stop) {
+                $cleanupFailures += "the task $taskName is still registered"
+            }
+        } catch [Microsoft.Management.Infrastructure.CimException] {
+            # The documented shape of "no such task", which is the outcome we want.
+        } catch {
+            $cleanupFailures += "could not verify the task was removed: $($_.Exception.Message)"
         }
     }
 }
 
 if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath | ForEach-Object { "   $_" } }
 
-if (-not (Test-Path -LiteralPath $markerPath)) {
+if (-not $runFailure -and -not (Test-Path -LiteralPath $markerPath)) {
     throw "No capture was confirmed within $TimeoutSeconds seconds. The log above, if any, says how far it got. A PNG may exist and must not be trusted: the marker is written only after the app was seen on screen. Nobody logged in means no desktop to photograph."
 }
 
 # A LEFTOVER TASK IS A FAILED RUN, however good the photograph is. Reporting CAPTURED over the top
 # of it is how the leftovers go unnoticed until somebody opens Task Scheduler.
-if ($cleanupFailures.Count -gt 0) {
-    throw "The capture succeeded but cleanup did not: $($cleanupFailures -join '; ')"
+if ($runFailure -or $cleanupFailures.Count -gt 0) {
+    $parts = @()
+    if ($runFailure) { $parts += $runFailure }
+    $parts += $cleanupFailures
+    throw ($parts -join '; ')
 }
 
 $size = (Get-Item -LiteralPath $shotPath).Length
