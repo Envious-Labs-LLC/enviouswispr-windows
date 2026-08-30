@@ -385,7 +385,18 @@ which nothing else will tell them at the moment it happens. The Windows sentence
 other macOS inset notices cover the rejected warm-engine feature and the hands-free gesture, which is
 built but not wired.
 
-**`BrandedPanel`: not compared.** Seven usages on macOS.
+**`BrandedPanel`: ONE GAP, FILED AS #81.** Its header is an accent glyph beside the uppercased accent
+label, and although the icon is optional in the signature, **all seven usages pass one** - so in
+practice it is what a section header looks like. Windows has 18 eyebrows and not one carries an icon.
+Filed rather than built: choosing 18 glyphs is the whole job, and this repository has measured that a
+missing codepoint renders as a hollow box and that two codes can be the same drawing, neither of which
+any check here can see. What makes it cheap is that the sidebar's glyphs are already verified and
+`NavigationGlyphFor(tag)` already resolves them, so most sections need no new choice.
+
+**THE COMPONENT PASS IS NOW COMPLETE.** Over `SettingsComponents.swift`: two gaps filed (#80 toggle hit
+target, #81 section glyphs), one gap closed (the missing-key consequence), one difference recorded for
+a decision (the auto-stop ceiling), and two non-issues written down so they are not rediscovered
+(sliders, segmented pickers).
 
 ## PROC: how-this-was-taken
 Two sweeps per capability from `src/Production`, the second using the CAPABILITY's synonyms rather than
