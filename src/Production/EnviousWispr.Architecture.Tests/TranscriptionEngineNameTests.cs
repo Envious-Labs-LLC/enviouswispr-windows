@@ -1,4 +1,7 @@
 using System.Text.RegularExpressions;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System.Xml.Linq;
 using EnviousWispr.ASR;
 using EnviousWispr.Core.Runtime;
@@ -1125,51 +1128,134 @@ public sealed partial class DesignSystemTokenTests
                 + "known and pass DictationStatus through instead: " + string.Join(", ", offenders));
     }
 
+    /// <summary>The two type names this gate is about, however they are spelled at a use site.</summary>
+    private static readonly string[] AppearanceTypeNames = ["DictationStatus", "DictationOverlayState"];
+
     /// <summary>Finds members in one file that turn a sentence into a pill appearance.</summary>
     /// <remarks>
-    /// SEPARATED FROM THE FACT SO THE FACT CAN BE PROVEN. Walking the app tree, this returns
-    /// nothing, and a gate that has only ever returned nothing has never demonstrated it can
-    /// return anything. <c>DetectsKnownShapesOfSentenceToAppearance</c> feeds it each shape that
-    /// has actually walked past a draft of this gate and requires a hit for every one.
+    /// THE COMPILER IS ASKED, BECAUSE FOUR ROUNDS OF REVIEW PROVED GUESSING CANNOT BE FINISHED.
+    /// Every regex draft decided a member's return type from the characters near its name, and every
+    /// draft was one shape short: a <c>using</c> alias, a return type wrapped onto its own line, a
+    /// <c>Func</c> field, an indexer, an attribute inside the parameter list. Reading the line above
+    /// to catch the wrapped case then began accusing a member whose NEIGHBOUR returned a status. The
+    /// shapes are not enumerable and each miss fails GREEN, which is indistinguishable from the
+    /// property holding.
+    ///
+    /// A SYNTAX TREE KNOWS WHERE A RETURN TYPE ENDS AND A NAME BEGINS, so comments, pragmas,
+    /// attributes, line breaks and whitespace stop mattering at all. Methods, indexers, operators,
+    /// conversion operators, properties, delegate declarations and fields or locals of a delegate
+    /// type are all covered, because each of them can be handed a string and hand back a status.
+    ///
+    /// IT IS STILL A SYNTAX TREE AND NOT A COMPILATION, so a type is matched by the NAME written at
+    /// the declaration, plus any <c>using</c> alias in the same file that resolves to one of these
+    /// types. That is the one guess left, and it is bounded: an alias is a file-local rename, and
+    /// the file being parsed carries it.
     /// </remarks>
     private static List<string> SentenceToAppearanceOffenders(string fileName, string text)
     {
         var offenders = new List<string>();
+        var root = CSharpSyntaxTree.ParseText(text).GetRoot();
 
-        // A `using` alias renames the type for this file, so the names to look for are not fixed.
-        // Every alias FOR one of them counts as one of them; a gate that only knows the real names
-        // is closed by one line at the top of a file.
-        var names = new List<string> { "DictationStatus", "DictationOverlayState" };
-        names.AddRange(AliasRegex().Matches(text).Select(match => match.Groups[1].Value));
+        // A file-local rename of one of these types counts as one of these types.
+        var names = new List<string>(AppearanceTypeNames);
+        names.AddRange(root.DescendantNodes().OfType<UsingDirectiveSyntax>()
+            .Where(directive => directive is { Alias: not null, Name: not null } &&
+                AppearanceTypeNames.Any(name => MentionsName(directive.Name!, name)))
+            .Select(directive => directive.Alias!.Name.Identifier.ValueText));
 
-        foreach (Match match in MemberTakingASentence().Matches(text))
+        // The null check is a STATEMENT rather than part of the expression, because a lambda
+        // capturing `type` defeats the compiler's flow analysis and the null check stops counting.
+        bool IsAppearance(TypeSyntax? type)
         {
-            // The return type is whatever precedes the member's name, and it sometimes sits on the
-            // line ABOVE, which is ordinary formatting for a long generic type. Reading that line
-            // UNCONDITIONALLY accuses innocent code: a member whose predecessor happens to return a
-            // status, or whose preceding line is a comment naming one, is not itself of this shape.
-            // The previous line is read only when the current line holds nothing but indentation,
-            // which is exactly the wrapped-return case and nothing else.
-            var lineStart = text.LastIndexOf('\n', match.Index) + 1;
-            var onThisLine = text[lineStart..match.Index];
-            var declarationStart = string.IsNullOrWhiteSpace(onThisLine) && lineStart > 1
-                ? text.LastIndexOf('\n', lineStart - 2) + 1
-                : lineStart;
-            var declaration = text[declarationStart..match.Index];
-            if (names.Any(name => declaration.Contains(name, StringComparison.Ordinal)))
+            if (type is null)
             {
-                offenders.Add($"{fileName}: {(declaration + match.Value).Trim().Replace("\n", " ")}");
+                return false;
+            }
+
+            return names.Any(name => MentionsName(type, name));
+        }
+
+        // Handed a string, hands back an appearance. Every member kind that can be either.
+        foreach (var member in root.DescendantNodes().OfType<MemberDeclarationSyntax>())
+        {
+            var (returnType, parameters) = member switch
+            {
+                MethodDeclarationSyntax method => (method.ReturnType, method.ParameterList.Parameters),
+                IndexerDeclarationSyntax indexer => (indexer.Type, indexer.ParameterList.Parameters),
+                OperatorDeclarationSyntax op => (op.ReturnType, op.ParameterList.Parameters),
+                ConversionOperatorDeclarationSyntax conversion =>
+                    (conversion.Type, conversion.ParameterList.Parameters),
+                DelegateDeclarationSyntax nominal => (nominal.ReturnType, nominal.ParameterList.Parameters),
+                _ => (null, default),
+            };
+
+            if (IsAppearance(returnType) &&
+                parameters.Any(parameter => IsStringType(parameter.Type)))
+            {
+                offenders.Add($"{fileName}: {Describe(member)}");
             }
         }
 
-        // A delegate FIELD is a member of no kind the pattern above recognises, and it is the
-        // shape somebody reaches for when a method has just been refused.
-        foreach (Match match in SentenceToStatusDelegateRegex().Matches(text))
+        // A VARIABLE of a delegate type is not a member declaration of any kind above, and it does
+        // exactly the refused thing. Covers a field, a property initialiser and a local alike, and
+        // covers a named delegate type as well as Func, by reading the type's own arguments.
+        foreach (var type in root.DescendantNodes().OfType<GenericNameSyntax>())
         {
-            offenders.Add($"{fileName}: {match.Value.Trim()}");
+            var arguments = type.TypeArgumentList.Arguments;
+            if (arguments.Count >= 2 &&
+                IsAppearance(arguments[^1]) &&
+                arguments.Take(arguments.Count - 1).Any(IsStringType))
+            {
+                offenders.Add($"{fileName}: {type}");
+            }
         }
 
         return offenders;
+    }
+
+    /// <summary>Whether a written type is <c>string</c>, however it is spelled.</summary>
+    private static bool IsStringType(TypeSyntax? type) =>
+        type is PredefinedTypeSyntax predefined
+            ? predefined.Keyword.IsKind(SyntaxKind.StringKeyword)
+            : type is IdentifierNameSyntax { Identifier.ValueText: "String" };
+
+    /// <summary>Whether a written type names the given type, qualified or not, bare or wrapped.</summary>
+    /// <remarks>
+    /// A RETURN TYPE IS OFTEN NOT THE TYPE ITSELF. <c>Task&lt;DictationStatus&gt;</c>,
+    /// <c>DictationStatus?</c> and <c>IReadOnlyList&lt;DictationOverlayState&gt;</c> all hand back an
+    /// appearance, so the whole written type is searched rather than only its outermost name.
+    /// </remarks>
+    private static bool MentionsName(SyntaxNode type, string name) =>
+        type.DescendantNodesAndSelf().OfType<SimpleNameSyntax>()
+            .Any(simple => simple.Identifier.ValueText == name);
+
+    /// <summary>One line naming the offending member, without its body.</summary>
+    private static string Describe(MemberDeclarationSyntax member)
+    {
+        var text = member.ToString();
+        var bodyStart = text.IndexOfAny(['{', '=', ';']);
+        return string.Join(' ', (bodyStart > 0 ? text[..bodyStart] : text)
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    /// <summary>Runs the gate over one fixture, as a real file rather than a fragment.</summary>
+    /// <remarks>
+    /// A MEMBER OUTSIDE A TYPE IS NOT A MEMBER DECLARATION, and the first draft of this proof wrote
+    /// its fixtures as bare members. The parser read them as something else entirely and the gate
+    /// found nothing, which is the failure the proof exists to catch, arriving from the fixture
+    /// rather than from the gate. Each fixture is wrapped in a host type here, and any leading
+    /// <c>using</c> stays outside it where the compiler requires it.
+    /// </remarks>
+    private static List<string> OffendersIn(string fileName, string body)
+    {
+        var lines = body.Split('\n');
+        var usings = lines.Where(line => line.TrimStart().StartsWith("using ", StringComparison.Ordinal));
+        var rest = lines.Where(line => !line.TrimStart().StartsWith("using ", StringComparison.Ordinal));
+        var source = string.Join('\n', usings)
+            + "\nnamespace Sample;\n\ninternal sealed class Host\n{\n"
+            + string.Join('\n', rest)
+            + "\n}\n";
+        return SentenceToAppearanceOffenders(fileName, source);
     }
 
     /// <summary>
@@ -1177,47 +1263,69 @@ public sealed partial class DesignSystemTokenTests
     /// </summary>
     /// <remarks>
     /// A GATE THAT PASSES ON ITS FIRST RUN IS UNPROVEN, and this one passes by finding nothing in a
-    /// clean tree, which is exactly what a gate that can find nothing at all also does. Each case
-    /// here is a real bypass: the plain method, the return type spelled through an alias, the type
-    /// on its own line above the name, and the delegate field. The last case is the control - a
-    /// member that takes a sentence and returns a sentence is not this defect and must not be
-    /// flagged, because a gate that accuses ordinary code gets deleted.
+    /// clean tree, which is exactly what a gate that can find nothing at all also does.
+    ///
+    /// EVERY POSITIVE CASE HERE IS A REAL BYPASS THAT SHIPPED GREEN, in the order they were found:
+    /// the plain method; the return type reached through a <c>using</c> alias; the return type
+    /// wrapped onto its own line; the <c>Func</c> field; the indexer; an attribute inside the
+    /// parameter list; a comment between the return type and the name; and a named delegate type.
+    /// The last three were found by review AFTER the previous draft called itself complete.
+    ///
+    /// THE NEGATIVE CASES ARE NOT DECORATION. A gate that accuses ordinary code gets switched off,
+    /// so each one is a false alarm a draft actually produced: a member returning what it was
+    /// handed, a member whose NEIGHBOUR returns a status, and a statement that USES an indexer
+    /// rather than declaring one.
     /// </remarks>
     [Fact]
     public void DetectsKnownShapesOfSentenceToAppearance()
     {
-        Assert.NotEmpty(SentenceToAppearanceOffenders(
+        Assert.NotEmpty(OffendersIn(
             "Plain.cs", "    private static DictationStatus Read(string sentence) => default;"));
 
-        Assert.NotEmpty(SentenceToAppearanceOffenders(
+        Assert.NotEmpty(OffendersIn(
             "Aliased.cs",
             "using Pill = EnviousWispr.Core.Presentation.DictationStatus;\n\n"
                 + "    private static Pill Read(string sentence) => default;"));
 
-        Assert.NotEmpty(SentenceToAppearanceOffenders(
+        Assert.NotEmpty(OffendersIn(
             "Wrapped.cs",
             "    private static IReadOnlyList<DictationOverlayState>\n"
                 + "        Read(string sentence) => [];"));
 
-        Assert.NotEmpty(SentenceToAppearanceOffenders(
+        Assert.NotEmpty(OffendersIn(
             "Delegated.cs", "    private Func<string, DictationStatus> _read = _ => default;"));
 
-        Assert.NotEmpty(SentenceToAppearanceOffenders(
+        Assert.NotEmpty(OffendersIn(
             "Indexed.cs",
             "    private DictationStatus this[string sentence] =>\n"
                 + "        DictationStatus.Warning(sentence);"));
 
-        Assert.Empty(SentenceToAppearanceOffenders(
+        Assert.NotEmpty(OffendersIn(
+            "Attributed.cs",
+            "    private DictationStatus Read([Tag(\"input\")] string sentence) => default;"));
+
+        Assert.NotEmpty(OffendersIn(
+            "Documented.cs",
+            "    private static DictationStatus\n"
+                + "        // reads it\n"
+                + "        Read(string sentence) => default;"));
+
+        Assert.NotEmpty(OffendersIn(
+            "NamedDelegate.cs",
+            "    private delegate DictationStatus Reader(string sentence);"));
+
+        Assert.Empty(OffendersIn(
             "Innocent.cs", "    private static string Trim(string sentence) => sentence.Trim();"));
 
-        // THE NEIGHBOUR CASE. Reading the previous line unconditionally accused this pair, because
-        // Normalize's two-line slice reached back into the method above it and found the type name
-        // there. A gate that accuses ordinary adjacent methods gets switched off.
-        Assert.Empty(SentenceToAppearanceOffenders(
+        Assert.Empty(OffendersIn(
             "Neighbours.cs",
             "    private static DictationStatus ExistingStatus() =>\n"
                 + "        DictationStatus.Quiet(\"Ready\");\n"
                 + "    private static string Normalize(string sentence) => sentence.Trim();"));
+
+        Assert.Empty(OffendersIn(
+            "IndexerUse.cs",
+            "    private void Show() { var current = statuses[this[string.Empty]]; }"));
     }
 
     /// <summary>
@@ -1324,55 +1432,6 @@ public sealed partial class DesignSystemTokenTests
 
     private static Regex IdentifierRegexFor(string name) =>
         new(@"\b" + Regex.Escape(name) + @"\b", RegexOptions.CultureInvariant);
-
-    /// <summary>A member declaration that takes a string parameter.</summary>
-    /// <remarks>
-    /// THE RETURN TYPE IS DELIBERATELY NOT IN THIS PATTERN. Three review rounds were spent on this
-    /// gate and every one was walked past by a spelling: first a different type, then a different
-    /// string method, then a nullable. A type has many spellings - <c>T</c>, <c>T?</c>,
-    /// <c>Task&lt;T&gt;</c>, <c>ValueTask&lt;T?&gt;</c>, <c>T[]</c>, <c>(T, bool)</c>, an alias
-    /// introduced by a using - and a pattern that lists them is a pattern that is one spelling
-    /// short, silently and in the green direction.
-    ///
-    /// So this matches the member NAME and its parameters, and the caller reads everything before
-    /// it on the line and asks whether that mentions the type at all. Every spelling above says the
-    /// type's name somewhere in the return position, which is the property no alternative spelling
-    /// can avoid.
-    ///
-    /// <c>\bstring\b</c> is what separates a declaration from a call: a call passing a sentence
-    /// carries the sentence, not the word <c>string</c>. A cast or a <c>nameof</c> could produce a
-    /// false alarm, and that is the safe direction - it fails loudly and gets read.
-    ///
-    /// WHAT IT CANNOT SEE, ENUMERATED, BECAUSE AN UNSTATED LIMIT READS AS COVERAGE. This reads
-    /// source text on one line, so it does not see: a declaration whose return type sits on its own
-    /// line above the name; a type reached through a <c>using</c> alias; or a
-    /// <c>Func&lt;string, DictationStatus&gt;</c> assigned to a field or local, which is a member of
-    /// no kind this pattern recognises. An earlier version of this comment claimed aliases were
-    /// covered and that was simply wrong.
-    ///
-    /// Closing those needs the compiler's own view of the code rather than the file's text, which
-    /// is a dependency this suite does not have today - tracked as its own issue. The guard is not
-    /// the reason the defect is gone: <c>OverlayStateFor</c> is deleted and every status is built
-    /// where its outcome is known. This stops the shape reappearing in the forms it has actually
-    /// taken, and says plainly which forms it would miss.
-    /// </remarks>
-    [GeneratedRegex(
-        @"(?:\b\w+\s*(?:<[^>()]*>)?\s*\([^)]*\b(?:string|String)\b[^)]*\)"
-            + @"|\bthis\s*\[[^\]]*\b(?:string|String)\b[^\]]*\])")]
-    private static partial Regex MemberTakingASentence();
-
-    /// <summary>A using alias for one of the types this gate is about.</summary>
-    [GeneratedRegex(@"using\s+(\w+)\s*=\s*[\w.]*(?:DictationStatus|DictationOverlayState)\s*;")]
-    private static partial Regex AliasRegex();
-
-    /// <summary>A delegate that takes a sentence and hands back a status.</summary>
-    /// <remarks>
-    /// NOT A MEMBER DECLARATION, WHICH IS WHY THE OTHER PATTERN CANNOT SEE IT. A
-    /// `Func&lt;string, DictationStatus&gt;` field or local does exactly what the refused method
-    /// does and is the obvious next thing to write once the method is refused.
-    /// </remarks>
-    [GeneratedRegex(@"Func\s*<\s*(?:string|String)\s*,\s*[\w.<>?\[\]]*(?:DictationStatus|DictationOverlayState)[\w<>?\[\]]*\s*>")]
-    private static partial Regex SentenceToStatusDelegateRegex();
 
     /// <summary>A name the compiler agrees is a DictationStatus: member, parameter, or local.</summary>
     [GeneratedRegex(@"\bDictationStatus\??\s+(\w+)\s*(?:\(|=|\)|,|;)")]
