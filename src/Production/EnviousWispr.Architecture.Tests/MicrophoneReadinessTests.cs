@@ -112,22 +112,40 @@ public sealed class MicrophoneReadinessTests
     }
 
     [Theory]
-    [InlineData(MicrophoneConsent.Blocked, MicrophoneConsent.Allowed, MicrophoneConsent.Blocked)]
-    [InlineData(MicrophoneConsent.Allowed, MicrophoneConsent.Blocked, MicrophoneConsent.Blocked)]
-    [InlineData(MicrophoneConsent.Blocked, MicrophoneConsent.Unknown, MicrophoneConsent.Blocked)]
-    [InlineData(MicrophoneConsent.Unknown, MicrophoneConsent.Blocked, MicrophoneConsent.Blocked)]
-    [InlineData(MicrophoneConsent.Allowed, MicrophoneConsent.Allowed, MicrophoneConsent.Allowed)]
-    [InlineData(MicrophoneConsent.Unknown, MicrophoneConsent.Allowed, MicrophoneConsent.Unknown)]
-    [InlineData(MicrophoneConsent.Allowed, MicrophoneConsent.Unknown, MicrophoneConsent.Unknown)]
-    public void AWorkplacePolicyCanRefuseWhatTheUserAllowed(
+    [InlineData(MicrophoneConsent.Blocked, MicrophoneConsent.Allowed, MicrophoneConsent.Allowed, MicrophoneConsent.Blocked)]
+    [InlineData(MicrophoneConsent.Allowed, MicrophoneConsent.Blocked, MicrophoneConsent.Allowed, MicrophoneConsent.Blocked)]
+    [InlineData(MicrophoneConsent.Allowed, MicrophoneConsent.Allowed, MicrophoneConsent.Blocked, MicrophoneConsent.Blocked)]
+    [InlineData(MicrophoneConsent.Blocked, MicrophoneConsent.Unknown, MicrophoneConsent.Unknown, MicrophoneConsent.Blocked)]
+    [InlineData(MicrophoneConsent.Allowed, MicrophoneConsent.Allowed, MicrophoneConsent.Allowed, MicrophoneConsent.Allowed)]
+    [InlineData(MicrophoneConsent.Unknown, MicrophoneConsent.Allowed, MicrophoneConsent.Allowed, MicrophoneConsent.Unknown)]
+    [InlineData(MicrophoneConsent.Allowed, MicrophoneConsent.Allowed, MicrophoneConsent.Unknown, MicrophoneConsent.Unknown)]
+    public void AnySwitchThatSaysNoIsTheAnswer(
         MicrophoneConsent machine,
         MicrophoneConsent user,
+        MicrophoneConsent desktopApps,
         MicrophoneConsent expected)
     {
-        // An administrator's switch overrules the person's own, so reading only their hive would
-        // tell a managed machine the microphone is fine while every attempt to open it is denied.
-        // A Deny anywhere wins, and an unreadable half is not a yes.
-        Assert.Equal(expected, WindowsMicrophoneConsent.Combine(machine, user));
+        // THREE SWITCHES DECIDE THIS, and the third is the one that governs this app: "let desktop
+        // apps access your microphone" is its own control. Reading only the global one told somebody
+        // who had turned desktop apps off that everything was fine.
+        Assert.Equal(expected, WindowsMicrophoneConsent.Combine(machine, user, desktopApps));
+    }
+
+    [Theory]
+    [InlineData(2, MicrophoneConsent.Blocked)]
+    [InlineData(1, MicrophoneConsent.Allowed)]
+    [InlineData(0, MicrophoneConsent.Unknown)]
+    [InlineData(null, MicrophoneConsent.Unknown)]
+    [InlineData("Deny", MicrophoneConsent.Unknown)]
+    [InlineData(7, MicrophoneConsent.Unknown)]
+    public void AWorkplacePolicyIsANumberAndItsSilenceIsNotADoubt(
+        object? stored,
+        MicrophoneConsent expected)
+    {
+        // A managed machine is configured somewhere else entirely and as a number, not a word. Its
+        // ABSENCE is the ordinary case on every PC nobody manages, so silence has to mean "the
+        // person's own switches decide" rather than "something could not be read".
+        Assert.Equal(expected, WindowsMicrophoneConsent.InterpretPolicy(stored));
     }
 
     [Fact]
