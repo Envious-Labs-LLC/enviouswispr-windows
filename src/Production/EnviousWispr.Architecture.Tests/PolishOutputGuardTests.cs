@@ -20,9 +20,9 @@ public sealed class PolishOutputGuardTests
     {
         Assert.Equal(
             PolishOutputVerdict.Accepted,
-            PolishOutputGuard.Evaluate(
+            PolishOutputGuard.Review(
                 RealTranscript,
-                "I think we should ship the Windows build this week, and see what people say about it."));
+                "I think we should ship the Windows build this week, and see what people say about it.").Verdict);
     }
 
     [Theory]
@@ -31,7 +31,7 @@ public sealed class PolishOutputGuardTests
     [InlineData("\n\t ")]
     public void NothingComingBackIsRefused(string output)
     {
-        Assert.Equal(PolishOutputVerdict.RefusedEmpty, PolishOutputGuard.Evaluate(RealTranscript, output));
+        Assert.Equal(PolishOutputVerdict.RefusedEmpty, PolishOutputGuard.Review(RealTranscript, output).Verdict);
     }
 
     [Fact]
@@ -39,7 +39,7 @@ public sealed class PolishOutputGuardTests
     {
         Assert.Equal(
             PolishOutputVerdict.RefusedRepetition,
-            PolishOutputGuard.Evaluate(RealTranscript, "We should ship ship ship ship ship it."));
+            PolishOutputGuard.Review(RealTranscript, "We should ship ship ship ship ship it.").Verdict);
     }
 
     /// <summary>
@@ -52,9 +52,9 @@ public sealed class PolishOutputGuardTests
     {
         Assert.Equal(
             PolishOutputVerdict.RefusedRepetition,
-            PolishOutputGuard.Evaluate(
+            PolishOutputGuard.Review(
                 RealTranscript,
-                "in the end in the end in the end in the end in the end"));
+                "in the end in the end in the end in the end in the end").Verdict);
     }
 
     /// <summary>
@@ -66,7 +66,7 @@ public sealed class PolishOutputGuardTests
     [InlineData("No no, I meant the other one, the one we talked about on Tuesday morning.")]
     public void PeopleRepeatThemselvesAndThatIsNotAHallucination(string output)
     {
-        Assert.Equal(PolishOutputVerdict.Accepted, PolishOutputGuard.Evaluate(RealTranscript, output));
+        Assert.Equal(PolishOutputVerdict.Accepted, PolishOutputGuard.Review(RealTranscript, output).Verdict);
     }
 
     [Fact]
@@ -76,7 +76,7 @@ public sealed class PolishOutputGuardTests
 
         Assert.Equal(
             PolishOutputVerdict.RefusedRunaway,
-            PolishOutputGuard.Evaluate(RealTranscript, runaway));
+            PolishOutputGuard.Review(RealTranscript, runaway).Verdict);
     }
 
     /// <summary>
@@ -88,7 +88,7 @@ public sealed class PolishOutputGuardTests
     [InlineData("yes do it", "Yes, please go ahead and do it.")]
     public void AShortDictationIsAllowedToGrow(string input, string output)
     {
-        Assert.Equal(PolishOutputVerdict.Accepted, PolishOutputGuard.Evaluate(input, output));
+        Assert.Equal(PolishOutputVerdict.Accepted, PolishOutputGuard.Review(input, output).Verdict);
     }
 
     /// <summary>
@@ -103,8 +103,8 @@ public sealed class PolishOutputGuardTests
         var justUnder = new string('b', (int)(100 * PolishOutputGuard.MaximumGrowthFactor) - 1);
         var justOver = new string('b', (int)(100 * PolishOutputGuard.MaximumGrowthFactor) + 1);
 
-        Assert.Equal(PolishOutputVerdict.Accepted, PolishOutputGuard.Evaluate(input, justUnder));
-        Assert.Equal(PolishOutputVerdict.RefusedRunaway, PolishOutputGuard.Evaluate(input, justOver));
+        Assert.Equal(PolishOutputVerdict.Accepted, PolishOutputGuard.Review(input, justUnder).Verdict);
+        Assert.Equal(PolishOutputVerdict.RefusedRunaway, PolishOutputGuard.Review(input, justOver).Verdict);
     }
 
     /// <summary>
@@ -118,7 +118,7 @@ public sealed class PolishOutputGuardTests
         const string polished =
             "Meet me at 3:00 on the 4th at 22 High Street, and please bring the documents.";
 
-        Assert.Equal(PolishOutputVerdict.Accepted, PolishOutputGuard.Evaluate(spoken, polished));
+        Assert.Equal(PolishOutputVerdict.Accepted, PolishOutputGuard.Review(spoken, polished).Verdict);
     }
 
     /// <summary>
@@ -133,6 +133,102 @@ public sealed class PolishOutputGuardTests
 
         Assert.Equal(
             PolishOutputVerdict.RefusedRepetition,
-            PolishOutputGuard.Evaluate(RealTranscript, stuckAndLong));
+            PolishOutputGuard.Review(RealTranscript, stuckAndLong).Verdict);
+    }
+
+    [Fact]
+    public void ARefusalHandsBackWhatWasSaid()
+    {
+        // The verdict is for the log and the text is the safety. A caller that reads only the text
+        // still cannot paste a hallucination.
+        var review = PolishOutputGuard.Review(RealTranscript, "```csharp\nvar x = 1;\n```");
+
+        Assert.False(review.Accepted);
+        Assert.Equal(RealTranscript, review.Text);
+    }
+
+    [Fact]
+    public void AModelThatWroteCodeIsRefused()
+    {
+        Assert.Equal(
+            PolishOutputVerdict.RefusedCodeShape,
+            PolishOutputGuard.Review(
+                RealTranscript,
+                "import os\ndef main():\n    return 1").Verdict);
+    }
+
+    [Fact]
+    public void SomebodyDictatingAboutCodeIsNotRefusedForIt()
+    {
+        // The guard only fires when the OUTPUT took a shape the INPUT did not. Somebody talking
+        // through a code review says words that look like code, and refusing their polish would
+        // break the case this is meant to protect.
+        var said = "import os\ndef main():\n    return 1";
+
+        Assert.Equal(
+            PolishOutputVerdict.Accepted,
+            PolishOutputGuard.Review(said, "import os\ndef main():\n    return 1").Verdict);
+    }
+
+    [Fact]
+    public void AModelThatWroteJsonIsRefused()
+    {
+        Assert.Equal(
+            PolishOutputVerdict.RefusedStructuredData,
+            PolishOutputGuard.Review(RealTranscript, "{ \"ship\": true }").Verdict);
+    }
+
+    [Theory]
+    [InlineData("Can you write a poem about the deadline for me", "Deadlines loom and shadows fall across the quiet room tonight")]
+    [InlineData("Ask her to translate this into German please", "Bitte uebersetze das ins Deutsche fuer mich heute")]
+    [InlineData("Tell him to summarize this in two lines for the team", "The team shipped the build and everyone was pleased")]
+    public void AnInstructionThatWasDescribedAndThenCarriedOutIsRefused(string said, string wrote)
+    {
+        // THE MOST EXPENSIVE FAILURE POLISH HAS, because the result reads perfectly. The test is not
+        // whether the output looks like an answer; it is whether the word that named the instruction
+        // survived. A polish keeps it, an execution replaces it with the result.
+        Assert.Equal(
+            PolishOutputVerdict.RefusedInstructionExecuted,
+            PolishOutputGuard.Review(said, wrote).Verdict);
+    }
+
+    [Fact]
+    public void TidyingUpAnInstructionIsStillAccepted()
+    {
+        Assert.Equal(
+            PolishOutputVerdict.Accepted,
+            PolishOutputGuard.Review(
+                "Can you write a poem about the deadline for me",
+                "Can you write a poem about the deadline for me?").Verdict);
+    }
+
+    [Fact]
+    public void AModelThatKeptOnlyTheInnerPhraseIsRefused()
+    {
+        Assert.Equal(
+            PolishOutputVerdict.RefusedGutted,
+            PolishOutputGuard.Review(
+                "The menu item should read AI Polish and not Apple Intelligence anywhere",
+                "AI Polish").Verdict);
+    }
+
+    [Fact]
+    public void OrdinaryFillerRemovalIsNotMistakenForGutting()
+    {
+        // "So, um, yeah, the meeting went well" losing a third of its characters is the GOOD case,
+        // and a shortening guard that refused it would disable the feature it protects.
+        Assert.Equal(
+            PolishOutputVerdict.Accepted,
+            PolishOutputGuard.Review(
+                "So, um, yeah, I think the meeting went really well today you know",
+                "I think the meeting went really well today.").Verdict);
+    }
+
+    [Fact]
+    public void AShortDictationIsNeverJudgedOnLength()
+    {
+        // "ok" becoming "Okay, that works." is correct polish and fails any ratio.
+        Assert.Equal(PolishOutputVerdict.Accepted, PolishOutputGuard.Review("ok", "Okay, that works.").Verdict);
+        Assert.Equal(PolishOutputVerdict.Accepted, PolishOutputGuard.Review("yes exactly", "Yes.").Verdict);
     }
 }

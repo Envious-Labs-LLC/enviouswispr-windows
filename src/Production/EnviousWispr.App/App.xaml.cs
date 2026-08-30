@@ -2915,7 +2915,7 @@ public partial class App : Application, IAsyncDisposable
             // cleaned text they already had, which is the same outcome as any other limb failure.
             var polishVerdict = polishResult is null || polishResult.UsedFallback
                 ? PolishOutputVerdict.Accepted
-                : PolishOutputGuard.Evaluate(processed.Output.Text, polishResult.Output.Text);
+                : PolishOutputGuard.Review(processed.Output.Text, polishResult.Output.Text).Verdict;
             if (polishVerdict != PolishOutputVerdict.Accepted)
             {
                 _logger.Write(new AppLogEntry(
