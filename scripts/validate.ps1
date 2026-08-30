@@ -45,12 +45,24 @@ Write-Host "Checking C# string escapes..."
 # Microsoft Store stub that prints an advert and exits 9009. Running it and reporting the failure as
 # a check failure blames the wrong thing entirely, so the interpreter is PROBED rather than assumed.
 function Resolve-Python {
-    foreach ($name in @('python', 'python3')) {
-        $command = Get-Command $name -ErrorAction SilentlyContinue
-        if ($null -eq $command) { continue }
-        $version = & $command.Source --version 2>&1
-        if ($LASTEXITCODE -eq 0 -and "$version" -match '^Python 3') { return $command.Source }
+    # THE STUB DOES NOT MERELY FAIL, IT WRITES TO STDERR - and a native command writing to stderr is
+    # a terminating NativeCommandError under this script's ErrorActionPreference, so the probe
+    # designed to tolerate a missing Python was itself ending the run. Measured on the dev machine,
+    # where `python` is the Microsoft Store alias.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        foreach ($name in @('python', 'python3')) {
+            $command = Get-Command $name -ErrorAction SilentlyContinue
+            if ($null -eq $command) { continue }
+            $version = & $command.Source --version 2>&1 | Out-String
+            if ($LASTEXITCODE -eq 0 -and $version -match 'Python 3') { return $command.Source }
+        }
     }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+
     return $null
 }
 
@@ -112,6 +124,21 @@ function Invoke-DotNet {
         [Parameter(Mandatory = $true)][string[]]$Arguments
     )
 
+    # RAISING PRIORITY HERE WAS TRIED AND MEASURED NOT TO WORK; see #68. Three findings, kept
+    # because each one refutes an obvious next attempt:
+    #
+    #   Priority is NOT inherited. A child started immediately after setting this script to High
+    #   came back Normal, so raising the script's own priority reaches nothing.
+    #
+    #   `Start-Process -PassThru` reports an EMPTY ExitCode on this host, with redirection and
+    #   without it, so switching to it would cost this helper the exit code it exists to check. A
+    #   raw Process object does report it.
+    #
+    #   AND SETTING IT ON THE dotnet PROCESS IS STILL NOT ENOUGH, which is why the attempt was
+    #   reverted rather than kept. `dotnet build` spawns MSBuild worker nodes to do the compiling,
+    #   they do not inherit the priority either, and sampling them during a real run showed Normal.
+    #   Opting out of EcoQoS properly needs SetProcessInformation with a power-throttling state
+    #   applied to the tree, not a priority class on one process.
     & $Executable @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
