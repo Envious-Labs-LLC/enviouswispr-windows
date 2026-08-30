@@ -1565,6 +1565,10 @@ public sealed partial class MainWindow : Window, IDisposable
         var drawsWithSomethingLit = 0;
         var maximumAssignedHeight = 0d;
         var maximumActualHeight = 0d;
+        var drawnBarIds = new HashSet<int>();
+        var readBackHeight = 0d;
+        var readBackOpacity = 0d;
+        var readBackWasAccent = false;
         capture.LevelChanged += OnLevel;
         try
         {
@@ -1623,7 +1627,10 @@ public sealed partial class MainWindow : Window, IDisposable
                 $"maxlit {maximumLit}, litdraws {drawsWithSomethingLit}, " +
                 $"maxheight {maximumAssignedHeight:F1}, " +
                 $"maxactual {maximumActualHeight:F1}, " +
-                $"gen {generation}/{_microphoneTestGeneration}] " +
+                $"gen {generation}/{_microphoneTestGeneration}, " +
+                $"drawnids {drawnBarIds.Count}, " +
+                $"readback h{readBackHeight:F0} o{readBackOpacity:F2} " +
+                $"accent {(readBackWasAccent ? "yes" : "no")}] " +
                 DescribeMicrophoneTestBars());
         }
         finally
@@ -1680,11 +1687,24 @@ public sealed partial class MainWindow : Window, IDisposable
                     // test arrives after the speaking has stopped - so a meter that had been moving
                     // all the way through reported the unlit value at the end and read as a meter
                     // that had never moved at all.
-                    if (MicrophoneTestBars.Children.Count > 0 &&
-                        MicrophoneTestBars.Children[0] is Border first &&
-                        first.Height > maximumAssignedHeight)
+                    // WHAT THE DRAW ACTUALLY TOUCHED, READ BACK OFF THE SAME OBJECT. Every property
+                    // this loop sets has failed to appear on screen - height, opacity and brush - so
+                    // the question is no longer which property is being ignored but whether the
+                    // object that accepts them is the object being rendered.
+                    if (lit > 0 &&
+                        MicrophoneTestBars.Children.Count > 0 &&
+                        MicrophoneTestBars.Children[0] is Border first)
                     {
-                        maximumAssignedHeight = first.Height;
+                        drawnBarIds.Add(first.GetHashCode());
+                        if (first.Height > maximumAssignedHeight)
+                        {
+                            maximumAssignedHeight = first.Height;
+                            readBackHeight = first.Height;
+                            readBackOpacity = first.Opacity;
+                            readBackWasAccent = ReferenceEquals(
+                                first.Background,
+                                Application.Current.Resources["BrandAccentSolidBrush"]);
+                        }
                     }
                 }))
             {
@@ -1728,8 +1748,18 @@ public sealed partial class MainWindow : Window, IDisposable
                 ? new Windows.Foundation.Point(-1, -1)
                 : bars.TransformToVisual(root).TransformPoint(new Windows.Foundation.Point(0, 0));
             var sameRoot = root is not null && ReferenceEquals(bars.XamlRoot, root.XamlRoot);
+
+            // THE LOGICAL COLLECTION AGAINST THE VISUAL TREE, which is the one comparison that can
+            // separate an element that accepts values from the element that is drawn. Children is
+            // what the code writes to and VisualTreeHelper is what the renderer walks. In an
+            // ordinary panel they are the same objects, and if they are not, that is the fault.
+            var visualCount = VisualTreeHelper.GetChildrenCount(bars);
+            var visualFirst = visualCount > 0 ? VisualTreeHelper.GetChild(bars, 0) : null;
             return
                 $"[tree panelparent {(bars.Parent is not null ? "yes" : "no")}, " +
+                $"visualchildren {visualCount}, " +
+                $"visualid {visualFirst?.GetHashCode() ?? 0}, " +
+                $"visualtype {visualFirst?.GetType().Name ?? "none"}, " +
                 $"barparent {(first?.Parent is not null ? "yes" : "no")}, " +
                 $"sameroot {(sameRoot ? "yes" : "no")}, " +
                 $"barid {first?.GetHashCode() ?? 0}, " +
