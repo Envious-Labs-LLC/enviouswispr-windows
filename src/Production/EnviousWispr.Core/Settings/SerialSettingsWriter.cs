@@ -24,8 +24,21 @@ public sealed class SerialSettingsWriter : IDisposable
 {
     private readonly ISettingsStore _store;
     private readonly SemaphoreSlim _gate = new(1, 1);
+
+    /// <summary>Guards admission and the count of operations already inside.</summary>
+    /// <remarks>
+    /// ADMISSION IS A SEPARATE QUESTION FROM ORDER, WHICH IS WHY THERE ARE TWO LOCKS. The gate makes
+    /// saves happen one at a time. This decides whether a save is allowed to join the queue at all -
+    /// and without it, a save queued behind the drain woke up to a disposed semaphore, which is a
+    /// crash on the way out rather than the tidy finish the drain was added for.
+    /// </remarks>
+    private readonly object _admission = new();
+
     private AppSettings _current;
+    private int _active;
+    private bool _closed;
     private bool _disposed;
+    private TaskCompletionSource? _quiet;
 
     public SerialSettingsWriter(ISettingsStore store, AppSettings current)
     {
@@ -64,7 +77,29 @@ public sealed class SerialSettingsWriter : IDisposable
     {
         ArgumentNullException.ThrowIfNull(change);
 
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        // REGISTERED BEFORE WAITING, so the drain can see it coming. Registering after the wait
+        // means the drain can decide nothing is running while somebody is queued behind it.
+        lock (_admission)
+        {
+            if (_closed)
+            {
+                return new SettingsUpdateOutcome<T>(
+                    new ObjectDisposedException(nameof(SerialSettingsWriter)), default!);
+            }
+
+            _active++;
+        }
+
+        try
+        {
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            LeaveAdmission();
+            return new SettingsUpdateOutcome<T>(exception, default!);
+        }
+
         try
         {
             var (next, value) = change(_current);
@@ -83,6 +118,20 @@ public sealed class SerialSettingsWriter : IDisposable
         finally
         {
             _gate.Release();
+            LeaveAdmission();
+        }
+    }
+
+    /// <summary>Records that one operation has left, and wakes a waiting drain when none remain.</summary>
+    private void LeaveAdmission()
+    {
+        lock (_admission)
+        {
+            _active--;
+            if (_active == 0)
+            {
+                _quiet?.TrySetResult();
+            }
         }
     }
 
@@ -94,25 +143,62 @@ public sealed class SerialSettingsWriter : IDisposable
     /// </remarks>
     public async Task DrainAsync(CancellationToken cancellationToken = default)
     {
-        if (_disposed)
+        TaskCompletionSource? waitFor;
+        lock (_admission)
         {
-            return;
+            // IDEMPOTENT, because exit can reach here more than once and a second drain must not
+            // dispose a semaphore the first one is still using.
+            if (_closed)
+            {
+                waitFor = _quiet;
+            }
+            else
+            {
+                _closed = true;
+                _quiet ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                if (_active == 0)
+                {
+                    _quiet.TrySetResult();
+                }
+
+                waitFor = _quiet;
+            }
         }
 
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        _disposed = true;
-        _gate.Release();
+        if (waitFor is not null)
+        {
+            await waitFor.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        // DISPOSED ONLY ONCE NOTHING IS INSIDE AND NOTHING CAN JOIN. Releasing a waiter into a
+        // semaphore that is about to be disposed is the crash this whole arrangement removes.
+        lock (_admission)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+        }
+
         _gate.Dispose();
     }
 
+    /// <summary>Closes the writer without waiting. Prefer <see cref="DrainAsync"/>.</summary>
     public void Dispose()
     {
-        if (_disposed)
+        lock (_admission)
         {
-            return;
+            if (_disposed)
+            {
+                return;
+            }
+
+            _closed = true;
+            _disposed = true;
         }
 
-        _disposed = true;
         _gate.Dispose();
     }
 }

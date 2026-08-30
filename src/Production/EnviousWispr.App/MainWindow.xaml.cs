@@ -1488,18 +1488,20 @@ public sealed partial class MainWindow : Window, IDisposable
         // so a row that another change replaced while this was waiting is no longer the row that was
         // chosen - it is left alone, correctly, and saying "removed" over the top of that tells
         // somebody a word is gone when it is still there.
-        var removed = await SaveUserDataAsync<string>(data =>
+        var removal = await SaveUserDataAsync(data =>
         {
             var remaining = CustomWordRemoval.Without(data.CustomWords, selected);
-            var count = data.CustomWords.Count - remaining.Count;
-            return (new ReusableUserData(remaining, data.Snippets), count.ToString(
-                System.Globalization.CultureInfo.InvariantCulture));
+            return (
+                new ReusableUserData(remaining, data.Snippets),
+                data.CustomWords.Count - remaining.Count);
         }).ConfigureAwait(true);
 
-        if (removed is null || !int.TryParse(removed, out var removedCount))
+        if (removal.Failure is not null)
         {
             return;
         }
+
+        var removedCount = removal.Value;
 
         if (removedCount == 0)
         {
@@ -1787,23 +1789,11 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        // READ ONCE OUTSIDE ONLY TO DECIDE WHETHER TO OFFER ANYTHING. The plan that is SAVED is
-        // computed again inside the gate, against the words that are really there at that moment.
-        var plan = CustomWordImport.Read(pack.Words, _settings.UserData.CustomWords);
-        if (plan.Additions.Count == 0)
-        {
-            // THE SAME OFFER A CHOSEN FILE GETS. A pack whose words the user already corrects their
-            // own way would otherwise say "already set up" and leave those corrections unreachable,
-            // which is the exact position a file import was in before this.
-            ShowMessage(
-                $"{pack.Name} is already set up",
-                DescribeImport(plan),
-                InfoBarSeverity.Informational,
-                ReplaceConflictsAction(plan));
-            return;
-        }
-
-        var committed = await SaveUserDataAsync<CustomWordImportPlan>(data =>
+        // NO DECISION OUTSIDE THE GATE AT ALL, INCLUDING "THERE IS NOTHING TO ADD". Reading the
+        // words first to decide whether to bother meant a removal finishing in between could leave
+        // this saying "already set up" about a list that would in fact have gained words. The plan
+        // is computed once, where it is applied, and the message is chosen from what came back.
+        var outcome = await SaveUserDataAsync(data =>
         {
             var actual = CustomWordImport.Read(pack.Words, data.CustomWords);
             return (
@@ -1811,15 +1801,16 @@ public sealed partial class MainWindow : Window, IDisposable
                 actual);
         }).ConfigureAwait(true);
 
-        if (committed is null)
+        if (outcome.Failure is not null)
         {
             return;
         }
 
+        var committed = outcome.Value;
         ShowMessage(
-            $"{pack.Name} added",
+            committed.Additions.Count == 0 ? $"{pack.Name} is already set up" : $"{pack.Name} added",
             DescribeImport(committed),
-            InfoBarSeverity.Success,
+            committed.Additions.Count == 0 ? InfoBarSeverity.Informational : InfoBarSeverity.Success,
             ReplaceConflictsAction(committed));
     }
 
@@ -1885,26 +1876,16 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private async Task ApplyWordListAsync(string text)
     {
-        // READ ONCE OUTSIDE ONLY TO DECIDE WHETHER TO OFFER ANYTHING. The plan that is SAVED is
-        // computed again inside the gate, against the words that are really there at that moment.
-        var plan = CustomWordImport.Read(text, _settings.UserData.CustomWords);
-        if (plan.Additions.Count == 0)
-        {
-            ShowMessage(
-                "No new words to add",
-                DescribeImport(plan),
-                InfoBarSeverity.Informational,
-                ReplaceConflictsAction(plan));
-            return;
-        }
-
-        // THE SAME DESCRIPTION ON BOTH PATHS. The first version used the generic save message here,
-        // so every problem outcome vanished the moment ONE word imported: a hundred-line file with
-        // sixty good rows and forty unreadable ones said "the change was saved locally" and the
-        // user never learned about the forty. That is the INVERSE of the failure the itemised
-        // message was written for, and it survived because the zero-added path was the only one
-        // anyone had looked at.
-        var committed = await SaveUserDataAsync<CustomWordImportPlan>(data =>
+        // NO DECISION OUTSIDE THE GATE AT ALL, INCLUDING "THERE IS NOTHING TO ADD". Reading the
+        // words first to decide whether to bother meant a removal finishing in between could leave
+        // this saying "no new words" about a list that would in fact have gained some. The plan is
+        // computed once, where it is applied, and the message is chosen from what came back.
+        //
+        // THE ITEMISED DESCRIPTION IS USED ON BOTH OUTCOMES. An earlier version fell back to the
+        // generic save message the moment ONE word imported, so a hundred-line file with sixty good
+        // rows and forty unreadable ones said "the change was saved locally" and the forty were
+        // never mentioned.
+        var outcome = await SaveUserDataAsync(data =>
         {
             var actual = CustomWordImport.Read(text, data.CustomWords);
             return (
@@ -1912,17 +1893,18 @@ public sealed partial class MainWindow : Window, IDisposable
                 actual);
         }).ConfigureAwait(true);
 
-        if (committed is null)
+        if (outcome.Failure is not null)
         {
             // The save refused and has already said why. Speaking again here would paint over that
             // with a success, and offering to replace corrections nothing imported would be worse.
             return;
         }
 
+        var committed = outcome.Value;
         ShowMessage(
-            "Words imported",
+            committed.Additions.Count == 0 ? "No new words to add" : "Words imported",
             DescribeImport(committed),
-            InfoBarSeverity.Success,
+            committed.Additions.Count == 0 ? InfoBarSeverity.Informational : InfoBarSeverity.Success,
             ReplaceConflictsAction(committed));
     }
 
@@ -2826,11 +2808,10 @@ public sealed partial class MainWindow : Window, IDisposable
     /// plan describes a list that may have changed - and saving its result then overwrites whatever
     /// changed it. The value comes back so the message describes what was actually stored.
     /// </remarks>
-    private async Task<T?> SaveUserDataAsync<T>(
+    private async Task<SettingsUpdateOutcome<T>> SaveUserDataAsync<T>(
         Func<ReusableUserData, (ReusableUserData Data, T Value)> change)
-        where T : class
     {
-        var outcome = await SettingsWriter.UpdateAsync<T?>(current =>
+        var outcome = await SettingsWriter.UpdateAsync(current =>
         {
             var (data, value) = change(current.UserData);
             return (current with { UserData = data }, value);
@@ -2839,13 +2820,13 @@ public sealed partial class MainWindow : Window, IDisposable
         if (outcome.Failure is not null)
         {
             ShowSettingsFailure(outcome.Failure);
-            return null;
+            return outcome;
         }
 
         _settings = SettingsWriter.Current;
         SettingsChanged?.Invoke(_settings);
         ApplySettingsToControls();
-        return outcome.Value;
+        return outcome;
     }
 
     /// <summary>Says why a settings write did not happen.</summary>
