@@ -15,6 +15,14 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 
     public void Dispose() => _automationGate.Dispose();
 
+    public Task<TextCommitResult> CopyOnlyAsync(
+        ProcessedText text,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        return WindowsClipboardPaste.CopyRequestedAsync(text.Text, cancellationToken);
+    }
+
     public async Task<TargetContextResult> CaptureContextAsync(
         TargetWindowId target,
         TextDeliveryOptions options,
