@@ -638,7 +638,16 @@ public partial class App : Application, IAsyncDisposable
             SystemLifecycleTransition.SessionUnlocked => AppEventCode.SessionUnlocked,
             _ => AppEventCode.UnhandledFailure,
         };
-        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, eventCode));
+        // WINDOWS LOCKING MID-DICTATION IS A FACT ABOUT THAT DICTATION. Written before the recovery
+        // flow opens its own scope, so it opens one here too; otherwise the event that EXPLAINS the
+        // recovery is the one line of it joined to nothing.
+        using (_sessionController?.CurrentSession is { } interrupted
+            ? DictationScope.Begin(interrupted.Id.Value)
+            : NoScope.Instance)
+        {
+            _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, eventCode));
+        }
+
         if (transition is SystemLifecycleTransition.Suspending or
             SystemLifecycleTransition.SessionLocked)
         {
@@ -653,6 +662,13 @@ public partial class App : Application, IAsyncDisposable
 
     private void OnAudioDevicesChanged(AudioDeviceChange change)
     {
+        // A MICROPHONE VANISHING MID-DICTATION IS A FACT ABOUT THAT DICTATION, and this arrives on
+        // its own Windows device callback, so it inherits nothing. It is also the single most
+        // useful line in the log when somebody asks why a recording went wrong, which is exactly
+        // the line worth not leaving joined to nothing.
+        using var dictation = _sessionController?.CurrentSession is { } recording
+            ? DictationScope.Begin(recording.Id.Value)
+            : NoScope.Instance;
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
             AppEventCode.AudioDevicesChanged,
@@ -870,6 +886,14 @@ public partial class App : Application, IAsyncDisposable
 
     private async Task PrepareForExitCoreAsync()
     {
+        // ONE SCOPE FOR THE WHOLE TEARDOWN, rather than one per line found. Quitting mid-recording
+        // is a fact about that recording, and everything written on the way out - the shell closing,
+        // the preview stopping, whatever a future teardown step logs - belongs to it. Five review
+        // rounds each named one more unscoped line on this path; scoping the path is the answer that
+        // does not need a sixth.
+        using var dictation = _sessionController?.CurrentSession is { } recording
+            ? DictationScope.Begin(recording.Id.Value)
+            : NoScope.Instance;
         _window?.ShutdownProductWindows();
         (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately();
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellClosed));
@@ -1947,6 +1971,14 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
+        // Carried rather than inherited, because the catch blocks below run after the try's scope
+        // has been disposed and are exactly the lines somebody reads first when a dictation went
+        // wrong.
+        //
+        // SEEDED FROM THE CONTROLLER RATHER THAN LEFT NULL, because a release or a cancel can throw
+        // BEFORE it returns a transition, and the recording those lines are about already exists.
+        // Left null, the two catches lost the dictation on exactly the paths that create them.
+        var interrupted = controller.CurrentSession?.Id.Value;
         CancellationTokenSource? processingCancellation = null;
         try
         {
@@ -2015,12 +2047,20 @@ public partial class App : Application, IAsyncDisposable
                 _ => throw new InvalidOperationException("Unsupported push-to-talk signal."),
             };
 
+            // FROM HERE THE DICTATION IS KNOWN, AND EVERYTHING BELOW BELONGS TO IT. Above this line
+            // the session either does not exist yet (a press) or is being read off the controller,
+            // and lines written there honestly have no dictation. `Begin` restores rather than
+            // clears, so this nesting inside another scope is safe.
+            interrupted = result.Session?.Id.Value;
+            using var dictation = interrupted is { } known
+                ? DictationScope.Begin(known)
+                : NoScope.Instance;
             WriteSessionEvent(result);
             if (result.Kind == SessionTransitionKind.Started && result.Session is not null)
             {
                 _escapeRecoveryForSession = _settings.Preferences.Dictation.EscapeRecoveryEnabled;
                 StartRecordingWatchdog(controller, result.Session.Id);
-                await StartLivePreviewAsync().ConfigureAwait(false);
+                await StartLivePreviewAsync(result.Session.Id).ConfigureAwait(false);
                 StartAutoStopWatch(result.Session.Id);
                 StartStreamingTranscription(result.Session.Id);
             }
@@ -2057,6 +2097,12 @@ public partial class App : Application, IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
+            // THE CATCH RUNS AFTER THE TRY'S SCOPE HAS BEEN DISPOSED, so the id is carried in a
+            // variable rather than inherited. Failure and recovery are the lines somebody reads
+            // FIRST when a dictation went wrong, and they were the ones losing their dictation.
+            using var failed = interrupted is { } timedOut
+                ? DictationScope.Begin(timedOut)
+                : NoScope.Instance;
             await RecoverFailedSessionAsync(
                 controller,
                 new AppError(
@@ -2067,6 +2113,9 @@ public partial class App : Application, IAsyncDisposable
         }
         catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
         {
+            using var failed = interrupted is { } broken
+                ? DictationScope.Begin(broken)
+                : NoScope.Instance;
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationSessionFailed,
@@ -2109,6 +2158,13 @@ public partial class App : Application, IAsyncDisposable
         DictationSessionId sessionId,
         CancellationToken cancellationToken)
     {
+        // Every flow that serves a dictation opens the scope for itself. Inheriting one would in
+        // fact work here - a child async flow keeps the AsyncLocal value it captured even after the
+        // caller disposes its own scope - and that is exactly why this does not rely on it: the
+        // join would then be a property of who happened to call whom, invisible at this method and
+        // unprovable by anything. Opening it here makes it a property of this flow, which a gate
+        // can check. One line per flow, and the flows are the methods that take a session id.
+        using var dictation = DictationScope.Begin(sessionId.Value);
         try
         {
             await Task.Delay(RecordingWatchdogDuration(), cancellationToken).ConfigureAwait(false);
@@ -2205,6 +2261,13 @@ public partial class App : Application, IAsyncDisposable
 
     private async Task RecoverFromSystemTransitionAsync(SystemLifecycleTransition transition)
     {
+        // WINDOWS LOCKING OR SUSPENDING ARRIVES ON ITS OWN CALLBACK, so this flow inherits nothing
+        // and had no dictation at all - the capture transition, the preview stop, the failure and
+        // the recovery lines all landed joined to nothing, on the path where a user most wants to
+        // know what happened to their words.
+        using var dictation = _sessionController?.CurrentSession is { } interrupted
+            ? DictationScope.Begin(interrupted.Id.Value)
+            : NoScope.Instance;
         _activeProcessingCancellation?.Cancel();
         if (!await _sessionOperationGate.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false))
         {
@@ -2384,6 +2447,13 @@ public partial class App : Application, IAsyncDisposable
         DictationSessionId sessionId,
         CancellationToken cancellationToken)
     {
+        // Every flow that serves a dictation opens the scope for itself. Inheriting one would in
+        // fact work here - a child async flow keeps the AsyncLocal value it captured even after the
+        // caller disposes its own scope - and that is exactly why this does not rely on it: the
+        // join would then be a property of who happened to call whom, invisible at this method and
+        // unprovable by anything. Opening it here makes it a property of this flow, which a gate
+        // can check. One line per flow, and the flows are the methods that take a session id.
+        using var dictation = DictationScope.Begin(sessionId.Value);
         var segmenter = new SpeechSegmenter(
             AudioSampleConverter.TargetSampleRate,
             TimeSpan.FromMilliseconds(400));
@@ -2492,6 +2562,13 @@ public partial class App : Application, IAsyncDisposable
         DictationPreferences dictation,
         CancellationToken cancellationToken)
     {
+        // Every flow that serves a dictation opens the scope for itself. Inheriting one would in
+        // fact work here - a child async flow keeps the AsyncLocal value it captured even after the
+        // caller disposes its own scope - and that is exactly why this does not rely on it: the
+        // join would then be a property of who happened to call whom, invisible at this method and
+        // unprovable by anything. Opening it here makes it a property of this flow, which a gate
+        // can check. One line per flow, and the flows are the methods that take a session id.
+        using var scope = DictationScope.Begin(sessionId.Value);
         var required = TimeSpan.FromSeconds(dictation.AutoStopSilenceSeconds);
         if (required < AutoStopPolicy.MinimumSilence)
         {
@@ -2569,8 +2646,15 @@ public partial class App : Application, IAsyncDisposable
         cancellation.Dispose();
     }
 
-    private async Task StartLivePreviewAsync()
+    private async Task StartLivePreviewAsync(DictationSessionId sessionId)
     {
+        // Every flow that serves a dictation opens the scope for itself. Inheriting one would in
+        // fact work here - a child async flow keeps the AsyncLocal value it captured even after the
+        // caller disposes its own scope - and that is exactly why this does not rely on it: the
+        // join would then be a property of who happened to call whom, invisible at this method and
+        // unprovable by anything. Opening it here makes it a property of this flow, which a gate
+        // can check. One line per flow, and the flows are the methods that take a session id.
+        using var scope = DictationScope.Begin(sessionId.Value);
         if (!_settings.Preferences.LivePreviewEnabled)
         {
             return;
@@ -2672,6 +2756,14 @@ public partial class App : Application, IAsyncDisposable
 
     private async Task StopLivePreviewAsync()
     {
+        // STOPPING IS REACHED FROM MORE PLACES THAN STARTING, and one of them is quitting the app
+        // from the tray mid-recording - a shutdown path that inherits nothing, where the line saying
+        // the preview stopped was the last thing written about that dictation and was joined to
+        // nothing. Read off the controller rather than taken as a parameter, because the callers
+        // that lose the join are exactly the ones with no id to pass.
+        using var dictation = _sessionController?.CurrentSession is { } recording
+            ? DictationScope.Begin(recording.Id.Value)
+            : NoScope.Instance;
         await _previewGate.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -2720,10 +2812,6 @@ public partial class App : Application, IAsyncDisposable
         // EVERY LINE WRITTEN FROM HERE ON SAYS WHICH DICTATION IT BELONGED TO. The scope is ambient,
         // so helpers that have never heard of it - polish, delivery, the recovery write - are joined
         // without being handed anything, and one added next month is joined on arrival.
-        //
-        // WHAT IT COVERS IS THE PIPELINE AFTER CAPTURE, and that is stated rather than implied:
-        // transcription, deterministic cleanup, polish, delivery and the recovery save. Capture,
-        // the streaming worker and auto-stop happen before this method and are NOT joined yet.
         using var dictation = DictationScope.Begin(sessionId.Value);
         _escapeRecoveryForSession = false;
         var engine = _transcriptionEngine;
