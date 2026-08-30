@@ -8,6 +8,13 @@ public sealed record WordCorrectionResult(string Text, int ReplacementCount);
 public static partial class CustomWordCorrector
 {
     public const double SimilarityThreshold = 0.82;
+
+    /// <summary>How close a heard word must be when the user asked for a generous match.</summary>
+    public const double LooseSimilarityThreshold = 0.72;
+
+    /// <summary>How close a heard word must be when the user asked for a mean one.</summary>
+    public const double StrictSimilarityThreshold = 0.92;
+
     public const double AmbiguityMargin = 0.05;
 
     private static readonly HashSet<string> ReservedTriggerWords =
@@ -37,7 +44,8 @@ public static partial class CustomWordCorrector
             .Where(IsUsable)
             .SelectMany(entry => Surfaces(entry).Select(surface => new Candidate(
                 CollapseSpaces(surface),
-                entry.Replacement)))
+                entry.Replacement,
+                entry.Strictness)))
             .Where(candidate => !ContainsReservedTrigger(candidate.Surface))
             .DistinctBy(
                 candidate => candidate.Surface,
@@ -114,7 +122,12 @@ public static partial class CustomWordCorrector
                     item.Candidate.Replacement,
                     best.Candidate.Replacement,
                     StringComparison.OrdinalIgnoreCase));
-            var threshold = SimilarityThreshold - LengthAwareAdjustment(best.Candidate.Surface.Length)
+            // THE USER'S CHOICE MOVES THE BAR; THE OTHER TWO TERMS STILL APPLY TO IT. Length and
+            // vocabulary size are properties of the word and the list, not of how forgiving somebody
+            // wanted to be, so asking for a strict match on a long word should not also throw away
+            // the allowance long words have always had.
+            var threshold = BaseThreshold(best.Candidate.Strictness)
+                - LengthAwareAdjustment(best.Candidate.Surface.Length)
                 + LargeVocabularyPenalty(fuzzyCandidates.Length);
             if (best.Score < threshold ||
                 secondBest is not null && best.Score - secondBest.Score < AmbiguityMargin)
@@ -128,6 +141,14 @@ public static partial class CustomWordCorrector
 
         return new WordCorrectionResult(result, replacementCount);
     }
+
+    /// <summary>The bar a heard word must clear for a custom word at the given strictness.</summary>
+    public static double BaseThreshold(MatchStrictness strictness) => strictness switch
+    {
+        MatchStrictness.Loose => LooseSimilarityThreshold,
+        MatchStrictness.Strict => StrictSimilarityThreshold,
+        _ => SimilarityThreshold,
+    };
 
     public static double LargeVocabularyPenalty(int poolSize) =>
         Math.Min(0.06, Math.Max(0, ((poolSize - 100) / 500) * 0.02));
@@ -162,7 +183,7 @@ public static partial class CustomWordCorrector
     private static string SurfacePattern(string surface) =>
         $@"(?<![\p{{L}}\p{{N}}]){string.Join(@"[\s,.!?\u2014\u2013-]+", surface.Split(' ').Select(Regex.Escape))}(?![\p{{L}}\p{{N}}])";
 
-    private sealed record Candidate(string Surface, string Replacement);
+    private sealed record Candidate(string Surface, string Replacement, MatchStrictness Strictness);
 
     [GeneratedRegex(@"[\p{L}\p{N}][\p{L}\p{N}'\u2019-]*", RegexOptions.CultureInvariant)]
     private static partial Regex WordTokenRegex();

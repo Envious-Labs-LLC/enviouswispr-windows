@@ -64,6 +64,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 9 => MigrateFromV9(json),
                 10 => MigrateFromV10(json),
                 11 => MigrateFromV11(json),
+                12 => MigrateFromV12(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -391,6 +392,22 @@ public sealed class JsonSettingsStore : ISettingsStore
                 SchemaVersion = AppSettings.CurrentSchemaVersion,
                 LastSeenReleaseNotes = null,
             };
+    }
+
+    /// <summary>Takes a settings file written before custom words could be matched loosely.</summary>
+    /// <remarks>
+    /// NOTHING IS REWRITTEN, AND THAT IS THE CORRECT MIGRATION rather than a missing one. Every word
+    /// in an older file was corrected by one rule, so the honest value for all of them is the one
+    /// that keeps doing exactly that - which is what a missing strictness deserializes to. The step
+    /// exists to record that the file has been read at the new shape, so a user is not asked to
+    /// prove anything about words they added before the question existed.
+    /// </remarks>
+    private static AppSettings? MigrateFromV12(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
     }
 
     private static SettingsLoadResult Invalid(
