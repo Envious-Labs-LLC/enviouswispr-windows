@@ -13,22 +13,32 @@ namespace EnviousWispr.Architecture.Tests;
 public sealed class StartupNoticeDecisionTests
 {
     [Theory]
-    // Text came back. That outranks everything, including a run that ended mid-dictation.
-    [InlineData(true, true, RecoveryTextLoadStatus.Found, StartupNotice.RecoveredText)]
+    // THE WHOLE SIXTEEN, NOT THE CORNERS. Two booleans against four recovery statuses is sixteen
+    // rows, and a corner-only set cannot see the two booleans becoming accidentally coupled - which
+    // is precisely the bug that would make a lost-dictation warning fire on an idle restart.
+    //
+    // Text came back. That outranks the run state on every combination of it.
     [InlineData(false, false, RecoveryTextLoadStatus.Found, StartupNotice.RecoveredText)]
+    [InlineData(false, true, RecoveryTextLoadStatus.Found, StartupNotice.RecoveredText)]
+    [InlineData(true, false, RecoveryTextLoadStatus.Found, StartupNotice.RecoveredText)]
+    [InlineData(true, true, RecoveryTextLoadStatus.Found, StartupNotice.RecoveredText)]
     // A recovery file that cannot be read is specific and actionable, so it keeps its own words.
-    [InlineData(true, true, RecoveryTextLoadStatus.Invalid, StartupNotice.RecoveryInvalid)]
     [InlineData(false, false, RecoveryTextLoadStatus.Invalid, StartupNotice.RecoveryInvalid)]
-    [InlineData(true, true, RecoveryTextLoadStatus.Unavailable, StartupNotice.RecoveryUnavailable)]
+    [InlineData(false, true, RecoveryTextLoadStatus.Invalid, StartupNotice.RecoveryInvalid)]
+    [InlineData(true, false, RecoveryTextLoadStatus.Invalid, StartupNotice.RecoveryInvalid)]
+    [InlineData(true, true, RecoveryTextLoadStatus.Invalid, StartupNotice.RecoveryInvalid)]
     [InlineData(false, false, RecoveryTextLoadStatus.Unavailable, StartupNotice.RecoveryUnavailable)]
-    // THE ROW THE FIRST FIX DELETED. Stopped mid-dictation with nothing saved: the words are gone
-    // and only the person who said them can say them again.
+    [InlineData(false, true, RecoveryTextLoadStatus.Unavailable, StartupNotice.RecoveryUnavailable)]
+    [InlineData(true, false, RecoveryTextLoadStatus.Unavailable, StartupNotice.RecoveryUnavailable)]
+    [InlineData(true, true, RecoveryTextLoadStatus.Unavailable, StartupNotice.RecoveryUnavailable)]
+    // NOTHING TO RESTORE, WHERE THE RUN STATE FINALLY MATTERS AND ONLY ONE ROW EARNS A WARNING.
+    // Stopped mid-dictation: the words are gone and only the person who said them can say them again.
     [InlineData(true, true, RecoveryTextLoadStatus.Missing, StartupNotice.DictationMayBeLost)]
-    // THE ROWS THE ORIGINAL BANNER GOT WRONG. An interrupted run with no dictation in flight is a
-    // closed laptop, a Restart, a log off or Task Manager, and costs the reader nothing.
+    // Interrupted with no dictation in flight is a closed laptop, a Restart, a log off or Task
+    // Manager, and costs the reader nothing. This is the row the original banner got wrong.
     [InlineData(true, false, RecoveryTextLoadStatus.Missing, StartupNotice.None)]
     [InlineData(false, false, RecoveryTextLoadStatus.Missing, StartupNotice.None)]
-    // A clean previous run cannot produce a warning even if the flag were somehow left set.
+    // A clean previous run cannot warn even if the flag were somehow left set.
     [InlineData(false, true, RecoveryTextLoadStatus.Missing, StartupNotice.None)]
     public void TheNoticeMatchesWhatTheAppActuallyKnows(
         bool previousRunInterrupted,
@@ -49,14 +59,26 @@ public sealed class StartupNoticeDecisionTests
     [Fact]
     public void TheRunStartResultCarriesNoInterruptedRunCount()
     {
+        // NAMED, NOT TYPED. Banning every future int property would reject an honest field nobody
+        // has thought of yet, which makes the guard something to work around rather than something
+        // to keep. This bans the one thing that was actually spent on the banner.
         var carried = typeof(ApplicationRunStartResult)
             .GetProperties()
-            .Where(property => property.PropertyType == typeof(int))
             .Select(property => property.Name)
+            .Where(name => name.Contains("Interrupted", StringComparison.OrdinalIgnoreCase)
+                && name.Contains("Count", StringComparison.OrdinalIgnoreCase))
+            .Concat(typeof(ApplicationRunStartResult)
+                .GetProperties()
+                .Select(property => property.Name)
+                .Where(name => string.Equals(
+                    name,
+                    "ConsecutiveInterruptedRuns",
+                    StringComparison.Ordinal)))
             .ToArray();
 
         Assert.True(
             carried.Length == 0,
-            "ApplicationRunStartResult carries a number again: " + string.Join(", ", carried));
+            "ApplicationRunStartResult carries the interrupted-run count again: "
+                + string.Join(", ", carried));
     }
 }
