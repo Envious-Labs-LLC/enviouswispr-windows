@@ -1,0 +1,31 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EnviousWispr.Smoke/EnviousWispr.Smoke.csproj" />
+    <Project Path="src/EnviousWispr.Tests/EnviousWispr.Tests.csproj" />
+    <Project Path="src/EnviousWispr/EnviousWispr.csproj" />
+  </Folder>
+  <Folder Name="/src/Production/">
+    <Project Path="src/Production/EnviousWispr.App/EnviousWispr.App.csproj" />
+    <Project Path="src/Production/EnviousWispr.Architecture.Tests/EnviousWispr.Architecture.Tests.csproj" />
+    <Project Path="src/Production/EnviousWispr.ASR/EnviousWispr.ASR.csproj" />
+    <Project Path="src/Production/EnviousWispr.Audio/EnviousWispr.Audio.csproj" />
+    <Project Path="src/Production/EnviousWispr.Core/EnviousWispr.Core.csproj" />
+    <Project Path="src/Production/EnviousWispr.LLM/EnviousWispr.LLM.csproj" />
+    <Project Path="src/Production/EnviousWispr.ModelDelivery/EnviousWispr.ModelDelivery.csproj" />
+    <Project Path="src/Production/EnviousWispr.Pipeline/EnviousWispr.Pipeline.csproj" />
+    <Project Path="src/Production/EnviousWispr.PostProcessing/EnviousWispr.PostProcessing.csproj" />
+    <Project Path="src/Production/EnviousWispr.RuntimeWorker/EnviousWispr.RuntimeWorker.csproj" />
+    <Project Path="src/Production/EnviousWispr.Services/EnviousWispr.Services.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/asr-uat/EnviousWispr.Asr.Uat.csproj" />
+    <Project Path="tools/audio-uat/EnviousWispr.Audio.Uat.csproj" />
+    <Project Path="tools/cloud-polish-uat/EnviousWispr.CloudPolish.Uat.csproj" />
+    <Project Path="tools/hotkey-uat/EnviousWispr.Hotkey.Uat.csproj" />
+    <Project Path="tools/model-delivery-uat/EnviousWispr.ModelDelivery.Uat.csproj" />
+    <Project Path="tools/ollama-uat/EnviousWispr.Ollama.Uat.csproj" />
+    <Project Path="tools/polish-uat/EnviousWispr.Polish.Uat.csproj" />
+    <Project Path="tools/reliability-uat/EnviousWispr.Reliability.Uat.csproj" />
+    <Project Path="tools/runtime-uat/EnviousWispr.Runtime.Uat.csproj" />
+  </Folder>
+</Solution>

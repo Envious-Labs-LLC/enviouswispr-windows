@@ -1,0 +1,57 @@
+# Architecture contract
+
+## Preserve the proof, build the product
+
+The current WPF and .NET 8 application is a founder-tested vertical slice. Keep it runnable as a reference
+until each capability has production replacement evidence. Do not rewrite working behavior all at once.
+
+The production target is C# on the current .NET LTS with WinUI 3 and Windows App SDK. Model engines may
+use pinned native libraries behind small C# interfaces. Direct distribution uses a self-contained Windows
+build so customers do not need to install developer tooling.
+
+## Module boundaries
+
+- `App`: composition, lifecycle, tray, onboarding, and WinUI views.
+- `Core`: shared value types, settings contracts, errors, and session state.
+- `Audio`: WASAPI capture, device selection, resampling, and level monitoring.
+- `ASR`: engine-neutral transcription contracts and adapters.
+- `PostProcessing`: deterministic cleanup, inverse text normalization, and emoji rules.
+- `LLM`: optional local and cloud polish providers.
+- `Pipeline`: recording-to-delivery orchestration and cancellation.
+- `Services`: storage, credentials, updates, telemetry boundaries, and Windows integration.
+- `ModelDelivery`: manifests, downloads, hashes, versions, storage, and cleanup.
+
+Dependencies point inward toward contracts. UI, storage, network, and model runtimes do not leak into the
+deterministic core.
+
+## Speech engines
+
+- Parakeet production work begins from the measured direct ONNX Runtime C# decoder in this repository.
+  Sherpa-onnx is a benchmarked fallback candidate, not the assumed baseline.
+- Whisper uses a pinned `whisper.cpp` Windows runtime behind the same final-ASR contract.
+- Live preview uses a separate small multilingual Whisper model through `whisper.cpp`. It is display-only,
+  runs below final-ASR priority, and yields resources before final transcription.
+- CPU execution is mandatory. GPU acceleration is selected only after a real capability probe.
+
+## Polishing engines
+
+- EG-1 uses a pinned Windows `llama.cpp` server or library and the same GGUF model family as macOS.
+- Ollama uses its documented loopback API and never requires an Envious Labs proxy.
+- OpenAI, Anthropic, and Gemini are direct BYOK integrations.
+- All providers implement one contract with timeouts, cancellation, health checks, and deterministic
+  fallback. Provider-specific wire details stay inside adapters.
+
+## Windows integration
+
+- Audio: WASAPI through a maintained .NET wrapper or a narrow native bridge.
+- Hotkey: `RegisterHotKey` where possible, with a low-level hook only for combinations it cannot express.
+- Focus and context: Windows UI Automation with explicit fallbacks and privacy limits.
+- Delivery: UI Automation when reliable, otherwise clipboard plus narrowly scoped `SendInput`.
+- Secrets: Windows Credential Manager.
+- Storage: versioned user data outside the install directory with atomic writes and migrations.
+
+## Runtime selection
+
+At startup, discover CPU, GPU providers, memory, model availability, and known incompatibilities. Choose a
+safe default and show why. A manual choice is allowed when it passes the same capability probe. One engine
+failure can fall back without crashing the app or losing recorded audio.

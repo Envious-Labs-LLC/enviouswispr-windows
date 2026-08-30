@@ -1,0 +1,41 @@
+# Line endings, decided here so they stop being decided by whoever last touched a file.
+#
+# THIS PROJECT IS EDITED FROM TWO OPERATING SYSTEMS AND BUILT ON A THIRD MACHINE. Without this file
+# git guesses per checkout, and the guesses disagree: a file added from Windows lands in the index
+# with CRLF, a Mac checkout gets LF, and CI gets whichever its runner produces. A test whose regex
+# ends in `$` then passes on one and fails on another, which is a real failure this project has
+# already paid for once.
+#
+# LF IN THE INDEX, WHATEVER THE WORKING TREE LOOKS LIKE. Visual Studio, MSBuild and PowerShell are
+# all content with LF, so there is nothing to trade away by picking one.
+
+* text=auto eol=lf
+
+# Binary, so git never tries to translate them and never offers them as a diff.
+*.png   binary
+*.jpg   binary
+*.ico   binary
+*.icns  binary
+*.wav   binary
+*.pdf   binary
+*.zip   binary
+*.onnx  binary
+*.bin   binary
+*.dll   binary
+*.exe   binary
+*.pdb   binary
+
+# EVIDENCE, LEFT BYTE-FOR-BYTE. The workflow rule is to preserve the founder-tested proof and the
+# spike results, and normalising them would rewrite files whose whole value is being exactly what was
+# run and measured. `-text` means git stores and checks them out unchanged, which also stops this
+# change touching a single existing byte anywhere in the repository.
+#
+# Seven of the spike result files are CRLF in the index today and two files in the proof tree are
+# MIXED. All nine stay that way on purpose.
+spikes/**                   -text
+src/EnviousWispr/**         -text
+src/EnviousWispr.Smoke/**   -text
+
+# The macOS snapshot is a copy of another repository's source, kept for parity comparisons. Its
+# bytes belong to that repository rather than to this one.
+macos-source/**             -text

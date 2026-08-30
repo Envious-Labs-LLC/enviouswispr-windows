@@ -3,6 +3,14 @@
 Snapshot baseline: commit `f9b70283`, 2026-08-24. All line counts below MEASURED by
 `find Sources/<Module> -name '*.swift' | xargs wc -l` on the snapshot, 2026-08-24.
 
+**Status of the compile check (2026-08-24 evening):** the plan was to build
+`EnviousWisprCore` and `EnviousWisprPostProcessing` with Swift-on-Linux to move the
+`PORTABILITY CANDIDATE` verdicts from ASSUMED to MEASURED. The rig moved to native
+Windows mid-install; the spike was **abandoned with no result** (see `toolchain.md`).
+The verdicts therefore remain `ASSUMED`-portable. Under the current C#
+recommendation the Swift compile check is optional — the 164K-line test corpus is
+the specification for the rewrite either way.
+
 ## Line-count correction to the brief
 
 `macos-source/` total = **139,085** lines of Swift across 17 modules (Sources/ only).
@@ -53,7 +61,8 @@ MEASURED import census (2026-08-24, `grep -rhoE '^import [A-Za-z]+'` per module)
 
 ## Load-bearing constraints (headline findings)
 
-1. **Sub-second = transcription only** (founder decision, READ pipeline-mechanics.md FACT subsecond…). Baseline 2026-08-21 PostHog: 0.61s median no-polish, 1.65s on-device polish (Mac, Apple Silicon). Windows RTFx for Parakeet int8 on DirectML/CPU is UNMEASURED — first thing to measure on the Windows host.
+1. **Sub-second = transcription only** (founder decision, READ pipeline-mechanics.md FACT subsecond…). Baseline 2026-08-21 PostHog: 0.61s median no-polish, 1.65s on-device polish (Mac, Apple Silicon). Windows RTFx for Parakeet int8 on DirectML/CUDA/CPU is UNMEASURED — first thing to
+measure, now locally on this rig (RTX 4090 24 GB, MEASURED 2026-08-24).
 2. **Caret context / cursor-aware insertion is the biggest platform gap.** AX reading of text around the caret → UIA TextPattern. Windows UIA coverage is app-by-app and weaker in places (ASSUMED — must be measured in the top-10 app matrix before promising cursor-aware insertion). The Mac's Tier-1 paste (AX direct write, verified character-count change) has no exact Windows counterpart; the workhorse becomes clipboard + SendInput (already Tier 2 on the Mac), with the sacred clipboard-restore contract intact.
 3. **Streaming is a limb, not the heart.** Default is batch (`useStreamingASR=false`, READ pipeline-mechanics.md FACT parakeet-pipeline). Windows v1 can ship without live transcription and still keep the speed promise; the streaming limb needs a real decision (port sliding window over ONNX / simulated streaming / different model / defer).
 4. **No TCC-style permission model.** Windows has no accessibility-permission prompt for UIA/SendInput, but elevated-target windows (UIPI) and RDP are the analogues to test.

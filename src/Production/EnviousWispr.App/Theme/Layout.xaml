@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <CornerRadius x:Key="BrandWindowCardRadius">18</CornerRadius>
+    <Thickness x:Key="BrandWindowFrameInset">14</Thickness>
+    <x:Double x:Key="BrandContentCardMinimumWidth">480</x:Double>
+    <CornerRadius x:Key="BrandSectionRadius">14</CornerRadius>
+    <x:Double x:Key="BrandRowPaddingH">14</x:Double>
+    <x:Double x:Key="BrandRowPaddingV">12</x:Double>
+    <!--
+        THE SPACING SCALE. Thirteen different gap values were in use across one window - 3, 4, 5, 6,
+        7, 8, 9, 10, 12, 14, 16, 18 and 20 - which is not a scale, it is noise, and it is what a
+        measured audit reads as inconsistent padding.
+
+        Four-point grid, because that is the one Fluent is built on and the one every first-party
+        Windows surface lines up to. Five steps is enough: anything needing a sixth is usually a
+        layout that wants restructuring rather than a new number.
+
+        Every former literal maps to its NEAREST step, and ties resolve DOWNWARD. Growth is what
+        clips text, and this branch has already shipped one clipping regression from a layout
+        change nobody could see before it shipped.
+    -->
+    <x:Double x:Key="BrandSpacingXs">4</x:Double>
+    <x:Double x:Key="BrandSpacingS">8</x:Double>
+    <x:Double x:Key="BrandSpacingM">12</x:Double>
+    <x:Double x:Key="BrandSpacingL">16</x:Double>
+    <x:Double x:Key="BrandSpacingXl">20</x:Double>
+
+    <x:Double x:Key="BrandSectionSpacing">18</x:Double>
+    <x:Double x:Key="BrandContentTop">18</x:Double>
+    <x:Double x:Key="BrandContentH">24</x:Double>
+    <x:Double x:Key="BrandContentBottom">32</x:Double>
+    <!-- One measure for every settings page. Pages that each pick their own cap change width as the
+         user navigates, which reads as the frame twitching rather than as a deliberate layout. -->
+    <x:Double x:Key="BrandPageContentMaxWidth">1040</x:Double>
+    <!-- Cap for content nested INSIDE a page card (a centred column within a section). -->
+    <x:Double x:Key="BrandInlineContentMaxWidth">440</x:Double>
+    <!-- Leading icon column on a setting row, and the inset that lines the glyph up with the row's
+         first text line instead of centring it against the whole row. -->
+    <x:Double x:Key="BrandRowIconColumnWidth">28</x:Double>
+    <Thickness x:Key="BrandRowIconInset">0,2,0,0</Thickness>
+    <!-- Navigation density, matched to the macOS sidebar rather than to WinUI's touch-first
+         default. The Mac ships the same fourteen destinations in the same five groups at about a
+         36pt row pitch. Both platforms scroll this list - the Mac sidebar is a ScrollView too -
+         so the goal is not to fit everything, it is to match the density the product already
+         ships. Measured: matching it brought the list from 896 DIP to fitting the window whole.
+
+         TWO WRONG PROPERTIES BEFORE THIS ONE, and they failed in opposite directions:
+         MinHeight below the natural height could never SHRINK anything, so it was inert. An
+         explicit Height on the group heading could never GROW, so it CLIPPED the letters - the
+         bottom row of pixels sliced off every glyph.
+
+         Hence the split below. Rows take a Height, because a row's label is comfortably shorter
+         than its box and the box is what sets the pitch. The heading takes NO height at all: it
+         is sized by its own text and the block is made shorter with MARGIN instead. Shorten the
+         BLOCK, never the text box. -->
+    <x:Double x:Key="BrandNavRowHeight">36</x:Double>
+    <Thickness x:Key="BrandNavGroupHeaderMargin">0,10,0,2</Thickness>
+<x:Double x:Key="BrandOnboardingContentMaxWidth">1040</x:Double>
+    <Thickness x:Key="BrandOnboardingContentPadding">40,28,40,48</Thickness>
+    <!-- The pinned first-run action sits in its own band below the scrolling content. It keeps the
+         content's side padding so the button lines up with the cards above it, and takes a smaller
+         vertical measure because a footer that is as tall as a section reads as another section. -->
+    <Thickness x:Key="BrandOnboardingFooterPadding">40,20,40,24</Thickness>
+    <x:Double x:Key="BrandOnboardingMarkSize">88</x:Double>
+    <x:Double x:Key="BrandOnboardingIconTileSize">52</x:Double>
+    <x:Double x:Key="BrandOnboardingIconGlyphSize">22</x:Double>
+    <x:Double x:Key="BrandOnboardingStepCardMinHeight">146</x:Double>
+    <x:Double x:Key="BrandOnboardingWideSpacing">24</x:Double>
+    <x:Double x:Key="BrandOnboardingCardSpacing">12</x:Double>
+    <x:Double x:Key="BrandOnboardingTextSpacing">4</x:Double>
+    <Thickness x:Key="BrandOnboardingCardPadding">20</Thickness>
+</ResourceDictionary>

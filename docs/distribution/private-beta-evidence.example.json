@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "channel": "win-x64-founder",
+  "version": "0.0.0",
+  "machineClass": "replace-with-coarse-class",
+  "checks": {
+    "cleanInstall": "unobserved",
+    "admittedUpdate": "unobserved",
+    "atomicRestart": "unobserved",
+    "forcedFailureRollback": "unobserved",
+    "repair": "unobserved",
+    "uninstall": "unobserved",
+    "dataPreservation": "unobserved",
+    "diagnosticsConsent": "unobserved",
+    "feedbackTriage": "unobserved",
+    "crashTriage": "unobserved",
+    "smartScreen": "unobserved",
+    "endpointSecurity": "unobserved"
+  },
+  "approvals": {
+    "founderRelease": false,
+    "updateEndpoint": false,
+    "telemetryServerPolicy": false
+  },
+  "blockerIssueNumbers": [42, 44, 45, 47, 50]
+}

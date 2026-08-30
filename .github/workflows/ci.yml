@@ -1,0 +1,24 @@
+name: ci
+
+on:
+  push:
+    branches: [main, "rig/*", "codex/*"]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      # Canonical parity with local validation. Model runtime tests remain
+      # excluded because their packs are gitignored and machine-local by design.
+      - name: Validate portable build and contracts
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/validate.ps1

@@ -1,0 +1,29 @@
+{
+  "tier": "cpu",
+  "decoder": "int8",
+  "providers": [
+    "CPUExecutionProvider"
+  ],
+  "model_load_s": 2.21,
+  "runs_per_clip": 7,
+  "clips": [
+    {
+      "clip": "clip10.wav",
+      "duration_s": 10.0,
+      "median_s": 3.06,
+      "min_s": 2.957,
+      "max_s": 3.131,
+      "rtfx": 3.3,
+      "text_head": "Tell me honestly if this new telemetry will truly answer the questions we need o"
+    },
+    {
+      "clip": "clip20.wav",
+      "duration_s": 20.0,
+      "median_s": 4.215,
+      "min_s": 4.073,
+      "max_s": 4.472,
+      "rtfx": 4.7,
+      "text_head": "I've gone through this headache with their team before. As long as it's not ment"
+    }
+  ]
+}

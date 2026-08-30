@@ -1,0 +1,30 @@
+{
+  "tier": "cuda",
+  "decoder": "fp32",
+  "providers": [
+    "CUDAExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "model_load_s": 10.31,
+  "runs_per_clip": 7,
+  "clips": [
+    {
+      "clip": "clip10.wav",
+      "duration_s": 10.0,
+      "median_s": 0.119,
+      "min_s": 0.056,
+      "max_s": 1.837,
+      "rtfx": 84.0,
+      "text_head": "Tell me honestly if this new telemetry will truly answer the questions we need o"
+    },
+    {
+      "clip": "clip20.wav",
+      "duration_s": 20.0,
+      "median_s": 0.191,
+      "min_s": 0.141,
+      "max_s": 1.926,
+      "rtfx": 104.8,
+      "text_head": "I've gone through this headache with their team before. As long as it's not ment"
+    }
+  ]
+}

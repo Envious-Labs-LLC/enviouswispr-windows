@@ -20,3 +20,5 @@ Starting files, create as needed:
 | `toolchain.md` | What was installed on the rig and why |
 | `open-questions.md` | Needs a founder decision |
 | `dead-ends.md` | Tried, did not work, why |
+| `Windows Port Research.md` | The full 2026-08-24 research pass: findings, recommendation, path forward |
+| `windows-native-stack.md` | The M-series question: Windows pillar map (WinML/NPU/dGPU) and product decisions |
