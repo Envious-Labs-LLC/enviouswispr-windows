@@ -794,9 +794,12 @@ public sealed partial class DesignSystemTokenTests
         // THE ARGUMENT THE CALL ACTUALLY PASSES, read off the syntax rather than matched out of the
         // text. A pattern that matched a known prefix passed on "settings-ai-polish2", which is a
         // page that does not exist and a button that quietly does nothing.
+        // THE METHOD'S NAME, NOT THE WHOLE EXPRESSION. "this.OpenPage(page)" is the same call and
+        // was invisible to a comparison against the complete text, so the qualified spelling walked
+        // straight past every check below it.
         var destinations = decision.Sections
             .SelectMany(section => section.DescendantNodes().OfType<InvocationExpressionSyntax>())
-            .Where(call => call.Expression.ToString() == "OpenPage")
+            .Where(call => InvokedName(call.Expression) == "OpenPage")
             .ToArray();
 
         // EVERY CALL HAS TO BE READABLE, and skipping the ones that are not was a hole rather than a
@@ -826,6 +829,15 @@ public sealed partial class DesignSystemTokenTests
             "The pill sends users to pages the window does not have, so the button quietly does "
                 + "nothing: " + string.Join(", ", missing));
     }
+
+    /// <summary>The final identifier of whatever an invocation names.</summary>
+    private static string? InvokedName(ExpressionSyntax expression) => expression switch
+    {
+        IdentifierNameSyntax name => name.Identifier.ValueText,
+        MemberAccessExpressionSyntax access => access.Name.Identifier.ValueText,
+        MemberBindingExpressionSyntax binding => binding.Name.Identifier.ValueText,
+        _ => null,
+    };
 
     /// <summary>Whether one case section actually runs something before it breaks.</summary>
     /// <remarks>
