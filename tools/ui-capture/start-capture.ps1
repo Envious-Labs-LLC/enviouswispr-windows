@@ -145,10 +145,15 @@ try {
             if (Get-ScheduledTask -TaskName $taskName -ErrorAction Stop) {
                 $cleanupFailures += "the task $taskName is still registered"
             }
-        } catch [Microsoft.Management.Infrastructure.CimException] {
-            # The documented shape of "no such task", which is the outcome we want.
         } catch {
-            $cleanupFailures += "could not verify the task was removed: $($_.Exception.Message)"
+            # MATCHED ON THE ERROR ID, NOT THE EXCEPTION TYPE. "No such task" arrives as
+            # CimJobException, which derives from SystemException rather than CimException - so a
+            # typed catch for CimException never fires and every SUCCESSFUL run reported a cleanup
+            # failure, suppressed CAPTURED and exited non-zero. The error id is the stable name for
+            # this outcome.
+            if ($_.FullyQualifiedErrorId -ne 'CmdletizationQuery_NotFound_TaskName,Get-ScheduledTask') {
+                $cleanupFailures += "could not verify the task was removed: $($_.Exception.Message)"
+            }
         }
     }
 }

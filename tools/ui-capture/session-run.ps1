@@ -26,16 +26,30 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# BEFORE ANYTHING MEASURES A WINDOW. Process DPI awareness must be set first or Windows keeps
-# handing this process virtualised coordinates: on a 3840x2160 display at 150% every rectangle came
-# back two-thirds of its real size, which made the pill's 278-pixel width read as 185 and sent a
-# window-size diagnosis badly wrong. capture-shot.ps1 sets it too, for when it is run on its own.
-Add-Type -Namespace UiCapture -Name DpiEarly -MemberDefinition @'
+# BEFORE ANYTHING MEASURES A WINDOW, because awareness must be set before the first measurement.
+# TRUE PIXELS, AND IT REFUSES TO PROCEED WITHOUT THEM. PowerShell is not per-monitor DPI aware, so
+# Windows lies kindly: on a 3840x2160 display at 150% every measurement came back 2560x1440 and the
+# capture was a DOWNSCALED image of the desktop. It looks like a screenshot and is one, of a screen
+# that does not exist - and that is fatal for a tool whose whole job is judging padding, a hairline
+# border and an antialiased corner, all of which a 0.67x resample destroys.
+#
+# VERIFIED, NOT ATTEMPTED. Asking for awareness and ignoring the answer fails OPEN: the measurements
+# go quietly back to being wrong, which is the exact defect this is here to prevent. There is no
+# SetProcessDPIAware fallback either - it requests the older system awareness, so it would "succeed"
+# into precisely the wrong mode.
+Add-Type -Namespace UiCapture -Name Dpi -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
-[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
-'@ -ErrorAction SilentlyContinue
-try { [void][UiCapture.DpiEarly]::SetProcessDpiAwarenessContext([IntPtr] -4) } catch { }
-try { [void][UiCapture.DpiEarly]::SetProcessDPIAware() } catch { }
+[DllImport("user32.dll")] public static extern IntPtr GetThreadDpiAwarenessContext();
+[DllImport("user32.dll")] public static extern bool AreDpiAwarenessContextsEqual(IntPtr a, IntPtr b);
+'@
+$perMonitorV2 = [IntPtr] -4
+# The call fails when awareness is ALREADY set, which is a success for our purposes - so the verdict
+# comes from the effective context afterwards, never from this return value.
+[void][UiCapture.Dpi]::SetProcessDpiAwarenessContext($perMonitorV2)
+if (-not [UiCapture.Dpi]::AreDpiAwarenessContextsEqual(
+        [UiCapture.Dpi]::GetThreadDpiAwarenessContext(), $perMonitorV2)) {
+    throw "Could not put this process into per-monitor DPI awareness. Every measurement and the capture itself would be silently scaled, so this refuses to continue rather than produce a plausible picture of the wrong screen."
+}
 
 if (-not (Test-Path $OutputDirectory)) { New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null }
 $log = Join-Path $OutputDirectory "$Shot.log"
