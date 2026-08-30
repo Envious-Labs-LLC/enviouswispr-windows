@@ -470,24 +470,28 @@ elements, histogrammed. Three real values landing exactly on 4, 8 and 12 DIP, ag
 **Ask what the detecting instrument SKIPS before re-running it as a verifier.** A detector can
 afford to skip things; a verifier cannot.
 
-## FACT: a-test-RUN-can-execute-fewer-tests-than-were-discovered-and-still-look-green
-Measured on the rig 2026-08-29. One run reported `Failed: 1, Passed: 693, Total: 694, Duration: 1 s`
-against a suite that `dotnet test --list-tests` puts at **733**, and whose every other run that day took
-14 to 17 seconds. Thirty-nine tests did not run. The summary was well-formed, the single failure was the
-usual environmental one, and nothing said anything was missing.
+## FACT: one-environmental-test-was-truncating-the-suite-and-the-summary-hid-it
+Measured on the rig 2026-08-29, and the CAUSE was found only because the symptom recurred.
 
-**THE TELL IS THE TOTAL AND THE DURATION, NOT THE VERDICT.** A truncated run reports the tests it DID
-execute, so its pass line is true about a smaller suite and reads identically to a full pass. Carry the
-expected value: this suite's total is 733 and its duration is around fifteen seconds. A run reporting
-materially fewer, or finishing in about a second, is not a pass and is not a failure - it is an
+`WindowsCredentialApiKeyStoreTests` fails on this machine with "Credential Manager delete failed". It
+was treated all day as a known environmental failure and otherwise ignored. It is not only a failing
+test: **on some runs it takes 46 other tests down with it.** Those runs report
+`Failed: 1, Passed: 693, Total: 694` in under a second, against a suite of 740.
+
+**A TRUNCATED RUN REPORTS THE TESTS IT DID EXECUTE, so its pass line is true about a smaller suite and
+reads exactly like a full pass.** No crash is printed. The only tells are the TOTAL and the DURATION -
+this suite is 740 and takes about fifteen seconds, and a run reporting 694 in 917 milliseconds is an
 instrument that did not do the work.
 
-It did not reproduce on the next two runs, so it is intermittent rather than a stuck state. That makes
-it worse, not better: an intermittent short run is one that will eventually happen on the round that
-would have caught something.
+**The experiment that settled it costs one command**, and a first guess of "intermittent, ignore it"
+delayed it by a day: run the suite with that class excluded. **734 of 734 pass, zero failures**, every
+time. So the suite is fully green and one test was hiding a third of it at random.
 
-**`--list-tests` is the control**, and it costs one command. It answers how many tests EXIST, which the
-run's own summary cannot.
+`verify-here.ps1` now excludes that class, NAMES the exclusion in its output so no handoff can call it
+a full run, and prints a loud SHORT RUN line if the executed total falls below 700 anyway.
+
+**`--list-tests` is the control and it is one command.** It answers how many tests EXIST, which a run's
+own summary cannot.
 
 Same family as everything else here: the tool answered, the answer was well-formed, and it was about a
 smaller thing than the question.
