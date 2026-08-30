@@ -22,6 +22,8 @@ param(
     [string] $Shot = "shot",
     [ValidateRange(0, 28000)]
     [int] $SettleMilliseconds = 4000,
+    [int] $MinimumWidth = 1280,
+    [int] $MinimumHeight = 720,
     [switch] $Probe
 )
 
@@ -173,12 +175,16 @@ Add-Type -Namespace UiCapture -Name Dpi -MemberDefinition @'
     # THE TREE BEFORE THE PICTURE, WHILE THE APP IS STILL UP. A screenshot cannot say whether a
     # control is enabled, what a toggle currently reads, or whether anything can be clicked at all.
     if ($Probe) {
-        & (Join-Path $PSScriptRoot 'probe-ui.ps1') -ProcessId $app.Id |
-            Set-Content -LiteralPath $treePath
+        $tree = & (Join-Path $PSScriptRoot 'probe-ui.ps1') -ProcessId $app.Id
+        if (-not $tree) {
+            throw "The automation probe returned nothing. An empty tree beside a fresh screenshot reads as an app with no controls."
+        }
+        Publish $treePath ($tree -join "`n")
         Note "automation tree -> $treePath"
     }
 
-    & (Join-Path $PSScriptRoot 'capture-shot.ps1') -Path $staging | ForEach-Object { Note $_ }
+    & (Join-Path $PSScriptRoot 'capture-shot.ps1') -Path $staging `
+        -MinimumWidth $MinimumWidth -MinimumHeight $MinimumHeight | ForEach-Object { Note $_ }
     if (-not (Test-Path -LiteralPath $staging)) { throw "capture-shot.ps1 wrote no file." }
 
     # RENAMED ONLY ONCE IT IS WHOLE, so a reader never picks up a half-written PNG, and the marker

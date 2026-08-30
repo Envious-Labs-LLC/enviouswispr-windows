@@ -20,6 +20,8 @@ param(
     [ValidateRange(0, 28000)]
     [int] $SettleMilliseconds = 4000,
     [int] $TimeoutSeconds = 90,
+    [int] $MinimumWidth = 1280,
+    [int] $MinimumHeight = 720,
     [switch] $Probe
 )
 
@@ -88,10 +90,11 @@ $logPath = Join-Path $OutputDirectory "$Shot.log"
 $markerPath = Join-Path $OutputDirectory "$Shot.ok"
 $pidPath = Join-Path $OutputDirectory "$Shot.pid"
 $failPath = Join-Path $OutputDirectory "$Shot.fail"
+$treePath = Join-Path $OutputDirectory "$Shot.tree.txt"
 # CLEARED LOUDLY, AND VERIFIED GONE. A silent clear leaves a locked file in place, and the next run
 # then reads the PREVIOUS run's verdict as its own - the worst possible failure for a tool whose
 # whole job is telling you what it saw.
-foreach ($stale in @($shotPath, $logPath, $markerPath, $pidPath, $failPath)) {
+foreach ($stale in @($shotPath, $logPath, $markerPath, $pidPath, $failPath, $treePath, "$treePath.writing")) {
     if (Test-Path -LiteralPath $stale) { Remove-Item -LiteralPath $stale -ErrorAction Stop }
 }
 foreach ($control in @($markerPath, $failPath)) {
@@ -112,7 +115,9 @@ $arguments = @(
     '-OutputDirectory', "`"$OutputDirectory`"",
     '-DataDirectory', "`"$DataDirectory`"",
     '-Shot', $Shot,
-    '-SettleMilliseconds', $SettleMilliseconds
+    '-SettleMilliseconds', $SettleMilliseconds,
+    '-MinimumWidth', $MinimumWidth,
+    '-MinimumHeight', $MinimumHeight
 )
 if ($OverlayState) { $arguments += @('-OverlayState', $OverlayState) }
 if ($Probe) { $arguments += '-Probe' }

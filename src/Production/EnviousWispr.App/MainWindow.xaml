@@ -265,13 +265,21 @@
                     </StackPanel>
                 </Grid>
                 </ScrollViewer>
-                <Border Grid.Row="1" Padding="{StaticResource BrandOnboardingFooterPadding}" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="0,1,0,0">
-                    <StackPanel MaxWidth="{StaticResource BrandOnboardingContentMaxWidth}" Spacing="{StaticResource BrandSpacingS}">
+                <!--
+                    THE CAP AND THE PADDING SIT ON THE SAME ELEMENT, WHICH IS WHAT KEEPS THE BUTTON
+                    LINED UP WITH THE CARDS. The scrolling content caps at 1040 and pads 40 a side,
+                    so a card is 960 wide. Padding the Border and capping its child instead let the
+                    button reach the full 1040 and hang 40 pixels past the cards on a wide window.
+                -->
+                <Border Grid.Row="1" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="0,1,0,0">
+                    <Grid MaxWidth="{StaticResource BrandOnboardingContentMaxWidth}" Padding="{StaticResource BrandOnboardingFooterPadding}">
+                    <StackPanel Spacing="{StaticResource BrandSpacingS}">
                         <Button x:Name="FinishOnboardingButton" x:Uid="FinishOnboardingButton" AccessKey="G" AutomationProperties.HelpText="Completes setup and opens the EnviousWispr home page. Press Control plus Enter from anywhere on this screen." Click="FinishOnboardingButton_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Style="{StaticResource BrandPrimaryButtonStyle}" Content="Get started" TabIndex="0">
                             <Button.KeyboardAccelerators><KeyboardAccelerator Key="Enter" Modifiers="Control" /></Button.KeyboardAccelerators>
                         </Button>
                         <TextBlock Style="{StaticResource BrandHelperStyle}" Text="You can change every choice later in Settings. No account is required." TextAlignment="Center" TextWrapping="Wrap" />
                     </StackPanel>
+                    </Grid>
                 </Border>
             </Grid>
 
