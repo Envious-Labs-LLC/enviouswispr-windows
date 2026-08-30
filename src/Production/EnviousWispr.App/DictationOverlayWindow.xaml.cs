@@ -49,7 +49,7 @@ public sealed partial class DictationOverlayWindow : Window
     private readonly RecordingLevelHistory _levelHistory = new();
 
     /// <summary>
-    /// The newest level the capture has reported, waiting for the next tick to be taken.
+    /// The loudest level the capture has reported since the last frame was taken.
     /// </summary>
     /// <remarks>
     /// KEPT AS ONE NUMBER RATHER THAN AS TWO HUNDRED DISPATCHER JOBS A SECOND. Every capture buffer
@@ -342,9 +342,18 @@ public sealed partial class DictationOverlayWindow : Window
     /// LOCK-FREE BECAUSE OF WHERE IT IS CALLED FROM. A compare-and-swap loop keeps this off any
     /// lock the UI thread could ever contend for, which matters at two hundred calls a second.
     /// </remarks>
-    public void SetAudioLevel(float rootMeanSquare)
+    public void SetAudioLevel(float rootMeanSquare) =>
+        AccumulatePeak(RecordingLevelHistory.Normalize(rootMeanSquare));
+
+    /// <summary>Raises the pending peak to this level, if it is louder.</summary>
+    /// <remarks>
+    /// SHARED WITH THE TICK, WHICH IS THE POINT. A poll that arrives before the frame is due has
+    /// already taken the pending peak out, so it has to put it back - and putting it back with a
+    /// plain write would erase a louder callback that arrived in between. Merging through the same
+    /// loop the capture thread uses makes the two paths agree by construction.
+    /// </remarks>
+    private void AccumulatePeak(float level)
     {
-        var level = RecordingLevelHistory.Normalize(rootMeanSquare);
         var current = Volatile.Read(ref _latestLevel);
         while (level > current)
         {
@@ -365,27 +374,37 @@ public sealed partial class DictationOverlayWindow : Window
             return;
         }
 
-        var level = Volatile.Read(ref _latestLevel);
+        // TAKING THE PEAK AND CLEARING IT IS ONE OPERATION, AND THAT ATOMICITY IS THE FRAME BOUNDARY.
+        // Reading the peak and writing a zero back afterwards leaves a window between the two, and a
+        // capture callback landing in that window is erased by the zero - so the loudest packet of a
+        // frame could still be lost, by the very code that exists to keep it.
+        var framePeak = Interlocked.Exchange(ref _latestLevel, 0f);
 
         // THE MARK BREATHES ON EVERY DESIGN THAT SHOWS IT, and that is the Classic pill's meter. It
         // showed a fixed logo while somebody was talking, so the one pill with no preview and no rail
         // was also the one that gave no sign it could hear them.
         if (RainbowMark.Visibility == Visibility.Visible)
         {
-            RainbowMark.Opacity = 0.55 + 0.45 * level;
+            RainbowMark.Opacity = 0.55 + 0.45 * framePeak;
         }
 
-        // THE FRAME IS CLOSED HERE, FOR EVERY DESIGN, WHICH IS WHY THE GATE IS NO LONGER INSIDE THE
-        // RAIL'S BRANCH. SetAudioLevel accumulates a maximum and something has to reset it; leaving
-        // that to the rail meant a pill with no rail accumulated a running maximum that only ever
-        // grew, so the Classic mark would have brightened once and stayed there.
-        if (_levelHistory.Sample(level, _levelClock.Elapsed))
+        // THE FRAME IS CLOSED FOR EVERY DESIGN, WHICH IS WHY THE GATE IS NOT INSIDE THE RAIL'S
+        // BRANCH. The peak is taken above whatever the design, so leaving the gate to the rail meant
+        // a pill with no rail never closed a frame at all.
+        //
+        // AND A POLL THAT IS TOO EARLY PUTS THE PEAK BACK. The timer polls at twice this rate, so
+        // most ticks are rejected here, and each one has already removed the pending peak. Merging
+        // it back through the same loop the capture thread uses is what stops an early poll from
+        // quietly discarding the loudest packet of a frame that has not finished yet.
+        if (!_levelHistory.Sample(framePeak, _levelClock.Elapsed))
         {
-            Volatile.Write(ref _latestLevel, 0f);
-            if (_activeDesign == RecordingPillDesign.LevelRail)
-            {
-                DrawLevelHistory();
-            }
+            AccumulatePeak(framePeak);
+            return;
+        }
+
+        if (_activeDesign == RecordingPillDesign.LevelRail)
+        {
+            DrawLevelHistory();
         }
     }
 
