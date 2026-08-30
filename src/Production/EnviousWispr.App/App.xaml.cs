@@ -858,14 +858,20 @@ public partial class App : Application, IAsyncDisposable
 
             _window.AppWindow.Show();
             _window.Activate();
-            // A RESULT THAT ARRIVED WHILE THE WINDOW WAS HIDDEN IS STILL NEWS WHEN IT COMES BACK.
-            // History finishing while the app sits in the notification area is the ordinary case,
-            // and without this the announcement is simply never made.
-            _window.AnnouncePendingHistoryState();
             if (openSettings)
             {
                 _window.OpenSettings();
             }
+
+            // A RESULT THAT ARRIVED WHILE THE WINDOW WAS HIDDEN IS STILL NEWS WHEN IT COMES BACK.
+            // History finishing while the app sits in the notification area is the ordinary case,
+            // and without this the announcement is simply never made.
+            //
+            // AFTER THE NAVIGATION, NOT BEFORE. Opening Settings from the tray runs through here too,
+            // and announcing first spoke the history result to somebody who had asked for Settings.
+            // Once the page has been switched away from, the ancestor check refuses it and the
+            // pending result is kept for whenever History is actually opened.
+            _window.AnnouncePendingHistoryState();
         });
     }
 
