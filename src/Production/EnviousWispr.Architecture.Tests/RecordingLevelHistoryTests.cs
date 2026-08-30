@@ -14,6 +14,9 @@ namespace EnviousWispr.Architecture.Tests;
 /// </remarks>
 public sealed class RecordingLevelHistoryTests
 {
+    /// <summary>Five levels a person could actually produce, quietest first.</summary>
+    private static readonly float[] LouderAndLouder = [0.002f, 0.01f, 0.05f, 0.2f, 0.6f];
+
     [Fact]
     public void AFreshMeterIsEmptyAndAsWideAsTheBarsItDraws()
     {
@@ -147,22 +150,45 @@ public sealed class RecordingLevelHistoryTests
     [Theory]
     [InlineData(-5f, 0f)]
     [InlineData(0f, 0f)]
-    [InlineData(0.25f, 1f)]
+    [InlineData(1f, 1f)]
     [InlineData(9f, 1f)]
-    public void TheNormalizerStaysInsideNoughtToOne(float rootMeanSquare, float expected)
+    public void TheNormalizerStaysInsideNoughtToOne(float level, float expected)
     {
-        Assert.Equal(expected, RecordingLevelHistory.Normalize(rootMeanSquare), 3);
+        Assert.Equal(expected, RecordingLevelHistory.Normalize(level), 3);
     }
 
     [Fact]
-    public void QuietSpeechIsVisibleRatherThanFlat()
+    public void OrdinarySpeechIsVISIBLYOffTheFloor()
     {
-        // A SQUARE ROOT BECAUSE HEARING IS NOT LINEAR. Ordinary speech sits low in a raw
-        // root-mean-square, so drawing it directly gives a meter that barely moves until somebody
-        // shouts at it.
-        var quiet = RecordingLevelHistory.Normalize(0.01f);
+        // THE NUMBER THAT CAUGHT THIS. Ordinary speech measured on the real hardware sits at a
+        // root-mean-square of about 0.004, which through the old sqrt curve became 0.125 - on a
+        // twenty-four bar rail that is a fraction of a pixel above the floor. Technically moving,
+        // visually flat, and reported by a person with a screen as a dead meter.
+        var speech = RecordingLevelHistory.Normalize(0.004f);
 
-        Assert.True(quiet > 0.15f, $"Quiet speech normalised to {quiet}, which draws as nothing.");
-        Assert.True(quiet < 0.5f, $"Quiet speech normalised to {quiet}, which draws as loud.");
+        Assert.True(speech > 0.15f, $"Ordinary speech normalised to {speech}, which draws as flat.");
+        Assert.True(speech < 0.6f, $"Ordinary speech normalised to {speech}, which leaves no headroom.");
+    }
+
+    [Fact]
+    public void ASilentRoomDoesNotLightTheMeter()
+    {
+        // A meter that glows in a quiet room destroys the one reading that matters, which is that
+        // nothing is arriving.
+        Assert.Equal(0f, RecordingLevelHistory.Normalize(0.0005f), 2);
+    }
+
+    [Fact]
+    public void LouderReadsHigherAllTheWayUp()
+    {
+        // A curve that saturates early is a meter with one useful half. Every step has to move it.
+        var steps = LouderAndLouder.Select(RecordingLevelHistory.Normalize).ToArray();
+
+        for (var index = 1; index < steps.Length; index++)
+        {
+            Assert.True(
+                steps[index] > steps[index - 1] + 0.05f,
+                $"Level {index} normalised to {steps[index]}, barely above {steps[index - 1]}.");
+        }
     }
 }

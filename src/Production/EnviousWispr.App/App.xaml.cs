@@ -326,6 +326,7 @@ public partial class App : Application, IAsyncDisposable
         }
 
         ApplyOverlayUatState();
+        StartSyntheticLevelRampIfRequested();
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellShown));
         SignalPerformanceUatReady();
         StartPublicFixtureJourneyUat();
@@ -1202,6 +1203,54 @@ public partial class App : Application, IAsyncDisposable
             _pushToTalkHook.CancelGesture.ToString(),
             _pushToTalkHook.QuickAddGesture.ToString());
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.HotkeyReady));
+    }
+
+    /// <summary>Drives the meters from a synthetic ramp, with no microphone in the loop.</summary>
+    /// <remarks>
+    /// EVERY MEASUREMENT OF A FLAT METER SO FAR IS ENTANGLED WITH AN ACOUSTIC PATH NOBODY CONTROLS.
+    /// A person speaks, a room absorbs, a device gains, a driver converts, and only then does a
+    /// number reach the code - so a flat meter could be any link in that chain. This replaces the
+    /// whole chain with a number that is known, which separates "the meters cannot draw" from "the
+    /// capture cannot hear" in one run rather than by argument.
+    ///
+    /// A RAMP RATHER THAN A CONSTANT, because a constant proves only that one value renders. A ramp
+    /// climbing from silence to full and back proves the scale, the direction, and on the recording
+    /// rail the scroll as well: the shape has to appear as a shape.
+    ///
+    /// IT GOES THROUGH THE SAME DOOR AS A REAL LEVEL, which is the entire point. Anything that drew
+    /// bars directly would prove the bars and nothing between here and them.
+    ///
+    /// UAT ONLY, and it says so by living behind the same environment variable convention as every
+    /// other harness switch in this app. It writes nothing, records nothing, and touches no setting.
+    /// </remarks>
+    private void StartSyntheticLevelRampIfRequested()
+    {
+        if (Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_LEVEL_RAMP") is not "1")
+        {
+            return;
+        }
+
+        var window = _window;
+        if (window is null)
+        {
+            return;
+        }
+
+        var timer = window.DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(50);
+        var step = 0;
+        timer.Tick += (_, _) =>
+        {
+            // Two seconds up, two seconds down, forever. Eighty ticks a cycle at fifty milliseconds.
+            var phase = step++ % 80;
+            var climb = phase < 40 ? phase / 40f : (80 - phase) / 40f;
+
+            // FROM THE FLOOR TO FULL SCALE IN THE UNIT THE METER SPEAKS, so the ramp exercises the
+            // real curve rather than sidestepping it.
+            var level = climb <= 0f ? 0f : MathF.Pow(10f, (RecordingLevelHistory.FloorDecibels * (1f - climb)) / 20f);
+            window.SetAudioLevel(new AudioLevel(level, level));
+        };
+        timer.Start();
     }
 
     private void OnAudioLevelChanged(object? sender, AudioLevel level)

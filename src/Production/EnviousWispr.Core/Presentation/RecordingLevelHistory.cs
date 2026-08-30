@@ -32,21 +32,41 @@ public sealed class RecordingLevelHistory
     /// </remarks>
     public static readonly TimeSpan SampleInterval = TimeSpan.FromMilliseconds(50);
 
-    /// <summary>Turns a raw root-mean-square into the nought-to-one a bar height is drawn from.</summary>
+    /// <summary>The quietest level the meter shows at all, in decibels below full scale.</summary>
     /// <remarks>
-    /// A SQUARE ROOT BECAUSE HEARING IS NOT LINEAR. Ordinary speech sits low in a raw
-    /// root-mean-square, so drawing it directly gives a meter that barely moves until somebody
-    /// shouts.
+    /// SIXTY DECIBELS IS THE RANGE A LEVEL METER USUALLY SPANS, and it is also where a real room's
+    /// noise floor sits comfortably below the bottom bar rather than lighting it.
+    /// </remarks>
+    public const float FloorDecibels = -60f;
+
+    /// <summary>Turns a raw level into the nought-to-one a bar height is drawn from.</summary>
+    /// <remarks>
+    /// DECIBELS, BECAUSE A SQUARE ROOT WAS NOT ENOUGH AND THE ARITHMETIC SAYS SO. Ordinary speech
+    /// measured on this hardware sits at a root-mean-square of about 0.004. Through the old
+    /// sqrt(level * 4) that became 0.125, which on a twenty-four bar rail is a bar three tenths of a
+    /// pixel off the floor at ordinary scaling - technically moving, visually flat, and reported by
+    /// a person with a screen as a dead meter. Hearing is logarithmic and so is every meter people
+    /// are used to reading; the same 0.004 through this is 0.20, which is visibly off the floor.
+    ///
+    /// A FLOOR RATHER THAN A CURVE THAT REACHES ZERO. Below sixty decibels down there is nothing
+    /// worth drawing, and mapping that region onto the bottom bar would light the meter in a silent
+    /// room and destroy the one reading that matters: that nothing is arriving.
     ///
     /// NOT-A-NUMBER IS SILENCE, AND IT HAS TO BE CAUGHT HERE RATHER THAN LATER. Math.Max and
     /// Math.Clamp both hand NaN straight back, so a level nobody could measure would pass every
     /// range check and arrive as an opacity and a height that no layout can draw. Infinity is the
     /// same problem wearing a different value.
     /// </remarks>
-    public static float Normalize(float rootMeanSquare) =>
-        float.IsFinite(rootMeanSquare)
-            ? Math.Clamp(MathF.Sqrt(Math.Max(0f, rootMeanSquare) * 4f), 0f, 1f)
-            : 0f;
+    public static float Normalize(float level)
+    {
+        if (!float.IsFinite(level) || level <= 0f)
+        {
+            return 0f;
+        }
+
+        var decibels = 20f * MathF.Log10(level);
+        return Math.Clamp((decibels - FloorDecibels) / -FloorDecibels, 0f, 1f);
+    }
 
     private readonly float[] _levels = new float[Capacity];
     private TimeSpan? _lastSampleAt;

@@ -16,22 +16,21 @@ namespace EnviousWispr.Core.Audio;
 /// </remarks>
 public static class MicrophoneTestVerdict
 {
-    /// <summary>
-    /// Below this peak, a room is not quiet, it is absent.
-    /// </summary>
+    /// <summary>Above this root-mean-square, somebody clearly spoke rather than breathed.</summary>
     /// <remarks>
-    /// EVEN A SILENT ROOM HAS A FLOOR. A real microphone in a still room still reports a peak in the
-    /// thousandths, so a peak under this is not a person being quiet.
+    /// MEASURED, NOT CHOSEN. Ordinary speech on the development hardware reads about 0.004, and a
+    /// still room reads in the ten-thousandths, so this sits between them with room on both sides.
+    /// It is the only threshold left: "no signal" is now reserved for an EXACT zero.
     /// </remarks>
-    public const float SilenceThreshold = 0.0005f;
-
-    /// <summary>Above this peak, somebody clearly spoke rather than breathed.</summary>
-    public const float SpeechThreshold = 0.05f;
+    public const float SpeechThreshold = 0.002f;
 
     /// <param name="packets">Audio packets the device delivered.</param>
     /// <param name="silentPackets">How many Windows marked as deliberately silent.</param>
-    /// <param name="peak">The loudest sample seen.</param>
-    public static string For(int packets, int silentPackets, float peak)
+    /// <param name="rootMeanSquare">
+    /// The loudest root-mean-square seen. The same number the meter is drawn from, so the words and
+    /// the picture cannot disagree.
+    /// </param>
+    public static string For(int packets, int silentPackets, float rootMeanSquare)
     {
         if (packets == 0)
         {
@@ -45,13 +44,18 @@ public static class MicrophoneTestVerdict
                 + "switched to a device that is not the one you are speaking into.";
         }
 
-        if (peak < SilenceThreshold)
+        // AN EXACT ZERO, AND NOTHING ELSE, IS "NO SIGNAL". A threshold here condemned working
+        // hardware: a quiet or low-gain microphone reading four ten-thousandths was told it was
+        // sending nothing but zeroes, while the meter beside it lit a bar. Anything that is not
+        // exactly nothing IS something, and the honest answer for a small something is that it is
+        // quiet.
+        if (rootMeanSquare <= 0f)
         {
             return "The microphone is open and sending nothing but zeroes. That is not a quiet room, "
                 + "it is no signal: try another microphone, or unplug and reconnect this one.";
         }
 
-        return peak >= SpeechThreshold
+        return rootMeanSquare >= SpeechThreshold
             ? "Heard you clearly. This microphone is working."
             : "Something is arriving, but very quietly. Move closer, or raise this microphone's "
                 + "level in Windows sound settings.";

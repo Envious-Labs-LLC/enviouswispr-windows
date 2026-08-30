@@ -17,7 +17,7 @@ public sealed class MicrophoneTestVerdictTests
     [Fact]
     public void ADeviceThatSentNothingIsNotADeviceThatIsQuiet()
     {
-        var said = MicrophoneTestVerdict.For(packets: 0, silentPackets: 0, peak: 0f);
+        var said = MicrophoneTestVerdict.For(packets: 0, silentPackets: 0, rootMeanSquare: 0f);
 
         Assert.Contains("nothing at all", said, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("plugged in", said, StringComparison.OrdinalIgnoreCase);
@@ -28,7 +28,7 @@ public sealed class MicrophoneTestVerdictTests
     {
         // Every packet flagged is Windows reporting that there is nothing to hear, which is a muted
         // or unrouted device rather than a broken one.
-        var said = MicrophoneTestVerdict.For(packets: 60, silentPackets: 60, peak: 0f);
+        var said = MicrophoneTestVerdict.For(packets: 60, silentPackets: 60, rootMeanSquare: 0f);
 
         Assert.Contains("muted", said, StringComparison.OrdinalIgnoreCase);
     }
@@ -38,7 +38,7 @@ public sealed class MicrophoneTestVerdictTests
     {
         // THIS IS THE ONE THAT COST A DAY. The device is open, Windows is not claiming silence, and
         // what arrives is zeroes - which every other surface in the app reported as working.
-        var said = MicrophoneTestVerdict.For(packets: 60, silentPackets: 0, peak: 0f);
+        var said = MicrophoneTestVerdict.For(packets: 60, silentPackets: 0, rootMeanSquare: 0f);
 
         Assert.Contains("no signal", said, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("quiet room", said.Replace("not a quiet room", string.Empty, StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase);
@@ -47,7 +47,7 @@ public sealed class MicrophoneTestVerdictTests
     [Fact]
     public void AWorkingMicrophoneSaysSoWithoutHedging()
     {
-        var said = MicrophoneTestVerdict.For(packets: 60, silentPackets: 0, peak: 0.4f);
+        var said = MicrophoneTestVerdict.For(packets: 60, silentPackets: 0, rootMeanSquare: 0.4f);
 
         Assert.Contains("working", said, StringComparison.OrdinalIgnoreCase);
     }
@@ -57,20 +57,25 @@ public sealed class MicrophoneTestVerdictTests
     {
         // A microphone turned down is a different answer from a microphone that is not there, and
         // sending somebody to unplug a working device is the wrong help.
-        var said = MicrophoneTestVerdict.For(packets: 60, silentPackets: 0, peak: 0.01f);
+        var said = MicrophoneTestVerdict.For(packets: 60, silentPackets: 0, rootMeanSquare: 0.0005f);
 
         Assert.Contains("quietly", said, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("unplug", said, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void ARoomWithAFloorIsNotMistakenForNoSignal()
+    [Theory]
+    [InlineData(0.0004f)]
+    [InlineData(0.0001f)]
+    [InlineData(float.Epsilon)]
+    public void AnythingThatIsNotExactlyNothingIsSomething(float rootMeanSquare)
     {
-        // A real microphone in a still room still reports a peak in the thousandths. Calling that
-        // "no signal" would send somebody to replace hardware that is working.
-        var said = MicrophoneTestVerdict.For(packets: 60, silentPackets: 0, peak: 0.002f);
+        // A THRESHOLD HERE CONDEMNED WORKING HARDWARE. A quiet or low-gain microphone was told it
+        // was sending nothing but zeroes while the meter beside it lit a bar, which sends somebody
+        // to replace a device that works.
+        var said = MicrophoneTestVerdict.For(packets: 60, silentPackets: 0, rootMeanSquare);
 
         Assert.DoesNotContain("no signal", said, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("quietly", said, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -83,7 +88,7 @@ public sealed class MicrophoneTestVerdictTests
             MicrophoneTestVerdict.For(0, 0, 0f),
             MicrophoneTestVerdict.For(60, 60, 0f),
             MicrophoneTestVerdict.For(60, 0, 0f),
-            MicrophoneTestVerdict.For(60, 0, 0.01f),
+            MicrophoneTestVerdict.For(60, 0, 0.0005f),
             MicrophoneTestVerdict.For(60, 0, 0.4f),
         };
 
