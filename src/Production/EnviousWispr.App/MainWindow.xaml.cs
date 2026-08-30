@@ -1001,21 +1001,6 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
-    public void SetRunRecoveryNotice(int consecutiveInterruptedRuns)
-    {
-        // This is a banner on the FIRST SCREEN of the product, so it is written for the person
-        // reading it rather than for the mechanism that raised it. The previous wording said
-        // "Global input and owned runtimes were reinitialized", which names two internal parts
-        // and asks a user to be reassured by them.
-        const string title = "EnviousWispr did not close properly last time";
-        FoundationInfoBar.Title = title;
-        FoundationInfoBar.Message = consecutiveInterruptedRuns > 1
-            ? $"That has now happened {consecutiveInterruptedRuns.ToString(CultureInfo.CurrentCulture)} times in a row. Everything was reset and dictation is ready. Unfinished text is never pasted on its own."
-            : "Everything was reset and dictation is ready. Unfinished text is never pasted on its own.";
-        FoundationInfoBar.Severity = InfoBarSeverity.Warning;
-        SetOnboardingReliabilityNotice(title, FoundationInfoBar.Message);
-    }
-
     private void SetOnboardingReliabilityNotice(string title, string message)
     {
         OnboardingReliabilityInfoBar.Title = title;
