@@ -168,38 +168,35 @@ public sealed class SerialSettingsWriter : IDisposable
     /// </remarks>
     public async Task DrainAsync(CancellationToken cancellationToken = default)
     {
-        TaskCompletionSource? waitFor;
+        // ALWAYS MAKE THE THING TO WAIT ON, WHETHER OR NOT SOMEBODY ELSE CLOSED FIRST. The earlier
+        // version only created it on the branch that did the closing, so Dispose closing while a
+        // save was still running left this with nothing to await - and it returned at once, which is
+        // the opposite of draining. The test only covered drain-then-dispose, so it passed.
+        TaskCompletionSource waitFor;
         lock (_admission)
         {
-            // IDEMPOTENT, because exit can reach here more than once and a second drain must not
-            // dispose a semaphore the first one is still using.
-            if (_closed)
+            _closed = true;
+            _quiet ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (_active == 0)
             {
-                waitFor = _quiet;
+                _quiet.TrySetResult();
             }
-            else
-            {
-                _closed = true;
-                _quiet ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                if (_active == 0)
-                {
-                    _quiet.TrySetResult();
-                }
 
-                waitFor = _quiet;
-            }
+            waitFor = _quiet;
         }
 
-        if (waitFor is not null)
-        {
-            await waitFor.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
-        }
+        await waitFor.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
 
         // DISPOSED ONLY ONCE NOTHING IS INSIDE AND NOTHING CAN JOIN. Releasing a waiter into a
         // semaphore that is about to be disposed is the crash this whole arrangement removes.
         lock (_admission)
         {
-            if (_disposed || _active > 0)
+            if (_disposed)
+            {
+                return;
+            }
+
+            if (_active > 0)
             {
                 // Somebody is still inside; the last one out disposes.
                 _disposeWhenQuiet = true;

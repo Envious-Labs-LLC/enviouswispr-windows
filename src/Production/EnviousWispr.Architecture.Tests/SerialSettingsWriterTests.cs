@@ -236,6 +236,29 @@ public sealed class SerialSettingsWriterTests
     }
 
     [Fact]
+    public async Task DisposingFirstDoesNotLetTheDrainReturnEarly()
+    {
+        // THE ORDER MY OTHER TEST DID NOT COVER, AND IT IS THE ONE THAT WAS BROKEN. Dispose closing
+        // the writer first meant the drain had nothing to wait on and returned at once - which reads
+        // as a clean shutdown while a save is still running, and is exactly the outcome the drain
+        // exists to prevent.
+        var store = new BlockingStore();
+        var writer = new SerialSettingsWriter(store, AppSettings.Default);
+
+        var save = writer.UpdateAsync(current => current with { LaunchCount = 5 });
+        await store.SaveStarted.Task.ConfigureAwait(true);
+
+        writer.Dispose();
+        var drain = writer.DrainAsync();
+        Assert.False(drain.IsCompleted, "The drain returned while a save was still running.");
+
+        store.LetSavesFinish();
+        Assert.Null(await save.ConfigureAwait(true));
+        await drain.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(true);
+        Assert.Equal(5, writer.Current.LaunchCount);
+    }
+
+    [Fact]
     public async Task CancellationWhileWaitingIsCancellationNotAStorageFailure()
     {
         // THE SAME CANCELLATION MEANT TWO THINGS depending on when it arrived: thrown if it landed
