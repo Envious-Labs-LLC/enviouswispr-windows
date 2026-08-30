@@ -55,7 +55,13 @@ public sealed partial class DictationOverlayWindow : Window
     /// KEPT AS ONE NUMBER RATHER THAN AS TWO HUNDRED DISPATCHER JOBS A SECOND. Every capture buffer
     /// used to be posted to the UI thread and thrown away there by a throttle, so the work was done
     /// whatever the throttle decided - and under load the queue backed up and the meter drew samples
-    /// that were already old. Only the latest matters, so only the latest is kept.
+    /// that were already old.
+    ///
+    /// ONE NUMBER, AND IT IS THE LOUDEST OF THE PENDING FRAME RATHER THAN THE NEWEST. About ten
+    /// levels arrive per frame and exactly one is drawn, so keeping the newest chooses at random
+    /// with respect to loudness and loses the attack of every consonant that does not happen to
+    /// land last. The tick takes this and clears it in one atomic operation, which is what makes
+    /// the window this maximises over the same window that gets drawn.
     /// </remarks>
     private float _latestLevel;
 
