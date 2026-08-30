@@ -2441,7 +2441,11 @@ public sealed partial class DesignSystemTokenTests
             .Where(element => element.Name.LocalName == "ToggleSwitch")
             .ToArray();
 
-        Assert.True(toggles.Length >= 11, $"Expected the settings toggles, found {toggles.Length}.");
+        // NO COUNT IS ASSERTED HERE, and the reason is that the compiler already asserts one. Every
+        // one of these switches is named in MainWindow.xaml.cs - read, written, or wired to a
+        // handler - so a switch that disappears from the markup fails the BUILD rather than passing
+        // this gate quietly. A roster of eleven written down here would only be a second place to
+        // update, and the kind that is wrong for a while before anyone notices.
 
         var faults = new List<string>();
         foreach (var toggle in toggles)
@@ -2474,7 +2478,7 @@ public sealed partial class DesignSystemTokenTests
                 continue;
             }
 
-            var labelName = ReferencedElementName((string?)toggle.Attribute("AutomationProperties.LabeledBy"));
+            var labelName = CompiledBindingTarget((string?)toggle.Attribute("AutomationProperties.LabeledBy"));
             if (labelName is null)
             {
                 faults.Add($"{identity} has no AutomationProperties.LabeledBy, so a screen reader announces a switch with no subject");
@@ -2507,15 +2511,23 @@ public sealed partial class DesignSystemTokenTests
         Assert.True(faults.Count == 0, string.Join(Environment.NewLine, faults));
     }
 
-    /// <summary>Reads the element name out of an ElementName binding, or null if it is not one.</summary>
-    private static string? ReferencedElementName(string? binding)
+    /// <summary>Reads the element a compiled binding points at, or null if it is not one.</summary>
+    /// <remarks>
+    /// ONLY x:Bind IS ACCEPTED, AND THAT IS THE POINT RATHER THAN A PREFERENCE. LabeledBy needs a
+    /// UIElement, and a classic binding will happily be given something that is not one -
+    /// "{Binding ElementName=AutoStopToggleLabel, Path=Text}" is a string, resolves to null at
+    /// runtime, and leaves the switch anonymous while looking entirely reasonable in a diff. A
+    /// compiled binding names a field and is checked against its type when the project builds, so
+    /// the same mistake stops being possible rather than being caught later.
+    /// </remarks>
+    private static string? CompiledBindingTarget(string? binding)
     {
         if (string.IsNullOrWhiteSpace(binding))
         {
             return null;
         }
 
-        var match = Regex.Match(binding, @"ElementName\s*=\s*(\w+)");
+        var match = Regex.Match(binding, @"^\{x:Bind\s+(\w+)\s*,\s*Mode=OneTime\s*\}$");
         return match.Success ? match.Groups[1].Value : null;
     }
 
