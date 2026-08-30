@@ -83,12 +83,37 @@ def scan(src):
         i += 1
     return bad
 
-problems = 0
-for path in sys.argv[1:]:
-    p = pathlib.Path(path)
+def production_sources(root):
+    """Every C# file this project owns.
+
+    WITH NO ARGUMENTS THIS USED TO SCAN NOTHING AND REPORT "0 problems". It read its file list from
+    argv, so running it bare exited 0 having opened no file at all - and a gate wired up that way
+    passes forever while catching nothing. Found by planting an invalid escape and watching it come
+    back clean.
+    """
+    for path in sorted(root.rglob('*.cs')):
+        parts = set(path.parts)
+        if 'obj' in parts or 'bin' in parts or 'macos-source' in parts:
+            continue
+        yield path
+
+
+paths = [pathlib.Path(a) for a in sys.argv[1:]]
+if not paths:
+    paths = list(production_sources(pathlib.Path(__file__).resolve().parent.parent))
+
+problems, scanned = 0, 0
+for p in paths:
     if not p.exists() or p.suffix != '.cs': continue
+    scanned += 1
     for line, ctx in scan(p.read_text(encoding='utf-8')):
         print(f"{p}:{line}: invalid C# escape near {ctx}")
         problems += 1
-print(f"--- {problems} problem(s) ---")
+
+# THE COUNT OF FILES IS THE CONTROL, and its absence is what let this report a clean bill of health
+# on an empty scan. "0 problems" says nothing on its own; "0 problems in 0 files" says everything.
+print(f"--- {problems} problem(s) in {scanned} file(s) ---")
+if scanned == 0:
+    print("Scanned no files at all, which is not a pass.")
+    sys.exit(2)
 sys.exit(1 if problems else 0)
