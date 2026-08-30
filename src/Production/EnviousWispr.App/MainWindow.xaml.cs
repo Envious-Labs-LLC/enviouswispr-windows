@@ -1552,6 +1552,11 @@ public sealed partial class MainWindow : Window, IDisposable
         SetLiveText(MicrophoneTestResultText, "Listening. Say a few words.");
         await using var capture = new WasapiAudioCapture();
         var generation = _microphoneTestGeneration;
+        // TEMPORARY INSTRUMENT, NOT SHIPPABLE. Reading the level path found nothing wrong with it,
+        // and the same capture that fed the recogniser intelligible speech drove this meter to a
+        // flat row, so the next useful thing is a count rather than another reading.
+        var levelCallbacks = 0;
+        var maximumNormalized = 0f;
         capture.LevelChanged += OnLevel;
         try
         {
@@ -1597,17 +1602,30 @@ public sealed partial class MainWindow : Window, IDisposable
             // THE ROOT-MEAN-SQUARE, NOT THE PEAK, because that is the number the recording meter is
             // driven from. A verdict read off the peak could call a microphone healthy while the
             // meter it is meant to explain sits flat.
-            SetLiveText(MicrophoneTestResultText, MicrophoneTestVerdict.For(
-                capture.LastPacketCount,
-                capture.LastSilentPacketCount,
-                capture.LastRootMeanSquare));
+            SetLiveText(
+                MicrophoneTestResultText,
+                MicrophoneTestVerdict.For(
+                    capture.LastPacketCount,
+                    capture.LastSilentPacketCount,
+                    capture.LastRootMeanSquare) +
+                $" [diag {levelCallbacks} callbacks, max {maximumNormalized:F3}, " +
+                $"rms {capture.LastRootMeanSquare:F5}, peak {capture.LastPeak:F5}, " +
+                $"bars {MicrophoneTestBars.Children.Count}]");
         }
         finally
         {
             capture.LevelChanged -= OnLevel;
         }
 
-        void OnLevel(object? sender, AudioLevel level) =>
+        void OnLevel(object? sender, AudioLevel level)
+        {
+            var normalized = RecordingLevelHistory.Normalize(level.RootMeanSquare);
+            Interlocked.Increment(ref levelCallbacks);
+            if (normalized > maximumNormalized)
+            {
+                maximumNormalized = normalized;
+            }
+
             MicrophoneTestBars.DispatcherQueue.TryEnqueue(() =>
             {
                 if (generation != _microphoneTestGeneration)
@@ -1615,8 +1633,9 @@ public sealed partial class MainWindow : Window, IDisposable
                     return;
                 }
 
-                DrawMicrophoneTestLevel(RecordingLevelHistory.Normalize(level.RootMeanSquare));
+                DrawMicrophoneTestLevel(normalized);
             });
+        }
     }
 
     /// <summary>Lights the bars up to the level, so the row reads as a meter rather than a chart.</summary>
