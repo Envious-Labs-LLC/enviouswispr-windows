@@ -33,6 +33,7 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
             var runId = Guid.NewGuid();
             var status = RunStateLoadStatus.Started;
             var consecutiveInterruptedRuns = 0;
+            var previousRunWasDictating = false;
 
             if (File.Exists(_path))
             {
@@ -74,6 +75,7 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
                     consecutiveInterruptedRuns = Math.Min(
                         int.MaxValue,
                         previous.ConsecutiveInterruptedRuns + 1);
+                    previousRunWasDictating = previous.DictationActive;
                 }
             }
 
@@ -83,13 +85,14 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
                 timestamp,
                 timestamp,
                 CleanShutdown: false,
-                consecutiveInterruptedRuns);
+                consecutiveInterruptedRuns,
+                DictationActive: false);
             await JsonSettingsStore.WriteAtomicallyAsync(_current, _path, cancellationToken)
                 .ConfigureAwait(false);
             return new ApplicationRunStartResult(
                 runId,
                 status,
-                consecutiveInterruptedRuns,
+                previousRunWasDictating,
                 status == RunStateLoadStatus.Started
                     ? null
                     : new AppError(
@@ -119,13 +122,20 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
         Guid runId,
         DateTimeOffset timestamp,
         CancellationToken cancellationToken = default) =>
-        UpdateAsync(runId, timestamp, cleanShutdown: false, cancellationToken);
+        UpdateAsync(runId, timestamp, cleanShutdown: false, dictationActive: null, cancellationToken);
+
+    public Task<bool> SetDictationActiveAsync(
+        Guid runId,
+        bool active,
+        DateTimeOffset timestamp,
+        CancellationToken cancellationToken = default) =>
+        UpdateAsync(runId, timestamp, cleanShutdown: false, dictationActive: active, cancellationToken);
 
     public Task<bool> CompleteRunAsync(
         Guid runId,
         DateTimeOffset timestamp,
         CancellationToken cancellationToken = default) =>
-        UpdateAsync(runId, timestamp, cleanShutdown: true, cancellationToken);
+        UpdateAsync(runId, timestamp, cleanShutdown: true, dictationActive: false, cancellationToken);
 
     public void Dispose()
     {
@@ -142,6 +152,7 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
         Guid runId,
         DateTimeOffset timestamp,
         bool cleanShutdown,
+        bool? dictationActive,
         CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -153,10 +164,14 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
                 return false;
             }
 
+            // NULL MEANS LEAVE IT ALONE. A heartbeat says nothing about whether somebody is
+            // dictating, and writing false there would clear the flag a second after a dictation set
+            // it - which is the whole signal, gone, on a timer.
             var next = _current with
             {
                 LastHeartbeatAt = timestamp,
                 CleanShutdown = cleanShutdown,
+                DictationActive = dictationActive ?? _current.DictationActive,
             };
             await JsonSettingsStore.WriteAtomicallyAsync(next, _path, cancellationToken)
                 .ConfigureAwait(false);
@@ -214,7 +229,7 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
     private static ApplicationRunStartResult Unavailable(Guid runId, AppErrorCode code) => new(
         runId,
         RunStateLoadStatus.Unavailable,
-        ConsecutiveInterruptedRuns: 0,
+        PreviousRunWasDictating: false,
         new AppError(code, AppErrorStage.RunState, CanRetry: true));
 
     private sealed record RunStateFile(
@@ -223,5 +238,8 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
         DateTimeOffset StartedAt,
         DateTimeOffset LastHeartbeatAt,
         bool CleanShutdown,
-        int ConsecutiveInterruptedRuns);
+        int ConsecutiveInterruptedRuns,
+        // DEFAULTED, SO A FILE WRITTEN BY AN OLDER BUILD STILL READS. It deserialises to false,
+        // which is the honest answer: that build never recorded whether a dictation was running.
+        bool DictationActive = false);
 }

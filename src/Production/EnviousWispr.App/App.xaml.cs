@@ -316,6 +316,14 @@ public partial class App : Application, IAsyncDisposable
         _hasPendingRecovery = recovery.Status == RecoveryTextLoadStatus.Found;
         _pendingRecoveryRecord = recovery.Record;
         _window.SetRecoveredText(recovery);
+        if (StartupNoticeDecision.For(
+                runStart.RecoveredInterruptedRun,
+                runStart.PreviousRunWasDictating,
+                recovery.Status) == StartupNotice.DictationMayBeLost)
+        {
+            _window.SetPossiblyLostDictationNotice();
+        }
+
         ConfigureSystemLifecycleMonitor();
         _window.FocusInitialControl();
         _window.SetCloudPolishNotice(_cloudPolishConsent?.Notice);
@@ -2222,6 +2230,22 @@ public partial class App : Application, IAsyncDisposable
             }
 
             processingCancellation?.Dispose();
+
+            // THE EDGE IS RECORDED HERE BECAUSE EVERY PATH LEAVES THROUGH IT. A press, a release, a
+            // cancel, a finalize that returns early, and both catch blocks all pass this line, so
+            // one write covers them without hunting every completion site - and a site missed later
+            // would leave the flag stuck true and turn an ordinary restart into a lost-dictation
+            // warning. Read off the controller rather than inferred from the signal, because the
+            // controller is what actually knows.
+            if (_runId is { } runId)
+            {
+                await _runStateStore.SetDictationActiveAsync(
+                        runId,
+                        controller.CurrentSession is not null,
+                        DateTimeOffset.UtcNow)
+                    .ConfigureAwait(false);
+            }
+
             _sessionOperationGate.Release();
         }
     }

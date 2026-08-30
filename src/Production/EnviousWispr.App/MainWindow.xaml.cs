@@ -1001,6 +1001,36 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
+    /// <summary>Says a dictation was lost, and only when one actually was.</summary>
+    /// <remarks>
+    /// THIS REPLACES A BANNER THAT ACCUSED THE PRODUCT ON A NUMBER IT COULD NOT JUSTIFY. Home used
+    /// to read "EnviousWispr did not close properly last time" plus "That has now happened N times
+    /// in a row" whenever the previous run left no clean-exit flag. Nothing in this app can tell a
+    /// fault from a closed laptop, a Restart chosen from the Start menu, a log off or Task Manager,
+    /// so the tally was not evidence of anything, and on the test machine it reached nineteen with
+    /// almost all of it a build script releasing a file lock.
+    ///
+    /// AND YET SOMETHING HAD TO STAY, WHICH IS THE HALF THAT NEARLY GOT LOST. Recovery text is
+    /// written only after transcription finishes, so a stop DURING a dictation leaves nothing to
+    /// restore and reads exactly like an idle restart. That is the one case where a person must be
+    /// told, because their words are gone and only they can say them again. StartupNoticeDecision
+    /// separates the two, and this is only ever raised for the second.
+    ///
+    /// NO COUNT, AND NO BLAME. It says what happened to their dictation and what they may have to
+    /// do, which is the whole of what they can act on.
+    /// </remarks>
+    public void SetPossiblyLostDictationNotice()
+    {
+        const string title = "A dictation may not have finished";
+        const string message =
+            "EnviousWispr stopped while a dictation was in progress, and there was nothing saved to "
+            + "restore. You may need to say it again.";
+        FoundationInfoBar.Title = title;
+        FoundationInfoBar.Message = message;
+        FoundationInfoBar.Severity = InfoBarSeverity.Warning;
+        SetOnboardingReliabilityNotice(title, message);
+    }
+
     private void SetOnboardingReliabilityNotice(string title, string message)
     {
         OnboardingReliabilityInfoBar.Title = title;
