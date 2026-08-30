@@ -186,17 +186,23 @@ Add-Type -Namespace UiCapture -Name Dpi -MemberDefinition @'
     # whether a POINTER can reach something; invoking a control asks the control to act and skips
     # hit-testing entirely. Each entry is "<control name>@left|centre|right".
     foreach ($spot in @($Click -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
-        # "<name>@<where>" or "<name>@<where>+<pixels past the right edge>".
+        # "<name>@<where>", plus "+<pixels past the right edge>" and "/<pixels down from the top
+        # edge>". The vertical part exists because a ToggleSwitch is two stacked bands inside one
+        # reported rectangle - its header sentence above, its switch below - and a click at the
+        # vertical centre cannot say which band it reached.
         $parts = $spot -split '@'
         $where = if ($parts.Count -gt 1) { $parts[1] } else { 'centre' }
         $offset = 0
-        if ($where -match '^(\w+)\+(\d+)$') {
+        $fromTop = $null
+        if ($where -match '^([a-z]+)(\+(\d+))?(/(\d+))?$') {
             $where = $Matches[1]
-            $offset = [int] $Matches[2]
+            if ($Matches[3]) { $offset = [int] $Matches[3] }
+            if ($Matches[5]) { $fromTop = [int] $Matches[5] }
         }
 
-        & (Join-Path $PSScriptRoot 'click-ui.ps1') -ProcessId $app.Id -Name $parts[0] -Where $where -OffsetX $offset |
-            ForEach-Object { Note $_ }
+        $clickArgs = @{ ProcessId = $app.Id; Name = $parts[0]; Where = $where; OffsetX = $offset }
+        if ($null -ne $fromTop) { $clickArgs['FromTop'] = $fromTop }
+        & (Join-Path $PSScriptRoot 'click-ui.ps1') @clickArgs | ForEach-Object { Note $_ }
         Start-Sleep -Milliseconds 700
     }
 

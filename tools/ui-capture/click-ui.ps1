@@ -17,6 +17,11 @@ param(
     # PAST THE CONTROL ON PURPOSE. Asking whether the ROW around a control is clickable means
     # clicking beside it, which is by definition outside its own rectangle.
     [int] $OffsetX = 0,
+    # AND DOWN THE ROW AS WELL AS ACROSS IT. A ToggleSwitch is two stacked bands: its HEADER, which
+    # is the sentence a person reads and aims at, and the switch below it. Both live inside the one
+    # rectangle the automation tree reports, so a click at the vertical centre cannot say which band
+    # it landed in. Measured from the TOP edge when given, rather than from the centre.
+    [Nullable[int]] $FromTop = $null,
     [int] $TimeoutSeconds = 10
 )
 
@@ -46,7 +51,7 @@ if (-not $element) { throw "No control named `"$Name`" to click in process $Proc
 $rect = $element.Current.BoundingRectangle
 if ($rect.IsEmpty -or $rect.Width -le 0) { throw "The control named `"$Name`" has no on-screen rectangle." }
 
-$y = [int] ($rect.Y + ($rect.Height / 2))
+$y = if ($null -ne $FromTop) { [int] ($rect.Y + $FromTop) } else { [int] ($rect.Y + ($rect.Height / 2)) }
 $x = switch ($Where) {
     'left'   { [int] ($rect.X + $Inset) }
     'right'  { [int] ($rect.X + $rect.Width - $Inset) }
