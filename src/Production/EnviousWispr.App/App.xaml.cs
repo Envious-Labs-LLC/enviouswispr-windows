@@ -1181,6 +1181,10 @@ public partial class App : Application, IAsyncDisposable
         _sessionController = new PushToTalkSessionController(
             audioCapture,
             new WindowsForegroundTargetProvider(),
+            deliveryOptions: TextDeliveryOptions.Default with
+            {
+                CopyInsteadOfPaste = _settings.Preferences.CopyInsteadOfPaste,
+            },
             preferredAudioDevice: string.IsNullOrWhiteSpace(_settings.PreferredMicrophoneId)
                 ? null
                 : new EnviousWispr.Core.Audio.AudioDeviceId(_settings.PreferredMicrophoneId));

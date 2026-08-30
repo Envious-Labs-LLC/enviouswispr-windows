@@ -80,6 +80,7 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 5 => MigrateFromV5(json),
                 6 => MigrateFromV6(json),
                 7 => MigrateFromV7(json),
+                8 => MigrateFromV8(json),
                 PortableProfile.CurrentSchemaVersion => JsonSerializer.Deserialize<PortableProfile>(
                     json,
                     JsonSettingsStore.SerializerOptions),
@@ -216,6 +217,18 @@ public sealed class JsonPortableProfileService : IPortableProfileService
 
     /// <summary>Takes a profile written before custom words could be matched loosely.</summary>
     /// <remarks>See <c>JsonSettingsStore.MigrateFromV12</c>; a missing strictness is the old rule.</remarks>
+    /// <summary>Takes a profile written before copy-only could be asked for.</summary>
+    /// <remarks>See <c>JsonSettingsStore.MigrateFromV13</c>; missing means off, which is what they had.</remarks>
+    private static PortableProfile? MigrateFromV8(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<PortableProfile>(
+            json,
+            JsonSettingsStore.SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = PortableProfile.CurrentSchemaVersion };
+    }
+
     private static PortableProfile? MigrateFromV7(string json)
     {
         var legacy = JsonSerializer.Deserialize<PortableProfile>(

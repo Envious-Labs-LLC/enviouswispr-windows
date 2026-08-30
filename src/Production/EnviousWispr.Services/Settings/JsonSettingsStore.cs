@@ -65,6 +65,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 10 => MigrateFromV10(json),
                 11 => MigrateFromV11(json),
                 12 => MigrateFromV12(json),
+                13 => MigrateFromV13(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -403,6 +404,20 @@ public sealed class JsonSettingsStore : ISettingsStore
     /// prove anything about words they added before the question existed.
     /// </remarks>
     private static AppSettings? MigrateFromV12(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+    }
+
+    /// <summary>Takes a settings file written before copy-only could be asked for.</summary>
+    /// <remarks>
+    /// NOTHING IS REWRITTEN. Everyone who has used this app so far has had their text pasted, and a
+    /// migration that turned that into copy-only would change what happens to the next thing they
+    /// dictate. Missing means off, which is what they already had.
+    /// </remarks>
+    private static AppSettings? MigrateFromV13(string json)
     {
         var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
         return legacy is null

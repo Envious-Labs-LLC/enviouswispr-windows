@@ -165,7 +165,8 @@ public sealed record UserPreferences(
     RecordingPillDesign PillDesignWithoutWords = RecordingPillDesign.Classic,
     RecordingPillDesign PillDesignWithWords = RecordingPillDesign.ReadingWell,
     bool PlayRecordingSounds = false,
-    RecordingSoundPairing RecordingSoundPairing = RecordingSoundPairing.WhisperTick)
+    RecordingSoundPairing RecordingSoundPairing = RecordingSoundPairing.WhisperTick,
+    bool CopyInsteadOfPaste = false)
 {
     public static UserPreferences Default { get; } = new(
         DictationPreferences.Default,

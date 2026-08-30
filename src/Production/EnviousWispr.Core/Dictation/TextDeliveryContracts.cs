@@ -34,6 +34,15 @@ public enum TextDeliveryRoute
 public enum TextDeliveryRefusalReason
 {
     None,
+
+    /// <summary>The person asked for the clipboard rather than a paste.</summary>
+    /// <remarks>
+    /// A REASON RATHER THAN A FAILURE, and it needs its own name for that. Every other value here
+    /// says something went wrong and the clipboard caught it; this one says the clipboard is where
+    /// the text was going. Folding it into one of the others would report a refusal in the
+    /// diagnostics every time somebody used the setting as intended.
+    /// </remarks>
+    CopyRequested,
     TargetUnavailable,
     TargetChanged,
     ProtectedField,
@@ -57,12 +66,14 @@ public enum CursorRepairDisposition
 public sealed record TextDeliveryOptions(
     bool RestoreClipboardAfterPaste,
     int ContextWindowCharacters,
-    int MaximumDirectValueCharacters)
+    int MaximumDirectValueCharacters,
+    bool CopyInsteadOfPaste = false)
 {
     public static TextDeliveryOptions Default { get; } = new(
         RestoreClipboardAfterPaste: true,
         ContextWindowCharacters: 256,
-        MaximumDirectValueCharacters: 16_384);
+        MaximumDirectValueCharacters: 16_384,
+        CopyInsteadOfPaste: false);
 }
 
 public sealed record TextDeliveryRequest(

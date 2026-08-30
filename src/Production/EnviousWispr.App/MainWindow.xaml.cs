@@ -973,7 +973,8 @@ public sealed partial class MainWindow : Window, IDisposable
             PillDesignWithoutWordsFromControls(),
             RecordingPillDesign.ReadingWell,
             PlayRecordingSoundsToggle.IsOn,
-            SelectedRecordingSoundPairing());
+            SelectedRecordingSoundPairing(),
+            CopyInsteadOfPasteToggle.IsOn);
 
         if (await TrySaveAsync(
                 current => current with
@@ -3194,6 +3195,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 preferences.PillDesignWithoutWords == RecordingPillDesign.LevelRail;
             ReadingWellPillButton.IsChecked = true;
             PlayRecordingSoundsToggle.IsOn = preferences.PlayRecordingSounds;
+            CopyInsteadOfPasteToggle.IsOn = preferences.CopyInsteadOfPaste;
             RecordingSoundComboBox.SelectedItem = RecordingSoundCatalog.Find(
                 preferences.RecordingSoundPairing);
             RecordingSoundDescriptionText.Text = RecordingSoundCatalog.Find(
