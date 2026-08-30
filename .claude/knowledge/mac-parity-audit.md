@@ -296,6 +296,36 @@ in about a page.
 Same lesson as the four stale rows above, arriving from the other direction: **the table's uncertainty
 is as expensive as its errors.** Both resolve by reading.
 
+## FACT: near-duplicate-warnings-on-import-were-built-and-REJECTED-2026-08-29
+Built, measured, reverted the same day. Recorded so it is not proposed again as an obvious gap.
+
+**macOS classifies an imported word as new, exact, variant, FUZZY or ambiguous, and Windows had exact
+matching only.** That reads like a clean parity gap. It is not one, for two reasons found only by
+measuring.
+
+**A CORRECTION LIST INTENTIONALLY CONTAINS NEAR-IDENTICAL SPOKEN FORMS. THAT IS WHAT IT IS FOR.** The
+warning fired on this product's own built-in packs: `envious wispr` beside `envious whisper`, `get hub`
+beside `git hub`, `post gres` beside `postgres`, `e g one` beside `eg one`. Every one of those pairs is
+deliberate, and a user adding a pack would have been warned that the pack is wrong. Tightening the
+policy to macOS's own conservative shape - case-normalised, one edit, minimum length seven - does not
+save it: `get hub` and `git hub` are seven characters and one edit apart.
+
+**AND macOS SHIPS IT DISABLED.** Its live import passes `.disabled`; the conservative policy exists in
+its tests. So the row was never a gap in behaviour - both products decline to do this, and only one of
+them had written the machinery.
+
+Measured against 4,000 real dictionary words, the 0.85 threshold flagged 78 of 2,000 imports, including
+`curious`/`furious`, `paternal`/`maternal` and `lighting`/`fighting`.
+
+**Two implementation defects found in the same review, worth keeping for whoever revisits this.** The
+shipped `TextSimilarity.LevenshteinSimilarity` is CASE-SENSITIVE, and the dictation path lowercases
+both sides before calling it - so a comparison that forgets to normalise scores `Conflunce` against
+`confluence` at 0.80 and misses it. And the scan is O(n*m) with an allocating comparison inside, which
+for 2,000 existing words and 2,000 imported is about six million comparisons on the UI thread before
+the first await.
+
+Ref: Codex review 2026-08-29, which supplied the pack collisions and the Hunspell sample.
+
 ## PROC: how-this-was-taken
 Two sweeps per capability from `src/Production`, the second using the CAPABILITY's synonyms rather than
 the Mac's symbol, because a name sweep only finds what someone already called by that name:
