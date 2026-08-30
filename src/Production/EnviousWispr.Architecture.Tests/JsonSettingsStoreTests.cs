@@ -230,6 +230,47 @@ public sealed class JsonSettingsStoreTests
         });
     }
 
+    /// <summary>
+    /// A settings file written before the release-notes mark existed still loads, and gains it.
+    /// </summary>
+    /// <remarks>
+    /// A NEW FIELD IS A NEW SCHEMA EVEN WHEN IT HAS A DEFAULT, and the cost of getting that wrong is
+    /// paid by somebody rolling BACK. This store refuses a file it does not recognise, so a
+    /// version-11 app reading a version-11 file carrying lastSeenReleaseNotes would treat it as
+    /// corruption and reset every choice the person had made. Bumping the number makes that older app
+    /// refuse it politely instead, as a newer schema it cannot read.
+    /// </remarks>
+    [Fact]
+    public async Task LoadMigratesASettingsFileWrittenBeforeTheReleaseNotesMark()
+    {
+        await WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "settings.json");
+            var legacy = CreatePopulatedSettings() with { SchemaVersion = 11 };
+            var json = System.Text.Json.JsonSerializer.Serialize(
+                legacy,
+                JsonSettingsStore.SerializerOptions);
+            var root = JsonNode.Parse(json)!.AsObject();
+            root.Remove("lastSeenReleaseNotes");
+            await File.WriteAllTextAsync(path, root.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var store = new JsonSettingsStore(path);
+            var result = await store.LoadAsync();
+
+            Assert.Equal(SettingsLoadStatus.Migrated, result.Status);
+            Assert.Equal(11, result.SourceSchemaVersion);
+            Assert.Equal(AppSettings.CurrentSchemaVersion, result.Settings.SchemaVersion);
+            // NULL IS THE ANSWER SOMEBODY UPGRADING SHOULD GET: they have not read this build's notes.
+            Assert.Null(result.Settings.LastSeenReleaseNotes);
+
+            // AND IT SURVIVES A ROUND TRIP, which is the half a migration test usually forgets.
+            await store.SaveAsync(result.Settings with { LastSeenReleaseNotes = "EnviousWispr 9.9.9" });
+            var reloaded = await new JsonSettingsStore(path).LoadAsync();
+            Assert.Equal(SettingsLoadStatus.Loaded, reloaded.Status);
+            Assert.Equal("EnviousWispr 9.9.9", reloaded.Settings.LastSeenReleaseNotes);
+        });
+    }
+
     [Fact]
     public async Task LoadMigratesPhaseSeventeenSettingsWithPrivateObservabilityDefaults()
     {

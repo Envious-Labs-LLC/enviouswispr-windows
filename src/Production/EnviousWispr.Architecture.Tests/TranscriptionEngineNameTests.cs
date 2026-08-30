@@ -1690,9 +1690,19 @@ public sealed partial class DesignSystemTokenTests
         }
 
         // And the method they reach must actually write, rather than merely existing.
+        //
+        // EITHER WAY OF WRITING COUNTS. This named the store call directly, so routing the same save
+        // through the gate that serialises every settings writer broke a check whose property had
+        // not changed - the choice is still persisted without a Save button, which is the whole
+        // claim. Both spellings end in _settingsStore.SaveAsync; one of them just gets there through
+        // the method that stops two writers overwriting each other.
         var persist = HandlerBody("PersistAppearanceChoicesAsync").Match(code);
         Assert.True(persist.Success, "PersistAppearanceChoicesAsync does not exist.");
-        Assert.Contains("_settingsStore.SaveAsync", persist.Value, StringComparison.Ordinal);
+        Assert.True(
+            persist.Value.Contains("_settingsStore.SaveAsync", StringComparison.Ordinal)
+                || persist.Value.Contains("UpdateSettingsAsync", StringComparison.Ordinal),
+            "PersistAppearanceChoicesAsync does not write the choice anywhere, so an appearance "
+                + "chosen without a Save button is lost on the next launch.");
     }
 
     private static Regex RadioButtonInGroup(string group) =>

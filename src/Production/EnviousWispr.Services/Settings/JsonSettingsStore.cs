@@ -63,6 +63,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 8 => MigrateFromV8(json),
                 9 => MigrateFromV9(json),
                 10 => MigrateFromV10(json),
+                11 => MigrateFromV11(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -366,6 +367,29 @@ public sealed class JsonSettingsStore : ISettingsStore
                         AutoStopSilenceSeconds = DictationPreferences.Default.AutoStopSilenceSeconds,
                     },
                 },
+            };
+    }
+
+    /// <summary>Adds the release-notes mark to a file written before it existed.</summary>
+    /// <remarks>
+    /// A NEW FIELD IS A NEW SCHEMA, EVEN WHEN IT HAS A DEFAULT. This store refuses a file it does not
+    /// recognise, so a version-11 app reading a version-11 file that carries lastSeenReleaseNotes
+    /// treats it as corruption and resets the settings - which is what a ROLLBACK looks like from the
+    /// user's side: every choice they made, gone. Bumping the number is what makes the older app
+    /// refuse the file politely instead, as a newer schema it cannot read.
+    ///
+    /// NULL IS THE RIGHT VALUE HERE AND IT IS SET ON PURPOSE. Somebody upgrading has not read THIS
+    /// build's notes, so the mark should be up - which is exactly what null means.
+    /// </remarks>
+    private static AppSettings? MigrateFromV11(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = AppSettings.CurrentSchemaVersion,
+                LastSeenReleaseNotes = null,
             };
     }
 
