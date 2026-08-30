@@ -2781,12 +2781,18 @@ public sealed partial class DesignSystemTokenTests
                 Calls(one.Body, "InitializeComponent") is not null);
         Assert.True(constructor is not null, "The window has no constructor that builds its own controls.");
 
-        var built = Calls(constructor!.Body!, "InitializeComponent")!;
-        var started = Calls(constructor.Body!, reset);
+        // THE VERY NEXT STATEMENT, not merely somewhere later. Anything allowed to run in between
+        // can set the picker to something else and the reset then does nothing visible, which is a
+        // single ordinary line that leaves every other rule here satisfied.
+        var statements = constructor!.Body!.Statements;
+        var built = statements
+            .Select((statement, index) => (statement, index))
+            .First(one => Calls(one.statement, "InitializeComponent") is not null)
+            .index;
         Assert.True(
-            started is not null && started.SpanStart > built.SpanStart,
-            $"The window never calls {reset} after building its controls, so the picker starts on "
-                + "whatever the markup happened to leave selected.");
+            built + 1 < statements.Count && Calls(statements[built + 1], reset) is not null,
+            $"The window does not call {reset} immediately after building its controls, so what the "
+                + "picker starts on is whatever ran in between.");
 
         var resetBody = root.DescendantNodes().OfType<MethodDeclarationSyntax>()
             .FirstOrDefault(method => method.Identifier.Text == reset);
@@ -2814,6 +2820,21 @@ public sealed partial class DesignSystemTokenTests
             $"{picker} is written to in a way that replaces or reorders what it offers: "
                 + string.Join(", ", writes));
 
+        // AND THE CHOICE IS SET IN ONE PLACE. A second assignment anywhere else runs after the reset
+        // and quietly decides what everyone starts on, while the reset above still reads correctly.
+        var chosen = root.DescendantNodes().OfType<AssignmentExpressionSyntax>()
+            .Where(assignment => assignment.Left is MemberAccessExpressionSyntax member
+                && Receiver(member) == picker
+                && member.Name.Identifier.Text == "SelectedValue")
+            .Where(assignment => assignment.Ancestors().OfType<MethodDeclarationSyntax>()
+                .FirstOrDefault()?.Identifier.Text != reset)
+            .Select(assignment => $"line {assignment.GetLocation().GetLineSpan().StartLinePosition.Line + 1}")
+            .ToArray();
+        Assert.True(
+            chosen.Length == 0,
+            $"{picker}.SelectedValue is set outside {reset}, so what a person starts on is decided in "
+                + "more than one place: " + string.Join(", ", chosen));
+
         var bound = root.DescendantNodes().OfType<InvocationExpressionSyntax>()
             .Select(call => call.Expression as MemberAccessExpressionSyntax)
             .Where(member => member is not null && Receiver(member) == picker)
@@ -2825,12 +2846,20 @@ public sealed partial class DesignSystemTokenTests
             $"{picker} is bound or set through the property system, which the markup gate cannot see: "
                 + string.Join(", ", bound));
 
+        // ASKED OF THE TREE, NOT OF THE SPELLING. "Items?.Clear()" empties the picker and contains no
+        // ".Items." at all, and "this." or a pair of brackets around the name change the text again
+        // without changing what happens.
+        var touched = root.DescendantNodes().OfType<MemberAccessExpressionSyntax>()
+            .Where(member => Receiver(member) == picker && member.Name.Identifier.Text == "Items")
+            .Select(member => $"line {member.GetLocation().GetLineSpan().StartLinePosition.Line + 1}")
+            .ToArray();
         Assert.True(
-            !root.ToString().Contains($"{picker}.Items.", StringComparison.Ordinal),
-            $"{picker}.Items is changed in code, so the choices a person sees are not the ones in the markup.");
+            touched.Length == 0,
+            $"{picker}.Items is reached in code, so the choices a person sees are not the ones in the "
+                + "markup: " + string.Join(", ", touched));
     }
 
-    /// <summary>The call to a named method inside a block, or null if it is not there.</summary>
+    /// <summary>The call to a named method inside a statement or block, or null if it is not there.</summary>
     private static InvocationExpressionSyntax? Calls(SyntaxNode body, string name) =>
         body.DescendantNodes().OfType<InvocationExpressionSyntax>()
             .FirstOrDefault(call => call.Expression switch
@@ -2840,9 +2869,12 @@ public sealed partial class DesignSystemTokenTests
                 _ => false,
             });
 
-    /// <summary>The control a member access is reading, whether or not it says "this".</summary>
-    private static string? Receiver(MemberAccessExpressionSyntax? member) => member?.Expression switch
+    /// <summary>The control a member access is reading, past "this" and any brackets around it.</summary>
+    private static string? Receiver(MemberAccessExpressionSyntax? member) => Named(member?.Expression);
+
+    private static string? Named(ExpressionSyntax? expression) => expression switch
     {
+        ParenthesizedExpressionSyntax parens => Named(parens.Expression),
         IdentifierNameSyntax identifier => identifier.Identifier.Text,
         MemberAccessExpressionSyntax { Expression: ThisExpressionSyntax } inner => inner.Name.Identifier.Text,
         _ => null,
