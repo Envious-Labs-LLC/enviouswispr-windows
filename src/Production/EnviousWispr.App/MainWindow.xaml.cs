@@ -847,8 +847,10 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var next = _settings with { HasCompletedOnboarding = true };
-        if (await TrySaveAsync(next, "Setup complete", "Your choices were saved on this PC.").ConfigureAwait(true))
+        if (await TrySaveAsync(
+                current => current with { HasCompletedOnboarding = true },
+                "Setup complete",
+                "Your choices were saved on this PC.").ConfigureAwait(true))
         {
             ShowOnboarding(show: false);
             ProductNavigation.SelectedItem = HomeNavItem;
@@ -936,25 +938,30 @@ public sealed partial class MainWindow : Window, IDisposable
                 RetentionDays.DiagnosticMaximum),
             _telemetryAvailable && ShareTelemetryToggle.IsOn);
         var microphoneId = (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id;
-        var next = _settings with
-        {
-            PreferredMicrophoneId = microphoneId,
-            Preferences = new UserPreferences(
-                dictation,
-                polish,
-                history,
-                theme,
-                LivePreviewToggle.IsOn,
-                OverlayPositionFromIndex(SelectedIndexOf(OverlayPositionChoices)),
-                PillDesignWithoutWordsFromControls(),
-                RecordingPillDesign.ReadingWell,
-                PlayRecordingSoundsToggle.IsOn,
-                SelectedRecordingSoundPairing()),
-            Observability = observability,
-        };
+
+        // THE CONTROL VALUES ARE READ HERE, ON THE UI THREAD, AND APPLIED INSIDE THE GATE. Reading
+        // them is what has to happen now; building the whole record now is what made a save that
+        // waited on another writer overwrite it. The fields above are already captured, so the
+        // transform below touches nothing that can have moved.
+        var preferences = new UserPreferences(
+            dictation,
+            polish,
+            history,
+            theme,
+            LivePreviewToggle.IsOn,
+            OverlayPositionFromIndex(SelectedIndexOf(OverlayPositionChoices)),
+            PillDesignWithoutWordsFromControls(),
+            RecordingPillDesign.ReadingWell,
+            PlayRecordingSoundsToggle.IsOn,
+            SelectedRecordingSoundPairing());
 
         if (await TrySaveAsync(
-                next,
+                current => current with
+                {
+                    PreferredMicrophoneId = microphoneId,
+                    Preferences = preferences,
+                    Observability = observability,
+                },
                 "Settings saved",
                 "Theme, Live Preview, pill design, pill position, recording sounds, and local data choices apply now. Engine, microphone, shortcut, and polish changes apply safely on the next launch.")
             .ConfigureAwait(true))
@@ -2156,8 +2163,10 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var next = _settings.Apply(imported.Profile);
-        if (await TrySaveAsync(next, "Profile imported", "Settings, dictionary entries, and snippets are ready. Machine-local choices and history were preserved.").ConfigureAwait(true))
+        if (await TrySaveAsync(
+                current => current.Apply(imported.Profile),
+                "Profile imported",
+                "Settings, dictionary entries, and snippets are ready. Machine-local choices and history were preserved.").ConfigureAwait(true))
         {
             ApplySettingsToControls();
         }
@@ -2756,7 +2765,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private async Task<bool> SaveUserDataAsync(
         ReusableUserData userData, string title, string message)
     {
-        if (!await TrySaveAsync(_settings with { UserData = userData }, title, message)
+        if (!await TrySaveAsync(current => current with { UserData = userData }, title, message)
             .ConfigureAwait(true))
         {
             return false;
@@ -2942,8 +2951,12 @@ public sealed partial class MainWindow : Window, IDisposable
             SettingsChanged?.Invoke(next);
             return true;
         }
+        // SecurityException IS AN ACCESS DENIAL AND THE STORE THROWS IT. Its own load and profile
+        // paths already classify it that way; only the save paths did not, so a settings write
+        // blocked by policy escaped an async void handler and took the app down.
         catch (Exception exception) when (
-            exception is ArgumentException or IOException or UnauthorizedAccessException)
+            exception is ArgumentException or IOException or UnauthorizedAccessException
+                or SecurityException)
         {
             if (onFailure is not null)
             {
@@ -2958,44 +2971,39 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
-    /// <summary>Saves a whole settings record, through the gate that serialises every writer.</summary>
+    /// <summary>Applies a change to the stored settings and reports how it went.</summary>
     /// <remarks>
-    /// THE RECORD IS STILL BUILT BY THE CALLER HERE, and that is a narrower risk than it looks: these
-    /// callers replace the WHOLE settings deliberately - a profile import, a reset - so deriving from
-    /// the current value would defeat what they are for. The gate still stops two of them, or one of
-    /// them and a field-level change, from interleaving.
+    /// A TRANSFORM, NOT A RECORD, AND MY REASON FOR ALLOWING A RECORD WAS SIMPLY WRONG. This took a
+    /// prebuilt AppSettings on the grounds that its callers replace the whole thing deliberately.
+    /// They do not: a profile import calls Apply, which preserves machine-local choices and app
+    /// state, so it is a partial change like every other. A record built before the gate is stale by
+    /// the time the gate opens, and writing it back discards whatever ran in between.
     /// </remarks>
-    private async Task<bool> TrySaveAsync(AppSettings next, string title, string message)
+    private async Task<bool> TrySaveAsync(
+        Func<AppSettings, AppSettings> change,
+        string title,
+        string message)
     {
-        await _settingsGate.WaitAsync().ConfigureAwait(true);
-        try
+        var saved = await UpdateSettingsAsync(
+            change,
+            exception =>
+            {
+                ShowMessage(
+                    exception is UnauthorizedAccessException or SecurityException
+                        ? "Windows blocked settings storage"
+                        : "Settings storage is unavailable",
+                    "Your previous settings remain active.",
+                    InfoBarSeverity.Error);
+                return Task.CompletedTask;
+            }).ConfigureAwait(true);
+
+        if (saved)
         {
-            await _settingsStore.SaveAsync(next).ConfigureAwait(true);
-            _settings = next;
-            SettingsChanged?.Invoke(next);
             ApplySettingsToControls();
             ShowMessage(title, message, InfoBarSeverity.Success);
-            return true;
-        }
-        catch (ArgumentException)
-        {
-            ShowMessage("Settings were not saved", "One or more values are invalid. Your previous settings remain active.", InfoBarSeverity.Error);
-        }
-        catch (IOException)
-        {
-            ShowMessage("Settings storage is unavailable", "Your previous settings remain active.", InfoBarSeverity.Error);
-        }
-        catch (UnauthorizedAccessException)
-        {
-            ShowMessage("Windows blocked settings storage", "Your previous settings remain active.", InfoBarSeverity.Error);
         }
 
-        finally
-        {
-            _settingsGate.Release();
-        }
-
-        return false;
+        return saved;
     }
 
     private void ApplySettingsToControls()
@@ -3370,10 +3378,32 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private void ShowReleaseNotesMark(bool unread)
     {
+        if (WhatsNewBadge.Visibility == (unread ? Visibility.Visible : Visibility.Collapsed))
+        {
+            return;
+        }
+
         WhatsNewBadge.Visibility = unread ? Visibility.Visible : Visibility.Collapsed;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(
             WhatsNewNavItem,
             unread ? "New release notes you have not read" : string.Empty);
+
+        // ItemStatus IS READ WHEN SOMEBODY REACHES THE ITEM, WHICH IS NOT THE SAME AS BEING TOLD.
+        // It is the right place for the status - Microsoft's own guidance, and what has news is the
+        // destination rather than the dot - but on its own the mark is silent to anyone whose focus
+        // is elsewhere, which is everyone at the moment it appears. One notification says it once.
+        //
+        // CurrentThenMostRecent, so a mark that appears and clears quickly does not queue two
+        // sentences that arrive after both are out of date.
+        var peer = FrameworkElementAutomationPeer.FromElement(WhatsNewNavItem)
+            ?? FrameworkElementAutomationPeer.CreatePeerForElement(WhatsNewNavItem);
+        peer?.RaiseNotificationEvent(
+            AutomationNotificationKind.Other,
+            AutomationNotificationProcessing.CurrentThenMostRecent,
+            unread
+                ? "New release notes you have not read."
+                : "Release notes marked as read.",
+            "EnviousWisprReleaseNotes");
     }
 
     /// <summary>Records that these notes have been read, and takes the mark off.</summary>
