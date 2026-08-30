@@ -3534,6 +3534,45 @@ public sealed partial class MainWindow : Window, IDisposable
         }).ConfigureAwait(true);
     }
 
+    /// <summary>Commits a setting when the row beside its switch is tapped.</summary>
+    /// <remarks>
+    /// macOS COMMITS ON THE WHOLE ROW AND WINDOWS COMMITTED ONLY ON THE SWITCH, leaving two thirds
+    /// of every settings row dead. Measured by clicking both ends of one on the running app: the
+    /// left turned it on, the right did nothing.
+    ///
+    /// A TRANSPARENT ROW RATHER THAN A REBUILT CONTROL. Stretching the ToggleSwitch was tried and
+    /// reverted - it widened the rectangle the accessibility tree reports without widening the area
+    /// a pointer can reach, because WinUI does not hit-test space whose background is null and the
+    /// stock template does not bind the control's background to anything that does. A Grid WITH a
+    /// background is hit-tested, and it needs no copy of a control used on ten pages.
+    ///
+    /// A TAP ON THE SWITCH ITSELF IS LEFT ALONE. It bubbles up to here after the switch has already
+    /// acted, and flipping again would undo it - so a tap inside the switch's own width is ignored
+    /// and the control keeps its own behaviour, including the drag its track supports.
+    /// </remarks>
+    private void SettingRow_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (sender is not Panel row)
+        {
+            return;
+        }
+
+        var toggle = row.Children.OfType<ToggleSwitch>().FirstOrDefault();
+        if (toggle is null || !toggle.IsEnabled)
+        {
+            return;
+        }
+
+        var where = e.GetPosition(toggle);
+        if (where.X >= 0 && where.X <= toggle.ActualWidth &&
+            where.Y >= 0 && where.Y <= toggle.ActualHeight)
+        {
+            return;
+        }
+
+        toggle.IsOn = !toggle.IsOn;
+    }
+
     private void ShowOnboarding(bool show)
     {
         OnboardingView.Visibility = show ? Visibility.Visible : Visibility.Collapsed;

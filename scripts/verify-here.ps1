@@ -119,9 +119,17 @@ $ran = Get-Content "$env:TEMP\v-test.log" -ErrorAction SilentlyContinue |
 # A THEORY IS ONE DISCOVERED NAME AND SEVERAL EXECUTED CASES, so the run can legitimately exceed
 # the discovered count and only a SHORTFALL is a problem. The failure being caught is a run that
 # stopped early, not one that expanded.
+# AND IT EXITS, RATHER THAN PRINTING A LINE THAT CAN BE READ PAST. A truncated run prints its own
+# cheerful "Passed!" summary about the tests it DID execute, so a warning line above it competes with
+# a success line below it - and the success line is the one that looks like the answer. Measured:
+# runs of 713 and 730 against an expected 761, each announcing "Passed!", each a minute apart.
+# Failing the script is the only version of this warning that cannot be skimmed.
 if ($ran -and [int]$ran.Matches[0].Groups[1].Value -lt $expected) {
+    ''
     "   SHORT RUN: $($ran.Matches[0].Groups[1].Value) tests executed, at least $expected expected."
-    '   This is an instrument failure rather than a result. Run it again before believing either.'
+    '   This is an instrument failure rather than a result. The "Passed!" line above is true about a'
+    '   smaller suite than the one you asked for. Run it again before believing either lane.'
+    exit 2
 }
 
 '--- lane 2: the isolated class, in its own process ---'
