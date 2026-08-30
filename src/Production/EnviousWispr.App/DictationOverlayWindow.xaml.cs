@@ -79,10 +79,19 @@ public sealed partial class DictationOverlayWindow : Window
         Resize(NoticeWidth, NoticeHeight);
         OverlayRoot.Loaded += (_, _) =>
         {
-            if (OverlayRoot.XamlRoot is { } root)
+            if (OverlayRoot.XamlRoot is not { } root)
             {
-                root.Changed += OnXamlRootChanged;
+                return;
             }
+
+            root.Changed += OnXamlRootChanged;
+
+            // SYNCHRONISE NOW, RATHER THAN WAIT FOR THE NEXT CHANGE. The pill is moved to the
+            // foreground app's monitor BEFORE it is shown, so by the time this subscription exists
+            // the scale may already be that of a different monitor - and a change that has already
+            // happened raises no event. Waiting would leave the very first pill on a second monitor
+            // sized for the first, which is the exact bug this subscription is here to prevent.
+            ApplyScale(root.RasterizationScale);
         };
         AppWindow.IsShownInSwitchers = false;
         if (AppWindow.Presenter is OverlappedPresenter presenter)
@@ -538,9 +547,12 @@ public sealed partial class DictationOverlayWindow : Window
     /// and rescaling it compounds a rounding error every time the pill crosses a monitor boundary.
     /// The logical size it asked for is exact and does not drift.
     /// </remarks>
-    private void OnXamlRootChanged(XamlRoot sender, XamlRootChangedEventArgs args)
+    private void OnXamlRootChanged(XamlRoot sender, XamlRootChangedEventArgs args) =>
+        ApplyScale(sender.RasterizationScale);
+
+    /// <summary>Re-applies the pill's own size at a new scale, if it really is a new one.</summary>
+    private void ApplyScale(double scale)
     {
-        var scale = sender.RasterizationScale;
         if (scale <= 0 || Math.Abs(scale - _rasterScale) < 0.001)
         {
             return;
