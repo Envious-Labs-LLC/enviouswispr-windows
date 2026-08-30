@@ -1,0 +1,11 @@
+{
+  "backend" : "parakeet",
+  "classification" : "asr_complete",
+  "createdAt" : "2026-08-20T19:15:59Z",
+  "durationMs" : 21877,
+  "hasFed" : true,
+  "id" : "68B90FDC-1478-497D-AEDF-86B7EB7B5FA1",
+  "outcome" : "completed",
+  "sampleCount" : 350032,
+  "sid" : "0EE8FD32-B4E4-4F5A-9729-095DE5EED6DF"
+}

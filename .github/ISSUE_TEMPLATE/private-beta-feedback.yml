@@ -1,0 +1,68 @@
+name: Private beta product feedback
+description: Share a content-free founder/private-beta observation or request.
+title: "[Private beta feedback] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the workflow, not what you dictated. Never include transcript, audio, clipboard or surrounding text, credentials, accounts, private paths, device identity, target-window titles, raw logs, or crash dumps.
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Release channel
+      options:
+        - Founder
+        - Beta
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      placeholder: 0.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: workflow
+    attributes:
+      label: Workflow area
+      options:
+        - Install and updates
+        - Onboarding and settings
+        - Hold, speak, release
+        - Live preview
+        - Final transcription
+        - Polishing
+        - Delivery into another app
+        - History, portability, or diagnostics
+        - Accessibility or international use
+        - Performance, battery, or thermal behavior
+    validations:
+      required: true
+  - type: textarea
+    id: observation
+    attributes:
+      label: Sanitized observation
+      description: State what you expected and what the product did using generic, content-free examples.
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - Prevents daily use
+        - Repeatedly interrupts daily use
+        - Noticeable but recoverable
+        - Minor improvement
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I removed private content and stable device or account identifiers from this report.
+          required: true

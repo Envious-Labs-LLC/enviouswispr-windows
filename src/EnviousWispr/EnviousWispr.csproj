@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms> <!-- tray icon only; no WinForms UI -->
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>EnviousWispr</AssemblyName>
+    <RootNamespace>EnviousWispr</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- contract-layer unit tests reach the internal pure functions -->
+    <InternalsVisibleTo Include="EnviousWispr.Tests" />
+
+    <!-- WindowsDesktop SDK drops System.IO + System.Net.Http from implicit usings; restore them -->
+    <Using Include="System.IO" />
+    <Using Include="System.Net.Http" />
+    <!-- WinForms is tray-only: drop its project-wide implicit usings (they collide
+         with WPF types: Application, Color). TrayIcon.cs imports them explicitly. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+
+    <!-- The GPU package includes the managed API, CPU execution provider, and CUDA
+         provider. Do not also reference Microsoft.ML.OnnxRuntime: both packages ship
+         an onnxruntime.dll and NuGet can select the CPU-only native library, which
+         makes AppendExecutionProvider_CUDA fail at runtime. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.29.0" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

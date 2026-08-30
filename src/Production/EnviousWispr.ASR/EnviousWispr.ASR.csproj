@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <InternalsVisibleTo Include="EnviousWispr.Architecture.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EnviousWispr.Core\EnviousWispr.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The GPU package contains the managed API, CPU execution provider, and CUDA provider.
+         Referencing the CPU package beside it can select the wrong native onnxruntime.dll. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.29.0" />
+    <PackageReference Include="Whisper.net" Version="1.9.1" />
+  </ItemGroup>
+</Project>

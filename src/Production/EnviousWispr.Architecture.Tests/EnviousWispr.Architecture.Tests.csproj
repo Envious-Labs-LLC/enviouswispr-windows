@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      ROSLYN, BECAUSE FOUR ROUNDS OF REVIEW PROVED THE REGEX APPROACH CANNOT BE FINISHED. The
+      design-system gates below ask what a C# member IS: what it returns and what it is handed. A
+      regex answers that from the characters near the member's name, and every draft was one shape
+      short - an alias, a wrapped return type, a delegate field, an indexer, an attribute inside the
+      parameter list. Each miss failed GREEN, which is indistinguishable from the property holding.
+      The compiler already knows the answer, so the gate asks it instead of guessing.
+    -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <ProjectReference Include="..\EnviousWispr.ASR\EnviousWispr.ASR.csproj" />
+    <ProjectReference Include="..\EnviousWispr.Audio\EnviousWispr.Audio.csproj" />
+    <ProjectReference Include="..\EnviousWispr.ModelDelivery\EnviousWispr.ModelDelivery.csproj" />
+    <ProjectReference Include="..\EnviousWispr.LLM\EnviousWispr.LLM.csproj" />
+    <ProjectReference Include="..\EnviousWispr.Pipeline\EnviousWispr.Pipeline.csproj" />
+    <ProjectReference Include="..\EnviousWispr.PostProcessing\EnviousWispr.PostProcessing.csproj" />
+    <ProjectReference Include="..\EnviousWispr.RuntimeWorker\EnviousWispr.RuntimeWorker.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\EnviousWispr.Services\EnviousWispr.Services.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Fixtures\deterministic-parity.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\macos-itn-parity.jsonl" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\macos-itn-parity-holdout.jsonl" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Target Name="CopyRuntimeWorkerForTests" AfterTargets="Build">
+    <ItemGroup>
+      <RuntimeWorkerFiles Include="..\EnviousWispr.RuntimeWorker\bin\$(Configuration)\net10.0-windows10.0.26100.0\EnviousWispr.RuntimeWorker*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(RuntimeWorkerFiles)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

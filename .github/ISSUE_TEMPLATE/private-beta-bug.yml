@@ -1,0 +1,86 @@
+name: Private beta bug or crash
+description: Report a founder/private-beta failure without sharing private content.
+title: "[Private beta] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never paste dictated or polished text, audio, clipboard or surrounding text, credentials, account names, private paths, window titles, raw logs, or crash dumps. Attach only the privacy-safe diagnostics export created by EnviousWispr.
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Release channel
+      options:
+        - Founder
+        - Beta
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      placeholder: 0.0.0
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows edition and build
+      description: Use Settings > System > About or winver. Do not include the device name or product ID.
+      placeholder: Windows 11 25H2 build 26200.0000
+    validations:
+      required: true
+  - type: dropdown
+    id: hardware
+    attributes:
+      label: Coarse hardware class
+      options:
+        - CPU-only or integrated graphics
+        - Intel graphics
+        - AMD graphics
+        - NVIDIA graphics
+        - Unknown or other
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Failed stage
+      options:
+        - Install, repair, update, rollback, or uninstall
+        - Startup, tray, settings, or onboarding
+        - Hotkey or recording
+        - Preview or final transcription
+        - Text processing or polish
+        - Delivery into the target app
+        - Diagnostics or feedback
+        - Shutdown, sleep, or resume
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Sanitized reproduction steps
+      description: Describe actions and visible product states only. Replace private app/file/account names with generic labels.
+    validations:
+      required: true
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: Frequency
+      options:
+        - Once
+        - Intermittent
+        - Every time
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I removed private content and will attach only an EnviousWispr privacy-safe diagnostics export, if available.
+          required: true

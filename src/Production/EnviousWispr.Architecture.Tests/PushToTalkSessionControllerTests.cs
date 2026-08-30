@@ -1,0 +1,355 @@
+using EnviousWispr.Core.Audio;
+using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Sessions;
+using EnviousWispr.Pipeline;
+
+namespace EnviousWispr.Architecture.Tests;
+
+public sealed class PushToTalkSessionControllerTests
+{
+    private static readonly float[] OneSample = [0.2f];
+
+    [Fact]
+    public async Task PressFreezesTargetAndRejectsOverlap()
+    {
+        var audio = new FakeAudioCapture();
+        var targets = new FakeTargetProvider(101);
+        await using var controller = new PushToTalkSessionController(audio, targets);
+
+        var started = await controller.PressAsync();
+        targets.Window = new TargetWindowId(202);
+        var overlap = await controller.PressAsync();
+        var released = await controller.ReleaseAsync();
+
+        Assert.Equal(SessionTransitionKind.Started, started.Kind);
+        Assert.Equal(new TargetWindowId(101), started.Session?.Target);
+        Assert.Equal(SessionTransitionKind.Ignored, overlap.Kind);
+        Assert.Equal(1, audio.StartCount);
+        Assert.Equal(new TargetWindowId(101), released.Session?.Target);
+    }
+
+    [Fact]
+    public async Task PressRoutesCaptureToConfiguredMachineLocalMicrophone()
+    {
+        var audio = new FakeAudioCapture();
+        var microphone = new AudioDeviceId("synthetic-microphone");
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            new FakeTargetProvider(101),
+            preferredAudioDevice: microphone);
+
+        await controller.PressAsync();
+
+        Assert.Equal(microphone, audio.LastRequest?.DeviceId);
+    }
+
+    [Fact]
+    public async Task MissingPreferredMicrophoneFallsBackToWindowsDefault()
+    {
+        var microphone = new AudioDeviceId("synthetic-microphone");
+        var audio = new FakeAudioCapture
+        {
+            StartResultFactory = request => request.DeviceId is null
+                ? new AudioOperationResult(Succeeded: true)
+                : new AudioOperationResult(
+                    Succeeded: false,
+                    new AppError(
+                        AppErrorCode.AudioDeviceUnavailable,
+                        AppErrorStage.AudioCapture,
+                        CanRetry: true)),
+        };
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            new FakeTargetProvider(101),
+            preferredAudioDevice: microphone);
+
+        var result = await controller.PressAsync();
+
+        Assert.Equal(SessionTransitionKind.Started, result.Kind);
+        Assert.Equal(AppErrorCode.AudioDeviceUnavailable, result.Error?.Code);
+        Assert.Equal(2, audio.StartCount);
+        Assert.Null(audio.LastRequest?.DeviceId);
+    }
+
+    [Fact]
+    public async Task EscapeCancellationDeliversNothingAndAllowsReset()
+    {
+        var audio = new FakeAudioCapture();
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            new FakeTargetProvider(101));
+
+        await controller.PressAsync();
+        var cancelled = await controller.CancelAsync();
+        var staleRelease = await controller.ReleaseAsync();
+        var reset = await controller.ResetAsync();
+
+        Assert.Equal(SessionTransitionKind.Cancelled, cancelled.Kind);
+        Assert.Equal(DictationSessionState.Cancelled, cancelled.Session?.State);
+        Assert.NotNull(cancelled.Session?.FinishedAt);
+        Assert.Equal(1, audio.CancelCount);
+        Assert.Equal(0, audio.StopCount);
+        Assert.Equal(SessionTransitionKind.Ignored, staleRelease.Kind);
+        Assert.Equal(SessionTransitionKind.Reset, reset.Kind);
+        Assert.Null(controller.CurrentSession);
+    }
+
+    [Fact]
+    public async Task FocuslessPressFailsBeforeAudioStarts()
+    {
+        var audio = new FakeAudioCapture();
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            new FakeTargetProvider(window: 0));
+
+        var result = await controller.PressAsync();
+
+        Assert.Equal(SessionTransitionKind.Failed, result.Kind);
+        Assert.Equal(AppErrorCode.TargetUnavailable, result.Error?.Code);
+        Assert.Equal(0, audio.StartCount);
+    }
+
+    [Fact]
+    public async Task BufferedInterruptionCanContinueToDeliveryForFrozenTarget()
+    {
+        var audio = new FakeAudioCapture
+        {
+            StopResultFactory = sessionId => new CapturedAudio(
+                sessionId,
+                OneSample,
+                SampleRate: 16_000,
+                Channels: 1,
+                AudioCaptureOutcome.Interrupted,
+                new AppError(
+                    AppErrorCode.AudioDeviceLost,
+                    AppErrorStage.AudioCapture,
+                    CanRetry: true)),
+        };
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            new FakeTargetProvider(303));
+
+        var started = await controller.PressAsync();
+        var released = await controller.ReleaseAsync();
+        var delivering = await controller.BeginDeliveryAsync(started.Session!.Id);
+        var completed = await controller.CompleteAsync(started.Session.Id);
+
+        Assert.Equal(SessionTransitionKind.FinalizeReady, released.Kind);
+        Assert.Equal(AppErrorCode.AudioDeviceLost, released.Error?.Code);
+        Assert.Equal(SessionTransitionKind.Delivering, delivering.Kind);
+        Assert.Equal(new TargetWindowId(303), delivering.Session?.Target);
+        Assert.Equal(SessionTransitionKind.Completed, completed.Kind);
+        Assert.Equal(DictationSessionState.Completed, completed.Session?.State);
+    }
+
+    [Fact]
+    public async Task EmptyInterruptedCaptureFailsQuietlyAndRejectsStaleCompletion()
+    {
+        var audio = new FakeAudioCapture
+        {
+            StopResultFactory = sessionId => new CapturedAudio(
+                sessionId,
+                ReadOnlyMemory<float>.Empty,
+                SampleRate: 16_000,
+                Channels: 1,
+                AudioCaptureOutcome.Interrupted,
+                new AppError(
+                    AppErrorCode.AudioDeviceLost,
+                    AppErrorStage.AudioCapture,
+                    CanRetry: false)),
+        };
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            new FakeTargetProvider(404));
+
+        await controller.PressAsync();
+        var released = await controller.ReleaseAsync();
+        var stale = await controller.CompleteAsync(DictationSessionId.Create());
+
+        Assert.Equal(SessionTransitionKind.Failed, released.Kind);
+        Assert.Equal(DictationSessionState.Failed, released.Session?.State);
+        Assert.Equal(SessionTransitionKind.Ignored, stale.Kind);
+    }
+
+    [Fact]
+    public async Task DisposalCancelsAnActiveSessionAndDisposesAudio()
+    {
+        var audio = new FakeAudioCapture();
+        var controller = new PushToTalkSessionController(audio, new FakeTargetProvider(505));
+        await controller.PressAsync();
+
+        await controller.DisposeAsync();
+
+        Assert.Equal(1, audio.CancelCount);
+        Assert.True(audio.Disposed);
+    }
+
+    [Fact]
+    public async Task ForcedAbortCancelsCaptureAndAllowsACompleteReset()
+    {
+        var audio = new FakeAudioCapture();
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            new FakeTargetProvider(606));
+        await controller.PressAsync();
+        var timeout = new AppError(
+            AppErrorCode.SessionTimedOut,
+            AppErrorStage.Session,
+            CanRetry: true);
+
+        var aborted = await controller.AbortAsync(timeout);
+        var reset = await controller.ResetAsync();
+
+        Assert.Equal(SessionTransitionKind.Failed, aborted.Kind);
+        Assert.Equal(DictationSessionState.Failed, aborted.Session?.State);
+        Assert.Equal(AppErrorCode.SessionTimedOut, aborted.Error?.Code);
+        Assert.Equal(1, audio.CancelCount);
+        Assert.Equal(SessionTransitionKind.Reset, reset.Kind);
+        Assert.Null(controller.CurrentSession);
+    }
+
+    [Fact]
+    public async Task ForcedAbortAfterCaptureDoesNotCancelAnAlreadyStoppedRecorder()
+    {
+        var audio = new FakeAudioCapture();
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            new FakeTargetProvider(707));
+        await controller.PressAsync();
+        await controller.ReleaseAsync();
+
+        var aborted = await controller.AbortAsync(new AppError(
+            AppErrorCode.Cancelled,
+            AppErrorStage.SystemLifecycle,
+            CanRetry: true));
+
+        Assert.Equal(SessionTransitionKind.Failed, aborted.Kind);
+        Assert.Equal(0, audio.CancelCount);
+        Assert.Equal(1, audio.StopCount);
+    }
+
+    private sealed class FakeTargetProvider(nint window) : IForegroundTargetProvider
+    {
+        public TargetWindowId Window { get; set; } = new(window);
+
+        public TargetWindowId? CaptureForegroundTarget() => Window.IsValid ? Window : null;
+    }
+
+    [Fact]
+    public async Task ChangingTheDeliveryChoiceReachesTheVeryNextRecording()
+    {
+        // Read once when the controller was built, the toggle changed a file and nothing else until
+        // the app was relaunched.
+        var audio = new FakeAudioCapture();
+        var copyInsteadOfPaste = false;
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            new FakeTargetProvider(101),
+            deliveryOptions: () =>
+                TextDeliveryOptions.Default with { CopyInsteadOfPaste = copyInsteadOfPaste });
+
+        var first = await controller.PressAsync();
+        await controller.CancelAsync();
+        await controller.ResetAsync();
+        copyInsteadOfPaste = true;
+        var second = await controller.PressAsync();
+
+        Assert.False(first.Session?.DeliveryOptions.CopyInsteadOfPaste);
+        Assert.True(second.Session?.DeliveryOptions.CopyInsteadOfPaste);
+    }
+
+    [Fact]
+    public async Task AChoiceSavedWhileTheMicrophoneIsOpeningWaitsForTheNextRecording()
+    {
+        // The recording that is already starting keeps the answer it was pressed with. Asking after
+        // the microphone opened let a save that landed in that gap change where the words of a
+        // recording already under way were going to be sent.
+        var copyInsteadOfPaste = false;
+        var audio = new FakeAudioCapture
+        {
+            StartResultFactory = _ =>
+            {
+                copyInsteadOfPaste = true;
+                return new AudioOperationResult(Succeeded: true);
+            },
+        };
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            new FakeTargetProvider(101),
+            deliveryOptions: () =>
+                TextDeliveryOptions.Default with { CopyInsteadOfPaste = copyInsteadOfPaste });
+
+        var started = await controller.PressAsync();
+
+        Assert.False(started.Session?.DeliveryOptions.CopyInsteadOfPaste);
+    }
+
+    private sealed class FakeAudioCapture : IAudioCapture
+    {
+        private DictationSessionId _sessionId;
+
+        public event EventHandler<AudioLevel>? LevelChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public bool IsCapturing { get; private set; }
+
+        public int StartCount { get; private set; }
+
+        public int StopCount { get; private set; }
+
+        public int CancelCount { get; private set; }
+
+        public bool Disposed { get; private set; }
+
+        public AudioCaptureRequest? LastRequest { get; private set; }
+
+        public Func<DictationSessionId, CapturedAudio>? StopResultFactory { get; init; }
+
+        public Func<AudioCaptureRequest, AudioOperationResult>? StartResultFactory { get; init; }
+
+        public Task<AudioOperationResult> StartAsync(
+            AudioCaptureRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            StartCount++;
+            LastRequest = request;
+            _sessionId = request.SessionId;
+            var result = StartResultFactory?.Invoke(request) ??
+                new AudioOperationResult(Succeeded: true);
+            IsCapturing = result.Succeeded;
+            return Task.FromResult(result);
+        }
+
+        public Task<CapturedAudio> StopAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            StopCount++;
+            IsCapturing = false;
+            return Task.FromResult(StopResultFactory?.Invoke(_sessionId) ?? new CapturedAudio(
+                _sessionId,
+                OneSample,
+                SampleRate: 16_000,
+                Channels: 1));
+        }
+
+        public Task<AudioOperationResult> CancelAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            CancelCount++;
+            IsCapturing = false;
+            return Task.FromResult(new AudioOperationResult(Succeeded: true));
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            Disposed = true;
+            return ValueTask.CompletedTask;
+        }
+    }
+}

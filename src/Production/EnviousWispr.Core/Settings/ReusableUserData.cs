@@ -1,0 +1,84 @@
+namespace EnviousWispr.Core.Settings;
+
+public sealed record CustomWordEntry(
+    string SpokenForm,
+    string Replacement,
+    MatchStrictness Strictness = MatchStrictness.Default)
+{
+    /// <summary>
+    /// What a screen reader announces for this row.
+    /// </summary>
+    /// <remarks>
+    /// A record's generated ToString emits its type name and brace syntax, and a list row with no
+    /// explicit automation name falls back to exactly that. Measured on the running app, the row
+    /// announced "CustomWordEntry open brace SpokenForm equals zzz test entry comma Replacement
+    /// equals ZZZTestEntry close brace" before reaching anything a user cares about.
+    ///
+    /// The row's child text elements were already clean; only the container was wrong, and only
+    /// once a row was bound - which is why an audit of an EMPTY list found nothing.
+    /// </remarks>
+    public override string ToString() => Strictness switch
+    {
+        MatchStrictness.Loose => $"{SpokenForm} becomes {Replacement}, matched loosely",
+        MatchStrictness.Strict => $"{SpokenForm} becomes {Replacement}, matched strictly",
+        _ => $"{SpokenForm} becomes {Replacement}",
+    };
+}
+
+public sealed record SnippetEntry(string Name, string Body)
+{
+    /// <summary>What a screen reader announces for this row. See <see cref="CustomWordEntry"/>.</summary>
+    public override string ToString() => $"{Name}: {Body}";
+}
+
+public sealed class ReusableUserData : IEquatable<ReusableUserData>
+{
+    public ReusableUserData(
+        IReadOnlyList<CustomWordEntry> customWords,
+        IReadOnlyList<SnippetEntry> snippets)
+    {
+        ArgumentNullException.ThrowIfNull(customWords);
+        ArgumentNullException.ThrowIfNull(snippets);
+        CustomWords = customWords.ToArray();
+        Snippets = snippets.ToArray();
+    }
+
+    public IReadOnlyList<CustomWordEntry> CustomWords { get; }
+
+    public IReadOnlyList<SnippetEntry> Snippets { get; }
+
+    public static ReusableUserData Empty { get; } = new(
+        Array.Empty<CustomWordEntry>(),
+        Array.Empty<SnippetEntry>());
+
+    public bool Equals(ReusableUserData? other) =>
+        other is not null &&
+        CustomWords.SequenceEqual(other.CustomWords) &&
+        Snippets.SequenceEqual(other.Snippets);
+
+    public override bool Equals(object? obj) => Equals(obj as ReusableUserData);
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        foreach (var entry in CustomWords)
+        {
+            hash.Add(entry);
+        }
+
+        foreach (var entry in Snippets)
+        {
+            hash.Add(entry);
+        }
+
+        return hash.ToHashCode();
+    }
+}
+
+public sealed record PortableProfile(
+    int SchemaVersion,
+    UserPreferences Preferences,
+    ReusableUserData UserData)
+{
+    public const int CurrentSchemaVersion = 9;
+}
