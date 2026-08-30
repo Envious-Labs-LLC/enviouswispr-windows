@@ -347,6 +347,34 @@ FACT: critic-pass-against-the-macos-overlay-source says about features.
 Sibling of the near-duplicate rejection above and of the four stale rows: this file's failures are
 overwhelmingly toward WORK, and toward work that a few minutes of reading would have refused.
 
+## FACT: critic-pass-over-the-settings-COMPONENTS-2026-08-29
+The overlay was compared surface-by-surface on 2026-08-28 and found four gaps. This is the same pass
+over `SettingsComponents.swift`, and it found one gap, one difference and one non-issue.
+
+**THE GAP: only the switch is clickable on Windows.** macOS's `BrandedToggleStyle` commits the change
+from anywhere in the row - label, gap and track are one target - and its source says this was noticed
+as a real problem and fixed, because "the 38pt track was the only part users aimed at". Windows uses
+the stock `ToggleSwitch` template plus two focus brushes, and a WinUI `ToggleSwitch` renders its Header
+outside the interactive area. All ten toggles sit in plain panels. Filed as #80 rather than built: the
+fix is a template override on a control used on every settings page, and nothing in this repository can
+see a hit test.
+
+**THE DIFFERENCE, WHICH IS NOT OBVIOUSLY A DEFECT: the same setting has different ranges.** Auto-stop
+pause duration is a slider on macOS at 0.5 to 3.0 seconds in 0.25 steps; on Windows it is a NumberBox
+at 1.5 to 30 seconds in 0.5 steps. The Windows floor is DELIBERATE and stated in the control's own help
+text - ordinary speech contains pauses longer than 1.5 seconds - so matching macOS's 0.5 would
+reintroduce a recording that ends mid-sentence. The 3.0 against 30 ceiling is unexplained on either
+side and is the half worth a decision.
+
+**THE NON-ISSUE: Windows has no sliders at all, and that is fine.** macOS uses `BrandedSlider` in
+exactly one place, and a NumberBox is a Fluent-native answer for a precise value that also states its
+own range. Recorded so the absence is not read as a gap next time.
+
+**Also checked and matching:** every macOS settings SECTION has a Windows home, which
+`EveryMacSettingsSectionHasAWindowsHome` already enforces.
+
+**Not yet compared:** `BrandedSegmentedPicker`, `BrandedPanel`, `InsetNotice`.
+
 ## PROC: how-this-was-taken
 Two sweeps per capability from `src/Production`, the second using the CAPABILITY's synonyms rather than
 the Mac's symbol, because a name sweep only finds what someone already called by that name:
