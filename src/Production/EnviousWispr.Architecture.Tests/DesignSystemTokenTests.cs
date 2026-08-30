@@ -783,30 +783,83 @@ public sealed partial class DesignSystemTokenTests
     [GeneratedRegex(@"=>\s*""([^""]+)""", RegexOptions.CultureInvariant)]
     private static partial Regex MappedPageTagRegex();
 
-    /// <summary>The dictation pipeline runs inside a scope, so its lines are joined.</summary>
+    /// <summary>Every flow that serves a dictation opens the scope for itself.</summary>
     /// <remarks>
-    /// THE FIRST VERSION OF THIS CHECKED THAT NINE LOG WRITES EACH NAMED AN ID, AND A REVIEWER
-    /// ENUMERATED TWENTY MORE THAT BELONG TO A DICTATION AND LIVE IN OTHER METHODS. A gate that
-    /// catches a forgotten argument is worth less than a design with no argument to forget, so the
-    /// id became ambient and this became a check that the scope is opened at all.
+    /// AN ASYNCLOCAL FLOWS DOWN A CALL TREE, NOT ACROSS EVENTS. A dictation spans separate
+    /// invocations of the push-to-talk handler - one when the key goes down, another when it comes
+    /// up - and a scope opened in the first is invisible to the second, because the second is a
+    /// fresh flow off the message loop. The same is true of the watchdog, the streaming worker and
+    /// the auto-stop watch, which the message loop starts on their own.
     ///
-    /// One line of source, so it is a tripwire rather than a proof. What the join actually DOES is
-    /// measured in `DictationScopeTests`, which writes real lines through the real logger.
+    /// So each flow opens its own, and this refuses one that forgets. The rule is decidable and
+    /// needs no roster: a method handed a `DictationSessionId` is a flow that serves a dictation,
+    /// and every one of them must begin a scope. Methods that merely START such a flow are
+    /// exempt by the same rule - they pass the id on rather than logging under it.
+    ///
+    /// WHAT IT CANNOT SEE, ENUMERATED, BECAUSE AN UNSTATED LIMIT READS AS COVERAGE. It matches
+    /// source text, so it does not see: a flow that logs through a HELPER rather than calling the
+    /// logger directly; a method that serves a dictation without being handed its id, which is
+    /// every Windows callback - the device-change and lifecycle handlers are scoped by hand and
+    /// nothing here would notice if they stopped being; a scope opened conditionally or with the
+    /// wrong id; and a `_logger.Write(` appearing first inside a comment or a string, which would
+    /// false-alarm.
+    ///
+    /// It closes the shape the flows actually take. The callbacks are the known hole, and they are
+    /// few enough to be read.
     /// </remarks>
     [Fact]
-    public void TheDictationPipelineRunsInsideItsOwnScope()
+    public void EveryFlowThatServesADictationOpensItsScope()
     {
         var shell = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
 
-        var method = SliceBetween(
-            shell,
-            "private async Task TranscribeFinalAsync(",
-            "\n    /// <summary>\n    /// Keeps the audio of a dictation",
-            "the final transcription method");
+        var unscoped = new List<string>();
+        var flows = 0;
+        foreach (Match match in DictationFlowRegex().Matches(shell))
+        {
+            flows++;
+            var body = shell[match.Index..];
+            var stop = body.IndexOf("\n    private ", 20, StringComparison.Ordinal);
+            if (stop > 0)
+            {
+                body = body[..stop];
+            }
 
-        Assert.Contains("DictationScope.Begin(sessionId.Value)", method, StringComparison.Ordinal);
+            // THE SCOPE MUST BE OPENED BEFORE THE FLOW LOGS ANYTHING, which is the property that
+            // actually matters and needs no window at all. Two earlier drafts guessed at one - six
+            // hundred characters, then eight lines - and a reviewer pointed out that a longer
+            // signature, a blank line or a block comment moves a correct scope past either. A
+            // window is a proxy; this is the thing itself.
+            //
+            // A flow that never logs is fine either way, and is required to open one anyway,
+            // because the next line added to it will be a log line.
+            var firstWrite = body.IndexOf("_logger.Write(", StringComparison.Ordinal);
+            var opening = firstWrite > 0 ? body[..firstWrite] : body;
+            if (!opening.Contains("DictationScope.Begin(", StringComparison.Ordinal))
+            {
+                unscoped.Add(match.Groups[1].Value);
+            }
+        }
+
+        // THE FLOOR IS TODAY'S COUNT, so a flow deleted or renamed out of the pattern is noticed.
+        // A lower floor lets the set shrink silently, which is how a gate stops covering the thing
+        // it was written for while still reporting green.
+        Assert.True(flows >= 5, $"Expected the dictation flows, found {flows}.");
+        Assert.True(
+            unscoped.Count == 0,
+            "These methods are handed a dictation and never open its scope, so every line they "
+                + "write is joined to nothing: " + string.Join(", ", unscoped));
     }
+
+    /// <summary>A method that takes a dictation and does work under it.</summary>
+    /// <remarks>
+    /// `async` is the discriminator between a flow and a starter. A method that merely kicks one
+    /// off is synchronous here and passes the id on; the ones that log under it are the ones that
+    /// await.
+    /// </remarks>
+    [GeneratedRegex(@"private async Task(?:<[^>]+>)? (\w+)\([^)]*DictationSessionId ",
+        RegexOptions.Singleline | RegexOptions.CultureInvariant)]
+    private static partial Regex DictationFlowRegex();
 
     [Fact]
     public void AppViewsContainNoLiteralColors()

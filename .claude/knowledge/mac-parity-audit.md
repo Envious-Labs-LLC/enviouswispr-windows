@@ -273,7 +273,7 @@ Re-swept against the tree rather than read off the tables above, because four of
 ### Ordinary work, nobody blocking
 | Capability | Note |
 |---|---|
-| Capture, streaming and auto-stop lines joined to their dictation | #78, with the `AsyncLocal` constraint and the design that survives it recorded on the issue. |
+| ~~Capture, streaming and auto-stop lines joined to their dictation~~ | **CLOSED 2026-08-29.** Every flow that serves a dictation opens the scope for itself, and the paths that arrive on their own Windows callbacks - lock, suspend, device change, teardown - open one from the controller. Six review rounds, each naming one more unscoped line, ended when the last was answered by scoping the PATH rather than the line. |
 | Auto-stop's recogniser | Behaviour ships; macOS uses a NEURAL detector and this hears a slammed door as speech. Needs a model, which is closer to ordinary work than to a decision. |
 | The streaming JOIN's quality | The head start feeds the final transcript; whether the seam matches macOS's is unaudited, and the seam is where a duplicated or dropped word would appear. |
 | Import from a rival app's own format, and bulk edit | The last two custom-words rows. |

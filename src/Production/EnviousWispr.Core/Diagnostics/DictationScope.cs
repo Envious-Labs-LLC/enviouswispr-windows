@@ -69,3 +69,23 @@ public static class DictationScope
         }
     }
 }
+
+/// <summary>A scope that marks nothing, for a path where there is no dictation yet.</summary>
+/// <remarks>
+/// A SHARED INSTANCE RATHER THAN A NULLABLE, so a call site reads as one `using` either way. The
+/// alternative is a nullable disposable and a null-conditional dispose, which is three places for a
+/// path to differ instead of one.
+/// </remarks>
+public sealed class NoScope : IDisposable
+{
+    public static NoScope Instance { get; } = new();
+
+    private NoScope()
+    {
+    }
+
+    public void Dispose()
+    {
+        // Nothing was set, so nothing is restored.
+    }
+}

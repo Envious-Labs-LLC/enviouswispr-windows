@@ -138,4 +138,42 @@ public sealed class DictationScopeTests
                 return record!;
             })
             .ToList();
+
+    /// <summary>A second dictation never inherits the first one's id.</summary>
+    /// <remarks>
+    /// THE FAILURE A PARTIAL FIX PRODUCES, AND THE REASON THE SCOPE RESTORES RATHER THAN LEAKS. A
+    /// scope that outlived its dictation would join the next one's lines to the previous id, and a
+    /// log that LIES about its join is worse than one that admits it has none - the second sends
+    /// somebody looking, the first sends them looking in the wrong place.
+    /// </remarks>
+    [Fact]
+    public async Task ASecondDictationNeverInheritsTheFirst()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(directory =>
+        {
+            var path = Path.Combine(directory, "app.jsonl");
+            var logger = new JsonLineFileLogger(path, enabled: true);
+            var first = Guid.NewGuid();
+            var second = Guid.NewGuid();
+
+            using (DictationScope.Begin(first))
+            {
+                logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.DictationCompleted));
+            }
+
+            logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ApplicationStarting));
+
+            using (DictationScope.Begin(second))
+            {
+                logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.DictationCompleted));
+            }
+
+            var lines = ReadLines(path);
+            Assert.Equal(3, lines.Count);
+            Assert.Equal(first, lines[0].DictationId);
+            Assert.Null(lines[1].DictationId);
+            Assert.Equal(second, lines[2].DictationId);
+            return Task.CompletedTask;
+        });
+    }
 }
