@@ -2832,6 +2832,14 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>Says why a settings write did not happen.</summary>
     private void ShowSettingsFailure(Exception exception)
     {
+        // THE APP CLOSING IS NOT A STORAGE FAILURE. A click that lands as the window is going away
+        // is refused on purpose, and telling somebody their settings storage broke as they quit is
+        // both alarming and untrue.
+        if (exception is ObjectDisposedException)
+        {
+            return;
+        }
+
         var (title, body) = exception switch
         {
             ArgumentException => (
@@ -3074,6 +3082,11 @@ public sealed partial class MainWindow : Window, IDisposable
                 // reports invalid settings as an ArgumentException; collapsing that into "storage is
                 // unavailable" tells somebody their disk is broken when a value they typed is out of
                 // range, which sends them looking in exactly the wrong place.
+                if (exception is ObjectDisposedException)
+                {
+                    return Task.CompletedTask;
+                }
+
                 var (title, body) = exception switch
                 {
                     ArgumentException => (

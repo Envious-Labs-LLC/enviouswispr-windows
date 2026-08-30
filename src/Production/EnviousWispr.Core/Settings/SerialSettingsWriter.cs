@@ -38,6 +38,7 @@ public sealed class SerialSettingsWriter : IDisposable
     private int _active;
     private bool _closed;
     private bool _disposed;
+    private bool _disposeWhenQuiet;
     private TaskCompletionSource? _quiet;
 
     public SerialSettingsWriter(ISettingsStore store, AppSettings current)
@@ -94,7 +95,15 @@ public sealed class SerialSettingsWriter : IDisposable
         {
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception exception)
+        catch (OperationCanceledException)
+        {
+            // CANCELLATION IS NOT A STORAGE FAILURE, and returning it as one made the same
+            // cancellation mean different things depending on whether it arrived while waiting or
+            // while saving - the first showed "storage is unavailable", the second propagated.
+            LeaveAdmission();
+            throw;
+        }
+        catch (ObjectDisposedException exception)
         {
             LeaveAdmission();
             return new SettingsUpdateOutcome<T>(exception, default!);
@@ -125,13 +134,29 @@ public sealed class SerialSettingsWriter : IDisposable
     /// <summary>Records that one operation has left, and wakes a waiting drain when none remain.</summary>
     private void LeaveAdmission()
     {
+        var disposeNow = false;
         lock (_admission)
         {
             _active--;
             if (_active == 0)
             {
                 _quiet?.TrySetResult();
+
+                // THE LAST ONE OUT TURNS THE LIGHTS OFF. Disposing while a write still held the gate
+                // made that write's release throw before it could leave - so the count never reached
+                // zero and a drain waiting on it never finished. Deferring the disposal to whoever
+                // leaves last is what makes those two safe in either order.
+                if (_disposeWhenQuiet && !_disposed)
+                {
+                    _disposed = true;
+                    disposeNow = true;
+                }
             }
+        }
+
+        if (disposeNow)
+        {
+            _gate.Dispose();
         }
     }
 
@@ -174,8 +199,10 @@ public sealed class SerialSettingsWriter : IDisposable
         // semaphore that is about to be disposed is the crash this whole arrangement removes.
         lock (_admission)
         {
-            if (_disposed)
+            if (_disposed || _active > 0)
             {
+                // Somebody is still inside; the last one out disposes.
+                _disposeWhenQuiet = true;
                 return;
             }
 
@@ -196,6 +223,14 @@ public sealed class SerialSettingsWriter : IDisposable
             }
 
             _closed = true;
+            if (_active > 0)
+            {
+                // DEFERRED, NOT IMMEDIATE. Disposing the gate under a write in progress makes that
+                // write's release throw before it can leave, which strands any drain waiting for it.
+                _disposeWhenQuiet = true;
+                return;
+            }
+
             _disposed = true;
         }
 
