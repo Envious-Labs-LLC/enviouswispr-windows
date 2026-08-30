@@ -621,4 +621,21 @@ public sealed class CustomWordStrictnessTests
         Assert.Equal("Alpha Gamma", result.Text);
         Assert.Equal(2, result.ReplacementCount);
     }
+
+    [Fact]
+    public void AWrittenFormOfSeveralWordsIsNotItselfSomethingToListenFor()
+    {
+        // "zed" writes "red blue". That phrase is not something anybody says, and treating it as a
+        // surface let it reserve the front of the sentence and stop a rule that WAS being said.
+        // macOS is explicit here: a written form only becomes matchable when it is a single word.
+        var result = CustomWordCorrector.Correct(
+            "red blue sun",
+            [
+                new CustomWordEntry("zed", "red blue"),
+                new CustomWordEntry("blue sun", "Beta"),
+            ]);
+
+        Assert.Equal("red Beta", result.Text);
+        Assert.Equal(1, result.ReplacementCount);
+    }
 }
