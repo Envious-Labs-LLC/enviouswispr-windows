@@ -30,6 +30,31 @@ focused when recording began.
 Read `.claude/knowledge/INDEX.md`, then every matching contract or rule it lists. Use `notes/` when a
 decision needs the measurements or experiment history behind it.
 
+## Cross-platform product catalog
+
+**Before reimplementing a macOS behaviour here, or claiming a feature is missing, QUERY THE CATALOG.**
+`~/.claude/knowledge/enviouswispr/catalog.db` holds what EnviousWispr actually does, feature by feature,
+across macOS, Windows and Android. macOS is the reference: it is launched and shipping. Every row cites the
+file and symbol that grounds it; where documentation and code disagreed, the code won and the disagreement
+is a `discrepancy` row.
+
+```bash
+C=~/.claude/knowledge/enviouswispr/catalog.db
+sqlite3 -header -column $C "SELECT status, summary FROM feature_platform WHERE feature_slug='multi-route-paste';"
+sqlite3 -header -column $C "SELECT surface, exact_text FROM user_copy WHERE feature_slug='<slug>';"
+sqlite3 -header -column $C "SELECT decision_text, reason, decision_date FROM decision;"   -- settled questions
+sqlite3 -header -column $C "SELECT kind, gap FROM catalog_gap WHERE feature_slug='<slug>';"
+```
+
+**Check `catalog_gap` first.** It records where the catalog is too thin to rebuild from, is overstated, or
+missed something. A feature with a `not-reimplementable` row needs the source read as well.
+
+**A feature with status `absent` was often BUILT AND RETIRED, with the reason attached.** Do not rebuild one
+as missing parity without reading its decision rows.
+
+Rebuild and contribute: `~/.claude/knowledge/enviouswispr/README.md`. The database is an artifact; the truth
+is `schema.sql` and `data/*.sql`, which are plain text. Never hand-edit the binary.
+
 ## Canonical validation
 
 From PowerShell at the repository root:
