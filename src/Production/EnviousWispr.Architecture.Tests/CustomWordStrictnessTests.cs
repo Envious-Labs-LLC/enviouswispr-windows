@@ -454,27 +454,3 @@ public sealed class CustomWordStrictnessTests
         Assert.NotNull(AppSettingsValidator.Validate(settings, AppErrorStage.SettingsLoad));
     }
 }
-
-/// <summary>
-/// What each position in the "How closely it must match" picker means.
-/// </summary>
-/// <remarks>
-/// THE MAPPING IS THE PART A GATE CANNOT JUDGE. A gate can prove the app asks the picker; it cannot
-/// prove the answer is right, and a mapping whose every arm returned the ordinary rule would satisfy
-/// one while quietly throwing every choice away. These are the values themselves.
-/// </remarks>
-public sealed class MatchStrictnessChoiceTests
-{
-    [Theory]
-    [InlineData(0, MatchStrictness.Default)]
-    [InlineData(1, MatchStrictness.Loose)]
-    [InlineData(2, MatchStrictness.Strict)]
-    public void EachPositionInThePickerMeansWhatItSays(int index, MatchStrictness expected) =>
-        Assert.Equal(expected, MatchStrictnessChoice.FromPickerIndex(index));
-
-    [Theory]
-    [InlineData(-1)]
-    [InlineData(3)]
-    public void APositionNobodyHasChosenIsTheOrdinaryRule(int index) =>
-        Assert.Equal(MatchStrictness.Default, MatchStrictnessChoice.FromPickerIndex(index));
-}

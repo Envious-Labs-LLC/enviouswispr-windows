@@ -1442,10 +1442,15 @@ public sealed partial class MainWindow : Window, IDisposable
             data => new ReusableUserData(
                 data.CustomWords
                     .Where(entry => !string.Equals(entry.SpokenForm, spokenForm, StringComparison.OrdinalIgnoreCase))
+                    // THE PICKER CARRIES THE ANSWER ITSELF, not a position that has to be looked up.
+                    // A mapping from index to meaning is a contract between this file and the ORDER
+                    // of three strings in the markup, and reordering those strings changes what
+                    // people choose while every test stays green. Each choice now holds its own
+                    // value, so there is nothing left to keep in step.
                     .Append(new CustomWordEntry(
                         spokenForm,
                         replacement,
-                        MatchStrictnessChoice.FromPickerIndex(WordStrictnessComboBox.SelectedIndex)))
+                        WordStrictnessComboBox.SelectedValue as MatchStrictness? ?? MatchStrictness.Default))
                     .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
                     .ToArray(),
                 data.Snippets),

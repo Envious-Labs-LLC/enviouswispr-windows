@@ -2536,7 +2536,7 @@ public sealed partial class DesignSystemTokenTests
     }
 
     /// <summary>
-    /// One place in the app builds a custom word, and it builds it from the picker's own position.
+    /// One place in the app builds a custom word, and it builds it from the picker's own value.
     /// </summary>
     /// <remarks>
     /// THE PAGE HAS TWO ADD BUTTONS AND ONLY ONE OF THEM USED TO ASK. Accepting a suggested
@@ -2556,10 +2556,9 @@ public sealed partial class DesignSystemTokenTests
     /// word. What the mapping RETURNS is pinned by MatchStrictnessChoiceTests.
     /// </remarks>
     [Fact]
-    public void OnePlaceInTheAppBuildsACustomWordFromThePickersOwnPosition()
+    public void OnePlaceInTheAppBuildsACustomWordFromThePickersOwnValue()
     {
         const string door = "SaveCustomWordFromPickerAsync";
-        const string mapping = nameof(MatchStrictnessChoice.FromPickerIndex);
         const string picker = "WordStrictnessComboBox";
         var app = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
 
@@ -2613,34 +2612,67 @@ public sealed partial class DesignSystemTokenTests
         var arguments = node.ArgumentList?.Arguments;
         Assert.True(arguments is { Count: 3 }, "A word is built without being told how closely it must match.");
 
-        var call = arguments!.Value[2].Expression as InvocationExpressionSyntax;
-        Assert.True(call is not null, "The strictness a word is built with is not worked out by a method call.");
+        // THE PICKER'S OWN SELECTED VALUE, taken as it is. Nothing is looked up from a position, so
+        // there is no order for this file and the markup to disagree about.
+        var fallback = arguments!.Value[2].Expression as BinaryExpressionSyntax;
+        var taken = (fallback?.Left as BinaryExpressionSyntax)?.Left as MemberAccessExpressionSyntax;
+        Assert.True(
+            fallback?.IsKind(SyntaxKind.CoalesceExpression) == true &&
+                (fallback.Left as BinaryExpressionSyntax)?.IsKind(SyntaxKind.AsExpression) == true &&
+                taken?.Name.Identifier.Text == "SelectedValue" &&
+                (taken.Expression as IdentifierNameSyntax)?.Identifier.Text == picker,
+            $"A word is not built from {picker}.SelectedValue, so the picker on screen decides nothing.");
+    }
 
-        // A METHOD GROUP HAS NO SINGLE SYMBOL UNTIL IT IS CALLED, and the call's own arguments cannot
-        // resolve here because they are WinUI. Roslyn answers both of those by putting the method in
-        // CandidateSymbols with Symbol left null, which is not a failure to look at.
-        var named = model2.GetSymbolInfo(call!.Expression);
-        var resolved = named.Symbol ?? named.CandidateSymbols.FirstOrDefault();
-        var wanted = compilation
-            .GetTypeByMetadataName(typeof(MatchStrictnessChoice).FullName!)?
-            .GetMembers(mapping)
-            .FirstOrDefault();
-        Assert.True(
-            wanted is not null,
-            $"{typeof(MatchStrictnessChoice).FullName}.{mapping} did not resolve, so this gate would "
-                + "have scanned for nothing.");
-        Assert.True(
-            SymbolEqualityComparer.Default.Equals(resolved, wanted),
-            $"The strictness a word is built with does not come from {mapping}, so what the picker means "
-                + "is decided somewhere no test can call.");
+    /// <summary>
+    /// Each choice in the strictness picker carries the meaning it shows.
+    /// </summary>
+    /// <remarks>
+    /// THIS IS THE HALF NO GATE OVER C# CAN SEE. The app takes whatever value the chosen item holds,
+    /// so what a person actually gets is decided by the markup - and a version of this feature that
+    /// mapped a POSITION to a meaning would let somebody reorder three strings and silently change
+    /// what everyone was choosing, with every test still green.
+    ///
+    /// THE LABEL AND THE VALUE ARE CHECKED TOGETHER, because either alone passes while wrong: three
+    /// correct values behind labels in another order reads as a lie to the person, and three correct
+    /// labels over one repeated value quietly gives everyone the same rule.
+    /// </remarks>
+    [Fact]
+    public void EachChoiceInTheStrictnessPickerCarriesTheMeaningItShows()
+    {
+        var markup = XDocument.Load(Path.Combine(
+            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var xaml = XNamespace.Get("http://schemas.microsoft.com/winfx/2006/xaml");
 
-        var read = call!.ArgumentList.Arguments.Count == 1
-            ? call.ArgumentList.Arguments[0].Expression as MemberAccessExpressionSyntax
-            : null;
-        Assert.True(
-            read?.Name.Identifier.Text == "SelectedIndex" &&
-                (read.Expression as IdentifierNameSyntax)?.Identifier.Text == picker,
-            $"{mapping} is not given {picker}.SelectedIndex, so the picker on screen decides nothing.");
+        var box = markup.Descendants()
+            .SingleOrDefault(element => element.Name.LocalName == "ComboBox"
+                && (string?)element.Attribute(xaml + "Name") == "WordStrictnessComboBox");
+        Assert.True(box is not null, "The strictness picker is not in the markup.");
+        Assert.Equal("Tag", (string?)box!.Attribute("SelectedValuePath"));
+
+        var choices = box.Elements().Where(child => child.Name.LocalName == "ComboBoxItem").ToArray();
+        var offered = choices
+            .Select(choice => choice.Descendants()
+                .FirstOrDefault(node => node.Name.LocalName == nameof(MatchStrictness))?.Value.Trim())
+            .ToArray();
+
+        Assert.Equal(
+            Enum.GetNames<MatchStrictness>().OrderBy(name => name, StringComparer.Ordinal),
+            offered.OrderBy(name => name, StringComparer.Ordinal));
+
+        foreach (var choice in choices)
+        {
+            var value = choice.Descendants()
+                .First(node => node.Name.LocalName == nameof(MatchStrictness)).Value.Trim();
+            var label = choice.Descendants()
+                .Where(node => node.Name.LocalName == "TextBlock")
+                .Select(node => (string?)node.Attribute("Text"))
+                .FirstOrDefault(text => !string.IsNullOrWhiteSpace(text));
+
+            Assert.True(
+                label?.StartsWith(value, StringComparison.Ordinal) == true,
+                $"The choice worth {value} reads \"{label}\", so the words on screen are not the rule applied.");
+        }
     }
 
     private static string Where(SyntaxNode node) =>
