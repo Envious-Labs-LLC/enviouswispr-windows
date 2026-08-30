@@ -403,4 +403,32 @@ public sealed class PolishOutputGuardTests
 
         Assert.Equal(wrote, PolishOutputGuard.Review(said, wrote).Text);
     }
+
+    [Fact]
+    public void MentioningAHeadingLaterIsNotHavingDictatedOne()
+    {
+        // Looking for the words anywhere handed the model its own line back, because somebody
+        // complaining about a preamble necessarily says the preamble.
+        const string said =
+            "please remove the phrase here is the polished transcript because the model keeps adding it";
+        var review = PolishOutputGuard.Review(
+            said,
+            "Here is the polished transcript:\n\nPlease remove the phrase because the model keeps adding it.");
+
+        Assert.Equal("Please remove the phrase because the model keeps adding it.", review.Text);
+    }
+
+    [Theory]
+    [InlineData("okay! here is the plan we launch on Tuesday")]
+    [InlineData("okay, here is the plan we launch on Tuesday")]
+    [InlineData("so... here is the plan we launch on Tuesday")]
+    [InlineData("well - here is the plan we launch on Tuesday")]
+    public void PunctuationAfterALeadInDoesNotCostSomebodyTheirHeading(string said)
+    {
+        // A listed set of characters to trim left "okay!" with its exclamation mark standing between
+        // the lead-in and the heading, and a real dictated line was deleted over it.
+        const string wrote = "Here is the plan:\n\nWe launch on Tuesday.";
+
+        Assert.Equal(wrote, PolishOutputGuard.Review(said, wrote).Text);
+    }
 }

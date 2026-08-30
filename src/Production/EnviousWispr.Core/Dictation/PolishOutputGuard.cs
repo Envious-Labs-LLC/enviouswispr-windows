@@ -490,11 +490,60 @@ public static class PolishOutputGuard
             return false;
         }
 
-        // THE WHOLE HEADING, WHEREVER IT SITS IN WHAT THEY SAID. Comparing only the opening word
-        // failed in both directions: "here we agreed on Tuesday" let a model's "Here is the polished
-        // transcript:" through because both begin with "here", and "Okay, here is the plan" lost its
-        // own dictated heading because the words were not at position zero.
-        return !ContainsWholeWord(said, firstLine.TrimEnd(':').Trim());
+        // THE WHOLE HEADING, AT THE FRONT OF WHAT THEY SAID. Comparing one word failed in both
+        // directions, and so does comparing anywhere: somebody saying "please remove the phrase
+        // 'here is the polished transcript' because the model keeps adding it" mentions the heading
+        // in a later clause, and taking that as proof they dictated it hands the model's own line
+        // straight back. Only the FRONT is evidence, past the small words speech starts with.
+        return !OpensWithHeading(said, firstLine.TrimEnd(':').Trim());
+    }
+
+    /// <summary>The small words a spoken sentence starts with before it says anything.</summary>
+    /// <remarks>
+    /// SKIPPED SO A DICTATED HEADING SURVIVES AN "OKAY". People do not begin a sentence at the first
+    /// content word, and a heading test anchored at character zero loses to the way anybody actually
+    /// talks. The list is short on purpose: every entry widens what counts as evidence.
+    /// </remarks>
+    private static readonly string[] SpokenLeadIns =
+        ["okay", "ok", "so", "alright", "all right", "well", "now", "and", "um", "uh"];
+
+    /// <summary>Whether what the person said begins with this heading, past any spoken lead-in.</summary>
+    private static bool OpensWithHeading(string said, string heading)
+    {
+        if (heading.Length == 0)
+        {
+            return false;
+        }
+
+        var start = said.TrimStart();
+        for (var dropped = true; dropped;)
+        {
+            dropped = false;
+            foreach (var lead in SpokenLeadIns)
+            {
+                if (!StartsWithWholeWord(start, lead))
+                {
+                    continue;
+                }
+
+                // EVERY BOUNDARY CHARACTER, NOT A CHOSEN FEW. Trimming a listed set left "okay!"
+                // with its exclamation mark in front of the heading, so a real dictated line was
+                // deleted over punctuation. The characters skipped here are exactly the ones that
+                // count as a word boundary one method below, so the two cannot disagree.
+                var rest = start[lead.Length..];
+                var at = 0;
+                while (at < rest.Length && !char.IsLetterOrDigit(rest[at]))
+                {
+                    at++;
+                }
+
+                start = rest[at..];
+                dropped = true;
+                break;
+            }
+        }
+
+        return StartsWithWholeWord(start, heading);
     }
 
     /// <summary>Whether the text opens with this word, and not merely with these letters.</summary>
