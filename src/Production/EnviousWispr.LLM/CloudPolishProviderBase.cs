@@ -183,10 +183,26 @@ public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvi
     }
 
     /// <summary>
-    /// Asks the model what a word is likely to be misheard as.
+    /// Refuses to ask a cloud model what a word is likely to be misheard as.
     /// </summary>
     /// <remarks>
-    /// IT REUSES <see cref="SendOnceAsync"/> AND NOTHING ELSE FROM THE POLISH PATH. That method is
+    /// IT USED TO ASK, AND THAT SENT THE DICTIONARY OUT. The suggestion prompt carries the spelling
+    /// somebody typed AND the aliases they have already saved for it, which is their custom
+    /// dictionary by another name. The Permissions page promises "dictionaries, snippets, and history
+    /// stay on this PC", and a button that quietly posts them to a vendor breaks that promise as
+    /// squarely as the polish path did.
+    ///
+    /// IT SURVIVED THE FIRST FIX BECAUSE IT IS CALLED SOMETHING ELSE. The test holding the cloud path
+    /// to that promise looked for the word "Vocabulary"; this route is named "mishearing advice". A
+    /// guard written around one spelling of a thing guards the spelling.
+    ///
+    /// THE FEATURE IS NOT LOST, IT IS LOCAL. EG-1 and Ollama both implement this and both run on
+    /// this machine, which is where a question about somebody's own dictionary belongs. A cloud
+    /// provider answers NotSupported, which is the same answer the app already handles for any
+    /// option that cannot do this.
+    ///
+    /// WHAT THE OLD IMPLEMENTATION EXPLAINED, KEPT BECAUSE IT IS STILL TRUE OF THE LOCAL ONES:
+    /// it reuses <see cref="SendOnceAsync"/> and nothing else from the polish path. That method is
     /// the one seam that is genuinely about talking to this vendor - the URL, the request shape, the
     /// place the answer lives in the response - and every subclass already has it right. Everything
     /// above it is polish policy: fallback text, safety comparison against the original, retries
@@ -201,58 +217,11 @@ public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvi
     /// a rate limit and a timeout all mean the suggestion did not arrive, so they are caught
     /// together rather than sorted into messages nobody can act on differently.
     /// </remarks>
-    public async Task<MishearingAdvice> SuggestAsync(
+    public Task<MishearingAdvice> SuggestAsync(
         string spokenForm,
         IReadOnlyList<string> existing,
-        CancellationToken cancellationToken = default)
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        ArgumentNullException.ThrowIfNull(existing);
-        if (string.IsNullOrWhiteSpace(spokenForm))
-        {
-            return MishearingAdvice.None(MishearingAdviceStatus.NothingUsable);
-        }
-
-        ApiKeyReadResult keyResult;
-        try
-        {
-            keyResult = _apiKeyStore.Read(Options.Provider);
-        }
-        catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
-        {
-            return MishearingAdvice.None(MishearingAdviceStatus.Failed);
-        }
-
-        if (keyResult.Status != ApiKeyReadStatus.Found || string.IsNullOrWhiteSpace(keyResult.Value))
-        {
-            return MishearingAdvice.None(MishearingAdviceStatus.Failed);
-        }
-
-        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken);
-        timeoutCancellation.CancelAfter(_requestTimeout);
-
-        string? reply;
-        try
-        {
-            reply = await SendOnceAsync(
-                keyResult.Value,
-                AliasSuggestionPrompt.SystemPrompt,
-                AliasSuggestionPrompt.BuildUserMessage(spokenForm, existing),
-                timeoutCancellation.Token).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (
-            exception is CloudPolishException or HttpRequestException or OperationCanceledException
-                or JsonException)
-        {
-            return MishearingAdvice.None(MishearingAdviceStatus.Failed);
-        }
-
-        var suggestions = AliasSuggestions.Parse(reply, spokenForm, existing);
-        return suggestions.Count == 0
-            ? MishearingAdvice.None(MishearingAdviceStatus.NothingUsable)
-            : new MishearingAdvice(MishearingAdviceStatus.Suggested, suggestions);
-    }
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(MishearingAdvice.None(MishearingAdviceStatus.NotSupported));
 
     protected abstract Task<string?> SendOnceAsync(
         string apiKey,

@@ -123,14 +123,44 @@ public static class PolishVocabulary
         return "<SPELLINGS>\n" + string.Join('\n', lines) + "\n</SPELLINGS>";
     }
 
-    private static string Defang(string word) => word
-        .Replace("\r", " ", StringComparison.Ordinal)
-        .Replace("\n", " ", StringComparison.Ordinal)
+    private static string Defang(string word) => CollapseWhitespace(word)
         .Replace("</SPELLINGS>", "<\u200C/SPELLINGS>", StringComparison.OrdinalIgnoreCase)
         .Replace("<SPELLINGS>", "<\u200CSPELLINGS>", StringComparison.OrdinalIgnoreCase)
         .Replace("</TRANSCRIPT>", "<\u200C/TRANSCRIPT>", StringComparison.OrdinalIgnoreCase)
         .Replace("<TRANSCRIPT>", "<\u200CTRANSCRIPT>", StringComparison.OrdinalIgnoreCase)
         .Trim();
+
+    /// <summary>Turns every run of whitespace into one ordinary space.</summary>
+    /// <remarks>
+    /// CARRIAGE RETURN AND LINE FEED ARE NOT THE ONLY WAYS TO START A LINE. Next-line, line
+    /// separator, paragraph separator, vertical tab and form feed all break a line where a model
+    /// reads it, so removing two of them left one entry able to look like several while a test
+    /// counting lines stayed green. char.IsWhiteSpace knows all of them, which is the point of
+    /// asking it rather than listing them.
+    /// </remarks>
+    private static string CollapseWhitespace(string word)
+    {
+        var built = new System.Text.StringBuilder(word.Length);
+        var lastWasSpace = false;
+        foreach (var character in word)
+        {
+            if (char.IsWhiteSpace(character))
+            {
+                if (!lastWasSpace && built.Length > 0)
+                {
+                    built.Append(' ');
+                }
+
+                lastWasSpace = true;
+                continue;
+            }
+
+            built.Append(character);
+            lastWasSpace = false;
+        }
+
+        return built.ToString();
+    }
 
     private static int FirstWholeWord(string text, string word)
     {

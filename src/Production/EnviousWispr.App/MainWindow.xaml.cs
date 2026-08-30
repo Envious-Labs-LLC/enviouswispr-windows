@@ -350,10 +350,6 @@ public sealed partial class MainWindow : Window, IDisposable
         // BUILT FROM WHAT WAS WRITTEN DOWN, so somebody who has already been asked three times about
         // Spanish is not asked three more times because they restarted the app.
         _languageSuggestions = new LanguageLockSuggester(settings.LanguageOfferHistory);
-        // EVERY PAGE ARRIVES THE SAME WAY. Attached once here rather than in ShowPage, because it
-        // describes what a page IS rather than something that happens on a particular navigation.
-        PageTransitions.Attach(
-            HomePage, HistoryPage, WhatsNewPage, DictionaryPage, SnippetsPage, SettingsPage, HelpPage);
         ApplyTheme(settings.Preferences.Theme);
         ApplySettingsToControls();
         ShowOnboarding(!settings.HasCompletedOnboarding);
