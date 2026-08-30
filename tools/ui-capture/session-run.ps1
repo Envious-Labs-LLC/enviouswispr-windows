@@ -38,9 +38,12 @@ function Publish($path, $content) {
     # WRITTEN ASIDE AND RENAMED INTO PLACE. The launcher polls for these files, so a verdict written
     # in two steps can be READ between them - an empty reason, or a marker that exists before the
     # thing it attests to is finished. A rename is the one operation that is either done or not.
+    # NO -Force. The launcher holds an exclusive lock and verified both verdict files were absent
+    # before starting, so a destination that already exists means something is wrong with that
+    # assumption - and replacing it silently is how a wrong verdict becomes a confident one.
     $staging = "$path.writing"
     Set-Content -LiteralPath $staging -Value $content
-    Move-Item -LiteralPath $staging -Destination $path -Force
+    Move-Item -LiteralPath $staging -Destination $path
 }
 
 function Note($text) { Add-Content -LiteralPath $log -Value "$([DateTime]::Now.ToString('HH:mm:ss')) $text" }
