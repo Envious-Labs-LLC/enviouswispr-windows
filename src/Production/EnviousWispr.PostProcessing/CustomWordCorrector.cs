@@ -92,12 +92,19 @@ public static partial class CustomWordCorrector
             }
         }
 
-        // A REPLACEMENT IS MATCHABLE TOO, so saying the written form aloud still finds the row - but
-        // it never takes a surface some row claims as its spoken form.
+        // A ONE-WORD REPLACEMENT IS MATCHABLE TOO, so saying the written form aloud still finds the
+        // row - but it never takes a surface some row claims as its spoken form.
+        //
+        // A MULTI-WORD ONE IS NOT, AND macOS IS EXPLICIT ABOUT IT: its canonical self-entry is
+        // space-free only. Adding phrases here let a written form nobody was matching against
+        // reserve words and block a rule that was: with "zed" writing "red blue", the phrase
+        // "red blue" claimed the front of "red blue sun" and stopped "blue sun" correcting anything.
         foreach (var entry in usable)
         {
             var surface = CollapseSpaces(entry.Replacement);
-            if (!ContainsReservedTrigger(surface) && !owners.ContainsKey(surface))
+            if (WordCount(surface) == 1 &&
+                !ContainsReservedTrigger(surface) &&
+                !owners.ContainsKey(surface))
             {
                 owners[surface] = new Candidate(surface, entry.Replacement, entry.Strictness);
             }
