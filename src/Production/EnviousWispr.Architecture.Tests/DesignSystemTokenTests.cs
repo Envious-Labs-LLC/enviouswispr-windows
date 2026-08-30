@@ -2034,12 +2034,32 @@ public sealed partial class DesignSystemTokenTests
                 + $"  pill    : {string.Join(" ", real.Select(b => b.Brush))}\n"
                 + $"  preview : {string.Join(" ", previewMeter.Select(b => b.Brush))}");
 
-        // THE ASSERTION THAT REFUSES BOTH ORIGINAL FAILURES. A solid bar and a gradient are each a
-        // single height, and so is a preview that copied the pill's empty resting state.
+        // NUMBERS, NOT STRINGS, AND A RANGE RATHER THAN A COUNT OF DIFFERENCES. "More than one
+        // distinct string" is satisfied by "5" beside "5.0", which draws a flat line, and by
+        // twenty-three bars at 5 with one at 1000, which draws off the pill. The claim that is
+        // actually true of a meter is that its bars sit inside the height the rail can draw and
+        // reach both ends of it.
+        var heights = previewMeter
+            .Select(bar => double.TryParse(bar.Height, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+                ? value
+                : double.NaN)
+            .ToArray();
         Assert.True(
-            previewMeter.Select(bar => bar.Height).Distinct(StringComparer.Ordinal).Count() > 1,
-            "The Level Rail preview draws every bar at one height, so it shows a bar rather than a "
-                + "meter. A user choosing this design would not get what the picture showed.");
+            heights.All(height => !double.IsNaN(height)),
+            "A Level Rail preview bar has a height that is not a plain number, so nothing here can "
+                + "tell what it draws.");
+        Assert.True(
+            heights.All(height => height is >= 4 and <= 25),
+            "The Level Rail preview draws bars outside the 4 to 25 the live meter uses, so the "
+                + "picture is not the meter: " + string.Join(" ", heights));
+        Assert.True(
+            heights.Min() <= 8 && heights.Max() >= 20,
+            "The Level Rail preview never reaches quiet or loud, so it shows a band rather than a "
+                + $"meter. Lowest {heights.Min()}, highest {heights.Max()}.");
+        Assert.True(
+            heights.Distinct().Count() >= 6,
+            "The Level Rail preview draws too few different heights to read as a level history. A "
+                + "solid bar and a gradient both failed this test before, and both are one height.");
     }
 
     /// <summary>

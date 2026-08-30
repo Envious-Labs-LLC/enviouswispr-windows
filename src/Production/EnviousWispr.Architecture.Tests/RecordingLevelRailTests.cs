@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Xml.Linq;
 
 namespace EnviousWispr.Architecture.Tests;
@@ -35,28 +36,30 @@ public sealed class RecordingLevelRailTests
     }
 
     [Fact]
-    public void TheBarsAreDrawnFromStoredSamplesRatherThanFromOneLiveNumber()
+    public void TheRailDrawsAsManyBarsAsTheMeterKeepsLevels()
     {
-        // THE DEFECT WAS A SHAPE, SO THE CHECK IS ABOUT SHAPE. A rail driven from the current level
-        // needs no memory at all; one that shows a history cannot work without it, and the sine wave
-        // that dressed one number up as many is exactly what must not come back.
-        var overlay = File.ReadAllText(Path.Combine(
-            RepositoryRoot(), "src", "Production", "EnviousWispr.App", "DictationOverlayWindow.xaml.cs"));
-
-        Assert.Contains("_levelHistory", overlay, StringComparison.Ordinal);
-        Assert.DoesNotContain("MathF.Sin", overlay, StringComparison.Ordinal);
+        // The two are separate declarations - one in markup, one in Core - and a meter that keeps
+        // more levels than the rail draws silently throws away the oldest ones twice.
+        Assert.Equal(EnviousWispr.Core.Presentation.RecordingLevelHistory.Capacity, LevelBars().Count);
     }
 
     [Fact]
-    public void ASampleIsTakenOnACadenceRatherThanOnEveryBuffer()
+    public void TheRailFitsInsideThePillItIsDrawnOn()
     {
-        // Capture reports a level per audio buffer, hundreds of times a second. Drawing every one
-        // scrolls a second of speech past in an eighth of a second, which reads as noise.
-        var overlay = File.ReadAllText(Path.Combine(
-            RepositoryRoot(), "src", "Production", "EnviousWispr.App", "DictationOverlayWindow.xaml.cs"));
+        // WIDTH WAS CHANGED TO 360 ON A GUESS AND PUT BACK. macOS returns 288 for this design, and
+        // the arithmetic says it always fitted: what a guess costs is the parity number, silently.
+        var bars = LevelBars();
+        var barWidth = bars.Sum(bar => double.Parse(
+            (string?)bar.Attribute("Width") ?? "0", CultureInfo.InvariantCulture));
+        const double spacing = 4;
+        const double timer = 52;
+        const double gap = 8;
+        const double padding = 32;
+        var content = barWidth + spacing * (bars.Count - 1) + timer + gap + padding;
 
-        Assert.Contains("LevelSampleInterval", overlay, StringComparison.Ordinal);
-        Assert.Contains("FromMilliseconds(50)", overlay, StringComparison.Ordinal);
+        Assert.True(
+            content <= 288,
+            $"The Level Rail needs {content} but the pill is 288 wide, so the newest bars clip.");
     }
 
     private static List<XElement> LevelBars()

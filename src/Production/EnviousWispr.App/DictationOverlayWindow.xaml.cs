@@ -46,9 +46,23 @@ public sealed partial class DictationOverlayWindow : Window
     private RecordingPillDesign _activeDesign = RecordingPillDesign.Classic;
 
     /// <summary>One level per bar, oldest first, so the rail is a history rather than a mirror.</summary>
-    private readonly float[] _levelHistory = new float[24];
+    private readonly RecordingLevelHistory _levelHistory = new();
 
-    private DateTimeOffset _lastLevelSampleAt = DateTimeOffset.MinValue;
+    /// <summary>
+    /// The newest level the capture has reported, waiting for the next tick to be taken.
+    /// </summary>
+    /// <remarks>
+    /// KEPT AS ONE NUMBER RATHER THAN AS TWO HUNDRED DISPATCHER JOBS A SECOND. Every capture buffer
+    /// used to be posted to the UI thread and thrown away there by a throttle, so the work was done
+    /// whatever the throttle decided - and under load the queue backed up and the meter drew samples
+    /// that were already old. Only the latest matters, so only the latest is kept.
+    /// </remarks>
+    private float _latestLevel;
+
+    private readonly DispatcherTimer _levelTimer = new();
+
+    /// <summary>A monotonic reading for the meter, so a clock change cannot stall or flood it.</summary>
+    private readonly System.Diagnostics.Stopwatch _levelClock = System.Diagnostics.Stopwatch.StartNew();
     private DictationOverlayState _state = DictationOverlayState.Hidden;
     private DateTimeOffset _recordingStartedAt;
     private PillAction? _action;
@@ -132,6 +146,14 @@ public sealed partial class DictationOverlayWindow : Window
         _hideTimer.Tick += (_, _) => HideOverlay();
         _elapsedTimer.Interval = TimeSpan.FromMilliseconds(250);
         _elapsedTimer.Tick += (_, _) => UpdateElapsed();
+
+        // THE METER IS DRAWN ON ITS OWN SCHEDULE, NOT ON THE MICROPHONE'S. Capture reports a level
+        // per audio buffer, roughly two hundred times a second, and posting each one to the UI
+        // thread did that work whatever the throttle then decided - and under load the queue backed
+        // up so the meter drew samples that were already old. The capture now records a number and
+        // this asks for it at the rate the meter actually has.
+        _levelTimer.Interval = RecordingLevelHistory.SampleInterval;
+        _levelTimer.Tick += (_, _) => OnLevelTick();
 
         // Distress and error share a red, so the breathing is what separates them. Opacity is a
         // composition property, so this animates off the UI thread and does not need
@@ -226,10 +248,12 @@ public sealed partial class DictationOverlayWindow : Window
             ApplyAction(action: null);
             ConfigureRecordingDesign();
             _elapsedTimer.Start();
+            _levelTimer.Start();
         }
         else
         {
             _elapsedTimer.Stop();
+            _levelTimer.Stop();
             // The action is applied before the notice is sized, because the size depends on whether
             // there is a button. The other order clips it.
             ApplyAction(status.Action);
@@ -293,52 +317,38 @@ public sealed partial class DictationOverlayWindow : Window
         }
     }
 
-    /// <summary>How often a level is taken, which is what makes the rail a history.</summary>
+    /// <summary>Takes the newest level from the capture. Draws nothing.</summary>
     /// <remarks>
-    /// FIFTY MILLISECONDS, WHICH IS macOS'S FIGURE AND ALSO THE ONLY ONE THAT WORKS. The capture
-    /// reports a level per audio buffer, measured at roughly two hundred times a second on this
-    /// hardware, so drawing every one would scroll a second of speech past in an eighth of a second
-    /// and read as noise. Twenty-four bars at this rate is about the last second, which is the span
-    /// somebody can actually recognise as the sentence they just said.
+    /// CALLED FROM THE CAPTURE'S OWN THREAD, ONCE PER AUDIO BUFFER. It records a number and returns,
+    /// so a burst of buffers costs a burst of assignments rather than a burst of UI work. The meter
+    /// is drawn by the timer below, on the schedule the meter actually has.
     /// </remarks>
-    private static readonly TimeSpan LevelSampleInterval = TimeSpan.FromMilliseconds(50);
+    public void SetAudioLevel(float rootMeanSquare) => Volatile.Write(
+        ref _latestLevel,
+        Math.Clamp(MathF.Sqrt(Math.Max(0, rootMeanSquare) * 4f), 0f, 1f));
 
-    public void SetAudioLevel(float rootMeanSquare)
+    private void OnLevelTick()
     {
         if (_state != DictationOverlayState.Recording)
         {
             return;
         }
 
-        var normalized = Math.Clamp(MathF.Sqrt(Math.Max(0, rootMeanSquare) * 4f), 0f, 1f);
+        var level = Volatile.Read(ref _latestLevel);
 
         // THE MARK BREATHES ON EVERY DESIGN THAT SHOWS IT, and that is the Classic pill's meter. It
         // showed a fixed logo while somebody was talking, so the one pill with no preview and no rail
         // was also the one that gave no sign it could hear them.
         if (RainbowMark.Visibility == Visibility.Visible)
         {
-            RainbowMark.Opacity = 0.55 + 0.45 * normalized;
+            RainbowMark.Opacity = 0.55 + 0.45 * level;
         }
 
-        if (_activeDesign != RecordingPillDesign.LevelRail)
+        if (_activeDesign == RecordingPillDesign.LevelRail &&
+            _levelHistory.Sample(level, _levelClock.Elapsed))
         {
-            return;
+            DrawLevelHistory();
         }
-
-        var now = DateTimeOffset.UtcNow;
-        if (now - _lastLevelSampleAt < LevelSampleInterval)
-        {
-            return;
-        }
-
-        _lastLevelSampleAt = now;
-
-        // OLDEST FALLS OFF THE LEFT, NEWEST ARRIVES ON THE RIGHT, so the rail reads the way the
-        // sentence was said. Every bar carrying the same current number was a decoration that looked
-        // alive and told nobody anything.
-        Array.Copy(_levelHistory, 1, _levelHistory, 0, _levelHistory.Length - 1);
-        _levelHistory[^1] = normalized;
-        DrawLevelHistory();
     }
 
     private void DrawLevelHistory()
@@ -350,7 +360,7 @@ public sealed partial class DictationOverlayWindow : Window
                 continue;
             }
 
-            var sample = index < _levelHistory.Length ? _levelHistory[index] : 0f;
+            var sample = index < _levelHistory.Levels.Count ? _levelHistory.Levels[index] : 0f;
             bar.Height = 4 + 21 * sample;
 
             // THE OLDEST BARS FADE, so which end is now is obvious without reading the heights. A
@@ -364,8 +374,8 @@ public sealed partial class DictationOverlayWindow : Window
 
     private void ResetLevelHistory()
     {
-        Array.Clear(_levelHistory);
-        _lastLevelSampleAt = DateTimeOffset.MinValue;
+        _levelHistory.Reset();
+        Volatile.Write(ref _latestLevel, 0f);
         RainbowMark.Opacity = 1;
         DrawLevelHistory();
     }
@@ -390,6 +400,7 @@ public sealed partial class DictationOverlayWindow : Window
     {
         _hideTimer.Stop();
         _elapsedTimer.Stop();
+        _levelTimer.Stop();
         Close();
     }
 
@@ -426,7 +437,7 @@ public sealed partial class DictationOverlayWindow : Window
             // squeezed the rail against the timer or clipped the newest samples, which are the ones
             // somebody is actually looking at.
             case RecordingPillDesign.LevelRail:
-                Resize(360, 92);
+                Resize(288, 92);
                 break;
             case RecordingPillDesign.ReadingWell:
                 ResizeReadingWell();
