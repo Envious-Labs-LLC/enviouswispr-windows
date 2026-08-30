@@ -27,7 +27,18 @@
                 the code said it was.
             -->
             <Border x:Name="SeverityWash" CornerRadius="29" />
-            <StackPanel x:Name="ContentPanel" Margin="16,12" Spacing="{StaticResource BrandSpacingS}">
+            <!--
+                CENTRED IN THE PILL, WHICH IT WAS NOT. A StackPanel stretches to fill its parent by
+                default and stacks its children from the TOP, so a one-line recording pill drew
+                "Listening 00:01" against the ceiling with two thirds of the capsule empty beneath
+                it. Photographed on a real screen at 150% scale; no gate could see it, because the
+                gates read markup and tokens and this is a property of the rendered layout.
+            -->
+            <StackPanel
+                x:Name="ContentPanel"
+                Margin="16,12"
+                VerticalAlignment="Center"
+                Spacing="{StaticResource BrandSpacingS}">
                 <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <Image x:Name="RainbowMark" Width="31" Height="24" AutomationProperties.AccessibilityView="Raw" Source="Assets/Brand/EnviousWisprMark.svg" VerticalAlignment="Center" />

@@ -149,7 +149,15 @@
         <Setter Property="Background" Value="{ThemeResource PillBadgeFillBrush}" />
         <Setter Property="BorderBrush" Value="{ThemeResource PillBorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="{StaticResource BrandPillRadius}" />
+        <!--
+            THE PLATFORM'S OWN CONTROL RADIUS, NOT A BRAND NUMBER. This was BrandPillRadius, which
+            is 100 - far larger than the button is tall, so it rendered as a full ellipse. A
+            lozenge is an iOS and macOS shape; every button in Windows 11 is a rounded rectangle,
+            and photographed beside the system's own chrome the ellipse was the single most
+            obviously foreign thing on the screen. ControlCornerRadius is the value Windows itself
+            uses, so the button matches whatever the platform decides, now and after an update.
+        -->
+        <Setter Property="CornerRadius" Value="{ThemeResource ControlCornerRadius}" />
         <!--
             THE BADGE INK, NOT THE NOTICE INK, AND THE PAIRING IS THE WHOLE REASON. The fill is
             PillBadgeFill, which High Contrast resolves to SystemColorHighlight; the notice ink
