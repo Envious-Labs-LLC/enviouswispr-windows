@@ -25,6 +25,7 @@ param(
     [int] $MinimumWidth = 1280,
     [int] $MinimumHeight = 720,
     [string] $Press = '',
+    [string] $Click = '',
     [switch] $Probe
 )
 
@@ -179,6 +180,17 @@ Add-Type -Namespace UiCapture -Name Dpi -MemberDefinition @'
         & (Join-Path $PSScriptRoot 'invoke-ui.ps1') -ProcessId $app.Id -Name $control |
             ForEach-Object { Note $_ }
         Start-Sleep -Milliseconds 1200
+    }
+
+    # A REAL CLICK, AFTER THE PRESSES AND BEFORE THE TREE IS READ. This is the only way to ask
+    # whether a POINTER can reach something; invoking a control asks the control to act and skips
+    # hit-testing entirely. Each entry is "<control name>@left|centre|right".
+    foreach ($spot in @($Click -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+        $parts = $spot -split '@'
+        $where = if ($parts.Count -gt 1) { $parts[1] } else { 'centre' }
+        & (Join-Path $PSScriptRoot 'click-ui.ps1') -ProcessId $app.Id -Name $parts[0] -Where $where |
+            ForEach-Object { Note $_ }
+        Start-Sleep -Milliseconds 700
     }
 
     # THE TREE BEFORE THE PICTURE, WHILE THE APP IS STILL UP. A screenshot cannot say whether a
