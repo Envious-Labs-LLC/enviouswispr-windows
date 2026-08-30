@@ -2717,6 +2717,14 @@ public partial class App : Application, IAsyncDisposable
         CancellationToken cancellationToken,
         bool recoveryOnly = false)
     {
+        // EVERY LINE WRITTEN FROM HERE ON SAYS WHICH DICTATION IT BELONGED TO. The scope is ambient,
+        // so helpers that have never heard of it - polish, delivery, the recovery write - are joined
+        // without being handed anything, and one added next month is joined on arrival.
+        //
+        // WHAT IT COVERS IS THE PIPELINE AFTER CAPTURE, and that is stated rather than implied:
+        // transcription, deterministic cleanup, polish, delivery and the recovery save. Capture,
+        // the streaming worker and auto-stop happen before this method and are NOT joined yet.
+        using var dictation = DictationScope.Begin(sessionId.Value);
         _escapeRecoveryForSession = false;
         var engine = _transcriptionEngine;
         if (engine is null)

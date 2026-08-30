@@ -40,7 +40,10 @@ public sealed class JsonLineFileLogger : IAppLogger
     public void Write(AppLogEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
-        WriteRecord(PrivacySafeDiagnosticRecord.From(entry));
+        // The dictation is read from the ambient scope rather than from the entry, so a caller does
+        // not have to know about it and cannot forget it. Outside a dictation there is none, and the
+        // field is simply absent from the line.
+        WriteRecord(PrivacySafeDiagnosticRecord.From(entry), DictationScope.Current);
     }
 
     public void Configure(ObservabilityPreferences preferences, DateTimeOffset now)
@@ -66,7 +69,10 @@ public sealed class JsonLineFileLogger : IAppLogger
         }
     }
 
-    internal void WriteRecord(PrivacySafeDiagnosticRecord record)
+    internal void WriteRecord(PrivacySafeDiagnosticRecord record) =>
+        WriteRecord(record, DictationScope.Current);
+
+    internal void WriteRecord(PrivacySafeDiagnosticRecord record, Guid? dictationId)
     {
         ArgumentNullException.ThrowIfNull(record);
 
@@ -85,7 +91,8 @@ public sealed class JsonLineFileLogger : IAppLogger
                     Directory.CreateDirectory(directory);
                 }
 
-                var line = Serialize(record) + Environment.NewLine;
+                var line = Serialize(LocalDiagnosticLine.From(record, dictationId))
+                    + Environment.NewLine;
                 File.AppendAllText(_path, line);
                 if (new FileInfo(_path).Length > MaximumFileBytes)
                 {
@@ -107,11 +114,19 @@ public sealed class JsonLineFileLogger : IAppLogger
         }
     }
 
-    internal static bool TryParseRecord(string line, out PrivacySafeDiagnosticRecord? record)
+    /// <summary>Reads one line back, keeping everything the line said.</summary>
+    /// <remarks>
+    /// THE LOCAL TYPE ALL THE WAY THROUGH, BECAUSE PRUNING REWRITES THE FILE. Retention and the
+    /// size trim both read every line, drop the ones they do not want, and write the rest back. Parse
+    /// as one type and serialise as another and that rewrite strips the field it does not know about,
+    /// so every dictation id would vanish on the first prune - two weeks later, or the first time the
+    /// log grew, with nothing to say it had happened.
+    /// </remarks>
+    internal static bool TryParseRecord(string line, out LocalDiagnosticLine? record)
     {
         try
         {
-            record = JsonSerializer.Deserialize<PrivacySafeDiagnosticRecord>(line, SerializerOptions);
+            record = JsonSerializer.Deserialize<LocalDiagnosticLine>(line, SerializerOptions);
             return record is not null &&
                 Enum.IsDefined(record.Event) &&
                 Enum.IsDefined(record.Failure) &&
@@ -129,7 +144,7 @@ public sealed class JsonLineFileLogger : IAppLogger
         }
     }
 
-    internal static string Serialize(PrivacySafeDiagnosticRecord record) =>
+    internal static string Serialize(LocalDiagnosticLine record) =>
         JsonSerializer.Serialize(record, SerializerOptions);
 
     private void PruneUnsafe(DateTimeOffset now)
@@ -147,14 +162,14 @@ public sealed class JsonLineFileLogger : IAppLogger
         RewriteValidRecordsUnsafe(_ => true, TargetTrimmedBytes, newestFirst: true);
 
     private void RewriteValidRecordsUnsafe(
-        Func<PrivacySafeDiagnosticRecord, bool> keep,
+        Func<LocalDiagnosticLine, bool> keep,
         long maximumBytes,
         bool newestFirst = false)
     {
         var records = File.ReadLines(_path)
             .Select(line => TryParseRecord(line, out var record) ? record : null)
             .Where(record => record is not null && keep(record))
-            .Cast<PrivacySafeDiagnosticRecord>()
+            .Cast<LocalDiagnosticLine>()
             .ToArray();
         if (newestFirst)
         {
