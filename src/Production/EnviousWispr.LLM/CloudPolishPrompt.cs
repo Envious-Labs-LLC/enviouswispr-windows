@@ -45,6 +45,17 @@ And remember what this is: they are composing text to paste somewhere else. Ever
         "\n",
         StringComparison.Ordinal);
 
+    /// <summary>
+    /// The cloud instruction. It carries the language and NOTHING from the person's dictionary.
+    /// </summary>
+    /// <remarks>
+    /// NO CUSTOM SPELLINGS GO OUT FROM HERE, AND A GATE HOLDS IT. The Permissions page says
+    /// "dictionaries stay on this PC" and that cloud polish "sends text". Naming somebody's own
+    /// spellings in a cloud request tells the provider which fragments belong to their private
+    /// dictionary and how they capitalise them, which is new information about them however familiar
+    /// the letters are - and a promise in the product cannot be reasoned around from inside the code
+    /// it constrains. The local providers get them instead.
+    /// </remarks>
     public static string BuildSystemPrompt(string? language, int wordCount)
     {
         var prefix =

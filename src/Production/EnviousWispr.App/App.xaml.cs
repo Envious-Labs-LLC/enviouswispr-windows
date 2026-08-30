@@ -3284,7 +3284,9 @@ public partial class App : Application, IAsyncDisposable
         if (!_polishUsesLocalRuntime)
         {
             result = await provider.TryPolishAsync(
-                new PolishRequest(input, detectedLanguage),
+                new PolishRequest(input, detectedLanguage, PolishVocabulary.Eligible(
+                    input.Text,
+                    _settings.UserData.CustomWords)),
                 cancellationToken).ConfigureAwait(false);
         }
         else
@@ -3311,7 +3313,9 @@ public partial class App : Application, IAsyncDisposable
                 await using (acquired.Lease.ConfigureAwait(false))
                 {
                     result = await provider.TryPolishAsync(
-                        new PolishRequest(input, detectedLanguage),
+                        new PolishRequest(input, detectedLanguage, PolishVocabulary.Eligible(
+                    input.Text,
+                    _settings.UserData.CustomWords)),
                         cancellationToken).ConfigureAwait(false);
                 }
             }
