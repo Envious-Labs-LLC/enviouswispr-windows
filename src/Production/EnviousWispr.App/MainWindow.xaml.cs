@@ -1274,8 +1274,7 @@ public sealed partial class MainWindow : Window, IDisposable
         SuggestAliasesButton.IsEnabled = false;
         SuggestedAliasesPanel.Children.Clear();
         SuggestedAliasesScroller.Visibility = Visibility.Collapsed;
-        SetLiveVisibility(SuggestAliasesStatusText, Visibility.Visible);
-        SetLiveText(SuggestAliasesStatusText, "Asking...");
+        SetLiveRegion(SuggestAliasesStatusText, "Asking...", Visibility.Visible);
         MishearingSuggestionsRequested?.Invoke(term, existing);
     }
 
@@ -1295,7 +1294,7 @@ public sealed partial class MainWindow : Window, IDisposable
         ArgumentNullException.ThrowIfNull(advice);
         SuggestAliasesButton.IsEnabled = true;
         SuggestedAliasesPanel.Children.Clear();
-        SetLiveVisibility(SuggestAliasesStatusText, Visibility.Visible);
+        // Shown by the SetLiveRegion call below, which sets text and visibility together.
 
         if (advice.Status != MishearingAdviceStatus.Suggested)
         {
@@ -1312,7 +1311,6 @@ public sealed partial class MainWindow : Window, IDisposable
                     _ => "The suggestion did not come back. Check your polish settings and try again.",
             
                 });
-            Announce(SuggestAliasesStatusText);
             return;
         }
 
@@ -1985,8 +1983,7 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         _speedCheckRunning = true;
         RunSpeedCheckButton.IsEnabled = false;
-        SetLiveVisibility(SpeedCheckResultText, Visibility.Visible);
-        SetLiveText(SpeedCheckResultText, "Running...");
+        SetLiveRegion(SpeedCheckResultText, "Running...", Visibility.Visible);
         SpeedCheckRequested?.Invoke();
     }
 
@@ -2020,8 +2017,7 @@ public sealed partial class MainWindow : Window, IDisposable
         // and handing the button back then would undo the greying the moment it was needed.
         _speedCheckRunning = false;
         SetSpeedCheckAvailability(_currentOverlayState != DictationOverlayState.Recording);
-        SetLiveVisibility(SpeedCheckResultText, Visibility.Visible);
-        SetLiveText(
+        SetLiveRegion(
             SpeedCheckResultText,
     summary is null || summary.Count == 0
                 ? "The speed check did not run. It is skipped while a dictation is in progress."
@@ -2029,7 +2025,8 @@ public sealed partial class MainWindow : Window, IDisposable
                     + $"fastest {summary.MinMilliseconds:0.0}ms, slowest {summary.MaxMilliseconds:0.0}ms. "
                     + (summary.Percentile95IsJustTheMaximum
                         ? "Too few runs to report a slow tail separately."
-                        : $"The slowest 5% took {summary.Percentile95Milliseconds:0.0}ms or more."));
+                        : $"The slowest 5% took {summary.Percentile95Milliseconds:0.0}ms or more."),
+            Visibility.Visible);
     }
 
     private async void ExportDiagnosticsButton_Click(object sender, RoutedEventArgs e)
@@ -2397,8 +2394,10 @@ public sealed partial class MainWindow : Window, IDisposable
             }
         }
 
-        SetLiveText(KeybindConflictText, HotkeyConflictDetector.Describe(clashes));
-        SetLiveVisibility(KeybindConflictText, clashes.Count == 0 ? Visibility.Collapsed : Visibility.Visible);
+        SetLiveRegion(
+            KeybindConflictText,
+            HotkeyConflictDetector.Describe(clashes),
+            clashes.Count == 0 ? Visibility.Collapsed : Visibility.Visible);
     }
 
     private void HotkeyBoxKeyDown(object sender, KeyRoutedEventArgs e)
@@ -2686,16 +2685,31 @@ public sealed partial class MainWindow : Window, IDisposable
         var hasItems = itemCount > 0;
         var hasQuery = !string.IsNullOrWhiteSpace(query);
         var historyUnavailable = _historyLoadStatus is HistoryLoadStatus.Invalid or HistoryLoadStatus.Unavailable;
-        SetLiveVisibility(HistoryLoadingState, _isHistoryLoading ? Visibility.Visible : Visibility.Collapsed);
+        HistoryLoadingState.Visibility = _isHistoryLoading ? Visibility.Visible : Visibility.Collapsed;
         HistoryList.Visibility = !_isHistoryLoading && hasItems ? Visibility.Visible : Visibility.Collapsed;
         HistoryEmptyState.Visibility = !_isHistoryLoading && !hasItems && !hasQuery && !historyUnavailable
             ? Visibility.Visible
             : Visibility.Collapsed;
-        SetLiveVisibility(
-            HistorySearchEmptyState,
-    !_isHistoryLoading && !hasItems && hasQuery && !historyUnavailable
-                ? Visibility.Visible
-                : Visibility.Collapsed);
+        HistorySearchEmptyState.Visibility = !_isHistoryLoading && !hasItems && hasQuery && !historyUnavailable
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        // THE RESULT IS ANNOUNCED, NOT THE WAITING. Announcing the loading card and then hiding it
+        // told a screen reader that history was loading and never that it had finished - the one
+        // sentence a person actually needs. A card appearing or disappearing is not news; what
+        // happened is. Silence while loading is correct, because the terminal line follows.
+        SetLiveRegion(
+            HistoryStatusText,
+            _isHistoryLoading
+                ? string.Empty
+                : historyUnavailable
+                    ? "History is unavailable. Your dictations are safe; this list could not be read."
+                    : hasItems
+                        ? $"History loaded. {itemCount} dictation{(itemCount == 1 ? string.Empty : "s")}."
+                        : hasQuery
+                            ? "No dictations match that search."
+                            : "No dictations yet.",
+            _isHistoryLoading ? Visibility.Collapsed : Visibility.Visible);
         HistoryUnavailableState.Visibility = !_isHistoryLoading && !hasItems && historyUnavailable
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -2971,7 +2985,6 @@ public sealed partial class MainWindow : Window, IDisposable
                     _ => "AI polish is off; no provider key is used.",
             
                 });
-            Announce(ApiKeyStatusText);
             return;
         }
 
@@ -2992,47 +3005,49 @@ public sealed partial class MainWindow : Window, IDisposable
                 _ => "Windows Credential Manager status is unavailable. No key value was revealed.",
         
             });
-        Announce(ApiKeyStatusText);
     }
 
-    /// <summary>The names this window marks as live regions in markup.</summary>
+    /// <summary>Sets a live region's text and visibility, and announces once if anything changed.</summary>
     /// <remarks>
-    /// KEPT BESIDE THE HELPERS SO THE GATE CAN READ IT. A gate that walks the XAML for
-    /// <c>AutomationProperties.LiveSetting</c> and then walks this file for direct assignments needs
-    /// the same list both sides, and a list written twice is a list that drifts.
+    /// ONE CALL, BECAUSE TWO CALLS ANNOUNCE TWICE. Separate text and visibility helpers each raised,
+    /// so showing a region and then filling it announced the OLD or empty text first and the new text
+    /// second - the alias suggestion status and the speed check both did exactly that. Reassigning
+    /// the same visibility announced again for no change at all.
+    ///
+    /// RAISED ONLY WHEN THE FINAL STATE IS VISIBLE AND SOMETHING ACTUALLY MOVED. Announcing text
+    /// nobody can see is noise, and announcing an unchanged region is noise that repeats.
+    ///
+    /// IT HAS TO BE A CONTROL WITH A PEER. WinUI creates no automation peer for a Border or a Panel,
+    /// so a live region declared on one has nothing to raise through and the raise silently does
+    /// nothing. TextBlock has one.
     /// </remarks>
-    private static void Announce(FrameworkElement region)
+    private static void SetLiveRegion(TextBlock region, string text, Visibility visibility)
     {
-        // MARKING A LIVE REGION IS NOT ANNOUNCING IT. Every live region in this window carried
-        // AutomationProperties.LiveSetting and every one of them was silent: WinUI raises no event
-        // of its own when the content of a live region changes, so the app has to raise
-        // LiveRegionChanged itself or the setting is decoration. A missing peer is not an error - a
-        // control that has not been realised yet has none, and the next change raises it once it has.
-        var peer = FrameworkElementAutomationPeer.FromElement(region)
-            ?? FrameworkElementAutomationPeer.CreatePeerForElement(region);
-        peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
-    }
+        var textChanged = !string.Equals(region.Text, text, StringComparison.Ordinal);
+        var becameVisible = region.Visibility != visibility && visibility == Visibility.Visible;
 
-    /// <summary>Sets a live region's text and tells a screen reader it changed.</summary>
-    /// <remarks>
-    /// ONE CALL, BECAUSE TWO CALLS DRIFT. Sixteen sites set these six controls; asking each of them
-    /// to remember a second line is how fifteen of them stay correct and one goes quiet. Assigning
-    /// through here means the announcement cannot be forgotten separately from the text.
-    /// </remarks>
-    private static void SetLiveText(TextBlock region, string text)
-    {
         region.Text = text;
-        Announce(region);
-    }
-
-    private static void SetLiveVisibility(FrameworkElement region, Visibility visibility)
-    {
         region.Visibility = visibility;
-        if (visibility == Visibility.Visible)
+
+        if (visibility == Visibility.Visible && (textChanged || becameVisible))
         {
-            Announce(region);
+            var peer = FrameworkElementAutomationPeer.FromElement(region)
+                ?? FrameworkElementAutomationPeer.CreatePeerForElement(region);
+            peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
         }
     }
+
+    /// <summary>Sets a live region's text, leaving its visibility alone.</summary>
+    private static void SetLiveText(TextBlock region, string text) =>
+        SetLiveRegion(region, text, region.Visibility);
+
+    /// <summary>Shows or hides a live region without changing its words.</summary>
+    /// <remarks>
+    /// A REGION THAT DISAPPEARS IS NOT ANNOUNCED, which is why this defers to the same setter: the
+    /// raise happens only when the final state is visible. Hiding something is not news.
+    /// </remarks>
+    private static void SetLiveVisibility(TextBlock region, Visibility visibility) =>
+        SetLiveRegion(region, region.Text, visibility);
 
     private void ShowOnboarding(bool show)
     {
