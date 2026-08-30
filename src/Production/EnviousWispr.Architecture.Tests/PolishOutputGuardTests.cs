@@ -100,8 +100,11 @@ public sealed class PolishOutputGuardTests
     {
         var input = new string('a', 100);
 
-        var justUnder = new string('b', (int)(100 * PolishOutputGuard.MaximumGrowthFactor) - 1);
-        var justOver = new string('b', (int)(100 * PolishOutputGuard.MaximumGrowthFactor) + 1);
+        // THE ALLOWANCE IS PART OF THE BOUND, and leaving it out is how a ceiling test passes while
+        // measuring the wrong line.
+        var ceiling = (int)(100 * PolishOutputGuard.MaximumGrowthFactor) + PolishOutputGuard.GrowthAllowance;
+        var justUnder = new string('b', ceiling);
+        var justOver = new string('b', ceiling + 1);
 
         Assert.Equal(PolishOutputVerdict.Accepted, PolishOutputGuard.Review(input, justUnder).Verdict);
         Assert.Equal(PolishOutputVerdict.RefusedRunaway, PolishOutputGuard.Review(input, justOver).Verdict);
@@ -129,11 +132,14 @@ public sealed class PolishOutputGuardTests
     [Fact]
     public void AStuckModelIsReportedAsStuckRatherThanAsLong()
     {
-        var stuckAndLong = string.Join(" ", Enumerable.Repeat("the same phrase", 40));
+        // SHORT ENOUGH TO CLEAR THE CEILING, because the size test now runs first to bound the work
+        // every later test does. A stuck model that is also enormous is reported as enormous, which
+        // is honest; this one is stuck WITHIN its allowance, which is the case the name is about.
+        var stuck = string.Join(" ", Enumerable.Repeat("the same phrase", 5));
 
         Assert.Equal(
             PolishOutputVerdict.RefusedRepetition,
-            PolishOutputGuard.Review(RealTranscript, stuckAndLong).Verdict);
+            PolishOutputGuard.Review(RealTranscript, stuck).Verdict);
     }
 
     [Fact]
@@ -230,5 +236,71 @@ public sealed class PolishOutputGuardTests
         // "ok" becoming "Okay, that works." is correct polish and fails any ratio.
         Assert.Equal(PolishOutputVerdict.Accepted, PolishOutputGuard.Review("ok", "Okay, that works.").Verdict);
         Assert.Equal(PolishOutputVerdict.Accepted, PolishOutputGuard.Review("yes exactly", "Yes.").Verdict);
+    }
+
+    [Fact]
+    public void AShortDictationHasACeilingToo()
+    {
+        // A bare multiplier has to be skipped below some floor, and skipping it left every short
+        // dictation with NO ceiling: "ok" could come back as a paragraph of invention and be pasted.
+        var invented = string.Join(' ', Enumerable.Repeat("the deadline moved again", 30));
+
+        Assert.Equal(PolishOutputVerdict.RefusedRunaway, PolishOutputGuard.Review("ok", invented).Verdict);
+    }
+
+    [Fact]
+    public void AnswerIsNotEnoughToProveTheQuestionSurvived()
+    {
+        // The plainest execution of all: "answer" is still in the output, so a single-word check saw
+        // the word it was looking for and passed the very thing the guard exists to catch.
+        Assert.Equal(
+            PolishOutputVerdict.RefusedInstructionExecuted,
+            PolishOutputGuard.Review(
+                "Ask him to answer this question about the capital of France",
+                "The answer is Paris").Verdict);
+    }
+
+    [Fact]
+    public void AWholeWordIsRequiredAndASubstringWillNotDo()
+    {
+        Assert.Equal(
+            PolishOutputVerdict.RefusedInstructionExecuted,
+            PolishOutputGuard.Review(
+                "Please write a poem about the deadline for the team",
+                "Poemlike lines about a deadline, written for the team").Verdict);
+    }
+
+    [Fact]
+    public void WhatTheModelSaidAboutTheTextDoesNotReachTheDocument()
+    {
+        var review = PolishOutputGuard.Review(
+            "so um I think the meeting went well today",
+            "Sure, here is the cleaned transcript:\n\nI think the meeting went well today.");
+
+        Assert.Equal(PolishOutputVerdict.Accepted, review.Verdict);
+        Assert.Equal("I think the meeting went well today.", review.Text);
+    }
+
+    [Fact]
+    public void AnEchoedTranscriptWrapperIsRemoved()
+    {
+        var review = PolishOutputGuard.Review(
+            "so um I think the meeting went well today",
+            "<transcript>I think the meeting went well today.</transcript>");
+
+        Assert.Equal("I think the meeting went well today.", review.Text);
+    }
+
+    [Fact]
+    public void SureIsKeptWhenItIsSomethingSomebodySaid()
+    {
+        // "Sure," begins plenty of real dictation. It goes only when what follows is a model
+        // talking, and prose that runs on with commas is somebody speaking.
+        var review = PolishOutputGuard.Review(
+            "sure I can do that on Tuesday, and then we can review it on Thursday together",
+            "Sure, I can do that on Tuesday, and then we can review it on Thursday together.");
+
+        Assert.Equal(PolishOutputVerdict.Accepted, review.Verdict);
+        Assert.StartsWith("Sure,", review.Text, StringComparison.Ordinal);
     }
 }
