@@ -63,7 +63,14 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
                 RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable);
         }
 
-        var forcedRefusal = RefusalFor(capture);
+        // ASKED FOR, NOT FALLEN BACK TO, and it travels the SAME road as the fallback rather than a
+        // new one beside it. Windows already puts the text on the clipboard and leaves the target
+        // alone whenever a paste is refused, and that path is the one every delivery test covers.
+        // Somebody choosing copy-only wants exactly that outcome, so the honest implementation is to
+        // say so in the refusal rather than to build a second way of arriving at the same place.
+        var forcedRefusal = request.Options.CopyInsteadOfPaste
+            ? TextDeliveryRefusalReason.CopyRequested
+            : RefusalFor(capture);
         var repair = CursorInsertionRepair.Apply(
             request.Text,
             capture.Status == TargetContextStatus.Available ? capture.Context : null,
