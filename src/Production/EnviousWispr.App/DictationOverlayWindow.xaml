@@ -62,7 +62,7 @@
                 <Border x:Name="PreviewWell" Background="{ThemeResource PillSurfaceBrush}" CornerRadius="10" Padding="12,9" Visibility="Collapsed">
                     <TextBlock x:Name="PreviewText" AutomationProperties.Name="Live transcription preview" FontSize="14" MaxLines="5" Style="{StaticResource PillDimmedTextStyle}" Text="Listening…" TextAlignment="DetectFromContent" TextWrapping="Wrap" />
                 </Border>
-                <TextBlock x:Name="StateDetail" FontSize="14" MaxLines="2" Style="{StaticResource PillNoticeTextStyle}" Text="Release your key to finish" TextWrapping="Wrap" Visibility="Collapsed" />
+                <TextBlock x:Name="StateDetail" AutomationProperties.AccessibilityView="Raw" FontSize="14" MaxLines="2" Style="{StaticResource PillNoticeTextStyle}" Text="Release your key to finish" TextWrapping="Wrap" Visibility="Collapsed" />
                 <!--
                     THE ONE THING THE USER CAN DO ABOUT IT. Right-aligned rather than full width so
                     the pill still reads as a notice rather than a dialog, and 14px like everything
