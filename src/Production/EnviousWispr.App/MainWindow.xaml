@@ -603,7 +603,7 @@
                                         pinned it here.
                                     -->
                                     <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                        <RadioButton x:Name="CapsulePillButton" AutomationProperties.Name="Capsule. A small capsule with the rainbow mark and a timer." GroupName="PillWithoutWords" Style="{StaticResource BrandSelectableCardStyle}">
+                                        <RadioButton x:Name="CapsulePillButton" Checked="AppearanceCardChecked" AutomationProperties.Name="Capsule. A small capsule with the rainbow mark and a timer." GroupName="PillWithoutWords" Style="{StaticResource BrandSelectableCardStyle}">
                                             <StackPanel Spacing="{StaticResource BrandSpacingS}">
                                                 <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Capsule" />
                                                 <TextBlock Style="{StaticResource BrandHelperStyle}" Text="A small capsule with the rainbow mark and a timer." TextWrapping="Wrap" />
@@ -612,7 +612,7 @@
                                                 </Border>
                                             </StackPanel>
                                         </RadioButton>
-                                        <RadioButton x:Name="LevelRailPillButton" AutomationProperties.Name="Level Rail. A wider capsule with a live rainbow meter beside the timer." GroupName="PillWithoutWords" Style="{StaticResource BrandSelectableCardStyle}">
+                                        <RadioButton x:Name="LevelRailPillButton" Checked="AppearanceCardChecked" AutomationProperties.Name="Level Rail. A wider capsule with a live rainbow meter beside the timer." GroupName="PillWithoutWords" Style="{StaticResource BrandSelectableCardStyle}">
                                             <StackPanel Spacing="{StaticResource BrandSpacingS}">
                                                 <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Level Rail" />
                                                 <TextBlock Style="{StaticResource BrandHelperStyle}" Text="A wider capsule with a live rainbow meter beside the timer." TextWrapping="Wrap" />
@@ -635,7 +635,7 @@
                                     -->
                                     <Border Height="1" Background="{ThemeResource BrandDividerBrush}" Margin="0,4,0,4" />
                                     <TextBlock x:Name="WithWordsPillHeading" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Live Preview on" />
-                                    <RadioButton x:Name="ReadingWellPillButton" AutomationProperties.Name="Reading Well. A wide panel that shows your words as you speak." GroupName="PillWithWords" HorizontalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}">
+                                    <RadioButton x:Name="ReadingWellPillButton" Checked="AppearanceCardChecked" AutomationProperties.Name="Reading Well. A wide panel that shows your words as you speak." GroupName="PillWithWords" HorizontalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}">
                                         <StackPanel Spacing="{StaticResource BrandSpacingS}">
                                             <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Reading Well" />
                                             <TextBlock Style="{StaticResource BrandHelperStyle}" Text="A wide panel that shows your words as you speak." TextWrapping="Wrap" />
