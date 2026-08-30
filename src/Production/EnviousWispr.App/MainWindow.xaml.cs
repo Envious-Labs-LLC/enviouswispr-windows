@@ -1213,7 +1213,7 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Writes the two Appearance choices, and nothing else.
+    /// Writes the Appearance choices, and nothing else.
     /// </summary>
     /// <remarks>
     /// ONLY THESE TWO FIELDS, DELIBERATELY. The Save button builds a whole settings object out of
@@ -1227,7 +1227,7 @@ public sealed partial class MainWindow : Window, IDisposable
     /// the state this whole change exists to prevent.
     ///
     /// Appearance is the only settings page with no Save button, so persisting on selection is what
-    /// makes its two settings behave like the other ten pages' rather than an exception. The
+    /// makes its settings behave like the other ten pages' rather than an exception. The
     /// alternative - adding a Save button - would mean asking a user to confirm a change they can
     /// already see, which reads as the app not trusting its own preview.
     /// </remarks>
@@ -1242,6 +1242,13 @@ public sealed partial class MainWindow : Window, IDisposable
                 {
                     Theme = ThemeFromIndex(SelectedIndexOf(ThemeChoices)),
                     OverlayPosition = OverlayPositionFromIndex(SelectedIndexOf(OverlayPositionChoices)),
+
+                    // THE PILL'S LOOK JOINED THIS PAGE AND HAD TO JOIN THIS WRITE. Appearance is the
+                    // one settings page with no Save button, so a card that only the Save button
+                    // reads is a card that does nothing: somebody picks a design, sees the preview,
+                    // walks away, and it is gone. Moving the cards here without moving them into
+                    // this list would have been a change that ships and does nothing.
+                    PillDesignWithoutWords = PillDesignWithoutWordsFromControls(),
                 },
             },
             _ =>
