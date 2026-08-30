@@ -1155,7 +1155,8 @@ public sealed partial class DesignSystemTokenTests
     /// type the compiler infers and the text does not state; a function pointer; and a third-party
     /// type that happens to share one of these names. Closing those needs a semantic model over a
     /// real compilation, or better, an analyser that refuses the code at build time rather than a
-    /// test that reports it afterwards. That is tracked as its own work.
+    /// test that reports it afterwards. That is issue #82, which also enumerates the four other gates
+    /// asking the same unanswerable question.
     ///
     /// The defect this guards is already gone - <c>OverlayStateFor</c> is deleted and every status
     /// is built where its outcome is known. This stops the shape coming back in the forms it has
