@@ -331,48 +331,30 @@ public sealed class WasapiAudioCapture :
         _transitionGate.Dispose();
     }
 
-    /// <summary>Temporary. Writes what the first packets of a capture actually contained.</summary>
-    /// <remarks>
-    /// THE RECORDING SESSION AND THE MICROPHONE TEST USE THIS SAME CLASS ON THE SAME DEVICE AND GET
-    /// OPPOSITE RESULTS: the test reads a root-mean-square of 0.55 while a dictation drives the
-    /// pill's rail to a flat zero. A working transcript does NOT settle it, because the recogniser
-    /// is fed the RAW bytes and the meter is fed the CONVERTED samples, so only one of those two
-    /// arrays is proved by a clean transcript. This writes both sides of that split for the first
-    /// packets of every capture, to a file rather than to the screen, because during a dictation
-    /// there is no surface to read.
-    /// </remarks>
-    private void ProbePacket(int byteCount, AudioConversionResult converted, bool silent)
+    private void OnDataAvailable(object? sender, AudioRecorderData args)
     {
-        if (_packets > 10)
+        // AN EMPTY BUFFER IS NOT A MEASUREMENT OF SILENCE, AND TREATING IT AS ONE BLINDED EVERY
+        // METER IN THE APP. This recorder delivers a zero-length packet on roughly half its
+        // callbacks, and each one arrived within a millisecond of a real one - so the sequence was
+        // always a true level published and then a zero published over the top of it. Anything
+        // reading the latest level, which is what both meters do, therefore read a zero on
+        // virtually every look, and the recording pill sat at its floor through dictations that
+        // transcribed perfectly.
+        //
+        // MEASURED, NOT INFERRED. Ten consecutive packets of a real dictation: 516, 0, 640, 0, 640,
+        // 0, 640, 0, 640, 0 bytes, with the empty ones landing in the same millisecond as the full
+        // one before them, and every one of them flagged NOT silent. The full packets carried a
+        // coherent rising attack from 0.000012 to 0.000509, so nothing about the audio or the
+        // conversion was ever wrong.
+        //
+        // BEFORE THE COUNTERS, DELIBERATELY. An empty packet is not a packet that arrived quietly,
+        // it is a callback with nothing in it, and counting it would report a capture as half
+        // silent when nothing of the kind happened.
+        if (args.Bytes.Length == 0)
         {
             return;
         }
 
-        try
-        {
-            var directory = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Envious Labs",
-                "EnviousWispr");
-            Directory.CreateDirectory(directory);
-            File.AppendAllText(
-                Path.Combine(directory, "meter-probe.txt"),
-                $"{DateTimeOffset.Now:HH:mm:ss.fff} packet {_packets} bytes {byteCount} " +
-                $"silent {silent} samples {converted.Samples.Length} " +
-                $"peak {converted.Peak:F6} rms {converted.RootMeanSquare:F6}" +
-                Environment.NewLine);
-        }
-        catch (IOException)
-        {
-            // A probe that cannot write is a probe that says nothing, not a capture that fails.
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
-    }
-
-    private void OnDataAvailable(object? sender, AudioRecorderData args)
-    {
         Interlocked.Increment(ref _packets);
         if (args.IsSilent)
         {
@@ -398,7 +380,6 @@ public sealed class WasapiAudioCapture :
                 _rms = converted.RootMeanSquare;
             }
 
-            ProbePacket(bytes.Length, converted, args.IsSilent);
             LevelChanged?.Invoke(this, new AudioLevel(converted.Peak, converted.RootMeanSquare));
         }
         catch (ArgumentException exception)
