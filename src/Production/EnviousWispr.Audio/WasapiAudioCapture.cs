@@ -331,6 +331,46 @@ public sealed class WasapiAudioCapture :
         _transitionGate.Dispose();
     }
 
+    /// <summary>Temporary. Writes what the first packets of a capture actually contained.</summary>
+    /// <remarks>
+    /// THE RECORDING SESSION AND THE MICROPHONE TEST USE THIS SAME CLASS ON THE SAME DEVICE AND GET
+    /// OPPOSITE RESULTS: the test reads a root-mean-square of 0.55 while a dictation drives the
+    /// pill's rail to a flat zero. A working transcript does NOT settle it, because the recogniser
+    /// is fed the RAW bytes and the meter is fed the CONVERTED samples, so only one of those two
+    /// arrays is proved by a clean transcript. This writes both sides of that split for the first
+    /// packets of every capture, to a file rather than to the screen, because during a dictation
+    /// there is no surface to read.
+    /// </remarks>
+    private void ProbePacket(int byteCount, AudioConversionResult converted, bool silent)
+    {
+        if (_packets > 10)
+        {
+            return;
+        }
+
+        try
+        {
+            var directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Envious Labs",
+                "EnviousWispr");
+            Directory.CreateDirectory(directory);
+            File.AppendAllText(
+                Path.Combine(directory, "meter-probe.txt"),
+                $"{DateTimeOffset.Now:HH:mm:ss.fff} packet {_packets} bytes {byteCount} " +
+                $"silent {silent} samples {converted.Samples.Length} " +
+                $"peak {converted.Peak:F6} rms {converted.RootMeanSquare:F6}" +
+                Environment.NewLine);
+        }
+        catch (IOException)
+        {
+            // A probe that cannot write is a probe that says nothing, not a capture that fails.
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
     private void OnDataAvailable(object? sender, AudioRecorderData args)
     {
         Interlocked.Increment(ref _packets);
@@ -358,6 +398,7 @@ public sealed class WasapiAudioCapture :
                 _rms = converted.RootMeanSquare;
             }
 
+            ProbePacket(bytes.Length, converted, args.IsSilent);
             LevelChanged?.Invoke(this, new AudioLevel(converted.Peak, converted.RootMeanSquare));
         }
         catch (ArgumentException exception)
