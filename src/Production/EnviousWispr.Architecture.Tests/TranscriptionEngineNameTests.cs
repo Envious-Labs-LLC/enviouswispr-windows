@@ -1148,8 +1148,18 @@ public sealed partial class DesignSystemTokenTests
     ///
     /// IT IS STILL A SYNTAX TREE AND NOT A COMPILATION, so a type is matched by the NAME written at
     /// the declaration, plus any <c>using</c> alias in the same file that resolves to one of these
-    /// types. That is the one guess left, and it is bounded: an alias is a file-local rename, and
-    /// the file being parsed carries it.
+    /// types.
+    ///
+    /// WHAT THAT LEAVES OPEN, ENUMERATED, BECAUSE AN UNSTATED LIMIT READS AS COVERAGE: a field whose
+    /// type is a named delegate IMPORTED from another file; a lambda assigned to <c>var</c>, whose
+    /// type the compiler infers and the text does not state; a function pointer; and a third-party
+    /// type that happens to share one of these names. Closing those needs a semantic model over a
+    /// real compilation, or better, an analyser that refuses the code at build time rather than a
+    /// test that reports it afterwards. That is tracked as its own work.
+    ///
+    /// The defect this guards is already gone - <c>OverlayStateFor</c> is deleted and every status
+    /// is built where its outcome is known. This stops the shape coming back in the forms it has
+    /// actually taken, and says plainly which forms it would miss.
     /// </remarks>
     private static List<string> SentenceToAppearanceOffenders(string fileName, string text)
     {
@@ -1175,12 +1185,15 @@ public sealed partial class DesignSystemTokenTests
             return names.Any(name => MentionsName(type, name));
         }
 
-        // Handed a string, hands back an appearance. Every member kind that can be either.
-        foreach (var member in root.DescendantNodes().OfType<MemberDeclarationSyntax>())
+        // Handed a string, hands back an appearance. Every declaration kind that can be either,
+        // including a LOCAL FUNCTION, which is not a member declaration and is the easiest of these
+        // to reach for once the others are refused.
+        foreach (var node in root.DescendantNodes())
         {
-            var (returnType, parameters) = member switch
+            var (returnType, parameters) = node switch
             {
                 MethodDeclarationSyntax method => (method.ReturnType, method.ParameterList.Parameters),
+                LocalFunctionStatementSyntax local => (local.ReturnType, local.ParameterList.Parameters),
                 IndexerDeclarationSyntax indexer => (indexer.Type, indexer.ParameterList.Parameters),
                 OperatorDeclarationSyntax op => (op.ReturnType, op.ParameterList.Parameters),
                 ConversionOperatorDeclarationSyntax conversion =>
@@ -1192,32 +1205,63 @@ public sealed partial class DesignSystemTokenTests
             if (IsAppearance(returnType) &&
                 parameters.Any(parameter => IsStringType(parameter.Type)))
             {
-                offenders.Add($"{fileName}: {Describe(member)}");
+                offenders.Add($"{fileName}: {Describe(node)}");
             }
         }
 
-        // A VARIABLE of a delegate type is not a member declaration of any kind above, and it does
-        // exactly the refused thing. Covers a field, a property initialiser and a local alike, and
-        // covers a named delegate type as well as Func, by reading the type's own arguments.
-        foreach (var type in root.DescendantNodes().OfType<GenericNameSyntax>())
+        // A VARIABLE of a delegate type is not a declaration of any kind above, and it does exactly
+        // the refused thing.
+        //
+        // TWO NARROWINGS, BOTH BOUGHT BY A FALSE POSITIVE THIS CODE ACTUALLY HAD. Scanning every
+        // generic type anywhere flagged `Dictionary<string, DictationStatus>`, which is legitimate
+        // and is arguably the CLEAREST way to map a known outcome onto a status - so the scan reads
+        // only the type written in a DECLARATION, never a type used in an expression. And it
+        // requires the name Func, because a syntax tree cannot tell an imported delegate type from
+        // any other generic type without asking the compiler what the name resolves to.
+        //
+        // WHAT THAT LEAVES OPEN, STATED RATHER THAN IMPLIED: a field whose type is an imported
+        // named delegate, a lambda assigned to `var`, and a function pointer. Closing those needs a
+        // semantic model over a real compilation, which is tracked as its own work.
+        foreach (var declared in DeclaredTypes(root).OfType<GenericNameSyntax>())
         {
-            var arguments = type.TypeArgumentList.Arguments;
-            if (arguments.Count >= 2 &&
+            var arguments = declared.TypeArgumentList.Arguments;
+            if (declared.Identifier.ValueText == "Func" &&
+                arguments.Count >= 2 &&
                 IsAppearance(arguments[^1]) &&
                 arguments.Take(arguments.Count - 1).Any(IsStringType))
             {
-                offenders.Add($"{fileName}: {type}");
+                offenders.Add($"{fileName}: {declared}");
             }
         }
 
         return offenders;
     }
 
+    /// <summary>The types written in a declaration, as opposed to used in an expression.</summary>
+    private static IEnumerable<TypeSyntax> DeclaredTypes(SyntaxNode root) =>
+        root.DescendantNodes().Select(node => node switch
+        {
+            VariableDeclarationSyntax variable => variable.Type,
+            PropertyDeclarationSyntax property => property.Type,
+            ParameterSyntax parameter => parameter.Type,
+            _ => null,
+        }).OfType<TypeSyntax>();
+
     /// <summary>Whether a written type is <c>string</c>, however it is spelled.</summary>
-    private static bool IsStringType(TypeSyntax? type) =>
-        type is PredefinedTypeSyntax predefined
-            ? predefined.Keyword.IsKind(SyntaxKind.StringKeyword)
-            : type is IdentifierNameSyntax { Identifier.ValueText: "String" };
+    /// <remarks>
+    /// FOUR SPELLINGS, AND THE LAST TWO WERE REVIEW FINDINGS. <c>string</c> and <c>String</c> are
+    /// the obvious pair. <c>string?</c> wraps either in a nullable node, and
+    /// <c>System.String</c> wraps it in a qualified name, so a parameter written either way slipped
+    /// past a check that only looked at the outermost node.
+    /// </remarks>
+    private static bool IsStringType(TypeSyntax? type) => type switch
+    {
+        NullableTypeSyntax nullable => IsStringType(nullable.ElementType),
+        QualifiedNameSyntax qualified => IsStringType(qualified.Right),
+        PredefinedTypeSyntax predefined => predefined.Keyword.IsKind(SyntaxKind.StringKeyword),
+        IdentifierNameSyntax identifier => identifier.Identifier.ValueText == "String",
+        _ => false,
+    };
 
     /// <summary>Whether a written type names the given type, qualified or not, bare or wrapped.</summary>
     /// <remarks>
@@ -1230,7 +1274,7 @@ public sealed partial class DesignSystemTokenTests
             .Any(simple => simple.Identifier.ValueText == name);
 
     /// <summary>One line naming the offending member, without its body.</summary>
-    private static string Describe(MemberDeclarationSyntax member)
+    private static string Describe(SyntaxNode member)
     {
         var text = member.ToString();
         var bodyStart = text.IndexOfAny(['{', '=', ';']);
@@ -1314,6 +1358,24 @@ public sealed partial class DesignSystemTokenTests
             "NamedDelegate.cs",
             "    private delegate DictationStatus Reader(string sentence);"));
 
+        // A local function is not a member, and it is the easiest shape to reach for once every
+        // member kind is refused.
+        Assert.NotEmpty(OffendersIn(
+            "LocalFunction.cs",
+            "    private void Show()\n"
+                + "    {\n"
+                + "        DictationStatus Read(string sentence) => default;\n"
+                + "    }"));
+
+        // A nullable or fully qualified string is still a string.
+        Assert.NotEmpty(OffendersIn(
+            "NullableString.cs",
+            "    private DictationStatus Read(string? sentence) => default;"));
+
+        Assert.NotEmpty(OffendersIn(
+            "QualifiedString.cs",
+            "    private DictationStatus Read(System.String sentence) => default;"));
+
         Assert.Empty(OffendersIn(
             "Innocent.cs", "    private static string Trim(string sentence) => sentence.Trim();"));
 
@@ -1326,6 +1388,17 @@ public sealed partial class DesignSystemTokenTests
         Assert.Empty(OffendersIn(
             "IndexerUse.cs",
             "    private void Show() { var current = statuses[this[string.Empty]]; }"));
+
+        // A LOOKUP IS NOT THE DEFECT. Mapping a known outcome onto a status through a dictionary is
+        // legitimate and is arguably the clearest way to do it. An earlier draft flagged this, which
+        // would have pushed people away from the good pattern.
+        Assert.Empty(OffendersIn(
+            "Lookup.cs",
+            "    private readonly Dictionary<string, DictationStatus> _statuses = [];"));
+
+        Assert.Empty(OffendersIn(
+            "GenericCall.cs",
+            "    private void Show() { var status = cache.Get<string, DictationStatus>(); }"));
     }
 
     /// <summary>
