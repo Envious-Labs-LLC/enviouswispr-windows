@@ -40,6 +40,21 @@ public static partial class CustomWordCorrector
     private static readonly HashSet<string> ReservedTriggerWords =
         new(["emoji", "emoticon"], StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>The everyday words that make a PHRASE need a closer match.</summary>
+    /// <remarks>
+    /// A SHORTER LIST THAN THE SINGLE-WORD ONE, AND macOS'S OWN. Reusing the 44-word set meant
+    /// "drove from bostin" against "drive from boston" was refused here and accepted there, purely
+    /// because "from" is in the larger list. These fourteen are the words the reference platform
+    /// treats as common enough to raise the bar - copied rather than reasoned about, because a set
+    /// that disagrees with macOS by one word disagrees with it on real sentences.
+    /// </remarks>
+    private static readonly HashSet<string> PhraseStopWords = new(
+        [
+            "the", "and", "or", "is", "to", "for", "in",
+            "a", "at", "on", "of", "we", "you", "it",
+        ],
+        StringComparer.OrdinalIgnoreCase);
+
     private static readonly HashSet<string> FuzzyStopWords = new(
         [
             "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
@@ -281,7 +296,27 @@ public static partial class CustomWordCorrector
                 }
 
                 var phrase = string.Join(' ', words);
-                var scored = rivals
+
+                // SAYING IT RIGHT IS A FACT ABOUT WHAT WAS SAID, so it is settled before any
+                // competition between rules and against EVERY rule rather than against whichever
+                // scored highest - a run that already reads as one rule's answer is correct however
+                // well some other rule happens to score against it.
+                if (rivals.Any(candidate =>
+                    phrase.Equals(candidate.Replacement, StringComparison.Ordinal)))
+                {
+                    claimed.Add(new Span(start, length));
+                    index += run - 1;
+                    break;
+                }
+
+                // EACH PHRASE IS JUDGED AGAINST ITS OWN BAR BEFORE ANY OF THEM ARE RANKED, which is
+                // the same defect this had for single words: ranking first let a STRICT phrase that
+                // was never going to be corrected stand in front of a LOOSE one that would have
+                // been. "alpha betx" is 0.90 from a strict "alpha beta", which fails its 0.92, and
+                // 0.80 from a loose "alpha zeta", which clears its 0.72 - and the sentence was left
+                // alone because the strict phrase scored higher.
+                var everyday = words.Any(PhraseStopWords.Contains);
+                var eligible = rivals
                     .Select(candidate => new
                     {
                         Candidate = candidate,
@@ -289,28 +324,16 @@ public static partial class CustomWordCorrector
                             phrase.ToLowerInvariant(),
                             candidate.Surface.ToLowerInvariant()),
                     })
+                    .Where(item => item.Score >= PhraseThreshold(item.Candidate.Strictness, everyday))
                     .OrderByDescending(item => item.Score)
                     .ToArray();
-                if (scored.Length == 0 || scored[0].Score <= 0)
+                if (eligible.Length == 0)
                 {
                     continue;
                 }
 
-                var best = scored[0];
-                if (phrase.Equals(best.Candidate.Replacement, StringComparison.Ordinal))
-                {
-                    claimed.Add(new Span(start, length));
-                    index += run - 1;
-                    break;
-                }
-
-                var everyday = words.Any(FuzzyStopWords.Contains);
-                if (best.Score < PhraseThreshold(best.Candidate.Strictness, everyday))
-                {
-                    continue;
-                }
-
-                var rival = scored
+                var best = eligible[0];
+                var rival = eligible
                     .Skip(1)
                     .FirstOrDefault(item => !string.Equals(
                         item.Candidate.Replacement,
