@@ -115,9 +115,12 @@ public static class CustomWordImport
 
         var lines = new List<ImportedWordLine>();
         var raw = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        var hasHeader = HasHeader(raw);
         for (var index = 0; index < raw.Length; index++)
         {
-            lines.Add(ReadLine(raw[index], index + 1, known, claimed));
+            lines.Add(IsHeader(raw[index])
+                ? new ImportedWordLine(index + 1, raw[index], null, ImportedWordOutcome.Ignored)
+                : ReadLine(raw[index], index + 1, hasHeader, known, claimed));
         }
 
         return new CustomWordImportPlan(lines);
@@ -136,8 +139,33 @@ public static class CustomWordImport
         ArgumentNullException.ThrowIfNull(entries);
         return string.Join(
             Environment.NewLine,
-            entries.Select(entry => $"{entry.SpokenForm},{entry.Replacement},{Spell(entry.Strictness)}"));
+            new[] { Header }.Concat(
+                entries.Select(entry =>
+                    $"{entry.SpokenForm},{entry.Replacement},{Spell(entry.Strictness)}")));
     }
+
+    /// <summary>The line that says this file has a third column, and names all three.</summary>
+    /// <remarks>
+    /// IT EARNS ITS PLACE TWICE. It tells the reader what the columns are, in the same words the
+    /// app uses, in a file whose whole purpose is to be edited in a spreadsheet. And it is what
+    /// makes a third field mean anything at all, so a file written before today cannot have one
+    /// line reinterpreted.
+    /// </remarks>
+    public const string Header = "when I say,write,how closely";
+
+    private static bool IsHeader(string line) =>
+        string.Equals(line.Trim(), Header, StringComparison.OrdinalIgnoreCase);
+
+    /// <remarks>
+    /// THE FIRST LINE THAT SAYS ANYTHING, not any line anywhere. A header found halfway down would
+    /// let a file turn its own earlier lines into three-column lines retrospectively, which is the
+    /// exact reinterpretation the header exists to prevent.
+    /// </remarks>
+    private static bool HasHeader(string[] lines) =>
+        lines
+            .Select(line => line.Trim())
+            .FirstOrDefault(line => line.Length > 0 && !line.StartsWith('#')) is { } first
+        && IsHeader(first);
 
     /// <summary>Takes the imported version of words the user already corrects differently.</summary>
     /// <remarks>
@@ -196,6 +224,10 @@ public static class CustomWordImport
 
     private static bool TryReadStrictness(string value, out MatchStrictness strictness)
     {
+        // AN EMPTY FIELD IS NOT "DEFAULT", IT IS A FIELD SOMEBODY DELETED HALF OF. "word,written,"
+        // reading as the ordinary rule would quietly replace a Loose or Strict word's choice with
+        // the one it did not have, on a line whose third column is visibly blank in the spreadsheet
+        // the person was editing.
         switch (value.Trim().ToLowerInvariant())
         {
             case "loose":
@@ -205,7 +237,6 @@ public static class CustomWordImport
                 strictness = MatchStrictness.Strict;
                 return true;
             case "default":
-            case "":
                 strictness = MatchStrictness.Default;
                 return true;
             default:
@@ -217,6 +248,7 @@ public static class CustomWordImport
     private static ImportedWordLine ReadLine(
         string raw,
         int lineNumber,
+        bool hasHeader,
         Dictionary<string, CustomWordEntry> known,
         Dictionary<string, CustomWordEntry> claimed)
     {
@@ -226,13 +258,15 @@ public static class CustomWordImport
             return new ImportedWordLine(lineNumber, raw, null, ImportedWordOutcome.Ignored);
         }
 
-        // TWO COLUMNS OR THREE, AND NOTHING ELSE. The third names how closely the word must match
-        // and a file that omits it is a file written before the column existed or by hand, which is
-        // the ordinary behaviour and needs no ceremony. More than three parts is still refused
-        // rather than guessed at, because a line that splits further is a line the reader cannot
-        // predict the meaning of either.
+        // THE THIRD COLUMN EXISTS ONLY IN A FILE THAT SAYS IT DOES, and that is the whole reason for
+        // the header line. Accepting a third field from any file changes what an OLD line means
+        // rather than adding to it: "say,hello,strict" was refused before, and reading it now as
+        // "hello" matched strictly is a decision made on behalf of somebody who may well have been
+        // writing a replacement with a comma in it. In a file with no header the rule is what it
+        // always was - exactly two fields - so no existing line can change meaning.
         var parts = trimmed.Split(Separators);
-        if (parts.Length is not (2 or 3))
+        var allowed = hasHeader ? 3 : 2;
+        if (parts.Length < 2 || parts.Length > allowed)
         {
             return new ImportedWordLine(lineNumber, raw, null, ImportedWordOutcome.Unreadable);
         }
@@ -249,15 +283,10 @@ public static class CustomWordImport
 
         // A WORD NOBODY RECOGNISES IS REFUSED, NOT QUIETLY TAKEN AS ORDINARY. Reading "strickt" as
         // default would correct that word more narrowly than the file asked for and say nothing.
-        if (parts.Length == 3 && !TryReadStrictness(parts[2], out _))
+        var strictness = MatchStrictness.Default;
+        if (parts.Length == 3 && !TryReadStrictness(parts[2], out strictness))
         {
             return new ImportedWordLine(lineNumber, raw, null, ImportedWordOutcome.Unreadable);
-        }
-
-        var strictness = MatchStrictness.Default;
-        if (parts.Length == 3)
-        {
-            TryReadStrictness(parts[2], out strictness);
         }
 
         var entry = new CustomWordEntry(spoken, replacement, strictness);
