@@ -96,25 +96,46 @@ try {
         Start-Sleep -Milliseconds 500
     }
 } finally {
-    # CLEANUP RUNS EVEN WHEN THE WAIT DID NOT. Deleting a task does NOT stop the program it started,
-    # which Microsoft documents plainly, so the task is stopped first and the app is stopped by the
-    # pid the runner wrote to disk - this session cannot see the logged-in session's processes.
-    if ($registered) {
-        try { Stop-ScheduledTask -TaskName $taskName -ErrorAction Stop } catch { "   cleanup: $($_.Exception.Message)" }
-    }
-    if (Test-Path -LiteralPath $pidPath) {
-        $strayPid = (Get-Content -LiteralPath $pidPath -ErrorAction SilentlyContinue | Select-Object -First 1)
-        if ($strayPid -match '^\d+$') {
-            $stray = Get-Process -Id ([int] $strayPid) -ErrorAction SilentlyContinue
-            if ($stray -and $stray.ProcessName -eq 'EnviousWispr.App') {
-                $stray | Stop-Process -Force -ErrorAction SilentlyContinue
-                "   cleanup: stopped stray app pid $strayPid"
+    # THREE STAGES, EACH PROTECTED ON ITS OWN, AND UNREGISTER ALWAYS ATTEMPTED. A single try around
+    # all three meant one failure skipped the rest, and a swallowed unregister failure let the run
+    # print CAPTURED while its task was still registered. Deleting a task does NOT stop the program
+    # it started, which Microsoft documents plainly, so the order is: stop the task, stop the app,
+    # then remove the task - and any failure is carried out and reported rather than discarded.
+    $cleanupFailures = @()
+
+    # ONLY ON A RUN THAT DID NOT SIGNAL SUCCESS. The runner writes its marker AFTER closing the app
+    # politely; stopping its task on a successful run killed it mid-shutdown, so the polite close
+    # never happened and the app was force-killed anyway - the harness defeating its own fix.
+    if ($registered -and -not (Test-Path -LiteralPath $markerPath)) {
+        try { Stop-ScheduledTask -TaskName $taskName -ErrorAction Stop }
+        catch { $cleanupFailures += "stop task: $($_.Exception.Message)" }
+
+        try {
+            if (Test-Path -LiteralPath $pidPath) {
+                # PID AND START TIME BOTH, because Windows reuses process ids and ProcessName alone
+                # would also match a SECOND copy of this app that somebody else is using.
+                $recorded = (Get-Content -LiteralPath $pidPath -ErrorAction SilentlyContinue |
+                    Select-Object -First 1) -split '\|'
+                if ($recorded.Count -eq 2 -and $recorded[0] -match '^\d+$' -and $recorded[1] -match '^\d+$') {
+                    $stray = Get-Process -Id ([int] $recorded[0]) -ErrorAction SilentlyContinue
+                    if ($stray -and $stray.StartTime.Ticks -eq [long] $recorded[1]) {
+                        $stray | Stop-Process -Force -ErrorAction Stop
+                        "   cleanup: stopped stray app pid $($recorded[0])"
+                    }
+                }
             }
-        }
+        } catch { $cleanupFailures += "stop app: $($_.Exception.Message)" }
     }
+
     if ($registered) {
         try { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop }
-        catch { "   cleanup: $($_.Exception.Message)" }
+        catch { $cleanupFailures += "unregister: $($_.Exception.Message)" }
+
+        # VERIFIED GONE, NOT ASSUMED GONE. An unregister that reports nothing and leaves the task
+        # behind is how a machine accumulates one scheduled task per screenshot.
+        if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+            $cleanupFailures += "the task $taskName is still registered"
+        }
     }
 }
 
@@ -122,6 +143,12 @@ if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath | ForEa
 
 if (-not (Test-Path -LiteralPath $markerPath)) {
     throw "No capture was confirmed within $TimeoutSeconds seconds. The log above, if any, says how far it got. A PNG may exist and must not be trusted: the marker is written only after the app was seen on screen. Nobody logged in means no desktop to photograph."
+}
+
+# A LEFTOVER TASK IS A FAILED RUN, however good the photograph is. Reporting CAPTURED over the top
+# of it is how the leftovers go unnoticed until somebody opens Task Scheduler.
+if ($cleanupFailures.Count -gt 0) {
+    throw "The capture succeeded but cleanup did not: $($cleanupFailures -join '; ')"
 }
 
 $size = (Get-Item -LiteralPath $shotPath).Length

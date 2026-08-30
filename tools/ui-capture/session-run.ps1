@@ -38,6 +38,16 @@ Note "session $((Get-Process -Id $PID).SessionId), shot '$Shot', overlay '$Overl
 $env:ENVIOUSWISPR_DATA_DIRECTORY = $DataDirectory
 if ($OverlayState) { $env:ENVIOUSWISPR_UAT_OVERLAY_STATE = $OverlayState }
 
+# THE APP CLOSES ITSELF, THROUGH ITS OWN TRAY EXIT. Asking the window to close does nothing here and
+# should not: EnviousWispr lives in the notification area, so closing its window hides it and the
+# process stays. Every capture therefore ended in a force-kill, and the app - correctly - reported
+# "EnviousWispr did not close properly last time" on the next launch, ten times in a row, in a
+# screenshot. ENVIOUSWISPR_UAT_EXIT_AFTER_MILLISECONDS runs the real shutdown path instead, so the
+# harness stops manufacturing the defect it exists to photograph. It is clamped to the 500..30000
+# window the app accepts; outside that the app ignores it and we are back to the hard stop below.
+$exitAfter = [Math]::Min(30000, [Math]::Max(500, $SettleMilliseconds + 2000))
+$env:ENVIOUSWISPR_UAT_EXIT_AFTER_MILLISECONDS = $exitAfter
+
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -69,11 +79,14 @@ public static class UiCaptureWindows {
 '@ -ErrorAction SilentlyContinue
 
 $app = $null
+$captured = $false
 try {
     $app = Start-Process -FilePath $AppExe -PassThru
-    # THE PID GOES TO DISK IMMEDIATELY. The launcher cannot see this session's processes and must
-    # still be able to stop the app if this script is killed part-way through.
-    Set-Content -LiteralPath $pidFile -Value $app.Id
+    # THE PID AND ITS START TIME GO TO DISK IMMEDIATELY. The launcher cannot see this session's
+    # processes and must still be able to stop the app if this script is killed part-way through.
+    # The start time is what makes the pid safe to act on: Windows reuses process ids, and a pid
+    # alone can name a completely different program by the time anybody reads it.
+    Set-Content -LiteralPath $pidFile -Value "$($app.Id)|$($app.StartTime.Ticks)"
     Note "started pid $($app.Id)"
 
     Start-Sleep -Milliseconds $SettleMilliseconds
@@ -98,7 +111,7 @@ try {
     # RENAMED ONLY ONCE IT IS WHOLE, so a reader never picks up a half-written PNG, and the marker
     # is written last so its presence means the app was on screen when the shutter fired.
     Move-Item -LiteralPath $staging -Destination $final -Force
-    Set-Content -LiteralPath $marker -Value "captured"
+    $captured = $true
     Note "captured $final"
 } catch {
     Note "FAILED: $($_.Exception.Message)"
@@ -106,15 +119,22 @@ try {
 } finally {
     Remove-Item -LiteralPath $staging -ErrorAction SilentlyContinue
     if ($app -and -not $app.HasExited) {
-        # ASK BEFORE INSISTING. Force-killing every run made the app report "did not close properly"
-        # on the next launch, ten times in a row - the capture harness manufacturing the very defect
-        # somebody might photograph.
-        $app.CloseMainWindow() | Out-Null
-        if (-not $app.WaitForExit(4000)) {
-            $app | Stop-Process -Force -ErrorAction SilentlyContinue
-            Note "stopped pid $($app.Id) the hard way; it ignored the close request"
+        # WAIT FOR THE APP'S OWN EXIT, and only insist if it overruns. The deadline it was given is
+        # $exitAfter from launch; this allows that plus a margin for the shutdown itself.
+        if ($app.WaitForExit($exitAfter + 6000)) {
+            Note "pid $($app.Id) exited cleanly through its own tray exit"
         } else {
-            Note "closed pid $($app.Id)"
+            $app | Stop-Process -Force -ErrorAction SilentlyContinue
+            Note "stopped pid $($app.Id) the hard way; it did not take its own exit"
         }
+    }
+
+    # THE MARKER IS THE LAST THING THAT HAPPENS, AND THAT ORDERING IS THE FIX. Written before the
+    # app was closed, it told the launcher to tidy up - and the launcher's Stop-ScheduledTask killed
+    # this script mid-shutdown, so the polite close never ran and the app was force-killed anyway.
+    # A success signal that cancels the work it is signalling is worse than no signal.
+    if ($captured) {
+        Remove-Item -LiteralPath $pidFile -ErrorAction SilentlyContinue
+        Set-Content -LiteralPath $marker -Value "captured"
     }
 }
