@@ -131,4 +131,38 @@ public sealed class RecordingLevelHistoryTests
 
         Assert.Equal(expected, history.Levels[^1]);
     }
+
+    [Theory]
+    [InlineData(float.NaN)]
+    [InlineData(float.PositiveInfinity)]
+    [InlineData(float.NegativeInfinity)]
+    public void ALevelNobodyCouldMeasureReadsAsSilence(float rootMeanSquare)
+    {
+        // NOT-A-NUMBER PASSES EVERY RANGE CHECK. Math.Max and Math.Clamp both hand it straight back,
+        // so it would have arrived as a bar height and an opacity that no layout can draw - and the
+        // Classic pill reads this value directly, before the history ever sees it.
+        Assert.Equal(0f, RecordingLevelHistory.Normalize(rootMeanSquare));
+    }
+
+    [Theory]
+    [InlineData(-5f, 0f)]
+    [InlineData(0f, 0f)]
+    [InlineData(0.25f, 1f)]
+    [InlineData(9f, 1f)]
+    public void TheNormalizerStaysInsideNoughtToOne(float rootMeanSquare, float expected)
+    {
+        Assert.Equal(expected, RecordingLevelHistory.Normalize(rootMeanSquare), 3);
+    }
+
+    [Fact]
+    public void QuietSpeechIsVisibleRatherThanFlat()
+    {
+        // A SQUARE ROOT BECAUSE HEARING IS NOT LINEAR. Ordinary speech sits low in a raw
+        // root-mean-square, so drawing it directly gives a meter that barely moves until somebody
+        // shouts at it.
+        var quiet = RecordingLevelHistory.Normalize(0.01f);
+
+        Assert.True(quiet > 0.15f, $"Quiet speech normalised to {quiet}, which draws as nothing.");
+        Assert.True(quiet < 0.5f, $"Quiet speech normalised to {quiet}, which draws as loud.");
+    }
 }
