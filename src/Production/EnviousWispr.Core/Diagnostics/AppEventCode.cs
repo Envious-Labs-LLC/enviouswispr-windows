@@ -59,6 +59,16 @@ public enum AppEventCode
     DeterministicProcessingStarted,
     DeterministicProcessingCompleted,
     DeterministicProcessingDegraded,
+
+    /// <summary>One deterministic cleanup stage reported what it did.</summary>
+    /// <remarks>
+    /// SEPARATE FROM THE SUMMARY PAIR ABOVE, which say only that the whole pass finished and
+    /// how long it took. A pass that skipped all five stages and one that did five jobs
+    /// quickly are the same line there, and "do custom words work" is exactly the question
+    /// that difference answers. The pipeline has always produced a receipt per stage; this is
+    /// where it stops being thrown away.
+    /// </remarks>
+    DeterministicStageObserved,
     PolishStarted,
     PolishCompleted,
     PolishDegraded,

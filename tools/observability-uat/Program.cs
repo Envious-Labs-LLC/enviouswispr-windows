@@ -1,8 +1,10 @@
 using System.Net;
+using System.Reflection;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using EnviousWispr.Core.Diagnostics;
+using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Services.Diagnostics;
 
@@ -49,13 +51,45 @@ try
         var telemetryFields = document.RootElement.EnumerateObject()
             .Select(property => property.Name)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "timestamp", "event", "failure", "elapsedMilliseconds", "provider",
-            "errorCode", "engine", "hardwareClass",
-        };
+        // DERIVED FROM THE RECORD, NOT TYPED OUT BESIDE IT. A hand-written copy of this list is a
+        // second place to forget, and forgetting it is exactly how three fields reached the network
+        // while every document and gate still described eight. Reflection cannot fall behind the
+        // type it reflects over, and ContainsForbiddenName below still refuses a field whose NAME
+        // looks like content whatever the record says.
+        var allowed = typeof(PrivacySafeDiagnosticRecord)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(property => property.Name != "EqualityContract")
+            .Select(property => JsonNamingPolicy.CamelCase.ConvertName(property.Name))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var typedTelemetryOnly = telemetryFields.IsSubsetOf(allowed) &&
             !ContainsForbiddenName(telemetryFields);
+
+        // A SECOND RECORD, BECAUSE AN ALLOWLIST THAT IS NEVER EXERCISED PROVES NOTHING. The record
+        // above carries none of the deterministic-stage fields, so widening the allowlist alone
+        // would let them through untested and this gate would pass while saying nothing about them.
+        var receiveStage = ReceiveOneAsync(listener, CancellationToken.None);
+        logger.Write(new AppLogEntry(
+            now,
+            AppEventCode.DeterministicStageObserved,
+            AppFailureCategory.None,
+            ElapsedMilliseconds: 4,
+            Stage: DeterministicTextStage.CustomWords,
+            StageStatus: DeterministicStageStatus.Completed,
+            Changed: true));
+        var stageBody = await receiveStage.WaitAsync(TimeSpan.FromSeconds(5));
+        using var stageDocument = JsonDocument.Parse(stageBody);
+        var stageFields = stageDocument.RootElement.EnumerateObject()
+            .Select(property => property.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var stageDetailArrives =
+            stageFields.IsSubsetOf(allowed) &&
+            !ContainsForbiddenName(stageFields) &&
+            stageDocument.RootElement.TryGetProperty("stage", out var stageValue) &&
+            stageValue.GetString() == "CustomWords" &&
+            stageDocument.RootElement.TryGetProperty("stageStatus", out var stageStatusValue) &&
+            stageStatusValue.GetString() == "Completed" &&
+            stageDocument.RootElement.TryGetProperty("changed", out var changedValue) &&
+            changedValue.GetBoolean();
 
         const string injected =
             "{\"timestamp\":\"2026-08-26T12:00:00Z\",\"event\":\"ShellShown\",\"failure\":\"None\",\"transcript\":\"PRIVATE_SENTINEL\"}";
@@ -72,15 +106,17 @@ try
 
         var passed = preConsentRequests == 0 &&
             typedTelemetryOnly &&
+            stageDetailArrives &&
             exportResult.Succeeded &&
-            exportResult.ExportedRecordCount == 2 &&
+            exportResult.ExportedRecordCount == 3 &&
             forbiddenContentAbsent;
         Console.WriteLine(JsonSerializer.Serialize(new
         {
             preConsentRequests,
-            postConsentRequests = 1,
+            postConsentRequests = 2,
             telemetryFieldCount = telemetryFields.Count,
             typedTelemetryOnly,
+            stageDetailArrives,
             exportResult.ExportedRecordCount,
             forbiddenContentAbsent,
             passed,

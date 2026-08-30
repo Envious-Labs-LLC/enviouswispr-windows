@@ -61,6 +61,15 @@ public partial class App : Application, IAsyncDisposable
     private IAudioCapture? _audioCapture;
     private RuntimeWorkerTranscriptionEngine? _transcriptionEngine;
     private RuntimeWorkerLivePreviewEngine? _previewEngine;
+    /// <summary>Why <see cref="_previewEngine"/> could not be built, or null when it was.</summary>
+    /// <remarks>
+    /// HELD RATHER THAN LOGGED WHERE IT IS DISCOVERED. Configuration runs on every launch,
+    /// including the overwhelming majority where Live Preview is switched off, so writing the
+    /// failure there would file a complaint on behalf of a user who never asked for the
+    /// feature - once per launch, on every machine without the optional pack. The reason is
+    /// kept here and reported at the moment somebody actually turns Live Preview on.
+    /// </remarks>
+    private AppErrorCode? _previewUnavailableReason;
     private IPolishProvider? _polishProvider;
     private WindowsTextTargetAdapter? _textTargetAdapter;
     private ContextAwareTextDelivery? _textDelivery;
@@ -894,6 +903,43 @@ public partial class App : Application, IAsyncDisposable
         });
     }
 
+    /// <summary>Writes one line per deterministic stage, so a skipped step is visible.</summary>
+    /// <remarks>
+    /// SPLIT IN TWO CALLS AROUND THE OPTIONAL POLISH. The summary line says only that the pass
+    /// finished and what it cost, so a pass that skipped all five stages and one that did five jobs
+    /// quickly are the same record - and "do custom words work" is exactly the question that
+    /// difference answers. An empty custom-word list makes correction vanish with no trace.
+    ///
+    /// EmojiRestoration is the one stage that runs on the far side of polish, where
+    /// <c>ApplyPolishedTextAsync</c> replaces its receipt. Reporting it early recorded Skipped and
+    /// hid a later failure; reporting everything late put older lines after newer ones in a file
+    /// that is appended to and read oldest-first. Each half is written when it is true.
+    /// </remarks>
+    private void EmitStageReceipts(
+        IReadOnlyList<DeterministicStageReceipt> receipts,
+        bool emojiRestorationOnly)
+    {
+        foreach (var receipt in receipts)
+        {
+            if ((receipt.Stage == DeterministicTextStage.EmojiRestoration) != emojiRestorationOnly)
+            {
+                continue;
+            }
+
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DeterministicStageObserved,
+                receipt.Status is DeterministicStageStatus.Failed
+                    or DeterministicStageStatus.TimedOut
+                    ? AppFailureCategory.PostProcessing
+                    : AppFailureCategory.None,
+                receipt.ElapsedMilliseconds,
+                Stage: receipt.Stage,
+                StageStatus: receipt.Status,
+                Changed: receipt.Changed));
+        }
+    }
+
     private void ExitFromTray()
     {
         _window?.DispatcherQueue.TryEnqueue(() => _ = ExitFromTrayAsync());
@@ -1552,6 +1598,7 @@ public partial class App : Application, IAsyncDisposable
         if (modelDirectory is null ||
             !new LocalWhisperModelProbe().Probe(modelDirectory).PreviewSmallComplete)
         {
+            _previewUnavailableReason = AppErrorCode.ModelPackUnavailable;
             return;
         }
 
@@ -1567,6 +1614,7 @@ public partial class App : Application, IAsyncDisposable
                 : Math.Max(1, hardware.LogicalProcessorCount / 2),
             2,
             8);
+        _previewUnavailableReason = null;
         _previewEngine = new RuntimeWorkerLivePreviewEngine(
             new RuntimeWorkerTranscriptionOptions(
                 workerExecutable,
@@ -2651,10 +2699,21 @@ public partial class App : Application, IAsyncDisposable
             // ANY failure gives up on the head start entirely rather than delivering a partial
             // transcript. Half a dictation is worse than a slow one.
             _streamingUsable = false;
+            // THE CAUGHT EXCEPTION IS READ RATHER THAN DISCARDED. This handler used to assert
+            // AsrUnavailable whatever had happened, so a busy runtime, a dead worker and a missing
+            // model pack wrote one identical line and no log could tell them apart. The engine
+            // already carries the code it failed with, so the category is now observed instead of
+            // chosen when the handler was written.
+            var error = (exception as TranscriptionEngineException)?.Error;
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.StreamingAbandoned,
-                AppFailureCategory.AsrUnavailable));
+                // UNKNOWN WHEN THE EXCEPTION IS UNTYPED, because the catch takes almost anything -
+                // a disposed runtime, a memory-mapped read, an infrastructure fault - and calling
+                // all of those AsrUnavailable is the same false assertion this change removed for
+                // the typed case.
+                error is null ? AppFailureCategory.Unknown : FailureFor(error),
+                ErrorCode: error?.Code));
         }
     }
 
@@ -2805,8 +2864,31 @@ public partial class App : Application, IAsyncDisposable
 
         var engine = _previewEngine;
         var audioCapture = _audioCapture as IAudioSnapshotSource;
-        if (engine is null || audioCapture is null)
+        // THE USER HAS ASKED FOR THIS BY THE TIME WE GET HERE, so a refusal is news and the two
+        // reasons are different facts. A missing preview model is a thing they can fix by installing
+        // one; a capture source that cannot be sampled is not. Reporting them as one silent return
+        // is what let somebody switch Live Preview on, watch the toggle stay on, see nothing happen,
+        // and find no trace of why.
+        if (engine is null)
         {
+            var reason = _previewUnavailableReason ?? AppErrorCode.RuntimeProviderUnavailable;
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.LivePreviewFailed,
+                reason == AppErrorCode.ModelPackUnavailable
+                    ? AppFailureCategory.AsrUnavailable
+                    : AppFailureCategory.RuntimeProvider,
+                ErrorCode: reason));
+            return;
+        }
+
+        if (audioCapture is null)
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.LivePreviewFailed,
+                AppFailureCategory.AudioUnavailable,
+                ErrorCode: AppErrorCode.AudioDeviceUnavailable));
             return;
         }
 
@@ -3009,15 +3091,18 @@ public partial class App : Application, IAsyncDisposable
                 deterministicRequest,
                 cancellationToken).ConfigureAwait(false);
             processingTimer.Stop();
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                processed.IsDegraded
-                    ? AppEventCode.DeterministicProcessingDegraded
-                    : AppEventCode.DeterministicProcessingCompleted,
-                processed.IsDegraded
-                    ? AppFailureCategory.PostProcessing
-                    : AppFailureCategory.None,
-                processingTimer.ElapsedMilliseconds));
+            var deterministicMilliseconds = processingTimer.ElapsedMilliseconds;
+            // THE FOUR STAGES THAT ARE FINISHED REPORT NOW; THE ONE THAT IS NOT WAITS.
+            // ApplyPolishedTextAsync runs EmojiRestoration further down and REPLACES its receipt, so
+            // reporting that stage from here recorded Skipped and left a later restoration failure
+            // hidden behind a healthy line. The other four cannot change after this point.
+            //
+            // SPLIT RATHER THAN ALL-AFTER-POLISH, because this file is append-ordered and read
+            // oldest-first by retention and pruning. Holding these four back and stamping them with
+            // an earlier time put older lines after newer ones whenever polish was slow, which
+            // breaks that contract to fix a different one. Every line now carries the moment it was
+            // written, and the ordering holds.
+            EmitStageReceipts(processed.Receipts, emojiRestorationOnly: false);
             await SaveRecoveryTextAsync(processed.Output, cancellationToken).ConfigureAwait(false);
             var polishResult = await TryPolishAsync(
                     processed.Output,
@@ -3058,6 +3143,24 @@ public partial class App : Application, IAsyncDisposable
                     cancellationToken).ConfigureAwait(false);
                 await SaveRecoveryTextAsync(processed.Output, cancellationToken).ConfigureAwait(false);
             }
+
+            EmitStageReceipts(processed.Receipts, emojiRestorationOnly: true);
+            var restorationMilliseconds = processed.Receipts
+                .Where(receipt => receipt.Stage == DeterministicTextStage.EmojiRestoration)
+                .Sum(receipt => receipt.ElapsedMilliseconds);
+            // THE SUMMARY IS LAST, BECAUSE IT IS THE ONLY LINE THAT CAN STILL BE WRONG. IsDegraded
+            // turns true when restoration times out or fails, and the duration has to include the
+            // restoration that a failure happened inside. Written before polish, a degraded pass
+            // reported itself as clean.
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                processed.IsDegraded
+                    ? AppEventCode.DeterministicProcessingDegraded
+                    : AppEventCode.DeterministicProcessingCompleted,
+                processed.IsDegraded
+                    ? AppFailureCategory.PostProcessing
+                    : AppFailureCategory.None,
+                deterministicMilliseconds + restorationMilliseconds));
 
             if (!recoveryOnly &&
                 !string.IsNullOrWhiteSpace(processed.Output.Text) &&

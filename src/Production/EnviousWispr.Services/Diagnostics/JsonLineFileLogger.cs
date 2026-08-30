@@ -134,6 +134,13 @@ public sealed class JsonLineFileLogger : IAppLogger
                 (record.ErrorCode is null || Enum.IsDefined(record.ErrorCode.Value)) &&
                 (record.Engine is null || Enum.IsDefined(record.Engine.Value)) &&
                 (record.HardwareClass is null || Enum.IsDefined(record.HardwareClass.Value)) &&
+                // JsonStringEnumConverter ACCEPTS INTEGERS unless told otherwise, so a corrupted or
+                // hand-edited line reading "stage":97 deserialises happily and would then survive a
+                // prune and reach an export. Every other enum on this line is checked here; leaving
+                // two out would make the strict read-back rule true only of the fields somebody
+                // remembered.
+                (record.Stage is null || Enum.IsDefined(record.Stage.Value)) &&
+                (record.StageStatus is null || Enum.IsDefined(record.StageStatus.Value)) &&
                 record.ElapsedMilliseconds is null or
                     (>= 0 and <= PrivacySafeDiagnosticRecord.MaximumElapsedMilliseconds);
         }

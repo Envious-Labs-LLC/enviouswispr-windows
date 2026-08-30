@@ -33,9 +33,16 @@ JSONL writer, exporter, or HTTP transport.
 | `errorCode` | optional `AppErrorCode` enum | Typed product failure, never exception text. |
 | `engine` | optional `DiagnosticEngineChoice` enum | Parakeet or Whisper only. |
 | `hardwareClass` | optional `DiagnosticHardwareClass` enum | Unknown, CPU-only, GPU-present, or NVIDIA-CUDA. No device name, vendor/product ID, memory size, driver version, or fingerprint. |
+| `stage` | optional `DeterministicTextStage` enum | Which deterministic cleanup step a record is about: custom words, filler and false starts, spoken emoji, inverse text normalization, or emoji restoration. |
+| `stageStatus` | optional `DeterministicStageStatus` enum | Completed, Skipped, TimedOut, or Failed. A skipped step is the answer to most questions asked of this pipeline, so it is reported rather than omitted. |
+| `changed` | optional boolean | Whether that step altered the text. One bit, never what changed. |
 
 There is no account ID, install ID, session ID, advertising ID, IP field, device name, username, path,
 model ID, locale, transcript length, audio length, target-app name, or free-form string field.
+
+`stage`, `stageStatus`, and `changed` describe the pipeline, never its contents. They are two fixed
+enum members and one bit, so none of them can carry a word somebody said, and `changed` says only THAT
+text was altered.
 
 ## Forbidden data
 
