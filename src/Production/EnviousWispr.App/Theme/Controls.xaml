@@ -40,19 +40,24 @@
         <Setter Property="Foreground" Value="{ThemeResource BrandAccentBrush}" />
     </Style>
     <!--
-        THE WHOLE ROW COMMITS THE CHANGE, NOT JUST THE SWITCH. Measured on the running app: the
-        control reported 154 units wide inside a 455-unit content column, so two thirds of every
-        settings row were dead and the only reliable target was a small track. macOS commits on the
-        entire row, and its source records that being found as a real usability problem and fixed.
-        The label was already inside the target - the earlier note claiming otherwise was wrong, read
-        off the app's own accessibility tree - so what was missing is width, not a retemplate.
-        Stretching is a property, which is why this is four lines rather than a copy of the control.
+        THE WHOLE ROW DOES NOT COMMIT THE CHANGE, AND MAKING IT SO NEEDS THE TEMPLATE. macOS commits
+        on the entire settings row; here only the switch and its label do, which is issue #80.
+
+        STRETCHING THE CONTROL WAS TRIED AND REVERTED, and the reason is worth keeping. It widened
+        the rectangle the accessibility tree reports from 154 to 447 units without widening the area
+        a pointer can reach - measured by clicking both ends of the row on the running app: the left
+        turned the toggle on, the right left it off. Adding Background="Transparent" did not change
+        that, because the stock template does not bind the control's background to anything that
+        takes part in hit-testing. So the change made the app CLAIM a target it did not have, which
+        is worse than the narrow target it replaced: a screen reader is told the row is the control.
+
+        What it needs is a pinned template with a full-span hit-testable border, which also carries
+        the hover tint macOS pairs with the wider target. That is a real piece of work and it is on
+        the issue with the measurements behind it.
     -->
     <Style x:Key="BrandToggleSwitchStyle" TargetType="ToggleSwitch" BasedOn="{StaticResource DefaultToggleSwitchStyle}">
         <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
         <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
-        <Setter Property="HorizontalAlignment" Value="Stretch" />
-        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
     </Style>
     <!-- A dropdown whose selected text is wider than the control clips mid-word with no
          ellipsis, which reads as a rendering fault rather than as a shortened label. Measured at

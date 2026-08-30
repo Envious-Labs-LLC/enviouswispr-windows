@@ -27,6 +27,7 @@ param(
     # arrives as the single string "a,b" and an array parameter never splits it. Taking a string and
     # splitting it here is what the calling convention actually supports.
     [string] $Press = '',
+    [string] $Click = '',
     [switch] $Probe
 )
 
@@ -132,6 +133,13 @@ foreach ($control in $pressList) {
     }
 }
 if ($pressList) { $arguments += @('-Press', "`"$($pressList -join ',')`"") }
+if ($Click) {
+    if ($Click -match '"') {
+        throw "-Click cannot contain a quote. Got '$Click'."
+    }
+
+    $arguments += @('-Click', "`"$Click`"")
+}
 if ($Probe) { $arguments += '-Probe' }
 
 # DECLARED BEFORE THE TRY, because finally runs and THEN the script terminates on an unhandled
