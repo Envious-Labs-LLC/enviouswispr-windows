@@ -1817,10 +1817,15 @@ public sealed partial class DesignSystemTokenTests
     /// BOTH FORMS OR THE TEST IS A LIE. A built-in symbol is an attribute on the element; a Fluent
     /// glyph is a child element after it. Matching only one form would report every row using the
     /// other as having no icon, and this window uses both.
+    ///
+    /// AND IN ANY ATTRIBUTE ORDER. This required Glyph to be the FIRST attribute on the FontIcon,
+    /// so giving those icons an x:Name - which is how a section header borrows one - reported all
+    /// twenty rows as having no icon at once. Attribute order carries no meaning in XAML, and a rule
+    /// that depends on it fails on a change that means nothing.
     /// </remarks>
     [GeneratedRegex(
         @"<NavigationViewItem\b(?![\w.])(?<head>[^>]*?Content=""(?<label>[^""]*)""[^>]*?)>"
-            + @"(?:\s*<NavigationViewItem\.Icon>\s*<FontIcon Glyph=""&\#x(?<glyph>[0-9A-Fa-f]+);"")?",
+            + @"(?:\s*<NavigationViewItem\.Icon>\s*<FontIcon\b[^>]*?Glyph=""&\#x(?<glyph>[0-9A-Fa-f]+);"")?",
         RegexOptions.Singleline)]
     private static partial Regex NavigationRow();
 

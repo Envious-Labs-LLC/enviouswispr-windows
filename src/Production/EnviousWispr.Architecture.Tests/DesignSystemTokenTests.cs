@@ -2914,6 +2914,15 @@ public sealed partial class DesignSystemTokenTests
 
         Assert.True(eyebrows.Length >= 18, $"Expected the section headers, found {eyebrows.Length}.");
 
+        // EVERY ICON THE SIDEBAR DRAWS, which is the set somebody has actually looked at.
+        var sidebar = markup.Descendants()
+            .Where(element => element.Name.LocalName == "NavigationViewItem")
+            .SelectMany(row => row.Descendants())
+            .Where(element => element.Name.LocalName == "FontIcon")
+            .Select(icon => (string?)icon.Attribute(xaml + "Name"))
+            .Where(name => name is not null)
+            .ToHashSet(StringComparer.Ordinal);
+
         var faults = new List<string>();
         foreach (var eyebrow in eyebrows)
         {
@@ -2932,16 +2941,36 @@ public sealed partial class DesignSystemTokenTests
                 continue;
             }
 
-            if (marks[0].Attribute("Glyph") is not null)
+            // THE MARK MUST BE THE SIDEBAR'S OWN, RESOLVED HERE RATHER THAN TRUSTED. Forbidding a
+            // literal was not enough: a codepoint could still arrive from C#, or through the
+            // property-element form <FontIcon.Glyph>, and both left this green. Requiring the
+            // binding names the exact icon the header borrows, and that icon has to be one the
+            // sidebar draws - which is the only set anybody has looked at.
+            var bound = (string?)marks[0].Attribute("Glyph");
+            var source = bound is null
+                ? null
+                : Regex.Match(bound, @"^\{x:Bind\s+(\w+)\.Glyph,\s*Mode=OneTime\s*\}$") is { Success: true } hit
+                    ? hit.Groups[1].Value
+                    : null;
+            if (source is null)
             {
                 faults.Add(
-                    $"\"{label}\" writes its own Glyph, which nothing here can tell from a hollow box. "
-                        + "Take the page's, through NavigationGlyphFor.");
+                    $"\"{label}\" does not take its mark from a sidebar icon. Nothing here can tell a "
+                        + "codepoint that draws a picture from one that draws a hollow box, so the mark "
+                        + "has to be one the sidebar already draws.");
+                continue;
             }
 
-            if (marks[0].Attribute(xaml + "Name") is null)
+            if (!sidebar.Contains(source))
             {
-                faults.Add($"\"{label}\" has a glyph nothing can reach to fill in");
+                faults.Add($"\"{label}\" borrows \"{source}\", which is not an icon on a sidebar row");
+            }
+
+            if ((string?)marks[0].Attribute("Style") != "{StaticResource BrandSectionEyebrowGlyphStyle}")
+            {
+                faults.Add(
+                    $"\"{label}\" sizes its own mark. Eighteen headers carry one and a size written "
+                        + "eighteen times is a size that will disagree with itself.");
             }
         }
 

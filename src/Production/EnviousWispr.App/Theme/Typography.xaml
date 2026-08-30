@@ -16,6 +16,21 @@
         <Setter Property="Foreground" Value="{ThemeResource BrandTextPrimaryBrush}" />
         <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
+    <!--
+        THE MARK BESIDE A SECTION HEADING, SIZED THE WAY THE REFERENCE SIZES ITS OWN. macOS draws it
+        at 16 semibold beside a 14pt label, so it sits slightly proud of the words rather than
+        shrinking under them. It was 12 here, which is smaller than the label it belongs to.
+
+        ONE PLACE, because eighteen headers carry it and a size written eighteen times is a size that
+        will disagree with itself.
+    -->
+    <Style x:Key="BrandSectionEyebrowGlyphStyle" TargetType="FontIcon">
+        <Setter Property="FontSize" Value="16" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="AutomationProperties.AccessibilityView" Value="Raw" />
+    </Style>
+
     <Style x:Key="BrandSectionEyebrowStyle" TargetType="TextBlock">
         <!--
             A WINDOWS SECTION HEADING, NOT A WEB EYEBROW. Accent colour, letter-spacing and literal
