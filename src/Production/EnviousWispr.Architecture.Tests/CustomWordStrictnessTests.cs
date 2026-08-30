@@ -587,4 +587,34 @@ public sealed class CustomWordStrictnessTests
         Assert.Equal("ask Magnusson to sign it", result.Text);
         Assert.Equal(1, result.ReplacementCount);
     }
+
+    [Fact]
+    public void AStrictPhraseDoesNotStandInFrontOfALooseOneThatWouldHaveMatched()
+    {
+        // "alpha betx" is 0.90 from the strict phrase, below its 0.92, and 0.80 from the loose one,
+        // above its 0.72. Ranking by score before checking each bar left the sentence alone.
+        var result = CustomWordCorrector.Correct(
+            "the alpha betx here",
+            [
+                new CustomWordEntry("alpha beta", "Alpha Beta", MatchStrictness.Strict),
+                new CustomWordEntry("alpha zeta", "Alpha Zeta", MatchStrictness.Loose),
+            ]);
+
+        Assert.Equal("the Alpha Zeta here", result.Text);
+        Assert.Equal(1, result.ReplacementCount);
+    }
+
+    [Fact]
+    public void ThePhrasePassUsesTheReferencePlatformsListOfEverydayWords()
+    {
+        // "drove from bostin" is 0.882 from the phrase. "from" is in the single-word list of 44 and
+        // NOT in the phrase list of 14, so reusing the larger list raised the bar to 0.90 and
+        // refused a correction macOS makes.
+        var result = CustomWordCorrector.Correct(
+            "I drove from bostin yesterday",
+            [new CustomWordEntry("drive from boston", "Drive from Boston")]);
+
+        Assert.Equal("I Drive from Boston yesterday", result.Text);
+        Assert.Equal(1, result.ReplacementCount);
+    }
 }
