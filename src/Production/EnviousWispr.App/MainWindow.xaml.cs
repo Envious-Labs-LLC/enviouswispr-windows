@@ -240,6 +240,11 @@ public sealed partial class MainWindow : Window, IDisposable
         _telemetryAvailable = telemetryAvailable;
 
         InitializeComponent();
+
+        // THE PICKER STARTS ON THE ORDINARY RULE BY NAME, NOT BY POSITION. Starting it on whichever
+        // item happens to be listed first is the same coupling this feature just removed, wearing
+        // the word "default" as a coincidence rather than as a choice.
+        ResetMatchStrictness();
         EngineComboBox.ItemsSource = FinalEngineChoices;
         PolishProviderComboBox.ItemsSource = PolishProviderChoices;
         ThemeComboBox.ItemsSource = ThemeChoices;
@@ -1463,7 +1468,8 @@ public sealed partial class MainWindow : Window, IDisposable
     /// because the first one was, and the only sign of it is a column they have no reason to be
     /// watching.
     /// </remarks>
-    private void ResetMatchStrictness() => WordStrictnessComboBox.SelectedIndex = 0;
+    private void ResetMatchStrictness() =>
+        WordStrictnessComboBox.SelectedValue = MatchStrictness.Default;
 
     /// <summary>Selects every word, or clears the selection when they are all already chosen.</summary>
     /// <remarks>
