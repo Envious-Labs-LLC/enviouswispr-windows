@@ -2691,46 +2691,52 @@ public sealed partial class MainWindow : Window, IDisposable
         var hasItems = itemCount > 0;
         var hasQuery = !string.IsNullOrWhiteSpace(query);
         var historyUnavailable = _historyLoadStatus is HistoryLoadStatus.Invalid or HistoryLoadStatus.Unavailable;
-        HistoryLoadingState.Visibility = _isHistoryLoading ? Visibility.Visible : Visibility.Collapsed;
-        HistoryList.Visibility = !_isHistoryLoading && hasItems ? Visibility.Visible : Visibility.Collapsed;
-        HistoryEmptyState.Visibility = !_isHistoryLoading && !hasItems && !hasQuery && !historyUnavailable
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-        HistorySearchEmptyState.Visibility = !_isHistoryLoading && !hasItems && hasQuery && !historyUnavailable
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+        ShowCard(HistoryLoadingState, _isHistoryLoading);
+        ShowCard(HistoryList, !_isHistoryLoading && hasItems);
+        ShowCard(HistoryEmptyState, !_isHistoryLoading && !hasItems && !hasQuery && !historyUnavailable);
+        ShowCard(HistorySearchEmptyState, !_isHistoryLoading && !hasItems && hasQuery && !historyUnavailable);
 
-        // THE RESULT IS ANNOUNCED THROUGH WHICHEVER CARD SAYS IT. Announcing the loading card told a
-        // screen reader that history was loading and never that it had finished, which is the one
-        // sentence a person needs. An extra status line would have said the same thing the cards
-        // already say, in a second place, to everybody. So the card that becomes visible is the live
-        // region, and a loaded list announces through the list itself with the count on its name.
-        if (!_isHistoryLoading)
+        ShowCard(HistoryUnavailableState, !_isHistoryLoading && !hasItems && historyUnavailable);
+
+        // ANNOUNCED AFTER EVERY CARD HAS ITS VISIBILITY, NOT BEFORE. A collapsed element is not in
+        // the layout, so raising while the unavailable card was still hidden was refused by the very
+        // ancestor check that stops announcements from pages nobody is looking at - and the one
+        // state a person most needs told about was the one that stayed silent.
+        //
+        // AND ONLY WHEN THE ANSWER CHANGED. This runs on every refresh and every search keystroke,
+        // and the card titles are fixed text, so nothing else stops "No matching dictations" being
+        // spoken again on each letter typed. The key carries the count too, because a list that grew
+        // is news even though it is still a loaded list.
+        var terminal = _isHistoryLoading
+            ? null
+            : historyUnavailable ? "unavailable"
+            : hasItems ? $"loaded:{itemCount}"
+            : hasQuery ? "no-matches"
+            : "empty";
+
+        if (terminal is null)
         {
-            if (historyUnavailable)
+            // CLEARED WHILE LOADING, so an explicit refresh that lands on the same answer still says
+            // so. Without this, pressing Refresh and getting the same twelve dictations is silent.
+            _lastAnnouncedHistoryState = null;
+        }
+        else if (!string.Equals(terminal, _lastAnnouncedHistoryState, StringComparison.Ordinal))
+        {
+            var announced = historyUnavailable
+                ? AnnounceLiveRegion(HistoryUnavailableTitle)
+                : hasItems
+                    ? AnnounceHistoryCount(itemCount)
+                    : hasQuery
+                        ? AnnounceLiveRegion(HistorySearchEmptyTitle)
+                        : AnnounceLiveRegion(HistoryEmptyTitle);
+
+            // RECORDED ONLY IF IT WAS ACTUALLY SPOKEN. Remembering a state the ancestor check
+            // refused would swallow the announcement for good once the page is opened.
+            if (announced)
             {
-                AnnounceLiveRegion(HistoryUnavailableTitle);
-            }
-            else if (hasItems)
-            {
-                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-                    HistoryList,
-                    $"Transcript history, {itemCount} dictation{(itemCount == 1 ? string.Empty : "s")}.");
-                AnnounceLiveRegion(HistoryList);
-            }
-            else if (hasQuery)
-            {
-                AnnounceLiveRegion(HistorySearchEmptyTitle);
-            }
-            else
-            {
-                AnnounceLiveRegion(HistoryEmptyTitle);
+                _lastAnnouncedHistoryState = terminal;
             }
         }
-
-        HistoryUnavailableState.Visibility = !_isHistoryLoading && !hasItems && historyUnavailable
-            ? Visibility.Visible
-            : Visibility.Collapsed;
         if (!hasItems && hasQuery && !historyUnavailable)
         {
             HistorySearchEmptyDescription.Text = $"No saved dictations match “{query}”. Try another search or clear it.";
@@ -3055,22 +3061,55 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
+    /// <summary>The last history outcome a screen reader was told about.</summary>
+    private string? _lastAnnouncedHistoryState;
+
+    /// <summary>Shows or hides one of the history cards.</summary>
+    /// <remarks>
+    /// A HELPER SO THE LIVE REGIONS ARE NOT WRITTEN DIRECTLY. HistoryList is a live region and its
+    /// visibility changes on every refresh; assigning it in place forced the gate to grant that
+    /// region a blanket exemption, which then excused any other direct write to it anywhere in the
+    /// file. Going through here means the gate needs no exemption at all.
+    /// </remarks>
+    private static void ShowCard(FrameworkElement card, bool show) =>
+        card.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>Announces how many dictations the list is showing.</summary>
+    /// <remarks>
+    /// THE COUNT GOES ON THE NAME BEFORE THE RAISE, because a live region announces what it is
+    /// called, and a list's own contents are not a sentence anybody wants read out on every refresh.
+    /// </remarks>
+    private bool AnnounceHistoryCount(int itemCount)
+    {
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            HistoryList,
+            $"Transcript history, {itemCount} dictation{(itemCount == 1 ? string.Empty : "s")}.");
+        return AnnounceLiveRegion(HistoryList);
+    }
+
     /// <summary>Announces a region that carries its own words, rather than being assigned them.</summary>
     /// <remarks>
     /// FOR THE CARDS THAT ALREADY SAY IT. A history card's title is fixed in markup - "No dictations
     /// yet" never changes - so there is nothing to assign and nothing for the atomic setter to
     /// compare. What changes is which card is showing, and that is the news.
     /// </remarks>
-    private static void AnnounceLiveRegion(FrameworkElement region)
+    /// <returns>True when the announcement was actually raised.</returns>
+    private static bool AnnounceLiveRegion(FrameworkElement region)
     {
         if (!IsOnAVisiblePage(region))
         {
-            return;
+            return false;
         }
 
         var peer = FrameworkElementAutomationPeer.FromElement(region)
             ?? FrameworkElementAutomationPeer.CreatePeerForElement(region);
-        peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+        if (peer is null)
+        {
+            return false;
+        }
+
+        peer.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+        return true;
     }
 
     /// <summary>Whether every ancestor of a region is showing, not just the region itself.</summary>

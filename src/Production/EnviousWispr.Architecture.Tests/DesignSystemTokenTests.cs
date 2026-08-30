@@ -1110,11 +1110,26 @@ public sealed partial class DesignSystemTokenTests
                 // it is still hidden announces something nobody can see - so text-then-raise is
                 // correct there and an atomic setter cannot express it. What must hold is that the
                 // file which writes the region is also the file that announces it.
+                // TWO INDEPENDENT CHECKS, BECAUSE ONE EXEMPTION COVERED BOTH. A single explicit
+                // raise used to excuse every direct write to that region anywhere in the file, and
+                // it also meant a region with no direct writes was never checked for having an
+                // announcement at all - so deleting the raise for a fixed history title would have
+                // gone unnoticed.
                 var announced = Regex.IsMatch(
                     text,
-                    @"(FromElement|CreatePeerForElement|AnnounceLiveRegion)\(\s*"
-                        + Regex.Escape(region) + @"\s*\)");
-                if (announced)
+                    @"(FromElement|CreatePeerForElement|AnnounceLiveRegion|SetLiveRegion|SetLiveText|SetLiveVisibility)\(\s*"
+                        + Regex.Escape(region) + @"\s*[,)]");
+                if (!announced)
+                {
+                    offenders.Add(
+                        $"{Path.GetFileName(codeBehind)}: {region} is declared a live region and nothing ever announces it");
+                }
+
+                // THE OVERLAY IS THE ONE PLACE A DIRECT WRITE IS CORRECT. Its text has to be set
+                // before the window is shown and announced after, because raising while the pill is
+                // still hidden announces something nobody can see. Named, so the exemption cannot
+                // quietly spread.
+                if (region == "StateTitle")
                 {
                     continue;
                 }
@@ -1159,14 +1174,34 @@ public sealed partial class DesignSystemTokenTests
         // at all. What matters is that the flag decides the card, and that both outcomes exist.
         var loadingAssignment = Regex.Match(
             codeBehind,
-            @"HistoryLoadingState[^;]*_isHistoryLoading[^;]*;",
+            // THE CALLER'S NAME IS PART OF THE STATEMENT. Starting the match at the control's name
+            // cut the helper off the front, so the mapping could not be followed to its definition.
+            @"[A-Za-z_]\w*\s*\(\s*HistoryLoadingState[^;]*_isHistoryLoading[^;]*;"
+                + @"|HistoryLoadingState[^;]*_isHistoryLoading[^;]*;",
             RegexOptions.Singleline);
         Assert.True(
             loadingAssignment.Success,
             "Nothing in MainWindow.xaml.cs makes HistoryLoadingState follow _isHistoryLoading, so a "
                 + "person cannot tell a history that is still loading from one that is empty.");
-        Assert.Contains("Visibility.Visible", loadingAssignment.Value, StringComparison.Ordinal);
-        Assert.Contains("Visibility.Collapsed", loadingAssignment.Value, StringComparison.Ordinal);
+        // BOTH OUTCOMES MUST EXIST, WHEREVER THE MAPPING LIVES. The statement used to spell them
+        // inline; it now hands the flag to a helper. Requiring the words in the statement itself
+        // meant the gate broke when the mapping moved, without the property changing at all, so it
+        // accepts either the statement or the helper it calls carrying both.
+        var mapping = loadingAssignment.Value;
+        if (!mapping.Contains("Visibility.", StringComparison.Ordinal))
+        {
+            var helper = Regex.Match(mapping, @"(\w+)\s*\(");
+            Assert.True(helper.Success, $"Cannot tell what maps the loading flag onto a visibility: {mapping}");
+            var body = Regex.Match(
+                codeBehind,
+                @"(static\s+)?void\s+" + Regex.Escape(helper.Groups[1].Value) + @"\([^)]*\)[^;{]*[;{](?:[^}]*\})?",
+                RegexOptions.Singleline);
+            Assert.True(body.Success, $"No definition found for {helper.Groups[1].Value}.");
+            mapping = body.Value;
+        }
+
+        Assert.Contains("Visibility.Visible", mapping, StringComparison.Ordinal);
+        Assert.Contains("Visibility.Collapsed", mapping, StringComparison.Ordinal);
     }
 
     [Fact]
