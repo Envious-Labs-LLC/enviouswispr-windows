@@ -2230,22 +2230,7 @@ public partial class App : Application, IAsyncDisposable
             }
 
             processingCancellation?.Dispose();
-
-            // THE EDGE IS RECORDED HERE BECAUSE EVERY PATH LEAVES THROUGH IT. A press, a release, a
-            // cancel, a finalize that returns early, and both catch blocks all pass this line, so
-            // one write covers them without hunting every completion site - and a site missed later
-            // would leave the flag stuck true and turn an ordinary restart into a lost-dictation
-            // warning. Read off the controller rather than inferred from the signal, because the
-            // controller is what actually knows.
-            if (_runId is { } runId)
-            {
-                await _runStateStore.SetDictationActiveAsync(
-                        runId,
-                        controller.CurrentSession is not null,
-                        DateTimeOffset.UtcNow)
-                    .ConfigureAwait(false);
-            }
-
+            await RecordDictationEdgeAsync().ConfigureAwait(false);
             _sessionOperationGate.Release();
         }
     }
@@ -2308,11 +2293,58 @@ public partial class App : Application, IAsyncDisposable
             }
             finally
             {
+                await RecordDictationEdgeAsync().ConfigureAwait(false);
                 _sessionOperationGate.Release();
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+        }
+    }
+
+    /// <summary>Records whether a dictation is in flight, at every place one can end.</summary>
+    /// <remarks>
+    /// THREE FLOWS OWN SESSION TRANSITIONS AND ALL THREE MUST WRITE THIS. The push-to-talk handler
+    /// is the obvious one; the recording watchdog aborts and resets a session that ran too long, and
+    /// Windows locking or suspending releases, transcribes or resets one on its own callback.
+    /// Writing the edge in only the first leaves the flag stuck true after either of the others, and
+    /// a later ordinary restart then tells somebody their dictation was lost when it was not. A
+    /// warning that fires when nothing happened is how the banner this replaces lost its meaning.
+    ///
+    /// READ OFF THE CONTROLLER RATHER THAN INFERRED. Each flow reaches here by several routes and
+    /// the controller is the only thing that knows the answer on all of them.
+    ///
+    /// IT CANNOT THROW, BECAUSE EVERY CALLER IS A FINALLY HOLDING THE SESSION GATE. An exception
+    /// escaping here would skip the release and deadlock every later dictation, which is a far worse
+    /// outcome than a missing flag - so a failed write is logged and swallowed.
+    /// </remarks>
+    private async Task RecordDictationEdgeAsync()
+    {
+        if (_runId is not { } runId)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!await _runStateStore.SetDictationActiveAsync(
+                    runId,
+                    _sessionController?.CurrentSession is not null,
+                    DateTimeOffset.UtcNow).ConfigureAwait(false))
+            {
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.ApplicationRunStateEdgeFailed,
+                    AppFailureCategory.StorageUnavailable));
+            }
+        }
+        catch (Exception exception) when (
+            exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.ApplicationRunStateEdgeFailed,
+                AppFailureCategory.StorageUnavailable));
         }
     }
 
@@ -2475,6 +2507,7 @@ public partial class App : Application, IAsyncDisposable
             }
 
             processingCancellation?.Dispose();
+            await RecordDictationEdgeAsync().ConfigureAwait(false);
             _sessionOperationGate.Release();
         }
     }

@@ -5,6 +5,17 @@ public enum AppEventCode
     ApplicationStarting,
     ApplicationRunRecovered,
     ApplicationHeartbeatFailed,
+
+    /// <summary>
+    /// The run state could not record whether a dictation was in flight.
+    /// </summary>
+    /// <remarks>
+    /// SEPARATE FROM THE HEARTBEAT, because they fail for the same reason and mean different things.
+    /// A missed heartbeat costs a timestamp. A missed dictation edge costs the ONE signal that
+    /// separates "your words are gone" from "your computer restarted", so a run that logs this is a
+    /// run whose lost-dictation warning cannot be trusted in either direction.
+    /// </remarks>
+    ApplicationRunStateEdgeFailed,
     ApplicationCleanShutdown,
     DuplicateInstanceRejected,
     DuplicateInstanceActivated,
