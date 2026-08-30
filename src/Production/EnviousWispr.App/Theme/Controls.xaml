@@ -39,9 +39,20 @@
         <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
         <Setter Property="Foreground" Value="{ThemeResource BrandAccentBrush}" />
     </Style>
+    <!--
+        THE WHOLE ROW COMMITS THE CHANGE, NOT JUST THE SWITCH. Measured on the running app: the
+        control reported 154 units wide inside a 455-unit content column, so two thirds of every
+        settings row were dead and the only reliable target was a small track. macOS commits on the
+        entire row, and its source records that being found as a real usability problem and fixed.
+        The label was already inside the target - the earlier note claiming otherwise was wrong, read
+        off the app's own accessibility tree - so what was missing is width, not a retemplate.
+        Stretching is a property, which is why this is four lines rather than a copy of the control.
+    -->
     <Style x:Key="BrandToggleSwitchStyle" TargetType="ToggleSwitch" BasedOn="{StaticResource DefaultToggleSwitchStyle}">
         <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
         <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
     </Style>
     <!-- A dropdown whose selected text is wider than the control clips mid-word with no
          ellipsis, which reads as a rendering fault rather than as a shortened label. Measured at
