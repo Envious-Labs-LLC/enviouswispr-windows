@@ -67,6 +67,16 @@ public sealed partial class DictationOverlayWindow : Window
             presenter.SetBorderAndTitleBar(hasBorder: false, hasTitleBar: false);
         }
 
+        // AND DWM STILL DRAWS ONE ANYWAY. SetBorderAndTitleBar(hasBorder: false) removes the frame
+        // the presenter owns; the desktop compositor keeps painting its own hairline rounded
+        // rectangle at the window bounds, which around a rounded pill reads as a second, squarer
+        // outline floating outside the first. Asking DWM for no border colour is what removes it.
+        // THE RESULT IS READ AND THEN DELIBERATELY IGNORED. A compositor that declines this leaves
+        // a hairline border, which is cosmetic; refusing to open the pill over it would be worse
+        // than the border. The discard is what says that on purpose rather than by omission.
+        var borderColour = DwmColorNone;
+        _ = DwmSetWindowAttribute(windowHandle, DwmwaBorderColor, ref borderColour, sizeof(uint));
+
         _hideTimer.Tick += (_, _) => HideOverlay();
         _elapsedTimer.Interval = TimeSpan.FromMilliseconds(250);
         _elapsedTimer.Tick += (_, _) => UpdateElapsed();
@@ -500,6 +510,63 @@ public sealed partial class DictationOverlayWindow : Window
         _overlayWidth = Math.Max(1, (int)Math.Ceiling(width * _rasterScale));
         _overlayHeight = Math.Max(1, (int)Math.Ceiling(height * _rasterScale));
         AppWindow.Resize(new SizeInt32(_overlayWidth, _overlayHeight));
+        ClipToPillShape();
+    }
+
+    /// <summary>Cuts the window down to the rounded shape the pill is drawn in.</summary>
+    /// <remarks>
+    /// FOUR BLACK CORNERS SHIPPED, AND ONLY A PHOTOGRAPH OF A REAL SCREEN FOUND THEM. The window is
+    /// a rectangle. The pill is a rounded Border inside it. Nothing made the rectangle transparent,
+    /// so the four areas outside the rounded corners painted the window's own background - solid
+    /// black - straight onto whatever the user was looking at. On a dark wallpaper it reads as a
+    /// shadow; on a light one it is four black wedges around a floating notice.
+    ///
+    /// EVERY GATE IN THIS REPOSITORY PASSED WITH THIS ON SCREEN, because a gate reads markup and
+    /// tokens and this is a property of the WINDOW, which markup does not describe.
+    ///
+    /// A REGION IS THE FIX, NOT A TRANSPARENT BACKDROP. Clipping the window makes the corners not
+    /// belong to the window at all, so the desktop shows through with no compositing, no per-pixel
+    /// alpha and nothing for a theme to get wrong. It also means clicks land on the desktop rather
+    /// than on an invisible corner of ours.
+    ///
+    /// THE RADIUS IS READ FROM THE BORDER RATHER THAN REPEATED HERE. The pill has three radii - 18
+    /// for a notice and the Reading Well, 29 for the capsules - and a second copy of that number is
+    /// a second thing to keep in step. Called from Resize, so every size change re-clips: a region
+    /// is measured in pixels and does not follow a window that changed shape.
+    /// </remarks>
+    private void ClipToPillShape()
+    {
+        var handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
+
+        // TIGHTER THAN THE WINDOW BY A HAIR, AND THAT MARGIN IS MEASURED RATHER THAN GUESSED. A
+        // region exactly the size of the window left a three-pixel black outline tracing the pill,
+        // photographed at 150% scale on a real screen: the window's background shows through
+        // wherever the pill's antialiased edge is not fully opaque, and a hard-edged region cannot
+        // clip a soft edge. Pulling the region in by the width of that fringe removes it. The cost
+        // is a fraction of a pixel off the pill's own edge, which no one can see; the black halo
+        // around a floating notice is the thing people would.
+        var fringe = (int)Math.Ceiling(2 * _rasterScale);
+        var radius = (int)Math.Ceiling(
+            (OverlayRoot.CornerRadius.TopLeft * _rasterScale - fringe) * 2);
+        var region = CreateRoundRectRgn(
+            fringe,
+            fringe,
+            _overlayWidth - fringe + 1,
+            _overlayHeight - fringe + 1,
+            radius,
+            radius);
+        if (region == nint.Zero)
+        {
+            return;
+        }
+
+        // OWNERSHIP PASSES TO THE WINDOW ON SUCCESS, so the region is deleted only when the call
+        // failed. Deleting it after a successful SetWindowRgn destroys the shape the window is
+        // now using, and freeing it on every resize instead leaks one region per resize.
+        if (SetWindowRgn(handle, region, bRedraw: true) == 0)
+        {
+            DeleteObject(region);
+        }
     }
 
     private void UpdateElapsed()
@@ -530,6 +597,27 @@ public sealed partial class DictationOverlayWindow : Window
             : OverlayPlacement.TopCenter(workArea, _overlayWidth, _overlayHeight, physicalMargin);
         AppWindow.Move(new PointInt32(position.X, position.Y));
     }
+
+    /// <summary>Tells the compositor to paint no border colour at all.</summary>
+    private const uint DwmColorNone = 0xFFFFFFFE;
+
+    /// <summary>DWMWA_BORDER_COLOR.</summary>
+    private const int DwmwaBorderColor = 34;
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(
+        nint windowHandle, int attribute, ref uint value, int size);
+
+    [DllImport("gdi32.dll")]
+    private static extern nint CreateRoundRectRgn(
+        int left, int top, int right, int bottom, int ellipseWidth, int ellipseHeight);
+
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeleteObject(nint handle);
+
+    [DllImport("user32.dll")]
+    private static extern int SetWindowRgn(nint windowHandle, nint region, bool bRedraw);
 
     [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();
