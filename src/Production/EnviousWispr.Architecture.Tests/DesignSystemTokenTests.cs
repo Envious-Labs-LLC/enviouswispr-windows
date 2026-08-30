@@ -1036,6 +1036,81 @@ public sealed partial class DesignSystemTokenTests
             .Attribute("Value");
     }
 
+    /// <summary>
+    /// Every live region the app declares is actually announced.
+    /// </summary>
+    /// <remarks>
+    /// MARKING A LIVE REGION IS NOT ANNOUNCING IT, AND THE APP SHIPPED SEVEN THAT SAID NOTHING.
+    /// AutomationProperties.LiveSetting tells a screen reader how urgently to read a region when it
+    /// changes; it does NOT tell it that anything changed. WinUI raises no event of its own, so an
+    /// app has to raise LiveRegionChanged itself. Without that, the markup reads as accessible, every
+    /// gate passes, and a person using Narrator is told nothing at all - the failure is silent in the
+    /// most literal sense available.
+    ///
+    /// THE ASSIGNMENT IS WHAT IS CHECKED, NOT THE CALL. Requiring a raise SOMEWHERE in the file is
+    /// satisfied by one call for seven regions. What has to hold is that no live region's content is
+    /// set directly, because a direct assignment is exactly the change that goes unannounced. The
+    /// announcing setters are the only way in, and this refuses any other.
+    /// </remarks>
+    [Fact]
+    public void EveryLiveRegionIsAnnouncedWhenItChanges()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var app = Path.Combine(repositoryRoot, "src", "Production", "EnviousWispr.App");
+        var offenders = new List<string>();
+
+        foreach (var markup in Directory.EnumerateFiles(app, "*.xaml", SearchOption.AllDirectories))
+        {
+            // BUILD OUTPUT IS NOT SOURCE. bin and obj carry copies of every .xaml with no
+            // code-behind beside them, so each one was reported as a file declaring live regions and
+            // owning no way to announce them - three phantom offenders for two real files.
+            if (markup.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                || markup.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var document = XDocument.Load(markup);
+            var regions = document.Descendants()
+                // ENDS WITH, BECAUSE AN ATTACHED PROPERTY CARRIES ITS OWNER IN THE NAME. In XAML the
+                // attribute's local name is the whole string "AutomationProperties.LiveSetting", so
+                // an equality test against "LiveSetting" matches nothing - and this gate found no
+                // live regions at all, passed, and would have gone on passing forever.
+                .Where(element => element.Attributes().Any(attribute =>
+                    attribute.Name.LocalName.EndsWith("LiveSetting", StringComparison.Ordinal)))
+                .Select(element => (string?)element.Attribute(XName.Get("Name", XamlNamespace)))
+                .OfType<string>()
+                .ToList();
+            if (regions.Count == 0)
+            {
+                continue;
+            }
+
+            var codeBehind = markup + ".cs";
+            if (!File.Exists(codeBehind))
+            {
+                offenders.Add($"{Path.GetFileName(markup)} declares live regions and has no code-behind to announce them");
+                continue;
+            }
+
+            var text = File.ReadAllText(codeBehind);
+            foreach (var region in regions)
+            {
+                foreach (Match direct in Regex.Matches(
+                    text, @"\b" + Regex.Escape(region) + @"\.(Text|Visibility)\s*="))
+                {
+                    offenders.Add($"{Path.GetFileName(codeBehind)}: {direct.Value.Trim()}");
+                }
+            }
+        }
+
+        Assert.True(
+            offenders.Count == 0,
+            "These live regions are written to directly, so the change is never announced and a "
+                + "screen reader says nothing. Assign through SetLiveText or SetLiveVisibility, which "
+                + "raise LiveRegionChanged with the text: " + string.Join(", ", offenders));
+    }
+
     [Fact]
     public void HistoryDistinguishesLoadingFromLoadedEmptyStates()
     {
@@ -1055,10 +1130,20 @@ public sealed partial class DesignSystemTokenTests
             "MainWindow.xaml.cs"));
         Assert.Contains("private bool _isHistoryLoading = true;", codeBehind, StringComparison.Ordinal);
         Assert.Contains("_isHistoryLoading = false;", codeBehind, StringComparison.Ordinal);
-        Assert.Contains(
-            "HistoryLoadingState.Visibility = _isHistoryLoading ? Visibility.Visible : Visibility.Collapsed;",
+        // THE LOADING CARD FOLLOWS THE FLAG, HOWEVER THE ASSIGNMENT IS SPELLED. This asserted one
+        // exact line, so routing the same assignment through the announcing setter - which is what
+        // makes a screen reader say the card appeared - broke a gate whose property had not changed
+        // at all. What matters is that the flag decides the card, and that both outcomes exist.
+        var loadingAssignment = Regex.Match(
             codeBehind,
-            StringComparison.Ordinal);
+            @"HistoryLoadingState[^;]*_isHistoryLoading[^;]*;",
+            RegexOptions.Singleline);
+        Assert.True(
+            loadingAssignment.Success,
+            "Nothing in MainWindow.xaml.cs makes HistoryLoadingState follow _isHistoryLoading, so a "
+                + "person cannot tell a history that is still loading from one that is empty.");
+        Assert.Contains("Visibility.Visible", loadingAssignment.Value, StringComparison.Ordinal);
+        Assert.Contains("Visibility.Collapsed", loadingAssignment.Value, StringComparison.Ordinal);
     }
 
     [Fact]

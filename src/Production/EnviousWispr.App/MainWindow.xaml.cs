@@ -21,6 +21,7 @@ using EnviousWispr.Core.Settings;
 using EnviousWispr.LLM;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml.Controls;
 using Windows.System;
@@ -317,9 +318,11 @@ public sealed partial class MainWindow : Window, IDisposable
         ProductNavigation.SelectedItem = HomeNavItem;
         BuildInfoText.Text = $"{releaseIdentity.DisplayName} {Assembly.GetExecutingAssembly().GetName().Version} · {releaseIdentity.ChannelName}";
         WhatsNewBuildInfoText.Text = BuildInfoText.Text;
-        UpdateStatusText.Text = updateConfigured
-            ? $"Installed {releaseIdentity.ChannelName} version {currentVersion}. Updates are downloaded only while dictation is idle and must pass SHA-256 plus Envious Labs publisher verification before apply."
-            : $"This {releaseIdentity.ChannelName} build has no update endpoint configured. It will not contact an update server.";
+        SetLiveText(
+            UpdateStatusText,
+    updateConfigured
+                ? $"Installed {releaseIdentity.ChannelName} version {currentVersion}. Updates are downloaded only while dictation is idle and must pass SHA-256 plus Envious Labs publisher verification before apply."
+                : $"This {releaseIdentity.ChannelName} build has no update endpoint configured. It will not contact an update server.");
         CheckForUpdatesButton.IsEnabled = updateConfigured;
         if (settingsLoadStatus is SettingsLoadStatus.Invalid or SettingsLoadStatus.Migrated)
         {
@@ -518,7 +521,7 @@ public sealed partial class MainWindow : Window, IDisposable
             : $"Toggle with {gesture}";
         HotkeyStatusText.Text = shortcut;
         OnboardingHotkeyText.Text = $"{instruction} Cancel with {cancelGesture}. Add a selected word with {quickAddGesture}.";
-        SessionStatusText.Text = "Idle";
+        SetLiveText(SessionStatusText, "Idle");
         // A full stop rather than a middle dot. The tray tooltip is a SENTENCE - it has no
         // layout to separate, and a screen reader either announces a middle dot literally or
         // drops it. Text that is laid out on screen may still use one; this is not.
@@ -529,7 +532,7 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         HotkeyStatusText.Text = status;
         OnboardingHotkeyText.Text = status;
-        SessionStatusText.Text = "Unavailable";
+        SetLiveText(SessionStatusText, "Unavailable");
         // AN ERROR FOR THE TRAY, WHICH IS THE ONLY PLACE IT SHOWS. The recording key not being
         // available means the app cannot be used at all, and unlike a pill the icon stays. It
         // raises no pill, because SetSessionStatus is not on this path.
@@ -539,7 +542,7 @@ public sealed partial class MainWindow : Window, IDisposable
     public void SetSessionStatus(DictationStatus status)
     {
         var sentence = status.Text;
-        SessionStatusText.Text = sentence;
+        SetLiveText(SessionStatusText, sentence);
         SessionStatusChanged?.Invoke(status);
         var overlayState = status.State;
         HandleRecordingSoundTransition(overlayState);
@@ -573,33 +576,35 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         CheckForUpdatesButton.IsEnabled = false;
         ApplyUpdateButton.IsEnabled = false;
-        UpdateStatusText.Text = "Checking the isolated signed update channel and staging any newer version…";
+        SetLiveText(UpdateStatusText, "Checking the isolated signed update channel and staging any newer version…");
     }
 
     public void SetUpdateStatus(UpdateOperationResult result)
     {
         CheckForUpdatesButton.IsEnabled = result.Status is not UpdateOperationStatus.NotConfigured;
         ApplyUpdateButton.IsEnabled = result.CanApply;
-        UpdateStatusText.Text = result.Status switch
-        {
-            UpdateOperationStatus.BusyDictating =>
-                "Finish or cancel the active dictation before checking or applying an update.",
-            UpdateOperationStatus.NoUpdate =>
-                $"Version {result.Version} is current on this isolated channel.",
-            UpdateOperationStatus.DownloadedAndVerified =>
-                $"Version {result.Version} is staged and verified. Apply it when you are ready to restart.",
-            UpdateOperationStatus.DevelopmentBuild =>
-                "Updates can only be checked from a Velopack-installed build.",
-            UpdateOperationStatus.NotConfigured =>
-                "No update endpoint is configured; no network request was made.",
-            UpdateOperationStatus.RejectedHash =>
-                "The update hash did not match. It was rejected and will not run.",
-            UpdateOperationStatus.RejectedSignature or UpdateOperationStatus.RejectedPublisher =>
-                "The update did not pass trusted Envious Labs publisher verification. It was rejected.",
-            UpdateOperationStatus.RejectedChannel =>
-                "The update identity did not match this release channel. It was rejected.",
-            _ => "The update could not be prepared safely. The installed version is unchanged.",
-        };
+        SetLiveText(
+            UpdateStatusText,
+    result.Status switch
+            {
+                UpdateOperationStatus.BusyDictating =>
+                    "Finish or cancel the active dictation before checking or applying an update.",
+                UpdateOperationStatus.NoUpdate =>
+                    $"Version {result.Version} is current on this isolated channel.",
+                UpdateOperationStatus.DownloadedAndVerified =>
+                    $"Version {result.Version} is staged and verified. Apply it when you are ready to restart.",
+                UpdateOperationStatus.DevelopmentBuild =>
+                    "Updates can only be checked from a Velopack-installed build.",
+                UpdateOperationStatus.NotConfigured =>
+                    "No update endpoint is configured; no network request was made.",
+                UpdateOperationStatus.RejectedHash =>
+                    "The update hash did not match. It was rejected and will not run.",
+                UpdateOperationStatus.RejectedSignature or UpdateOperationStatus.RejectedPublisher =>
+                    "The update did not pass trusted Envious Labs publisher verification. It was rejected.",
+                UpdateOperationStatus.RejectedChannel =>
+                    "The update identity did not match this release channel. It was rejected.",
+                _ => "The update could not be prepared safely. The installed version is unchanged.",
+            });
     }
 
     public void SetCloudPolishNotice(string? notice)
@@ -1269,8 +1274,8 @@ public sealed partial class MainWindow : Window, IDisposable
         SuggestAliasesButton.IsEnabled = false;
         SuggestedAliasesPanel.Children.Clear();
         SuggestedAliasesScroller.Visibility = Visibility.Collapsed;
-        SuggestAliasesStatusText.Visibility = Visibility.Visible;
-        SuggestAliasesStatusText.Text = "Asking...";
+        SetLiveVisibility(SuggestAliasesStatusText, Visibility.Visible);
+        SetLiveText(SuggestAliasesStatusText, "Asking...");
         MishearingSuggestionsRequested?.Invoke(term, existing);
     }
 
@@ -1290,24 +1295,28 @@ public sealed partial class MainWindow : Window, IDisposable
         ArgumentNullException.ThrowIfNull(advice);
         SuggestAliasesButton.IsEnabled = true;
         SuggestedAliasesPanel.Children.Clear();
-        SuggestAliasesStatusText.Visibility = Visibility.Visible;
+        SetLiveVisibility(SuggestAliasesStatusText, Visibility.Visible);
 
         if (advice.Status != MishearingAdviceStatus.Suggested)
         {
             SuggestedAliasesScroller.Visibility = Visibility.Collapsed;
-            SuggestAliasesStatusText.Text = advice.Status switch
-            {
-                MishearingAdviceStatus.NothingUsable =>
-                    "No likely mishearings came back for that word. Add one yourself when you hear it.",
-                MishearingAdviceStatus.NotSupported =>
-                    "The polish option you have chosen cannot answer this. Pick the built-in model, "
-                        + "Ollama, or a cloud provider to use suggestions.",
-                _ => "The suggestion did not come back. Check your polish settings and try again.",
-            };
+            SetLiveText(
+                SuggestAliasesStatusText,
+    advice.Status switch
+                {
+                    MishearingAdviceStatus.NothingUsable =>
+                        "No likely mishearings came back for that word. Add one yourself when you hear it.",
+                    MishearingAdviceStatus.NotSupported =>
+                        "The polish option you have chosen cannot answer this. Pick the built-in model, "
+                            + "Ollama, or a cloud provider to use suggestions.",
+                    _ => "The suggestion did not come back. Check your polish settings and try again.",
+            
+                });
+            Announce(SuggestAliasesStatusText);
             return;
         }
 
-        SuggestAliasesStatusText.Text = "Click one to add it. Nothing is saved until you do.";
+        SetLiveText(SuggestAliasesStatusText, "Click one to add it. Nothing is saved until you do.");
         foreach (var suggestion in advice.Suggestions)
         {
             var candidate = suggestion;
@@ -1360,7 +1369,7 @@ public sealed partial class MainWindow : Window, IDisposable
         if (SuggestedAliasesPanel.Children.Count == 0)
         {
             SuggestedAliasesScroller.Visibility = Visibility.Collapsed;
-            SuggestAliasesStatusText.Text = "All of them added.";
+            SetLiveText(SuggestAliasesStatusText, "All of them added.");
         }
     }
 
@@ -1976,8 +1985,8 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         _speedCheckRunning = true;
         RunSpeedCheckButton.IsEnabled = false;
-        SpeedCheckResultText.Visibility = Visibility.Visible;
-        SpeedCheckResultText.Text = "Running...";
+        SetLiveVisibility(SpeedCheckResultText, Visibility.Visible);
+        SetLiveText(SpeedCheckResultText, "Running...");
         SpeedCheckRequested?.Invoke();
     }
 
@@ -2002,7 +2011,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private void SetSpeedCheckAvailability(bool available)
     {
         RunSpeedCheckButton.IsEnabled = available && !_speedCheckRunning;
-        SpeedCheckUnavailableText.Visibility = available ? Visibility.Collapsed : Visibility.Visible;
+        SetLiveVisibility(SpeedCheckUnavailableText, available ? Visibility.Collapsed : Visibility.Visible);
     }
 
     public void SetSpeedCheckResult(LatencySummary? summary)
@@ -2011,14 +2020,16 @@ public sealed partial class MainWindow : Window, IDisposable
         // and handing the button back then would undo the greying the moment it was needed.
         _speedCheckRunning = false;
         SetSpeedCheckAvailability(_currentOverlayState != DictationOverlayState.Recording);
-        SpeedCheckResultText.Visibility = Visibility.Visible;
-        SpeedCheckResultText.Text = summary is null || summary.Count == 0
-            ? "The speed check did not run. It is skipped while a dictation is in progress."
-            : $"{summary.Count} runs. Typical {summary.MedianMilliseconds:0.0}ms, "
-                + $"fastest {summary.MinMilliseconds:0.0}ms, slowest {summary.MaxMilliseconds:0.0}ms. "
-                + (summary.Percentile95IsJustTheMaximum
-                    ? "Too few runs to report a slow tail separately."
-                    : $"The slowest 5% took {summary.Percentile95Milliseconds:0.0}ms or more.");
+        SetLiveVisibility(SpeedCheckResultText, Visibility.Visible);
+        SetLiveText(
+            SpeedCheckResultText,
+    summary is null || summary.Count == 0
+                ? "The speed check did not run. It is skipped while a dictation is in progress."
+                : $"{summary.Count} runs. Typical {summary.MedianMilliseconds:0.0}ms, "
+                    + $"fastest {summary.MinMilliseconds:0.0}ms, slowest {summary.MaxMilliseconds:0.0}ms. "
+                    + (summary.Percentile95IsJustTheMaximum
+                        ? "Too few runs to report a slow tail separately."
+                        : $"The slowest 5% took {summary.Percentile95Milliseconds:0.0}ms or more."));
     }
 
     private async void ExportDiagnosticsButton_Click(object sender, RoutedEventArgs e)
@@ -2386,8 +2397,8 @@ public sealed partial class MainWindow : Window, IDisposable
             }
         }
 
-        KeybindConflictText.Text = HotkeyConflictDetector.Describe(clashes);
-        KeybindConflictText.Visibility = clashes.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        SetLiveText(KeybindConflictText, HotkeyConflictDetector.Describe(clashes));
+        SetLiveVisibility(KeybindConflictText, clashes.Count == 0 ? Visibility.Collapsed : Visibility.Visible);
     }
 
     private void HotkeyBoxKeyDown(object sender, KeyRoutedEventArgs e)
@@ -2675,14 +2686,16 @@ public sealed partial class MainWindow : Window, IDisposable
         var hasItems = itemCount > 0;
         var hasQuery = !string.IsNullOrWhiteSpace(query);
         var historyUnavailable = _historyLoadStatus is HistoryLoadStatus.Invalid or HistoryLoadStatus.Unavailable;
-        HistoryLoadingState.Visibility = _isHistoryLoading ? Visibility.Visible : Visibility.Collapsed;
+        SetLiveVisibility(HistoryLoadingState, _isHistoryLoading ? Visibility.Visible : Visibility.Collapsed);
         HistoryList.Visibility = !_isHistoryLoading && hasItems ? Visibility.Visible : Visibility.Collapsed;
         HistoryEmptyState.Visibility = !_isHistoryLoading && !hasItems && !hasQuery && !historyUnavailable
             ? Visibility.Visible
             : Visibility.Collapsed;
-        HistorySearchEmptyState.Visibility = !_isHistoryLoading && !hasItems && hasQuery && !historyUnavailable
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+        SetLiveVisibility(
+            HistorySearchEmptyState,
+    !_isHistoryLoading && !hasItems && hasQuery && !historyUnavailable
+                ? Visibility.Visible
+                : Visibility.Collapsed);
         HistoryUnavailableState.Visibility = !_isHistoryLoading && !hasItems && historyUnavailable
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -2795,9 +2808,11 @@ public sealed partial class MainWindow : Window, IDisposable
             DiagnosticRetentionDaysBox.Value = observability.DiagnosticRetentionDays;
             ShareTelemetryToggle.IsEnabled = _telemetryAvailable;
             ShareTelemetryToggle.IsOn = _telemetryAvailable && observability.ShareAnonymousTelemetry;
-            DiagnosticsStatusText.Text = _telemetryAvailable
-                ? "Anonymous sharing is off until you explicitly enable and save it. Local exports and uploads contain only the typed fields listed here."
-                : "No telemetry upload channel is configured in this development build. Local content-free diagnostics can still be retained, exported, or disabled.";
+            SetLiveText(
+                DiagnosticsStatusText,
+    _telemetryAvailable
+                    ? "Anonymous sharing is off until you explicitly enable and save it. Local exports and uploads contain only the typed fields listed here."
+                    : "No telemetry upload channel is configured in this development build. Local content-free diagnostics can still be retained, exported, or disabled.");
             RefreshReusableUserDataViews();
         }
         finally
@@ -2913,7 +2928,7 @@ public sealed partial class MainWindow : Window, IDisposable
         PolishModelPicker.SelectedIndex = selectedIndex;
         if (discoveryNotice is not null)
         {
-            ApiKeyStatusText.Text = discoveryNotice;
+            SetLiveText(ApiKeyStatusText, discoveryNotice);
         }
     }
 
@@ -2947,29 +2962,76 @@ public sealed partial class MainWindow : Window, IDisposable
 
         if (!isCloudProvider)
         {
-            ApiKeyStatusText.Text = provider switch
-            {
-                PolishProvider.Ollama => "Ollama runs on this PC and does not use a cloud API key.",
-                PolishProvider.EgOne => "EG-1 runs on this PC and does not use a cloud API key.",
-                _ => "AI polish is off; no provider key is used.",
-            };
+            SetLiveText(
+                ApiKeyStatusText,
+    provider switch
+                {
+                    PolishProvider.Ollama => "Ollama runs on this PC and does not use a cloud API key.",
+                    PolishProvider.EgOne => "EG-1 runs on this PC and does not use a cloud API key.",
+                    _ => "AI polish is off; no provider key is used.",
+            
+                });
+            Announce(ApiKeyStatusText);
             return;
         }
 
-        ApiKeyStatusText.Text = _apiKeyStore.GetStatus(provider) switch
+        SetLiveText(
+            ApiKeyStatusText,
+    _apiKeyStore.GetStatus(provider) switch
+            {
+                ApiKeyReadStatus.Found =>
+                    $"{CredentialArticle(provider)} {ProviderDisplayName(provider)} key is stored in Windows Credential Manager.",
+                // SAY WHAT IT MEANS FOR THE DICTATION, NOT JUST WHAT IS TRUE OF THE MACHINE. "No key is
+                // stored" is a fact about storage; the thing a person needs to know is that every
+                // dictation will come out unpolished until they add one, and nothing will tell them
+                // again at the moment it happens. macOS carries the same warning for the same reason.
+                ApiKeyReadStatus.Missing =>
+                    $"No {ProviderDisplayName(provider)} key is stored on this PC. Dictation still "
+                        + "works, and cleanup falls back to your raw, unedited text every time until "
+                        + "you add one.",
+                _ => "Windows Credential Manager status is unavailable. No key value was revealed.",
+        
+            });
+        Announce(ApiKeyStatusText);
+    }
+
+    /// <summary>The names this window marks as live regions in markup.</summary>
+    /// <remarks>
+    /// KEPT BESIDE THE HELPERS SO THE GATE CAN READ IT. A gate that walks the XAML for
+    /// <c>AutomationProperties.LiveSetting</c> and then walks this file for direct assignments needs
+    /// the same list both sides, and a list written twice is a list that drifts.
+    /// </remarks>
+    private static void Announce(FrameworkElement region)
+    {
+        // MARKING A LIVE REGION IS NOT ANNOUNCING IT. Every live region in this window carried
+        // AutomationProperties.LiveSetting and every one of them was silent: WinUI raises no event
+        // of its own when the content of a live region changes, so the app has to raise
+        // LiveRegionChanged itself or the setting is decoration. A missing peer is not an error - a
+        // control that has not been realised yet has none, and the next change raises it once it has.
+        var peer = FrameworkElementAutomationPeer.FromElement(region)
+            ?? FrameworkElementAutomationPeer.CreatePeerForElement(region);
+        peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+    }
+
+    /// <summary>Sets a live region's text and tells a screen reader it changed.</summary>
+    /// <remarks>
+    /// ONE CALL, BECAUSE TWO CALLS DRIFT. Sixteen sites set these six controls; asking each of them
+    /// to remember a second line is how fifteen of them stay correct and one goes quiet. Assigning
+    /// through here means the announcement cannot be forgotten separately from the text.
+    /// </remarks>
+    private static void SetLiveText(TextBlock region, string text)
+    {
+        region.Text = text;
+        Announce(region);
+    }
+
+    private static void SetLiveVisibility(FrameworkElement region, Visibility visibility)
+    {
+        region.Visibility = visibility;
+        if (visibility == Visibility.Visible)
         {
-            ApiKeyReadStatus.Found =>
-                $"{CredentialArticle(provider)} {ProviderDisplayName(provider)} key is stored in Windows Credential Manager.",
-            // SAY WHAT IT MEANS FOR THE DICTATION, NOT JUST WHAT IS TRUE OF THE MACHINE. "No key is
-            // stored" is a fact about storage; the thing a person needs to know is that every
-            // dictation will come out unpolished until they add one, and nothing will tell them
-            // again at the moment it happens. macOS carries the same warning for the same reason.
-            ApiKeyReadStatus.Missing =>
-                $"No {ProviderDisplayName(provider)} key is stored on this PC. Dictation still "
-                    + "works, and cleanup falls back to your raw, unedited text every time until "
-                    + "you add one.",
-            _ => "Windows Credential Manager status is unavailable. No key value was revealed.",
-        };
+            Announce(region);
+        }
     }
 
     private void ShowOnboarding(bool show)
