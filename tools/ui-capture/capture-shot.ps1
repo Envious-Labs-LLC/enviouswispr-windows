@@ -8,7 +8,7 @@
 param(
     [Parameter(Mandatory = $true)][string] $Path,
     [int] $MinimumWidth = 1280,
-    [int] $MinimumHeight = 800
+    [int] $MinimumHeight = 720
 )
 
 $ErrorActionPreference = 'Stop'
@@ -49,7 +49,8 @@ if ($bounds.Width -le 1 -or $bounds.Height -le 1) {
 # fallback mode - measured at 1024x768 on a 3840x2160 panel at half past two in the morning. The
 # capture SUCCEEDS: it is a real photograph of a real desktop, every other check passes, and every
 # judgement made from it about padding or alignment is worthless. Anything this small is a sleeping
-# display rather than a machine somebody works on.
+# display rather than a machine somebody works on. The floor is 1280x720 because that is what
+# Windows 11 itself requires, so it refuses the measured fallback without excluding a supported PC.
 if ($bounds.Width -lt $MinimumWidth -or $bounds.Height -lt $MinimumHeight) {
     throw "The desktop is $($bounds.Width)x$($bounds.Height), below the ${MinimumWidth}x${MinimumHeight} floor. A display that has gone to sleep reports a fallback mode this size, and a photograph of it looks like a screenshot while being useless for judging layout. Wake the screen, or lower the floor deliberately if this machine really is this size."
 }

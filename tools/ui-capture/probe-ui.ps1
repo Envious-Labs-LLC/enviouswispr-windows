@@ -16,47 +16,104 @@ param(
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+Add-Type -AssemblyName WindowsBase
+Add-Type -AssemblyName System.Windows.Forms
 
 $root = [System.Windows.Automation.AutomationElement]::RootElement
 $condition = New-Object System.Windows.Automation.PropertyCondition(
     [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $ProcessId)
 $windows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
 
-function Describe($element, $depth) {
+function Describe($element, $depth, $clip) {
     $info = $element.Current
     $rect = $info.BoundingRectangle
     $pad = ' ' * ($depth * 2)
-    $bounds = if ($rect.IsEmpty -or $rect.Width -le 0) { 'offscreen' }
-              else { "$([int]$rect.X),$([int]$rect.Y) $([int]$rect.Width)x$([int]$rect.Height)" }
 
-    # THE TOGGLE STATE AND THE CLICKABLE POINT ARE THE WHOLE REASON THIS EXISTS. A control that
-    # offers no clickable point cannot be pressed, whatever it looks like.
+    # VISIBILITY IS MEASURED, NOT ASKED FOR. IsOffscreen answers a narrower question than it sounds
+    # like: UI Automation calls a control onscreen when any part of it is, so a button with two
+    # pixels showing below a scroll viewport reports exactly the same as one sitting in the middle
+    # of the window. Trusting it turned a partially clipped control into proof of visibility. The
+    # rectangle is intersected with the window and the virtual screen instead, and a control that
+    # only partly survives says so.
+    if ($rect.IsEmpty -or $rect.Width -le 0 -or $info.IsOffscreen) {
+        $bounds = 'offscreen'
+        $state = 'OFFSCREEN'
+    } else {
+        $bounds = "$([int]$rect.X),$([int]$rect.Y) $([int]$rect.Width)x$([int]$rect.Height)"
+        $visible = $rect
+        $visible.Intersect($clip)
+        if ($visible.IsEmpty -or $visible.Width -le 0 -or $visible.Height -le 0) {
+            $state = 'OFFSCREEN'
+        } elseif ([int]$visible.Width -lt [int]$rect.Width -or [int]$visible.Height -lt [int]$rect.Height) {
+            $state = "PARTIALLY_CLIPPED to $([int]$visible.Width)x$([int]$visible.Height)"
+        } else {
+            $state = 'visible'
+        }
+    }
+
+    # WHAT THE CONTROL OFFERS, WHICH IS THE PART A PICTURE CANNOT SHOW. A clickable point is
+    # reported as UNAVAILABLE rather than NONE, because failing to produce one often means the
+    # window is obscured rather than that the control cannot be pressed - the title bar's own
+    # Minimize and Close report the same thing.
     $extra = ''
     $toggle = $null
     if ($element.TryGetCurrentPattern(
             [System.Windows.Automation.TogglePattern]::Pattern, [ref] $toggle)) {
         $extra += " toggle=$($toggle.Current.ToggleState)"
     }
+    $patterns = @()
+    foreach ($pair in @(
+            @('invoke', [System.Windows.Automation.InvokePattern]::Pattern),
+            @('toggle', [System.Windows.Automation.TogglePattern]::Pattern),
+            @('selection-item', [System.Windows.Automation.SelectionItemPattern]::Pattern),
+            @('scroll', [System.Windows.Automation.ScrollPattern]::Pattern))) {
+        $found = $null
+        if ($element.TryGetCurrentPattern($pair[1], [ref] $found)) { $patterns += $pair[0] }
+    }
+    if ($patterns) { $extra += " does=$($patterns -join ',')" }
+    if ($info.IsKeyboardFocusable) { $extra += ' focusable' }
+
     $point = New-Object System.Windows.Point
     if ($element.TryGetClickablePoint([ref] $point)) {
-        $extra += " click=$([int]$point.X),$([int]$point.Y)"
+        $extra += " clickPoint=$([int]$point.X),$([int]$point.Y)"
     } else {
-        $extra += ' click=NONE'
+        $extra += ' clickPoint=UNAVAILABLE'
     }
     if (-not $info.IsEnabled) { $extra += ' DISABLED' }
-    if ($info.IsOffscreen) { $extra += ' OFFSCREEN' }
 
-    "$pad$($info.ControlType.ProgrammaticName -replace 'ControlType\.', '') `"$($info.Name)`" [$bounds]$extra"
+    "$pad$($info.ControlType.ProgrammaticName -replace 'ControlType\.', '') `"$($info.Name)`" [$bounds] $state$extra"
 
-    if ($depth -lt $MaxDepth) {
-        foreach ($child in $element.FindAll(
-                [System.Windows.Automation.TreeScope]::Children,
-                [System.Windows.Automation.Condition]::TrueCondition)) {
-            Describe $child ($depth + 1)
-        }
+    $children = $element.FindAll(
+        [System.Windows.Automation.TreeScope]::Children,
+        [System.Windows.Automation.Condition]::TrueCondition)
+    if ($depth -ge $MaxDepth) {
+        # SAID OUT LOUD, because a tree that simply stops looks like a tree that ended.
+        if ($children.Count -gt 0) { "$pad  ... TRUNCATED at depth $MaxDepth, $($children.Count) child element(s) not shown" }
+        return
     }
+
+    # A SCROLL VIEWPORT CLIPS WHAT IS INSIDE IT, and that is the clipping that hides a first-run
+    # button. Anything scrollable narrows the box its descendants are judged against.
+    $childClip = $clip
+    $scroll = $null
+    if (-not $rect.IsEmpty -and $element.TryGetCurrentPattern(
+            [System.Windows.Automation.ScrollPattern]::Pattern, [ref] $scroll)) {
+        $childClip = $clip
+        $childClip.Intersect($rect)
+    }
+    foreach ($child in $children) { Describe $child ($depth + 1) $childClip }
 }
 
+$screen = New-Object System.Windows.Rect(
+    [System.Windows.Forms.SystemInformation]::VirtualScreen.X,
+    [System.Windows.Forms.SystemInformation]::VirtualScreen.Y,
+    [System.Windows.Forms.SystemInformation]::VirtualScreen.Width,
+    [System.Windows.Forms.SystemInformation]::VirtualScreen.Height)
+
 foreach ($window in $windows) {
-    Describe $window 0
+    # EACH WINDOW CLIPS ITS OWN CONTENTS, and the screen clips the window.
+    $clip = $screen
+    $windowRect = $window.Current.BoundingRectangle
+    if (-not $windowRect.IsEmpty) { $clip.Intersect($windowRect) }
+    Describe $window 0 $clip
 }
