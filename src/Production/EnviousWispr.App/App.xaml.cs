@@ -905,6 +905,14 @@ public partial class App : Application, IAsyncDisposable
         using var dictation = _sessionController?.CurrentSession is { } recording
             ? DictationScope.Begin(recording.Id.Value)
             : NoScope.Instance;
+        // THE SETTINGS WRITE FINISHES BEFORE THE WINDOW GOES. Teardown is synchronous and cannot
+        // wait, so abandoning a save in flight let the process end mid-write - which is how a choice
+        // somebody just made disappears. This is the one place on the exit path that can await it.
+        if (_window is not null)
+        {
+            await _window.DrainSettingsAsync().ConfigureAwait(true);
+        }
+
         _window?.ShutdownProductWindows();
         (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately();
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellClosed));
