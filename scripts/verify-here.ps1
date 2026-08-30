@@ -5,6 +5,9 @@
 # safeguards described something nobody else had, and `scripts/validate.ps1` still ran the suite
 # unfiltered. A safeguard that exists on one laptop is a safeguard the project does not have.
 #
+# RUN IT FROM THE REPOSITORY ROOT ON THE WINDOWS MACHINE:
+#   powershell -ExecutionPolicy Bypass -File scripts/verify-here.ps1
+#
 # TWO LANES, TWO RECEIPTS, AND THAT IS THE WHOLE POINT OF THE SHAPE. Measured 2026-08-29:
 # `WindowsCredentialApiKeyStoreTests` does not merely fail on that machine, it sometimes takes 46
 # other tests down with it, and the run then reports `Failed: 1, Passed: 693, Total: 694` in under a
@@ -15,10 +18,23 @@
 # NEITHER LANE MAY BE CALLED A FULL PASS ON ITS OWN. `.claude/rules/validation.md` says a filtered
 # green is never full runtime proof, so both receipts are printed and both are named.
 
+# NO MACHINE PATHS. This is a public repository and its own compliance scan refuses any committed
+# file containing one - correctly, since a hardcoded home directory publishes whose machine it was.
+# The tree is found from this script's own location and dotnet from PATH, which also makes the script
+# work on a second machine without editing.
 param(
-    [string] $Tree = 'C:\Users\saura\agent-workspace\enviouswispr-windows',
-    [string] $Dotnet = 'C:\Users\saura\.dotnet\dotnet.exe'
+    [string] $Tree = (Split-Path -Parent $PSScriptRoot),
+    [string] $Dotnet
 )
+
+if (-not $Dotnet) {
+    # THE USER-LOCAL SDK FIRST, AND THAT ORDER IS LOAD-BEARING. This project targets .NET 10 and the
+    # machine-wide install can easily be older - on the dev machine `dotnet` on PATH is 8.0, which
+    # fails every project with NETSDK1045 before a single test runs. Resolved through
+    # $env:USERPROFILE rather than a literal path so nothing here names whose machine it is.
+    $userLocal = Join-Path $env:USERPROFILE '.dotnet\dotnet.exe'
+    $Dotnet = if (Test-Path -LiteralPath $userLocal) { $userLocal } else { 'dotnet' }
+}
 
 $ErrorActionPreference = 'Continue'
 $testProject = 'src\Production\EnviousWispr.Architecture.Tests\EnviousWispr.Architecture.Tests.csproj'
