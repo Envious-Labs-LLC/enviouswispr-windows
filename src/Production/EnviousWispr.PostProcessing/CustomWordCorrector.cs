@@ -73,27 +73,64 @@ public static partial class CustomWordCorrector
             return new WordCorrectionResult(text, 0);
         }
 
-        var result = text;
+        // EVERY SURFACE IS LOOKED FOR IN WHAT THE PERSON ACTUALLY SAID, ONCE, and the winners are
+        // written back afterwards. Replacing one surface at a time in the growing result made two
+        // things depend on the order of a list the user sorted for their own reasons: two phrases
+        // that overlap - "red blue" and "blue sun" inside "red blue sun" - gave whichever row came
+        // first, and a word written in by one row could be found and rewritten again by the next.
         var replacementCount = 0;
+        var found = new List<SurfaceMatch>();
         foreach (var candidate in candidates)
         {
-            var pattern = SurfacePattern(candidate.Surface);
-            result = Regex.Replace(
-                result,
-                pattern,
-                match =>
-                {
-                    if (match.Value.Equals(candidate.Replacement, StringComparison.Ordinal))
-                    {
-                        return match.Value;
-                    }
-
-                    replacementCount++;
-                    return candidate.Replacement;
-                },
+            foreach (Match match in Regex.Matches(
+                text,
+                SurfacePattern(candidate.Surface),
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
-                TimeSpan.FromMilliseconds(250));
+                TimeSpan.FromMilliseconds(250)))
+            {
+                found.Add(new SurfaceMatch(match.Index, match.Length, match.Value, candidate));
+            }
         }
+
+        // TWO PHRASES OF THE SAME STANDING THAT WANT THE SAME WORDS ARE BOTH LEFT ALONE. Longer
+        // phrases still win over shorter ones, which is the rule this already had; the tie is the
+        // only case with no answer in the list itself, and picking one of them silently would be
+        // picking by position.
+        var contested = found
+            .Where(one => found.Any(other =>
+                !ReferenceEquals(one, other) &&
+                Overlaps(one, other) &&
+                Standing(one) == Standing(other) &&
+                !string.Equals(one.Candidate.Replacement, other.Candidate.Replacement, StringComparison.Ordinal)))
+            .ToHashSet();
+
+        var accepted = new List<SurfaceMatch>();
+        foreach (var match in found
+            .Where(match => !contested.Contains(match))
+            .OrderByDescending(match => WordCount(match.Candidate.Surface))
+            .ThenByDescending(match => match.Candidate.Surface.Length)
+            .ThenBy(match => match.Start))
+        {
+            if (!accepted.Any(taken => Overlaps(taken, match)))
+            {
+                accepted.Add(match);
+            }
+        }
+
+        // RIGHT TO LEFT, so an earlier match's position is still the position it was found at.
+        var rewritten = new System.Text.StringBuilder(text);
+        foreach (var match in accepted.OrderByDescending(match => match.Start))
+        {
+            if (match.Text.Equals(match.Candidate.Replacement, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            rewritten.Remove(match.Start, match.Length).Insert(match.Start, match.Candidate.Replacement);
+            replacementCount++;
+        }
+
+        var result = rewritten.ToString();
 
         var fuzzyCandidates = candidates
             .Where(candidate => WordCount(candidate.Surface) == 1 && candidate.Surface.Length >= 5)
@@ -219,7 +256,16 @@ public static partial class CustomWordCorrector
     private static string SurfacePattern(string surface) =>
         $@"(?<![\p{{L}}\p{{N}}]){string.Join(@"[\s,.!?\u2014\u2013-]+", surface.Split(' ').Select(Regex.Escape))}(?![\p{{L}}\p{{N}}])";
 
+    private static bool Overlaps(SurfaceMatch left, SurfaceMatch right) =>
+        left.Start < right.Start + right.Length && right.Start < left.Start + left.Length;
+
+    /// <summary>How strong a claim a match has on the words it covers.</summary>
+    private static (int Words, int Length) Standing(SurfaceMatch match) =>
+        (WordCount(match.Candidate.Surface), match.Candidate.Surface.Length);
+
     private sealed record Candidate(string Surface, string Replacement, MatchStrictness Strictness);
+
+    private sealed record SurfaceMatch(int Start, int Length, string Text, Candidate Candidate);
 
     [GeneratedRegex(@"[\p{L}\p{N}][\p{L}\p{N}'\u2019-]*", RegexOptions.CultureInvariant)]
     private static partial Regex WordTokenRegex();
