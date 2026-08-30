@@ -468,10 +468,19 @@ public sealed partial class DictationOverlayWindow : Window
         // window starts moving, a position measured against the window chases itself and the pill
         // slides away under the pointer.
         GetCursorPos(out var cursor);
-        AppWindow.Move(new PointInt32(
-            _dragFromWindow.X + (cursor.X - _dragFromCursor.X),
-            _dragFromWindow.Y + (cursor.Y - _dragFromCursor.Y)));
+        var moveX = cursor.X - _dragFromCursor.X;
+        var moveY = cursor.Y - _dragFromCursor.Y;
+        if (moveX == 0 && moveY == 0)
+        {
+            return;
+        }
+
+        // THE FLAG GOES UP BEFORE THE MOVE, NOT AFTER. Crossing onto a monitor with a different
+        // scale makes Windows raise a DPI change, and this app answers that by re-placing the pill -
+        // so a drag that crosses that boundary would snap back mid-gesture, while the flag that
+        // stops exactly that was still one line away from being set.
         _draggedThisPresentation = true;
+        AppWindow.Move(new PointInt32(_dragFromWindow.X + moveX, _dragFromWindow.Y + moveY));
     }
 
     private void OverlayRoot_PointerReleased(object sender, PointerRoutedEventArgs e)
