@@ -19,7 +19,8 @@ param(
     [string] $DataDirectory = "",
     [ValidateRange(0, 28000)]
     [int] $SettleMilliseconds = 4000,
-    [int] $TimeoutSeconds = 90
+    [int] $TimeoutSeconds = 90,
+    [switch] $Probe
 )
 
 $ErrorActionPreference = 'Stop'
@@ -114,6 +115,7 @@ $arguments = @(
     '-SettleMilliseconds', $SettleMilliseconds
 )
 if ($OverlayState) { $arguments += @('-OverlayState', $OverlayState) }
+if ($Probe) { $arguments += '-Probe' }
 
 # DECLARED BEFORE THE TRY, because finally runs and THEN the script terminates on an unhandled
 # error - so a check written after the try/finally never executes on that path, and every cleanup

@@ -21,7 +21,8 @@ param(
     [string] $OverlayState = "",
     [string] $Shot = "shot",
     [ValidateRange(0, 28000)]
-    [int] $SettleMilliseconds = 4000
+    [int] $SettleMilliseconds = 4000,
+    [switch] $Probe
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,6 +33,7 @@ $pidFile = Join-Path $OutputDirectory "$Shot.pid"
 $marker = Join-Path $OutputDirectory "$Shot.ok"
 $failMarker = Join-Path $OutputDirectory "$Shot.fail"
 $final = Join-Path $OutputDirectory "$Shot.png"
+$treePath = Join-Path $OutputDirectory "$Shot.tree.txt"
 $staging = Join-Path $OutputDirectory "$Shot.png.partial"
 
 function Publish($path, $content) {
@@ -65,6 +67,21 @@ if ($OverlayState) { $env:ENVIOUSWISPR_UAT_OVERLAY_STATE = $OverlayState }
 # one that refuses it.
 $exitAfter = $SettleMilliseconds + 2000
 $env:ENVIOUSWISPR_UAT_EXIT_AFTER_MILLISECONDS = $exitAfter
+
+# NUDGE THE POINTER ONE PIXEL AND PUT IT BACK, TO WAKE A SLEEPING SCREEN. A blanked monitor drops the
+# desktop to a small fallback mode, and a photograph of that passes every other check while being
+# useless for judging layout. This is the smallest input that wakes a display: it moves the pointer
+# by one pixel and returns it, so it cannot press anything or land on a control.
+Add-Type -Namespace UiCapture -Name Cursor -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
+[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+public struct POINT { public int X, Y; }
+'@
+$where = New-Object UiCapture.Cursor+POINT
+if ([UiCapture.Cursor]::GetCursorPos([ref] $where)) {
+    [void][UiCapture.Cursor]::SetCursorPos($where.X + 1, $where.Y)
+    [void][UiCapture.Cursor]::SetCursorPos($where.X, $where.Y)
+}
 
 Add-Type -TypeDefinition @'
 using System;
@@ -152,6 +169,14 @@ Add-Type -Namespace UiCapture -Name Dpi -MemberDefinition @'
         throw "The app is running but has no visible window. A photograph now would show the desktop and read as a photograph of the app."
     }
     foreach ($line in $windows) { Note "window $line" }
+
+    # THE TREE BEFORE THE PICTURE, WHILE THE APP IS STILL UP. A screenshot cannot say whether a
+    # control is enabled, what a toggle currently reads, or whether anything can be clicked at all.
+    if ($Probe) {
+        & (Join-Path $PSScriptRoot 'probe-ui.ps1') -ProcessId $app.Id |
+            Set-Content -LiteralPath $treePath
+        Note "automation tree -> $treePath"
+    }
 
     & (Join-Path $PSScriptRoot 'capture-shot.ps1') -Path $staging | ForEach-Object { Note $_ }
     if (-not (Test-Path -LiteralPath $staging)) { throw "capture-shot.ps1 wrote no file." }
