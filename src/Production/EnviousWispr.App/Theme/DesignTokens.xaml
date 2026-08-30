@@ -63,6 +63,14 @@
             <Color x:Key="BrandControlBorderColor">#847BA0</Color>
             <SolidColorBrush x:Key="BrandControlBorderBrush" Color="#847BA0" />
             <Color x:Key="BrandDividerColor">#148A2BE2</Color>
+            <!--
+                A BRUSH THAT EXISTS TO BE HIT-TESTED, NOT TO BE SEEN. WinUI does not hit-test space
+                whose background is null, so a row that should respond to a click needs SOME brush -
+                and the one it needs is invisible. It is a token rather than a literal because the
+                rule here is that every brush is named, and this one's name is the only thing that
+                explains why an invisible colour is set at all. The same in every theme, on purpose.
+            -->
+            <SolidColorBrush x:Key="BrandHitTestBrush" Color="Transparent" />
             <SolidColorBrush x:Key="BrandDividerBrush" Color="#148A2BE2" />
 
             <Color x:Key="BrandSpectrumRedColor">#FF2A40</Color>
@@ -145,6 +153,14 @@
             <Color x:Key="BrandControlBorderColor">#75708C</Color>
             <SolidColorBrush x:Key="BrandControlBorderBrush" Color="#75708C" />
             <Color x:Key="BrandDividerColor">#24B8AAD6</Color>
+            <!--
+                A BRUSH THAT EXISTS TO BE HIT-TESTED, NOT TO BE SEEN. WinUI does not hit-test space
+                whose background is null, so a row that should respond to a click needs SOME brush -
+                and the one it needs is invisible. It is a token rather than a literal because the
+                rule here is that every brush is named, and this one's name is the only thing that
+                explains why an invisible colour is set at all. The same in every theme, on purpose.
+            -->
+            <SolidColorBrush x:Key="BrandHitTestBrush" Color="Transparent" />
             <SolidColorBrush x:Key="BrandDividerBrush" Color="#24B8AAD6" />
 
             <Color x:Key="BrandSpectrumRedColor">#FF2A40</Color>
@@ -214,6 +230,14 @@
             <Color x:Key="BrandControlBorderColor">{ThemeResource SystemColorWindowTextColor}</Color>
             <SolidColorBrush x:Key="BrandControlBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
             <Color x:Key="BrandDividerColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <!--
+                A BRUSH THAT EXISTS TO BE HIT-TESTED, NOT TO BE SEEN. WinUI does not hit-test space
+                whose background is null, so a row that should respond to a click needs SOME brush -
+                and the one it needs is invisible. It is a token rather than a literal because the
+                rule here is that every brush is named, and this one's name is the only thing that
+                explains why an invisible colour is set at all. The same in every theme, on purpose.
+            -->
+            <SolidColorBrush x:Key="BrandHitTestBrush" Color="Transparent" />
             <SolidColorBrush x:Key="BrandDividerBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
 
             <Color x:Key="BrandSpectrumRedColor">{ThemeResource SystemColorWindowTextColor}</Color>

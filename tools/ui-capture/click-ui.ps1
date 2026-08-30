@@ -14,6 +14,9 @@ param(
     [Parameter(Mandatory = $true)][string] $Name,
     [ValidateSet('left', 'centre', 'right')][string] $Where = 'centre',
     [int] $Inset = 16,
+    # PAST THE CONTROL ON PURPOSE. Asking whether the ROW around a control is clickable means
+    # clicking beside it, which is by definition outside its own rectangle.
+    [int] $OffsetX = 0,
     [int] $TimeoutSeconds = 10
 )
 
@@ -50,6 +53,7 @@ $x = switch ($Where) {
     default  { [int] ($rect.X + ($rect.Width / 2)) }
 }
 
+$x += $OffsetX
 [void][UiCapture.Click]::SetCursorPos($x, $y)
 Start-Sleep -Milliseconds 120
 [UiCapture.Click]::mouse_event(0x0002, 0, 0, 0, [IntPtr]::Zero)
