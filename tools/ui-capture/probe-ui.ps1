@@ -67,6 +67,15 @@ function Describe($element, $depth, $clip) {
             [System.Windows.Automation.TogglePattern]::Pattern, [ref] $toggle)) {
         $extra += " toggle=$($toggle.Current.ToggleState)"
     }
+    # WHICH DESTINATION IS CURRENTLY CHOSEN. Without this the tree shows a navigation list and no
+    # way to tell which page the app is on, so "the button navigated somewhere" could not be
+    # separated from "the button did nothing and the app was already there".
+    $selected = $null
+    if ($element.TryGetCurrentPattern(
+            [System.Windows.Automation.SelectionItemPattern]::Pattern, [ref] $selected)) {
+        if ($selected.Current.IsSelected) { $extra += ' SELECTED' }
+    }
+
     $patterns = @()
     foreach ($pair in @(
             @('invoke', [System.Windows.Automation.InvokePattern]::Pattern),
