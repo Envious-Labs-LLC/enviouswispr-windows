@@ -45,6 +45,11 @@ return CapturePassed(defaultCapture, minimumDurationMilliseconds: 1_500) &&
 static async Task<CaptureMetrics> CaptureAsync(AudioDeviceId? DeviceId, TimeSpan duration)
 {
     await using var capture = new WasapiAudioCapture();
+
+    // WHICH KIND OF SILENCE, IF IT IS SILENT. Windows marks a packet as deliberately silent when it
+    // is handing over zeroes on purpose; zeroes WITHOUT that flag are a microphone that is on and
+    // delivering nothing, which is a different fault entirely. Read off the capture itself, because
+    // the analyser is right that an interface variable here buys nothing.
     var levelGate = new object();
     var observedPeak = 0f;
     double rmsSum = 0;
@@ -71,7 +76,10 @@ static async Task<CaptureMetrics> CaptureAsync(AudioDeviceId? DeviceId, TimeSpan
             Error: started.Error?.Code.ToString(),
             LevelEvents: 0,
             Peak: 0,
-            AverageRootMeanSquare: 0);
+            AverageRootMeanSquare: 0,
+            Packets: 0,
+            SilentPackets: 0,
+            LoudestRootMeanSquare: 0);
     }
 
     await Task.Delay(duration);
@@ -87,16 +95,29 @@ static async Task<CaptureMetrics> CaptureAsync(AudioDeviceId? DeviceId, TimeSpan
             result.Error?.Code.ToString(),
             levelEvents,
             observedPeak,
-            levelEvents == 0 ? 0 : rmsSum / levelEvents);
+            levelEvents == 0 ? 0 : rmsSum / levelEvents,
+            capture.LastPacketCount,
+            capture.LastSilentPacketCount,
+            capture.LastRootMeanSquare);
     }
 }
 
+// A CAPTURE THAT HEARD NOTHING USED TO PASS THIS. It started, it ran for the right duration, it
+// produced the right sample rate and the right count of samples, and every one of them was zero -
+// and every assertion here was about the shape of the recording rather than its contents. A capture
+// path handing the app digital silence sailed through, twice a day, for months.
+//
+// A ROOM IS NEVER EXACTLY ZERO. Even a quiet one has a floor, so a peak of exactly nothing is not
+// quiet, it is nothing arriving. That is the assertion that was missing.
 static bool CapturePassed(CaptureMetrics result, long minimumDurationMilliseconds) =>
     result.Outcome == AudioCaptureOutcome.Completed.ToString() &&
     result.SampleRate == AudioSampleConverter.TargetSampleRate &&
     result.Channels == 1 &&
     result.DurationMilliseconds >= minimumDurationMilliseconds &&
-    result.LevelEvents > 0;
+    result.LevelEvents > 0 &&
+    result.Peak > 0 &&
+    result.LoudestRootMeanSquare > 0 &&
+    result.SilentPackets < result.Packets;
 
 internal sealed record CaptureMetrics(
     int SampleRate,
@@ -107,4 +128,7 @@ internal sealed record CaptureMetrics(
     string? Error,
     int LevelEvents,
     float Peak,
-    double AverageRootMeanSquare);
+    double AverageRootMeanSquare,
+    int Packets,
+    int SilentPackets,
+    float LoudestRootMeanSquare);

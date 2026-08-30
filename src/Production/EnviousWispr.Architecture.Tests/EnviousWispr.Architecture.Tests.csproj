@@ -5,6 +5,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!--
+      ROSLYN, BECAUSE FOUR ROUNDS OF REVIEW PROVED THE REGEX APPROACH CANNOT BE FINISHED. The
+      design-system gates below ask what a C# member IS: what it returns and what it is handed. A
+      regex answers that from the characters near the member's name, and every draft was one shape
+      short - an alias, a wrapped return type, a delegate field, an indexer, an attribute inside the
+      parameter list. Each miss failed GREEN, which is indistinguishable from the property holding.
+      The compiler already knows the answer, so the gate asks it instead of guessing.
+    -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4">

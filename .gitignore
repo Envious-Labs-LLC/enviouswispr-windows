@@ -66,3 +66,7 @@ spikes/s1/audio/*.flac
 *.tar.gz
 # Local llama.cpp toolchain (prebuilt, ~61 MB — not repo content)
 tools/llama.cpp/
+
+# Session-state notes are written for the NEXT session, not for the repository. Their durable parts
+# belong in the knowledge files beside them; the rest goes stale the moment the branch moves.
+.claude/knowledge/session-state-*.md

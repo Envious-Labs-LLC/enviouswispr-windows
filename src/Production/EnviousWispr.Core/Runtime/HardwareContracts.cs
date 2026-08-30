@@ -128,6 +128,11 @@ public static class WhisperModelFileNames
     };
 }
 
+public static class ParakeetModelIds
+{
+    public const string Final = "parakeet-tdt-0.6b-v3";
+}
+
 public static class WhisperModelIds
 {
     public const string Final = "whisper-large-v3-turbo";

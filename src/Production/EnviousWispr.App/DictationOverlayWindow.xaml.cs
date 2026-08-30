@@ -3,41 +3,108 @@ using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Settings;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media.Animation;
 using Windows.Graphics;
 
 namespace EnviousWispr.App;
-
-public enum DictationOverlayState
-{
-    Hidden,
-    Recording,
-    Processing,
-    Success,
-    Warning,
-    Error,
-}
 
 public sealed partial class DictationOverlayWindow : Window
 {
     private const uint MonitorDefaultToNearest = 2;
     private const int NoticeWidth = 380;
     private const int NoticeHeight = 108;
+
+    /// <summary>The notice height when the pill carries a button.</summary>
+    /// <remarks>
+    /// A PILL IS SIZED BY AN EXPLICIT Resize, NOT BY ITS CONTENTS, so a control added to the stack
+    /// does not make the window taller - it renders outside it and is clipped. A button whose
+    /// bottom half is cut off is the same family as a change that ships and does nothing: it
+    /// builds, it passes every gate, and the user cannot use it.
+    ///
+    /// DERIVED, NOT CHOSEN, so the next person can check it rather than trust it.
+    /// <see cref="NoticeHeight"/> is 108 for a heading and two lines of detail. Adding the button
+    /// costs one <c>BrandSpacingS</c> gap, which is 8, plus the button itself: a 14px line at
+    /// roughly 20, its 14,6 padding at 12, and its 1px border at 2, which is 34 and clears the
+    /// platform Button's own 32 minimum. 108 + 8 + 34 = 150.
+    /// </remarks>
+    private const int ActionNoticeHeight = 150;
     private const int WorkAreaMargin = 28;
 
     private readonly DispatcherTimer _hideTimer = new();
     private readonly DispatcherTimer _elapsedTimer = new();
+    private readonly Storyboard _distressPulse = new();
+    private TimeSpan _dwell = TimeSpan.Zero;
+    private bool _pointerIsOver;
     private OverlayPillPosition _position = OverlayPillPosition.Top;
     private bool _livePreviewEnabled;
     private RecordingPillDesign _withoutWordsDesign = RecordingPillDesign.Classic;
     private RecordingPillDesign _withWordsDesign = RecordingPillDesign.ReadingWell;
     private RecordingPillDesign _activeDesign = RecordingPillDesign.Classic;
+
+    /// <summary>One level per bar, oldest first, so the rail is a history rather than a mirror.</summary>
+    private readonly RecordingLevelHistory _levelHistory = new();
+
+    /// <summary>
+    /// The loudest level the capture has reported since the last frame was taken.
+    /// </summary>
+    /// <remarks>
+    /// KEPT AS ONE NUMBER RATHER THAN AS TWO HUNDRED DISPATCHER JOBS A SECOND. Every capture buffer
+    /// used to be posted to the UI thread and thrown away there by a throttle, so the work was done
+    /// whatever the throttle decided - and under load the queue backed up and the meter drew samples
+    /// that were already old.
+    ///
+    /// ONE NUMBER, AND IT IS THE LOUDEST OF THE PENDING FRAME RATHER THAN THE NEWEST. About ten
+    /// levels arrive per frame and exactly one is drawn, so keeping the newest chooses at random
+    /// with respect to loudness and loses the attack of every consonant that does not happen to
+    /// land last. The tick takes this and clears it in one atomic operation, which is what makes
+    /// the window this maximises over the same window that gets drawn.
+    /// </remarks>
+    private float _latestLevel;
+
+    private readonly DispatcherTimer _levelTimer = new();
+
+    /// <summary>A monotonic reading for the meter, so a clock change cannot stall or flood it.</summary>
+    private readonly System.Diagnostics.Stopwatch _levelClock = System.Diagnostics.Stopwatch.StartNew();
     private DictationOverlayState _state = DictationOverlayState.Hidden;
     private DateTimeOffset _recordingStartedAt;
+    private PillAction? _action;
     private string? _previewText;
     private int _overlayWidth = NoticeWidth;
     private int _overlayHeight = NoticeHeight;
-    private readonly double _rasterScale;
+
+    /// <summary>The size the pill last asked for, in the units the layout is written in.</summary>
+    /// <remarks>
+    /// KEPT SO A SCALE CHANGE CAN BE REPLAYED. The physical size is the logical size times the
+    /// scale, so once the scale moves, the only way back to a correct window is the number the pill
+    /// originally asked for. Without these two, a monitor change could only be recovered by
+    /// re-running whichever state handler happened to have set the size.
+    /// </remarks>
+    private int _logicalWidth = NoticeWidth;
+
+    /// <summary>The pointer currently dragging the pill, if one is.</summary>
+    private uint? _dragPointer;
+
+    private PointInt32 _dragFromWindow;
+    private NativePoint _dragFromCursor;
+
+    /// <summary>True once this pill has been moved by hand, so placement leaves it alone.</summary>
+    private bool _draggedThisPresentation;
+    private int _logicalHeight = NoticeHeight;
+
+    /// <summary>Physical pixels per layout unit on the monitor the pill is currently on.</summary>
+    /// <remarks>
+    /// NOT READONLY, AND THAT IS THE FIX. This was read once in the constructor, from whichever
+    /// monitor the app happened to start on. The pill then MOVES: it is placed on the monitor of
+    /// whatever app the user is dictating into. On a two-monitor desk with different scales - a
+    /// 150% laptop panel beside a 100% external, which is an ordinary setup - every size, the
+    /// clipping region and the screen margin stayed computed for the monitor the pill had left.
+    /// The pill came out too big or too small, and its clip no longer matched its own corners.
+    /// </remarks>
+    private double _rasterScale;
 
     public DictationOverlayWindow()
     {
@@ -46,6 +113,22 @@ public sealed partial class DictationOverlayWindow : Window
         var dpi = GetDpiForWindow(windowHandle);
         _rasterScale = dpi > 0 ? dpi / 96d : 1d;
         Resize(NoticeWidth, NoticeHeight);
+        OverlayRoot.Loaded += (_, _) =>
+        {
+            if (OverlayRoot.XamlRoot is not { } root)
+            {
+                return;
+            }
+
+            root.Changed += OnXamlRootChanged;
+
+            // SYNCHRONISE NOW, RATHER THAN WAIT FOR THE NEXT CHANGE. The pill is moved to the
+            // foreground app's monitor BEFORE it is shown, so by the time this subscription exists
+            // the scale may already be that of a different monitor - and a change that has already
+            // happened raises no event. Waiting would leave the very first pill on a second monitor
+            // sized for the first, which is the exact bug this subscription is here to prevent.
+            ApplyScale(root.RasterizationScale);
+        };
         AppWindow.IsShownInSwitchers = false;
         if (AppWindow.Presenter is OverlappedPresenter presenter)
         {
@@ -56,24 +139,84 @@ public sealed partial class DictationOverlayWindow : Window
             presenter.SetBorderAndTitleBar(hasBorder: false, hasTitleBar: false);
         }
 
-        _hideTimer.Tick += (_, _) =>
-        {
-            _hideTimer.Stop();
-            _elapsedTimer.Stop();
-            AppWindow.Hide();
-        };
+        // AND DWM STILL DRAWS ONE ANYWAY. SetBorderAndTitleBar(hasBorder: false) removes the frame
+        // the presenter owns; the desktop compositor keeps painting its own hairline rounded
+        // rectangle at the window bounds, which around a rounded pill reads as a second, squarer
+        // outline floating outside the first. Asking DWM for no border colour is what removes it.
+        // THE RESULT IS READ AND THEN DELIBERATELY IGNORED. A compositor that declines this leaves
+        // a hairline border, which is cosmetic; refusing to open the pill over it would be worse
+        // than the border. The discard is what says that on purpose rather than by omission.
+        var borderColour = DwmColorNone;
+        _ = DwmSetWindowAttribute(windowHandle, DwmwaBorderColor, ref borderColour, sizeof(uint));
+
+        _hideTimer.Tick += (_, _) => HideOverlay();
         _elapsedTimer.Interval = TimeSpan.FromMilliseconds(250);
         _elapsedTimer.Tick += (_, _) => UpdateElapsed();
+
+        // THE METER IS DRAWN ON ITS OWN SCHEDULE, NOT ON THE MICROPHONE'S. Capture reports a level
+        // per audio buffer, roughly two hundred times a second, and posting each one to the UI
+        // thread did that work whatever the throttle then decided - and under load the queue backed
+        // up so the meter drew samples that were already old. The capture now records a number and
+        // this asks for it at the rate the meter actually has.
+        //
+        // AND IT TICKS FASTER THAN THE SAMPLE INTERVAL, WHICH IS THE WHOLE REASON THE RAIL WAS DEAD.
+        // Setting the timer to the sample interval put two clocks in series at the same period, and
+        // the history's own gate rejects anything arriving early. Windows quantises timers to about
+        // 15.6 milliseconds, so a fifty millisecond DispatcherTimer fires at 46.9 - reliably three
+        // milliseconds SHORT of the gate, every single time. The rail therefore drew its first
+        // sample and then never again, and sat pinned at its unlit four-DIP floor through
+        // dictations that transcribed perfectly. Ticking at half the interval makes the history's
+        // gate the single pacer, which is what it was written to be.
+        _levelTimer.Interval = RecordingLevelHistory.SampleInterval / 2;
+        _levelTimer.Tick += (_, _) => OnLevelTick();
+
+        // Distress and error share a red, so the breathing is what separates them. Opacity is a
+        // composition property, so this animates off the UI thread and does not need
+        // EnableDependentAnimation - which also means it cannot stutter while a dictation is being
+        // transcribed on the same machine.
+        var breath = new DoubleAnimation
+        {
+            From = 1,
+            To = 0.35,
+            Duration = new Duration(TimeSpan.FromMilliseconds(650)),
+            AutoReverse = true,
+            RepeatBehavior = RepeatBehavior.Forever,
+        };
+        Storyboard.SetTarget(breath, SeverityWash);
+        Storyboard.SetTargetProperty(breath, "Opacity");
+        _distressPulse.Children.Add(breath);
     }
 
-    public void ShowState(DictationOverlayState state, string detail)
+    /// <summary>Puts the recording pill in the same theme as the rest of the app.</summary>
+    /// <remarks>
+    /// THE PILL IS A SEPARATE TOP-LEVEL WINDOW, so setting the theme on the settings window never
+    /// reached it. It followed the MACHINE instead - invisible while the two agree, and wrong the
+    /// moment someone picks Light on a machine set to Dark.
+    ///
+    /// It is worse than a mismatched colour, because the settings window shows a PREVIEW of this
+    /// pill and the preview does follow the app theme. So the preview was showing a pill that would
+    /// never appear. A preview that lies is worse than no preview.
+    ///
+    /// Same class as the window's caption buttons: anything that is not inside the settings window's
+    /// visual tree needs the theme handed to it deliberately.
+    /// </remarks>
+    public void ApplyTheme(ElementTheme theme) => OverlayRoot.RequestedTheme = theme;
+
+    /// <summary>Puts one status on screen.</summary>
+    /// <remarks>
+    /// TAKES THE STATUS RATHER THAN A STATE AND A SENTENCE, because a status now carries a third
+    /// thing - the one action the user can take about it - and three loose arguments is how the
+    /// third one gets forgotten at a call site.
+    /// </remarks>
+    public void ShowState(DictationStatus status)
     {
+        var state = status.State;
+        var detail = status.Text;
         _hideTimer.Stop();
         if (state == DictationOverlayState.Hidden)
         {
             _state = state;
-            _elapsedTimer.Stop();
-            AppWindow.Hide();
+            HideOverlay();
             return;
         }
 
@@ -82,7 +225,19 @@ public sealed partial class DictationOverlayWindow : Window
             DictationOverlayState.Recording => ("Listening", "\uE720", "Release your key to finish · Escape cancels"),
             DictationOverlayState.Processing => ("Working locally", "\uE895", detail),
             DictationOverlayState.Success => ("Dictation complete", "\uE73E", detail),
+            // THE ADVISORY HEADING NAMES THE MACHINE, NOT THE APP, and that is the whole point of
+            // the severity: "Dictation stopped safely" over a sentence about Ollama being switched
+            // off tells the user our software broke when their setup is simply incomplete.
+            DictationOverlayState.Advisory => ("Setup needs attention", "\uE946", detail),
+            // THE GLOBE, AND THE HEADING SAYS THE APP WAS LISTENING RATHER THAN THAT SOMETHING IS
+            // WRONG. This is the one pill that asks a question instead of reporting news.
+            DictationOverlayState.Suggestion => ("A suggestion", "\uE774", detail),
             DictationOverlayState.Warning => ("Your text is safe", "\uE7BA", detail),
+            // Distress reuses the error glyph deliberately. It is the same bad news arriving
+            // louder, and the pulse plus the deeper wash carry the difference. A codepoint chosen
+            // for novelty is a hollow box on a machine whose font does not have it, and nothing in
+            // this repository can see that.
+            DictationOverlayState.Distress => ("Dictation interrupted", "\uEA39", detail),
             DictationOverlayState.Error => ("Dictation stopped safely", "\uEA39", detail),
             _ => ("EnviousWispr", "\uE720", detail),
         };
@@ -98,37 +253,77 @@ public sealed partial class DictationOverlayWindow : Window
                 _livePreviewEnabled,
                 _withoutWordsDesign,
                 _withWordsDesign);
+            if (_state != DictationOverlayState.Recording)
+            {
+                // A NEW RECORDING STARTS EMPTY. Leaving the last one's shape on screen would show
+                // somebody the sentence before this one as though they were still saying it.
+                ResetLevelHistory();
+            }
+
+            ApplyAction(action: null);
             ConfigureRecordingDesign();
             _elapsedTimer.Start();
+            _levelTimer.Start();
         }
         else
         {
             _elapsedTimer.Stop();
+            _levelTimer.Stop();
+            // The action is applied before the notice is sized, because the size depends on whether
+            // there is a button. The other order clips it.
+            ApplyAction(status.Action);
             ConfigureNotice();
         }
 
         _state = state;
+        ApplySeverity(state);
         StateTitle.Text = presentation.Item1;
         StateIcon.Glyph = presentation.Item2;
         StateDetail.Text = presentation.Item3;
+        // THE ANNOUNCEMENT LIVES ON THE TITLE, NOT ON THE FRAME. WinUI creates no automation peer for
+        // a Border, so a live region declared there has nothing to raise through and the raise
+        // silently does nothing - which is how this shipped "fixed" and still said nothing at all.
+        // A TextBlock has a peer. The whole sentence goes on its Name, because that is what a screen
+        // reader reads when a live region changes.
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-            OverlayRoot,
+            StateTitle,
             state == DictationOverlayState.Recording
                 ? $"{RecordingPillCatalog.DisplayName(_activeDesign)} recording pill. {presentation.Item1}."
                 : $"{presentation.Item1}. {presentation.Item3}");
         PositionOnForegroundMonitor();
         AppWindow.Show(activateWindow: false);
+        // AFTER THE WINDOW IS SHOWN. Raising while it is still hidden announces something the user
+        // cannot yet see, and the first state of a freshly shown pill is exactly that case.
+        AnnounceStateChange(StateTitle, state);
 
-        if (state is DictationOverlayState.Success or DictationOverlayState.Warning or DictationOverlayState.Error)
+        if (state is DictationOverlayState.Success or DictationOverlayState.Advisory
+            or DictationOverlayState.Suggestion or DictationOverlayState.Warning
+            or DictationOverlayState.Distress or DictationOverlayState.Error)
         {
-            _hideTimer.Interval = TimeSpan.FromSeconds(state == DictationOverlayState.Error ? 5 : 3);
-            _hideTimer.Start();
+            // AN ADVISORY DWELLS LONGEST BECAUSE IT ASKS THE USER TO DO SOMETHING. It names a
+            // setting they have to go and change, which is more words than "your text is safe" and
+            // more thought than a tick. macOS makes the same call and says so in its own source.
+            _dwell = TimeSpan.FromSeconds(state switch
+            {
+                // A SUGGESTION DWELLS AS LONG AS AN ADVISORY. It asks a question and offers a
+                // button, and a question the user has not finished reading is a question they
+                // answer by default.
+                DictationOverlayState.Advisory or DictationOverlayState.Suggestion => 6,
+                DictationOverlayState.Error or DictationOverlayState.Distress => 5,
+                _ => 3,
+            });
+            ArmDwell();
+        }
+        else
+        {
+            _dwell = TimeSpan.Zero;
         }
     }
 
     public void SetPreview(string? text)
     {
         _previewText = string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+        ApplyPreviewInk();
         if (_state == DictationOverlayState.Recording &&
             _activeDesign == RecordingPillDesign.ReadingWell)
         {
@@ -137,15 +332,90 @@ public sealed partial class DictationOverlayWindow : Window
         }
     }
 
-    public void SetAudioLevel(float rootMeanSquare)
+    /// <summary>Keeps the loudest level of the current frame. Draws nothing.</summary>
+    /// <remarks>
+    /// CALLED FROM THE CAPTURE'S OWN THREAD, ONCE PER AUDIO BUFFER. It records a number and returns,
+    /// so a burst of buffers costs a burst of comparisons rather than a burst of UI work. The meter
+    /// is drawn by the timer below, on the schedule the meter actually has.
+    ///
+    /// THE LOUDEST OF THE FRAME, NOT THE NEWEST, AND THE DIFFERENCE IS THE ATTACK OF EVERY
+    /// CONSONANT. Capture reports about ten levels per frame and only one of them is ever drawn, so
+    /// keeping the newest chooses at random with respect to loudness: a short loud packet landing
+    /// anywhere but last in its frame was simply never seen. Keeping the loudest costs one compare
+    /// and cannot lose a peak, and the frame is closed by the timer below rather than here, so the
+    /// window this maximises over is exactly the window that gets drawn.
+    ///
+    /// LOCK-FREE BECAUSE OF WHERE IT IS CALLED FROM. A compare-and-swap loop keeps this off any
+    /// lock the UI thread could ever contend for, which matters at two hundred calls a second.
+    /// </remarks>
+    public void SetAudioLevel(float rootMeanSquare) =>
+        AccumulatePeak(RecordingLevelHistory.Normalize(rootMeanSquare));
+
+    /// <summary>Raises the pending peak to this level, if it is louder.</summary>
+    /// <remarks>
+    /// SHARED WITH THE TICK, WHICH IS THE POINT. A poll that arrives before the frame is due has
+    /// already taken the pending peak out, so it has to put it back - and putting it back with a
+    /// plain write would erase a louder callback that arrived in between. Merging through the same
+    /// loop the capture thread uses makes the two paths agree by construction.
+    /// </remarks>
+    private void AccumulatePeak(float level)
     {
-        if (_state != DictationOverlayState.Recording ||
-            _activeDesign != RecordingPillDesign.LevelRail)
+        var current = Volatile.Read(ref _latestLevel);
+        while (level > current)
+        {
+            var seen = Interlocked.CompareExchange(ref _latestLevel, level, current);
+            if (seen.Equals(current))
+            {
+                return;
+            }
+
+            current = seen;
+        }
+    }
+
+    private void OnLevelTick()
+    {
+        if (_state != DictationOverlayState.Recording)
         {
             return;
         }
 
-        var normalized = Math.Clamp(MathF.Sqrt(Math.Max(0, rootMeanSquare) * 4f), 0f, 1f);
+        // TAKING THE PEAK AND CLEARING IT IS ONE OPERATION, AND THAT ATOMICITY IS THE FRAME BOUNDARY.
+        // Reading the peak and writing a zero back afterwards leaves a window between the two, and a
+        // capture callback landing in that window is erased by the zero - so the loudest packet of a
+        // frame could still be lost, by the very code that exists to keep it.
+        var framePeak = Interlocked.Exchange(ref _latestLevel, 0f);
+
+        // THE MARK BREATHES ON EVERY DESIGN THAT SHOWS IT, and that is the Classic pill's meter. It
+        // showed a fixed logo while somebody was talking, so the one pill with no preview and no rail
+        // was also the one that gave no sign it could hear them.
+        if (RainbowMark.Visibility == Visibility.Visible)
+        {
+            RainbowMark.Opacity = 0.55 + 0.45 * framePeak;
+        }
+
+        // THE FRAME IS CLOSED FOR EVERY DESIGN, WHICH IS WHY THE GATE IS NOT INSIDE THE RAIL'S
+        // BRANCH. The peak is taken above whatever the design, so leaving the gate to the rail meant
+        // a pill with no rail never closed a frame at all.
+        //
+        // AND A POLL THAT IS TOO EARLY PUTS THE PEAK BACK. The timer polls at twice this rate, so
+        // most ticks are rejected here, and each one has already removed the pending peak. Merging
+        // it back through the same loop the capture thread uses is what stops an early poll from
+        // quietly discarding the loudest packet of a frame that has not finished yet.
+        if (!_levelHistory.Sample(framePeak, _levelClock.Elapsed))
+        {
+            AccumulatePeak(framePeak);
+            return;
+        }
+
+        if (_activeDesign == RecordingPillDesign.LevelRail)
+        {
+            DrawLevelHistory();
+        }
+    }
+
+    private void DrawLevelHistory()
+    {
         for (var index = 0; index < LevelBars.Children.Count; index++)
         {
             if (LevelBars.Children[index] is not Border bar)
@@ -153,10 +423,24 @@ public sealed partial class DictationOverlayWindow : Window
                 continue;
             }
 
-            var wave = 0.45f + 0.55f * MathF.Abs(MathF.Sin(index * 1.7f + normalized * 5.1f));
-            bar.Height = 5 + 20 * normalized * wave;
-            bar.Opacity = 0.35 + 0.65 * normalized;
+            var sample = index < _levelHistory.Levels.Count ? _levelHistory.Levels[index] : 0f;
+            bar.Height = 4 + 21 * sample;
+
+            // THE OLDEST BARS FADE, so which end is now is obvious without reading the heights. A
+            // rail of equally bright bars is a chart with no time axis.
+            var age = LevelBars.Children.Count <= 1
+                ? 1.0
+                : (double)index / (LevelBars.Children.Count - 1);
+            bar.Opacity = (0.30 + 0.70 * age) * (0.35 + 0.65 * sample);
         }
+    }
+
+    private void ResetLevelHistory()
+    {
+        _levelHistory.Reset();
+        Volatile.Write(ref _latestLevel, 0f);
+        RainbowMark.Opacity = 1;
+        DrawLevelHistory();
     }
 
     public void ApplyPreferences(
@@ -179,34 +463,47 @@ public sealed partial class DictationOverlayWindow : Window
     {
         _hideTimer.Stop();
         _elapsedTimer.Stop();
+        _levelTimer.Stop();
         Close();
     }
 
     private void ConfigureRecordingDesign()
     {
+        StateTitle.Style = GetPillStyle("PillModeQuietTextStyle");
         StateIcon.Visibility = Visibility.Collapsed;
         StateDetail.Visibility = Visibility.Collapsed;
         ElapsedText.Visibility = Visibility.Visible;
         RainbowMark.Visibility = _activeDesign == RecordingPillDesign.Classic
             ? Visibility.Visible
             : Visibility.Collapsed;
-        LevelBars.Visibility = _activeDesign == RecordingPillDesign.LevelRail
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+
+        // THE TIMER MOVES TO THE FRONT AND THE WORD GOES, so the row reads exactly as the Appearance
+        // page draws it: the time, then the meter. On this design the meter IS the "listening", and
+        // a word beside it would be saying the same thing twice in less room.
+        var rail = _activeDesign == RecordingPillDesign.LevelRail;
+        LevelBars.Visibility = rail ? Visibility.Visible : Visibility.Collapsed;
+        SetLiveVisibility(StateTitle, rail ? Visibility.Collapsed : Visibility.Visible);
+        Grid.SetColumn(ElapsedText, rail ? 0 : 2);
         PreviewWell.Visibility = _activeDesign == RecordingPillDesign.ReadingWell
             ? Visibility.Visible
             : Visibility.Collapsed;
         PreviewText.Text = _previewText ?? "Listening…";
+        ApplyPreviewInk();
         OverlayRoot.CornerRadius = _activeDesign == RecordingPillDesign.ReadingWell
             ? new CornerRadius(18)
             : new CornerRadius(29);
-        OverlayRoot.Padding = new Thickness(16, 12, 16, 12);
+        // On the CONTENT, not the frame: a Border lays its child out inside its padding, so a
+        // frame that owns the padding insets the severity wash away from the capsule edge.
+        ContentPanel.Margin = new Thickness(16, 12, 16, 12);
 
         switch (_activeDesign)
         {
             case RecordingPillDesign.Classic:
                 Resize(185, 92);
                 break;
+            // WIDER FOR TWENTY-FOUR BARS. Twelve fitted in 288; leaving that width would have
+            // squeezed the rail against the timer or clipped the newest samples, which are the ones
+            // somebody is actually looking at.
             case RecordingPillDesign.LevelRail:
                 Resize(288, 92);
                 break;
@@ -218,8 +515,252 @@ public sealed partial class DictationOverlayWindow : Window
         }
     }
 
+    /// <summary>Raised when the user presses the pill's button.</summary>
+    public event Action<PillActionKind>? ActionInvoked;
+
+    /// <summary>Shows the one thing the user can do about this status, or nothing.</summary>
+    private void ApplyAction(PillAction? action)
+    {
+        _action = action;
+        if (action is null)
+        {
+            ActionButton.Visibility = Visibility.Collapsed;
+            ActionButton.Content = null;
+            return;
+        }
+
+        ActionButton.Content = action.Label;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ActionButton, action.SpokenLabel);
+        ActionButton.Visibility = Visibility.Visible;
+    }
+
+    private void ActionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_action is not { } action)
+        {
+            return;
+        }
+
+        HideOverlay();
+        ActionInvoked?.Invoke(action.Kind);
+    }
+
+    /// <summary>Starts the dwell clock, unless the pointer is on the pill.</summary>
+    /// <remarks>
+    /// A BUTTON ON A PILL THAT DISMISSES ITSELF IN SIX SECONDS IS A BUTTON NOBODY REACHES. Moving a
+    /// mouse to it is most of that budget, and the pill would leave while the pointer was on its
+    /// way. macOS pairs its action pills with hover-pause for exactly this reason, and shipping the
+    /// button without it would have been a control that renders, builds clean and cannot be used.
+    ///
+    /// The pause applies to every dwelling pill rather than only the ones with a button, because
+    /// the other thing a pointer resting on a notice means is that somebody is reading it.
+    /// </remarks>
+    private void ArmDwell()
+    {
+        _hideTimer.Stop();
+        if (_dwell <= TimeSpan.Zero || _pointerIsOver)
+        {
+            return;
+        }
+
+        _hideTimer.Interval = _dwell;
+        _hideTimer.Start();
+    }
+
+    private void OverlayRoot_PointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        _pointerIsOver = true;
+        _hideTimer.Stop();
+    }
+
+    /// <remarks>
+    /// THE CLOCK RESTARTS FROM THE TOP RATHER THAN RESUMING WHAT WAS LEFT. A pill the user has just
+    /// stopped reading deserves its whole dwell again; resuming a remainder makes a pill they
+    /// looked at vanish faster than one they ignored.
+    /// </remarks>
+    private void OverlayRoot_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        _pointerIsOver = false;
+        ArmDwell();
+    }
+
+    /// <summary>Starts a drag, so the pill can be moved out of the way of what is underneath it.</summary>
+    /// <remarks>
+    /// THE PILL LANDS WHERE IT LANDS, AND SOMETIMES THAT IS ON TOP OF THE THING BEING DICTATED INTO.
+    /// Top or bottom is a setting, but a setting is the wrong grain for "not there, just now" - the
+    /// obstruction is about this window at this moment, not about a preference. macOS lets the pill
+    /// be dragged for the presentation it is in.
+    ///
+    /// FOR THIS PRESENTATION ONLY, WHICH IS THE WHOLE POINT. Moving it once should not silently
+    /// redefine where every future pill appears; the next one comes back where the setting says. Hide
+    /// clears the override, so the rule is simply "until this pill goes away".
+    ///
+    /// THE POINTER IS CAPTURED so the drag survives leaving the pill's own bounds, which is otherwise
+    /// the first thing that happens when somebody moves it any distance.
+    /// </remarks>
+    private void OverlayRoot_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(null);
+        if (!point.Properties.IsLeftButtonPressed || !OverlayRoot.CapturePointer(e.Pointer))
+        {
+            return;
+        }
+
+        _dragPointer = e.Pointer.PointerId;
+        _dragFromWindow = new PointInt32(AppWindow.Position.X, AppWindow.Position.Y);
+        GetCursorPos(out var cursor);
+        _dragFromCursor = cursor;
+    }
+
+    private void OverlayRoot_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (_dragPointer != e.Pointer.PointerId)
+        {
+            return;
+        }
+
+        // MOVED BY THE CURSOR'S OWN TRAVEL, not by the pointer position inside the pill. Once the
+        // window starts moving, a position measured against the window chases itself and the pill
+        // slides away under the pointer.
+        GetCursorPos(out var cursor);
+        var moveX = cursor.X - _dragFromCursor.X;
+        var moveY = cursor.Y - _dragFromCursor.Y;
+        if (moveX == 0 && moveY == 0)
+        {
+            return;
+        }
+
+        // THE FLAG GOES UP BEFORE THE MOVE, NOT AFTER. Crossing onto a monitor with a different
+        // scale makes Windows raise a DPI change, and this app answers that by re-placing the pill -
+        // so a drag that crosses that boundary would snap back mid-gesture, while the flag that
+        // stops exactly that was still one line away from being set.
+        _draggedThisPresentation = true;
+        AppWindow.Move(new PointInt32(_dragFromWindow.X + moveX, _dragFromWindow.Y + moveY));
+    }
+
+    private void OverlayRoot_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (_dragPointer != e.Pointer.PointerId)
+        {
+            return;
+        }
+
+        OverlayRoot.ReleasePointerCapture(e.Pointer);
+        _dragPointer = null;
+    }
+
+    /// <summary>Takes the pill off screen and stops everything it left running.</summary>
+    /// <remarks>
+    /// BOTH HIDE PATHS GO THROUGH HERE, and they did not before. The dwell timer's tick stopped
+    /// two timers; the Hidden state stopped one; neither stopped the distress pulse. So a pill that
+    /// had breathed once went on breathing on an invisible window for as long as the app ran. It
+    /// was invisible and it did not contaminate the next pill, because the next state stops the
+    /// pulse before it draws - which is exactly why nothing would ever have reported it.
+    ///
+    /// One helper rather than three careful call sites, because the next thing added to this window
+    /// that needs stopping will be added by somebody who reads one of them.
+    /// </remarks>
+    private void HideOverlay()
+    {
+        // THE METER STOPS WHEN THE PILL GOES. Hiding jumps straight here, so leaving it running woke
+        // the app twenty times a second for the rest of the session to look at a pill nobody can see.
+        _levelTimer.Stop();
+        _hideTimer.Stop();
+        _elapsedTimer.Stop();
+        _dwell = TimeSpan.Zero;
+        _pointerIsOver = false;
+        // THE DRAG LASTED AS LONG AS THIS PILL DID. The next one returns to where the setting says,
+        // which is what stops one nudge quietly becoming a new permanent position.
+        _draggedThisPresentation = false;
+        _dragPointer = null;
+        ApplyDistressPulse(pulsing: false);
+        AppWindow.Hide();
+    }
+
+    /// <summary>Colours the pill for how bad the news is.</summary>
+    /// <remarks>
+    /// BEFORE THIS, EVERY OUTCOME DREW THE SAME CAPSULE. An error, a warning and a success shared
+    /// one surface, one border and one ink, and were told apart only by a small glyph most people
+    /// never look at directly. The app's in-window notifications had the identical hole one surface
+    /// over, and it was found the same way: nobody chose it, there was simply one tint token and
+    /// the severities with none of their own fell through to the neutral card.
+    ///
+    /// THE SET IS THE UNIT. Every state that can reach the pill is answered here, including the two
+    /// that take the neutral pair, so a state added later cannot render as a plain pill and look
+    /// deliberate. The wash and the ink are chosen together in one expression for the same reason.
+    /// </remarks>
+    private void ApplySeverity(DictationOverlayState state)
+    {
+        // STYLES RATHER THAN BRUSHES, and spelled out rather than composed. A brush read from the
+        // application dictionary resolves against the MACHINE's theme, while this window follows
+        // the APP's - the trap ApplyTheme exists to close, one property over. A style's setters
+        // resolve against the element they land on, so they follow the pill.
+        //
+        // Every name is written in full because the gate that checks these styles exist reads the
+        // source text; a name built by interpolation is not a name it can see, so it would be
+        // checked by nothing.
+        var (icon, edge, wash) = state switch
+        {
+            DictationOverlayState.Success =>
+                ("PillSuccessIconStyle", "PillSuccessEdgeStyle", "PillSuccessWashStyle"),
+            // SUGGESTION SHARES THE ADVISORY PALETTE ON PURPOSE, and is listed beside it rather than
+            // folded into the neutral arm. The violet already says "this is about your setup and
+            // nothing is broken", which is exactly what a suggestion is.
+            DictationOverlayState.Advisory or DictationOverlayState.Suggestion =>
+                ("PillAdvisoryIconStyle", "PillAdvisoryEdgeStyle", "PillAdvisoryWashStyle"),
+            DictationOverlayState.Warning =>
+                ("PillWarningIconStyle", "PillWarningEdgeStyle", "PillWarningWashStyle"),
+            DictationOverlayState.Distress =>
+                ("PillDistressIconStyle", "PillDistressEdgeStyle", "PillDistressWashStyle"),
+            DictationOverlayState.Error =>
+                ("PillErrorIconStyle", "PillErrorEdgeStyle", "PillErrorWashStyle"),
+            // The three quiet states are LISTED rather than left to the default arm. A pill with
+            // no severity is a choice about how it looks, and the gate that checks this set is
+            // complete reads these names - an unlisted state would be covered by nothing and would
+            // render as a plain capsule looking exactly as though somebody meant it.
+            DictationOverlayState.Hidden or DictationOverlayState.Recording
+                or DictationOverlayState.Processing =>
+                ("PillNeutralIconStyle", "PillNeutralEdgeStyle", "PillNeutralWashStyle"),
+            // An enum can hold a value nobody declared, so this arm has to exist. It takes the
+            // neutral look rather than throwing, because a pill is not worth crashing a dictation.
+            _ => ("PillNeutralIconStyle", "PillNeutralEdgeStyle", "PillNeutralWashStyle"),
+        };
+
+        StateIcon.Style = GetPillStyle(icon);
+        OverlayRoot.Style = GetPillStyle(edge);
+        SeverityWash.Style = GetPillStyle(wash);
+        // The wash fills the pill, so its corners have to be the pill's corners. Reading them off
+        // the root rather than restating the number is what stops a design change rounding one
+        // layer and not the other.
+        SeverityWash.CornerRadius = OverlayRoot.CornerRadius;
+        ApplyDistressPulse(state == DictationOverlayState.Distress);
+    }
+
+    /// <summary>Breathes the wash while something outside the app is interrupting a dictation.</summary>
+    /// <remarks>
+    /// THE PULSE IS WHAT SEPARATES DISTRESS FROM ERROR, because they share a colour. Stopping it
+    /// explicitly on every other state matters more than starting it: a storyboard left running
+    /// would breathe under the next success pill, and the state that started it would be long gone.
+    /// </remarks>
+    private void ApplyDistressPulse(bool pulsing)
+    {
+        _distressPulse.Stop();
+        SeverityWash.Opacity = 1;
+        if (!pulsing)
+        {
+            return;
+        }
+
+        _distressPulse.Begin();
+    }
+
     private void ConfigureNotice()
     {
+        // A NOTICE IS NEVER THE RAIL, so the row goes back to its ordinary shape. Leaving the timer
+        // in the first column would put an error's icon and its sentence in the wrong places.
+        SetLiveVisibility(StateTitle, Visibility.Visible);
+        Grid.SetColumn(ElapsedText, 2);
+        StateTitle.Style = GetPillStyle("PillNoticeTextStyle");
         RainbowMark.Visibility = Visibility.Collapsed;
         StateIcon.Visibility = Visibility.Visible;
         StateDetail.Visibility = Visibility.Visible;
@@ -227,9 +768,20 @@ public sealed partial class DictationOverlayWindow : Window
         LevelBars.Visibility = Visibility.Collapsed;
         PreviewWell.Visibility = Visibility.Collapsed;
         OverlayRoot.CornerRadius = new CornerRadius(18);
-        OverlayRoot.Padding = new Thickness(18, 14, 18, 14);
-        Resize(NoticeWidth, NoticeHeight);
+        ContentPanel.Margin = new Thickness(18, 14, 18, 14);
+        Resize(NoticeWidth, _action is null ? NoticeHeight : ActionNoticeHeight);
     }
+
+    private void ApplyPreviewInk()
+    {
+        var styleKey = _previewText is null ? "PillDimmedTextStyle" : "PillLiveTextStyle";
+        PreviewText.Style = GetPillStyle(styleKey);
+    }
+
+    private static Style GetPillStyle(string key) =>
+        (Style)Application.Current.Resources[key];
+
+
 
     private void ResizeReadingWell()
     {
@@ -242,11 +794,149 @@ public sealed partial class DictationOverlayWindow : Window
         }
     }
 
+    /// <summary>Re-applies the pill's own size when the monitor's scale changes under it.</summary>
+    /// <remarks>
+    /// THE SIZE IS REPLAYED, NOT RECOMPUTED FROM THE WINDOW. Reading the current physical size back
+    /// and rescaling it compounds a rounding error every time the pill crosses a monitor boundary.
+    /// The logical size it asked for is exact and does not drift.
+    /// </remarks>
+    private void OnXamlRootChanged(XamlRoot sender, XamlRootChangedEventArgs args) =>
+        ApplyScale(sender.RasterizationScale);
+
+    /// <summary>Re-applies the pill's own size at a new scale, if it really is a new one.</summary>
+    private void ApplyScale(double scale)
+    {
+        if (scale <= 0 || Math.Abs(scale - _rasterScale) < 0.001)
+        {
+            return;
+        }
+
+        _rasterScale = scale;
+        Resize(_logicalWidth, _logicalHeight);
+        PositionOnForegroundMonitor();
+    }
+
+    /// <summary>Tells a screen reader the pill has changed, and how urgently.</summary>
+    /// <remarks>
+    /// MARKING A LIVE REGION IS NOT ANNOUNCING IT. The pill has carried
+    /// <c>AutomationProperties.LiveSetting</c> since it was written, and Narrator said nothing:
+    /// WinUI raises no event of its own when the text inside a live region changes, so the app has
+    /// to raise <c>LiveRegionChanged</c> itself or the setting is decoration. Every live region in
+    /// this app was silent for the same reason.
+    ///
+    /// THE URGENCY IS PART OF THE MESSAGE, WHICH IS WHY IT IS SET HERE AND NOT IN MARKUP. A failure
+    /// and an interrupted dictation are the two states where waiting for a gap in speech means
+    /// hearing about it after the moment has passed, so those interrupt; everything else waits its
+    /// turn, because a pill that talks over the user is worse than one that waits. macOS tags its
+    /// announcements by priority for the same reason.
+    ///
+    /// IT HAS TO BE A CONTROL WITH A PEER. This was declared on the pill's root Border and WinUI
+    /// creates no peer for one, so CreatePeerForElement returned null, the null-safe raise did
+    /// nothing, and the pill stayed silent while looking fixed. It is on the title TextBlock now.
+    /// </remarks>
+    /// <summary>Shows or hides a live region, and tells a screen reader it changed.</summary>
+    /// <remarks>
+    /// A REGION THAT VANISHES SILENTLY IS WORSE THAN ONE THAT NEVER EXISTED. The Level Rail hides the
+    /// state word because the meter says the same thing in the space the word would need, and a
+    /// screen reader has no meter to read - so the change has to be announced or that user simply
+    /// loses the sentence.
+    /// </remarks>
+    private static void SetLiveVisibility(TextBlock region, Visibility visibility)
+    {
+        if (region.Visibility == visibility)
+        {
+            return;
+        }
+
+        region.Visibility = visibility;
+        var peer = FrameworkElementAutomationPeer.FromElement(region)
+            ?? FrameworkElementAutomationPeer.CreatePeerForElement(region);
+        peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+    }
+
+    private static void AnnounceStateChange(TextBlock region, DictationOverlayState state)
+    {
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(
+            region,
+            state is DictationOverlayState.Error or DictationOverlayState.Distress
+                ? AutomationLiveSetting.Assertive
+                : AutomationLiveSetting.Polite);
+
+        var peer = FrameworkElementAutomationPeer.FromElement(region)
+            ?? FrameworkElementAutomationPeer.CreatePeerForElement(region);
+        peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+    }
+
     private void Resize(int width, int height)
     {
+        _logicalWidth = width;
+        _logicalHeight = height;
         _overlayWidth = Math.Max(1, (int)Math.Ceiling(width * _rasterScale));
         _overlayHeight = Math.Max(1, (int)Math.Ceiling(height * _rasterScale));
         AppWindow.Resize(new SizeInt32(_overlayWidth, _overlayHeight));
+        ClipToPillShape();
+    }
+
+    /// <summary>Cuts the window down to the rounded shape the pill is drawn in.</summary>
+    /// <remarks>
+    /// FOUR BLACK CORNERS SHIPPED, AND ONLY A PHOTOGRAPH OF A REAL SCREEN FOUND THEM. The window is
+    /// a rectangle. The pill is a rounded Border inside it. Nothing made the rectangle transparent,
+    /// so the four areas outside the rounded corners painted the window's own background - solid
+    /// black - straight onto whatever the user was looking at. On a dark wallpaper it reads as a
+    /// shadow; on a light one it is four black wedges around a floating notice.
+    ///
+    /// EVERY GATE IN THIS REPOSITORY PASSED WITH THIS ON SCREEN, because a gate reads markup and
+    /// tokens and this is a property of the WINDOW, which markup does not describe.
+    ///
+    /// A REGION IS THE FIX, NOT A TRANSPARENT BACKDROP. Clipping the window makes the corners not
+    /// belong to the window at all, so the desktop shows through with no compositing, no per-pixel
+    /// alpha and nothing for a theme to get wrong. It also means clicks land on the desktop rather
+    /// than on an invisible corner of ours.
+    ///
+    /// THE RADIUS IS READ FROM THE BORDER RATHER THAN REPEATED HERE. The pill has three radii - 18
+    /// for a notice and the Reading Well, 29 for the capsules - and a second copy of that number is
+    /// a second thing to keep in step. Called from Resize, so every size change re-clips: a region
+    /// is measured in pixels and does not follow a window that changed shape.
+    /// </remarks>
+    private void ClipToPillShape()
+    {
+        var handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
+
+        // TIGHTER THAN THE WINDOW BY A HAIR, AND THAT MARGIN IS MEASURED RATHER THAN GUESSED. A
+        // region exactly the size of the window left a three-pixel black outline tracing the pill,
+        // photographed at 150% scale on a real screen: the window's background shows through
+        // wherever the pill's antialiased edge is not fully opaque, and a hard-edged region cannot
+        // clip a soft edge. Pulling the region in by the width of that fringe removes it. The cost
+        // is a fraction of a pixel off the pill's own edge, which no one can see; the black halo
+        // around a floating notice is the thing people would.
+        // CLAMPED SO THE RECTANGLE CANNOT INVERT. Every shipping size stays far clear of this - the
+        // smallest pill is 185 by 92 with a radius of 29 - but a region built from a negative width
+        // is a window clipped to nothing, which is a pill that silently never appears. A guard that
+        // costs two comparisons is cheaper than that failure being possible at all.
+        var fringe = Math.Max(0, Math.Min(
+            (int)Math.Ceiling(2 * _rasterScale),
+            (Math.Min(_overlayWidth, _overlayHeight) - 1) / 2));
+        var radius = Math.Max(0, (int)Math.Ceiling(
+            (OverlayRoot.CornerRadius.TopLeft * _rasterScale - fringe) * 2));
+        var region = CreateRoundRectRgn(
+            fringe,
+            fringe,
+            _overlayWidth - fringe + 1,
+            _overlayHeight - fringe + 1,
+            radius,
+            radius);
+        if (region == nint.Zero)
+        {
+            return;
+        }
+
+        // OWNERSHIP PASSES TO THE WINDOW ON SUCCESS, so the region is deleted only when the call
+        // failed. Deleting it after a successful SetWindowRgn destroys the shape the window is
+        // now using, and freeing it on every resize instead leaks one region per resize.
+        if (SetWindowRgn(handle, region, bRedraw: true) == 0)
+        {
+            DeleteObject(region);
+        }
     }
 
     private void UpdateElapsed()
@@ -258,6 +948,14 @@ public sealed partial class DictationOverlayWindow : Window
 
     private void PositionOnForegroundMonitor()
     {
+        // A PILL SOMEBODY HAS MOVED STAYS MOVED. Placement runs again on every status change within
+        // one presentation, so without this the pill would snap back the moment its words changed -
+        // which reads as the drag not having worked at all.
+        if (_draggedThisPresentation)
+        {
+            return;
+        }
+
         var foreground = GetForegroundWindow();
         var monitor = MonitorFromWindow(foreground, MonitorDefaultToNearest);
         var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
@@ -276,6 +974,44 @@ public sealed partial class DictationOverlayWindow : Window
             ? OverlayPlacement.BottomCenter(workArea, _overlayWidth, _overlayHeight, physicalMargin)
             : OverlayPlacement.TopCenter(workArea, _overlayWidth, _overlayHeight, physicalMargin);
         AppWindow.Move(new PointInt32(position.X, position.Y));
+    }
+
+    /// <summary>Tells the compositor to paint no border colour at all.</summary>
+    private const uint DwmColorNone = 0xFFFFFFFE;
+
+    /// <summary>DWMWA_BORDER_COLOR.</summary>
+    private const int DwmwaBorderColor = 34;
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(
+        nint windowHandle, int attribute, ref uint value, int size);
+
+    [DllImport("gdi32.dll")]
+    private static extern nint CreateRoundRectRgn(
+        int left, int top, int right, int bottom, int ellipseWidth, int ellipseHeight);
+
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeleteObject(nint handle);
+
+    [DllImport("user32.dll")]
+    private static extern int SetWindowRgn(nint windowHandle, nint region, bool bRedraw);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out NativePoint point);
+
+    /// <summary>A screen position in physical pixels, which is what the cursor is reported in.</summary>
+    /// <remarks>
+    /// ITS OWN TYPE RATHER THAN ONE OF THE THREE Points ALREADY IN SCOPE. Windows.Foundation.Point is
+    /// doubles in layout units, Windows.Graphics.PointInt32 is a window position, and a using
+    /// directive decides which bare "Point" means what. A name that cannot be confused costs nothing.
+    /// </remarks>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
     }
 
     [DllImport("user32.dll")]

@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.LLM;
 
@@ -15,7 +16,7 @@ public sealed record OllamaPolishOptions(
     public TimeSpan EffectiveRequestTimeout => RequestTimeout ?? TimeSpan.FromSeconds(15);
 }
 
-public sealed class OllamaPolishProvider : IPolishProvider
+public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
 {
     private static readonly TimeSpan[] RetryDelays =
         [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3)];
@@ -89,6 +90,7 @@ public sealed class OllamaPolishProvider : IPolishProvider
                 {
                     var output = await SendOnceAsync(
                         request.Input.Text,
+                        request.Vocabulary,
                         readiness.Model,
                         timeout.Token).ConfigureAwait(false);
                     if (LooksLikeCodeOutput(output))
@@ -173,8 +175,90 @@ public sealed class OllamaPolishProvider : IPolishProvider
         }
     }
 
+    /// <summary>Asks the local model what a word is likely to be misheard as.</summary>
+    /// <remarks>
+    /// The same shape as the cloud providers': probe, one call, parse, and no retries, because
+    /// nothing is at stake in a suggestion and the user is looking at the screen while it runs.
+    ///
+    /// A model that is not installed or not running is reported as Failed rather than NotSupported.
+    /// The distinction matters to the person reading the message - NotSupported means "this choice
+    /// can never do this", which is a reason to switch, while Failed means "it did not work this
+    /// time", which is a reason to check Ollama is running and press it again.
+    /// </remarks>
+    public async Task<MishearingAdvice> SuggestAsync(
+        string spokenForm,
+        IReadOnlyList<string> existing,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(existing);
+        if (string.IsNullOrWhiteSpace(spokenForm))
+        {
+            return MishearingAdvice.None(MishearingAdviceStatus.NothingUsable);
+        }
+
+        var readiness = await _apiClient.ProbeModelAsync(_options.ModelId, cancellationToken)
+            .ConfigureAwait(false);
+        if (readiness.Readiness != OllamaModelReadiness.Ready || readiness.Model is null)
+        {
+            return MishearingAdvice.None(MishearingAdviceStatus.Failed);
+        }
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(_requestTimeout);
+
+        string reply;
+        try
+        {
+            reply = await SendOnceAsync(
+                spokenForm,
+                AliasSuggestionPrompt.SystemPrompt,
+                AliasSuggestionPrompt.BuildUserMessage(spokenForm, existing),
+                readiness.Model,
+                timeout.Token).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            exception is OllamaPolishException or HttpRequestException or OperationCanceledException
+                or JsonException)
+        {
+            return MishearingAdvice.None(MishearingAdviceStatus.Failed);
+        }
+
+        var suggestions = AliasSuggestions.Parse(reply, spokenForm, existing);
+        return suggestions.Count == 0
+            ? MishearingAdvice.None(MishearingAdviceStatus.NothingUsable)
+            : new MishearingAdvice(MishearingAdviceStatus.Suggested, suggestions);
+    }
+
     private async Task<string> SendOnceAsync(
         string transcript,
+        IReadOnlyList<string>? vocabulary,
+        OllamaModelInfo model,
+        CancellationToken cancellationToken) =>
+        await SendOnceAsync(
+            transcript,
+            OllamaLocalPrompt.BuildSystemPrompt(vocabulary),
+            OllamaLocalPrompt.BuildUserMessage(transcript, vocabulary),
+            model,
+            cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// One call to the local model, with the instruction supplied by the caller.
+    /// </summary>
+    /// <remarks>
+    /// The prompt used to be read from a constant inside this method, which meant the only thing
+    /// this model could ever be asked was to clean a transcript. Passing it in changes nothing about
+    /// the polish path - it hands over exactly the constants that were hard-coded here - and lets
+    /// the same connection answer a different question.
+    ///
+    /// <paramref name="transcript"/> stays a separate argument from the user message because it
+    /// sizes the reply budget, and the two are not the same string once the caller is asking a
+    /// question rather than submitting text to be rewritten.
+    /// </remarks>
+    private async Task<string> SendOnceAsync(
+        string transcript,
+        string systemPrompt,
+        string userMessage,
         OllamaModelInfo model,
         CancellationToken cancellationToken)
     {
@@ -188,8 +272,8 @@ public sealed class OllamaPolishProvider : IPolishProvider
             ["model"] = model.Id,
             ["messages"] = new object[]
             {
-                new { role = "system", content = OllamaLocalPrompt.SystemPrompt },
-                new { role = "user", content = OllamaLocalPrompt.BuildUserMessage(transcript) },
+                new { role = "system", content = systemPrompt },
+                new { role = "user", content = userMessage },
             },
             ["stream"] = false,
             ["keep_alive"] = "60m",
@@ -261,25 +345,13 @@ public sealed class OllamaPolishProvider : IPolishProvider
 
     internal static string? CleanOutput(string? content)
     {
+        // PREAMBLE STRIPPING LIVES IN ONE PLACE NOW, AND IT IS NOT HERE. This ran before the shared
+        // guard and without the person's own words, so it deleted a heading somebody actually
+        // dictated - "Here is the plan:" - and nothing downstream could tell it had happened.
+        // PolishOutputGuard.StripPreamble knows what was said and is the only place allowed to
+        // remove a line because of how it looks.
         var result = content?.Trim();
-        if (string.IsNullOrWhiteSpace(result))
-        {
-            return null;
-        }
-
-        var firstNewline = result.IndexOf('\n');
-        var firstLine = firstNewline >= 0 ? result[..firstNewline].Trim() : result;
-        var lower = firstLine.ToLowerInvariant();
-        var preamble = firstLine.Length < 100 && firstLine.EndsWith(':') &&
-            (lower.StartsWith("here", StringComparison.Ordinal) ||
-             lower.StartsWith("below", StringComparison.Ordinal) ||
-             lower.StartsWith("the corrected", StringComparison.Ordinal) ||
-             lower.StartsWith("the cleaned", StringComparison.Ordinal) ||
-             lower.StartsWith("the polished", StringComparison.Ordinal) ||
-             lower.StartsWith("corrected version", StringComparison.Ordinal));
-        return preamble && firstNewline >= 0
-            ? result[(firstNewline + 1)..].Trim()
-            : result;
+        return string.IsNullOrWhiteSpace(result) ? null : result;
     }
 
     private static PolishAttemptStatus StatusFor(AppErrorCode errorCode) => errorCode switch

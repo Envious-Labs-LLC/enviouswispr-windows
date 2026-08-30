@@ -15,6 +15,14 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
 
     public void Dispose() => _automationGate.Dispose();
 
+    public Task<TextCommitResult> CopyOnlyAsync(
+        ProcessedText text,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        return WindowsClipboardPaste.CopyRequestedAsync(text.Text, cancellationToken);
+    }
+
     public async Task<TargetContextResult> CaptureContextAsync(
         TargetWindowId target,
         TextDeliveryOptions options,
@@ -47,6 +55,17 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable);
         }
     }
+
+    /// <summary>
+    /// Asks the focused app for its selection with a synthetic Copy, and puts the clipboard back.
+    /// </summary>
+    /// <remarks>
+    /// For apps that publish no selection. Returns null when nothing could be read, for any reason:
+    /// every reason has the same remedy, so a caller branching on them would be inventing
+    /// distinctions it cannot act on.
+    /// </remarks>
+    public static Task<string?> TryReadSelectionWithCopyAsync(CancellationToken cancellationToken) =>
+        WindowsClipboardPaste.TryReadSelectionAsync(cancellationToken);
 
     public async Task<TextCommitResult> CommitAsync(
         TextCommitRequest request,

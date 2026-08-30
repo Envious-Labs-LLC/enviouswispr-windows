@@ -62,6 +62,11 @@ public sealed class JsonSettingsStore : ISettingsStore
                 7 => MigrateFromV7(json),
                 8 => MigrateFromV8(json),
                 9 => MigrateFromV9(json),
+                10 => MigrateFromV10(json),
+                11 => MigrateFromV11(json),
+                12 => MigrateFromV12(json),
+                13 => MigrateFromV13(json),
+                14 => MigrateFromV14(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -334,6 +339,106 @@ public sealed class JsonSettingsStore : ISettingsStore
                     },
                 },
             };
+    }
+
+    /// <summary>
+    /// A settings file written before auto-stop existed.
+    /// </summary>
+    /// <remarks>
+    /// The two new fields are optional with defaults, so deserialising a v10 file already fills
+    /// them correctly. The migration is here anyway, and it is not ceremony: it takes the DEFAULTS
+    /// explicitly, so a future change to those defaults reaches an upgrading user rather than
+    /// leaving them on whatever the record happened to declare when their file was written.
+    ///
+    /// The schema version had to move regardless. Writing the new fields under the old version
+    /// would make an older build reject the file as unreadable and reset the user's settings,
+    /// because this store refuses unmapped members.
+    /// </remarks>
+    private static AppSettings? MigrateFromV10(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = AppSettings.CurrentSchemaVersion,
+                Preferences = legacy.Preferences with
+                {
+                    Dictation = legacy.Preferences.Dictation with
+                    {
+                        AutoStopEnabled = DictationPreferences.Default.AutoStopEnabled,
+                        AutoStopSilenceSeconds = DictationPreferences.Default.AutoStopSilenceSeconds,
+                    },
+                },
+            };
+    }
+
+    /// <summary>Adds the release-notes mark to a file written before it existed.</summary>
+    /// <remarks>
+    /// A NEW FIELD IS A NEW SCHEMA, EVEN WHEN IT HAS A DEFAULT. This store refuses a file it does not
+    /// recognise, so a version-11 app reading a version-11 file that carries lastSeenReleaseNotes
+    /// treats it as corruption and resets the settings - which is what a ROLLBACK looks like from the
+    /// user's side: every choice they made, gone. Bumping the number is what makes the older app
+    /// refuse the file politely instead, as a newer schema it cannot read.
+    ///
+    /// NULL IS THE RIGHT VALUE HERE AND IT IS SET ON PURPOSE. Somebody upgrading has not read THIS
+    /// build's notes, so the mark should be up - which is exactly what null means.
+    /// </remarks>
+    private static AppSettings? MigrateFromV11(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with
+            {
+                SchemaVersion = AppSettings.CurrentSchemaVersion,
+                LastSeenReleaseNotes = null,
+            };
+    }
+
+    /// <summary>Takes a settings file written before the app offered to pin a language.</summary>
+    /// <remarks>
+    /// NOTHING IS WRITTEN, AND A MISSING HISTORY IS THE HONEST VALUE. Nobody has been offered
+    /// anything, because there was nothing to offer them, so the count that deserializes from an
+    /// absent field is already correct. The step exists so the file is recorded as read at the new
+    /// shape rather than refused.
+    /// </remarks>
+    private static AppSettings? MigrateFromV14(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+    }
+
+    /// <summary>Takes a settings file written before custom words could be matched loosely.</summary>
+    /// <remarks>
+    /// NOTHING IS REWRITTEN, AND THAT IS THE CORRECT MIGRATION rather than a missing one. Every word
+    /// in an older file was corrected by one rule, so the honest value for all of them is the one
+    /// that keeps doing exactly that - which is what a missing strictness deserializes to. The step
+    /// exists to record that the file has been read at the new shape, so a user is not asked to
+    /// prove anything about words they added before the question existed.
+    /// </remarks>
+    private static AppSettings? MigrateFromV12(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+    }
+
+    /// <summary>Takes a settings file written before copy-only could be asked for.</summary>
+    /// <remarks>
+    /// NOTHING IS REWRITTEN. Everyone who has used this app so far has had their text pasted, and a
+    /// migration that turned that into copy-only would change what happens to the next thing they
+    /// dictate. Missing means off, which is what they already had.
+    /// </remarks>
+    private static AppSettings? MigrateFromV13(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
     }
 
     private static SettingsLoadResult Invalid(

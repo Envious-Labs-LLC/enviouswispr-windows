@@ -30,7 +30,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
     private readonly IForegroundTargetProvider _targetProvider;
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan _minimumHoldDuration;
-    private readonly TextDeliveryOptions _deliveryOptions;
+    private readonly Func<TextDeliveryOptions> _deliveryOptions;
     private readonly AudioDeviceId? _preferredAudioDevice;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private bool _disposed;
@@ -40,7 +40,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         IForegroundTargetProvider targetProvider,
         TimeProvider? timeProvider = null,
         TimeSpan? minimumHoldDuration = null,
-        TextDeliveryOptions? deliveryOptions = null,
+        Func<TextDeliveryOptions>? deliveryOptions = null,
         AudioDeviceId? preferredAudioDevice = null)
     {
         ArgumentNullException.ThrowIfNull(audioCapture);
@@ -49,7 +49,12 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         _targetProvider = targetProvider;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _minimumHoldDuration = minimumHoldDuration ?? TimeSpan.FromMilliseconds(100);
-        _deliveryOptions = deliveryOptions ?? TextDeliveryOptions.Default;
+        // ASKED FOR AT THE PRESS, NOT SNAPSHOT AT STARTUP. Reading the settings once when this was
+        // built meant saving a delivery choice did nothing until the app was restarted - the toggle
+        // moved, the file changed, and the next recording used the value from launch. Reading it
+        // here keeps the other half of the promise too: whatever it answers is held for the whole of
+        // that recording, so a change saved mid-take cannot alter where the words already going.
+        _deliveryOptions = deliveryOptions ?? (() => TextDeliveryOptions.Default);
         _preferredAudioDevice = preferredAudioDevice;
         ArgumentOutOfRangeException.ThrowIfLessThan(_minimumHoldDuration, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(
@@ -64,6 +69,11 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
     public async Task<SessionTransitionResult> PressAsync(
         CancellationToken cancellationToken = default)
     {
+        // BEFORE THE GATE, WHICH IS THE FIRST AWAIT AND THEREFORE THE FIRST PLACE TIME CAN PASS.
+        // Reading it after the gate leaves a window under contention: the press happens, another
+        // press or a release holds the gate, a save lands, and the recording that is starting takes
+        // a choice made after the person pressed the key.
+        var deliveryOptions = _deliveryOptions();
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -109,7 +119,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
                 sessionId,
                 _timeProvider.GetUtcNow(),
                 target.Value,
-                _deliveryOptions);
+                deliveryOptions);
             RaiseChanged();
             return new SessionTransitionResult(
                 SessionTransitionKind.Started,

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text;
 using System.Threading.Channels;
 using EnviousWispr.Core.Diagnostics;
@@ -58,8 +59,12 @@ public sealed class HttpPrivacySafeTelemetryTransport : IPrivacySafeTelemetryTra
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(record);
+        // SERIALISED HERE RATHER THAN THROUGH THE LOCAL LOG'S HELPER. What is sent and what is
+        // written to disk are different shapes on purpose - the local line carries a dictation id
+        // that must not cross the network - and borrowing the log's serialiser is how the two would
+        // silently become one shape again the next time somebody adds a field to it.
         using var content = new StringContent(
-            JsonLineFileLogger.Serialize(record),
+            JsonSerializer.Serialize(record, JsonLineFileLogger.SerializerOptions),
             Encoding.UTF8,
             "application/json");
         using var response = await _client.PostAsync(

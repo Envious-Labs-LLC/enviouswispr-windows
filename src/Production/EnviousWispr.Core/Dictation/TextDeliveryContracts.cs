@@ -33,6 +33,14 @@ public enum TextDeliveryRoute
 
 public enum TextDeliveryRefusalReason
 {
+    /// <summary>Nothing was refused.</summary>
+    /// <remarks>
+    /// A REQUESTED COPY ENDS HERE, AND THAT IS THE WHOLE POINT. It briefly had a name of its own,
+    /// which was the wrong shape: every other value in this enum says something went wrong and the
+    /// clipboard caught it, so a member for the ordinary case would have reported a refusal in the
+    /// diagnostics every time somebody used the setting exactly as intended. Where the text went is
+    /// carried by <see cref="TextDeliveryRoute"/>, which already has a value for the clipboard.
+    /// </remarks>
     None,
     TargetUnavailable,
     TargetChanged,
@@ -57,12 +65,14 @@ public enum CursorRepairDisposition
 public sealed record TextDeliveryOptions(
     bool RestoreClipboardAfterPaste,
     int ContextWindowCharacters,
-    int MaximumDirectValueCharacters)
+    int MaximumDirectValueCharacters,
+    bool CopyInsteadOfPaste = false)
 {
     public static TextDeliveryOptions Default { get; } = new(
         RestoreClipboardAfterPaste: true,
         ContextWindowCharacters: 256,
-        MaximumDirectValueCharacters: 16_384);
+        MaximumDirectValueCharacters: 16_384,
+        CopyInsteadOfPaste: false);
 }
 
 public sealed record TextDeliveryRequest(
@@ -125,6 +135,20 @@ public interface ITextTargetAdapter
 
     Task<TextCommitResult> CommitAsync(
         TextCommitRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Puts the text on the clipboard and leaves every window alone.</summary>
+    /// <remarks>
+    /// A DELIVERY IN ITS OWN RIGHT, NOT A FALLBACK. The fallback path reaches the clipboard THROUGH
+    /// the target: it validates the window, reads the caret context, repairs the spacing for where
+    /// the text was going to land, and only then gives up. Somebody who asked for the clipboard is
+    /// not going anywhere, so all of that is work done for a destination that does not exist - and
+    /// it is not free. Capturing the context can bring the old window back to the front, it can fail
+    /// and stop the copy that was the whole point, and the repaired text is not the text that was
+    /// said.
+    /// </remarks>
+    Task<TextCommitResult> CopyOnlyAsync(
+        ProcessedText text,
         CancellationToken cancellationToken = default);
 }
 

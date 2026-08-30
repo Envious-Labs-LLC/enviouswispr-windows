@@ -5,6 +5,7 @@ using EnviousWispr.Core.Distribution;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.History;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Reliability;
@@ -55,6 +56,7 @@ public partial class App : Application, IAsyncDisposable
     private SingleInstanceActivationChannel? _activationChannel;
     private WindowsSystemLifecycleMonitor? _lifecycleMonitor;
     private WindowsPushToTalkHook? _pushToTalkHook;
+    private bool _keybindCaptureActive;
     private PushToTalkSessionController? _sessionController;
     private IAudioCapture? _audioCapture;
     private RuntimeWorkerTranscriptionEngine? _transcriptionEngine;
@@ -70,11 +72,22 @@ public partial class App : Application, IAsyncDisposable
     private Task? _polishWarmup;
     private CancellationTokenSource? _previewCancellation;
     private Task? _previewLoop;
+    private CancellationTokenSource? _autoStopCancellation;
+    private Task? _autoStopLoop;
+    private CancellationTokenSource? _streamingCancellation;
+    private Task? _streamingLoop;
+    private readonly StreamingTranscriptAccumulator _streamed = new();
+    private int _streamedThroughSample;
+
+    private bool _streamingUsable;
     private long _previewSequence;
     private MainWindow? _window;
     private WindowsTrayIcon? _trayIcon;
     private IReadOnlyList<CustomWordEntry> _customWords = [];
-    private AppSettings _settings = AppSettings.Default;
+    // VOLATILE BECAUSE THE HOTKEY THREAD READS IT AND THE UI THREAD REPLACES IT. The record itself
+    // is immutable and cannot tear, but the REFERENCE can be read stale, and one of its readers is
+    // the delivery-options closure that decides where a recording's words are about to go.
+    private volatile AppSettings _settings = AppSettings.Default;
     private DeterministicTextOptions _deterministicTextOptions =
         DeterministicTextOptions.From(DictationPreferences.Default);
     private bool _disposed;
@@ -274,6 +287,9 @@ public partial class App : Application, IAsyncDisposable
         _window.DiagnosticsExportCompleted += OnDiagnosticsExportCompleted;
         _window.UpdateCheckRequested += OnUpdateCheckRequested;
         _window.UpdateApplyRequested += OnUpdateApplyRequested;
+        _window.KeybindCaptureActiveChanged += OnKeybindCaptureActiveChanged;
+        _window.SpeedCheckRequested += OnSpeedCheckRequested;
+        _window.MishearingSuggestionsRequested += OnMishearingSuggestionsRequested;
         _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosed;
         _window.Activate();
@@ -297,7 +313,7 @@ public partial class App : Application, IAsyncDisposable
         _window.FocusInitialControl();
         _window.SetCloudPolishNotice(_cloudPolishConsent?.Notice);
         _window.SetOllamaPolishNotice(_localPolishNotice);
-        _window.SetSessionStatus("Preparing local transcription...");
+        _window.SetSessionStatus(DictationStatus.Quiet("Preparing local transcription..."));
         await ConfigureTranscriptionAsync(settings.Preferences.Dictation.FinalEngine).ConfigureAwait(true);
         ConfigurePushToTalk(settings.Preferences.Dictation);
         if (_polishProvider is EgOnePolishProvider polishProvider)
@@ -310,6 +326,7 @@ public partial class App : Application, IAsyncDisposable
         }
 
         ApplyOverlayUatState();
+        StartSyntheticLevelRampIfRequested();
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellShown));
         SignalPerformanceUatReady();
         StartPublicFixtureJourneyUat();
@@ -408,12 +425,146 @@ public partial class App : Application, IAsyncDisposable
             window.DiagnosticsExportCompleted -= OnDiagnosticsExportCompleted;
             window.UpdateCheckRequested -= OnUpdateCheckRequested;
             window.UpdateApplyRequested -= OnUpdateApplyRequested;
+            window.KeybindCaptureActiveChanged -= OnKeybindCaptureActiveChanged;
+            window.SpeedCheckRequested -= OnSpeedCheckRequested;
+            window.MishearingSuggestionsRequested -= OnMishearingSuggestionsRequested;
             window.AppWindow.Closing -= OnAppWindowClosing;
             window.Closed -= OnWindowClosed;
         }
 
+        // The window can close with a keybind field still focused, and unsubscribing above stops
+        // the field's own LostFocus ever arriving. Clearing it here is what stops the hook being
+        // left standing down with nothing on screen to explain why dictation no longer responds.
+        OnKeybindCaptureActiveChanged(active: false);
+
         await PrepareForExitAsync().ConfigureAwait(true);
         _window = null;
+    }
+
+    /// <summary>How many times the speed check runs the pipeline.</summary>
+    /// <remarks>
+    /// Chosen so the 95th percentile means something. Below twenty samples it IS the maximum, and a
+    /// tail figure that is secretly the worst single run reads as evidence while being an artefact
+    /// of the sample size.
+    /// </remarks>
+    private const int SpeedCheckRuns = 50;
+
+    /// <summary>
+    /// A repeatable measurement of the text cleanup, with no microphone and no network.
+    /// </summary>
+    /// <remarks>
+    /// WHAT IT MEASURES AND WHAT IT DOES NOT, said in the UI as well as here. It times the
+    /// deterministic pipeline - the cleanup every dictation runs after transcription - which is the
+    /// part of the wait that is entirely ours and entirely repeatable. It does NOT include
+    /// recognition or AI polish: both need resources a speed check should not quietly consume, and
+    /// a number silently including a cloud round trip would be measuring somebody's broadband.
+    ///
+    /// IT REFUSES WHILE A DICTATION IS RUNNING, and it uses the LIVE pipeline rather than a second
+    /// one. Those two facts belong together: measuring a different object from the one every
+    /// dictation uses is the one thing a speed check must not do, and sharing the live object means
+    /// the two must not run at once.
+    ///
+    /// THE FIRST RUN IS DISCARDED and that is stated rather than silent. It pays for every lazy
+    /// initialisation in the pipeline, which no dictation after the first one pays - but a
+    /// benchmark that quietly drops its worst sample is precisely how a speed claim becomes untrue,
+    /// so the reason sits beside the line that does it.
+    /// </remarks>
+    /// <summary>
+    /// Asks the user's chosen polish model what a word is likely to be misheard as.
+    /// </summary>
+    /// <remarks>
+    /// THE PROVIDER IS WHATEVER POLISH IS SET TO, AND THAT IS THE POINT. The user has already chosen
+    /// a model and, for a cloud one, already provided a key. Asking them to configure a second thing
+    /// for a convenience button would mean almost nobody ever sees it work.
+    ///
+    /// PRIVACY: THE WORD GOES WHERE THEIR POLISHED TEXT ALREADY GOES. It travels to the provider
+    /// they chose, under their own key, with no Envious Labs endpoint in the path - the same
+    /// boundary cloud polish already sits on. Nothing about this reaches us.
+    ///
+    /// A PROVIDER THAT CANNOT BE ASKED SAYS SO RATHER THAN FAILING QUIETLY. Every provider that
+    /// ships today can answer, and a test enumerates them from the type system so a fourth cannot
+    /// arrive without one. This branch is what the user would see if one ever did.
+    /// </remarks>
+    private async void OnMishearingSuggestionsRequested(string term, IReadOnlyList<string> existing)
+    {
+        if (_polishProvider is not IMishearingAdvisor advisor)
+        {
+            _window?.SetAliasSuggestions(
+                term,
+                MishearingAdvice.None(MishearingAdviceStatus.NotSupported));
+            return;
+        }
+
+        MishearingAdvice advice;
+        try
+        {
+            advice = await advisor.SuggestAsync(term, existing).ConfigureAwait(true);
+        }
+        catch (Exception exception) when (
+            exception is not (StackOverflowException or OutOfMemoryException))
+        {
+            advice = MishearingAdvice.None(MishearingAdviceStatus.Failed);
+        }
+
+        _window?.SetAliasSuggestions(term, advice);
+    }
+
+    private async void OnSpeedCheckRequested()
+    {
+        var pipeline = _deterministicTextPipeline;
+        if (_sessionController?.CurrentSession is not null)
+        {
+            _window?.SetSpeedCheckResult(null);
+            return;
+        }
+
+        var summary = await Task.Run(() => MeasureDeterministicPipeline(pipeline)).ConfigureAwait(true);
+        _window?.SetSpeedCheckResult(summary);
+    }
+
+    private LatencySummary MeasureDeterministicPipeline(DeterministicTextPipeline pipeline)
+    {
+        // A realistic dictation rather than a word: the cleanup's cost scales with what it is given,
+        // so timing "hello" would produce a number no real dictation resembles.
+        const string spoken =
+            "so i think we should ship the windows build this week comma and see what people say "
+            + "about it period i counted 14 things left on the list and 3 of them need review";
+
+        var request = new DeterministicTextRequest(
+            new Transcript(DictationSessionId.Create(), spoken, "speed-check", []),
+            _customWords,
+            _deterministicTextOptions);
+
+        var timings = new List<double>(SpeedCheckRuns);
+        for (var run = 0; run <= SpeedCheckRuns; run++)
+        {
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                _ = pipeline.ProcessAsync(request).GetAwaiter().GetResult();
+            }
+            catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
+            {
+                return LatencySummary.From([]);
+            }
+
+            timer.Stop();
+
+            // Run zero pays for every lazy initialisation in the pipeline, and no dictation after
+            // the first one pays it.
+            if (run > 0)
+            {
+                timings.Add(timer.Elapsed.TotalMilliseconds);
+            }
+        }
+
+        return LatencySummary.From(timings);
+    }
+
+    private void OnKeybindCaptureActiveChanged(bool active)
+    {
+        _keybindCaptureActive = active;
+        _pushToTalkHook?.SetCapturingKeybind(active);
     }
 
     private void OnDuplicateActivationRequested(object? sender, EventArgs args)
@@ -492,7 +643,16 @@ public partial class App : Application, IAsyncDisposable
             SystemLifecycleTransition.SessionUnlocked => AppEventCode.SessionUnlocked,
             _ => AppEventCode.UnhandledFailure,
         };
-        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, eventCode));
+        // WINDOWS LOCKING MID-DICTATION IS A FACT ABOUT THAT DICTATION. Written before the recovery
+        // flow opens its own scope, so it opens one here too; otherwise the event that EXPLAINS the
+        // recovery is the one line of it joined to nothing.
+        using (_sessionController?.CurrentSession is { } interrupted
+            ? DictationScope.Begin(interrupted.Id.Value)
+            : NoScope.Instance)
+        {
+            _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, eventCode));
+        }
+
         if (transition is SystemLifecycleTransition.Suspending or
             SystemLifecycleTransition.SessionLocked)
         {
@@ -501,12 +661,19 @@ public partial class App : Application, IAsyncDisposable
         else
         {
             _window?.DispatcherQueue.TryEnqueue(() =>
-                _window?.SetSessionStatus("Windows resumed — EnviousWispr is ready"));
+                _window?.SetSessionStatus(DictationStatus.Quiet("Windows resumed. EnviousWispr is ready")));
         }
     }
 
     private void OnAudioDevicesChanged(AudioDeviceChange change)
     {
+        // A MICROPHONE VANISHING MID-DICTATION IS A FACT ABOUT THAT DICTATION, and this arrives on
+        // its own Windows device callback, so it inherits nothing. It is also the single most
+        // useful line in the log when somebody asks why a recording went wrong, which is exactly
+        // the line worth not leaving joined to nothing.
+        using var dictation = _sessionController?.CurrentSession is { } recording
+            ? DictationScope.Begin(recording.Id.Value)
+            : NoScope.Instance;
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
             AppEventCode.AudioDevicesChanged,
@@ -611,26 +778,44 @@ public partial class App : Application, IAsyncDisposable
     private void ApplyOverlayUatState()
     {
         var requested = Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_OVERLAY_STATE");
-        var status = requested?.Trim().ToLowerInvariant() switch
+        DictationStatus? status = requested?.Trim().ToLowerInvariant() switch
         {
-            "recording" => "Recording — release to finish, Escape to cancel",
-            "processing" => "Transcribing locally...",
-            "success" => "Inserted safely in the app you started in",
-            "warning" => "Protected field — copied only; paste manually if intended",
-            "error" => "Local transcription failed safely",
+            "recording" =>
+                DictationStatus.Recording("Recording. Release to finish, Escape to cancel"),
+            "processing" => DictationStatus.Processing("Transcribing locally..."),
+            "success" => DictationStatus.Success("Inserted safely in the app you started in"),
+            "warning" =>
+                DictationStatus.Warning("Protected field: copied only. Paste manually if intended"),
+            // THE TWO NEW SEVERITIES ARE DRIVABLE FROM HERE OR THEY ARE NOT TESTABLE AT ALL. An
+            // advisory needs a provider to be misconfigured and a distress needs Windows to
+            // interrupt a dictation, neither of which a person can arrange on demand. The advisory
+            // carries its button, because the thing most worth looking at on a real screen is
+            // whether a button on a window shown without activation can actually be pressed.
+            "advisory" => DictationStatus.Advisory(
+                "Ollama is offline. Cleaned text will still be preserved", OpenPolish),
+            "distress" => DictationStatus.Distress(
+                "Windows interrupted the active dictation; recovery is still pending"),
+            "error" => DictationStatus.Error("Local transcription failed safely"),
             _ => null,
         };
-        if (status is not null)
+        if (status.HasValue)
         {
-            _window?.SetSessionStatus(status);
+            // Read through the declared local rather than a pattern-bound name. The gate that
+            // checks every status names its pill can see what `status` was declared as; it cannot
+            // see what a name introduced by a pattern is, and a gate that cannot tell has to
+            // refuse. Saying it plainly here is cheaper than widening what the gate accepts.
+            _window?.SetSessionStatus(status.Value);
         }
     }
 
-    private void OnSessionStatusChanged(string status)
+    private void OnSessionStatusChanged(DictationStatus status)
     {
         try
         {
-            _trayIcon?.SetStatus(status);
+            _trayIcon?.SetStatus(status.Text);
+            // The tray and the pill are driven from the same status, so the two surfaces cannot
+            // disagree about whether a recording is live.
+            _trayIcon?.SetState(TrayIconStates.For(status.State));
         }
         catch (ObjectDisposedException)
         {
@@ -681,6 +866,16 @@ public partial class App : Application, IAsyncDisposable
             {
                 _window.OpenSettings();
             }
+
+            // A RESULT THAT ARRIVED WHILE THE WINDOW WAS HIDDEN IS STILL NEWS WHEN IT COMES BACK.
+            // History finishing while the app sits in the notification area is the ordinary case,
+            // and without this the announcement is simply never made.
+            //
+            // AFTER THE NAVIGATION, NOT BEFORE. Opening Settings from the tray runs through here too,
+            // and announcing first spoke the history result to somebody who had asked for Settings.
+            // Once the page has been switched away from, the ancestor check refuses it and the
+            // pending result is kept for whenever History is actually opened.
+            _window.AnnouncePendingHistoryState();
         });
     }
 
@@ -706,6 +901,22 @@ public partial class App : Application, IAsyncDisposable
 
     private async Task PrepareForExitCoreAsync()
     {
+        // ONE SCOPE FOR THE WHOLE TEARDOWN, rather than one per line found. Quitting mid-recording
+        // is a fact about that recording, and everything written on the way out - the shell closing,
+        // the preview stopping, whatever a future teardown step logs - belongs to it. Five review
+        // rounds each named one more unscoped line on this path; scoping the path is the answer that
+        // does not need a sixth.
+        using var dictation = _sessionController?.CurrentSession is { } recording
+            ? DictationScope.Begin(recording.Id.Value)
+            : NoScope.Instance;
+        // THE SETTINGS WRITE FINISHES BEFORE THE WINDOW GOES. Teardown is synchronous and cannot
+        // wait, so abandoning a save in flight let the process end mid-write - which is how a choice
+        // somebody just made disappears. This is the one place on the exit path that can await it.
+        if (_window is not null)
+        {
+            await _window.DrainSettingsAsync().ConfigureAwait(true);
+        }
+
         _window?.ShutdownProductWindows();
         (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately();
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellClosed));
@@ -753,6 +964,8 @@ public partial class App : Application, IAsyncDisposable
             _pushToTalkHook = null;
         }
 
+        cleanShutdown &= await TryCleanupAsync(StopStreamingTranscriptionAsync).ConfigureAwait(true);
+        cleanShutdown &= await TryCleanupAsync(StopAutoStopWatchAsync).ConfigureAwait(true);
         cleanShutdown &= await TryCleanupAsync(StopLivePreviewAsync).ConfigureAwait(true);
 
         if (_audioCapture is not null)
@@ -972,10 +1185,18 @@ public partial class App : Application, IAsyncDisposable
         _sessionController = new PushToTalkSessionController(
             audioCapture,
             new WindowsForegroundTargetProvider(),
+            deliveryOptions: () => TextDeliveryOptions.Default with
+            {
+                CopyInsteadOfPaste = _settings.Preferences.CopyInsteadOfPaste,
+            },
             preferredAudioDevice: string.IsNullOrWhiteSpace(_settings.PreferredMicrophoneId)
                 ? null
                 : new EnviousWispr.Core.Audio.AudioDeviceId(_settings.PreferredMicrophoneId));
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
+        // A saved keybind builds a NEW hook, which starts armed and knows nothing about a capture
+        // field that is still focused. Carrying the state across is what stops the hook re-arming
+        // underneath a field the user is still standing in.
+        _pushToTalkHook.SetCapturingKeybind(_keybindCaptureActive);
         _window?.SetHotkeyReady(
             _pushToTalkHook.Gesture.ToString(),
             _pushToTalkHook.RecordingMode,
@@ -984,9 +1205,61 @@ public partial class App : Application, IAsyncDisposable
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.HotkeyReady));
     }
 
+    /// <summary>Drives the meters from a synthetic ramp, with no microphone in the loop.</summary>
+    /// <remarks>
+    /// EVERY MEASUREMENT OF A FLAT METER SO FAR IS ENTANGLED WITH AN ACOUSTIC PATH NOBODY CONTROLS.
+    /// A person speaks, a room absorbs, a device gains, a driver converts, and only then does a
+    /// number reach the code - so a flat meter could be any link in that chain. This replaces the
+    /// whole chain with a number that is known, which separates "the meters cannot draw" from "the
+    /// capture cannot hear" in one run rather than by argument.
+    ///
+    /// A RAMP RATHER THAN A CONSTANT, because a constant proves only that one value renders. A ramp
+    /// climbing from silence to full and back proves the scale, the direction, and on the recording
+    /// rail the scroll as well: the shape has to appear as a shape.
+    ///
+    /// IT GOES THROUGH THE SAME DOOR AS A REAL LEVEL, which is the entire point. Anything that drew
+    /// bars directly would prove the bars and nothing between here and them.
+    ///
+    /// UAT ONLY, and it says so by living behind the same environment variable convention as every
+    /// other harness switch in this app. It writes nothing, records nothing, and touches no setting.
+    /// </remarks>
+    private void StartSyntheticLevelRampIfRequested()
+    {
+        if (Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_LEVEL_RAMP") is not "1")
+        {
+            return;
+        }
+
+        var window = _window;
+        if (window is null)
+        {
+            return;
+        }
+
+        var timer = window.DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(50);
+        var step = 0;
+        timer.Tick += (_, _) =>
+        {
+            // Two seconds up, two seconds down, forever. Eighty ticks a cycle at fifty milliseconds.
+            var phase = step++ % 80;
+            var climb = phase < 40 ? phase / 40f : (80 - phase) / 40f;
+
+            // FROM THE FLOOR TO FULL SCALE IN THE UNIT THE METER SPEAKS, so the ramp exercises the
+            // real curve rather than sidestepping it.
+            var level = climb <= 0f ? 0f : MathF.Pow(10f, (RecordingLevelHistory.FloorDecibels * (1f - climb)) / 20f);
+            window.SetAudioLevel(new AudioLevel(level, level));
+        };
+        timer.Start();
+    }
+
     private void OnAudioLevelChanged(object? sender, AudioLevel level)
     {
-        _window?.DispatcherQueue.TryEnqueue(() => _window?.SetAudioLevel(level));
+        // STRAIGHT THROUGH, ON THE CAPTURE'S OWN THREAD. This arrives once per audio buffer, roughly
+        // two hundred times a second, and SetAudioLevel only records a number - so posting each one
+        // to the UI thread did that scheduling work for a value the meter's own timer would ask for
+        // when it was ready. Every UI touch stays inside that tick.
+        _window?.SetAudioLevel(level);
     }
 
     private void ConfigurePolish(PolishPreferences preferences)
@@ -1147,7 +1420,7 @@ public partial class App : Application, IAsyncDisposable
                 "1",
                 StringComparison.Ordinal))
         {
-            _window?.SetSessionStatus("Local transcription disabled for performance UAT");
+            _window?.SetSessionStatus(DictationStatus.Quiet("Local transcription disabled for performance UAT"));
             return;
         }
 
@@ -1174,7 +1447,9 @@ public partial class App : Application, IAsyncDisposable
             : ParakeetTranscriptionEngine.ModelId);
         if (modelDirectory is null)
         {
-            _window?.SetSessionStatus("Local transcription model is not installed");
+            _window?.SetSessionStatus(
+                DictationStatus.Advisory(
+                    "Local transcription model is not installed", OpenTranscription));
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionFailed,
@@ -1198,7 +1473,9 @@ public partial class App : Application, IAsyncDisposable
             : CreateParakeetEngine(workerExecutable, modelDirectory, hardware);
         if (_transcriptionEngine is null)
         {
-            _window?.SetSessionStatus("Local transcription is unavailable on this machine");
+            _window?.SetSessionStatus(
+                DictationStatus.Advisory(
+                    "Local transcription is unavailable on this machine", OpenTranscription));
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionFailed,
@@ -1224,7 +1501,9 @@ public partial class App : Application, IAsyncDisposable
                 }
 
                 _transcriptionEngine = null;
-                _window?.SetSessionStatus("Local transcription worker could not start");
+                _window?.SetSessionStatus(
+                    DictationStatus.Advisory(
+                    "Local transcription could not start", OpenTranscription));
                 _logger.Write(new AppLogEntry(
                     DateTimeOffset.UtcNow,
                     AppEventCode.DictationTranscriptionFailed,
@@ -1233,7 +1512,7 @@ public partial class App : Application, IAsyncDisposable
             }
 
             ConfigureLivePreview(workerExecutable, hardware, whisperLanguage, forceCpu: true);
-            _window?.SetSessionStatus("Local transcription ready with CPU recovery");
+            _window?.SetSessionStatus(DictationStatus.Quiet("Local transcription ready on the processor"));
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionDegraded,
@@ -1243,7 +1522,7 @@ public partial class App : Application, IAsyncDisposable
         }
 
         ConfigureLivePreview(workerExecutable, hardware, whisperLanguage);
-        _window?.SetSessionStatus("Local transcription ready");
+        _window?.SetSessionStatus(DictationStatus.Quiet("Local transcription ready"));
     }
 
     private void ConfigureLivePreview(
@@ -1488,16 +1767,57 @@ public partial class App : Application, IAsyncDisposable
         var context = await _textTargetAdapter.CaptureContextAsync(
             target.Value,
             TextDeliveryOptions.Default).ConfigureAwait(false);
-        var selection = context.Status == TargetContextStatus.Available &&
-            context.Context?.TargetKind != TextTargetKind.Terminal
-                ? context.Context?.Selection.Trim()
-                : null;
-        var message = !string.IsNullOrWhiteSpace(selection)
-            ? null
-            : context.Context?.TargetKind == TextTargetKind.Terminal
-                ? "Terminal windows do not share their selection. Add the word here by hand."
-                : "No readable selection was found. Select a misheard word, then try the shortcut again.";
-        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.QuickAddPrepared));
+        var published = context.Status == TargetContextStatus.Available
+            ? context.Context?.Selection.Trim()
+            : null;
+
+        // EVERY OUTCOME BELOW SAYS SOMETHING, INCLUDING THE REFUSALS. A refusal that is silent is
+        // indistinguishable from nothing having happened at all - to the user, who is left looking
+        // at an empty box, and to anyone testing it, who would be reporting the absence of an
+        // effect as evidence of a decision.
+        var acquisition = SelectionAcquisitionPolicy.Decide(
+            hasValidTarget: true,
+            published,
+            isDictationRunning: _sessionController?.CurrentSession is not null,
+            isDeliveryInFlight: _activeProcessingCancellation is not null);
+
+        string? selection;
+        string? message;
+        switch (acquisition)
+        {
+            case SelectionAcquisition.UsePublished:
+                selection = published;
+                message = null;
+                break;
+
+            case SelectionAcquisition.SyntheticCopy:
+                // Static because it holds no state - it borrows the clipboard and gives it back.
+                selection = await WindowsTextTargetAdapter
+                    .TryReadSelectionWithCopyAsync(CancellationToken.None)
+                    .ConfigureAwait(false);
+                selection = selection?.Trim();
+                message = string.IsNullOrWhiteSpace(selection)
+                    ? "Nothing was selected in that app. Select a misheard word, then try the shortcut again."
+                    : null;
+                break;
+
+            default:
+                selection = null;
+                message = "EnviousWispr was busy with a dictation, so it left your clipboard alone. Try the shortcut again in a moment.";
+                break;
+        }
+
+        // THREE OUTCOMES, THREE EVENTS. The first version had two, so "the copy found nothing" and
+        // "the user got their word" logged identically - and the log is where a support case looks
+        // when nobody can reproduce the screen. The messages had been split from the start; the log
+        // had not, which is the half that goes unnoticed until it is needed.
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            acquisition == SelectionAcquisition.Refuse
+                ? AppEventCode.QuickAddRefused
+                : string.IsNullOrWhiteSpace(selection)
+                    ? AppEventCode.QuickAddSelectionEmpty
+                    : AppEventCode.QuickAddPrepared));
         _window?.DispatcherQueue.TryEnqueue(() =>
         {
             ShowMainWindow(openSettings: false);
@@ -1730,6 +2050,14 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
+        // Carried rather than inherited, because the catch blocks below run after the try's scope
+        // has been disposed and are exactly the lines somebody reads first when a dictation went
+        // wrong.
+        //
+        // SEEDED FROM THE CONTROLLER RATHER THAN LEFT NULL, because a release or a cancel can throw
+        // BEFORE it returns a transition, and the recording those lines are about already exists.
+        // Left null, the two catches lost the dictation on exactly the paths that create them.
+        var interrupted = controller.CurrentSession?.Id.Value;
         CancellationTokenSource? processingCancellation = null;
         try
         {
@@ -1743,7 +2071,7 @@ public partial class App : Application, IAsyncDisposable
                         _window?.SetReliabilityNotice(
                             "Recovered text is waiting",
                             "Copy or delete the unfinished dictation on Home before starting another recording.");
-                        _window?.SetSessionStatus("Review recovered text before recording again");
+                        _window?.SetSessionStatus(DictationStatus.Quiet("Review recovered text before recording again"));
                     });
                     return;
                 }
@@ -1767,7 +2095,8 @@ public partial class App : Application, IAsyncDisposable
                             "Windows memory is critically low",
                             "Close another memory-heavy app, then try dictation again. No recording was started.",
                             isError: true);
-                        _window?.SetSessionStatus("Recording paused because Windows memory is critically low");
+                        _window?.SetSessionStatus(DictationStatus.Distress(
+                            "Recording paused because Windows memory is critically low"));
                     });
                     return;
                 }
@@ -1797,12 +2126,22 @@ public partial class App : Application, IAsyncDisposable
                 _ => throw new InvalidOperationException("Unsupported push-to-talk signal."),
             };
 
+            // FROM HERE THE DICTATION IS KNOWN, AND EVERYTHING BELOW BELONGS TO IT. Above this line
+            // the session either does not exist yet (a press) or is being read off the controller,
+            // and lines written there honestly have no dictation. `Begin` restores rather than
+            // clears, so this nesting inside another scope is safe.
+            interrupted = result.Session?.Id.Value;
+            using var dictation = interrupted is { } known
+                ? DictationScope.Begin(known)
+                : NoScope.Instance;
             WriteSessionEvent(result);
             if (result.Kind == SessionTransitionKind.Started && result.Session is not null)
             {
                 _escapeRecoveryForSession = _settings.Preferences.Dictation.EscapeRecoveryEnabled;
                 StartRecordingWatchdog(controller, result.Session.Id);
-                await StartLivePreviewAsync().ConfigureAwait(false);
+                await StartLivePreviewAsync(result.Session.Id).ConfigureAwait(false);
+                StartAutoStopWatch(result.Session.Id);
+                StartStreamingTranscription(result.Session.Id);
             }
             else if (result.Kind == SessionTransitionKind.FinalizeReady &&
                 result.Session is not null &&
@@ -1811,6 +2150,8 @@ public partial class App : Application, IAsyncDisposable
                 processingCancellation = new CancellationTokenSource(
                     MaximumFinalProcessingDuration);
                 _activeProcessingCancellation = processingCancellation;
+                await StopStreamingTranscriptionAsync().ConfigureAwait(false);
+                await StopAutoStopWatchAsync().ConfigureAwait(false);
                 await StopLivePreviewAsync().ConfigureAwait(false);
                 await TranscribeFinalAsync(
                         controller,
@@ -1824,6 +2165,8 @@ public partial class App : Application, IAsyncDisposable
             else if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
             {
                 _escapeRecoveryForSession = false;
+                await StopStreamingTranscriptionAsync().ConfigureAwait(false);
+                await StopAutoStopWatchAsync().ConfigureAwait(false);
                 await StopLivePreviewAsync().ConfigureAwait(false);
                 await controller.ResetAsync().ConfigureAwait(false);
             }
@@ -1833,16 +2176,25 @@ public partial class App : Application, IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
+            // THE CATCH RUNS AFTER THE TRY'S SCOPE HAS BEEN DISPOSED, so the id is carried in a
+            // variable rather than inherited. Failure and recovery are the lines somebody reads
+            // FIRST when a dictation went wrong, and they were the ones losing their dictation.
+            using var failed = interrupted is { } timedOut
+                ? DictationScope.Begin(timedOut)
+                : NoScope.Instance;
             await RecoverFailedSessionAsync(
                 controller,
                 new AppError(
                     AppErrorCode.SessionTimedOut,
                     AppErrorStage.Session,
                     CanRetry: true),
-                "The dictation timed out and was recovered safely").ConfigureAwait(false);
+                DictationStatus.Quiet("The dictation timed out and was recovered safely")).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
         {
+            using var failed = interrupted is { } broken
+                ? DictationScope.Begin(broken)
+                : NoScope.Instance;
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationSessionFailed,
@@ -1853,7 +2205,7 @@ public partial class App : Application, IAsyncDisposable
                     AppErrorCode.InvalidTransition,
                     AppErrorStage.Session,
                     CanRetry: true),
-                "Session failed and was reset safely").ConfigureAwait(false);
+                DictationStatus.Error("Session failed and was reset safely")).ConfigureAwait(false);
         }
         finally
         {
@@ -1885,6 +2237,13 @@ public partial class App : Application, IAsyncDisposable
         DictationSessionId sessionId,
         CancellationToken cancellationToken)
     {
+        // Every flow that serves a dictation opens the scope for itself. Inheriting one would in
+        // fact work here - a child async flow keeps the AsyncLocal value it captured even after the
+        // caller disposes its own scope - and that is exactly why this does not rely on it: the
+        // join would then be a property of who happened to call whom, invisible at this method and
+        // unprovable by anything. Opening it here makes it a property of this flow, which a gate
+        // can check. One line per flow, and the flows are the methods that take a session id.
+        using var dictation = DictationScope.Begin(sessionId.Value);
         try
         {
             await Task.Delay(RecordingWatchdogDuration(), cancellationToken).ConfigureAwait(false);
@@ -1897,7 +2256,9 @@ public partial class App : Application, IAsyncDisposable
                         State: EnviousWispr.Core.Sessions.DictationSessionState.Recording,
                     } && currentId == sessionId)
                 {
-                    await StopLivePreviewAsync().ConfigureAwait(false);
+                    await StopStreamingTranscriptionAsync().ConfigureAwait(false);
+                await StopAutoStopWatchAsync().ConfigureAwait(false);
+                await StopLivePreviewAsync().ConfigureAwait(false);
                     var error = new AppError(
                         AppErrorCode.SessionTimedOut,
                         AppErrorStage.Session,
@@ -1910,7 +2271,8 @@ public partial class App : Application, IAsyncDisposable
                         AppFailureCategory.Recovery,
                         ErrorCode: error.Code));
                     _window?.DispatcherQueue.TryEnqueue(() =>
-                        _window?.SetSessionStatus("Recording timed out and was cancelled safely"));
+                        _window?.SetSessionStatus(
+                            DictationStatus.Warning("Recording timed out and was cancelled safely")));
                 }
             }
             finally
@@ -1955,10 +2317,12 @@ public partial class App : Application, IAsyncDisposable
     private async Task RecoverFailedSessionAsync(
         PushToTalkSessionController controller,
         AppError error,
-        string status)
+        DictationStatus status)
     {
         await StopRecordingWatchdogAsync().ConfigureAwait(false);
-        await StopLivePreviewAsync().ConfigureAwait(false);
+        await StopStreamingTranscriptionAsync().ConfigureAwait(false);
+                await StopAutoStopWatchAsync().ConfigureAwait(false);
+                await StopLivePreviewAsync().ConfigureAwait(false);
         if (controller.CurrentSession is not null)
         {
             await controller.AbortAsync(error).ConfigureAwait(false);
@@ -1976,11 +2340,19 @@ public partial class App : Application, IAsyncDisposable
 
     private async Task RecoverFromSystemTransitionAsync(SystemLifecycleTransition transition)
     {
+        // WINDOWS LOCKING OR SUSPENDING ARRIVES ON ITS OWN CALLBACK, so this flow inherits nothing
+        // and had no dictation at all - the capture transition, the preview stop, the failure and
+        // the recovery lines all landed joined to nothing, on the path where a user most wants to
+        // know what happened to their words.
+        using var dictation = _sessionController?.CurrentSession is { } interrupted
+            ? DictationScope.Begin(interrupted.Id.Value)
+            : NoScope.Instance;
         _activeProcessingCancellation?.Cancel();
         if (!await _sessionOperationGate.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false))
         {
             _window?.DispatcherQueue.TryEnqueue(() =>
-                _window?.SetSessionStatus("Windows interrupted the active dictation; recovery is still pending"));
+                _window?.SetSessionStatus(DictationStatus.Distress(
+                    "Windows interrupted the active dictation; recovery is still pending")));
             return;
         }
 
@@ -2006,12 +2378,14 @@ public partial class App : Application, IAsyncDisposable
                     processingCancellation = new CancellationTokenSource(
                         MaximumFinalProcessingDuration);
                     _activeProcessingCancellation = processingCancellation;
-                    await StopLivePreviewAsync().ConfigureAwait(false);
+                    await StopStreamingTranscriptionAsync().ConfigureAwait(false);
+                await StopAutoStopWatchAsync().ConfigureAwait(false);
+                await StopLivePreviewAsync().ConfigureAwait(false);
                     _window?.DispatcherQueue.TryEnqueue(() =>
-                        _window?.SetSessionStatus(
+                        _window?.SetSessionStatus(DictationStatus.Quiet(
                             transition == SystemLifecycleTransition.Suspending
-                                ? "Windows is suspending — captured audio is being preserved"
-                                : "Windows locked — captured audio is being preserved"));
+                                ? "Windows is suspending. Captured audio is being preserved"
+                                : "Windows locked. Captured audio is being preserved")));
                     await TranscribeFinalAsync(
                             controller,
                             result.Session.Id,
@@ -2028,7 +2402,8 @@ public partial class App : Application, IAsyncDisposable
                     AppErrorCode.Cancelled,
                     AppErrorStage.SystemLifecycle,
                     CanRetry: true),
-                "Windows interrupted the session; it was reset safely").ConfigureAwait(false);
+                DictationStatus.Quiet(
+                    "Windows interrupted the session; it was reset safely")).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -2040,7 +2415,7 @@ public partial class App : Application, IAsyncDisposable
                         AppErrorCode.SessionTimedOut,
                         AppErrorStage.SystemLifecycle,
                         CanRetry: true),
-                    "Windows interrupted the session; recovery timed out safely").ConfigureAwait(false);
+                    DictationStatus.Quiet("Windows interrupted the session; recovery timed out safely")).ConfigureAwait(false);
             }
         }
         catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
@@ -2057,7 +2432,8 @@ public partial class App : Application, IAsyncDisposable
                         AppErrorCode.InvalidTransition,
                         AppErrorStage.SystemLifecycle,
                         CanRetry: true),
-                    "Windows interrupted the session; it was reset safely").ConfigureAwait(false);
+                    DictationStatus.Quiet(
+                    "Windows interrupted the session; it was reset safely")).ConfigureAwait(false);
             }
         }
         finally
@@ -2072,8 +2448,292 @@ public partial class App : Application, IAsyncDisposable
         }
     }
 
-    private async Task StartLivePreviewAsync()
+    /// <summary>How often the watcher asks whether the speaker has finished.</summary>
+    /// <remarks>
+    /// Far more often than the threshold it is testing, so the recording ends close to when the
+    /// user expects rather than up to a poll late. Cheap: it reads a buffer already being written.
+    /// </remarks>
+    private static readonly TimeSpan AutoStopPollInterval = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
+    /// Watches a running recording and ends it when the speaker has stopped, if the user asked.
+    /// </summary>
+    /// <remarks>
+    /// IT ENDS THE RECORDING THROUGH THE SAME DOOR A KEY RELEASE USES. Calling
+    /// HandlePushToTalkAsync with a Released signal means the session state machine, the hook's
+    /// own recording flag, transcription, delivery and history all run exactly as they would have.
+    /// A parallel finish path here would be a second implementation of ending a dictation, and the
+    /// two would drift.
+    ///
+    /// HAS-HEARD-SPEECH IS STICKY AND LIVES HERE, not in the snapshot. The buffer only holds a
+    /// window, so a speaker who says one word and then pauses past that window would look to a
+    /// single snapshot like someone who never spoke - and the policy would stop protecting them at
+    /// the exact moment it should fire. Once speech is heard in this recording, it stays heard.
+    ///
+    /// THE SNAPSHOT WINDOW IS LONGER THAN ANY THRESHOLD IT COULD BE ASKED ABOUT. A window shorter
+    /// than the threshold can never contain enough silence to satisfy it, so the feature would
+    /// simply never fire - silently, and looking exactly like a user who had not turned it on.
+    /// </remarks>
+    /// <summary>How often the streaming loop looks for a stretch it can commit.</summary>
+    private static readonly TimeSpan StreamingPollInterval = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>
+    /// Transcribes finished parts of a recording while the user is still speaking.
+    /// </summary>
+    /// <remarks>
+    /// ITS WORST CASE IS TODAY'S BEHAVIOUR, and that is the design rather than a safety net bolted
+    /// on. The full audio is kept regardless; the streamed text is only USED if every commit
+    /// succeeded. Any failure - a dead worker, a cancelled request, an exception - clears
+    /// <see cref="_streamingUsable"/> and the release transcribes the whole take exactly as it does
+    /// now. Dictation working is the first rule this product has, and a speed feature must not be
+    /// able to break it.
+    ///
+    /// SO THERE IS NO SETTING. A change that cannot make things worse does not need one, and every
+    /// switch added is a thing a user has to understand before they benefit.
+    ///
+    /// IT DOES NOT RUN WITH LIVE PREVIEW ON. Both transcribe during the recording and both use the
+    /// same worker, so together they would queue behind each other and make the release SLOWER than
+    /// doing nothing. Live Preview is the user's explicit choice and is display-only; this is
+    /// invisible and makes the real text faster. Turning off the thing they chose would be wrong,
+    /// so the invisible one stands down.
+    /// </remarks>
+    private void StartStreamingTranscription(DictationSessionId sessionId)
     {
+        _streamed.Clear();
+        _streamedThroughSample = 0;
+        _streamingUsable = false;
+
+        if (_settings.Preferences.LivePreviewEnabled ||
+            _transcriptionEngine is not { } engine ||
+            _audioCapture is not IAudioSnapshotSource snapshots)
+        {
+            return;
+        }
+
+        _streamingUsable = true;
+        var cancellation = new CancellationTokenSource();
+        _streamingCancellation = cancellation;
+        _streamingLoop = RunStreamingTranscriptionAsync(
+            snapshots,
+            engine,
+            sessionId,
+            cancellation.Token);
+    }
+
+    private async Task RunStreamingTranscriptionAsync(
+        IAudioSnapshotSource snapshots,
+        RuntimeWorkerTranscriptionEngine engine,
+        DictationSessionId sessionId,
+        CancellationToken cancellationToken)
+    {
+        // Every flow that serves a dictation opens the scope for itself. Inheriting one would in
+        // fact work here - a child async flow keeps the AsyncLocal value it captured even after the
+        // caller disposes its own scope - and that is exactly why this does not rely on it: the
+        // join would then be a property of who happened to call whom, invisible at this method and
+        // unprovable by anything. Opening it here makes it a property of this flow, which a gate
+        // can check. One line per flow, and the flows are the methods that take a session id.
+        using var dictation = DictationScope.Begin(sessionId.Value);
+        var segmenter = new SpeechSegmenter(
+            AudioSampleConverter.TargetSampleRate,
+            TimeSpan.FromMilliseconds(400));
+
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(StreamingPollInterval, cancellationToken).ConfigureAwait(false);
+
+                // The WHOLE recording so far, not a window: a commit is a range measured from the
+                // start, and a rolling window would make those indices mean something different on
+                // every poll.
+                var snapshot = snapshots.GetSnapshot(TimeSpan.MaxValue);
+                if (snapshot is null || snapshot.SessionId != sessionId)
+                {
+                    continue;
+                }
+
+                var commit = StreamingCommitPlanner.NextCommit(
+                    snapshot.Samples.Span,
+                    snapshot.SampleRate,
+                    _streamedThroughSample,
+                    segmenter);
+                if (commit is not { } range)
+                {
+                    continue;
+                }
+
+                var slice = snapshot.Samples.Slice(
+                    range.StartSample,
+                    range.EndSample - range.StartSample);
+                var transcript = await engine.TranscribeAsync(
+                    new CapturedAudio(sessionId, slice, snapshot.SampleRate, snapshot.Channels),
+                    cancellationToken).ConfigureAwait(false);
+
+                _streamed.Append(transcript.Text);
+                _streamedThroughSample = range.EndSample;
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.StreamingSegmentCommitted));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The recording ended, which is the ordinary case. What has been committed so far
+            // stays usable - the ranges already transcribed are still correct.
+        }
+        catch (Exception exception) when (
+            exception is not (StackOverflowException or OutOfMemoryException))
+        {
+            // ANY failure gives up on the head start entirely rather than delivering a partial
+            // transcript. Half a dictation is worse than a slow one.
+            _streamingUsable = false;
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.StreamingAbandoned,
+                AppFailureCategory.AsrUnavailable));
+        }
+    }
+
+    private async Task StopStreamingTranscriptionAsync()
+    {
+        var cancellation = _streamingCancellation;
+        var loop = _streamingLoop;
+        _streamingCancellation = null;
+        _streamingLoop = null;
+        if (cancellation is null)
+        {
+            return;
+        }
+
+        await cancellation.CancelAsync().ConfigureAwait(false);
+        if (loop is not null)
+        {
+            try
+            {
+                await loop.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        cancellation.Dispose();
+    }
+
+    private void StartAutoStopWatch(DictationSessionId sessionId)
+    {
+        var dictation = _settings.Preferences.Dictation;
+        if (!dictation.AutoStopEnabled ||
+            dictation.RecordingMode != DictationRecordingMode.Toggle ||
+            _audioCapture is not IAudioSnapshotSource snapshots)
+        {
+            return;
+        }
+
+        var cancellation = new CancellationTokenSource();
+        _autoStopCancellation = cancellation;
+        _autoStopLoop = RunAutoStopWatchAsync(snapshots, sessionId, dictation, cancellation.Token);
+    }
+
+    private async Task RunAutoStopWatchAsync(
+        IAudioSnapshotSource snapshots,
+        DictationSessionId sessionId,
+        DictationPreferences dictation,
+        CancellationToken cancellationToken)
+    {
+        // Every flow that serves a dictation opens the scope for itself. Inheriting one would in
+        // fact work here - a child async flow keeps the AsyncLocal value it captured even after the
+        // caller disposes its own scope - and that is exactly why this does not rely on it: the
+        // join would then be a property of who happened to call whom, invisible at this method and
+        // unprovable by anything. Opening it here makes it a property of this flow, which a gate
+        // can check. One line per flow, and the flows are the methods that take a session id.
+        using var scope = DictationScope.Begin(sessionId.Value);
+        var required = TimeSpan.FromSeconds(dictation.AutoStopSilenceSeconds);
+        if (required < AutoStopPolicy.MinimumSilence)
+        {
+            required = AutoStopPolicy.MinimumSilence;
+        }
+
+        // Comfortably more than the threshold, so the window can always hold enough silence to
+        // answer the question being asked of it.
+        var window = required + required;
+        var heardSpeech = false;
+
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(AutoStopPollInterval, cancellationToken).ConfigureAwait(false);
+
+                var snapshot = snapshots.GetSnapshot(window);
+                if (snapshot is null || snapshot.SessionId != sessionId)
+                {
+                    continue;
+                }
+
+                var segmenter = new SpeechSegmenter(snapshot.SampleRate, TimeSpan.FromMilliseconds(400));
+                var samples = snapshot.Samples.Span;
+                heardSpeech |= segmenter.Segment(samples).Any(segment => segment.IsSpeech);
+
+                var decision = AutoStopPolicy.Decide(
+                    dictation.AutoStopEnabled,
+                    dictation.RecordingMode == DictationRecordingMode.Toggle,
+                    heardSpeech,
+                    segmenter.TrailingSilence(samples),
+                    required);
+                if (decision != AutoStopDecision.Stop)
+                {
+                    continue;
+                }
+
+                _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.AutoStopTriggered));
+                // Fire and return. Awaiting here would hold this loop open across the whole
+                // transcription, and the loop is cancelled as part of ending the recording.
+                _ = HandlePushToTalkAsync(PushToTalkSignal.Released);
+                return;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The recording ended some other way, which is the ordinary case.
+        }
+    }
+
+    private async Task StopAutoStopWatchAsync()
+    {
+        var cancellation = _autoStopCancellation;
+        var loop = _autoStopLoop;
+        _autoStopCancellation = null;
+        _autoStopLoop = null;
+        if (cancellation is null)
+        {
+            return;
+        }
+
+        await cancellation.CancelAsync().ConfigureAwait(false);
+        if (loop is not null)
+        {
+            try
+            {
+                await loop.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        cancellation.Dispose();
+    }
+
+    private async Task StartLivePreviewAsync(DictationSessionId sessionId)
+    {
+        // Every flow that serves a dictation opens the scope for itself. Inheriting one would in
+        // fact work here - a child async flow keeps the AsyncLocal value it captured even after the
+        // caller disposes its own scope - and that is exactly why this does not rely on it: the
+        // join would then be a property of who happened to call whom, invisible at this method and
+        // unprovable by anything. Opening it here makes it a property of this flow, which a gate
+        // can check. One line per flow, and the flows are the methods that take a session id.
+        using var scope = DictationScope.Begin(sessionId.Value);
         if (!_settings.Preferences.LivePreviewEnabled)
         {
             return;
@@ -2175,6 +2835,14 @@ public partial class App : Application, IAsyncDisposable
 
     private async Task StopLivePreviewAsync()
     {
+        // STOPPING IS REACHED FROM MORE PLACES THAN STARTING, and one of them is quitting the app
+        // from the tray mid-recording - a shutdown path that inherits nothing, where the line saying
+        // the preview stopped was the last thing written about that dictation and was joined to
+        // nothing. Read off the controller rather than taken as a parameter, because the callers
+        // that lose the join are exactly the ones with no id to pass.
+        using var dictation = _sessionController?.CurrentSession is { } recording
+            ? DictationScope.Begin(recording.Id.Value)
+            : NoScope.Instance;
         await _previewGate.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -2220,6 +2888,10 @@ public partial class App : Application, IAsyncDisposable
         CancellationToken cancellationToken,
         bool recoveryOnly = false)
     {
+        // EVERY LINE WRITTEN FROM HERE ON SAYS WHICH DICTATION IT BELONGED TO. The scope is ambient,
+        // so helpers that have never heard of it - polish, delivery, the recovery write - are joined
+        // without being handed anything, and one added next month is joined on arrival.
+        using var dictation = DictationScope.Begin(sessionId.Value);
         _escapeRecoveryForSession = false;
         var engine = _transcriptionEngine;
         if (engine is null)
@@ -2231,19 +2903,26 @@ public partial class App : Application, IAsyncDisposable
             await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
             await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
             _window?.DispatcherQueue.TryEnqueue(() =>
-                _window?.SetSessionStatus("Audio captured, but local transcription is unavailable"));
+                _window?.SetSessionStatus(DictationStatus.Advisory(
+                    "Audio captured, but local transcription is unavailable", OpenTranscription)));
             return;
         }
 
         _window?.DispatcherQueue.TryEnqueue(() =>
-            _window?.SetSessionStatus("Transcribing locally..."));
+            _window?.SetSessionStatus(DictationStatus.Processing("Transcribing locally...")));
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
             AppEventCode.DictationTranscriptionStarted));
+        // The whole wait, not the sum of the stages. A sum reports zero for every await and
+        // dispatcher hop BETWEEN them, which is exactly where an unexplained delay would hide.
+        // In a finally, so a path that throws still reports what the user waited before it did.
+        var waitTimer = System.Diagnostics.Stopwatch.StartNew();
+        ArchiveDictationAudio(audio);
         var timer = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            var transcript = await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+            var transcript = await TranscribeUsingAnyHeadStartAsync(engine, audio, cancellationToken)
+                .ConfigureAwait(false);
             timer.Stop();
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
@@ -2281,12 +2960,37 @@ public partial class App : Application, IAsyncDisposable
                     transcript.DetectedLanguage,
                     cancellationToken)
                 .ConfigureAwait(false);
-            if (polishResult is not null && !polishResult.UsedFallback)
+            // A model that comes off the rails returns a CONFIDENT string rather than an error, so
+            // polishResult.UsedFallback is false and every check above says the call succeeded.
+            // This is the only place that asks whether what came back is worth showing anyone.
+            //
+            // Polish is a limb and the transcript is the heart: a refusal leaves the user with the
+            // cleaned text they already had, which is the same outcome as any other limb failure.
+            var polishReview = polishResult is null || polishResult.UsedFallback
+                ? new PolishOutputReview(PolishOutputVerdict.Accepted, string.Empty)
+                : PolishOutputGuard.Review(processed.Output.Text, polishResult.Output.Text);
+            var polishVerdict = polishReview.Verdict;
+            if (polishVerdict != PolishOutputVerdict.Accepted)
             {
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.PolishOutputRefused,
+                    // InvalidData rather than LocalPolish or CloudPolish: the refusal is about
+                    // what came BACK, and either provider can produce it. Attributing it to one
+                    // would make the log claim a cause it does not know.
+                    AppFailureCategory.InvalidData));
+            }
+
+            if (polishResult is not null && !polishResult.UsedFallback &&
+                polishVerdict == PolishOutputVerdict.Accepted)
+            {
+                // THE REVIEWED TEXT, NOT WHAT THE PROVIDER SENT. The guard strips what the model
+                // wrote ABOUT the text - "Sure, here is the cleaned transcript:" - and using the
+                // raw string here would put that chatter in somebody's document with their words.
                 processed = await _deterministicTextPipeline.ApplyPolishedTextAsync(
                     deterministicRequest,
                     processed,
-                    polishResult.Output.Text,
+                    polishReview.Text,
                     cancellationToken).ConfigureAwait(false);
                 await SaveRecoveryTextAsync(processed.Output, cancellationToken).ConfigureAwait(false);
             }
@@ -2302,7 +3006,8 @@ public partial class App : Application, IAsyncDisposable
                 if (deliveryTransition.Kind == SessionTransitionKind.Delivering)
                 {
                     _window?.DispatcherQueue.TryEnqueue(() =>
-                        _window?.SetSessionStatus("Delivering to the app you started in..."));
+                        _window?.SetSessionStatus(
+                            DictationStatus.Processing("Delivering to the app you started in...")));
                     _logger.Write(new AppLogEntry(
                         DateTimeOffset.UtcNow,
                         AppEventCode.TextDeliveryStarted));
@@ -2327,12 +3032,15 @@ public partial class App : Application, IAsyncDisposable
                     await SaveHistoryAsync(
                         transcript,
                         processed.Output.Text,
-                        polishResult is { Status: PolishAttemptStatus.Polished },
+                        polishResult is { Status: PolishAttemptStatus.Polished } &&
+                            polishVerdict == PolishOutputVerdict.Accepted,
                         delivery.Delivered).ConfigureAwait(false);
                     await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
                     await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
                     _window?.DispatcherQueue.TryEnqueue(() =>
-                        _window?.SetSessionStatus(DeliveryStatus(delivery)));
+                        _window?.ReportDeliveryAndMaybeOfferLanguage(
+                            DeliveryStatusReport.For(delivery),
+                            DeliveryLanguage(transcript)));
                     return;
                 }
             }
@@ -2340,7 +3048,8 @@ public partial class App : Application, IAsyncDisposable
             await SaveHistoryAsync(
                 transcript,
                 processed.Output.Text,
-                polishResult is { Status: PolishAttemptStatus.Polished },
+                polishResult is { Status: PolishAttemptStatus.Polished } &&
+                    polishVerdict == PolishOutputVerdict.Accepted,
                 wasDelivered: false,
                 expiresAt: recoveryOnly ? DateTimeOffset.UtcNow.AddHours(24) : null,
                 forceSave: recoveryOnly)
@@ -2356,20 +3065,21 @@ public partial class App : Application, IAsyncDisposable
                         "The dictation is ready to copy on Home and stays in History for 24 hours unless you Keep it."));
             }
             var status = string.IsNullOrWhiteSpace(processed.Output.Text)
-                    ? "No speech detected"
+                    ? DictationStatus.Quiet("No speech detected")
                     : recoveryOnly
-                        ? "Escape Recovery finished — text is ready to copy"
+                        ? DictationStatus.Quiet("Escape Recovery finished. Text is ready to copy")
                     : processed.IsDegraded
-                    ? "Transcribed and cleaned locally with a safe fallback"
+                    ? DictationStatus.Success("Transcribed and cleaned locally with a safe fallback")
                     : polishResult is { UsedFallback: true }
-                        ? PolishFallbackStatus(polishResult)
+                        ? DictationStatus.Success(PolishFallbackStatus(polishResult))
                     : polishResult is { UsedFallback: false }
                         ? _cloudPolishConsent is null
-                            ? "Transcribed and polished locally"
-                            : $"Transcribed and polished directly with {_cloudPolishConsent.ProviderName}"
+                            ? DictationStatus.Success("Transcribed and polished locally")
+                            : DictationStatus.Success(
+                                $"Transcribed and polished directly with {_cloudPolishConsent.ProviderName}")
                     : transcript.UsedFallback
-                        ? "Transcribed and cleaned locally with CPU fallback"
-                        : "Transcribed and cleaned locally";
+                        ? DictationStatus.Success("Transcribed and cleaned locally with CPU fallback")
+                        : DictationStatus.Success("Transcribed and cleaned locally");
             _window?.DispatcherQueue.TryEnqueue(() => _window?.SetSessionStatus(status));
         }
         catch (TranscriptionEngineException exception)
@@ -2383,8 +3093,120 @@ public partial class App : Application, IAsyncDisposable
             await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
             await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
             _window?.DispatcherQueue.TryEnqueue(() =>
-                _window?.SetSessionStatus("Local transcription failed safely"));
+                _window?.SetSessionStatus(DictationStatus.Error("Local transcription failed safely")));
         }
+        finally
+        {
+            // In a finally rather than beside each return, because this method leaves by several
+            // paths - delivered, held for recovery, and a transcription failure - and a wait the
+            // user sat through is worth the same whichever one it took. Beside the returns, the
+            // failure path is the one that would have been missed, and it is the slowest.
+            waitTimer.Stop();
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DictationCompleted,
+                AppFailureCategory.None,
+                waitTimer.ElapsedMilliseconds));
+        }
+    }
+
+    /// <summary>
+    /// Keeps the audio of a dictation so a bad transcript can be replayed. DEBUG builds only.
+    /// </summary>
+    /// <remarks>
+    /// WITHOUT THIS, "the app heard that wrong" IS UNREPRODUCIBLE. The audio is gone the moment
+    /// the dictation finishes, so the only evidence is the wrong text and somebody's memory of
+    /// what they said - which is the least reliable input available and the one every report is
+    /// currently built on.
+    ///
+    /// DEBUG ONLY, compiled out entirely rather than gated at runtime. Audio is the most sensitive
+    /// thing this app touches, and a runtime flag is a thing that can be turned on; a conditional
+    /// compile is not present in the binary a user runs at all. It never leaves the machine either
+    /// way - the network boundary is untouched - but "cannot be enabled" is a stronger claim than
+    /// "is not enabled" and it costs nothing here.
+    ///
+    /// FAILURES ARE SWALLOWED, and that is right for this one specifically. A debugging aid that
+    /// can break a dictation is worse than no debugging aid: the archive exists to help diagnose
+    /// the pipeline, so it must never be the reason the pipeline failed.
+    /// </remarks>
+    [System.Diagnostics.Conditional("DEBUG")]
+    private void ArchiveDictationAudio(CapturedAudio audio)
+    {
+        try
+        {
+            var directory = Path.Combine(_dataDirectory, "audio-archive");
+            Directory.CreateDirectory(directory);
+
+            var existing = Directory
+                .EnumerateFiles(directory, "*.wav")
+                .Select(path => (Path: path, Written: (DateTimeOffset)File.GetLastWriteTimeUtc(path)))
+                .ToArray();
+            foreach (var stale in AudioArchiveRetention.ToDelete(existing))
+            {
+                File.Delete(stale);
+            }
+
+            // The session id rather than a timestamp, so the file can be matched to the log lines
+            // for the same dictation. A timestamp would collide with itself on a fast machine and
+            // would have to be matched by eye against a clock.
+            File.WriteAllBytes(
+                Path.Combine(directory, $"{audio.SessionId.Value:N}.wav"),
+                WaveFile.EncodeMono(audio.Samples.Span, audio.SampleRate));
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Transcribes only what streaming did not already cover, and joins the two.
+    /// </summary>
+    /// <remarks>
+    /// THIS IS WHERE STREAMING PAYS. Everything committed while the user was speaking is already
+    /// text, so the release only has to recognise the tail - which is why a long dictation stops
+    /// costing a long wait.
+    ///
+    /// IT FALLS BACK TO THE WHOLE RECORDING ON ANY DOUBT, and the conditions are checked here
+    /// rather than trusted from the loop. No head start, a failure flag, or a tail that would be
+    /// longer than the audio all mean transcribe everything, exactly as before streaming existed.
+    /// Half a dictation is worse than a slow one, and this is the last place to refuse.
+    ///
+    /// THE TAIL'S ENGINE ID AND LANGUAGE ARE THE ONES REPORTED, because they came from the same
+    /// engine on the same audio and the committed pieces cannot disagree about them. The token
+    /// timings are the tail's alone and are already only used for diagnostics.
+    /// </remarks>
+    private async Task<Transcript> TranscribeUsingAnyHeadStartAsync(
+        RuntimeWorkerTranscriptionEngine engine,
+        CapturedAudio audio,
+        CancellationToken cancellationToken)
+    {
+        var headStart = _streamed.ToString();
+        var usable = _streamingUsable &&
+            _streamedThroughSample > 0 &&
+            _streamedThroughSample < audio.Samples.Length &&
+            !string.IsNullOrWhiteSpace(headStart);
+
+        if (!usable)
+        {
+            return await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+        }
+
+        var tailAudio = audio with
+        {
+            Samples = audio.Samples[_streamedThroughSample..],
+        };
+        var tail = await engine.TranscribeAsync(tailAudio, cancellationToken).ConfigureAwait(false);
+
+        var joined = new StreamingTranscriptAccumulator();
+        joined.Append(headStart);
+        joined.Append(tail.Text);
+
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.StreamingHeadStartUsed));
+
+        return tail with { Text = joined.ToString() };
     }
 
     private async Task SaveRecoveryTextAsync(
@@ -2511,7 +3333,9 @@ public partial class App : Application, IAsyncDisposable
         if (!_polishUsesLocalRuntime)
         {
             result = await provider.TryPolishAsync(
-                new PolishRequest(input, detectedLanguage),
+                new PolishRequest(input, detectedLanguage, PolishVocabulary.Eligible(
+                    input.Text,
+                    _settings.UserData.CustomWords)),
                 cancellationToken).ConfigureAwait(false);
         }
         else
@@ -2538,7 +3362,9 @@ public partial class App : Application, IAsyncDisposable
                 await using (acquired.Lease.ConfigureAwait(false))
                 {
                     result = await provider.TryPolishAsync(
-                        new PolishRequest(input, detectedLanguage),
+                        new PolishRequest(input, detectedLanguage, PolishVocabulary.Eligible(
+                    input.Text,
+                    _settings.UserData.CustomWords)),
                         cancellationToken).ConfigureAwait(false);
                 }
             }
@@ -2583,6 +3409,24 @@ public partial class App : Application, IAsyncDisposable
             SessionTransitionKind.Failed => AppEventCode.DictationSessionFailed,
             _ => (AppEventCode?)null,
         };
+        if (result.Kind == SessionTransitionKind.Started &&
+            _audioCapture is ICaptureStartTimings timings &&
+            timings.LastDeviceOpenMilliseconds is { } openMs)
+        {
+            // THE NUMBER THAT DECIDES A FEATURE. Warming the capture engine removes the OPEN half
+            // and nothing else, so if open is cheap the whole idea is worth nothing and the privacy
+            // question behind it never needs asking. Logged rather than reasoned about, because the
+            // one thing nobody has done is look.
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.CaptureDeviceOpened,
+                ElapsedMilliseconds: openMs));
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.CaptureStreamStarted,
+                ElapsedMilliseconds: timings.LastStreamStartMilliseconds ?? -1));
+        }
+
         if (eventCode is not null)
         {
             _logger.Write(new AppLogEntry(
@@ -2623,33 +3467,6 @@ public partial class App : Application, IAsyncDisposable
             ErrorCode: errorCode));
     }
 
-    private static string DeliveryStatus(DeliveryResult result) => result switch
-    {
-        { Delivered: true, Route: TextDeliveryRoute.UiAutomationValue } =>
-            "Inserted safely in the app you started in",
-        { Delivered: true, ClipboardRestored: true } =>
-            "Pasted safely and restored your clipboard",
-        { Delivered: true } => "Pasted safely",
-        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.ProtectedField } =>
-            "Protected field — copied only; paste manually if intended",
-        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.ElevatedTarget } =>
-            "Windows blocked the elevated app — copied only",
-        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.TargetChanged } =>
-            "The target changed — copied only to protect your text",
-        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.UnsafeMultilineTarget } =>
-            "Terminal line break refused — copied only",
-        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.UnsupportedTarget } =>
-            "Automatic paste is unsafe here — copied only",
-        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.InputStateUnsafe } =>
-            "A key was held — copied only; paste manually",
-        { ClipboardFallback: true } => "Copied — press Ctrl+V",
-        { RefusalReason: TextDeliveryRefusalReason.ClipboardUnavailable } =>
-            "Clipboard unavailable — text is held safely in memory",
-        { RefusalReason: TextDeliveryRefusalReason.DirectWriteUnverified } =>
-            "Insertion could not be verified — text is held safely in memory",
-        _ => "Text delivery stopped safely",
-    };
-
     private static string? DeliveryLanguage(Transcript transcript) =>
         transcript.EngineId.StartsWith(
             ParakeetTranscriptionEngine.ModelId,
@@ -2657,15 +3474,17 @@ public partial class App : Application, IAsyncDisposable
             ? null
             : transcript.DetectedLanguage;
 
-    private static string SessionStatus(SessionTransitionResult result) => result.Kind switch
+    private static DictationStatus SessionStatus(SessionTransitionResult result) => result.Kind switch
     {
-        SessionTransitionKind.Started => "Recording — release to finish, Escape to cancel",
+        SessionTransitionKind.Started =>
+            DictationStatus.Recording("Recording. Release to finish, Escape to cancel"),
         SessionTransitionKind.FinalizeReady when result.Error is not null =>
-            "Capture preserved after a microphone interruption",
-        SessionTransitionKind.FinalizeReady => "Capture complete — transcribing locally",
-        SessionTransitionKind.Cancelled => "Cancelled — nothing will be delivered",
-        SessionTransitionKind.Failed => "Session failed safely",
-        _ => "Idle",
+            DictationStatus.Quiet("Capture preserved after a microphone interruption"),
+        SessionTransitionKind.FinalizeReady =>
+            DictationStatus.Quiet("Capture complete. Transcribing locally"),
+        SessionTransitionKind.Cancelled => DictationStatus.Quiet("Cancelled. Nothing will be delivered"),
+        SessionTransitionKind.Failed => DictationStatus.Error("Session failed safely"),
+        _ => DictationStatus.Quiet("Idle"),
     };
 
     private static string HotkeyFailureStatus(AppError? error) => error?.Code switch
@@ -2675,13 +3494,34 @@ public partial class App : Application, IAsyncDisposable
         _ => "Global shortcut is unavailable",
     };
 
-    private static string OllamaHealthStatus(OllamaHealth health) => health switch
+    /// <summary>The button an advisory about the cleanup provider carries.</summary>
+    /// <remarks>
+    /// ONE INSTANCE RATHER THAN ONE PER ROW. Four sentences send the user to the same page, and
+    /// four copies of the same two words is how one of them ends up saying something else.
+    /// </remarks>
+    private static readonly PillAction OpenPolish =
+        new("Open settings", PillActionKind.OpenPolishSettings, "Open AI polish settings");
+
+    /// <summary>The button an advisory about the speech engine carries.</summary>
+    private static readonly PillAction OpenTranscription =
+        new("Open settings", PillActionKind.OpenTranscriptionSettings, "Open transcription settings");
+
+    private static DictationStatus OllamaHealthStatus(OllamaHealth health) => health switch
     {
-        OllamaHealth.EndpointInvalid => "Ollama endpoint must point to this PC",
-        OllamaHealth.ServerUnavailable => "Ollama is offline — cleaned text will still be preserved",
-        OllamaHealth.ServerUnhealthy => "Ollama did not return a usable health response",
-        OllamaHealth.NoLocalModels => "Ollama is running, but no local model is installed",
-        _ => "Ollama is ready",
+        // EVERY UNHEALTHY OLLAMA ROW IS A SETUP PROBLEM THE USER CAN FIX, so it is an advisory
+        // rather than an error or, as it was, nothing at all. A user whose polish provider is
+        // switched off currently gets a silently plainer result and no pill saying why.
+        OllamaHealth.EndpointInvalid =>
+            DictationStatus.Advisory("Ollama endpoint must point to this PC", OpenPolish),
+        OllamaHealth.ServerUnavailable =>
+            DictationStatus.Advisory(
+                "Ollama is offline. Cleaned text will still be preserved", OpenPolish),
+        OllamaHealth.ServerUnhealthy =>
+            DictationStatus.Advisory("Ollama did not return a usable health response", OpenPolish),
+        OllamaHealth.NoLocalModels =>
+            DictationStatus.Advisory(
+                "Ollama is running, but no local model is installed", OpenPolish),
+        _ => DictationStatus.Quiet("Ollama is ready"),
     };
 
     private static string PolishFallbackStatus(PolishResult result) => result.Error?.Code switch

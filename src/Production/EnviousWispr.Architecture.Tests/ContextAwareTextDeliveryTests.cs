@@ -1,4 +1,5 @@
 using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Pipeline;
 
@@ -122,6 +123,103 @@ public sealed class ContextAwareTextDeliveryTests
         Assert.Equal("recover commit", delivery.RecoveryText?.Text);
     }
 
+    [Fact]
+    public async Task AskingToCopyNeverTouchesTheWindowTheTextIsNotGoingTo()
+    {
+        // Reading the caret of a window nothing will be typed into can bring that window back to the
+        // front, and it can fail and stop the copy that was the whole point.
+        var adapter = new FakeTargetAdapter(AvailableContext("before", "after"));
+        var delivery = new ContextAwareTextDelivery(adapter);
+
+        var result = await delivery.DeliverAsync(CopyRequest("hello"));
+
+        Assert.Equal(0, adapter.Captures);
+        Assert.Null(adapter.LastCommit);
+        Assert.True(result.Delivered);
+        Assert.Null(delivery.RecoveryText);
+    }
+
+    [Fact]
+    public async Task WhatIsCopiedIsWhatWasSaid()
+    {
+        // The repair adds spacing for where the text was going to land. Nothing is landing anywhere,
+        // so "hello" must arrive as "hello" rather than as "hello ".
+        var adapter = new FakeTargetAdapter(AvailableContext("before", "after"));
+        var delivery = new ContextAwareTextDelivery(adapter);
+
+        await delivery.DeliverAsync(CopyRequest("hello"));
+
+        Assert.Equal("hello", adapter.LastCopied?.Text);
+    }
+
+    [Fact]
+    public async Task ACopyStillHappensWhenThereIsNoWindowToPasteInto()
+    {
+        // The target check refused this before the choice was ever read, so a copy that needs no
+        // target was refused for the lack of one.
+        var adapter = new FakeTargetAdapter(AvailableContext("before", "after"));
+        var delivery = new ContextAwareTextDelivery(adapter);
+
+        var result = await delivery.DeliverAsync(new TextDeliveryRequest(
+            new ProcessedText(SessionId, "hello"),
+            new TargetWindowId(0),
+            "en",
+            TextDeliveryOptions.Default with { CopyInsteadOfPaste = true }));
+
+        Assert.True(result.Delivered);
+        Assert.Equal("hello", adapter.LastCopied?.Text);
+    }
+
+    [Fact]
+    public async Task AnIntendedCopyIsNotReportedAsAPasteThatFailed()
+    {
+        // Delivered false with a clipboard fallback is the shape every reader downstream treats as a
+        // failure that was caught: a refusal in the log, an error code, a warning notice, and a
+        // history entry reading "held safely".
+        var adapter = new FakeTargetAdapter(AvailableContext("before", "after"));
+        var delivery = new ContextAwareTextDelivery(adapter);
+
+        var result = await delivery.DeliverAsync(CopyRequest("hello"));
+
+        Assert.True(result.Delivered);
+        Assert.False(result.ClipboardFallback);
+        Assert.Equal(TextDeliveryRefusalReason.None, result.RefusalReason);
+    }
+
+    [Fact]
+    public void TheSentenceForARequestedCopyNamesTheClipboardAndNotAPaste()
+    {
+        // The route is the only thing that says WHERE the text went, so a delivered copy that loses
+        // it falls through to the paste sentences and tells the user it pasted into a window it
+        // never touched.
+        var copied = DeliveryStatusReport.For(new DeliveryResult(
+            SessionId,
+            Delivered: true,
+            ClipboardFallback: false,
+            TextDeliveryRoute.ClipboardOnly));
+
+        Assert.Equal("Copied to your clipboard", copied.Text);
+        Assert.Equal(DictationOverlayState.Success, copied.State);
+    }
+
+    [Fact]
+    public async Task ARequestedCopyCarriesTheClipboardRouteBackToTheUser()
+    {
+        var adapter = new FakeTargetAdapter(AvailableContext("before", "after"));
+        var delivery = new ContextAwareTextDelivery(adapter);
+
+        var result = await delivery.DeliverAsync(CopyRequest("hello"));
+
+        Assert.Equal(TextDeliveryRoute.ClipboardOnly, result.Route);
+        Assert.Equal("Copied to your clipboard", DeliveryStatusReport.For(result).Text);
+    }
+
+    private static TextDeliveryRequest CopyRequest(string text) => new(
+        new ProcessedText(SessionId, text),
+        Target,
+        "en",
+        TextDeliveryOptions.Default with { CopyInsteadOfPaste = true });
+
     private static TextDeliveryRequest Request(string text) => new(
         new ProcessedText(SessionId, text),
         Target,
@@ -151,12 +249,39 @@ public sealed class ContextAwareTextDeliveryTests
     {
         public TextCommitRequest? LastCommit { get; private set; }
 
+        /// <summary>How many times the target was asked for its caret context.</summary>
+        /// <remarks>
+        /// COUNTED SO A TEST CAN SAY "NOT AT ALL". A choice to copy must not read the caret of a
+        /// window the text is not going to, and the only way to assert that is to notice the call
+        /// that should never happen.
+        /// </remarks>
+        public int Captures { get; private set; }
+
+        public ProcessedText? LastCopied { get; private set; }
+
+        public Task<TextCommitResult> CopyOnlyAsync(
+            ProcessedText text,
+            CancellationToken cancellationToken = default)
+        {
+            LastCopied = text;
+            return Task.FromResult(new TextCommitResult(
+                TextDeliveryRoute.ClipboardOnly,
+                Delivered: true,
+                ClipboardFallback: false,
+                ClipboardRestored: false,
+                TextDeliveryRefusalReason.None));
+        }
+
         public Task<TargetContextResult> CaptureContextAsync(
             TargetWindowId target,
             TextDeliveryOptions options,
-            CancellationToken cancellationToken = default) => captureException is null
+            CancellationToken cancellationToken = default)
+        {
+            Captures++;
+            return captureException is null
                 ? Task.FromResult(context)
                 : Task.FromException<TargetContextResult>(captureException);
+        }
 
         public Task<TextCommitResult> CommitAsync(
             TextCommitRequest request,

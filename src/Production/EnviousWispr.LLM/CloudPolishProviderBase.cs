@@ -4,10 +4,11 @@ using System.Text.Json;
 using EnviousWispr.Core.Credentials;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.LLM;
 
-public abstract class CloudPolishProviderBase : IPolishProvider
+public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvisor
 {
     private static readonly TimeSpan[] RetryDelays =
         [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3)];
@@ -181,6 +182,47 @@ public abstract class CloudPolishProviderBase : IPolishProvider
         }
     }
 
+    /// <summary>
+    /// Refuses to ask a cloud model what a word is likely to be misheard as.
+    /// </summary>
+    /// <remarks>
+    /// IT USED TO ASK, AND THAT SENT THE DICTIONARY OUT. The suggestion prompt carries the spelling
+    /// somebody typed AND the aliases they have already saved for it, which is their custom
+    /// dictionary by another name. The Permissions page promises "dictionaries, snippets, and history
+    /// stay on this PC", and a button that quietly posts them to a vendor breaks that promise as
+    /// squarely as the polish path did.
+    ///
+    /// IT SURVIVED THE FIRST FIX BECAUSE IT IS CALLED SOMETHING ELSE. The test holding the cloud path
+    /// to that promise looked for the word "Vocabulary"; this route is named "mishearing advice". A
+    /// guard written around one spelling of a thing guards the spelling.
+    ///
+    /// THE FEATURE IS NOT LOST, IT IS LOCAL. EG-1 and Ollama both implement this and both run on
+    /// this machine, which is where a question about somebody's own dictionary belongs. A cloud
+    /// provider answers NotSupported, which is the same answer the app already handles for any
+    /// option that cannot do this.
+    ///
+    /// WHAT THE OLD IMPLEMENTATION EXPLAINED, KEPT BECAUSE IT IS STILL TRUE OF THE LOCAL ONES:
+    /// it reuses <see cref="SendOnceAsync"/> and nothing else from the polish path. That method is
+    /// the one seam that is genuinely about talking to this vendor - the URL, the request shape, the
+    /// place the answer lives in the response - and every subclass already has it right. Everything
+    /// above it is polish policy: fallback text, safety comparison against the original, retries
+    /// tuned for a user who is mid-dictation. None of that applies to a button press.
+    ///
+    /// NO RETRIES HERE, ON PURPOSE. Polishing retries because the alternative is the user losing the
+    /// benefit of words they have already spoken. Nothing is at stake in a suggestion, the user is
+    /// looking at the screen, and the honest answer to a failed ask is to say so immediately rather
+    /// than to sit for another four seconds first.
+    ///
+    /// EVERY FAILURE IS THE SAME FAILURE TO THE PERSON WAITING. A missing key, a refused connection,
+    /// a rate limit and a timeout all mean the suggestion did not arrive, so they are caught
+    /// together rather than sorted into messages nobody can act on differently.
+    /// </remarks>
+    public Task<MishearingAdvice> SuggestAsync(
+        string spokenForm,
+        IReadOnlyList<string> existing,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(MishearingAdvice.None(MishearingAdviceStatus.NotSupported));
+
     protected abstract Task<string?> SendOnceAsync(
         string apiKey,
         string systemPrompt,
@@ -220,25 +262,13 @@ public abstract class CloudPolishProviderBase : IPolishProvider
 
     protected static string? CleanOutput(string? content)
     {
+        // PREAMBLE STRIPPING LIVES IN ONE PLACE NOW, AND IT IS NOT HERE. This ran before the shared
+        // guard and without the person's own words, so it deleted a heading somebody actually
+        // dictated - "Here is the plan:" - and nothing downstream could tell it had happened.
+        // PolishOutputGuard.StripPreamble knows what was said and is the only place allowed to
+        // remove a line because of how it looks.
         var result = content?.Trim();
-        if (string.IsNullOrWhiteSpace(result))
-        {
-            return null;
-        }
-
-        var firstNewline = result.IndexOf('\n');
-        var firstLine = firstNewline >= 0 ? result[..firstNewline].Trim() : result;
-        var lower = firstLine.ToLowerInvariant();
-        var preamble = firstLine.Length < 100 && firstLine.EndsWith(':') &&
-            (lower.StartsWith("here", StringComparison.Ordinal) ||
-             lower.StartsWith("below", StringComparison.Ordinal) ||
-             lower.StartsWith("the corrected", StringComparison.Ordinal) ||
-             lower.StartsWith("the cleaned", StringComparison.Ordinal) ||
-             lower.StartsWith("the polished", StringComparison.Ordinal) ||
-             lower.StartsWith("corrected version", StringComparison.Ordinal));
-        return preamble && firstNewline >= 0
-            ? result[(firstNewline + 1)..].Trim()
-            : result;
+        return string.IsNullOrWhiteSpace(result) ? null : result;
     }
 
     private static PolishAttemptStatus StatusFor(AppErrorCode errorCode) => errorCode switch

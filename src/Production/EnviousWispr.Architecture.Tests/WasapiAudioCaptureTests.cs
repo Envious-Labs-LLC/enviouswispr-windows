@@ -32,6 +32,40 @@ public sealed class WasapiAudioCaptureTests
         Assert.True(recorder.Disposed);
     }
 
+    /// <summary>An empty callback is not a packet, and it must not publish a level.</summary>
+    /// <remarks>
+    /// MEASURED ON A REAL MACHINE AND IT BLINDED EVERY METER IN THE APP. This recorder delivers a
+    /// zero-length buffer on roughly half its callbacks, each within a millisecond of a real one, so
+    /// every true level was immediately published over with a zero. Both meters read the latest
+    /// level, so both read zero on virtually every look, and the recording pill sat at its floor
+    /// through dictations that transcribed perfectly.
+    /// </remarks>
+    [Fact]
+    public async Task EmptyCallbacksDoNotCountAsPacketsOrPublishSilence()
+    {
+        var recorder = new FakeRecorderSession();
+        await using var capture = CreateCapture(recorder);
+        var levels = new List<AudioLevel>();
+        capture.LevelChanged += (_, level) => levels.Add(level);
+
+        await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
+        recorder.Emit(0.5f, -0.5f);
+        recorder.EmitBytes([]);
+        var result = await capture.StopAsync();
+
+        Assert.Equal(1, capture.LastPacketCount);
+        Assert.Equal(0, capture.LastSilentPacketCount);
+        // THE LEVEL FROM THE REAL BUFFER SURVIVES, which is the whole point. A second event here
+        // would be the defect: a zero published a millisecond after the truth.
+        Assert.Single(levels);
+        Assert.Equal(0.5f, levels[0].Peak);
+        Assert.Equal(0.5f, levels[0].RootMeanSquare, 5);
+        Assert.Equal(0.5f, capture.LastPeak);
+        Assert.Equal(0.5f, capture.LastRootMeanSquare, 5);
+        Assert.Equal(new[] { 0.5f, -0.5f }, result.Samples.ToArray());
+        Assert.Equal(AudioCaptureOutcome.Completed, result.Outcome);
+    }
+
     [Fact]
     public async Task PreviewSnapshotIsBoundedAndDoesNotConsumeFinalAudio()
     {

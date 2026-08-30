@@ -29,6 +29,35 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
         }
 
         RecoveryText = request.Text;
+
+        // ANSWERED BEFORE ANYTHING IS TOUCHED. Putting this after the target check meant a choice to
+        // copy still validated a window, still read its caret, and still repaired the spacing for a
+        // place the text was never going - so an unavailable target could refuse a copy that needed
+        // no target, the old window could be brought back to the front on the way, and what landed
+        // on the clipboard was the repaired text rather than the words that were said. "hello"
+        // arrived as "hello ".
+        if (request.Options.CopyInsteadOfPaste)
+        {
+            var copied = await _targetAdapter
+                .CopyOnlyAsync(request.Text, cancellationToken)
+                .ConfigureAwait(false);
+            if (copied.Delivered || copied.ClipboardFallback)
+            {
+                RecoveryText = null;
+            }
+
+            // THE ROUTE TRAVELS WITH THE RESULT, because the route is the only thing that says
+            // WHERE the text went. Dropping it left a requested copy indistinguishable from an
+            // ordinary paste at the one place that speaks to the user, so the notice read "Pasted
+            // safely" over a delivery that pasted nothing.
+            return new DeliveryResult(
+                request.Text.SessionId,
+                copied.Delivered,
+                copied.ClipboardFallback,
+                copied.Route,
+                copied.RefusalReason);
+        }
+
         if (!request.Target.IsValid)
         {
             return new DeliveryResult(
@@ -63,6 +92,11 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
                 RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable);
         }
 
+        // ASKED FOR, NOT FALLEN BACK TO, and it travels the SAME road as the fallback rather than a
+        // new one beside it. Windows already puts the text on the clipboard and leaves the target
+        // alone whenever a paste is refused, and that path is the one every delivery test covers.
+        // Somebody choosing copy-only wants exactly that outcome, so the honest implementation is to
+        // say so in the refusal rather than to build a second way of arriving at the same place.
         var forcedRefusal = RefusalFor(capture);
         var repair = CursorInsertionRepair.Apply(
             request.Text,
