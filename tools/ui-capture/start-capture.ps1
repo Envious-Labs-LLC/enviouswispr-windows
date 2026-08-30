@@ -35,6 +35,31 @@ if ($OverlayState -and $OverlayState -notmatch '^[a-z]{1,20}$') {
     throw "-OverlayState must be a single lowercase word. Got '$OverlayState'."
 }
 
+# ONE CAPTURE AT A TIME, ACROSS THE WHOLE MACHINE. Two runs sharing a -Shot could each clear the
+# control files and start; the second's success marker was then read by the FIRST, which skipped
+# stopping its own runner, unregistered its task while that runner was still going, and printed
+# CAPTURED for a photograph belonging to somebody else.
+#
+# THE PATH IS FIXED AND OWES NOTHING TO A PARAMETER. Keeping the lock inside $OutputDirectory meant
+# two runs given different output directories took different locks and still drove the same desktop
+# at the same time - a lock that is only as exclusive as the caller wants it to be. Every capture
+# shares one screen and one scratch profile, so the lock has to sit outside everything the caller
+# can vary, and it is taken immediately after the parameters are checked, before any directory is
+# created or any file is touched.
+#
+# THE HANDLE IS THE LOCK, NOT THE FILE. The file is left in place on purpose - deleting it would let
+# a second run create its own and hold nothing.
+$lockPath = Join-Path $env:TEMP 'enviouswispr-ui-capture.lock'
+try {
+    $captureLock = [System.IO.File]::Open(
+        $lockPath, [System.IO.FileMode]::OpenOrCreate,
+        [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+} catch {
+    throw "Another capture is already running (lock at $lockPath). Captures share one desktop, so they cannot overlap."
+}
+
+try {
+
 if (-not $AppExe) {
     # FOUND RATHER THAN SPELLED OUT. The output path carries the platform, the target framework and
     # a runtime identifier, and a first draft that wrote all three by hand was wrong about the
@@ -62,26 +87,6 @@ $logPath = Join-Path $OutputDirectory "$Shot.log"
 $markerPath = Join-Path $OutputDirectory "$Shot.ok"
 $pidPath = Join-Path $OutputDirectory "$Shot.pid"
 $failPath = Join-Path $OutputDirectory "$Shot.fail"
-# ONE CAPTURE AT A TIME, ACROSS THE WHOLE HARNESS. Two runs sharing a -Shot could each clear the
-# control files and start; the second's success marker was then read by the FIRST, which skipped
-# stopping its own runner, unregistered its task while that runner was still going, and printed
-# CAPTURED for a photograph belonging to somebody else. The lock is harness-wide rather than
-# per-shot because every capture shares one desktop and one scratch data directory, so two runs with
-# different shot names still photograph each other's windows.
-#
-# THE HANDLE IS THE LOCK, NOT THE FILE. The file is left in place on purpose - deleting it would let
-# a second run create its own and hold nothing.
-$lockPath = Join-Path $OutputDirectory '.capture.lock'
-try {
-    $captureLock = [System.IO.File]::Open(
-        $lockPath, [System.IO.FileMode]::OpenOrCreate,
-        [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
-} catch {
-    throw "Another capture is already running (lock at $lockPath). Captures share one desktop, so they cannot overlap."
-}
-
-try {
-
 # CLEARED LOUDLY, AND VERIFIED GONE. A silent clear leaves a locked file in place, and the next run
 # then reads the PREVIOUS run's verdict as its own - the worst possible failure for a tool whose
 # whole job is telling you what it saw.
