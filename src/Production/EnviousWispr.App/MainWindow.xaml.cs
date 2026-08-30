@@ -1562,7 +1562,9 @@ public sealed partial class MainWindow : Window, IDisposable
         var skippedByGeneration = 0;
         var draws = 0;
         var maximumLit = 0;
-        var lastAssignedHeight = 0d;
+        var drawsWithSomethingLit = 0;
+        var maximumAssignedHeight = 0d;
+        var maximumActualHeight = 0d;
         capture.LevelChanged += OnLevel;
         try
         {
@@ -1618,7 +1620,9 @@ public sealed partial class MainWindow : Window, IDisposable
                 $"rms {capture.LastRootMeanSquare:F5}, peak {capture.LastPeak:F5}, " +
                 $"bars {MicrophoneTestBars.Children.Count}, rejected {queuedRejected}, " +
                 $"ran {callbacksRan}, skipped {skippedByGeneration}, draws {draws}, " +
-                $"maxlit {maximumLit}, height {lastAssignedHeight:F1}, " +
+                $"maxlit {maximumLit}, litdraws {drawsWithSomethingLit}, " +
+                $"maxheight {maximumAssignedHeight:F1}, " +
+                $"maxactual {maximumActualHeight:F1}, " +
                 $"gen {generation}/{_microphoneTestGeneration}]");
         }
         finally
@@ -1651,11 +1655,33 @@ public sealed partial class MainWindow : Window, IDisposable
                         maximumLit = lit;
                     }
 
+                    if (lit > 0)
+                    {
+                        drawsWithSomethingLit++;
+                    }
+
                     DrawMicrophoneTestLevel(normalized);
+
+                    // THE MAXIMUM, NOT THE LATEST, AND THE DIFFERENCE DECIDED A WRONG DIAGNOSIS. The
+                    // previous instrument recorded the last height it saw, and the last callback of a
+                    // test arrives after the speaking has stopped - so a meter that had been moving
+                    // all the way through reported the unlit value at the end and read as a meter
+                    // that had never moved at all.
                     if (MicrophoneTestBars.Children.Count > 0 &&
                         MicrophoneTestBars.Children[0] is Border first)
                     {
-                        lastAssignedHeight = first.Height;
+                        if (first.Height > maximumAssignedHeight)
+                        {
+                            maximumAssignedHeight = first.Height;
+                        }
+
+                        // WHAT LAYOUT ACTUALLY GAVE IT, which is the only number that can disagree
+                        // with the assignment. A height that is set and never measured is the one
+                        // way a correct assignment still draws nothing.
+                        if (first.ActualHeight > maximumActualHeight)
+                        {
+                            maximumActualHeight = first.ActualHeight;
+                        }
                     }
                 }))
             {
