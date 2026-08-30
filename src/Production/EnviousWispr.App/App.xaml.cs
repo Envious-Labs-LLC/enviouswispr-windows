@@ -1552,6 +1552,16 @@ public partial class App : Application, IAsyncDisposable
         if (modelDirectory is null ||
             !new LocalWhisperModelProbe().Probe(modelDirectory).PreviewSmallComplete)
         {
+            // THE MOST LIKELY FAILURE WAS THE ONLY SILENT ONE. LivePreviewFailed is written further
+            // down when a BUILT engine fails to start; an engine that was never built wrote nothing
+            // at all, so somebody who switched Live Preview on watched the toggle stay on, saw no
+            // preview, and left no trace behind to explain it. A missing preview model is the
+            // ordinary reason this happens and it is now a fact in the log rather than an absence.
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.LivePreviewFailed,
+                AppFailureCategory.AsrUnavailable,
+                ErrorCode: AppErrorCode.ModelPackUnavailable));
             return;
         }
 
@@ -2651,10 +2661,17 @@ public partial class App : Application, IAsyncDisposable
             // ANY failure gives up on the head start entirely rather than delivering a partial
             // transcript. Half a dictation is worse than a slow one.
             _streamingUsable = false;
+            // THE CAUGHT EXCEPTION IS READ RATHER THAN DISCARDED. This handler used to assert
+            // AsrUnavailable whatever had happened, so a busy runtime, a dead worker and a missing
+            // model pack wrote one identical line and no log could tell them apart. The engine
+            // already carries the code it failed with, so the category is now observed instead of
+            // chosen when the handler was written.
+            var error = (exception as TranscriptionEngineException)?.Error;
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.StreamingAbandoned,
-                AppFailureCategory.AsrUnavailable));
+                error is null ? AppFailureCategory.AsrUnavailable : FailureFor(error),
+                ErrorCode: error?.Code));
         }
     }
 
@@ -3018,6 +3035,26 @@ public partial class App : Application, IAsyncDisposable
                     ? AppFailureCategory.PostProcessing
                     : AppFailureCategory.None,
                 processingTimer.ElapsedMilliseconds));
+            // EVERY STAGE REPORTS, AND A SKIPPED ONE REPORTS LOUDEST. The summary line above says
+            // only that the pass finished and what it cost, so a pass that skipped all five stages
+            // and one that did five jobs quickly are the same line - and "do custom words work" is
+            // exactly the question that difference answers. An empty custom-word list makes
+            // correction vanish with no trace, which is the case worth being able to see.
+            foreach (var receipt in processed.Receipts)
+            {
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.DeterministicStageObserved,
+                    receipt.Status is DeterministicStageStatus.Failed
+                        or DeterministicStageStatus.TimedOut
+                        ? AppFailureCategory.PostProcessing
+                        : AppFailureCategory.None,
+                    receipt.ElapsedMilliseconds,
+                    Stage: receipt.Stage,
+                    StageStatus: receipt.Status,
+                    Changed: receipt.Changed));
+            }
+
             await SaveRecoveryTextAsync(processed.Output, cancellationToken).ConfigureAwait(false);
             var polishResult = await TryPolishAsync(
                     processed.Output,

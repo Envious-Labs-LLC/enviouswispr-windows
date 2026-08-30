@@ -1,5 +1,6 @@
 using System.Text.Json;
 using EnviousWispr.Core.Diagnostics;
+using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Services.Diagnostics;
@@ -144,6 +145,59 @@ public sealed class PrivacySafeObservabilityTests
                 name.Contains("Path", StringComparison.OrdinalIgnoreCase) ||
                 name.EndsWith("Id", StringComparison.OrdinalIgnoreCase));
         });
+    }
+
+    [Theory]
+    [InlineData(DeterministicTextStage.CustomWords, DeterministicStageStatus.Completed, true)]
+    [InlineData(DeterministicTextStage.CustomWords, DeterministicStageStatus.Skipped, false)]
+    [InlineData(DeterministicTextStage.InverseTextNormalization, DeterministicStageStatus.TimedOut, false)]
+    [InlineData(DeterministicTextStage.EmojiRestoration, DeterministicStageStatus.Failed, false)]
+    public void DeterministicStageDetailSurvivesIntoTheRecord(
+        DeterministicTextStage stage,
+        DeterministicStageStatus status,
+        bool changed)
+    {
+        // A SKIPPED STAGE IS THE CASE THIS EXISTS FOR. Custom-word correction disappears when the
+        // word list is empty, and a record that dropped the detail could not tell that apart from a
+        // correction that ran and found nothing to change.
+        var record = PrivacySafeDiagnosticRecord.From(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.DeterministicStageObserved,
+            ElapsedMilliseconds: 4,
+            Stage: stage,
+            StageStatus: status,
+            Changed: changed));
+
+        Assert.Equal(stage, record.Stage);
+        Assert.Equal(status, record.StageStatus);
+        Assert.Equal(changed, record.Changed);
+    }
+
+    [Fact]
+    public void StageDetailIsAbsentUnlessTheEntryCarriedIt()
+    {
+        var record = PrivacySafeDiagnosticRecord.From(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.DictationCompleted));
+
+        Assert.Null(record.Stage);
+        Assert.Null(record.StageStatus);
+        Assert.Null(record.Changed);
+    }
+
+    [Fact]
+    public void UndefinedStageValuesAreDroppedRatherThanWritten()
+    {
+        // The same admission rule every other enum on this record obeys. A value outside the enum
+        // reaches the log as an absence, never as a number nobody can read back.
+        var record = PrivacySafeDiagnosticRecord.From(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.DeterministicStageObserved,
+            Stage: (DeterministicTextStage)97,
+            StageStatus: (DeterministicStageStatus)97));
+
+        Assert.Null(record.Stage);
+        Assert.Null(record.StageStatus);
     }
 
     [Theory]
