@@ -149,6 +149,37 @@ public sealed class PrivacySafeObservabilityTests
     }
 
     /// <summary>
+    /// Every nullable enum on the local line is rejected when it arrives out of range.
+    /// </summary>
+    /// <remarks>
+    /// REFLECTIVE, BECAUSE THE CHECK IT GUARDS IS A HAND-WRITTEN LIST. `TryParseRecord` names each
+    /// enum explicitly, so a field added without a matching clause is admitted silently -
+    /// `JsonStringEnumConverter` accepts integers, and an unchecked line then survives a prune and
+    /// reaches an export. Adding an enum without validating it fails here rather than shipping.
+    /// </remarks>
+    [Fact]
+    public void EveryNullableEnumOnTheLocalLineIsRejectedWhenOutOfRange()
+    {
+        var enums = typeof(LocalDiagnosticLine)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(property => Nullable.GetUnderlyingType(property.PropertyType)?.IsEnum == true)
+            .ToArray();
+        Assert.NotEmpty(enums);
+
+        foreach (var property in enums)
+        {
+            var name = JsonNamingPolicy.CamelCase.ConvertName(property.Name);
+            var line =
+                $$"""
+                {"timestamp":"2026-08-30T22:00:00+00:00","event":"DictationCompleted","failure":"None","{{name}}":97}
+                """;
+            Assert.False(
+                JsonLineFileLogger.TryParseRecord(line, out _),
+                $"A line carrying an undefined '{name}' was accepted. Add it to TryParseRecord.");
+        }
+    }
+
+    /// <summary>
     /// The local log line copies the telemetry record's fields by hand, so a forgotten line there
     /// drops a field with nothing to show for it. This is the check that turns that into a red test.
     /// </summary>

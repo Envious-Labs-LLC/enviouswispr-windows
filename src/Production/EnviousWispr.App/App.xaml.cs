@@ -61,6 +61,15 @@ public partial class App : Application, IAsyncDisposable
     private IAudioCapture? _audioCapture;
     private RuntimeWorkerTranscriptionEngine? _transcriptionEngine;
     private RuntimeWorkerLivePreviewEngine? _previewEngine;
+    /// <summary>Why <see cref="_previewEngine"/> could not be built, or null when it was.</summary>
+    /// <remarks>
+    /// HELD RATHER THAN LOGGED WHERE IT IS DISCOVERED. Configuration runs on every launch,
+    /// including the overwhelming majority where Live Preview is switched off, so writing the
+    /// failure there would file a complaint on behalf of a user who never asked for the
+    /// feature - once per launch, on every machine without the optional pack. The reason is
+    /// kept here and reported at the moment somebody actually turns Live Preview on.
+    /// </remarks>
+    private AppErrorCode? _previewUnavailableReason;
     private IPolishProvider? _polishProvider;
     private WindowsTextTargetAdapter? _textTargetAdapter;
     private ContextAwareTextDelivery? _textDelivery;
@@ -1552,16 +1561,7 @@ public partial class App : Application, IAsyncDisposable
         if (modelDirectory is null ||
             !new LocalWhisperModelProbe().Probe(modelDirectory).PreviewSmallComplete)
         {
-            // THE MOST LIKELY FAILURE WAS THE ONLY SILENT ONE. LivePreviewFailed is written further
-            // down when a BUILT engine fails to start; an engine that was never built wrote nothing
-            // at all, so somebody who switched Live Preview on watched the toggle stay on, saw no
-            // preview, and left no trace behind to explain it. A missing preview model is the
-            // ordinary reason this happens and it is now a fact in the log rather than an absence.
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.LivePreviewFailed,
-                AppFailureCategory.AsrUnavailable,
-                ErrorCode: AppErrorCode.ModelPackUnavailable));
+            _previewUnavailableReason = AppErrorCode.ModelPackUnavailable;
             return;
         }
 
@@ -1577,6 +1577,7 @@ public partial class App : Application, IAsyncDisposable
                 : Math.Max(1, hardware.LogicalProcessorCount / 2),
             2,
             8);
+        _previewUnavailableReason = null;
         _previewEngine = new RuntimeWorkerLivePreviewEngine(
             new RuntimeWorkerTranscriptionOptions(
                 workerExecutable,
@@ -2670,7 +2671,11 @@ public partial class App : Application, IAsyncDisposable
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.StreamingAbandoned,
-                error is null ? AppFailureCategory.AsrUnavailable : FailureFor(error),
+                // UNKNOWN WHEN THE EXCEPTION IS UNTYPED, because the catch takes almost anything -
+                // a disposed runtime, a memory-mapped read, an infrastructure fault - and calling
+                // all of those AsrUnavailable is the same false assertion this change removed for
+                // the typed case.
+                error is null ? AppFailureCategory.Unknown : FailureFor(error),
                 ErrorCode: error?.Code));
         }
     }
@@ -2822,8 +2827,31 @@ public partial class App : Application, IAsyncDisposable
 
         var engine = _previewEngine;
         var audioCapture = _audioCapture as IAudioSnapshotSource;
-        if (engine is null || audioCapture is null)
+        // THE USER HAS ASKED FOR THIS BY THE TIME WE GET HERE, so a refusal is news and the two
+        // reasons are different facts. A missing preview model is a thing they can fix by installing
+        // one; a capture source that cannot be sampled is not. Reporting them as one silent return
+        // is what let somebody switch Live Preview on, watch the toggle stay on, see nothing happen,
+        // and find no trace of why.
+        if (engine is null)
         {
+            var reason = _previewUnavailableReason ?? AppErrorCode.RuntimeProviderUnavailable;
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.LivePreviewFailed,
+                reason == AppErrorCode.ModelPackUnavailable
+                    ? AppFailureCategory.AsrUnavailable
+                    : AppFailureCategory.RuntimeProvider,
+                ErrorCode: reason));
+            return;
+        }
+
+        if (audioCapture is null)
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.LivePreviewFailed,
+                AppFailureCategory.AudioUnavailable,
+                ErrorCode: AppErrorCode.AudioDeviceUnavailable));
             return;
         }
 
@@ -3026,35 +3054,14 @@ public partial class App : Application, IAsyncDisposable
                 deterministicRequest,
                 cancellationToken).ConfigureAwait(false);
             processingTimer.Stop();
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                processed.IsDegraded
-                    ? AppEventCode.DeterministicProcessingDegraded
-                    : AppEventCode.DeterministicProcessingCompleted,
-                processed.IsDegraded
-                    ? AppFailureCategory.PostProcessing
-                    : AppFailureCategory.None,
-                processingTimer.ElapsedMilliseconds));
-            // EVERY STAGE REPORTS, AND A SKIPPED ONE REPORTS LOUDEST. The summary line above says
-            // only that the pass finished and what it cost, so a pass that skipped all five stages
-            // and one that did five jobs quickly are the same line - and "do custom words work" is
-            // exactly the question that difference answers. An empty custom-word list makes
-            // correction vanish with no trace, which is the case worth being able to see.
-            foreach (var receipt in processed.Receipts)
-            {
-                _logger.Write(new AppLogEntry(
-                    DateTimeOffset.UtcNow,
-                    AppEventCode.DeterministicStageObserved,
-                    receipt.Status is DeterministicStageStatus.Failed
-                        or DeterministicStageStatus.TimedOut
-                        ? AppFailureCategory.PostProcessing
-                        : AppFailureCategory.None,
-                    receipt.ElapsedMilliseconds,
-                    Stage: receipt.Stage,
-                    StageStatus: receipt.Status,
-                    Changed: receipt.Changed));
-            }
-
+            // NOTHING IS WRITTEN ABOUT THE PASS YET, AND THE DELAY IS THE POINT. EmojiRestoration
+            // does not run here: ApplyPolishedTextAsync runs it further down and REPLACES its
+            // receipt, and it can turn IsDegraded true. Reporting from this point recorded that
+            // stage as Skipped and left a later restoration failure invisible behind a healthy
+            // line - the same defect this whole change exists to remove, reintroduced by the fix
+            // for it. So the pass is reported once, after the last thing that can alter it.
+            var deterministicMilliseconds = processingTimer.ElapsedMilliseconds;
+            var deterministicCompletedAt = DateTimeOffset.UtcNow;
             await SaveRecoveryTextAsync(processed.Output, cancellationToken).ConfigureAwait(false);
             var polishResult = await TryPolishAsync(
                     processed.Output,
@@ -3094,6 +3101,42 @@ public partial class App : Application, IAsyncDisposable
                     polishReview.Text,
                     cancellationToken).ConfigureAwait(false);
                 await SaveRecoveryTextAsync(processed.Output, cancellationToken).ConfigureAwait(false);
+            }
+
+            _logger.Write(new AppLogEntry(
+                deterministicCompletedAt,
+                processed.IsDegraded
+                    ? AppEventCode.DeterministicProcessingDegraded
+                    : AppEventCode.DeterministicProcessingCompleted,
+                processed.IsDegraded
+                    ? AppFailureCategory.PostProcessing
+                    : AppFailureCategory.None,
+                deterministicMilliseconds));
+            // EVERY STAGE REPORTS, AND A SKIPPED ONE REPORTS LOUDEST. The summary line above says
+            // only that the pass finished and what it cost, so a pass that skipped all five stages
+            // and one that did five jobs quickly are the same line - and "do custom words work" is
+            // exactly the question that difference answers. An empty custom-word list makes
+            // correction vanish with no trace, which is the case worth being able to see.
+            //
+            // TIMESTAMPED WHEN THE WORK HAPPENED, NOT WHEN THE LINE WAS WRITTEN. These are emitted
+            // after an optional polish that can take seconds, so UtcNow here would date four stages
+            // to a moment long after they ran. EmojiRestoration is the exception: it is the only
+            // stage that runs on the far side of polish, so it carries the current time honestly.
+            foreach (var receipt in processed.Receipts)
+            {
+                _logger.Write(new AppLogEntry(
+                    receipt.Stage == DeterministicTextStage.EmojiRestoration
+                        ? DateTimeOffset.UtcNow
+                        : deterministicCompletedAt,
+                    AppEventCode.DeterministicStageObserved,
+                    receipt.Status is DeterministicStageStatus.Failed
+                        or DeterministicStageStatus.TimedOut
+                        ? AppFailureCategory.PostProcessing
+                        : AppFailureCategory.None,
+                    receipt.ElapsedMilliseconds,
+                    Stage: receipt.Stage,
+                    StageStatus: receipt.Status,
+                    Changed: receipt.Changed));
             }
 
             if (!recoveryOnly &&
