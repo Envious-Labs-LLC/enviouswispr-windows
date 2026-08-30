@@ -237,6 +237,10 @@ public sealed class LanguageLockSuggesterTests
     [InlineData("|es:3")]
     [InlineData("it:2")]
     [InlineData("en:2")]
+    [InlineData("es-:2")]
+    [InlineData("es-garbage:2")]
+    [InlineData("ES:2")]
+    [InlineData("es_ES:2")]
     public void AHistoryNobodyCanReadIsDroppedWholeRatherThanInPart(string history)
     {
         // ALL OF IT OR NONE OF IT. Reading what parsed and skipping the rest turned "es:3|es:1" into

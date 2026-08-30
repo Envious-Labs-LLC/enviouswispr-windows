@@ -2426,6 +2426,9 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private async Task LoadMicrophonesAsync()
     {
+        // DECLARED OUTSIDE THE TRY SO THE ANSWER SURVIVES A FAILURE. A blocked switch is one of the
+        // reasons enumeration throws, and the catch is exactly where knowing that matters most.
+        var consent = MicrophoneConsent.Unknown;
         try
         {
             if (_deviceCatalog is null)
@@ -2434,6 +2437,10 @@ public sealed partial class MainWindow : Window, IDisposable
                 _deviceCatalog.DevicesChanged += OnAudioDevicesChanged;
             }
 
+            // READ BEFORE THE ENUMERATION, because the enumeration is one of the things a blocked
+            // switch breaks. Reading it afterwards meant the catch threw the answer away and
+            // reported the symptom instead of the cause.
+            consent = WindowsMicrophoneConsent.Read();
             var devices = await _deviceCatalog.GetCaptureDevicesAsync().ConfigureAwait(true);
             _microphones = [
                 new MicrophoneChoice(null, "Use the Windows default microphone"),
@@ -2448,7 +2455,7 @@ public sealed partial class MainWindow : Window, IDisposable
             var defaultDevice = devices.FirstOrDefault(device => device.IsDefault) ??
                 (devices.Count == 0 ? null : devices[0]);
             ApplyMicrophoneReadiness(MicrophoneReadinessReport.For(
-                WindowsMicrophoneConsent.Read(),
+                consent,
                 defaultDevice?.DisplayName));
         }
         catch
@@ -2457,7 +2464,7 @@ public sealed partial class MainWindow : Window, IDisposable
             MicrophoneComboBox.ItemsSource = _microphones;
             MicrophoneComboBox.SelectedIndex = 0;
             ApplyMicrophoneReadiness(MicrophoneReadinessReport.For(
-                MicrophoneConsent.Unknown,
+                consent,
                 defaultDeviceName: null,
                 enumerationFailed: true));
         }

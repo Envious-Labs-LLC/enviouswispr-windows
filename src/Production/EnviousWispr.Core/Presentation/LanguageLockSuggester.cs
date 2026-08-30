@@ -105,8 +105,11 @@ public sealed class LanguageLockSuggester
                 return;
             }
 
-            var code = NormalizedBase(entry[..separator]);
-            if (code.Length == 0 || code == "en" || !TryPin(code, out _) || !parsed.TryAdd(code, made))
+            // THE EXACT CODES OfferHistory WRITES, not the forgiving normaliser recognition needs.
+            // That one turns "es-garbage" into "es", so a string this app could never have written
+            // came back as a real Spanish count. What is read has to be what was written.
+            var code = entry[..separator];
+            if (!TryPin(code, out _) || !parsed.TryAdd(code, made))
             {
                 return;
             }
