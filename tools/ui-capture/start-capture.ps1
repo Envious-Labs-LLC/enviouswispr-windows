@@ -62,7 +62,17 @@ $logPath = Join-Path $OutputDirectory "$Shot.log"
 $markerPath = Join-Path $OutputDirectory "$Shot.ok"
 $pidPath = Join-Path $OutputDirectory "$Shot.pid"
 $failPath = Join-Path $OutputDirectory "$Shot.fail"
-Remove-Item -LiteralPath $shotPath, $logPath, $markerPath, $pidPath, $failPath -ErrorAction SilentlyContinue
+# CLEARED LOUDLY, AND VERIFIED GONE. A silent clear leaves a locked file in place, and the next run
+# then reads the PREVIOUS run's verdict as its own - the worst possible failure for a tool whose
+# whole job is telling you what it saw.
+foreach ($stale in @($shotPath, $logPath, $markerPath, $pidPath, $failPath)) {
+    if (Test-Path -LiteralPath $stale) { Remove-Item -LiteralPath $stale -ErrorAction Stop }
+}
+foreach ($control in @($markerPath, $failPath)) {
+    if (Test-Path -LiteralPath $control) {
+        throw "Could not clear $control before starting. A stale verdict would be read as this run's."
+    }
+}
 
 # A NAME NOBODY ELSE OWNS. A fixed name plus -Force replaces whatever task already had it, and the
 # unregister at the end would then delete a task this script never created - including a concurrent
@@ -165,23 +175,28 @@ try {
 
 if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath | ForEach-Object { "   $_" } }
 
-if (Test-Path -LiteralPath $failPath) {
-    $reason = (Get-Content -LiteralPath $failPath -Raw -ErrorAction SilentlyContinue).Trim()
-    throw "The capture failed in the desktop session: $reason"
+# EVERY REASON IS COLLECTED AND THROWN ONCE. Throwing at the first one hid the rest: a run that
+# failed in the desktop session reported that and never mentioned the scheduled task it had also
+# failed to remove, so the leftovers went unnoticed until somebody opened Task Scheduler.
+$parts = @()
+$sawSuccess = Test-Path -LiteralPath $markerPath
+$sawFailure = Test-Path -LiteralPath $failPath
+
+if ($sawSuccess -and $sawFailure) {
+    $parts += "both a success and a failure verdict are present, so neither can be trusted"
+} elseif ($sawFailure) {
+    $reason = Get-Content -LiteralPath $failPath -Raw -ErrorAction SilentlyContinue
+    if (-not $reason) { $reason = 'no reason was recorded' }
+    $parts += "the capture failed in the desktop session: $($reason.Trim())"
+} elseif (-not $sawSuccess -and -not $runFailure) {
+    $parts += "no capture was confirmed within $TimeoutSeconds seconds. The log above, if any, says how far it got. A PNG may exist and must not be trusted: the marker is written only after the app was seen on screen and cleanly closed. Nobody logged in means no desktop to photograph."
 }
 
-if (-not $runFailure -and -not (Test-Path -LiteralPath $markerPath)) {
-    throw "No capture was confirmed within $TimeoutSeconds seconds. The log above, if any, says how far it got. A PNG may exist and must not be trusted: the marker is written only after the app was seen on screen. Nobody logged in means no desktop to photograph."
-}
+if ($runFailure) { $parts += $runFailure }
+# A LEFTOVER TASK IS A FAILED RUN, however good the photograph is.
+$parts += $cleanupFailures
 
-# A LEFTOVER TASK IS A FAILED RUN, however good the photograph is. Reporting CAPTURED over the top
-# of it is how the leftovers go unnoticed until somebody opens Task Scheduler.
-if ($runFailure -or $cleanupFailures.Count -gt 0) {
-    $parts = @()
-    if ($runFailure) { $parts += $runFailure }
-    $parts += $cleanupFailures
-    throw ($parts -join '; ')
-}
+if ($parts.Count -gt 0) { throw ($parts -join '; ') }
 
 $size = (Get-Item -LiteralPath $shotPath).Length
 "CAPTURED $shotPath ($([math]::Round($size / 1KB)) KB)"

@@ -34,6 +34,15 @@ $failMarker = Join-Path $OutputDirectory "$Shot.fail"
 $final = Join-Path $OutputDirectory "$Shot.png"
 $staging = Join-Path $OutputDirectory "$Shot.png.partial"
 
+function Publish($path, $content) {
+    # WRITTEN ASIDE AND RENAMED INTO PLACE. The launcher polls for these files, so a verdict written
+    # in two steps can be READ between them - an empty reason, or a marker that exists before the
+    # thing it attests to is finished. A rename is the one operation that is either done or not.
+    $staging = "$path.writing"
+    Set-Content -LiteralPath $staging -Value $content
+    Move-Item -LiteralPath $staging -Destination $path -Force
+}
+
 function Note($text) { Add-Content -LiteralPath $log -Value "$([DateTime]::Now.ToString('HH:mm:ss')) $text" }
 
 Note "session $((Get-Process -Id $PID).SessionId), shot '$Shot', overlay '$OverlayState'"
@@ -152,38 +161,43 @@ Add-Type -Namespace UiCapture -Name Dpi -MemberDefinition @'
 } catch {
     $failure = $_.Exception.Message
     Note "FAILED: $failure"
-    throw
 } finally {
     Remove-Item -LiteralPath $staging -ErrorAction SilentlyContinue
-    if ($app -and -not $app.HasExited) {
-        # WAIT FOR THE APP'S OWN EXIT, and only insist if it overruns. The deadline it was given is
-        # $exitAfter from launch; this allows that plus a margin for the shutdown itself.
-        if ($app.WaitForExit($exitAfter + 6000)) {
-            Note "pid $($app.Id) exited cleanly through its own tray exit"
-        } else {
-            $app | Stop-Process -Force -ErrorAction SilentlyContinue
-            Note "stopped pid $($app.Id) the hard way; it did not take its own exit"
+
+    # THE APP IS STOPPED IN ITS OWN TRY, AND THE OUTCOME IS RECORDED. Stopping it with
+    # SilentlyContinue meant a refused kill still read as a clean stop, and a terminating error here
+    # skipped the verdict entirely - so the launcher waited out its timeout after a run that had
+    # actually finished.
+    $cleanupFailure = $null
+    try {
+        if ($app -and -not $app.HasExited) {
+            # WAIT FOR THE APP'S OWN EXIT, and only insist if it overruns. The deadline it was given
+            # is $exitAfter from launch; this allows that plus a margin for the shutdown itself.
+            if ($app.WaitForExit($exitAfter + 6000)) {
+                Note "pid $($app.Id) exited cleanly through its own tray exit"
+            } else {
+                $app | Stop-Process -Force -ErrorAction Stop
+                if (-not $app.WaitForExit(5000)) {
+                    throw "pid $($app.Id) is still running after being stopped."
+                }
+                Note "stopped pid $($app.Id) the hard way; it did not take its own exit"
+            }
         }
+    } catch {
+        $cleanupFailure = $_.Exception.Message
+        Note "CLEANUP FAILED: $cleanupFailure"
     }
 
-    # THE MARKER IS THE LAST THING THAT HAPPENS, AND THAT ORDERING IS THE FIX. Written before the
-    # app was closed, it told the launcher to tidy up - and the launcher's Stop-ScheduledTask killed
-    # this script mid-shutdown, so the polite close never ran and the app was force-killed anyway.
-    # A success signal that cancels the work it is signalling is worse than no signal.
-    # EITHER WAY, A MARKER, AND BOTH ARE WRITTEN AFTER THE APP HAS GONE. Only success was ever
-    # signalled, so a failed run said nothing and the launcher sat out its full ninety seconds before
-    # reporting a timeout - even when the runner had known the real reason within a second. Signalling
-    # from the catch instead would let the launcher stop the task before this cleanup finished, which
-    # is the race that made the polite shutdown never happen.
-    if ($captured) {
+    # EXACTLY ONE VERDICT, PUBLISHED LAST, AND SUCCESS MEANS BOTH HALVES SUCCEEDED. A capture that
+    # left the app running is not a clean run, and saying so here is what stops the next capture
+    # inheriting it. Signalling from the catch instead would let the launcher stop the task before
+    # this cleanup finished, which is the race that stopped the polite shutdown from ever running.
+    if ($captured -and -not $cleanupFailure) {
         Remove-Item -LiteralPath $pidFile -ErrorAction SilentlyContinue
-        Set-Content -LiteralPath $marker -Value "captured"
+        Publish $marker "captured"
     } else {
-        # WRITTEN THE LONG WAY ON PURPOSE. These scripts are launched by powershell.exe, which is
-        # Windows PowerShell 5.1, and the null-coalescing operator arrived in PowerShell 7. Using it
-        # here did not fail at that line - it stopped the whole file parsing, so no marker of either
-        # kind was written and the failure surfaced as the ninety-second timeout this change removes.
-        $reason = if ($failure) { $failure } else { "the run ended without capturing" }
-        Set-Content -LiteralPath $failMarker -Value $reason
+        $reason = @($failure, $cleanupFailure) | Where-Object { $_ }
+        if (-not $reason) { $reason = @("the run ended without capturing") }
+        Publish $failMarker ($reason -join '; ')
     }
 }
