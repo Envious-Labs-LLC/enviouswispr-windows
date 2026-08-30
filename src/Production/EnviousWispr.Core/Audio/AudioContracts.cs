@@ -45,13 +45,26 @@ public sealed record AudioSnapshot(
 /// Reports how long the last start spent opening the device versus starting the stream.
 /// </summary>
 /// <remarks>
-/// EXISTS TO DECIDE WHETHER WARMING IS WORTH BUILDING AT ALL. Holding a microphone open between
-/// dictations only helps if OPENING is the slow half. Nobody has measured which half is slow, and
-/// the answer decides three things at once: whether the feature buys anything, whether it can be
-/// built the way it is described, and whether the privacy question it raises is worth asking.
+/// EXISTED TO DECIDE WHETHER WARMING IS WORTH BUILDING AT ALL, AND IT HAS NOW DECIDED IT. Holding a
+/// microphone open between dictations only helps if OPENING is the slow half. Measured on the
+/// Windows development machine against a Logitech BRIO on 2026-08-30, ten consecutive starts:
 ///
-/// A SPLIT, NOT A TOTAL. The total is already known and is not the question. Two numbers that add up
-/// to it is the only shape that answers "which half would warming remove".
+///   device open   median 0 ms, mean 1.5 ms, worst 15 ms
+///   stream start  median 13 ms, mean 13.4 ms, worst 20 ms
+///
+/// OPENING IS FREE, SO WARMING BUYS ALMOST NOTHING. The half a warm device would remove is the one
+/// already costing about a millisecond and a half; the half it cannot remove is the larger one. The
+/// whole start is about fifteen milliseconds, which is a fraction of a syllable, so holding a
+/// microphone open permanently would trade a microphone-in-use light that never goes out for a
+/// saving nobody can perceive. That is why the feature is not built, and this is the number rather
+/// than the opinion.
+///
+/// IT DOES NOT SETTLE PRE-ROLL, which is a different question. People begin speaking slightly before
+/// they press, and a ring buffer would help with that however fast the device opens. What this rules
+/// out is warming as the reason to build one.
+///
+/// A SPLIT, NOT A TOTAL. The total was already known and was never the question. Two numbers that
+/// add up to it is the only shape that answers "which half would warming remove".
 /// </remarks>
 public interface ICaptureStartTimings
 {
