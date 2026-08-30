@@ -164,6 +164,58 @@ public sealed class SerialSettingsWriterTests
     }
 
     [Fact]
+    public async Task AWriteQueuedBeforeTheDrainStillFinishes()
+    {
+        // THE RACE THIS ARRANGEMENT EXISTS FOR. A save already queued behind another one must not
+        // wake up to a disposed semaphore just because exit began while it waited.
+        var store = new BlockingStore();
+        var writer = new SerialSettingsWriter(store, AppSettings.Default);
+
+        var first = writer.UpdateAsync(current => current with { LaunchCount = 1 });
+        await store.SaveStarted.Task.ConfigureAwait(true);
+        var queued = writer.UpdateAsync(current => current with { HasCompletedOnboarding = true });
+
+        var drain = writer.DrainAsync();
+        store.LetSavesFinish();
+
+        Assert.Null(await first.ConfigureAwait(true));
+        Assert.Null(await queued.ConfigureAwait(true));
+        await drain.ConfigureAwait(true);
+        Assert.Equal(1, writer.Current.LaunchCount);
+        Assert.True(writer.Current.HasCompletedOnboarding);
+    }
+
+    [Fact]
+    public async Task AWriteAttemptedAfterTheDrainIsRefusedRatherThanCrashing()
+    {
+        var store = new BlockingStore();
+        var writer = new SerialSettingsWriter(store, AppSettings.Default);
+        store.LetSavesFinish();
+        await writer.DrainAsync().ConfigureAwait(true);
+
+        var outcome = await writer.UpdateAsync(current => current with { LaunchCount = 9 })
+            .ConfigureAwait(true);
+
+        // REFUSED, NOT THROWN. A click that lands as the app is closing should do nothing, not take
+        // the app down on its way out.
+        Assert.IsType<ObjectDisposedException>(outcome);
+        Assert.Equal(AppSettings.Default.LaunchCount, writer.Current.LaunchCount);
+    }
+
+    [Fact]
+    public async Task TwoDrainsAreSafe()
+    {
+        // EXIT CAN REACH THE DRAIN MORE THAN ONCE, and a second one must not dispose a semaphore the
+        // first is still using.
+        var store = new BlockingStore();
+        var writer = new SerialSettingsWriter(store, AppSettings.Default);
+        store.LetSavesFinish();
+
+        await Task.WhenAll(writer.DrainAsync(), writer.DrainAsync()).ConfigureAwait(true);
+        writer.Dispose();
+    }
+
+    [Fact]
     public async Task AFailedSaveLeavesTheStoredValueAlone()
     {
         var store = new BlockingStore { FailNext = new IOException("the disk said no") };
