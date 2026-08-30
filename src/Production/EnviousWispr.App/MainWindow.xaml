@@ -236,8 +236,7 @@
                                         </Border>
                                         <StackPanel Grid.Column="1" Spacing="{StaticResource BrandOnboardingTextSpacing}">
                                             <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Microphone" />
-                                            <TextBlock x:Name="OnboardingMicrophoneText" Style="{StaticResource BrandBodyStyle}" Text="Checking Windows audio devices…" TextWrapping="Wrap" /><Button x:Name="OnboardingMicrophonePrivacyButton" AutomationProperties.HelpText="Opens the Windows microphone privacy controls." Click="OpenMicrophonePrivacyButton_Click" Content="Open microphone privacy settings" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" />
-                                            <Button AutomationProperties.HelpText="Opens the Windows microphone privacy controls." Click="OpenMicrophonePrivacyButton_Click" Content="Open microphone privacy settings" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" TabIndex="10" />
+                                            <TextBlock x:Name="OnboardingMicrophoneText" Style="{StaticResource BrandBodyStyle}" Text="Checking Windows audio devices…" TextWrapping="Wrap" /><Button x:Name="OnboardingMicrophonePrivacyButton" AutomationProperties.HelpText="Opens the Windows microphone privacy controls." Click="OpenMicrophonePrivacyButton_Click" Content="Open microphone privacy settings" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" TabIndex="10" Visibility="Collapsed" />
                                         </StackPanel>
                                     </Grid>
                                     <Grid Grid.Column="1" ColumnSpacing="{StaticResource BrandOnboardingCardSpacing}">

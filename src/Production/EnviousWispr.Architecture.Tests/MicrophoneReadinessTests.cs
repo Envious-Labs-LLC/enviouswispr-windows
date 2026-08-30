@@ -69,8 +69,10 @@ public sealed class MicrophoneReadinessTests
     [Fact]
     public void WindowsRefusingToListDevicesIsItsOwnSentenceAndOffersNoFix()
     {
+        // With the switch on, a refusal to list is a fault rather than a permission, and there is
+        // nothing on a privacy page that would help.
         var readiness = MicrophoneReadinessReport.For(
-            MicrophoneConsent.Blocked,
+            MicrophoneConsent.Allowed,
             "Blue Yeti",
             enumerationFailed: true);
 
@@ -93,6 +95,39 @@ public sealed class MicrophoneReadinessTests
         // Anything unrecognised has to be Unknown rather than Allowed. Telling somebody their
         // microphone is fine while it is switched off is the failure that costs them a dictation.
         Assert.Equal(expected, WindowsMicrophoneConsent.Interpret(stored));
+    }
+
+    [Fact]
+    public void ABlockedSwitchOutranksWindowsRefusingToListDevices()
+    {
+        // A refusal to list devices is one of the things a blocked switch CAUSES, so the generic
+        // sentence there hides the cause behind its own symptom.
+        var readiness = MicrophoneReadinessReport.For(
+            MicrophoneConsent.Blocked,
+            defaultDeviceName: null,
+            enumerationFailed: true);
+
+        Assert.Contains("blocking", readiness.Sentence, StringComparison.OrdinalIgnoreCase);
+        Assert.True(readiness.OffersPrivacySettings);
+    }
+
+    [Theory]
+    [InlineData(MicrophoneConsent.Blocked, MicrophoneConsent.Allowed, MicrophoneConsent.Blocked)]
+    [InlineData(MicrophoneConsent.Allowed, MicrophoneConsent.Blocked, MicrophoneConsent.Blocked)]
+    [InlineData(MicrophoneConsent.Blocked, MicrophoneConsent.Unknown, MicrophoneConsent.Blocked)]
+    [InlineData(MicrophoneConsent.Unknown, MicrophoneConsent.Blocked, MicrophoneConsent.Blocked)]
+    [InlineData(MicrophoneConsent.Allowed, MicrophoneConsent.Allowed, MicrophoneConsent.Allowed)]
+    [InlineData(MicrophoneConsent.Unknown, MicrophoneConsent.Allowed, MicrophoneConsent.Unknown)]
+    [InlineData(MicrophoneConsent.Allowed, MicrophoneConsent.Unknown, MicrophoneConsent.Unknown)]
+    public void AWorkplacePolicyCanRefuseWhatTheUserAllowed(
+        MicrophoneConsent machine,
+        MicrophoneConsent user,
+        MicrophoneConsent expected)
+    {
+        // An administrator's switch overrules the person's own, so reading only their hive would
+        // tell a managed machine the microphone is fine while every attempt to open it is denied.
+        // A Deny anywhere wins, and an unreadable half is not a yes.
+        Assert.Equal(expected, WindowsMicrophoneConsent.Combine(machine, user));
     }
 
     [Fact]

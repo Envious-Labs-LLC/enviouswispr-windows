@@ -733,44 +733,50 @@ public sealed partial class DesignSystemTokenTests
     public void EveryPillActionNamesAPageThatExists()
     {
         var repositoryRoot = FindRepositoryRoot();
-        var window = File.ReadAllText(Path.Combine(
-            repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
-
-        // PARSED, NOT MATCHED. An action can be answered without naming a page - pinning a language
-        // is a save rather than a navigation - so the gate has to read the whole handler, and a
-        // pattern over raw text then counts an action written inside a comment. Both "// case
-        // PillActionKind.X:" and the same words in a block comment satisfy any regex ever written
-        // for this, and both leave the button landing on the default page. Roslyn sees a comment as
-        // trivia and a case label as a label, which no amount of typing can blur.
-        var handlerNode = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(
+        // PARSED, NOT MATCHED, AND NOT MERELY NAMED EITHER. Three ways to look answered while doing
+        // nothing had to be closed in turn. Text matching counts an action written inside a comment -
+        // "// case PillActionKind.X:" and its block-comment twin satisfy any pattern ever written for
+        // this. Reading every case label in the method counts one inside a nested local function or
+        // lambda, which the switch never reaches. And a bare "case X: break;" is a label with nothing
+        // behind it, which is the default page wearing a name.
+        var handler = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(
                 repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs")))
             .GetRoot()
             .DescendantNodes()
             .OfType<MethodDeclarationSyntax>()
             .FirstOrDefault(method => method.Identifier.ValueText == "OnPillActionInvoked");
         Assert.True(
-            handlerNode is not null,
+            handler is not null,
             "MainWindow has no OnPillActionInvoked method, so nothing here is checking anything.");
 
-        var mapping = handlerNode!.ToFullString();
+        var parameter = handler!.ParameterList.Parameters.Single().Identifier.ValueText;
 
-        // CAPTURE THE NAME AND COMPARE IT, NEVER ASK WHETHER THE TEXT CONTAINS IT. A substring test
-        // reports an action named OpenPolish as mapped, because OpenPolishSettings contains it -
-        // green on exactly the edit the gate exists to refuse. Same correction the repository's own
-        // rule about a lookahead after a quantifier makes: a question about a VALUE, not a position.
-        var mapped = handlerNode.DescendantNodes()
-            .OfType<CaseSwitchLabelSyntax>()
+        // THE SWITCH ON THE PARAMETER ITSELF, not any switch that happens to be inside. A helper
+        // switching over something else is not the decision this gate is about.
+        var decision = handler.DescendantNodes()
+            .OfType<SwitchStatementSyntax>()
+            .FirstOrDefault(one => one.Expression.ToString() == parameter);
+        Assert.True(
+            decision is not null,
+            $"OnPillActionInvoked does not switch on its own '{parameter}' parameter, so the gate "
+                + "cannot see which actions it answers.");
+
+        // DIRECT CHILDREN OF THAT SWITCH. A section nested inside a local function or a lambda is
+        // not reached by pressing a button, and DescendantNodes walks into both.
+        var answered = decision!.Sections
+            .Where(DoesSomething)
+            .SelectMany(section => section.Labels.OfType<CaseSwitchLabelSyntax>())
             .Select(label => label.Value)
             .OfType<MemberAccessExpressionSyntax>()
             .Where(access => access.Expression.ToString() == "PillActionKind")
             .Select(access => access.Name.Identifier.ValueText)
             .ToHashSet(StringComparer.Ordinal);
         Assert.True(
-            mapped.Count > 0,
-            "No case labels were found in the pill action handler, so this gate is reading nothing "
-                + "and would pass whatever the handler said.");
+            answered.Count > 0,
+            "No case section in the pill action handler does anything, so this gate is reading "
+                + "nothing and would pass whatever the handler said.");
         var unmapped = Enum.GetNames<PillActionKind>()
-            .Where(name => !mapped.Contains(name))
+            .Where(name => !answered.Contains(name))
             .ToArray();
         Assert.True(
             unmapped.Length == 0,
@@ -784,11 +790,16 @@ public sealed partial class DesignSystemTokenTests
             .Select(element => (string?)element.Attribute("Tag"))
             .Where(tag => tag is not null)
             .ToHashSet(StringComparer.Ordinal);
-        // The whole literal each arm hands back, not a shape a tag happens to start with. A pattern
-        // that matched a known prefix passed on "settings-ai-polish2", which is a page that does
-        // not exist and a button that does nothing.
-        var named = MappedPageTagRegex().Matches(mapping)
-            .Select(match => match.Groups[1].Value)
+
+        // THE ARGUMENT THE CALL ACTUALLY PASSES, read off the syntax rather than matched out of the
+        // text. A pattern that matched a known prefix passed on "settings-ai-polish2", which is a
+        // page that does not exist and a button that quietly does nothing.
+        var named = decision.Sections
+            .SelectMany(section => section.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            .Where(call => call.Expression.ToString() == "OpenPage")
+            .Select(call => call.ArgumentList.Arguments.FirstOrDefault()?.Expression)
+            .OfType<LiteralExpressionSyntax>()
+            .Select(literal => literal.Token.ValueText)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
         Assert.True(named.Length >= 2, $"Expected the mapped page tags, found {named.Length}.");
@@ -799,14 +810,20 @@ public sealed partial class DesignSystemTokenTests
                 + "nothing: " + string.Join(", ", missing));
     }
 
-    /// <summary>The whole page tag one case opens.</summary>
+    /// <summary>Whether one case section actually runs something before it breaks.</summary>
     /// <remarks>
-    /// READS THE CALL, NOT AN ARROW. The handler became a switch STATEMENT so its actions could be
-    /// counted from case labels, and a statement has no arms handing values back - a pattern looking
-    /// for one finds nothing and reports every page as unnamed rather than as wrong.
+    /// A LABEL IS NOT AN ANSWER. "case PillActionKind.X: break;" satisfies every check about naming
+    /// and leaves the button doing exactly what the default arm would have done, which is the whole
+    /// failure this gate exists to refuse.
+    ///
+    /// Statements declared inside a local function or a lambda within the section do not count,
+    /// because nothing in the section calls them.
     /// </remarks>
-    [GeneratedRegex(@"OpenPage\(\s*""([^""]+)""\s*\)", RegexOptions.CultureInvariant)]
-    private static partial Regex MappedPageTagRegex();
+    private static bool DoesSomething(SwitchSectionSyntax section) => section.Statements
+        .SelectMany(statement => statement.DescendantNodesAndSelf(descendIntoChildren: node =>
+            node is not LocalFunctionStatementSyntax and not AnonymousFunctionExpressionSyntax))
+        .OfType<InvocationExpressionSyntax>()
+        .Any();
 
     /// <summary>Every flow that serves a dictation opens the scope for itself.</summary>
     /// <remarks>

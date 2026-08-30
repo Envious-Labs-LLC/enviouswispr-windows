@@ -51,24 +51,28 @@ public static class MicrophoneReadinessReport
         string? defaultDeviceName,
         bool enumerationFailed = false)
     {
-        if (enumerationFailed)
-        {
-            return new MicrophoneReadiness(
-                "Windows could not list microphones. Settings remain available and dictation will "
-                    + "fail safely.",
-                OffersPrivacySettings: false,
-                IsReady: false);
-        }
-
-        // THE SWITCH IS CHECKED BEFORE THE DEVICE LIST, because while it is off the device list is
-        // empty for a reason that has nothing to do with the devices. Reporting "no microphone
-        // found" there sends somebody to look at their hardware over a setting.
+        // BLOCKED OUTRANKS EVERY OTHER SENTENCE, INCLUDING A FAILED ENUMERATION. A refusal to list
+        // devices is one of the things a blocked switch CAUSES, so answering with the generic
+        // "Windows could not list microphones" there hides the cause behind its own symptom.
+        //
+        // AND IT IS CHECKED BEFORE THE DEVICE LIST for the same reason: while the switch is off the
+        // list is empty for a reason that has nothing to do with the devices, and "no microphone
+        // found" sends somebody to look at their hardware over a setting.
         if (consent == MicrophoneConsent.Blocked)
         {
             return new MicrophoneReadiness(
                 "Windows is blocking microphone access for desktop apps, so dictation cannot hear "
                     + "you. Turn it on in microphone privacy settings.",
                 OffersPrivacySettings: true,
+                IsReady: false);
+        }
+
+        if (enumerationFailed)
+        {
+            return new MicrophoneReadiness(
+                "Windows could not list microphones. Settings remain available and dictation will "
+                    + "fail safely.",
+                OffersPrivacySettings: false,
                 IsReady: false);
         }
 

@@ -19,12 +19,38 @@ public static class WindowsMicrophoneConsent
     private const string ConsentKey =
         @"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
 
-    /// <summary>What the switch says, or Unknown when it cannot be read.</summary>
-    public static MicrophoneConsent Read()
+    /// <summary>What the switches say, or Unknown when neither can be read.</summary>
+    /// <remarks>
+    /// TWO SWITCHES, AND EITHER ONE CAN REFUSE. The per-user value is the one somebody sets in the
+    /// Settings app. The machine value is the one an administrator or a workplace policy sets, and it
+    /// overrules the user, so a report that read only the user's own hive would tell a managed
+    /// machine the microphone is fine while every attempt to open it is denied.
+    ///
+    /// A DENY ANYWHERE WINS, and an unreadable half is not a yes. Allowed is claimed only when the
+    /// switches that could be read all said Allow and none said Deny.
+    /// </remarks>
+    public static MicrophoneConsent Read() => Combine(
+        ReadFrom(Registry.LocalMachine),
+        ReadFrom(Registry.CurrentUser));
+
+    /// <summary>Resolves two switch readings into one answer. Public so both orders are testable.</summary>
+    public static MicrophoneConsent Combine(MicrophoneConsent machine, MicrophoneConsent user)
+    {
+        if (machine == MicrophoneConsent.Blocked || user == MicrophoneConsent.Blocked)
+        {
+            return MicrophoneConsent.Blocked;
+        }
+
+        return machine == MicrophoneConsent.Unknown || user == MicrophoneConsent.Unknown
+            ? MicrophoneConsent.Unknown
+            : MicrophoneConsent.Allowed;
+    }
+
+    private static MicrophoneConsent ReadFrom(RegistryKey hive)
     {
         try
         {
-            using var key = Registry.CurrentUser.OpenSubKey(ConsentKey);
+            using var key = hive.OpenSubKey(ConsentKey);
             return Interpret(key?.GetValue("Value") as string);
         }
         catch (Exception exception) when (

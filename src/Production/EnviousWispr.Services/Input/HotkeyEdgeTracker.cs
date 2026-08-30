@@ -130,13 +130,21 @@ internal sealed class HotkeyEdgeTracker
     /// bound with no modifiers, and holding right Control to talk makes Windows report Control on
     /// every key that follows - so an exact match refuses the one key that must always work.
     ///
-    /// ONLY WHILE A RECORDING IS ACTUALLY RUNNING. Outside one, the mask is empty and the match is
-    /// exact again, so binding right Control does not quietly turn Ctrl+Escape into a cancel for the
-    /// rest of the session.
+    /// ONLY WHILE THE KEY IS PHYSICALLY HELD, which is not the same as "while a recording is
+    /// running". A hands-free recording runs with the key long since released, so masking for the
+    /// whole recording turned a deliberate Ctrl+Escape into a bare Escape and cancelled on a
+    /// keystroke nobody bound.
+    ///
+    /// AND ONLY MODIFIERS THE BINDING DOES NOT ASK FOR. Removing Control from what is held breaks a
+    /// cancel binding of Ctrl+Escape, which then can never match while right Control is down -
+    /// taking the key away from the one person who deliberately chose it.
     /// </remarks>
     private bool ModifiersMatch(HotkeyModifiers active, HotkeyModifiers required)
     {
-        var ignored = _recordingActive ? _recordSuppliedModifiers : HotkeyModifiers.None;
+        var suppliedNow = _recordGesture?.IsHolding == true
+            ? _recordSuppliedModifiers
+            : HotkeyModifiers.None;
+        var ignored = suppliedNow & ~required;
         return (active & ~ignored) == required;
     }
 

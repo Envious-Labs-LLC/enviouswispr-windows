@@ -85,6 +85,7 @@ public sealed class HotkeyEdgeTrackerTests
         tracker.SetRecordingActive(true);
 
         var cancelled = tracker.Process(EscapeKey, isKeyDown: true, HotkeyModifiers.None);
+        Assert.Equal(PushToTalkSignal.Cancelled, cancelled.Signal);
         tracker.Process(EscapeKey, isKeyDown: false, HotkeyModifiers.None);
         tracker.SetRecordingActive(false);
         var tap = SingleTap(tracker);
@@ -103,6 +104,40 @@ public sealed class HotkeyEdgeTrackerTests
         var pressed = tracker.Process(EscapeKey, isKeyDown: true, HotkeyModifiers.Control);
 
         Assert.Null(pressed.Signal);
+    }
+
+    [Fact]
+    public void ControlAndEscapeDoesNotCancelAHandsFreeRecording()
+    {
+        // THE KEY IS LONG SINCE RELEASED in hands-free, so nothing is supplying Control and Escape
+        // is not what was pressed. Masking for the whole recording turned a deliberate Ctrl+Escape
+        // into a bare Escape and threw away what somebody was still saying.
+        var tracker = ModifierBound();
+        DoubleTap(tracker);
+        tracker.SetRecordingActive(true);
+
+        var pressed = tracker.Process(EscapeKey, isKeyDown: true, HotkeyModifiers.Control);
+
+        Assert.Null(pressed.Signal);
+    }
+
+    [Fact]
+    public void ACancelBindingOfControlAndEscapeStillWorksWhileRightControlIsHeld()
+    {
+        // Removing Control from what is held breaks the binding of the one person who deliberately
+        // chose Ctrl+Escape, which could then never match while the record key was down.
+        var tracker = new HotkeyEdgeTracker(
+            new HotkeyBinding(RightControl, HotkeyModifiers.None),
+            new HotkeyBinding(EscapeKey, HotkeyModifiers.Control),
+            new HotkeyBinding('W', HotkeyModifiers.Control | HotkeyModifiers.Alt),
+            DictationRecordingMode.PushToTalk);
+        tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.Control);
+        TickPastDeadline(tracker);
+        tracker.SetRecordingActive(true);
+
+        var cancelled = tracker.Process(EscapeKey, isKeyDown: true, HotkeyModifiers.Control);
+
+        Assert.Equal(PushToTalkSignal.Cancelled, cancelled.Signal);
     }
 
     /// <summary>Taps the bound modifier twice, which starts a hands-free recording.</summary>
