@@ -2960,8 +2960,14 @@ public sealed partial class MainWindow : Window, IDisposable
         {
             ApiKeyReadStatus.Found =>
                 $"{CredentialArticle(provider)} {ProviderDisplayName(provider)} key is stored in Windows Credential Manager.",
+            // SAY WHAT IT MEANS FOR THE DICTATION, NOT JUST WHAT IS TRUE OF THE MACHINE. "No key is
+            // stored" is a fact about storage; the thing a person needs to know is that every
+            // dictation will come out unpolished until they add one, and nothing will tell them
+            // again at the moment it happens. macOS carries the same warning for the same reason.
             ApiKeyReadStatus.Missing =>
-                $"No {ProviderDisplayName(provider)} key is stored on this PC.",
+                $"No {ProviderDisplayName(provider)} key is stored on this PC. Dictation still "
+                    + "works, and cleanup falls back to your raw, unedited text every time until "
+                    + "you add one.",
             _ => "Windows Credential Manager status is unavailable. No key value was revealed.",
         };
     }

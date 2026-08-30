@@ -373,7 +373,19 @@ own range. Recorded so the absence is not read as a gap next time.
 **Also checked and matching:** every macOS settings SECTION has a Windows home, which
 `EveryMacSettingsSectionHasAWindowsHome` already enforces.
 
-**Not yet compared:** `BrandedSegmentedPicker`, `BrandedPanel`, `InsetNotice`.
+**`BrandedSegmentedPicker`: NOT A GAP.** macOS uses it twice - pill position, and the warm-engine
+policy that Windows measured and rejected. Windows renders pill position as a card-based choice list
+with radio-group arrow semantics, which its own design system requires and which says more per option
+than a segment does.
+
+**`InsetNotice`: ONE REAL GAP, CLOSED.** macOS warns, when the selected polish provider has no saved
+key, that "cleanup falls back to your raw, unedited text every time". Windows said "No OpenAI key is
+stored on this PC" - a fact about storage where the user needs the consequence for their dictation,
+which nothing else will tell them at the moment it happens. The Windows sentence now carries it. The
+other macOS inset notices cover the rejected warm-engine feature and the hands-free gesture, which is
+built but not wired.
+
+**`BrandedPanel`: not compared.** Seven usages on macOS.
 
 ## PROC: how-this-was-taken
 Two sweeps per capability from `src/Production`, the second using the CAPABILITY's synonyms rather than
