@@ -20,9 +20,19 @@ build so customers do not need to install developer tooling.
 - `Pipeline`: recording-to-delivery orchestration and cancellation.
 - `Services`: storage, credentials, updates, telemetry boundaries, and Windows integration.
 - `ModelDelivery`: manifests, downloads, hashes, versions, storage, and cleanup.
+- `RuntimeWorker`: a **separate executable** that hosts the native speech runtimes, including the CUDA
+  build. `Services` drives it through `RuntimeWorkerSupervisor` over a versioned protocol with a bounded
+  restart budget and an explicit process priority.
 
 Dependencies point inward toward contracts. UI, storage, network, and model runtimes do not leak into the
 deterministic core.
+
+**Speech models run OUT OF PROCESS.** Wire a new engine through the worker and its supervisor, never
+in-process in the app. The supervisor's process priority is also what keeps the worker off the efficiency
+cores — see `../rules/validation-discipline.md` RULE: work-started-over-ssh-lands-on-the-slow-cores.
+
+The RATIONALE for the split is not recorded anywhere in the source. Treat crash isolation as the likely
+reason but ask rather than assert it, and write the answer here when you get it.
 
 ## Speech engines
 
