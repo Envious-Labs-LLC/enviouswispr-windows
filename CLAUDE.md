@@ -102,8 +102,8 @@ the portable build and contract gate used by CI.
 ## Delivery workflow
 
 GitHub Issues are the durable task system. Every implementation ends with relevant validation, a pushed
-branch, and an updated pull request. Codex may submit work but must not merge unless Saurabh explicitly
-requests that exact merge.
+branch, and an updated pull request. Once a change clears its gates, merge it. Do not park finished work
+waiting to be asked (founder standing instruction, 2026-08-30).
 
 Work happens in a git worktree on its own branch, merges to `main`, and the worktree is removed. `main`
 stays buildable and is never edited in place.
