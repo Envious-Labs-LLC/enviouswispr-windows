@@ -4,6 +4,24 @@ EnviousWispr Windows Edition is the native Windows sibling of the shipping macOS
 job is simple: hold a key, speak, release, and get accurate, optionally polished text in the app that was
 focused when recording began.
 
+## How this project works
+
+Saurabh is founder; Claude is CTO and implementer, alongside Codex which also writes into this codebase.
+Every update to him is exec-level plain English, one question at a time. No class names, file paths, or
+engineering acronyms in chat — those belong in tool calls and commits.
+
+**Two authors, one canonical tree.** Read files off disk rather than trusting an earlier read, and check
+`git status` before asserting the state of anything.
+
+He does not need to be asked for permission. Once a change clears its gates, ship it.
+
+## Objective: Reach, Not Revenue
+
+**North Star:** 100,000 users, notoriety, market disruption. Free is the core strategy, not a gap. No
+paywalls; users bring their own keys and use everything free. Monetization is deferred until massive
+scale. Judge every plan on traction, credibility and word-of-mouth toward 100k. Never apply a revenue
+rubric, and never treat "free" as a weakness.
+
 ## Current truth
 
 - The repository contains a founder-tested WPF and .NET 8 proof on Windows 11 x64.
@@ -24,6 +42,33 @@ focused when recording began.
 6. Live preview is display-only and can never change the final transcript.
 7. Automatic hardware selection is the default. Manual engine and device choices remain available.
 8. Public release waits for full agreed Windows parity, not just a convincing demo.
+
+Detail and the full contract: [`.claude/knowledge/product-contract.md`](.claude/knowledge/product-contract.md).
+What is present, partial and absent against macOS:
+[`.claude/knowledge/mac-parity-audit.md`](.claude/knowledge/mac-parity-audit.md) — **read it before calling
+any gap a defect**, and note it expires, so its absences are claims that need re-checking.
+
+## Principles
+
+- **Heart and limbs.** The critical path — hotkey, capture, ASR, text finalization, insertion — must never
+  fail. Everything else is a limb: it enhances behind a deadline and a fallback, and on failure returns the
+  last SUCCESSFUL text, never nothing.
+- **Deterministic processing is the reliability floor.** AI is a limb, never the heart.
+- **Production-grade from day one.** No band-aid fixes, no shortcuts trading today's speed for tomorrow's
+  debt.
+
+## Compatibility (know this cold)
+
+- **Windows 11 x64 ships first.** ARM64 follows once x64 is stable.
+- **The production target is C# on the current .NET LTS with WinUI 3.** The shipped proof is WPF on
+  .NET 8. Native C or C++ is allowed behind narrow interfaces for model runtimes.
+- **A WinUI app launched from a service session exits before it draws.** Anything user-facing is proven in
+  a logged-on interactive desktop session or it is not proven.
+- **Insertion borrows the clipboard and gives it back.** It is snapshotted before a paste route uses it and
+  restored afterwards, and every delivery reports which route ran.
+- **Windows delivers text through TWO routes, not the five macOS uses, and that is deliberate.** A
+  synthesised paste keystroke, and clipboard-only when that is refused. The catalog records this as
+  `deliberately-different`; it is not a parity gap and must not be "fixed" toward the macOS shape.
 
 ## Rules
 
@@ -66,24 +111,35 @@ sqlite3 -header -column $C "SELECT kind, gap FROM catalog_gap WHERE feature_slug
 **Check `catalog_gap` first.** It records where the catalog is too thin to rebuild from, is overstated, or
 missed something. A feature with a `not-reimplementable` row needs the source read as well.
 
-**A feature with status `absent` was often BUILT AND RETIRED, with the reason attached.** Do not rebuild one
-as missing parity without reading its decision rows.
+**`deliberately-different` IS AN ANSWER, NOT A GAP.** Windows carries 10 of them (measured 2026-08-30),
+each with its reason in `difference_reason`. They exist because the macOS mechanism has no cause on
+Windows: `soft-onset-protection` guards a problem this platform does not have, `warm-engine` was measured
+and rejected, `multi-route-paste` collapses five macOS routes into two. **Never close one toward the macOS
+shape.** Read the reason, and if you disagree, say so as a product argument rather than a parity fix.
 
-**WHEN THE CATALOG DOES NOT ANSWER, READ THE macOS SOURCE. Do not research the problem from scratch.**
-The catalog is an index, not the product, and a thin row reads exactly like an absent capability.
-`~/Developer/EnviousLabs/EnviousWispr/Sources/` is the shipping macOS app: it has solved most of these
-problems already, in code, usually with the measurement that settled it in a comment beside it.
+```bash
+sqlite3 -header -column $C "SELECT feature_slug, difference_reason FROM feature_platform \
+  WHERE platform_key='windows' AND status='deliberately-different';"
+```
 
-Measured 2026-08-30, and it cost most of a day. Whisper fabricated whole sentences on Windows. The
-catalog was queried first, as this file requires. Its `hallucination-protection` rows describe
-polish-output guards on every platform and say nothing about ASR-level suppression, so the query
-answered honestly for a different mechanism. That looked like "nothing exists", and the session went off
-to research whisper.cpp decoder thresholds. The answer was in `WhisperKitBackend.swift` the whole time -
-VAD-derived clip boundaries, chunking above 30 s, 500 ms trailing silence padding - with a 107-clip
-benchmark behind it and the failure named in the source as trailing phantom-phrase hallucination.
+**`absent` can mean BUILT AND RETIRED, with the reason attached.** Windows carries 13. Read the `decision`
+rows before rebuilding one as a parity gap.
 
-So the order is: catalog, then `catalog_gap`, then **grep the macOS source**, then research. Reaching
-step four with steps one to three unanswered means the thing is genuinely new, and that is rare.
+**WHEN THE CATALOG DOES NOT ANSWER, READ THE macOS SOURCE. Never research from scratch.** The catalog is
+an index, not the product, and a thin row reads exactly like an absent capability.
+`~/Developer/EnviousLabs/EnviousWispr/Sources/` is the shipping app and
+`~/Developer/EnviousLabs/EnviousWispr/.claude/knowledge/` is 101 files of measured findings, including the
+dead ends that source code cannot record.
+
+**A HIT ABOUT A NEIGHBOURING MECHANISM IS NOT AN ANSWER.** Verify the row covers the mechanism under
+investigation. The trap is not silence; it is a well-formed answer under a name matching your symptom.
+
+Order: catalog, `catalog_gap`, the macOS source and its knowledge, then research. Reaching step four with
+the first three unanswered means the thing is genuinely new.
+
+Ref 2026-08-30, cost most of a day: a `hallucination-protection` hit described polish-output guards, so
+ASR-level suppression read as absent. The answer was in the macOS speech backend with a 107-clip benchmark
+beside it. Full account in `LOG.md`.
 
 Rebuild and contribute: `~/.claude/knowledge/enviouswispr/README.md`. The database is an artifact; the truth
 is `schema.sql` and `data/*.sql`, which are plain text. Never hand-edit the binary.
@@ -98,6 +154,11 @@ powershell -ExecutionPolicy Bypass -File scripts/validate.ps1
 
 Use `-IncludeLocalRuntime` only on a machine with the required local model packs. The default command is
 the portable build and contract gate used by CI.
+
+**A build succeeding is not a test result, and a green portable gate is not the user path.** The gate
+proves the code compiles and its contracts hold. It proves nothing about what a person sees. Drive the real
+application in a logged-on interactive desktop session, and attach the recording.
+Owner: [`.claude/rules/validation-discipline.md`](.claude/rules/validation-discipline.md).
 
 ## Delivery workflow
 
