@@ -6,9 +6,16 @@ already exist on one side. Taken 2026-08-27 against the Mac repo's own
 `.claude/knowledge/capability-map.md`, which is the authoritative list of what macOS ships.
 
 ## RULE: query-the-catalog-first
-`~/.claude/knowledge/enviouswispr/catalog.db` now carries both columns, 92 features on macOS and 92 on
-Windows, each row citing the file that decided it. It is the answer to "does Windows have X yet?" and it
-is machine-queryable, which this table is not:
+`~/.claude/knowledge/enviouswispr/catalog.db` carries both columns, each row citing the file that decided
+it. It is the answer to "does Windows have X yet?" and it is machine-queryable, which this table is not.
+
+**A count published here cannot stay correct**, because nothing links this file to a catalog edit. Ask the
+catalog instead:
+
+```bash
+sqlite3 ~/.claude/knowledge/enviouswispr/catalog.db \
+  "SELECT status, count(*) FROM feature_platform WHERE platform_key='windows' GROUP BY 1;"
+```
 
 ```bash
 sqlite3 -header -column ~/.claude/knowledge/enviouswispr/catalog.db \

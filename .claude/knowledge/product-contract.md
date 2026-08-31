@@ -1,5 +1,14 @@
 # Product contract
 
+**How to read this file.** A PROMISE is stated here with its values, because if the code drops one this
+file is what catches it. An IMPLEMENTATION DETAIL — a member list, a display order, an initial value —
+names its owning type instead, because prose restating code can only decay.
+
+The line matters: a contract that points at code for everything can never disagree with code, so it can
+never catch a regression. Providers, engines, the navigation groups and the licensing direction are
+promises and stay written out. Enum members, catalog order and defaults are details and point at their
+owner.
+
 ## Audience and promise
 
 EnviousWispr is commercial-grade Windows dictation for ordinary laptops and powerful gaming PCs. The
@@ -27,13 +36,14 @@ without a dedicated GPU.
   OUTPUT (Clipboard), and SYSTEM (Permissions, Check for Updates, Open Source Licenses).
 - Appearance follows the Windows setting by default and also offers explicit Light and Dark modes.
 - The recording pill can appear at the top or bottom of the active monitor.
-- The three recording-pill designs are Capsule, Reading Well, and Level Rail. Capsule and Level Rail are
-  wordless choices. Reading Well is the Live Preview choice and grows to show up to five lines of the
-  display-only preview. The app remembers the wordless and with-words selections separately.
-- Recording sounds are optional and off by default. Whisper Tick is the fresh-install selection. The
-  ordered catalog is Dust Mote, Velvet Hush, Muted Confirm, Whisper Tick, Round Pebble, Paper Tap, Soft
-  Hush, Low Nod, Cloud Pop, Velvet Tap, Satin Shift, and Air Glint. Settings can preview the selected
-  start/stop pair even while the master switch is off, but never during an active recording.
+- Three recording-pill designs. Capsule and Level Rail are the wordless choices; Reading Well is the Live
+  Preview choice and grows to show up to five lines of display-only preview. The app remembers the wordless
+  and with-words selections separately. **The user-facing name "Capsule" is `Classic` in code** — the enum
+  `RecordingPillDesign` is the authority and does not use the display name.
+- Recording sounds are optional and off by default. Whisper Tick is the fresh-install selection. Settings
+  can preview the selected start/stop pair while the master switch is off, but never during an active
+  recording. **`RecordingSoundCatalog.Choices` owns the sounds, their display names and their order, and
+  feeds the picker directly; `RecordingSoundPairing` owns the identities. Never restate either list here.**
 - Keybinds offer Push to Talk and Toggle recording modes. The recording, cancel, and Add-a-word
   shortcuts are independently configurable and must not overlap. Windows defaults are F8, Escape, and
   Ctrl+Alt+W respectively.
@@ -64,6 +74,27 @@ without a dedicated GPU.
 The deterministic result is always usable on its own. Optional AI polish may improve it but cannot be
 required to complete a dictation. If any later stage fails, the pipeline returns the last valid result and
 explains the degraded stage without exposing private content.
+
+## Release gate
+
+Invariant 8 says public release waits for full agreed Windows parity. What "agreed" means, stated so it is
+not re-litigated:
+
+- **The catalog decides parity, not this file.** A feature is release-blocking when its Windows row is
+  `absent` or `partial` AND it is not recorded as `deliberately-different`.
+- **A deliberate difference needs its reason recorded before it counts as settled**, in the catalog's
+  `difference_reason`. An undocumented divergence is a gap, not a decision.
+- **Parity is claimed from observed behaviour, never from a green suite.** The evidence is the real
+  application driven in a logged-on interactive desktop session, with the recording attached.
+
+```bash
+sqlite3 ~/.claude/knowledge/enviouswispr/catalog.db \
+  "SELECT feature_slug, status FROM feature_platform \
+   WHERE platform_key='windows' AND status IN ('absent','partial') ORDER BY status, feature_slug;"
+```
+
+**Still undecided and owned by the founder:** whether every `partial` row must reach `shipped`, or whether
+some may ship as a stated limitation. Do not assume either.
 
 ## Licensing and release
 

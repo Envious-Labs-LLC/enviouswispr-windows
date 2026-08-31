@@ -88,6 +88,20 @@ a two-valued caller, and the third value collapses into "no".
 | a capability reached by a DEFAULTED argument | absence has no call-site token, so no search finds it | make the default fail closed and read the callers off the first run |
 | a pipeline | returns its LAST command's status | assign first, then branch |
 | a cross-process visibility check | measures a pair; a probe process is not the signed app | make the SUBJECT log the outcome on every path |
+| **a CPU percentage counter** | three counters read 56%, 71% and 51% on a machine consuming 14.2 of 32 cores | gate on CPU-seconds per wall-second, summed over the worker processes, re-checked at EVERY heartbeat |
+
+## RULE: work-started-over-ssh-lands-on-the-slow-cores
+Windows puts a process started by a background service into EcoQoS and schedules it onto the efficiency
+cores. Measured 2026-08-28: under a load designed to saturate every thread, processors 16-31 sat at
+91-100% and processors 0-15 at 0-26%. **Every build this project ran over SSH used the slow cores.**
+
+Set `PriorityClass = 'High'` on the started process to opt back out; the same load then reached 28 of 32
+threads at 4.1 GHz. `scripts/verify-here.ps1` already does this and says why at the line that does it.
+Open: issue #68.
+
+Consequence for any load or performance run: three attempts reported a busy-looking machine that was not
+busy, and one printed `alive=0` for six consecutive minutes then claimed it had survived twelve minutes of
+load. Never use blank frames as an encoder load; they finish almost instantly.
 
 Before believing any sweep's silence, run the pattern against a case you KNOW is present.
 
@@ -108,6 +122,17 @@ wrong thing, and no guard shape catches them:
 Two free tells. An answer IDENTICAL across targets with no reason to agree is a property of the
 instrument. And existence is not function: an attribute present but constant, a name present but never
 called, a list present but capped.
+
+## RULE: four-things-that-pass-while-proving-nothing
+- **A new gate is unproven until a deliberate violation makes it fail AND a clean artifact makes it pass.**
+  One direction is not a control.
+- **For every setting, compare the values the UI can produce against the values storage accepts, runtime
+  listens for, and routing handles.** Three matching sets do not prove the fourth.
+- **A pattern over a delimited list must be proven against a MIDDLE element and the FINAL one.** The final
+  element carries a closing delimiter instead of a trailing separator, so a pattern that works everywhere
+  else fails there alone.
+- **Every save-and-restore harness must test an EMPTY original state and verify the restored world.** A
+  successful wrapper call is not proof that restoration happened.
 
 ## RULE: an-expectation-built-with-the-thing-under-test-cannot-fail
 When asserting that a transformation PRESERVES something, build the expected value from a literal. If your
