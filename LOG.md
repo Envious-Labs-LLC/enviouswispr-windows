@@ -21,6 +21,99 @@ No machine paths, no personal data, no credentials. This file is public.
 
 ---
 
+## 2026-08-30 (evening)
+
+### The app knew, and did not say
+
+Five separate defects this evening were one defect wearing different clothes: a
+thing that reported a fact it had never checked.
+
+The deterministic pipeline returns a receipt per cleanup stage - which stage,
+completed or skipped, whether it changed the text, what it cost - and the app
+logged one summary line and binned all five. So "do custom words work" could not
+be answered from a dictation: 23 ms looks identical whether five stages ran or all
+five were skipped. Live Preview refused to build its engine and returned silently
+from two places, so switching it on produced a toggle that stayed on, no preview,
+and no trace. The streaming head start's catch bound its exception, never read it,
+and asserted the same failure category 59 times running.
+
+Fixing that surfaced three more of the same shape in the tools built to prove the
+fix. A disclosure gate that searched a whole file for a word, which a passing
+mention satisfies. An allowlist that could only ever grow. A subset assertion
+checking eight field names while eleven were being written, passing the whole
+time. Each is now closed by a check rather than by care: reflection compares the
+two record shapes both ways, the data dictionary's table rows are parsed and
+compared as a set in both directions, and every remaining allowlist is derived
+from the type it describes.
+
+**The privacy gate that proves no dictated content crosses the network was built
+by the validation script and run by nothing, here or in CI. It had never
+executed.** It runs in the default lane now.
+
+### Whisper fabricates, and macOS solved it a year ago
+
+Whisper invented whole sentences on live microphone input: six takes, six
+fabrications, in one case eleven appended words in a register the speaker never
+used. The same engine scores WER 0 on the clean English and French file fixtures
+already in this repository.
+
+Three findings, in the order they were needed.
+
+**The provider is not the variable.** The same six recordings fabricate
+identically on CUDA and CPU, three of them word for word. So a GPU change fixes
+nothing about output, and ten clean controlled takes were clean because of the
+recording conditions.
+
+**Not silence - real non-speech audio.** One file produced the same leading words
+across three independent decodings by two engines on two providers. Something was
+audible before the speech and it peaked louder than the speech did. Given that
+input, Parakeet returns a fragment and Whisper returns a grammatical sentence. A
+person notices the first and may not notice the second.
+
+**macOS already ships the answer, and the catalog could not say so.** The failure
+is named in the macOS source as trailing phantom-phrase hallucination, with a
+107-clip benchmark behind the design: VAD-derived clip boundaries so only speech
+is decoded, chunking above 30 s, and 500 ms of trailing silence padding without
+which abruptly-ending audio loses its last words. Windows has none of the three
+and sends the whole buffer, silence and noise included, to the decoder.
+
+The cross-platform catalog was queried first, as the project brain requires. Its
+`hallucination-protection` rows describe polish-output guards on every platform
+and say nothing about ASR-level suppression, so the query answered truthfully
+about a different mechanism and read as "nothing exists". Most of a day went into
+researching decoder thresholds from first principles. The order is now written
+down: catalog, then `catalog_gap`, then grep the macOS source, then research.
+
+### A fallback working is how a 100x regression hides
+
+Whisper took 11 seconds to transcribe a 6.6 second dictation. The twelve CUDA and
+cuDNN runtime libraries were absent from the development machine - the wheels were
+installed with their headers and not one runtime DLL, consistent with a disk
+cleanup. The engine looked for its GPU dependencies, correctly did not find them,
+correctly fell back, and said nothing.
+
+Restoring them: 11,015-11,712 ms becomes 75-203 ms on identical files, roughly
+110x to 150x, with word error rate unchanged. Whisper on GPU is now faster than
+Parakeet on CPU. In the app on a live microphone, a whole dictation went from
+11,496 ms to 471 ms.
+
+No code changed. The defect that remains is that none of it was reported.
+
+### Recording evidence you cannot account for is not evidence
+
+Six recordings that reproduced the fabrication were discarded rather than promoted
+to fixtures. Transcribing them with the faithful engine, to answer a privacy
+question mechanically rather than by asking somebody to listen, instead found
+content in three of them that nobody could identify. A fixture nobody can explain
+is a confound in every measurement that uses it, and this repository is public.
+
+They were replaced by ten deliberately controlled takes - quiet room verified
+before starting, two seconds of silence at each end, levels within 0.9 dB across
+the set - of which nine pass admission: the faithful engine must return exactly
+the spoken sentence and nothing else. If it hears only the sentence, the file
+contains only the sentence, and anything extra the other engine produces is its
+own.
+
 ## 2026-08-30
 
 ### Main finally holds the product
