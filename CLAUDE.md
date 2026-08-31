@@ -52,6 +52,22 @@ missed something. A feature with a `not-reimplementable` row needs the source re
 **A feature with status `absent` was often BUILT AND RETIRED, with the reason attached.** Do not rebuild one
 as missing parity without reading its decision rows.
 
+**WHEN THE CATALOG DOES NOT ANSWER, READ THE macOS SOURCE. Do not research the problem from scratch.**
+The catalog is an index, not the product, and a thin row reads exactly like an absent capability.
+`~/Developer/EnviousLabs/EnviousWispr/Sources/` is the shipping macOS app: it has solved most of these
+problems already, in code, usually with the measurement that settled it in a comment beside it.
+
+Measured 2026-08-30, and it cost most of a day. Whisper fabricated whole sentences on Windows. The
+catalog was queried first, as this file requires. Its `hallucination-protection` rows describe
+polish-output guards on every platform and say nothing about ASR-level suppression, so the query
+answered honestly for a different mechanism. That looked like "nothing exists", and the session went off
+to research whisper.cpp decoder thresholds. The answer was in `WhisperKitBackend.swift` the whole time -
+VAD-derived clip boundaries, chunking above 30 s, 500 ms trailing silence padding - with a 107-clip
+benchmark behind it and the failure named in the source as trailing phantom-phrase hallucination.
+
+So the order is: catalog, then `catalog_gap`, then **grep the macOS source**, then research. Reaching
+step four with steps one to three unanswered means the thing is genuinely new, and that is rare.
+
 Rebuild and contribute: `~/.claude/knowledge/enviouswispr/README.md`. The database is an artifact; the truth
 is `schema.sql` and `data/*.sql`, which are plain text. Never hand-edit the binary.
 
