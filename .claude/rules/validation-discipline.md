@@ -134,6 +134,33 @@ called, a list present but capped.
 - **Every save-and-restore harness must test an EMPTY original state and verify the restored world.** A
   successful wrapper call is not proof that restoration happened.
 
+## RULE: a-change-that-does-nothing-looks-exactly-like-one-that-never-shipped
+Six changes in this repo built clean, passed every gate, and had ZERO effect on the running app. Each was
+found only by measuring afterwards and getting the number from before.
+
+**The tell is free and always the same: the measurement does not MOVE.** Not "improved a little" —
+identical. Take the number before and after. Read an unchanged number as evidence the change never reached
+the thing, never as evidence it was too small to see.
+
+- **Prefer the failure mode that is loud.** A blunt mechanism that clips visibly is caught immediately; a
+  silent no-op ships believed-working.
+- **A minimum is a floor and a maximum is a ceiling.** Setting either on the wrong side of a natural value
+  is inert by construction and reads in the diff as a real change.
+- **Two mechanisms setting one property have no defined order.** Whichever you did not write wins.
+- **Padding on a frame is padding the frame's own background does not share.** Anything meant to fill a
+  frame goes on the content layer.
+
+**SIBLING FAILURE, DIFFERENT CAUSE.** This catches code that RUNS and does nothing. Code that is correct
+and that nothing can REACH ships green too, and the measurement tell cannot find it, because an
+unreachable feature never runs. Check that every set agrees: the declaration, the registration, the
+routing, and the surface that exposes it.
+
+Platform instances and the WinUI mechanics behind each: `../knowledge/design-system.md`.
+
+## RULE: the-instrument-that-found-a-problem-may-not-verify-its-fix
+A tool sensitive enough to detect a defect is frequently blind to whether the repair worked. Name the
+verification instrument separately from the detection instrument, and state why it can see the fix.
+
 ## RULE: an-expectation-built-with-the-thing-under-test-cannot-fail
 When asserting that a transformation PRESERVES something, build the expected value from a literal. If your
 expected value passes through any of the machinery the subject passes through, the test can only prove the
