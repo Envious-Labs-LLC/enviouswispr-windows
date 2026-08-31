@@ -1,13 +1,18 @@
 # Product contract
 
 **How to read this file.** A PROMISE is stated here with its values, because if the code drops one this
-file is what catches it. An IMPLEMENTATION DETAIL — a member list, a display order, an initial value —
-names its owning type instead, because prose restating code can only decay.
+file is what catches it. An IMPLEMENTATION DETAIL — an internal member list or display order with no
+independent product requirement — names its owning type instead, because prose restating code can only
+decay.
 
 The line matters: a contract that points at code for everything can never disagree with code, so it can
-never catch a regression. Providers, engines, the navigation groups and the licensing direction are
-promises and stay written out. Enum members, catalog order and defaults are details and point at their
-owner.
+never catch a regression. Providers, engines, navigation groups, licensing direction, and user-visible
+fresh-install defaults are promises and stay written out. Internal enum membership and catalog order are
+details and point at their owner.
+
+**The test, when a line is ambiguous:** would changing or removing this value reduce supported
+user-visible behaviour, violate a release promise, or weaken acceptance criteria? If yes, write it as a
+promise. If it only describes internal representation, ordering or ownership, point at the code.
 
 ## Audience and promise
 
@@ -80,8 +85,9 @@ explains the degraded stage without exposing private content.
 Invariant 8 says public release waits for full agreed Windows parity. What "agreed" means, stated so it is
 not re-litigated:
 
-- **The catalog decides parity, not this file.** A feature is release-blocking when its Windows row is
-  `absent` or `partial` AND it is not recorded as `deliberately-different`.
+- **The catalog decides parity, not this file.** A feature is release-blocking while its Windows status is
+  `absent` or `partial`. A `deliberately-different` row stops being a blocker only once
+  `difference_reason` records the settled reason.
 - **A deliberate difference needs its reason recorded before it counts as settled**, in the catalog's
   `difference_reason`. An undocumented divergence is a gap, not a decision.
 - **Parity is claimed from observed behaviour, never from a green suite.** The evidence is the real
@@ -93,8 +99,8 @@ sqlite3 ~/.claude/knowledge/enviouswispr/catalog.db \
    WHERE platform_key='windows' AND status IN ('absent','partial') ORDER BY status, feature_slug;"
 ```
 
-**Still undecided and owned by the founder:** whether every `partial` row must reach `shipped`, or whether
-some may ship as a stated limitation. Do not assume either.
+**Until the founder records a changed contract, every `partial` row blocks public release.** A stated
+limitation is not an exception.
 
 ## Licensing and release
 

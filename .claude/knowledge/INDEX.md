@@ -10,14 +10,15 @@ Read only the files relevant to the task, but read each selected file completely
 | Anything the user SEES — a screen, a control, a colour, a size, copy on a surface | `design-system.md` |
 | Installer, signing, updates, or release channels | `distribution.md`, `product-contract.md` |
 | A crash, hang, silent exit, or any "why did it do that" | `diagnostics.md` FIRST, then the matching contract |
-| Any shipped implementation | `../rules/workflow.md`, `../rules/validation.md`, plus matching contracts above |
+| Any shipped implementation | the always-on rules are already in context; add the matching contracts above |
 | Parity with the macOS app, or "does Windows have X yet" | the catalog first (below), then `mac-parity-audit.md` |
 | Historical measurements or experiments | Matching file under `../../notes/` |
 
 ## The cross-platform catalog answers parity questions first
 
-`~/.claude/knowledge/enviouswispr/catalog.db` holds 92 features across macOS and Windows, each row citing
-the file that decided it. Query it before reading a table or grepping the tree:
+`~/.claude/knowledge/enviouswispr/catalog.db` holds every feature across macOS, Windows and Android, each
+row citing the file that decided it. Query it before reading a table or grepping the tree. **Never publish
+a feature count here; ask the catalog.**
 
 ```bash
 C=~/.claude/knowledge/enviouswispr/catalog.db
@@ -40,8 +41,8 @@ surfaces the row without the whole index. One row per line, every row carries a 
 
 - [diagnostics.md](diagnostics.md) — **when:** crash, hang, silent exit, app quit, vanished, app.jsonl, run-state, heartbeat, diagnostic log, why did it do that
 - [design-system.md](design-system.md) — **when:** screen, control, colour, color, size, spacing, copy, icon, theme, anything the user sees
-- [pipeline.md](pipeline.md) — **when:** dictation behaviour, deterministic cleanup, emoji, punctuation, fallback, transcript
-- [distribution.md](distribution.md) — **when:** installer, signing, updates, release channel, Velopack, feed
-- [architecture.md](architecture.md) — **when:** architecture, dependency, platform choice, project layout
-- [product-contract.md](product-contract.md) — **when:** product decision, scope, invariant, privacy boundary
-- [mac-parity-audit.md](mac-parity-audit.md) — **when:** macOS parity, does Windows have, missing feature
+- [pipeline.md](pipeline.md) — **when:** dictation behaviour, deterministic cleanup, emoji, punctuation, fallback, transcript, wrong words, made up, making up, makes up, invented, hallucinat, extra words, trailing garbage, cut off, empty result, garbage at the end
+- [distribution.md](distribution.md) — **when:** installer, signing, updates, release channel, Velopack, feed, SmartScreen, publisher warning, cannot install, update failed
+- [architecture.md](architecture.md) — **when:** architecture, dependency, platform choice, project layout, new module, where does this live, out of process, worker
+- [product-contract.md](product-contract.md) — **when:** product decision, scope, invariant, privacy boundary, are we allowed to, should we ship, release gate, is this a defect
+- [mac-parity-audit.md](mac-parity-audit.md) — **when:** macOS parity, does Windows have, missing feature, the Mac does, on macOS, how does the Mac, deliberately different

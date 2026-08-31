@@ -56,7 +56,8 @@ reason but ask rather than assert it, and write the answer here when you get it.
 - Audio: WASAPI through a maintained .NET wrapper or a narrow native bridge.
 - Hotkey: `RegisterHotKey` where possible, with a low-level hook only for combinations it cannot express.
 - Focus and context: Windows UI Automation with explicit fallbacks and privacy limits.
-- Delivery: UI Automation when reliable, otherwise clipboard plus narrowly scoped `SendInput`.
+- Delivery: clipboard-backed paste through narrowly scoped `SendInput`, with clipboard-only fallback when
+  synthetic paste is refused. Two routes, not the macOS cascade of five, and that is deliberate.
 - Secrets: Windows Credential Manager.
 - Storage: versioned user data outside the install directory with atomic writes and migrations.
 

@@ -75,14 +75,13 @@ one before.
   **Padding on a frame is padding the frame's own background does not share.** Put it on the content
   layer whenever anything is meant to fill the frame.
 
-**The tell is always the same and it is free: the measurement does not move.** Not "improves a little" -
-IDENTICAL. Ask for the number before and the number after, and treat an unchanged number as evidence the
-change never reached the thing, not as evidence the change was too small.
+**The law, the measurement tell and the loud-failure preference are owned by
+`../rules/validation-discipline.md` RULE: a-change-that-does-nothing-looks-exactly-like-one-that-never-shipped,
+which is always in context. This file keeps the WinUI mechanics behind each instance.**
 
-**And the inverse failure is cheaper, so prefer it.** Replacing `MinHeight` with `Height` fixed the
-density and CLIPPED the group headings - the bottom row of pixels sliced off every glyph. That cost one
-round, because it was visible the moment anyone looked. The three inert changes cost three rounds and
-would all have shipped believed-working. **A fix that fails loudly beats three that fail silently.**
+Worked instance of preferring the loud failure: replacing `MinHeight` with `Height` fixed the density and
+CLIPPED the group headings, slicing the bottom row of pixels off every glyph. Visible the moment anyone
+looked.
 
 Corollary for sizing a text-bearing container: shorten the BLOCK with margin, never the text box with a
 height. `MinHeight` cannot shrink it and `Height` cannot let it grow, so a fixed height is a clip waiting
@@ -454,9 +453,9 @@ cheap check; that exchange is the expensive one, and neither replaces the other.
 Companion to RULE: a-gate-that-pins-the-MECHANISM. That one is about what a check ASSERTS; this is
 about what it asserts it WITH.
 
-## RULE: the-instrument-that-found-a-problem-may-not-verify-its-fix
-A measurement built to DETECT an inconsistency is frequently the wrong one to CONFIRM the fix, and
-re-running it produces a scattered result that reads as failure.
+## FACT: the spacing detector could not verify the spacing fix
+General law: `../rules/validation-discipline.md`
+RULE: the-instrument-that-found-a-problem-may-not-verify-its-fix. This is its worked instance.
 
 Measured on the spacing scale. The geometry table that found the problem measures gaps between
 consecutive WIDE CONTROLS and skips every label and paragraph in between, so a "370" is not a gap -
@@ -467,8 +466,7 @@ it is two controls with unmeasured content between them. Re-run after the fix it
 elements, histogrammed. Three real values landing exactly on 4, 8 and 12 DIP, against 2, 2.67, 10,
 10.67, 14 and 32.7 before - not one of which was on a grid.
 
-**Ask what the detecting instrument SKIPS before re-running it as a verifier.** A detector can
-afford to skip things; a verifier cannot.
+The detector skipped labels and paragraphs, so it could not verify adjacent-element spacing.
 
 ## FACT: one-environmental-test-was-truncating-the-suite-and-the-summary-hid-it
 Measured on the rig 2026-08-29, and the CAUSE was found only because the symptom recurred.
