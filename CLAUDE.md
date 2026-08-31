@@ -25,6 +25,23 @@ focused when recording began.
 7. Automatic hardware selection is the default. Manual engine and device choices remain available.
 8. Public release waits for full agreed Windows parity, not just a convincing demo.
 
+## Rules
+
+Every file in `.claude/rules/` without a `paths:` block at its top loads on every session. Those are
+instructions, not background, and they are already in context before you read this list.
+
+| Rule | Owns |
+|---|---|
+| [grounding-discipline](.claude/rules/grounding-discipline.md) | where to look, in what order, and what a hit does and does not settle |
+| [workflow-process](.claude/rules/workflow-process.md) | how a change moves from idea to merge-ready |
+| [validation-discipline](.claude/rules/validation-discipline.md) | what green is allowed to mean |
+| [tools-and-apps](.claude/rules/tools-and-apps.md) | the safety core: destructive actions, shared resources, watchers, guards |
+| [session-behavior](.claude/rules/session-behavior.md) | how a session opens, reports, and winds down |
+| [github](.claude/rules/github.md) | issues, pull requests, and the fact that `main` is unprotected |
+
+A rule file carrying a `paths:` block is scoped to those paths and arrives only when one is in play.
+Rules beat documents when they conflict.
+
 ## Read before work
 
 Read `.claude/knowledge/INDEX.md`, then every matching contract or rule it lists. Use `notes/` when a
