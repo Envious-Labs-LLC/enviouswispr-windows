@@ -16,7 +16,7 @@ How a change moves from idea to merged.
    fallback, and public-repository safety first.
 6. **Build.** Larger work is built in chunks, each reviewed against its own diff before the next starts.
 7. **Validate.** The portable gate, plus the observed Windows user path.
-8. **Ship.** Branch, pull request, review gate. Merge only on Saurabh's exact request.
+8. **Ship.** Branch, pull request, review gate, merge, verify `main`.
 
 ## RULE: port-the-proof-before-simplifying-it
 When replacing proven WPF behaviour, first port its outcome and its causal comments unchanged. Simplify
@@ -73,6 +73,7 @@ Merge-ready means the release build, the portable gate, the observed Windows pat
 CI are all green. After an authorized merge, verify `main` and close the issue. Any code edit after
 validation invalidates validation.
 
-## RULE: never-merge-unasked
-Codex and Claude may open and update pull requests. Neither merges unless Saurabh asks for that exact
-merge.
+## RULE: the-gate-is-the-approval
+Once a change clears its gates, merge it yourself, including your own work. Never ask for permission to
+merge and never park finished work awaiting a founder merge (founder standing instruction, 2026-08-30).
+If something blocks the merge, surface the exact command for Saurabh to run once.

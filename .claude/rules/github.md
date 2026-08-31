@@ -49,9 +49,11 @@ diagnosis alone.
 
 ## RULE: the-pull-request-workflow
 Branch from `main` in its own worktree, implement, commit, push, open the pull request, clear review, then
-leave it merge-ready. Merge and delete the branch only on Saurabh's exact request. **Never arm auto-merge.**
+merge and delete the branch. Always pass `--auto` so the merge waits for CI rather than no-opping while
+checks run.
 
-Never merge unless Saurabh asks for that exact merge.
+**The gate IS the approval.** Merge your own work once it clears; never ask, and never leave finished work
+open waiting to be asked (founder standing instruction, 2026-08-30).
 
 ## RULE: write-to-a-live-surface-alone-in-its-own-call
 Any command that posts to an issue or a pull request runs alone, never chained, and never with its output

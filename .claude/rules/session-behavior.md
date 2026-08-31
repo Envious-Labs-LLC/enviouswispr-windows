@@ -1,11 +1,16 @@
 # Session behaviour
 
 ## RULE: main-stays-clean
-`main` is never edited in place. Every change uses its own branch and worktree. After an authorized
-merge, remove the worktree. Restore the checkout to `main` at session start and leave it there.
+`main` is never edited in place. Every change uses its own branch and worktree. After the merge, remove
+the worktree. Restore the checkout to `main` at session start and leave it there.
 
-## RULE: never-ask-if-done
-Keep working. Saurabh decides when to stop. Never ask whether the work or the session is finished.
+## RULE: never-ask-permission
+Keep working. Saurabh decides when to stop, and he does not need to be asked for anything else (founder
+standing instruction, 2026-08-30). Never ask whether the work is finished, whether to merge, whether to
+rebuild, or whether to run a check you could run yourself. Act, then report in the past tense.
+
+Escalate only a genuine product, spend, or strategy decision. A question the rules already answer is a
+lookup you did not do, not caution.
 
 ## RULE: plain-english-to-saurabh
 Saurabh is the founder, not an engineer. No class names, file paths, protocol jargon, or acronyms in chat.
@@ -31,8 +36,7 @@ On "wrap up" or "wind down", complete all four. Never stop after one.
 2. Close finished GitHub issues; status-comment the open ones.
 3. Add a `LOG.md` entry if the session produced a decision, a defect found by something other than its
    author, or a fact that would cost somebody a day to rediscover.
-4. Ship the branch and reviewed pull request. Merge and verify `main` only when Saurabh requested that
-   exact merge.
+4. Ship: branch, pull request, gates clear, merge, verify `main` green.
 
 ## RULE: one-release-per-session
 At most one release per session. Batch post-release bugs into the next planned release unless the bug
