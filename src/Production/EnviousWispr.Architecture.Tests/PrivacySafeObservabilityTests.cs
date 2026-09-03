@@ -315,13 +315,14 @@ public sealed class PrivacySafeObservabilityTests
             HardwareClass: DiagnosticHardwareClass.NvidiaCuda,
             Stage: DeterministicTextStage.CustomWords,
             StageStatus: DeterministicStageStatus.Completed,
-            Changed: true);
+            Changed: true,
+            RuntimeSelection: DiagnosticRuntimeSelectionReason.ProcessorSelectedAfterGpuFailedToStart);
 
         var populated = typeof(PrivacySafeDiagnosticRecord)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(property => property.Name != "EqualityContract")
             .ToArray();
-        Assert.Equal(11, populated.Length);
+        Assert.Equal(12, populated.Length);
 
         var line = LocalDiagnosticLine.From(record, Guid.NewGuid());
         foreach (var property in populated)
