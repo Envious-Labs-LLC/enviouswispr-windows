@@ -717,6 +717,14 @@ try
         livePreviewUpdated = livePreview && diagnosticEvents.Any(value => value.StartsWith(
             "LivePreviewUpdated/",
             StringComparison.Ordinal)),
+        // A BOOLEAN CANNOT ANSWER THE QUESTION THIS FEATURE IS JUDGED ON. "Did any update arrive" was
+        // true throughout the period when Live Preview put ONE stale fragment on screen and then
+        // froze for the rest of the sentence: the arithmetic allowed exactly one update per take and
+        // the harness reported success. The count is the measurement; the flag above only says the
+        // path is wired. Ref: #99.
+        livePreviewUpdateCount = diagnosticEvents.Count(value => value.StartsWith(
+            "LivePreviewUpdated/",
+            StringComparison.Ordinal)),
         appExitedCleanly,
         ownedWorkerStartedCount = ownedWorkerIds.Length,
         ownedWorkerCount,
