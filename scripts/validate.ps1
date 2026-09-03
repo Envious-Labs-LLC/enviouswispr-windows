@@ -145,6 +145,71 @@ function Invoke-DotNet {
     }
 }
 
+function Invoke-DotNetTest {
+    # A GREEN TEST RUN MUST BE A WHOLE TEST RUN, AND `dotnet test` WILL NOT TELL YOU THAT.
+    #
+    # When the test host dies, the run is aborted and the summary still begins with the word
+    # `Passed!` - beside a total for the tests that happened to finish. Measured four times in one
+    # session on the development machine: totals of 1064, 1049, 1064 and 1069 against a complete
+    # suite of 1127, each printed under `Passed!`. Only the exit code disagreed. The same shape took
+    # 46 tests down with a credential-store failure earlier and reported 694 of 740 as a pass.
+    #
+    # SO THE EXIT CODE IS NOT ENOUGH ON ITS OWN EITHER. It happens to be correct today, which is
+    # exactly what makes it a bad single guard: nothing about the output would look different if a
+    # future runner swallowed it, and the failure mode is a silent pass. Two independent checks, and
+    # the second one does not depend on the first being right.
+    #
+    # THE EXPECTED COUNT IS DISCOVERED, NEVER WRITTEN DOWN. `--list-tests` enumerates what the
+    # assembly actually contains, including one entry per theory case, so it matches the run's own
+    # Total exactly - verified 1127 against 1127. A floor would not do: a floor of 700 still lets 34
+    # tests vanish, which is the objection recorded on #79 against the first attempt at this.
+    param(
+        [Parameter(Mandatory = $true)][string]$Executable,
+        [Parameter(Mandatory = $true)][string]$Project,
+        [string[]]$ExtraArguments = @()
+    )
+
+    $common = @("test", $Project, "-c", "Release", "--nologo") + $ExtraArguments
+    # ASSIGNED FIRST, THEN BRANCHED. A pipeline reports its LAST command's status, so testing
+    # $LASTEXITCODE after piping the output anywhere would report the pipe.
+    $output = & $Executable @common 2>&1
+    $exitCode = $LASTEXITCODE
+    $output | ForEach-Object { Write-Host $_ }
+
+    $aborted = @($output | Select-String -Pattern 'Test host process crashed|The active test run was aborted')
+    if ($aborted.Count -gt 0) {
+        throw ("The test run was ABORTED, so its summary describes only the tests that finished: " +
+            ($aborted[0].ToString().Trim()))
+    }
+
+    if ($exitCode -ne 0) {
+        throw "dotnet $($common -join ' ') failed with exit code $exitCode"
+    }
+
+    # --no-build BECAUSE THE RUN ABOVE JUST BUILT IT, and re-building here would let a discovery
+    # against different bytes agree with a run it never described.
+    $listed = & $Executable @($common + @("--no-build", "--list-tests")) 2>&1
+    $discovered = @($listed | Select-String -Pattern '^\s{4}\S').Count
+    $reported = 0
+    foreach ($match in ($output | Select-String -Pattern 'Total:\s*(\d+)' -AllMatches)) {
+        foreach ($item in $match.Matches) {
+            $reported += [int]$item.Groups[1].Value
+        }
+    }
+
+    if ($discovered -le 0) {
+        throw ("Test discovery returned no tests for $Project, so the count this gate compares " +
+            "against is meaningless. Fix the discovery rather than removing the check.")
+    }
+
+    if ($reported -ne $discovered) {
+        throw ("The test run reported $reported tests and the assembly contains $discovered. A run " +
+            "that executes fewer tests than exist still prints a pass line for the ones it reached.")
+    }
+
+    Write-Host "  verified: $reported of $discovered tests ran."
+}
+
 $dotnet8Exe = Resolve-DotNetSdk -MajorVersion 8
 $dotnet10Exe = Resolve-DotNetSdk -MajorVersion 10
 
@@ -227,7 +292,7 @@ try {
 
     if ($IncludeLocalRuntime) {
         Write-Host "Running contract and local model runtime tests..."
-        Invoke-DotNet -Executable $dotnet8Exe -Arguments @("test", "src/EnviousWispr.Tests/EnviousWispr.Tests.csproj", "-c", "Release", "--nologo")
+        Invoke-DotNetTest -Executable $dotnet8Exe -Project "src/EnviousWispr.Tests/EnviousWispr.Tests.csproj"
         Write-Host "Running production CPU and CUDA ASR acceptance..."
         Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/asr-uat/EnviousWispr.Asr.Uat.csproj", "-c", "Release", "--no-build")
         Write-Host "Running production CPU and CUDA Whisper acceptance..."
@@ -246,12 +311,12 @@ try {
     }
     else {
         Write-Host "Running portable contract tests..."
-        Invoke-DotNet -Executable $dotnet8Exe -Arguments @("test", "src/EnviousWispr.Tests/EnviousWispr.Tests.csproj", "-c", "Release", "--nologo", "-p:ExcludeLocalOnlyTests=true")
+        Invoke-DotNetTest -Executable $dotnet8Exe -Project "src/EnviousWispr.Tests/EnviousWispr.Tests.csproj" -ExtraArguments @("-p:ExcludeLocalOnlyTests=true")
         Write-Host "Local model runtime tests were not requested. Use -IncludeLocalRuntime on a configured Windows machine."
     }
 
     Write-Host "Running production architecture and foundation tests..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("test", "src/Production/EnviousWispr.Architecture.Tests/EnviousWispr.Architecture.Tests.csproj", "-c", "Release", "--nologo")
+    Invoke-DotNetTest -Executable $dotnet10Exe -Project "src/Production/EnviousWispr.Architecture.Tests/EnviousWispr.Architecture.Tests.csproj"
 
     Write-Host "Validation passed."
 }
