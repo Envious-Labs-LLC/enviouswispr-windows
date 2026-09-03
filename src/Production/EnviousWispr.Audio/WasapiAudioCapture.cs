@@ -66,11 +66,26 @@ public sealed class WasapiAudioCapture :
     public AudioSnapshot? GetSnapshot(TimeSpan maximumDuration)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maximumDuration, TimeSpan.Zero);
-        var maximumSamples = Math.Max(
-            1,
-            checked((int)Math.Ceiling(
-                maximumDuration.TotalSeconds * AudioSampleConverter.TargetSampleRate)));
-        var maximumBytes = checked(maximumSamples * sizeof(float));
+        // SATURATES RATHER THAN OVERFLOWS, AND A CALLER ASKING FOR EVERYTHING IS THE REASON. The
+        // streaming head start wants the whole recording rather than a window - a commit is a range
+        // measured from the start, so a rolling window would make those indices mean something
+        // different on every poll - and it says so with `TimeSpan.MaxValue`. That is about 9.2e11
+        // seconds; times the sample rate it is about 1.5e16, and the `checked` cast threw
+        // `OverflowException` on the FIRST poll of every recording ever made. Measured 2026-09-03:
+        // the head start was abandoned 511 ms in, every single time, since the day it shipped.
+        //
+        // NOT ONLY THE SENTINEL. A year-long duration overflowed too, so this was never about one
+        // magic value being mishandled.
+        //
+        // A CEILING THAT CANNOT BE REACHED IS NOT A LIMIT. This value only ever TRIMS the buffer, so
+        // clamping it changes nothing for any duration a caller could mean, and it removes the one
+        // way "give me everything" could become a crash. Ref: #96.
+        var requestedSamples = Math.Ceiling(
+            maximumDuration.TotalSeconds * AudioSampleConverter.TargetSampleRate);
+        var maximumSamples = requestedSamples >= int.MaxValue
+            ? int.MaxValue
+            : Math.Max(1, (int)requestedSamples);
+        var maximumBytes = (long)maximumSamples * sizeof(float);
         byte[] bytes;
         DictationSessionId sessionId;
         lock (_bufferGate)

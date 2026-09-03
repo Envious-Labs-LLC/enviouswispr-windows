@@ -118,6 +118,19 @@ public interface ICaptureDiagnostics
 
 public interface IAudioSnapshotSource
 {
+    /// <summary>The most recent <paramref name="maximumDuration"/> of the take so far.</summary>
+    /// <param name="maximumDuration">
+    /// A ceiling, never a requirement. A duration longer than what has been captured returns
+    /// everything captured, so `TimeSpan.MaxValue` is the supported way to ask for the whole
+    /// recording rather than a rolling window.
+    /// </param>
+    /// <remarks>
+    /// THAT LAST SENTENCE IS WRITTEN DOWN BECAUSE BOTH IMPLEMENTATIONS USED TO CRASH ON IT. Each
+    /// converted the duration to a sample count with a `checked` cast, so a caller asking for
+    /// everything got an `OverflowException` instead of everything. The streaming head start asks
+    /// for exactly that, and was abandoned 511 ms into every recording ever made. A contract that
+    /// only one value can break is a contract that needs stating. Ref: #96.
+    /// </remarks>
     AudioSnapshot? GetSnapshot(TimeSpan maximumDuration);
 }
 
