@@ -1013,7 +1013,7 @@ public sealed partial class DesignSystemTokenTests
         // and nowhere else.
         //
         // So: strip that one array, and ask whether the name survives anywhere in the file.
-        var reachableCode = SettingsSectionsArray().Replace(code, string.Empty);
+        var reachableCode = CodeWithoutTheHideList(code);
 
         var unreachable = sections
             .Where(section => !reachableCode.Contains(section, StringComparison.Ordinal))
@@ -1873,13 +1873,91 @@ public sealed partial class DesignSystemTokenTests
     [GeneratedRegex(@"x:Name=""(\w+Section)""")]
     private static partial Regex SectionName();
 
+    /// <summary>The hide list is removed however its declaration is written.</summary>
+    /// <remarks>
+    /// THREE OF THESE FIVE WERE INVISIBLE YESTERDAY, checked by running the old pattern against
+    /// them rather than assumed: a comment between the parameter list and the arrow, a block body
+    /// instead of an expression body, and the property form with no parameter list. The pattern
+    /// required `SettingsSections() =>` with nothing but whitespace between. When it missed, the
+    /// hide list stayed in the text, every section name inside it read as reached - including an
+    /// orphaned one - and the gate passed. Ref: #82.
+    ///
+    /// THE OTHER TWO ALREADY MATCHED AND ARE HERE AS THE CONTROL, so a rewrite that traded one
+    /// blind spot for another could not pass as a fix.
+    /// </remarks>
+    [Theory]
+    [InlineData("private Border[] SettingsSections() /* inventory */ => [ PrivacySection ];")]
+    [InlineData("private Border[] SettingsSections() => [ PrivacySection ];")]
+    [InlineData("private Border[] SettingsSections()|    {|        return [ PrivacySection ];|    }")]
+    [InlineData("private Border[] SettingsSections => [ PrivacySection ];")]
+    [InlineData("private System.Collections.Generic.List<Border> SettingsSections() => [ PrivacySection ];")]
+    public void TheHideListIsRemovedHoweverItIsWritten(string declaration)
+    {
+        var code = "class C { " + declaration.Replace('|', '\n') + " void Other() { } }";
+
+        var remaining = CodeWithoutTheHideList(code);
+
+        Assert.DoesNotContain("PrivacySection", remaining, StringComparison.Ordinal);
+        // The control: it removed the hide list and not the whole file.
+        Assert.Contains("void Other()", remaining, StringComparison.Ordinal);
+    }
+
+    /// <summary>A hide list that is not there stops the gate rather than emptying it.</summary>
+    /// <remarks>
+    /// UNDER THE PATTERN THIS REPLACES, NOT FINDING IT REMOVED NOTHING AND THE TEST STILL PASSED.
+    /// A check whose own blindness is indistinguishable from the property holding is worse than no
+    /// check, because it is counted as coverage.
+    /// </remarks>
+    [Fact]
+    public void AMissingHideListFailsLoudly()
+    {
+        Assert.ThrowsAny<Exception>(() => CodeWithoutTheHideList("class C { void Other() { } }"));
+    }
+
     /// <summary>
-    /// The array the settings page iterates in order to HIDE sections.
+    /// The window's code with the hide-list member removed, so a name left only there does not
+    /// count as reached.
     /// </summary>
     /// <remarks>
-    /// The one place a section name appears without showing anything, which is why an orphaned
-    /// section is invisible to a plain search: it sits here and nowhere else.
+    /// ASKS THE PARSER WHERE THE MEMBER IS, BECAUSE THE REGEX THAT DID THIS FAILED GREEN. It
+    /// matched `SettingsSections\(\) =>\s*\[[^\]]*\]`, and C# allows trivia between every one of
+    /// those parts - a comment between the parameter list and the arrow was enough to leave the
+    /// hide list in the text. The gate then found every section name inside the array it had
+    /// failed to remove, concluded all of them were reachable, and passed. An orphaned section
+    /// would have read as used, which is the exact defect this test exists to catch. Ref: #82.
+    ///
+    /// ```csharp
+    /// private Border[] SettingsSections() /* inventory */ => [ PrivacySection ];
+    /// ```
+    ///
+    /// A MISSING MEMBER NOW FAILS LOUDLY. Under the regex, not finding the declaration removed
+    /// nothing and the test still passed; the one outcome a check must never have is that its own
+    /// blindness looks like the property holding.
+    ///
+    /// LIMIT, STATED RATHER THAN IMPLIED: this is syntax, not semantics. It finds the member by
+    /// NAME, so a second member of the same name in a partial class elsewhere is not considered,
+    /// and a hide list built somewhere other than a member called `SettingsSections` is not seen.
+    /// The durable fix for that whole class is an analyser with a semantic model - #82.
     /// </remarks>
-    [GeneratedRegex(@"SettingsSections\(\) =>\s*\[[^\]]*\]", RegexOptions.Singleline)]
-    private static partial Regex SettingsSectionsArray();
+    private static string CodeWithoutTheHideList(string code)
+    {
+        var root = CSharpSyntaxTree.ParseText(code).GetRoot();
+        var declaration = root.DescendantNodes()
+            .FirstOrDefault(node => node switch
+            {
+                MethodDeclarationSyntax method =>
+                    method.Identifier.ValueText == "SettingsSections",
+                PropertyDeclarationSyntax property =>
+                    property.Identifier.ValueText == "SettingsSections",
+                _ => false,
+            });
+
+        Assert.True(
+            declaration is not null,
+            "The window has no SettingsSections member. Either it was renamed - in which case this "
+                + "test no longer removes the hide list and would call an orphaned section reached - "
+                + "or the hide list is gone and this test should be too.");
+
+        return code.Remove(declaration!.FullSpan.Start, declaration.FullSpan.Length);
+    }
 }
