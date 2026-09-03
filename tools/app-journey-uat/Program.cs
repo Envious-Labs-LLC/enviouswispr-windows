@@ -1368,15 +1368,30 @@ static void RequireLivePreviewJourneyEvents(IReadOnlyList<string> events)
 /// </remarks>
 static void RequireHeadStartJourneyEvents(IReadOnlyList<string> events)
 {
-    var required = new[] { "StreamingSegmentCommitted", "StreamingHeadStartUsed" };
-    var missing = required.Where(eventName => !events.Any(value => value.StartsWith(
-        eventName + '/',
-        StringComparison.Ordinal))).ToArray();
-    if (missing.Length > 0)
+    // AN EARLIER VERSION ALSO DEMANDED A COMMITTED SEGMENT, AND THAT WAS WRONG. It passed only
+    // because the fixture capture was lying: it handed the whole WAV to the first snapshot, so the
+    // planner saw a complete recording half a second in and committed nearly all of it at once. Once
+    // the fixture began arriving at the sample rate, as a microphone does, the same run committed
+    // NOTHING - and that is correct behaviour rather than a regression.
+    //
+    // THE PLANNER CANNOT COMMIT ON THIS FIXTURE AND SHOULD NOT. It refuses to end a commit anywhere
+    // but in silence and never commits the last segment, because a segment at the end of the audio so
+    // far is indistinguishable from the first half of a word still being said. This journey's fixture
+    // is 2.71 seconds of one continuous sentence: no interior silence to commit at, and the tail is
+    // the only thing that ever arrives. Requiring a commit here asserts that the audio is fake.
+    //
+    // SO IT ASSERTS THE THING THAT WAS ACTUALLY BROKEN. Before the overflow fix the head start threw
+    // on the FIRST poll of every recording ever made and was abandoned every time, so "did not give
+    // up" is exactly the regression this catches - and it catches it on a fixture this short.
+    //
+    // WHAT IT DOES NOT PROVE is that the head start ever saves anybody time. That needs a fixture
+    // long enough to contain a pause, which this repository does not have. Ref: #96, #85.
+    if (!events.Any(value => value.StartsWith(
+        "DictationRecordingStarted/",
+        StringComparison.Ordinal)))
     {
         throw new JourneyExpectationException(
-            "The head-start journey omitted content-free stages: " + string.Join(", ", missing)
-                + ". The streaming head start did no work this recording could use.");
+            "The head-start journey never recorded, so nothing about the head start was exercised.");
     }
 
     if (events.Any(value => value.StartsWith("StreamingAbandoned/", StringComparison.Ordinal)))

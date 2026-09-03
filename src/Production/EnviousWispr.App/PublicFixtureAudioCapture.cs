@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
@@ -20,6 +21,10 @@ internal sealed class PublicFixtureAudioCapture : IAudioCapture, IAudioSnapshotS
     private readonly float[] _samples;
     private AudioCaptureRequest? _request;
     private bool _disposed;
+    // THE MOMENT THE RECORDING STARTED, SO A READER MID-TAKE SEES ONLY WHAT HAS ARRIVED. Without it
+    // this capture handed its whole file to the first snapshot, which is not a recording anybody
+    // makes and which overstated the streaming head start's benefit. Ref: #85, #96.
+    private long _startedTicks;
 
     private PublicFixtureAudioCapture(float[] samples)
     {
@@ -75,6 +80,7 @@ internal sealed class PublicFixtureAudioCapture : IAudioCapture, IAudioSnapshotS
         }
 
         _request = request;
+        _startedTicks = Stopwatch.GetTimestamp();
         LevelChanged?.Invoke(this, MeasureLevel(_samples));
         return Task.FromResult(new AudioOperationResult(Succeeded: true));
     }
@@ -131,10 +137,21 @@ internal sealed class PublicFixtureAudioCapture : IAudioCapture, IAudioSnapshotS
         var maximumSamples = requestedSamples >= int.MaxValue
             ? int.MaxValue
             : Math.Max(1, (int)requestedSamples);
-        var offset = Math.Max(0, _samples.Length - maximumSamples);
+        // ONLY WHAT A MICROPHONE WOULD HAVE PRODUCED BY NOW. Stopping still returns the whole fixture,
+        // so transcripts are unchanged; this is what anything reading DURING the recording can see.
+        var arrived = ArrivedAudio.Count(
+            Stopwatch.GetElapsedTime(_startedTicks),
+            _samples.Length,
+            RequiredSampleRate);
+        if (arrived <= 0)
+        {
+            return null;
+        }
+
+        var offset = Math.Max(0, arrived - maximumSamples);
         return new AudioSnapshot(
             request.SessionId,
-            _samples.AsMemory(offset),
+            _samples.AsMemory(offset, arrived - offset),
             RequiredSampleRate,
             Channels: 1);
     }
