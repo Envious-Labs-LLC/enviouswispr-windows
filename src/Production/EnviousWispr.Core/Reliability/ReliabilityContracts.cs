@@ -9,6 +9,23 @@ public enum RunStateLoadStatus
     PreviousRunInterrupted,
     InvalidStateRecovered,
     Unavailable,
+
+    /// <summary>Windows ended the previous run: a shutdown, a restart, or a log off.</summary>
+    /// <remarks>
+    /// "WE DO NOT KNOW" AND "WINDOWS ENDED IT" ARE DIFFERENT FACTS AND USED TO BE THE SAME RECORD.
+    /// A run only records a clean exit when the app completes one itself, and Windows shutting the
+    /// machine down terminates the process before that can happen - so a deliberate Restart from the
+    /// Start menu was written down as an interruption, indistinguishable from a fault.
+    ///
+    /// NOTHING A USER SEES DEPENDS ON THIS. The banner that once accused the product on this basis
+    /// is gone, and what replaced it asks whether a dictation was actually in flight. This is about
+    /// a diagnostics export being honest: somebody reading a run history should not have to treat a
+    /// week of ordinary restarts as a week of crashes. Ref: #93.
+    ///
+    /// IT DOES NOT COVER Task Manager, a forced kill, or the power going out. Those genuinely cannot
+    /// be told from a crash by the process they end, and they stay `PreviousRunInterrupted`.
+    /// </remarks>
+    PreviousRunEndedByWindows,
 }
 
 /// <param name="PreviousRunWasDictating">
@@ -33,6 +50,10 @@ public sealed record ApplicationRunStartResult(
     bool PreviousRunWasDictating,
     AppError? Error = null)
 {
+    /// <remarks>
+    /// A WINDOWS ENDING IS DELIBERATELY NOT ONE OF THESE. It is a known ending rather than an
+    /// unexplained one, which is the entire reason for telling them apart.
+    /// </remarks>
     public bool RecoveredInterruptedRun => Status is
         RunStateLoadStatus.PreviousRunInterrupted or
         RunStateLoadStatus.InvalidStateRecovered;
@@ -58,6 +79,19 @@ public interface IApplicationRunStateStore
     Task<bool> SetDictationActiveAsync(
         Guid runId,
         bool active,
+        DateTimeOffset timestamp,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Records that Windows is ending this run, before it gets the chance to end itself.</summary>
+    /// <remarks>
+    /// NOT `CompleteRunAsync`, AND THE DIFFERENCE IS THE POINT. A clean completion says the app tore
+    /// itself down and everything in that teardown succeeded. Windows ending the session says only
+    /// that the ending was expected; the process may still be killed part-way through whatever it was
+    /// doing. Writing the stronger claim here would make every shutdown look like a clean exit and
+    /// lose the distinction this exists to record. Ref: #93.
+    /// </remarks>
+    Task<bool> NoteSystemEndingAsync(
+        Guid runId,
         DateTimeOffset timestamp,
         CancellationToken cancellationToken = default);
 
@@ -127,6 +161,9 @@ public enum SystemLifecycleTransition
     Resumed,
     SessionLocked,
     SessionUnlocked,
+
+    /// <summary>Windows is shutting down, restarting, or logging the user off.</summary>
+    SessionEnding,
 }
 
 public interface ISystemLifecycleMonitor : IDisposable

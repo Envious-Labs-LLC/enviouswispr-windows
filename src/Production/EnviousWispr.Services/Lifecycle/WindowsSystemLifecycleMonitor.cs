@@ -11,6 +11,10 @@ public sealed class WindowsSystemLifecycleMonitor : ISystemLifecycleMonitor
     {
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
         SystemEvents.SessionSwitch += OnSessionSwitch;
+        // WINDOWS ANNOUNCES ITS OWN ENDINGS AND NOBODY WAS LISTENING. A shutdown, a restart or a log
+        // off kills the process before it can record that it exited cleanly, so every one of them was
+        // written down as an interruption - the same trace a crash leaves. Ref: #93.
+        SystemEvents.SessionEnding += OnSessionEnding;
     }
 
     public event EventHandler<SystemLifecycleTransition>? Transitioned;
@@ -25,6 +29,7 @@ public sealed class WindowsSystemLifecycleMonitor : ISystemLifecycleMonitor
         _disposed = true;
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         SystemEvents.SessionSwitch -= OnSessionSwitch;
+        SystemEvents.SessionEnding -= OnSessionEnding;
     }
 
     internal static SystemLifecycleTransition? Map(PowerModes mode) => mode switch
@@ -40,6 +45,17 @@ public sealed class WindowsSystemLifecycleMonitor : ISystemLifecycleMonitor
         SessionSwitchReason.SessionUnlock => SystemLifecycleTransition.SessionUnlocked,
         _ => null,
     };
+
+    /// <remarks>
+    /// EVERY REASON IS THE SAME ANSWER HERE, so the reason is not read. Windows distinguishes a
+    /// logoff from a system shutdown; this record only needs to say that the ending was expected
+    /// rather than unexplained, and both are.
+    ///
+    /// IT DOES NOT CANCEL THE ENDING. `SessionEndingEventArgs.Cancel` exists and is deliberately not
+    /// touched: a dictation tool must never be the reason somebody's shutdown does not happen.
+    /// </remarks>
+    private void OnSessionEnding(object sender, SessionEndingEventArgs args) =>
+        Transitioned?.Invoke(this, SystemLifecycleTransition.SessionEnding);
 
     private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs args)
     {
