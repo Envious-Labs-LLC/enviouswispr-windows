@@ -45,9 +45,27 @@ if (-not $Dotnet) {
 $ErrorActionPreference = 'Continue'
 Set-Location $Tree
 
+# COMPUTED WITHOUT AN AUTOLOADED CMDLET, ON PURPOSE. This used to call `Get-FileHash`, and on the
+# development machine that cmdlet is NOT FOUND when PowerShell is started with the user's profile -
+# which is exactly how this script is invoked. Reproduced both ways:
+#
+#   powershell -NoProfile -Command "[bool](Get-Command Get-FileHash -EA SilentlyContinue)"   # True
+#   powershell           -Command "[bool](Get-Command Get-FileHash -EA SilentlyContinue)"   # False
+#
+# The profile is breaking module autoloading, almost certainly by replacing rather than appending to
+# PSModulePath. Rather than depend on that being fixed, the one check this whole script exists to make
+# now uses a type that is always present. Ref: #115.
 function Md5($path) {
     if (-not (Test-Path -LiteralPath $path)) { return 'MISSING' }
-    (Get-FileHash -LiteralPath $path -Algorithm MD5).Hash
+    $stream = [IO.File]::OpenRead($path)
+    try {
+        $algorithm = [Security.Cryptography.MD5]::Create()
+        try {
+            return (-join ($algorithm.ComputeHash($stream) | ForEach-Object { $_.ToString('x2') })).ToUpperInvariant()
+        }
+        finally { $algorithm.Dispose() }
+    }
+    finally { $stream.Dispose() }
 }
 
 # ---- 1. nothing may be running, or the build silently writes nothing -------------------------
@@ -145,6 +163,18 @@ if ($Scan) {
 "RUN MD5        $runHash"
 "BUILT AT       $($built.LastWriteTime)"
 '======================================='
+
+# AN EMPTY ANSWER IS NOT AN AGREEMENT, AND IT USED TO READ AS ONE. When `Get-FileHash` was missing
+# both sides came back empty, '' -ne '' is false, and this script launched with a stamp reporting
+# blank hashes - certifying nothing while looking exactly like a pass. A tool that cannot measure has
+# to fail closed, because the whole reason this file exists is that a measurement nobody can tie to a
+# binary is worthless. Observed on 2026-09-03; the run happened to be correct, which is the point.
+if ([string]::IsNullOrWhiteSpace($builtHash) -or [string]::IsNullOrWhiteSpace($runHash) -or
+    $builtHash -eq 'MISSING' -or $runHash -eq 'MISSING') {
+    'REFUSING TO LAUNCH - the hashes could not be computed, so nothing above is verified.'
+    "   BUILD MD5 '$builtHash'   RUN MD5 '$runHash'"
+    exit 1
+}
 
 if ($builtHash -ne $runHash) {
     'REFUSING TO LAUNCH - the run copy is not the build. Report no measurement from this machine.'
