@@ -418,6 +418,66 @@ target, #81 section glyphs), one gap closed (the missing-key consequence), one d
 a decision (the auto-stop ceiling), and two non-issues written down so they are not rediscovered
 (sliders, segmented pickers).
 
+## FACT: vad-gating-the-whisper-decode-was-MEASURED-AND-REJECTED-2026-09-03
+Built, measured against real dictations, and not shipped. Recorded here because it is the most
+convincing-looking parity gap this project has produced: the macOS source does it, the macOS source
+carries a benchmark for it, the issue proposed it, and it makes the output WORSE.
+
+**The reasoning that made it look certain.** `WhisperKitBackend` feeds only voiced ranges to the
+decoder as `clipTimestamps`, pads 500 ms of trailing silence, and chunks above 30 s. Its comment
+carries the numbers - trailing phantom-phrase hallucination on 3 of 107 clips against 14 of 107 for
+the approach it replaced. Windows had none of the three and passed the whole buffer, silence
+included. On this machine's own takes the buffer is about 8.6 s holding about 3.5 s of speech, so
+roughly 55% of what the decoder was asked to transcribe was never speech. Every step of that is true.
+
+**What happened when it was run.** Eleven archived dictations from the development machine, the same
+sentence each time, decoded five ways. The decoder was first proved deterministic: an identical
+re-run returned all eleven transcripts byte-identical, so every difference below is caused by the
+change and not by decoder noise.
+
+| What was decoded | Transcripts changed | Direction |
+|---|---|---|
+| Trimmed to the detected speech span | 6 of 11 | 2 better, 3 worse, 1 both |
+| Same span via whisper.cpp seek rather than slicing | 5 of 11 | 2 better, 3 worse |
+| Whole capture plus a 500 ms tail pad | **0 of 11** | no effect at all |
+| Capture cut at the last word, no pad | 2 of 11 | 2 better, 0 worse |
+| Capture cut at the last word, with the pad | 2 of 11 | identical to the line above |
+
+**Gating costs capitalisation and words.** `Testing` became `testing` on two takes, and one turned
+`Envious Whisper` into `EnVyUs whisper`. Nothing downstream repairs either: a sweep for sentence-case
+restoration across the deterministic pipeline and the delivery path found none, so a lowered first
+word is pasted lowered into somebody's document.
+
+**Seeking is not a way out.** whisper.cpp's `offset_ms`/`duration_ms` was tried precisely because it
+is closer to what `clipTimestamps` does than cutting an array is. It agreed with slicing on 8 of the
+11 and carried the same regressions. The mechanism is not the difference.
+
+**THE TAIL PAD'S OWN REASON DOES NOT REPRODUCE HERE.** macOS says "without this, abruptly-ending
+audio loses the last 1-3 words". Every archived take was recorded with two deliberate seconds of
+silence after the speech, so the pad had nothing to do on them - which is why the recording was CUT
+at its detected speech end to build the condition macOS describes. Cut that way, whisper.cpp lost no
+words at all, and adding the pad changed nothing. A measure worth shipping on macOS's evidence alone
+is not one this port can currently justify.
+
+**WHAT WAS MEASURED IS THE COST, AND ONLY THE COST.** All eleven takes are CLEAN - the fabricating
+recordings behind #101 rolled off the twenty-file archive bound and no longer exist. So the benefit
+side of the trade is entirely unmeasured, and a change that measurably harms the common path cannot
+be adopted on an unmeasured benefit. That is the same trap the issue's own revised plan named: "A
+change that trades one wrong output for another, judged by whether the next single dictation looks
+better, is exactly the shape of check whose failure mode is passing."
+
+**What has to happen before this is decided.** Record the fabricating condition - live microphone,
+room noise, a real lead-in - and score both halves against it: the noisy takes must stop producing
+sentences AND the clean takes must stay correct. Until both are on one table this stays unbuilt.
+Ref: #101, measured 2026-09-03 on eleven archived takes, `ggml-large-v3-turbo-q5_0`, CPU provider.
+
+**The generalisation, which is the reason this entry exists.** This file already records that its
+failures run overwhelmingly toward WORK - toward building something that was already there. This is
+the same bias arriving from a new direction: toward building something the other platform has, that
+is genuinely absent here, and that still should not be built. A capability being present on macOS,
+absent on Windows, and backed by a benchmark on macOS is not evidence it helps on Windows. The
+runtimes are different, and the only thing that settles it is running it here.
+
 ## PROC: how-this-was-taken
 Two sweeps per capability from `src/Production`, the second using the CAPABILITY's synonyms rather than
 the Mac's symbol, because a name sweep only finds what someone already called by that name:
