@@ -36,6 +36,7 @@ JSONL writer, exporter, or HTTP transport.
 | `stage` | optional `DeterministicTextStage` enum | Which deterministic cleanup step a record is about: custom words, filler and false starts, spoken emoji, inverse text normalization, or emoji restoration. |
 | `stageStatus` | optional `DeterministicStageStatus` enum | Completed, Skipped, TimedOut, or Failed. A skipped step is the answer to most questions asked of this pipeline, so it is reported rather than omitted. |
 | `changed` | optional boolean | Whether that step altered the text. One bit, never what changed. |
+| `runtimeSelection` | optional `DiagnosticRuntimeSelectionReason` enum | Which processing path a run ended up on and what put it there: the graphics card, the processor because no card was available, the processor because the user asked for it, or the processor because the card was chosen and would not start. Also the three ways selection can fail. No device name, no driver version, and never the exception text behind a failed start. |
 
 There is no account ID, install ID, session ID, advertising ID, IP field, device name, username, path,
 model ID, locale, transcript length, audio length, target-app name, or free-form string field.

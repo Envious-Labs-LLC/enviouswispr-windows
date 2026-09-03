@@ -14,4 +14,5 @@ public sealed record AppLogEntry(
     DiagnosticHardwareClass? HardwareClass = null,
     DeterministicTextStage? Stage = null,
     DeterministicStageStatus? StageStatus = null,
-    bool? Changed = null);
+    bool? Changed = null,
+    DiagnosticRuntimeSelectionReason? RuntimeSelection = null);

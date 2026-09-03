@@ -1530,8 +1530,15 @@ public sealed partial class DesignSystemTokenTests
             .Select(match => match.Groups[1].Value)
             .ToHashSet(StringComparer.Ordinal);
 
+        // WHITESPACE-TOLERANT ON PURPOSE, AND THIS WAS A CORRECTION. The check was a substring test
+        // for "DictationStatus." exactly, so a call site that wrapped the line between the type and
+        // its factory - which the line length forces once a status is also marked for the
+        // Transcription card - was reported as deciding its appearance somewhere unseen. It was not:
+        // it named the type on the line above. The gate was pinning the LINE BREAK rather than the
+        // property it exists to hold, and the app was right. It now asserts what it actually means,
+        // which is that the call site names the type.
         var unnamed = arguments
-            .Where(argument => !argument.Contains("DictationStatus.", StringComparison.Ordinal))
+            .Where(argument => !DictationStatusFactoryCall().IsMatch(argument))
             .Where(argument => !carriers.Any(carrier =>
                 IdentifierRegexFor(carrier).IsMatch(argument)))
             .ToArray();
@@ -1540,6 +1547,28 @@ public sealed partial class DesignSystemTokenTests
             unnamed.Length == 0,
             "These statuses reach the window without naming the pill they want, so the appearance "
                 + "is decided somewhere this suite cannot see: " + string.Join(" | ", unnamed));
+    }
+
+    /// <summary>The relaxed match still refuses an argument that names no status at all.</summary>
+    /// <remarks>
+    /// PROVING THE RELAXATION DID NOT OPEN THE GATE. Allowing whitespace between the type and its
+    /// factory is a one-character change to a pattern, and the failure it could introduce is silent:
+    /// a gate that matches everything passes forever. Both directions are asserted here because one
+    /// of them alone is not a control.
+    /// </remarks>
+    [Fact]
+    public void TheStatusFactoryMatchAcceptsAWrappedCallAndStillRefusesANamelessOne()
+    {
+        var pattern = DictationStatusFactoryCall();
+        Assert.Matches(pattern, "DictationStatus.Quiet(\"Ready\")");
+        Assert.Matches(
+            pattern,
+            "DictationStatus" + Environment.NewLine +
+            "                .Quiet(\"Ready\")" + Environment.NewLine +
+            "                .AboutTheTranscriptionEngine()");
+        Assert.DoesNotMatch(pattern, "helper.BuildTheStatus(sentence)");
+        Assert.DoesNotMatch(pattern, "statusFromSentence(sentence)");
+        Assert.DoesNotMatch(pattern, "DictationStatusHelper(sentence)");
     }
 
     private static IEnumerable<string> ProductionSourceFiles(string directory) =>
@@ -1586,6 +1615,10 @@ public sealed partial class DesignSystemTokenTests
     /// <summary>A name the compiler agrees is a DictationStatus: member, parameter, or local.</summary>
     [GeneratedRegex(@"\bDictationStatus\??\s+(\w+)\s*(?:\(|=|\)|,|;)")]
     private static partial Regex DictationStatusCarrier();
+
+    /// <summary>The type naming one of its own factories, across a line break if need be.</summary>
+    [GeneratedRegex(@"\bDictationStatus\s*\.")]
+    private static partial Regex DictationStatusFactoryCall();
 
     /// <summary>
     /// No page arrives with a heading and nothing under it.

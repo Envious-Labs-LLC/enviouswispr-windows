@@ -141,6 +141,7 @@ public sealed class JsonLineFileLogger : IAppLogger
                 // remembered.
                 (record.Stage is null || Enum.IsDefined(record.Stage.Value)) &&
                 (record.StageStatus is null || Enum.IsDefined(record.StageStatus.Value)) &&
+                (record.RuntimeSelection is null || Enum.IsDefined(record.RuntimeSelection.Value)) &&
                 record.ElapsedMilliseconds is null or
                     (>= 0 and <= PrivacySafeDiagnosticRecord.MaximumElapsedMilliseconds);
         }
