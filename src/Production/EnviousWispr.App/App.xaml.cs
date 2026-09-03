@@ -2969,16 +2969,25 @@ public partial class App : Application, IAsyncDisposable
         IAudioSnapshotSource audioCapture,
         CancellationToken cancellationToken)
     {
-        var cadence = TimeSpan.FromMilliseconds(2_500);
         var maximumWindow = TimeSpan.FromSeconds(20);
         try
         {
             while (true)
             {
-                await Task.Delay(cadence, cancellationToken).ConfigureAwait(false);
+                // THE WAIT MOVED TO THE FAR SIDE OF THE WORK, WHICH IS THE WHOLE FIX. It used to sit
+                // here, so the period was the interval PLUS the cost of a pass rather than the larger
+                // of the two, and nothing could reach the screen before both had elapsed however fast
+                // the engine became. On the measured 7.9-second take that bought exactly one update
+                // and the second was not slow but impossible. Ref: #99 and `LivePreviewCadence`.
                 var snapshot = audioCapture.GetSnapshot(maximumWindow);
                 if (snapshot is null || snapshot.Samples.Length < 8_000)
                 {
+                    // NOT THE CADENCE, BECAUSE THIS IS NOT AN UPDATE. There is not yet enough audio to
+                    // transcribe, and waiting the full interval to re-ask is what made a person watch
+                    // "Listening..." for four seconds. Half the threshold this guard enforces, so the
+                    // first pass cannot start more than a quarter second late.
+                    await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken)
+                        .ConfigureAwait(false);
                     continue;
                 }
 
@@ -3004,6 +3013,12 @@ public partial class App : Application, IAsyncDisposable
                     ElapsedMilliseconds: timer.ElapsedMilliseconds));
                 _window?.DispatcherQueue.TryEnqueue(() =>
                     _window?.SetLivePreview(update.Text));
+
+                // A FLOOR, NOT AN ADDITION. A pass slower than the interval waits nothing and the next
+                // one starts immediately; a fast one still cannot flood the screen. The engine is a
+                // limb and must not spend the machine the final transcript is waiting on.
+                await Task.Delay(LivePreviewCadence.DelayAfter(timer.Elapsed), cancellationToken)
+                    .ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
