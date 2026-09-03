@@ -278,7 +278,7 @@ Re-swept against the tree rather than read off the tables above, because four of
 | Capability | What is needed |
 |---|---|
 | The whole 2026-08-29 UI: pill severities, the pill's action button, four tray icons, High Contrast, Reduce Motion | #76. Nobody has seen any of it. A session over SSH runs in Windows session 0, where a WinUI app dies in `Microsoft.UI.Input.dll` before drawing. Confirmed environmental by running the same launch against a reviewed commit. |
-| The fourth delivery tier, macOS's `menuPaste` | #77. Invoking an app's own Paste command. Getting it wrong presses the wrong control inside somebody's document, so it needs Word, Excel and OneNote open in front of a person. |
+| The fourth delivery tier, macOS's `menuPaste` | #77. **The reading half is done, 2026-09-03, on the machine.** Word and Excel put NO writable element near the caret - the focused element is the top-level window - and both publish a Paste button under the same non-localised `AutomationId` of `Paste`. Both also report that button ENABLED with the clipboard cleared, so an invoke can never be confirmed from the control and must be confirmed from the document or fall through. Chromium apps publish no Paste command at all, so this tier is Office-shaped rather than general. Still owed: OneNote, which is signed out on this machine and shows only a Sign In button. Probe with `tools/ui-capture/probe-paste-route.ps1`. |
 | Modifier-only hotkeys, `Ctrl+Win` as the default | #66. Built. Needs a real keyboard. |
 | Bluetooth-aware routing and wake allowance | A Bluetooth headset. |
 | Ollama catalogue install and remove | Ollama installed and running. |
