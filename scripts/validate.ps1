@@ -172,8 +172,26 @@ function Invoke-DotNetTest {
     $common = @("test", $Project, "-c", "Release", "--nologo") + $ExtraArguments
     # ASSIGNED FIRST, THEN BRANCHED. A pipeline reports its LAST command's status, so testing
     # $LASTEXITCODE after piping the output anywhere would report the pipe.
-    $output = & $Executable @common 2>&1
-    $exitCode = $LASTEXITCODE
+    #
+    # AND STDERR IS MERGED UNDER 'Continue', WHICH IS LOAD-BEARING. This script runs with
+    # ErrorActionPreference = Stop, and under Stop a native command writing ANYTHING to stderr raises
+    # a terminating NativeCommandError at the moment of capture - before any of the checks below can
+    # run. Measured: a crashing test host printed its abort line to stderr and the gate died here with
+    # `NativeCommandError`, so the run failed for the right reason with the wrong explanation, twice.
+    #
+    # THE SAME TRAP IS ALREADY DOCUMENTED IN `Resolve-Python` IN THIS FILE, and knowing about it did
+    # not stop it being reintroduced fifty lines away. Restored in a finally, so a throw inside the
+    # capture cannot leave the rest of the gate running with errors non-terminating.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & $Executable @common 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+
     $output | ForEach-Object { Write-Host $_ }
 
     $aborted = @($output | Select-String -Pattern 'Test host process crashed|The active test run was aborted')
@@ -188,7 +206,13 @@ function Invoke-DotNetTest {
 
     # --no-build BECAUSE THE RUN ABOVE JUST BUILT IT, and re-building here would let a discovery
     # against different bytes agree with a run it never described.
-    $listed = & $Executable @($common + @("--no-build", "--list-tests")) 2>&1
+    $ErrorActionPreference = 'Continue'
+    try {
+        $listed = & $Executable @($common + @("--no-build", "--list-tests")) 2>&1
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
     $discovered = @($listed | Select-String -Pattern '^\s{4}\S').Count
     $reported = 0
     foreach ($match in ($output | Select-String -Pattern 'Total:\s*(\d+)' -AllMatches)) {
