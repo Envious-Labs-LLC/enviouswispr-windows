@@ -80,7 +80,7 @@ await using var engine = new RuntimeWorkerTranscriptionEngine(new RuntimeWorkerT
     Engine: FinalAsrEngine.Whisper,
     WhisperPack: WhisperModelPack.PreviewSmall,
     Language: "auto",
-    CudaRuntimeDirectory: Environment.GetEnvironmentVariable("ENVIOUSWISPR_CUDA_RUNTIME_DIR")));
+    CudaRuntimeDirectory: CudaRuntimeDirectory.ForTooling()));
 
 var started = await engine.StartAsync();
 if (!started.Succeeded)

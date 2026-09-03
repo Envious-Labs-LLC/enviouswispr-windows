@@ -9,7 +9,7 @@ using EnviousWispr.Services.Runtime;
 using Microsoft.Win32;
 
 var outputPath = ArgumentValue(args, "--output");
-var hardware = await new WindowsHardwareDiscovery().ProbeAsync();
+var hardware = await new WindowsHardwareDiscovery(CudaRuntimeDirectory.ForTooling()).ProbeAsync();
 using var deviceCatalog = new WasapiDeviceCatalog();
 var captureDevices = await deviceCatalog.GetCaptureDevicesAsync();
 var operatingSystem = Environment.OSVersion.Version;
