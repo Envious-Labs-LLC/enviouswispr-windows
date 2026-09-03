@@ -123,11 +123,8 @@ public sealed partial class DesignSystemTokenTests
                 FindRepositoryRoot(),
                 "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
 
-        var block = FinalEngineChoicesBlock().Match(source);
-        Assert.True(block.Success, "Could not find the FinalEngineChoices list in MainWindow.xaml.cs.");
-
         var offered = ChoiceLabel()
-            .Matches(block.Groups[1].Value)
+            .Matches(InitializerOf(source, "FinalEngineChoices"))
             .Select(match => match.Groups[1].Value)
             .ToArray();
 
@@ -152,9 +149,6 @@ public sealed partial class DesignSystemTokenTests
 
     [GeneratedRegex(@"parakeet-tdt-[0-9.]+b-v[0-9]+|whisper-large-v[0-9]+-turbo|""whisper-small""")]
     private static partial Regex ModelNameLiteral();
-
-    [GeneratedRegex(@"FinalEngineChoices\s*=\s*\[(.*?)\];", RegexOptions.Singleline)]
-    private static partial Regex FinalEngineChoicesBlock();
 
     [GeneratedRegex(@"new\(""([^""]+)""")]
     private static partial Regex ChoiceLabel();
@@ -668,23 +662,16 @@ public sealed partial class DesignSystemTokenTests
                 FindRepositoryRoot(),
                 "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
 
-        var watcher = AutoStopWatcherBody().Match(source);
-        Assert.True(watcher.Success, "Could not find the auto-stop watcher.");
-
+        // THE LENGTH CONTROL IS GONE BECAUSE WHAT IT GUARDED IS GONE. The pattern this replaces
+        // ended at the first line reading exactly four spaces and a brace, so it could capture a
+        // FRAGMENT of the method and the assertion below would then be about part of a body; the
+        // character count stood in for "did you get the whole thing". The parser returns the method
+        // or nothing, so there is no fragment to guard against. Ref: #82.
         Assert.Contains(
             "HandlePushToTalkAsync(PushToTalkSignal.Released)",
-            watcher.Value,
+            DeclarationTextOf(source, "RunAutoStopWatchAsync"),
             StringComparison.Ordinal);
-
-        // Control: the matcher must have captured a real body rather than an empty match, or the
-        // assertion above would be about nothing.
-        Assert.True(
-            watcher.Value.Length > 400,
-            $"The watcher body matched only {watcher.Value.Length} characters; the matcher is wrong.");
     }
-
-    [GeneratedRegex(@"private async Task RunAutoStopWatchAsync.*?\n    \}", RegexOptions.Singleline)]
-    private static partial Regex AutoStopWatcherBody();
 
     /// <summary>
     /// Any animation of a LAYOUT property must ask to be allowed to run.
@@ -1526,9 +1513,7 @@ public sealed partial class DesignSystemTokenTests
 
         // A carrier is a name the compiler already agrees is a DictationStatus: a member declared
         // to return one, or a parameter or local of that type.
-        var carriers = DictationStatusCarrier().Matches(shell)
-            .Select(match => match.Groups[1].Value)
-            .ToHashSet(StringComparer.Ordinal);
+        var carriers = DictationStatusCarriers(shell);
 
         // WHITESPACE-TOLERANT ON PURPOSE, AND THIS WAS A CORRECTION. The check was a substring test
         // for "DictationStatus." exactly, so a call site that wrapped the line between the type and
@@ -1611,10 +1596,6 @@ public sealed partial class DesignSystemTokenTests
 
     private static Regex IdentifierRegexFor(string name) =>
         new(@"\b" + Regex.Escape(name) + @"\b", RegexOptions.CultureInvariant);
-
-    /// <summary>A name the compiler agrees is a DictationStatus: member, parameter, or local.</summary>
-    [GeneratedRegex(@"\bDictationStatus\??\s+(\w+)\s*(?:\(|=|\)|,|;)")]
-    private static partial Regex DictationStatusCarrier();
 
     /// <summary>The type naming one of its own factories, across a line break if need be.</summary>
     [GeneratedRegex(@"\bDictationStatus\s*\.")]
@@ -1912,6 +1893,198 @@ public sealed partial class DesignSystemTokenTests
     public void AMissingHideListFailsLoudly()
     {
         Assert.ThrowsAny<Exception>(() => CodeWithoutTheHideList("class C { void Other() { } }"));
+    }
+
+    /// <summary>A body is read whole, however the braces inside it are laid out.</summary>
+    /// <remarks>
+    /// THE PATTERN THIS REPLACES STOPPED AT THE FIRST LINE THAT WAS FOUR SPACES AND A BRACE. A local
+    /// function, a lambda block or a nested type closing at that indentation ended the capture early,
+    /// and the caller then asserted about part of a method - which passes or fails for reasons that
+    /// have nothing to do with the property being checked. Ref: #82.
+    /// </remarks>
+    /// <summary>A body is read whole, however braces appear inside it.</summary>
+    /// <remarks>
+    /// THE PATTERN THIS REPLACES STOPPED AT THE FIRST LINE THAT WAS FOUR SPACES AND A BRACE, and it
+    /// did not care whether that brace was code. Verified against the old pattern rather than
+    /// assumed: with a verbatim string in the body holding such a line, it captured a FRAGMENT - the
+    /// marker below was outside it - and the caller then asserted about part of a method. Ref: #82.
+    /// </remarks>
+    [Fact]
+    public void AMethodBodyIsReadWholeWhenAStringInsideItHoldsAClosingBrace()
+    {
+        var code = string.Join("\n", [
+            "class C",
+            "{",
+            "    private async Task RunAutoStopWatchAsync()",
+            "    {",
+            "        var fixture = @\"",
+            "    }\";",
+            "        Marker();",
+            "    }",
+            "}",
+        ]);
+
+        Assert.Contains("Marker();", DeclarationTextOf(code, "RunAutoStopWatchAsync"), StringComparison.Ordinal);
+    }
+
+    /// <summary>An initializer is found however the declaration is written.</summary>
+    /// <remarks>
+    /// The pattern this replaces required the name, then `=`, then `[`, with only whitespace between,
+    /// and stopped at the first `];`. A comment before the bracket hid the list entirely; a nested
+    /// collection ended it early, and the caller read a truncated list as the whole set of choices.
+    /// </remarks>
+    [Theory]
+    [InlineData("private static readonly object[] FinalEngineChoices = [ new(\"Automatic\") ];")]
+    [InlineData("private static readonly object[] FinalEngineChoices /* three */ = [ new(\"Automatic\") ];")]
+    [InlineData("private static object[] FinalEngineChoices => [ new(\"Automatic\") ];")]
+    public void AnInitializerIsFoundHoweverItIsWritten(string declaration)
+    {
+        var text = InitializerOf("class C { " + declaration + " }", "FinalEngineChoices");
+
+        Assert.Contains("Automatic", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>A carrier is a declaration, not a mention.</summary>
+    /// <remarks>
+    /// THE PATTERN THIS REPLACES INVENTED CARRIERS AND MISSED REAL ONES. It matched the type name
+    /// followed by an identifier anywhere in the file, so a comment or a string naming the type
+    /// created a carrier that does not exist - and any name can then be treated as already being a
+    /// status. A declaration wrapped across a line break was missed the other way.
+    /// </remarks>
+    /// <summary>A carrier is a declaration, not a mention.</summary>
+    /// <remarks>
+    /// THE PATTERN THIS REPLACES INVENTED CARRIERS, and the two rows below are the ones it actually
+    /// invents - checked by running it, not taken from the issue. It matched the type name, a word,
+    /// and any of `( = ) , ;`, so a COMMENT ending in a semicolon and a STRING containing one both
+    /// produced a name. Every name in an argument then counts as already being a status, which is
+    /// the check quietly not checking. Ref: #82.
+    /// </remarks>
+    [Fact]
+    public void OnlyDeclarationsCountAsCarriers()
+    {
+        var code = string.Join("\n", [
+            "class C",
+            "{",
+            "    // Returns a DictationStatus value; nothing is declared here.",
+            "    private const string Note = \"DictationStatus invented;\";",
+            "    private DictationStatus Declared() => default;",
+            "    private void Takes(DictationStatus parameter) { }",
+            "    private void Local() { DictationStatus local = default; }",
+            "}",
+        ]);
+
+        var carriers = DictationStatusCarriers(code);
+
+        Assert.Contains("Declared", carriers);
+        Assert.Contains("parameter", carriers);
+        Assert.Contains("local", carriers);
+        // The two the old pattern invented.
+        Assert.DoesNotContain("value", carriers);
+        Assert.DoesNotContain("invented", carriers);
+    }
+
+    /// <summary>A member that is not there stops the gate rather than emptying it.</summary>
+    [Fact]
+    public void AMissingMemberFailsLoudly()
+    {
+        Assert.ThrowsAny<Exception>(() => DeclarationTextOf("class C { }", "NotThere"));
+    }
+
+    /// <summary>The whole text of the member with this name.</summary>
+    /// <remarks>
+    /// ASKS THE PARSER WHERE THE MEMBER ENDS. The pattern this replaces ran from the declaration to
+    /// the first line that was exactly four spaces and a closing brace, which is an assumption about
+    /// indentation rather than about C#: a nested type, a differently indented body, or a brace
+    /// inside a string ends it early and the caller then asserts about a fragment. Ref: #82.
+    /// </remarks>
+    private static string DeclarationTextOf(string code, string name) =>
+        DeclarationNamed(code, name).ToString();
+
+    /// <summary>The text of the initializer of the member with this name.</summary>
+    /// <remarks>
+    /// The pattern this replaces required `Name = [` with only whitespace between and stopped at the
+    /// first `];`, so a comment before the bracket hid the list and a nested collection ended it early.
+    /// </remarks>
+    private static string InitializerOf(string code, string name)
+    {
+        var declaration = DeclarationNamed(code, name);
+        var initializer = declaration switch
+        {
+            VariableDeclaratorSyntax variable => (SyntaxNode?)variable.Initializer?.Value,
+            PropertyDeclarationSyntax property =>
+                (SyntaxNode?)property.Initializer?.Value ?? property.ExpressionBody?.Expression,
+            _ => null,
+        };
+
+        Assert.True(initializer is not null, $"{name} has no initializer to read.");
+        return initializer!.ToString();
+    }
+
+    /// <summary>Every name declared as a DictationStatus: member, parameter or local.</summary>
+    /// <remarks>
+    /// SYNTAX IS BETTER THAN TEXT HERE AND STILL NOT THE COMPILER. The pattern this replaces matched
+    /// `DictationStatus` followed by a name anywhere in the file, so a comment or a string mentioning
+    /// the type INVENTED a carrier, and a declaration wrapped across a line break hid one. Reading
+    /// declarations cannot do either.
+    ///
+    /// WHAT IT STILL CANNOT SEE, because this gate's own summary claims the compiler agrees and this
+    /// does not ask it: a `var` local bound to a DictationStatus, an alias for the type, and a
+    /// different type of the same name from another namespace. That is the gap #82 wants an analyser
+    /// for, and it is the reason this member is named after what it reads rather than after what the
+    /// compiler knows.
+    /// </remarks>
+    private static HashSet<string> DictationStatusCarriers(string code)
+    {
+        var root = CSharpSyntaxTree.ParseText(code).GetRoot();
+        var names = root.DescendantNodes()
+            .SelectMany(node => node switch
+            {
+                MethodDeclarationSyntax method when IsDictationStatus(method.ReturnType) =>
+                    [method.Identifier.ValueText],
+                PropertyDeclarationSyntax property when IsDictationStatus(property.Type) =>
+                    [property.Identifier.ValueText],
+                ParameterSyntax parameter when parameter.Type is not null &&
+                    IsDictationStatus(parameter.Type) => [parameter.Identifier.ValueText],
+                VariableDeclarationSyntax declaration when IsDictationStatus(declaration.Type) =>
+                    declaration.Variables.Select(variable => variable.Identifier.ValueText),
+                _ => Enumerable.Empty<string>(),
+            });
+
+        return names.ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static bool IsDictationStatus(TypeSyntax type) => type switch
+    {
+        NullableTypeSyntax nullable => IsDictationStatus(nullable.ElementType),
+        QualifiedNameSyntax qualified => IsDictationStatus(qualified.Right),
+        IdentifierNameSyntax name => name.Identifier.ValueText == "DictationStatus",
+        _ => false,
+    };
+
+    /// <summary>The one member with this name, or a failure that says which.</summary>
+    /// <remarks>
+    /// A MISSING MEMBER STOPS THE TEST. Under the patterns these replace, not finding one left the
+    /// caller holding an empty match to assert about - and two of those gates compensated with a
+    /// character-count control rather than by refusing.
+    /// </remarks>
+    private static SyntaxNode DeclarationNamed(string code, string name)
+    {
+        var root = CSharpSyntaxTree.ParseText(code).GetRoot();
+        var declarations = root.DescendantNodes()
+            .Where(node => node switch
+            {
+                MethodDeclarationSyntax method => method.Identifier.ValueText == name,
+                PropertyDeclarationSyntax property => property.Identifier.ValueText == name,
+                VariableDeclaratorSyntax variable => variable.Identifier.ValueText == name,
+                _ => false,
+            })
+            .ToArray();
+
+        Assert.True(
+            declarations.Length > 0,
+            $"No member called {name}. Either it was renamed, in which case this gate is no longer "
+                + "checking what it was written for, or it is gone and the gate should be too.");
+        return declarations[0];
     }
 
     /// <summary>
