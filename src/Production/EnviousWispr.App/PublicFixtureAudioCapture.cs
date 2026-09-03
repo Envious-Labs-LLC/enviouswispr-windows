@@ -123,9 +123,14 @@ internal sealed class PublicFixtureAudioCapture : IAudioCapture, IAudioSnapshotS
             return null;
         }
 
-        var maximumSamples = Math.Max(
-            1,
-            checked((int)Math.Ceiling(maximumDuration.TotalSeconds * RequiredSampleRate)));
+        // THE TWIN OF THE CLAMP IN `WasapiAudioCapture`, and it has to move with it. Both answer the
+        // same contract for the same callers, so a duration that is safe against a live microphone
+        // and fatal against a fixture would make the harness disagree with the app about whether a
+        // dictation works. Same reason, written once there. Ref: #96.
+        var requestedSamples = Math.Ceiling(maximumDuration.TotalSeconds * RequiredSampleRate);
+        var maximumSamples = requestedSamples >= int.MaxValue
+            ? int.MaxValue
+            : Math.Max(1, (int)requestedSamples);
         var offset = Math.Max(0, _samples.Length - maximumSamples);
         return new AudioSnapshot(
             request.SessionId,

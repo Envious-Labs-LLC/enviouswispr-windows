@@ -236,6 +236,13 @@ try {
         Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", "Release", "--no-build")
         Write-Host "Running the production WinUI English Parakeet journey..."
         Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", "Release", "--no-build", "--", "--english-parakeet")
+        # ARMS THE HEAD-START CHECK, WHICH IS THE POINT OF ADDING IT. The streaming head start polls
+        # every 500 ms and every other journey holds a recording for a fraction of that, so nothing
+        # here had ever reached the first poll: the feature was abandoned 511 ms into every recording
+        # from the day it shipped and the gate stayed green throughout. A guard nobody runs is not a
+        # guard, so this costs the four seconds it takes to hold a recording long enough to matter.
+        Write-Host "Running the streaming head-start journey..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", "Release", "--no-build", "--", "--english-parakeet", "--head-start")
     }
     else {
         Write-Host "Running portable contract tests..."
