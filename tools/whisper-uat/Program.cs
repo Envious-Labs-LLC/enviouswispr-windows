@@ -94,8 +94,7 @@ static async Task<ProviderResult> RunProviderAsync(
         Engine: FinalAsrEngine.Whisper,
         WhisperPack: modelPack,
         Language: "auto",
-        CudaRuntimeDirectory: Environment.GetEnvironmentVariable(
-            "ENVIOUSWISPR_CUDA_RUNTIME_DIR")));
+        CudaRuntimeDirectory: CudaRuntimeDirectory.ForTooling()));
 
     var loadTimer = Stopwatch.StartNew();
     var started = await engine.StartAsync();
@@ -191,8 +190,7 @@ static async Task<IReadOnlyList<LanguageResult>> RunFixedLanguageDiagnosticsAsyn
             Engine: FinalAsrEngine.Whisper,
             WhisperPack: modelPack,
             Language: language,
-            CudaRuntimeDirectory: Environment.GetEnvironmentVariable(
-                "ENVIOUSWISPR_CUDA_RUNTIME_DIR")));
+            CudaRuntimeDirectory: CudaRuntimeDirectory.ForTooling()));
         var started = await engine.StartAsync();
         if (!started.Succeeded)
         {
