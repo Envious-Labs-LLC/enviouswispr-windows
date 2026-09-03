@@ -604,14 +604,14 @@ public sealed partial class MainWindow : Window, IDisposable
         PreviewRecordingSoundButton.IsEnabled = overlayState != DictationOverlayState.Recording;
         SetSpeedCheckAvailability(overlayState != DictationOverlayState.Recording);
         _overlayWindow.ShowState(status);
-        if (sentence.Contains("ready", StringComparison.OrdinalIgnoreCase))
-        {
-            EngineReadinessText.Text = sentence;
-            OnboardingModelText.Text = sentence;
-        }
-        else if (sentence.Contains("model is not installed", StringComparison.OrdinalIgnoreCase) ||
-                 sentence.Contains("transcription is unavailable", StringComparison.OrdinalIgnoreCase) ||
-                 sentence.Contains("worker could not start", StringComparison.OrdinalIgnoreCase))
+        // THE STATUS SAYS WHETHER IT BELONGS HERE; THIS NO LONGER GUESSES FROM THE WORDS. What stood
+        // here tested the sentence for "ready", "model is not installed", "transcription is
+        // unavailable" and "worker could not start", which is the same mistake `OverlayStateFor` was
+        // deleted for one surface over. It let four unrelated messages overwrite the Transcription
+        // card - a Windows resume, a finished Escape Recovery, and both Ollama health lines - and it
+        // would have dropped any new engine sentence that did not happen to contain one of the four
+        // phrases. `AboutTheTranscriptionEngine` carries the answer from the call site instead.
+        if (status.DescribesTranscriptionEngine)
         {
             EngineReadinessText.Text = sentence;
             OnboardingModelText.Text = sentence;
