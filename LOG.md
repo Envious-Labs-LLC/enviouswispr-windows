@@ -21,6 +21,120 @@ No machine paths, no personal data, no credentials. This file is public.
 
 ---
 
+## 2026-09-03 (morning)
+
+### A feature that had never once run, and the fallback that hid it
+
+The streaming head start transcribes finished parts of a recording while somebody
+is still speaking, so releasing the key finishes work already mostly done. It had
+never worked. Every recording abandoned it about half a second in, and no log this
+project has ever written contained a committed segment.
+
+The cause was one cast. The loop wants the whole recording rather than a rolling
+window - a commit is a range measured from the start, so a window would make those
+indices mean something different on every poll - and it says so by asking for the
+largest span there is. Both implementations of that request turned the span into a
+sample count through a checked conversion, and the largest span times the sample
+rate does not fit. It threw on the first poll, every time, since the day it shipped.
+A year-long span overflowed too, so this was never one magic value mishandled.
+
+**It was invisible because giving up is correct.** Any failure abandons the head
+start and the release transcribes the whole take. Nothing on screen was ever wrong,
+nothing was ever lost, and the fallback is good enough that nobody noticed for as
+long as the feature has existed. The wait after release halved once it worked:
+444-445 ms to 201-217 ms, three runs each way.
+
+**Nothing could have caught it.** The journey harness holds a recording for a
+fraction of the 500 ms poll interval, so no run it has ever made reached the first
+poll. A guard that cannot reach the code it guards is not a guard, and its greenness
+says nothing. It now holds one long enough and asserts the outcome AND the absence
+together - committed and used must appear, abandoned must not - because either half
+alone passes against the defect.
+
+### A success word on a truncated run, and the fix that failed for the right reason
+
+`dotnet test` prints `Passed!` when the test host dies mid-run, beside a total for
+whatever finished. Five times in one session: totals of 1064, 1049, 1064 and 1069
+against a complete 1127, each under that word. Only the exit code disagreed.
+
+The gate now refuses an aborted run on its output text and compares what ran against
+what the assembly contains, discovered rather than written down - one entry per
+theory case, so it matches the run's own total exactly. A floor would not do, because
+a floor still lets tests vanish quietly beneath it.
+
+**And the first version of that fix was wrong in a way worth keeping.** It captured
+the runner's output with a stderr merge under a preference that makes errors fatal,
+so a native command writing anything to the error stream raised a terminating error
+at the moment of capture - before any of the new checks could run. A crashing host
+therefore produced a runtime error pointing at the capture instead of the sentence
+written for exactly that case. It failed for the right reason with the wrong
+explanation, and the explanation was the entire value of the change.
+
+**The same trap is documented fifty lines away in that file**, about the Python
+probe, and knowing that did not prevent reintroducing it. Naming a defect class
+raises confidence about it, which is the opposite of what should happen while still
+typing.
+
+### Two numbers measured instead of argued, and one route closed
+
+Inverse text normalisation was filed as load-sensitive after a single CI timeout. It
+is deterministic and reachable: four hundred spoken numbers take about half a second,
+eight hundred about a second and a half, and sixteen hundred fail every time on a
+quiet machine. **The expensive passage comes back completely unchanged** - the whole
+cost is patterns scanning and failing.
+
+Atomic grouping is one of the three routes the issue proposes and the cheapest, so it
+went first. It is fifteen per cent faster at four hundred words and **moves the
+failure point not at all**. It was byte-for-byte correct against a 3756-row pinned
+oracle, so it was shippable, and it was thrown away rather than banked as progress: a
+constant factor that leaves the cliff where it was does not earn new complexity in the
+component that is meant to be the reliability floor.
+
+**A wrong instrument nearly produced a wrong number.** The first readings threw where
+warm ones complete in about a second and a half; the first call in a process pays for
+compilation and can cross the per-call guard on its own. Any measurement here must
+discard the first run.
+
+### A probe that asked about the wrong library, and could not be caught by running it
+
+Live Preview runs one speech engine and decided whether to use the graphics card by
+checking whether a DIFFERENT engine's runtime files were present. A machine with a
+working card and none of those files was put on the processor for a reason that had
+nothing to do with the thing running there.
+
+**Both probes are true on the development machine**, so the fix changes nothing
+locally and no amount of running it would have shown anything. The machine where the
+two disagree is the test. Worth keeping as a shape: a condition can be wrong in a way
+that is invisible everywhere except the configuration nobody has.
+
+### Looking at copy changed the copy
+
+The spoken-emoji switch never said that the word "emoji" is required, so turning it
+on and saying a phrase does nothing and reads as broken - a tester with the source
+open reached exactly that conclusion. The switch now carries the rule and an example.
+
+The first version ended the example with the glyph followed by a full stop, and the
+emoji's own advance width leaves a visible gap there, so it rendered as though a
+space had been typed. The example now sits mid-sentence where that width falls
+naturally. **The glyph renders in colour rather than as the hollow box a missing
+codepoint gives, and nothing in this repository can decide that.** It was looked at,
+at real density, on the page where it ships.
+
+### A finding that reshaped an issue rather than closing it
+
+The recording-signal gate is also the update gate. Three call sites take the same
+primitive with a zero timeout, and only one of them is wrong: dropping a recording
+signal is the defect, refusing an update while dictating is correct. The update path
+holds that gate across a full download.
+
+So "one ordered queue for recording signals", as proposed, would let a record-key
+press queue behind a download and start a recording on its own minutes later -
+trading one wrong behaviour for another. **The state machine is a prerequisite for
+the queue rather than a sibling of it**, which reverses the order the issue implies.
+Recorded and left alone: what should happen when somebody presses record during an
+update is a product decision, and this is the code where being wrong costs somebody
+their keyboard or leaves a microphone open.
+
 ## 2026-09-03 (overnight)
 
 ### The most convincing parity gap this project has produced, and it was wrong
