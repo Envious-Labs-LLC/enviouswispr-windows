@@ -302,6 +302,36 @@ Re-swept against the tree rather than read off the tables above, because four of
 three need a product decision. A session that can only reach the machine over SSH cannot close them by
 writing more code, and writing more code around them is how the unverified pile grows.
 
+## FACT: the-machine-IS-reachable-interactively-2026-09-03
+**The premise under "Blocked on a person at the machine" is no longer true, and five rows rest on it.**
+That table and its closing paragraph say a session here can only reach the machine over SSH, lands in
+Windows session 0, and therefore cannot drive a WinUI app or see a pixel. A session on 2026-09-03 ran in
+**session 1, the logged-on interactive desktop**, alongside the user's own shell.
+
+Demonstrated rather than asserted, three ways in one night:
+
+- Launched the app from `scripts/one-build.ps1 -Launch` and it drew.
+- Read its own accessibility tree with `tools/ui-capture/probe-ui.ps1` and asserted on the text of a
+  settings card - which is how the #102 sentence was confirmed on screen rather than described.
+- Drove `tools/app-journey-uat --live-preview` end to end six times, each launching the real app,
+  recording from a fixture and delivering into a target window.
+
+**So `tools/ui-capture/start-capture.ps1` and its scheduled-task hop are not required from a session
+like this one.** That script exists because an SSH session IS session 0; check which session you are in
+(`(Get-Process -Id $PID).SessionId`) before assuming you need it. Both routes still work.
+
+**What this unblocks.** Every row in that table whose blocker is "somebody has to be at the machine" is
+reachable by a session that can check it is in session 1: the 2026-08-29 UI work, `Ctrl+Win` on a real
+keyboard, and the parts of the fourth delivery tier that do not need Word and Excel open. It does NOT
+unblock the rows needing hardware nobody has - a Bluetooth headset - or a product decision.
+
+**One thing it deliberately does not unblock: playing audio out loud.** The machine is in the founder's
+home. A synthetic sender through `ENVIOUSWISPR_UAT_AUDIO_FIXTURE` covers the whole dictation journey
+without a sound, and that is the right instrument for almost everything. Recording new microphone
+fixtures is the exception and wants the room free rather than the small hours.
+
+Ref: 2026-09-03, verified while closing #102 and #99.
+
 ## FACT: a-claimed-uncertainty-is-worth-closing-before-it-becomes-a-rebuild
 The streaming seam was recorded as "unaudited" on the morning of 2026-08-29 and closed the same day by
 reading two files. It cost five minutes and it removes a row that, left standing, is exactly the shape
