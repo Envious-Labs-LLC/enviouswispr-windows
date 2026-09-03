@@ -21,6 +21,112 @@ No machine paths, no personal data, no credentials. This file is public.
 
 ---
 
+## 2026-09-03 (overnight)
+
+### The most convincing parity gap this project has produced, and it was wrong
+
+Whisper sometimes returns sentences nobody said. macOS solves it by decoding only
+the parts of a recording where somebody was speaking, and its source carries the
+benchmark that settled the design: trailing phantom-phrase hallucination on 3 of
+107 clips against 14 of 107 for the approach it replaced. Windows did none of it
+and handed the decoder the whole buffer. On real dictations from this project's
+own machine, that buffer is about 8.6 seconds holding about 3.5 seconds of speech,
+so roughly 55% of what the decoder was asked to transcribe was never speech.
+
+Every step of that is true, and the port makes the output worse.
+
+Eleven archived dictations, the same sentence each, decoded five ways. The decoder
+was proved deterministic first — an identical re-run returned all eleven
+transcripts byte for byte — so the differences below are the change rather than
+noise.
+
+| What was decoded | Changed | Direction |
+|---|---|---|
+| Trimmed to the detected speech span | 6 of 11 | 2 better, 3 worse, 1 both |
+| Same span via a seek rather than a cut | 5 of 11 | 2 better, 3 worse |
+| Whole capture plus a half-second tail pad | 0 of 11 | no effect |
+| Capture cut at the last word, no pad | 2 of 11 | 2 better, 0 worse |
+| Capture cut at the last word, with pad | 2 of 11 | identical to above |
+
+Gating cost capitalisation and words: `Testing` became `testing` on two takes, and
+one turned the product's own name into `EnVyUs whisper`. Nothing downstream puts a
+lowered first word back — swept the deterministic pipeline and the delivery path,
+there is no sentence-case restoration anywhere — so it reaches the document lowered.
+
+Seeking is not a way out. It was tried precisely because it is closer to what the
+other platform does than cutting an array is; it agreed with the cut on 8 of the
+11 and carried the same regressions. The mechanism is not the variable.
+
+**The tail pad's own reason does not reproduce here either.** The other platform
+says abruptly-ending audio loses its last one to three words. Every archived take
+was recorded with two deliberate seconds of trailing silence, so the pad had
+nothing to do on them — which is why each recording was CUT at its last word to
+build the condition being described. Cut that way, nothing was lost, and the pad
+changed nothing.
+
+**What was measured is the cost and only the cost.** The recordings that actually
+fabricated had rolled off the twenty-file archive bound and no longer existed, so
+the benefit side is unmeasured. That is exactly why it must not ship: a change that
+demonstrably harms the ordinary path cannot be adopted on an unmeasured benefit.
+
+The lesson outlives the feature. This file already records that parity work fails
+toward building something that was already present. This is the same bias from a
+new direction — toward building something genuinely absent that still should not be
+built. **A capability being present on the other platform, absent here, and backed
+by a benchmark there is not evidence it helps here.** The runtimes differ, and only
+running it here settles it.
+
+### A surface was being filled by searching for words in a sentence
+
+The panel that reports which speech engine is loaded was updated by testing the
+status text for `ready`, `model is not installed`, `transcription is unavailable`
+and `worker could not start` — the same shape as the pill-appearance mapping that
+was deleted for one surface over.
+
+Four unrelated messages reached it, counted rather than assumed: a Windows resume,
+a finished Escape Recovery, and both cleanup-provider health lines. Each overwrote
+the engine line with a sentence about something else.
+
+It fails silently the other way too, and that direction is what forced the fix
+rather than a follow-up. A new sentence about a failed graphics card contains none
+of the four phrases, so the panel would have kept stale text while the notice said
+the card had failed. A status now carries the answer from its call site.
+
+Found by trying to add a sentence, not by looking for a defect. The general shape:
+**when a mechanism selects on text, adding text is what exposes it**, and the
+adding is more likely than the auditing.
+
+### Live preview was not slow, it was impossible
+
+The loop waited a full interval and only then started work, so the period was the
+interval plus the cost of a pass rather than the larger of the two. On the measured
+take the first update was predicted at 5419 ms and observed at 5421 ms — two
+milliseconds apart, so nothing was intermittent — and the second was due after the
+recording had already ended.
+
+Measured on the machine, three runs each way: one update per take before, two
+after, on a five-second hold. The harness could not have caught it: it reported
+live preview as a yes-or-no, which stayed true for the whole period when the
+feature showed one frozen fragment and stopped. **Existence is not function, and a
+boolean is the shape that hides the difference.** It now reports the count.
+
+A number was wrong on the way: the first simulation test asserted three updates
+because that is what the fix felt like. Walking it gives two. Writing the test as a
+walk over both schemes rather than an assertion of a remembered figure is what made
+the wrong number fail instead of ship.
+
+### The gate printed a success word on a truncated run
+
+Three times in one session the test host crashed during teardown and `dotnet test`
+printed `Passed!` beside a count roughly fifty tests short of a complete run. Only
+the exit code disagreed, and the gate reads the exit code, so it failed correctly.
+
+Recorded rather than dismissed as runner noise because two of the three aborts
+stopped at the identical count, and because a summary that says `Passed!` while
+fifty tests did not run is one careless parse away from a false green. Filed with
+the proposed fix: fail on the abort text as well as the exit code, and assert the
+suite size.
+
 ## 2026-08-30 (evening)
 
 ### The app knew, and did not say
