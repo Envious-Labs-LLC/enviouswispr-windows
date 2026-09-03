@@ -9,7 +9,7 @@ var repositoryRoot = FindRepositoryRoot(AppContext.BaseDirectory);
 var modelDirectory = Path.Combine(repositoryRoot, "models", "parakeet-tdt-0.6b-v3");
 var workerExecutable = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
 
-var hardware = await new WindowsHardwareDiscovery().ProbeAsync();
+var hardware = await new WindowsHardwareDiscovery(CudaRuntimeDirectory.ForTooling()).ProbeAsync();
 var models = new LocalParakeetModelProbe().Probe(modelDirectory);
 var selection = ParakeetRuntimeSelector.Select(hardware, models);
 

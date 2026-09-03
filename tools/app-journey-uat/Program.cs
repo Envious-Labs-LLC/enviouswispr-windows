@@ -709,7 +709,7 @@ try
         throw new JourneyExpectationException("The production journey left an owned local-polish worker running.");
     }
 
-    var hardware = await new WindowsHardwareDiscovery().ProbeAsync();
+    var hardware = await new WindowsHardwareDiscovery(CudaRuntimeDirectory.ForTooling()).ProbeAsync();
     string provider;
     string modelPack;
     if (englishParakeet)

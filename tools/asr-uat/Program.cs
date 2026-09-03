@@ -38,7 +38,7 @@ var cuda = requestedProvider is null or "cuda"
             RuntimeProviderKind.Cuda,
             ParakeetModelPack.FullPrecision,
             IntraOpThreads: 1,
-            CudaRuntimeDirectory: Environment.GetEnvironmentVariable("ENVIOUSWISPR_CUDA_RUNTIME_DIR")),
+            CudaRuntimeDirectory: CudaRuntimeDirectory.ForTooling()),
         clips)
     : null;
 var isolated = requestedProvider is null or "cuda"
@@ -62,7 +62,7 @@ static async Task<IsolatedResult> RunIsolatedAsync(
         "Release",
         "net10.0-windows10.0.26100.0",
         "EnviousWispr.RuntimeWorker.exe");
-    var cudaRuntimeDirectory = Environment.GetEnvironmentVariable("ENVIOUSWISPR_CUDA_RUNTIME_DIR");
+    var cudaRuntimeDirectory = CudaRuntimeDirectory.ForTooling();
     await using var engine = new RuntimeWorkerTranscriptionEngine(new RuntimeWorkerTranscriptionOptions(
         workerExecutable,
         modelDirectory,
