@@ -58,6 +58,21 @@ var livePreview = args.Any(argument => string.Equals(
     argument,
     "--live-preview",
     StringComparison.OrdinalIgnoreCase));
+// HOLDS THE RECORDING LONG ENOUGH FOR THE HEAD START TO POLL, WHICH NOTHING DID BEFORE. The
+// streaming head start polls every 500 ms and the ordinary journey holds a recording for a fraction
+// of that, so no run this harness has ever made reached the first poll. The feature was broken from
+// the day it shipped - abandoned 511 ms into every recording - and every gate stayed green, because
+// the only thing that could have noticed was never given a long enough take. Ref: #96.
+var headStart = args.Any(argument => string.Equals(
+    argument,
+    "--head-start",
+    StringComparison.OrdinalIgnoreCase));
+if (headStart && livePreview)
+{
+    throw new JourneyExpectationException(
+        "--head-start and --live-preview are mutually exclusive: the head start deliberately stands "
+            + "down when Live Preview is on, so asking for both asserts a state the app refuses.");
+}
 var deterministicProfileArgument = ArgumentValue(args, "--deterministic-profile");
 var deterministicProfile = deterministicProfileArgument?.ToLowerInvariant() switch
 {
@@ -445,6 +460,14 @@ try
         {
             appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_HOLD_MILLISECONDS"] = "2000";
         }
+        else if (headStart)
+        {
+            // FOUR SECONDS BUYS SEVEN POLLS AT THE 500 ms INTERVAL, and the planner needs more than
+            // one because it refuses to commit the final segment - a segment at the end of the audio
+            // so far is indistinguishable from the first half of a word still being said. One poll
+            // would assert nothing about committing.
+            appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_HOLD_MILLISECONDS"] = "4000";
+        }
     }
     app = StartOrExplain(appStart) ?? throw new JourneyExpectationException(
         "The production WinUI app did not start.");
@@ -656,6 +679,10 @@ try
     if (livePreview)
     {
         RequireLivePreviewJourneyEvents(diagnosticEvents);
+    }
+    if (headStart)
+    {
+        RequireHeadStartJourneyEvents(diagnosticEvents);
     }
     var polishEvidence = ReadPolishJourneyEvidence(diagnosticPath, polishProvider);
     if (polishProvider != PolishProvider.None)
@@ -1324,6 +1351,39 @@ static void RequireLivePreviewJourneyEvents(IReadOnlyList<string> events)
     {
         throw new JourneyExpectationException(
             $"The live-preview journey omitted content-free stages: {string.Join(", ", missing)}.");
+    }
+}
+
+/// <summary>The head start committed work during the recording and the release used it.</summary>
+/// <remarks>
+/// ASSERTS THE OUTCOME AND THE ABSENCE, because either alone passes against the defect. Requiring
+/// only the committed segment would pass on a run that committed once and then abandoned; requiring
+/// only "not abandoned" would pass on a run that never polled at all, which is exactly what every
+/// journey before this one did.
+///
+/// ABANDONING IS CORRECT BEHAVIOUR AND IS STILL A FAILURE HERE. The head start gives up on any error
+/// rather than delivering half a dictation, and that design stays. This mode exists to assert the
+/// happy path is reachable at all - on a clean fixture, on a machine with a working engine, there is
+/// nothing to give up over.
+/// </remarks>
+static void RequireHeadStartJourneyEvents(IReadOnlyList<string> events)
+{
+    var required = new[] { "StreamingSegmentCommitted", "StreamingHeadStartUsed" };
+    var missing = required.Where(eventName => !events.Any(value => value.StartsWith(
+        eventName + '/',
+        StringComparison.Ordinal))).ToArray();
+    if (missing.Length > 0)
+    {
+        throw new JourneyExpectationException(
+            "The head-start journey omitted content-free stages: " + string.Join(", ", missing)
+                + ". The streaming head start did no work this recording could use.");
+    }
+
+    if (events.Any(value => value.StartsWith("StreamingAbandoned/", StringComparison.Ordinal)))
+    {
+        throw new JourneyExpectationException(
+            "The streaming head start was abandoned on a clean fixture run. Giving up is correct on "
+                + "a real failure, so read the abandoned record's error code: it names what failed.");
     }
 }
 

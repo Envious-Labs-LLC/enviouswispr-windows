@@ -85,6 +85,58 @@ public sealed class WasapiAudioCaptureTests
         Assert.Null(capture.GetSnapshot(TimeSpan.FromSeconds(1)));
     }
 
+    /// <summary>Asking for the whole recording returns it instead of throwing.</summary>
+    /// <remarks>
+    /// THE STREAMING HEAD START ASKS FOR EXACTLY THIS AND HAS NEVER ONCE SURVIVED IT. Its loop wants
+    /// the whole recording rather than a window - a commit is a range measured from the start, so a
+    /// rolling window would make those indices mean something different on every poll - and it says
+    /// so by passing `TimeSpan.MaxValue`. That is about 9.2e11 seconds; multiplied by the sample rate
+    /// it is about 1.5e16, and the `checked` cast to `int` threw `OverflowException` on the FIRST
+    /// poll of every recording ever made.
+    ///
+    /// THE EXCEPTION WAS INVISIBLE BECAUSE THE FEATURE IS DESIGNED TO GIVE UP QUIETLY. Any failure
+    /// abandons the head start and the release transcribes the whole take, which is correct and is
+    /// why nothing on screen was ever wrong. Measured 2026-09-03: `StreamingAbandoned` 511 ms after
+    /// the recording started, matching the poll interval, with no error code because an
+    /// `OverflowException` is not a transcription failure. Ref: #96.
+    ///
+    /// A CEILING THAT CANNOT BE REACHED IS NOT A LIMIT. `maximumDuration` only ever trims, so
+    /// saturating it changes nothing for any duration a caller could mean and removes the one value
+    /// that turned "give me everything" into a crash.
+    /// </remarks>
+    [Fact]
+    public async Task AskingForTheWholeRecordingReturnsItRatherThanOverflowing()
+    {
+        var recorder = new FakeRecorderSession();
+        await using var capture = CreateCapture(recorder);
+        var sessionId = DictationSessionId.Create();
+
+        await capture.StartAsync(new AudioCaptureRequest(sessionId));
+        recorder.Emit(0.1f, 0.2f, 0.3f, 0.4f);
+        var snapshot = capture.GetSnapshot(TimeSpan.MaxValue);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(sessionId, snapshot.SessionId);
+        Assert.Equal(CompletePreviewFixture, snapshot.Samples.ToArray());
+    }
+
+    /// <summary>Every duration a caller could mean is accepted, including the extremes.</summary>
+    [Theory]
+    [InlineData(long.MaxValue)]
+    [InlineData(long.MaxValue / 2)]
+    [InlineData(TimeSpan.TicksPerDay * 365)]
+    [InlineData(TimeSpan.TicksPerSecond * 20)]
+    public async Task NoReachableDurationThrows(long ticks)
+    {
+        var recorder = new FakeRecorderSession();
+        await using var capture = CreateCapture(recorder);
+
+        await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
+        recorder.Emit(0.1f, 0.2f, 0.3f, 0.4f);
+
+        Assert.NotNull(capture.GetSnapshot(TimeSpan.FromTicks(ticks)));
+    }
+
     [Fact]
     public async Task UnexpectedStopPreservesTakeAsRetryableInterruption()
     {
