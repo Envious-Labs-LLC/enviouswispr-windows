@@ -1806,17 +1806,12 @@ public partial class App : Application, IAsyncDisposable
             Language: language));
     }
 
-    private static string? ResolveCudaRuntimeDirectory(string dataDirectory)
-    {
-        var configured = Environment.GetEnvironmentVariable("ENVIOUSWISPR_CUDA_RUNTIME_DIR");
-        if (!string.IsNullOrWhiteSpace(configured) && Directory.Exists(configured))
-        {
-            return Path.GetFullPath(configured);
-        }
-
-        var installed = Path.Combine(dataDirectory, "runtime", "cuda");
-        return Directory.Exists(installed) ? installed : null;
-    }
+    // MOVED TO CORE, UNCHANGED IN BEHAVIOUR, so the harnesses that judge this app can ask the same
+    // question and get the same answer. They used to read the environment variable alone, so on a
+    // machine with the runtime provisioned and the variable unset the app ran on the card while the
+    // gate reported that CUDA could not load. Ref: #129.
+    private static string? ResolveCudaRuntimeDirectory(string dataDirectory) =>
+        CudaRuntimeDirectory.ForApplication(dataDirectory);
 
     private string? ResolveModelDirectory(
         string modelId,
