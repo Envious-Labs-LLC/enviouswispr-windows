@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Production\EnviousWispr.Core\EnviousWispr.Core.csproj" />
+    <ProjectReference Include="..\..\src\Production\EnviousWispr.Services\EnviousWispr.Services.csproj" />
+    <ProjectReference Include="..\..\src\Production\EnviousWispr.RuntimeWorker\EnviousWispr.RuntimeWorker.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Target Name="CopyRuntimeWorker" AfterTargets="Build">
+    <ItemGroup>
+      <RuntimeWorkerFiles Include="..\..\src\Production\EnviousWispr.RuntimeWorker\bin\$(Configuration)\net10.0-windows10.0.26100.0\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(RuntimeWorkerFiles)" DestinationFiles="@(RuntimeWorkerFiles->'$(OutDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

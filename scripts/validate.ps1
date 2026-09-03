@@ -311,6 +311,12 @@ try {
     Write-Host "Building native Whisper UAT harness (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/whisper-uat/EnviousWispr.Whisper.Uat.csproj", "-c", "Release", "--nologo")
 
+    # BUILT BY THE GATE THOUGH THE GATE CANNOT RUN IT. It needs a model pack and long recordings that
+    # are not in the repository, so it is a measuring instrument rather than a check. Compiling it here
+    # is what stops it rotting into something that cannot be pointed at the next question.
+    Write-Host "Building live-preview cost spike (Release)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/asr-incremental-spike/EnviousWispr.Asr.Incremental.Spike.csproj", "-c", "Release", "--nologo")
+
     Write-Host "Building production WinUI end-to-end journey UAT harness (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", "Release", "--nologo")
 

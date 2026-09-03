@@ -54,6 +54,29 @@ Automatic Parakeet therefore selected its tested quantized CPU path.
 | Parakeet / Whisper / preview cancellation | 165 / 596 / 603 ms | 2,000 ms |
 | Reliability cycles / handle delta | 1,000 / 9 | 1,000 / at most 12 |
 
+## The preview budget on this page and the preview cadence in the code disagree
+
+**Measured 2026-09-03 on the same rig, and this row needs re-deciding rather than re-running.** The
+budget above allows a preview update 5,000 ms through 20 seconds; #113 has since made the loop ask for
+one every 2,500 ms. So the run below passes this page and saturates the loop at the same time, and
+"preview latency passes" is true only against the older of the two numbers.
+
+Cost of one preview pass, whisper-small, the thread count `ConfigureLivePreview` picks, three real
+recordings, three runs each, median:
+
+| speech so far | 0.5 s | 1 s | 2.5 s | 5 s | 7.5 s | 10 s | 15 s | 20 s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| card | 51 | 48 | 65 | 88 | 108 | 142 | 232 | 308 |
+| processor | 2,047 | 2,050 | 2,171 | 2,226 | 2,240 | 2,255 | 2,381 | 2,495 |
+
+**The two shortest columns are the point.** On the processor, half a second of speech costs 2,047 ms -
+82% of what twenty seconds costs. The cost is a floor, not a function of how long somebody has been
+speaking, so the loop on a processor runs a 2.0-2.5 second pass against a 2.5 second cadence with no
+headroom at any window length. On a card the same figures are a floor of 48 ms and growth to 308,
+which is an eighth of the cadence and reaches nobody.
+
+Reproduce with `tools/asr-incremental-spike`. Ref: #99.
+
 Parakeet, shell/runtime readiness, recording, cancellation, and repeated lifecycle pass on this machine.
 Whisper CPU final latency fails the provisional laptop budget even on this desktop. Its German language
 detection and Spanish public-fixture quality also failed in this run. Preview latency passes, French and
