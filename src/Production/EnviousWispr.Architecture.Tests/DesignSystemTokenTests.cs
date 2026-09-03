@@ -884,31 +884,43 @@ public sealed partial class DesignSystemTokenTests
         var shell = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
 
-        var unscoped = new List<string>();
-        var flows = 0;
-        foreach (Match match in DictationFlowRegex().Matches(shell))
-        {
-            flows++;
-            var body = shell[match.Index..];
-            var stop = body.IndexOf("\n    private ", 20, StringComparison.Ordinal);
-            if (stop > 0)
-            {
-                body = body[..stop];
-            }
+        // THE PARSER DECIDES WHAT A FLOW IS, BECAUSE THE REGEX FAILED GREEN. It required the exact
+        // text `private async Task`, and C# lets a method carry its modifiers in any order with any
+        // trivia between them, so ONE extra valid modifier hid a whole flow while the floor below
+        // still counted five and passed. A method that never opened a scope would have read as
+        // ABSENT rather than as unscoped, which is the one outcome a check must never have. Ref: #82.
+        //
+        //     private static async Task HandleAsync(DictationSessionId sessionId) { ... }
+        var methods = DictationFlows(shell);
 
+        var unscoped = new List<string>();
+        var flows = methods.Length;
+        foreach (var method in methods)
+        {
             // THE SCOPE MUST BE OPENED BEFORE THE FLOW LOGS ANYTHING, which is the property that
             // actually matters and needs no window at all. Two earlier drafts guessed at one - six
             // hundred characters, then eight lines - and a reviewer pointed out that a longer
             // signature, a blank line or a block comment moves a correct scope past either. A
             // window is a proxy; this is the thing itself.
             //
+            // COMPARED AS CALLS RATHER THAN AS TEXT, which closes the false alarm the old version
+            // admitted to in its own remarks: `_logger.Write(` written inside a comment or a string
+            // counted as the flow logging, and would have accused a correctly scoped method.
+            //
             // A flow that never logs is fine either way, and is required to open one anyway,
             // because the next line added to it will be a log line.
-            var firstWrite = body.IndexOf("_logger.Write(", StringComparison.Ordinal);
-            var opening = firstWrite > 0 ? body[..firstWrite] : body;
-            if (!opening.Contains("DictationScope.Begin(", StringComparison.Ordinal))
+            var calls = ((SyntaxNode?)method.Body ?? method.ExpressionBody)
+                ?.DescendantNodes()
+                .OfType<InvocationExpressionSyntax>()
+                .ToArray() ?? [];
+            var firstWrite = calls.FirstOrDefault(call => call.Expression.ToString()
+                .EndsWith("_logger.Write", StringComparison.Ordinal));
+            var opensScope = calls.FirstOrDefault(call => call.Expression.ToString()
+                .EndsWith("DictationScope.Begin", StringComparison.Ordinal));
+            if (opensScope is null ||
+                (firstWrite is not null && opensScope.SpanStart > firstWrite.SpanStart))
             {
-                unscoped.Add(match.Groups[1].Value);
+                unscoped.Add(method.Identifier.ValueText);
             }
         }
 
@@ -921,16 +933,89 @@ public sealed partial class DesignSystemTokenTests
             "These methods are handed a dictation and never open its scope, so every line they "
                 + "write is joined to nothing: " + string.Join(", ", unscoped));
     }
+    /// <summary>Every method the shell has that is handed a dictation and awaits under it.</summary>
+    /// <remarks>
+    /// A METHOD RATHER THAN AN INLINE QUERY SO THE RULE CAN BE PROVED. The shapes that broke the
+    /// regex this replaces do not appear in the repository, so a gate exercised only against the
+    /// real file cannot show it is better than what it replaced. This is called both by the gate
+    /// and by proofs written against source that exists nowhere else.
+    /// </remarks>
+    private static MethodDeclarationSyntax[] DictationFlows(string code) =>
+        CSharpSyntaxTree.ParseText(code).GetRoot()
+            .DescendantNodes()
+            .OfType<MethodDeclarationSyntax>()
+            .Where(method =>
+                method.Modifiers.Any(SyntaxKind.PrivateKeyword) &&
+                method.Modifiers.Any(SyntaxKind.AsyncKeyword) &&
+                ReturnsTask(method.ReturnType) &&
+                method.ParameterList.Parameters.Any(parameter =>
+                    parameter.Type is IdentifierNameSyntax
+                    {
+                        Identifier.ValueText: "DictationSessionId",
+                    }))
+            .ToArray();
 
-    /// <summary>A method that takes a dictation and does work under it.</summary>
+    /// <summary>A flow is found however its signature is written.</summary>
+    /// <remarks>
+    /// THREE OF THESE SIX WERE INVISIBLE YESTERDAY, checked by running the old pattern against
+    /// them rather than assumed: a modifier in front of `async` (A), a qualified return type (B),
+    /// and modifiers split across lines (D). The regex required the literal text
+    /// `private async Task`. A hidden method is not reported as unscoped - it is not reported at
+    /// all, and the floor below still counted five and passed. Ref: #82.
+    ///
+    /// THE OTHER THREE ARE NOT MISSES AND ARE HERE ON PURPOSE. C, E and F were already matched, so
+    /// they are what proves the parser did not BUY the three above by dropping shapes the pattern
+    /// used to catch. A rewrite that trades one blind spot for another looks identical to a fix.
+    /// </remarks>
+    [Theory]
+    [InlineData("private static async Task A(DictationSessionId id) { }")]
+    [InlineData("private async System.Threading.Tasks.Task B(DictationSessionId id) { }")]
+    [InlineData("private async Task<int> C(DictationSessionId id) { return 0; }")]
+    [InlineData("private|async|Task D(DictationSessionId id) { }")]
+    [InlineData("private async Task E(|DictationSessionId id) { }")]
+    [InlineData("private async Task F(string first, DictationSessionId id) { }")]
+    public void AFlowIsFoundHoweverItsSignatureIsWritten(string declaration)
+    {
+        // The bar stands for a line break: a signature split across lines is one of the shapes
+        // the pattern this replaces could not see, and it cannot be written inside an attribute.
+        var found = DictationFlows("class C { " + declaration.Replace('|', '\n') + " }");
+
+        Assert.Single(found);
+    }
+
+    /// <summary>A method that only starts a flow is not one, and neither is a stranger.</summary>
+    /// <remarks>
+    /// THE CONTROL. Without it, a finder that matched every method would satisfy every row above
+    /// and prove nothing at all.
+    /// </remarks>
+    [Theory]
+    [InlineData("private Task Starts(DictationSessionId id) => Task.CompletedTask;")]
+    [InlineData("public async Task NotPrivate(DictationSessionId id) { }")]
+    [InlineData("private async void NotATask(DictationSessionId id) { }")]
+    [InlineData("private async Task NoDictation(string id) { }")]
+    public void SomethingThatIsNotAFlowIsNotFound(string declaration)
+    {
+        Assert.Empty(DictationFlows("class C { " + declaration + " }"));
+    }
+
+    /// <summary>Whether a method returns a Task, however that Task is written.</summary>
     /// <remarks>
     /// `async` is the discriminator between a flow and a starter. A method that merely kicks one
     /// off is synchronous here and passes the id on; the ones that log under it are the ones that
     /// await.
+    ///
+    /// SYNTAX, NOT SEMANTICS, AND THE DIFFERENCE IS WRITTEN DOWN RATHER THAN IMPLIED. This believes
+    /// any type spelled `Task`, so a different `Task` brought in by a using directive would be
+    /// accepted, and a task-like type under another name would be missed. Closing that needs a
+    /// semantic model - #82.
     /// </remarks>
-    [GeneratedRegex(@"private async Task(?:<[^>]+>)? (\w+)\([^)]*DictationSessionId ",
-        RegexOptions.Singleline | RegexOptions.CultureInvariant)]
-    private static partial Regex DictationFlowRegex();
+    private static bool ReturnsTask(TypeSyntax returnType) => returnType switch
+    {
+        IdentifierNameSyntax name => name.Identifier.ValueText == "Task",
+        GenericNameSyntax generic => generic.Identifier.ValueText == "Task",
+        QualifiedNameSyntax qualified => ReturnsTask(qualified.Right),
+        _ => false,
+    };
 
     /// <summary>The journey harness reports its own failures instead of crashing.</summary>
     /// <remarks>
