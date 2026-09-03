@@ -323,6 +323,48 @@ window width — all of that is asserted here and checked nowhere. Say so when y
 letting a green suite imply it was looked at. The entire design system landed this way once, in one night,
 against code and the macOS token files and never against a screen.
 
+## FACT: a-warped-cursor-is-not-a-pointer-and-the-overlay-was-accused-because-of-it
+Measured 2026-09-03, and it produced a defect report against a healthy product before it was caught.
+
+`SetCursorPos` moves the cursor. It puts nothing on the input queue, and WinUI raises `PointerEntered`
+from that queue - so the pointer sits inside the window and the window is never told a pointer arrived.
+Same reading, same build, same state, two ways of moving:
+
+| pointer driven by | control | hovered |
+| --- | ---: | ---: |
+| `SetCursorPos` | 2.64 s | 2.13 s - reads as NO hover effect |
+| `SendInput`, MOUSEEVENTF_MOVE \| MOUSEEVENTF_ABSOLUTE | 2.91 s | **never within 15 s** |
+
+`tools/ui-capture/hover-ui.ps1` is the instrument, and it moves with `SendInput`. Walk in from outside
+the target's edge and keep nudging while the pointer is meant to rest there; `SetCursorPos` is fit only
+for parking a cursor out of the way.
+
+**THE CHECK THAT WOULD HAVE CAUGHT IT IS NOT ABOUT THE API.** The overlay already supports being
+DRAGGED with a real mouse, so pointer events demonstrably reach it. A measurement implying they never
+arrive contradicted a feature that ships, and that contradiction was on screen before the issue was
+filed. **A reading that disagrees with something already known to work is the reading to distrust
+first** - the same demand as carrying the expected VALUE rather than the expected variance, arriving
+from the other direction.
+
+Four confounds were ruled out before filing - occlusion by another window, a teleport rather than a
+walk, a detector that could not see the pill leave, and the missing control - and not the one that
+mattered: whether the pointer was a pointer at all.
+
+## FACT: the-pill-dwells-are-explicit-and-hover-pauses-them
+Read from `SetState` and confirmed by measurement, because the numbers matter to anyone timing a
+capture and a settle that lands on a boundary reads as "still there":
+
+| State | Dwell |
+|---|---|
+| Advisory, Suggestion | 6 s |
+| Error, Distress | 5 s |
+| Success, Warning | 3 s |
+| Recording, Processing | no dwell - they persist |
+
+Hover pauses all of them, and `ArmDwell` restarts the clock from the top on exit rather than resuming a
+remainder. The pill is also **not click-through**: `WindowFromPoint` over it returns the app's own
+window rather than passing through, so a mouse click can land on it.
+
 ## RULE: a-handled-routed-event-does-not-reach-the-system-wide-hook
 **The recording key is a low-level keyboard hook, so it fires BEFORE any window sees the key.** Setting
 `e.Handled = true` in a XAML `KeyDown` handler is a statement about the window's routed event and has no
