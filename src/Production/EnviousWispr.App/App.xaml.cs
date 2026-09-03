@@ -1481,7 +1481,9 @@ public partial class App : Application, IAsyncDisposable
                 "1",
                 StringComparison.Ordinal))
         {
-            _window?.SetSessionStatus(DictationStatus.Quiet("Local transcription disabled for performance UAT"));
+            _window?.SetSessionStatus(DictationStatus
+                .Quiet("Local transcription disabled for performance UAT")
+                .AboutTheTranscriptionEngine());
             return;
         }
 
@@ -1510,7 +1512,8 @@ public partial class App : Application, IAsyncDisposable
         {
             _window?.SetSessionStatus(
                 DictationStatus.Advisory(
-                    "Local transcription model is not installed", OpenTranscription));
+                        "Local transcription model is not installed", OpenTranscription)
+                    .AboutTheTranscriptionEngine());
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionFailed,
@@ -1521,22 +1524,30 @@ public partial class App : Application, IAsyncDisposable
         var hardware = await new WindowsHardwareDiscovery(_cudaRuntimeDirectory)
             .ProbeAsync()
             .ConfigureAwait(true);
+        var workerExecutable = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
+        // THE SELECTION IS MADE BEFORE IT IS OBSERVED. This line used to be written above the two
+        // Create calls, so it could only ever report the hardware and never what the hardware was
+        // used FOR - which is why a machine transcribing on the processor beside an idle graphics
+        // card had nothing anywhere saying whether the card was absent, refused, or chosen and
+        // broken. Ref: #102.
+        _transcriptionEngine = engine == FinalAsrEngine.Whisper
+            ? CreateWhisperEngine(
+                workerExecutable, modelDirectory, hardware, whisperLanguage, out var selectionReason)
+            : CreateParakeetEngine(workerExecutable, modelDirectory, hardware, out selectionReason);
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
             AppEventCode.RuntimeSelectionObserved,
             Engine: engine == FinalAsrEngine.Whisper
                 ? DiagnosticEngineChoice.Whisper
                 : DiagnosticEngineChoice.Parakeet,
-            HardwareClass: DiagnosticHardwareClassFor(hardware)));
-        var workerExecutable = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
-        _transcriptionEngine = engine == FinalAsrEngine.Whisper
-            ? CreateWhisperEngine(workerExecutable, modelDirectory, hardware, whisperLanguage)
-            : CreateParakeetEngine(workerExecutable, modelDirectory, hardware);
+            HardwareClass: DiagnosticHardwareClassFor(hardware),
+            RuntimeSelection: selectionReason));
         if (_transcriptionEngine is null)
         {
             _window?.SetSessionStatus(
                 DictationStatus.Advisory(
-                    "Local transcription is unavailable on this machine", OpenTranscription));
+                        "Local transcription is unavailable on this machine", OpenTranscription)
+                    .AboutTheTranscriptionEngine());
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionFailed,
@@ -1564,7 +1575,8 @@ public partial class App : Application, IAsyncDisposable
                 _transcriptionEngine = null;
                 _window?.SetSessionStatus(
                     DictationStatus.Advisory(
-                    "Local transcription could not start", OpenTranscription));
+                            "Local transcription could not start", OpenTranscription)
+                        .AboutTheTranscriptionEngine());
                 _logger.Write(new AppLogEntry(
                     DateTimeOffset.UtcNow,
                     AppEventCode.DictationTranscriptionFailed,
@@ -1573,17 +1585,39 @@ public partial class App : Application, IAsyncDisposable
             }
 
             ConfigureLivePreview(workerExecutable, hardware, whisperLanguage, forceCpu: true);
-            _window?.SetSessionStatus(DictationStatus.Quiet("Local transcription ready on the processor"));
+            // THE MEMBER NO SELECTOR CAN PRODUCE. Getting here means the selection SUCCEEDED and the
+            // runtime then refused to start, which the selector cannot see and therefore cannot
+            // report. Measured on the development machine: the graphics libraries were missing, the
+            // card was chosen, the start failed, the processor took over, and dictation ran about a
+            // hundred times slower for days with nothing saying so. Ref: #102.
+            var degradedReason =
+                selectionReason == DiagnosticRuntimeSelectionReason.GpuSelected
+                    ? DiagnosticRuntimeSelectionReason.ProcessorSelectedAfterGpuFailedToStart
+                    : selectionReason;
+            // ADVISORY, NOT QUIET, AND ONLY WHERE THE CARD IS ACTUALLY THE STORY. This is the user's
+            // setup needing attention rather than the app breaking, so it takes the advisory pill and
+            // carries the consequence rather than the mechanism - a person who reads "ready on the
+            // processor" has been told a fact about our plumbing and nothing they can act on. Where
+            // the run was never going to be on a card, there is no consequence to report and the
+            // quiet line stands.
+            _window?.SetSessionStatus(
+                (degradedReason == DiagnosticRuntimeSelectionReason.ProcessorSelectedAfterGpuFailedToStart
+                    ? DictationStatus.Advisory(
+                        "Your graphics card did not start, so dictation is slower", OpenTranscription)
+                    : DictationStatus.Quiet("Local transcription ready on the processor"))
+                    .AboutTheTranscriptionEngine());
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionDegraded,
                 AppFailureCategory.RuntimeProvider,
-                ErrorCode: AppErrorCode.RuntimeProviderUnavailable));
+                ErrorCode: AppErrorCode.RuntimeProviderUnavailable,
+                RuntimeSelection: degradedReason));
             return;
         }
 
         ConfigureLivePreview(workerExecutable, hardware, whisperLanguage);
-        _window?.SetSessionStatus(DictationStatus.Quiet("Local transcription ready"));
+        _window?.SetSessionStatus(
+            DictationStatus.Quiet("Local transcription ready").AboutTheTranscriptionEngine());
     }
 
     private void ConfigureLivePreview(
@@ -1635,7 +1669,8 @@ public partial class App : Application, IAsyncDisposable
     private RuntimeWorkerTranscriptionEngine? CreateParakeetEngine(
         string workerExecutable,
         string modelDirectory,
-        HardwareSnapshot hardware)
+        HardwareSnapshot hardware,
+        out DiagnosticRuntimeSelectionReason reason)
     {
         var models = new LocalParakeetModelProbe().Probe(modelDirectory);
         var selection = ParakeetRuntimeSelector.Select(hardware, models);
@@ -1643,6 +1678,9 @@ public partial class App : Application, IAsyncDisposable
             hardware,
             models,
             RuntimeProviderPreference.Cpu);
+        // REPORTED ON BOTH EXITS, WHICH IS THE POINT OF THE OUT PARAMETER. The failing path is the
+        // one nobody could read: returning null told the caller only that there was no engine.
+        reason = DiagnosticRuntimeSelectionReasons.From(selection);
         if (!selection.Succeeded ||
             selection.Provider is null ||
             selection.ModelPack is null ||
@@ -1695,7 +1733,8 @@ public partial class App : Application, IAsyncDisposable
         string workerExecutable,
         string modelDirectory,
         HardwareSnapshot hardware,
-        string language)
+        string language,
+        out DiagnosticRuntimeSelectionReason reason)
     {
         var models = new LocalWhisperModelProbe().Probe(modelDirectory);
         var selection = WhisperRuntimeSelector.Select(hardware, models);
@@ -1703,6 +1742,7 @@ public partial class App : Application, IAsyncDisposable
             hardware,
             models,
             RuntimeProviderPreference.Cpu);
+        reason = DiagnosticRuntimeSelectionReasons.From(selection);
         if (!selection.Succeeded ||
             selection.Provider is null ||
             selection.ModelPack is null ||
@@ -3050,7 +3090,8 @@ public partial class App : Application, IAsyncDisposable
             await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
             _window?.DispatcherQueue.TryEnqueue(() =>
                 _window?.SetSessionStatus(DictationStatus.Advisory(
-                    "Audio captured, but local transcription is unavailable", OpenTranscription)));
+                        "Audio captured, but local transcription is unavailable", OpenTranscription)
+                    .AboutTheTranscriptionEngine()));
             return;
         }
 

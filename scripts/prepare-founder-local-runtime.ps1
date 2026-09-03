@@ -13,11 +13,56 @@ param(
 
     [string[]]$CudaSourceDirectories,
 
-    [switch]$IncludeCuda
+    [switch]$IncludeCuda,
+
+    # THE ONLY WAY PAST THE GUARD BELOW, AND IT COSTS A STATED INTENT. Provisioning a machine that
+    # has an NVIDIA card without its runtime libraries is legitimate - a deliberate processor-only
+    # setup, or a card whose libraries are supplied some other way - but it is never what somebody
+    # wanted by ACCIDENT, which is what the bare default used to produce.
+    [switch]$SkipCuda
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
+
+# ---- refuse to half-provision a machine that has a card ---------------------------------------
+# THIS SCRIPT'S DEFAULT SILENTLY BUILT THE EXACT STATE ISSUE #102 SPENT DAYS ON. Without
+# -IncludeCuda it provisions models and no graphics runtime, so the app correctly finds no
+# dependencies, correctly falls back, and dictation runs about a hundred times slower on a machine
+# with an idle RTX 4090. Nothing failed, nothing was red, and the only symptom was a slow app.
+#
+# A DEFAULT THAT PRODUCES A BROKEN-LOOKING MACHINE IS NOT A SAFE DEFAULT. The check runs BEFORE any
+# file is copied so a refusal leaves the machine exactly as it was found.
+#
+# THE DRIVER'S OWN TOOL IS THE AUTHORITY, and the display adapter list is the fallback for a machine
+# whose driver tools are not on PATH. Neither is asked whether the RUNTIME libraries are present -
+# that is what -IncludeCuda provisions; this asks only whether a card is here to be wasted.
+function Test-NvidiaDevicePresent {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $smi = Get-Command 'nvidia-smi' -ErrorAction SilentlyContinue
+        if ($null -ne $smi) {
+            $listed = & $smi.Source '-L' 2>&1 | Out-String
+            if ($LASTEXITCODE -eq 0 -and $listed -match 'GPU 0:') { return $true }
+        }
+
+        $adapters = @(Get-CimInstance -ClassName Win32_VideoController -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match 'NVIDIA' })
+        return $adapters.Count -gt 0
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
+if (-not $IncludeCuda -and -not $SkipCuda -and (Test-NvidiaDevicePresent)) {
+    throw ('This machine has an NVIDIA graphics card and -IncludeCuda was not passed, so the run ' +
+        'would install the models and none of the graphics runtime libraries they need. That is ' +
+        'the state where transcription silently falls back to the processor and runs about a ' +
+        'hundred times slower (#102). Re-run with -IncludeCuda, or with -SkipCuda if a ' +
+        'processor-only machine is what you meant. Nothing has been copied.')
+}
 
 if ([string]::IsNullOrWhiteSpace($DataDirectory)) {
     $DataDirectory = Join-Path `

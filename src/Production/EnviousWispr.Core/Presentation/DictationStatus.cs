@@ -124,11 +124,38 @@ public sealed record PillAction(string Label, PillActionKind Kind, string? Acces
 /// <param name="Text">The sentence shown to the user.</param>
 /// <param name="State">The pill that carries it.</param>
 /// <param name="Action">The one thing the user can do about it, or null.</param>
+/// <param name="DescribesTranscriptionEngine">
+/// Whether this sentence is about the speech engine's own readiness, and therefore belongs on the
+/// Transcription card and the onboarding line as well as the status line.
+/// </param>
 public readonly record struct DictationStatus(
     string Text,
     DictationOverlayState State,
-    PillAction? Action = null)
+    PillAction? Action = null,
+    bool DescribesTranscriptionEngine = false)
 {
+    /// <summary>Marks a status as one the Transcription card should show.</summary>
+    /// <remarks>
+    /// THE SECOND HALF OF THE SAME LESSON AS THE STATE ABOVE, AND IT WAS STILL BEING READ OUT OF THE
+    /// WORDS. The window decided whether to update the Transcription card by testing the sentence
+    /// for "ready", "model is not installed", "transcription is unavailable" and "worker could not
+    /// start" - so the card was reached by whatever happened to contain those words rather than by
+    /// what the sentence was about.
+    ///
+    /// FOUR UNRELATED MESSAGES REACHED IT, counted rather than assumed: "Windows resumed.
+    /// EnviousWispr is ready" after a lid opens, "Escape Recovery finished. Text is ready to copy"
+    /// after a dictation, and both cleanup-provider health lines - "Ollama is ready" and "Cleaned
+    /// locally; the selected Ollama model is not installed". Each one overwrote the card that is
+    /// supposed to say which speech engine is loaded, with a sentence about something else.
+    ///
+    /// AND IT FAILS IN BOTH DIRECTIONS. A new engine sentence that happens not to contain one of the
+    /// four phrases never reaches the card at all, silently, which is how a copy edit removes a
+    /// surface. Saying it here at the call site is the only version of this that a reword cannot
+    /// break.
+    /// </remarks>
+    public DictationStatus AboutTheTranscriptionEngine() =>
+        this with { DescribesTranscriptionEngine = true };
+
     /// <summary>Shown on the settings status line only. No pill.</summary>
     public static DictationStatus Quiet(string text) => new(text, DictationOverlayState.Hidden);
 
