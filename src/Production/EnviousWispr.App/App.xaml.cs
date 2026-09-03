@@ -1636,12 +1636,12 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        var useCuda = !forceCpu &&
-            hardware.Architecture == ProcessorArchitectureKind.X64 &&
-            hardware.Cuda.IsDriverAvailable &&
-            hardware.Cuda.DeviceCount > 0 &&
-            hardware.IsOnnxRuntimeCudaDependencySetAvailable;
-        var provider = useCuda ? RuntimeProviderKind.Cuda : RuntimeProviderKind.Cpu;
+        // ASKS ABOUT whisper.cpp NOW, WHICH IS WHAT LIVE PREVIEW ACTUALLY RUNS. This used to require
+        // onnxruntime's CUDA dependency set as well - a probe about the library PARAKEET uses - so a
+        // machine whose card works for whisper.cpp was put on the processor because a different
+        // library's files were absent. The rule lives beside the engine it describes and is tested
+        // there. Ref: #99.
+        var provider = WhisperPreviewRuntime.Select(hardware, forceCpu);
         var threads = Math.Clamp(
             hardware.PhysicalCoreCount > 0
                 ? hardware.PhysicalCoreCount
