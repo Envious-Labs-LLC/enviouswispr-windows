@@ -109,18 +109,32 @@ public static class UiCaptureWindows {
     // MOVED, NEVER RESIZED. The size is the app's own answer and is one of the things being
     // measured; only where it sits is the tool's business.
     public static string Anchor(uint target) {
+        // THE MAIN WINDOW ONLY, BY NAME, AND THIS IS THE WHOLE POINT OF THE REWRITE. This used to
+        // move EVERY visible window of the process bigger than 200x200. The recording pill is
+        // 570x225, so it qualified, and an overlay shot therefore moved the pill to 0,0 and then
+        // moved the main window to 0,0 ON TOP OF IT. Both windows reported [0,0] in the automation
+        // tree - which reads like an unpositioned overlay and was actually this tool stacking them -
+        // and the photograph showed the main window where the pill was supposed to be. The run then
+        // published SUCCESS, because its success test is that SOME visible window exists.
+        //
+        // It also destroyed the thing an overlay shot exists to show: where the overlay actually
+        // sits is a user setting, and moving it to the corner answers a question nobody asked.
+        //
+        // Selected by NAME rather than by size, for the same reason the design system already
+        // requires it of UIA lookups: this app has two top-level windows and picking by a property
+        // they share picks the wrong one silently.
         var moved = "no window to move";
         EnumWindows((h, p) => {
             uint pid; GetWindowThreadProcessId(h, out pid);
-            if (pid == target && IsWindowVisible(h)) {
-                RECT r; GetWindowRect(h, out r);
-                if (r.Right - r.Left > 200 && r.Bottom - r.Top > 200) {
-                    // SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
-                    SetWindowPos(h, IntPtr.Zero, 0, 0, 0, 0, 0x0001 | 0x0004 | 0x0010);
-                    moved = string.Format("moved {0}x{1} from {2},{3} to 0,0",
-                        r.Right - r.Left, r.Bottom - r.Top, r.Left, r.Top);
-                }
-            }
+            if (pid != target || !IsWindowVisible(h)) { return true; }
+            var title = new System.Text.StringBuilder(200);
+            GetWindowTextW(h, title, title.Capacity);
+            if (title.ToString() != "EnviousWispr") { return true; }
+            RECT r; GetWindowRect(h, out r);
+            // SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+            SetWindowPos(h, IntPtr.Zero, 0, 0, 0, 0, 0x0001 | 0x0004 | 0x0010);
+            moved = string.Format("moved {0}x{1} from {2},{3} to 0,0",
+                r.Right - r.Left, r.Bottom - r.Top, r.Left, r.Top);
             return true;
         }, IntPtr.Zero);
         return moved;
@@ -203,6 +217,39 @@ Add-Type -Namespace UiCapture -Name Dpi -MemberDefinition @'
         throw "The app is running but has no visible window. A photograph now would show the desktop and read as a photograph of the app."
     }
     foreach ($line in $windows) { Note "window $line" }
+
+    # AN OVERLAY SHOT MUST PROVE IT PHOTOGRAPHED THE OVERLAY. The success test above is that SOME
+    # visible window exists, which the main window satisfies on its own - so an overlay run that
+    # never drew a pill, or drew one underneath the main window, published a .ok marker and a
+    # perfectly valid photograph of the wrong thing. That happened: the anchor used to move the pill
+    # to 0,0 as well, the main window landed on top of it, and the shot was reported as captured.
+    #
+    # WHAT THIS CAN AND CANNOT SEE, because an unstated limit reads as coverage. It proves the pill
+    # EXISTS and that it is not wholly inside the main window's rectangle. It cannot see another
+    # application on top - a music player covering the screen occludes the pill and nothing here
+    # will say so, which is the same limit `probe-ui.ps1` declares as occlusion-and-other-clips.
+    if ($OverlayState) {
+        $pill = $windows | Where-Object { $_ -match 'dictation status' }
+        if (-not $pill) {
+            throw "Overlay state '$OverlayState' was asked for and no pill window is on screen. A photograph now would be of the main window and would read as a photograph of the pill."
+        }
+
+        $main = $windows | Where-Object { $_ -match '"EnviousWispr"$' } | Select-Object -First 1
+        if ($main -and ($pill -join ' ') -match '^(\d+)x(\d+) at (-?\d+),(-?\d+)') {
+            $pw = [int]$Matches[1]; $ph = [int]$Matches[2]
+            $px = [int]$Matches[3]; $py = [int]$Matches[4]
+            if ($main -match '^(\d+)x(\d+) at (-?\d+),(-?\d+)') {
+                $mw = [int]$Matches[1]; $mh = [int]$Matches[2]
+                $mx = [int]$Matches[3]; $my = [int]$Matches[4]
+                if ($px -ge $mx -and $py -ge $my -and
+                    ($px + $pw) -le ($mx + $mw) -and ($py + $ph) -le ($my + $mh)) {
+                    throw "The pill sits entirely inside the main window's rectangle, so the photograph shows the main window where the pill should be. Close or move the main window for overlay shots."
+                }
+            }
+        }
+
+        Note "overlay present: $pill"
+    }
 
     # PRESS WHAT WAS ASKED FOR, IN ORDER, BEFORE ANYTHING IS RECORDED. Each press settles before the
     # next, because a control that appears as a RESULT of the previous press does not exist yet.
