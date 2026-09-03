@@ -91,6 +91,9 @@ public enum AppEventCode
     SystemResumed,
     SessionLocked,
     SessionUnlocked,
+
+    /// <summary>Windows is shutting down, restarting, or logging the user off.</summary>
+    SystemSessionEnding,
     AudioDevicesChanged,
     LivePreviewStarted,
     LivePreviewUpdated,

@@ -665,8 +665,20 @@ public partial class App : Application, IAsyncDisposable
             SystemLifecycleTransition.Resumed => AppEventCode.SystemResumed,
             SystemLifecycleTransition.SessionLocked => AppEventCode.SessionLocked,
             SystemLifecycleTransition.SessionUnlocked => AppEventCode.SessionUnlocked,
+            SystemLifecycleTransition.SessionEnding => AppEventCode.SystemSessionEnding,
             _ => AppEventCode.UnhandledFailure,
         };
+        if (transition == SystemLifecycleTransition.SessionEnding && _runId is { } endingRunId)
+        {
+            // RECORDED HERE, NOT AT TEARDOWN, BECAUSE TEARDOWN MAY NEVER COME. Windows gives the
+            // process a short and unguaranteed window after this notification and can kill it at any
+            // point, so the one chance to write down that the ending was EXPECTED is now. Without it
+            // a deliberate restart is stored as an interruption, which is the same trace a crash
+            // leaves. Fire and forget for the same reason: waiting on a disk write inside a shutdown
+            // notification is how an app becomes the thing that delays somebody's shutdown. Ref: #93.
+            _ = _runStateStore.NoteSystemEndingAsync(endingRunId, DateTimeOffset.UtcNow);
+        }
+
         // WINDOWS LOCKING MID-DICTATION IS A FACT ABOUT THAT DICTATION. Written before the recovery
         // flow opens its own scope, so it opens one here too; otherwise the event that EXPLAINS the
         // recovery is the one line of it joined to nothing.
