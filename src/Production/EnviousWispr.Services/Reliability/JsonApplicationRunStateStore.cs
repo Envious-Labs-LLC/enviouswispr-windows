@@ -69,6 +69,15 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
                     status = RunStateLoadStatus.InvalidStateRecovered;
                     consecutiveInterruptedRuns = 1;
                 }
+                else if (!previous!.CleanShutdown && previous.EndedBySystem)
+                {
+                    // A KNOWN ENDING, SO THE INTERRUPTED COUNT DOES NOT MOVE. Counting deliberate
+                    // restarts as interruptions is how one machine came to believe it had failed
+                    // nineteen times in a row. The dictation flag still travels, because a shutdown
+                    // DURING a dictation loses it exactly as any other ending would. Ref: #93.
+                    status = RunStateLoadStatus.PreviousRunEndedByWindows;
+                    previousRunWasDictating = previous.DictationActive;
+                }
                 else if (!previous!.CleanShutdown)
                 {
                     status = RunStateLoadStatus.PreviousRunInterrupted;
@@ -93,7 +102,10 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
                 runId,
                 status,
                 previousRunWasDictating,
-                status == RunStateLoadStatus.Started
+                // NO ERROR FOR A KNOWN ENDING. A Windows shutdown is not a fault, so attaching
+                // `PreviousRunInterrupted` to it would put back, in the error field, exactly the
+                // conflation the status was split to remove. Ref: #93.
+                status is RunStateLoadStatus.Started or RunStateLoadStatus.PreviousRunEndedByWindows
                     ? null
                     : new AppError(
                         AppErrorCode.PreviousRunInterrupted,
@@ -131,6 +143,24 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
         CancellationToken cancellationToken = default) =>
         UpdateAsync(runId, timestamp, cleanShutdown: false, dictationActive: active, cancellationToken);
 
+    /// <remarks>
+    /// DELIBERATELY DOES NOT SET `CleanShutdown`. Windows saying the session is ending means the
+    /// ending is EXPECTED, not that the app finished tidying up - the process can still be killed
+    /// part-way through. Claiming a clean shutdown here would make every restart look like a clean
+    /// exit and erase the distinction this method exists to record. Ref: #93.
+    /// </remarks>
+    public Task<bool> NoteSystemEndingAsync(
+        Guid runId,
+        DateTimeOffset timestamp,
+        CancellationToken cancellationToken = default) =>
+        UpdateAsync(
+            runId,
+            timestamp,
+            cleanShutdown: false,
+            dictationActive: null,
+            cancellationToken,
+            endedBySystem: true);
+
     public Task<bool> CompleteRunAsync(
         Guid runId,
         DateTimeOffset timestamp,
@@ -153,7 +183,8 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
         DateTimeOffset timestamp,
         bool cleanShutdown,
         bool? dictationActive,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool? endedBySystem = null)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -172,6 +203,11 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
                 LastHeartbeatAt = timestamp,
                 CleanShutdown = cleanShutdown,
                 DictationActive = dictationActive ?? _current.DictationActive,
+                // NULL LEAVES IT ALONE, LIKE THE FLAG ABOVE, and it is never cleared. Windows
+                // announcing the end of the session is not something that stops being true: a
+                // heartbeat landing after it must not erase the one fact that explains this run's
+                // ending.
+                EndedBySystem = endedBySystem ?? _current.EndedBySystem,
             };
             await JsonSettingsStore.WriteAtomicallyAsync(next, _path, cancellationToken)
                 .ConfigureAwait(false);
@@ -241,5 +277,9 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
         int ConsecutiveInterruptedRuns,
         // DEFAULTED, SO A FILE WRITTEN BY AN OLDER BUILD STILL READS. It deserialises to false,
         // which is the honest answer: that build never recorded whether a dictation was running.
-        bool DictationActive = false);
+        bool DictationActive = false,
+        // DEFAULTED FOR THE SAME REASON AS THE FLAG ABOVE. A file written before this existed reads
+        // as false, which is the honest answer: that build never observed a Windows ending, so it
+        // cannot claim one happened. Ref: #93.
+        bool EndedBySystem = false);
 }

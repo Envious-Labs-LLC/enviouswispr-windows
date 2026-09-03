@@ -167,6 +167,137 @@ public sealed class ReliabilityStoreTests
         }
     }
 
+    /// <summary>A Windows shutdown reads as a known ending, not an unexplained one.</summary>
+    /// <remarks>
+    /// THE TWO USED TO BE ONE RECORD. A run only writes a clean exit when the app completes one
+    /// itself, and Windows shutting the machine down kills the process first - so a deliberate
+    /// Restart was stored with exactly the trace a crash leaves. Ref: #93.
+    /// </remarks>
+    [Fact]
+    public async Task AWindowsEndingIsRecordedAsKnownRatherThanInterrupted()
+    {
+        using var temp = new TemporaryDirectory();
+        var path = Path.Combine(temp.Path, "run-state.json");
+        using (var store = new JsonApplicationRunStateStore(path))
+        {
+            var run = await store.BeginRunAsync(Timestamp(0));
+            Assert.True(await store.NoteSystemEndingAsync(run.RunId, Timestamp(1)));
+        }
+
+        using (var next = new JsonApplicationRunStateStore(path))
+        {
+            var recovered = await next.BeginRunAsync(Timestamp(2));
+
+            Assert.Equal(RunStateLoadStatus.PreviousRunEndedByWindows, recovered.Status);
+            // NOT AN INTERRUPTION, WHICH IS THE WHOLE POINT: nothing downstream should treat a
+            // restart as a fault, and no error should travel with it.
+            Assert.False(recovered.RecoveredInterruptedRun);
+            Assert.Null(recovered.Error);
+        }
+    }
+
+    /// <summary>A shutdown does not claim the app tidied up after itself.</summary>
+    /// <remarks>
+    /// WINDOWS ENDING THE SESSION MEANS THE ENDING WAS EXPECTED, not that teardown ran. The process
+    /// can still be killed part-way through. If this wrote a clean shutdown, a restart would be
+    /// indistinguishable from a proper exit and the next run would report `Started` - erasing the
+    /// distinction in the other direction.
+    /// </remarks>
+    [Fact]
+    public async Task AWindowsEndingIsNotRecordedAsACleanShutdown()
+    {
+        using var temp = new TemporaryDirectory();
+        var path = Path.Combine(temp.Path, "run-state.json");
+        using (var store = new JsonApplicationRunStateStore(path))
+        {
+            var run = await store.BeginRunAsync(Timestamp(0));
+            Assert.True(await store.NoteSystemEndingAsync(run.RunId, Timestamp(1)));
+        }
+
+        using (var next = new JsonApplicationRunStateStore(path))
+        {
+            Assert.NotEqual(RunStateLoadStatus.Started, (await next.BeginRunAsync(Timestamp(2))).Status);
+        }
+    }
+
+    /// <summary>A shutdown during a dictation still says a dictation was in flight.</summary>
+    /// <remarks>
+    /// THE ONE THING A USER GENUINELY NEEDS TELLING SURVIVES. Recovery text is written only after
+    /// transcription completes, so an ending mid-dictation loses it whether Windows caused the
+    /// ending or not.
+    /// </remarks>
+    [Fact]
+    public async Task AWindowsEndingDuringADictationStillReportsTheDictation()
+    {
+        using var temp = new TemporaryDirectory();
+        var path = Path.Combine(temp.Path, "run-state.json");
+        using (var store = new JsonApplicationRunStateStore(path))
+        {
+            var run = await store.BeginRunAsync(Timestamp(0));
+            Assert.True(await store.SetDictationActiveAsync(run.RunId, true, Timestamp(1)));
+            Assert.True(await store.NoteSystemEndingAsync(run.RunId, Timestamp(2)));
+        }
+
+        using (var next = new JsonApplicationRunStateStore(path))
+        {
+            var recovered = await next.BeginRunAsync(Timestamp(3));
+
+            Assert.Equal(RunStateLoadStatus.PreviousRunEndedByWindows, recovered.Status);
+            Assert.True(recovered.PreviousRunWasDictating);
+        }
+    }
+
+    /// <summary>A heartbeat arriving after the notice does not erase it.</summary>
+    /// <remarks>
+    /// WINDOWS ANNOUNCING THE END OF THE SESSION DOES NOT STOP BEING TRUE. The heartbeat runs on a
+    /// timer and knows nothing about it; if it cleared the flag, the very case this records would be
+    /// lost whenever the process lived a moment longer than the notice.
+    /// </remarks>
+    [Fact]
+    public async Task AHeartbeatAfterTheNoticeDoesNotEraseIt()
+    {
+        using var temp = new TemporaryDirectory();
+        var path = Path.Combine(temp.Path, "run-state.json");
+        using (var store = new JsonApplicationRunStateStore(path))
+        {
+            var run = await store.BeginRunAsync(Timestamp(0));
+            Assert.True(await store.NoteSystemEndingAsync(run.RunId, Timestamp(1)));
+            Assert.True(await store.HeartbeatAsync(run.RunId, Timestamp(2)));
+        }
+
+        using (var next = new JsonApplicationRunStateStore(path))
+        {
+            Assert.Equal(
+                RunStateLoadStatus.PreviousRunEndedByWindows,
+                (await next.BeginRunAsync(Timestamp(3))).Status);
+        }
+    }
+
+    /// <summary>An ending nobody announced is still an interruption.</summary>
+    /// <remarks>
+    /// THE CONTROL. Task Manager, a forced kill and a power cut genuinely cannot be told from a
+    /// crash by the process they end, and must stay exactly as they were.
+    /// </remarks>
+    [Fact]
+    public async Task AnUnannouncedEndingIsStillAnInterruption()
+    {
+        using var temp = new TemporaryDirectory();
+        var path = Path.Combine(temp.Path, "run-state.json");
+        using (var store = new JsonApplicationRunStateStore(path))
+        {
+            var run = await store.BeginRunAsync(Timestamp(0));
+            Assert.True(await store.HeartbeatAsync(run.RunId, Timestamp(1)));
+        }
+
+        using (var next = new JsonApplicationRunStateStore(path))
+        {
+            var recovered = await next.BeginRunAsync(Timestamp(2));
+
+            Assert.Equal(RunStateLoadStatus.PreviousRunInterrupted, recovered.Status);
+            Assert.True(recovered.RecoveredInterruptedRun);
+        }
+    }
+
     private static DateTimeOffset Timestamp(int minute) => new(
         year: 2026,
         month: 8,
