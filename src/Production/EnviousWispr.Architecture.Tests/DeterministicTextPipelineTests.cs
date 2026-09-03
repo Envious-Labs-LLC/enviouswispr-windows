@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Pipeline;
@@ -52,7 +53,30 @@ public sealed class DeterministicTextPipelineTests
         {
             var row = JsonSerializer.Deserialize<MacParityRow>(line, SerializerOptions)
                 ?? throw new InvalidOperationException($"Invalid parity row in {fileName}.");
-            var actual = InverseTextNormalizer.Normalize(row.Input, spokenPunctuation: true);
+            string actual;
+            try
+            {
+                actual = InverseTextNormalizer.Normalize(row.Input, spokenPunctuation: true);
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                // NAMES THE ROW INSTEAD OF DYING ANONYMOUSLY. This test failed once on CI with a
+                // timeout thrown from inside the replace, and nothing in the output said which of
+                // 3756 inputs had caused it - so the one thing needed to reproduce it was the one
+                // thing the failure did not carry. Recorded as a failure like a mismatch, and the
+                // loop continues, so a single slow row cannot hide every other difference behind it.
+                // Ref: #91.
+                if (failures.Count < 10)
+                {
+                    failures.Add(
+                        $"[{row.Category}/{row.Slice}] row {rowCount + 1} TIMED OUT on input " +
+                        $"'{row.Input}' ({row.Input.Length} chars)");
+                }
+
+                rowCount++;
+                continue;
+            }
+
             if (!string.Equals(row.Expected, actual, StringComparison.Ordinal) && failures.Count < 10)
             {
                 failures.Add(
