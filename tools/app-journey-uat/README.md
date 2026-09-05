@@ -236,6 +236,11 @@ the default journey and report it green in place of the one requested - which is
 2026-09-05 when a wrapper passed `--english-parakeet,--synthetic-hotkey` as one token. Read the result's
 `inputKind` against what you asked for; the harness now refuses before it can happen.
 
+Running from a git worktree: the model packs are not in git, so bring them in as **hard links or real files,
+never symlinks** - .NET reports `FileInfo.Length` of 0 for a symlink, so the Parakeet `Int8Complete` probe
+correctly refuses a pack made of them ("the gitignored Parakeet quantized model is required"). Measured
+2026-09-05: the same file read 0 bytes as a symlink and 652,183,999 as a hard link.
+
 This mode cannot be combined with live or manual microphone, Live Preview, the head start, Escape Recovery, or
 failure injection, each of which owns the trigger or the hold differently. It refuses to run while an unowned
 EnviousWispr instance exists, because a second low-level hook would also receive the injected key and start a
