@@ -1104,9 +1104,28 @@ public static class InverseTextNormalizer
         });
 
     /// <summary>The patterns that still run on the backtracking engine, for the test that keeps that list short.</summary>
+    // BUILDING THE NON-BACKTRACKING PATTERNS COSTS ~257 ms, PAID ONCE PER PROCESS ON THE FIRST CALL.
+    // That construction must never fall inside the pipeline's 500 ms ITN stage: on a loaded CI runner
+    // it crossed the timeout, the stage returned un-normalised text, and the macOS parity oracle
+    // mismatched. Worse for a user, their first dictation on a busy machine could lose ITN the same
+    // way. So the pipeline calls this from its constructor, which runs off every timed path and off
+    // the hotkey path, and the Lazy makes a second pipeline free. Ref: #91, #112.
+    private static readonly Lazy<bool> WarmOnce = new(() =>
+    {
+        _ = Normalize(WarmRepresentative);
+        _ = Normalize(WarmRepresentative, spokenPunctuation: true);
+        return true;
+    });
+
+    private const string WarmRepresentative =
+        "one point five dollars and two cents at half past three on the fourth of july nineteen ninety nine";
+
+    /// <summary>Builds every pattern once, so no later call pays construction inside a timed stage.</summary>
+    public static void Warm() => _ = WarmOnce.Value;
+
     internal static IReadOnlyList<string> BacktrackingPatterns()
     {
-        _ = Normalize("one point five dollars and two cents at half past three on the fourth of july nineteen ninety nine");
+        Warm();
         return Patterns
             .Where(pair => (pair.Value.Options & RegexOptions.NonBacktracking) == 0)
             .Select(pair => pair.Key.Pattern)
