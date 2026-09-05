@@ -137,7 +137,11 @@ public sealed partial class MainWindow : Window, IDisposable
     [
         new("Automatic", "Chooses the best available local engine for this PC."),
         new("Parakeet", "Fast local English transcription with automatic hardware selection."),
-        new("Whisper", "Local multilingual transcription using your chosen language."),
+        // NOT PRESENTED AS PARAKEET'S EQUAL, BECAUSE IT IS NOT YET. Six of six live takes on this rig
+        // pasted sentences nobody said (#101): the engine elaborates room noise into fluent prose,
+        // where Parakeet degrades into a fragment a person can see is wrong. Until that closes, the
+        // card says so, and the sentence names the condition rather than the mechanism.
+        new("Whisper", "Multilingual, but not yet recommended: with room noise it can add words that were never spoken."),
     ];
 
     private static readonly SelectableChoiceOption[] PolishProviderChoices =
