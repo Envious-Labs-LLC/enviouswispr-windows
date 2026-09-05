@@ -67,6 +67,11 @@ public sealed class DeterministicTextPipeline
     public DeterministicTextPipeline()
         : this(CreateDefaultSteps())
     {
+        // OFF EVERY TIMED PATH. Inverse text normalisation builds heavy non-backtracking patterns on
+        // first use; paying that here, at construction, keeps it out of the 500 ms ITN stage where a
+        // loaded runner once crossed the timeout and dropped normalisation. The app builds this once
+        // at startup, so a user's first dictation is already warm. Ref: #91, #112.
+        InverseTextNormalizer.Warm();
     }
 
     public DeterministicTextPipeline(IReadOnlyList<IDeterministicTextStep> steps)
