@@ -38,6 +38,7 @@ const string ReviewedEnglishFixtureHash =
 // a catch around the parts already found has no end; starting it at the first statement does.
 try
 {
+RequireKnownArguments(args);
 var syntheticMicrophonePlayback = args.Any(argument => string.Equals(
     argument,
     "--live-microphone",
@@ -2055,6 +2056,60 @@ static void BringToForeground(nint window)
         {
             _ = NativeMethods.AttachThreadInput(currentThread, foregroundThread, attach: false);
         }
+    }
+}
+
+/// <summary>Refuses an argument this harness does not know, before any journey is chosen.</summary>
+/// <remarks>
+/// A GREEN RUN OF THE WRONG JOURNEY IS THE MOST EXPENSIVE KIND OF PASS. On 2026-09-05 a wrapper joined
+/// two flags into one token, `--english-parakeet,--synthetic-hotkey`. Every flag test here is an exact
+/// match, so the token matched nothing, the harness ran its DEFAULT named-event journey, and that came
+/// back green - a pass, for a journey nobody had asked for. It was caught only because the result's
+/// `inputKind` label was read against the request. That is the macOS harness's failure mode (b): the
+/// menu path proving the pipeline healthy while saying nothing about the hotkey.
+///
+/// So an unrecognised argument is INSTRUMENT INVALID, exit code 3, and no journey runs. The set below
+/// is the harness's own flags; the `--mode`, `--result` and substring switches in this file belong to
+/// the controlled target's command line and are never accepted here.
+/// </remarks>
+static void RequireKnownArguments(string[] arguments)
+{
+    string[] booleanFlags =
+    [
+        "--live-microphone", "--manual-microphone", "--english-parakeet", "--live-preview",
+        "--head-start", "--escape-recovery", "--synthesized-acoustic", "--synthetic-hotkey",
+    ];
+    string[] valuedFlags =
+    [
+        "--acoustic-gain", "--app-executable", "--deterministic-profile", "--eg1-model", "--eg1-server",
+        "--failure", "--ollama-endpoint", "--ollama-model", "--polish",
+    ];
+    for (var index = 0; index < arguments.Length; index++)
+    {
+        var argument = arguments[index];
+        if (booleanFlags.Contains(argument, StringComparer.OrdinalIgnoreCase))
+        {
+            continue;
+        }
+
+        if (valuedFlags.Contains(argument, StringComparer.OrdinalIgnoreCase))
+        {
+            var value = index + 1 < arguments.Length ? arguments[index + 1] : null;
+            if (value is null || value.StartsWith("--", StringComparison.Ordinal))
+            {
+                throw JourneyExpectationException.Instrument(
+                    $"{argument} needs a value and none followed it; refusing to run a journey other than "
+                        + "the one asked for.");
+            }
+
+            index++;
+            continue;
+        }
+
+        throw JourneyExpectationException.Instrument(
+            $"Unrecognised argument '{argument}'. This harness matches flags exactly and would otherwise run "
+                + "its default journey and report it green; refusing instead. Known flags: "
+                + string.Join(' ', booleanFlags.Concat(valuedFlags)) + ".");
     }
 }
 
