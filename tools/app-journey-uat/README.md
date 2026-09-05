@@ -201,3 +201,38 @@ edges and playback source are still synthetic. On the current webcam-microphone 
 fixture and Windows-synthesized sentence were detected by the content-free probe but failed their lexical gates;
 speaker echo suppression is the likely boundary. The `--manual-microphone` mode makes the remaining requirement
 directly runnable, but it is not evidence until a person completes it successfully on the exact candidate build.
+
+## Synthetic hotkey: the installed global hook, without a sound
+
+`--synthetic-hotkey` is the take that starts the way a finger starts it. The reviewed fixture is still the
+microphone, so nothing plays through the speakers, but the harness never signals the START event: it resolves
+the recording key the app is actually listening for, injects that key through `SendInput`, and the app's
+installed `WH_KEYBOARD_LL` hook - the same single route every real press takes - starts and stops the take.
+
+```powershell
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --synthetic-hotkey
+```
+
+Every verdict is read from `app.jsonl` and the controlled target, never from the injector. The control has
+both halves: `HotkeyReady` must be logged before anything is pressed; a two-second quiet window must show
+`DictationRecordingStarted` ABSENT; the press must make it PRESENT within three seconds; and the observed
+press-to-recording latency must fit comfortably inside the quiet window, or the run refuses to count the
+absence. The result adds a content-free `syntheticHotkey` object: the virtual key, how long it was held, the
+quiet window, the press-to-recording latency, and whether the target observed the phrase.
+
+The recording key is resolved through the app's own parser and key map from the isolated profile, in three
+states: no settings file resolves to the app's default (`F8`, `DictationPreferences.Default`); a gesture the
+app accepts is the binding; anything else is refused. Chords and modifier taps are refused as a declared
+boundary - their gesture completes on a 40 ms poll that an instant synthetic press can fall between - and
+that refusal says so rather than reporting a flaky hotkey.
+
+**Exit codes.** `0` is a pass. `2` is `JOURNEY EXPECTATION NOT MET`: the app did not do what the journey
+required. `3` is `INSTRUMENT INVALID`: the harness could not stage or trust the run - a key it would not
+guess, a payload that failed its own precondition, a control window that meant nothing - and **nothing in a
+code-3 run is evidence about the product.** A runner must never average it into a pass rate.
+
+This mode cannot be combined with live or manual microphone, Live Preview, the head start, Escape Recovery, or
+failure injection, each of which owns the trigger or the hold differently. It refuses to run while an unowned
+EnviousWispr instance exists, because a second low-level hook would also receive the injected key and start a
+real take. It proves the installed hook and the real key path; it still does not prove the microphone.
