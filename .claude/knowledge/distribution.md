@@ -1,35 +1,58 @@
 # Distribution and update contract
 
-## Primary path
+## Primary path: the Microsoft Store
 
-Ship a signed, self-contained direct installer and use Velopack for Sparkle-equivalent Windows updates.
-The app supports stable, founder, and beta channels without sharing state between them accidentally.
+**Decided 2026-09-05 (#42), replacing the Velopack direct-installer path below the fold.** The app ships as a
+self-contained `win-x64` **MSIX** through the Microsoft Store: Microsoft signs it, the Store delivers updates,
+SmartScreen never sees it, and no signing account exists anywhere. Direct download is not offered. The
+Velopack code, scripts and gates remain in the tree until Phase 19 step E removes them; the plan, its three
+validation rounds and the acceptance evidence are on #42.
 
-An update is accepted only after signature and hash validation. Downloads are resumable, installation is
-atomic, user data remains outside the install directory, and the last known-good version is recoverable.
-The app never updates while recording or processing a dictation.
+The promises the old path made are kept in Store terms: the app never updates while recording or processing
+(it checks the Store itself and requests install only when idle); user data lives outside the package and
+survives uninstall; recovery is a higher-version package. Signature and hash validation of updates is the
+Store's job, and the package gate verifies identity, version and a complete payload instead.
 
 ## Signing
 
-Windows development itself requires no paid developer membership. Public direct distribution uses trusted
-code signing, and **the signing identity is decided: SignPath Foundation** (founder, 2026-09-05, #42), the
-free code-signing programme for open-source projects. The project qualifies - GPL v3, public repository, no
-proprietary component; the bundled speech models are open-weight data, not code. Signing runs through
-SignPath's managed pipeline, so no signing key ever sits on a developer machine, which is also what the
-no-write-token rule for this PC requires. Owed before it counts as done: the founder submits the
-application; the installer and update pipeline gain the signing step once the account is approved.
+None to arrange. The Store replaces any signature on an MSIX with Microsoft's. SignPath Foundation and Azure
+Trusted Signing, both weighed on 2026-09-05, are retired with the direct-download path. The only certificate
+in the project is a **self-signed development certificate** for sideloading test builds, whose public half
+must be imported into the test machine's *Trusted People* store before a sideload installs - a signed package
+alone does not establish device trust.
 
-Fallback only if SignPath's review refuses: Azure Trusted Signing, about $10 a month. Envious Labs LLC
-qualifies since the three-year-history requirement was dropped at GA (2026), but it is paid infrastructure
-and needs explicit founder approval before it is enabled. Signing reduces publisher warnings; reputation-
-based SmartScreen prompts can still occur early in a new product's life, and SignPath issues OV-level
-certificates, so expect some until reputation accrues.
+## Store packaging decisions
 
-## Secondary path
+Each of these was a founder decision or a validator finding on #42; the reason is the part to keep.
 
-Microsoft Store and MSIX distribution can be evaluated after direct install and update reliability are
-proven. Store packaging must not become the only route or weaken local model delivery, BYOK, Ollama, or
-offline behavior.
+- **Execution model:** `packagedClassicApp` at medium integrity via `runFullTrust`, with `internetClient`,
+  `microphone`, and a declared `windows.startupTask` extension whose user-disabled state the app honours.
+  `runFullTrust` is a restricted capability and needs a justification at certification.
+- **Storage:** `%LocalAppData%\Envious Labs\EnviousWispr` is excluded from virtualization
+  (`unvirtualizedResources` plus the Windows 11 folder exclusion, scoped to the product folder), so it
+  survives uninstall. Migration must handle mixed storage - pre-existing physical files beside newly
+  virtualized writes - and the exclusion's approval is a real gate. The customer's delete/export controls are
+  in-app; see `product-contract.md`.
+- **Identity and channels:** one production identity; private audience first, then package flights. A flight
+  updates the same install, so `JsonSettingsStore` (which rejects newer schemas) must always be met by a
+  schema-compatible migration, and a recovery package carries a higher version.
+- **Credentials are not isolated by the data directory.** The app selects the production credential store
+  unless a UAT suffix is present, so development and acceptance runs use their own credential namespace and
+  the override-free clean-user acceptance runs in a separate Windows account or VM, never the founder's.
+- **Payload:** the shell, the RuntimeWorker (its copy targets must run before payload collection), native
+  libraries with CUDA **beside the executable** (where the dependency probe already looks), and
+  `runtime\llama-server.exe` with its dependencies - the app currently finds llama-server in the data folder
+  first and the install directory last, and no script stages it. Store policy 10.2.2 governs dynamic code.
+- **Toolchain:** CLI packaging through the documented `dotnet` target, with the Windows SDK, packaging tool
+  and `msstore` CLI versions pinned in the packaging script and mirrored in CI; `windows-latest` is not a pin.
+  If Visual Studio tooling is ever used, `net10.0` needs VS 2026 (18+).
+- **Proof:** the journey harness overrides data, model and runtime paths and so cannot prove packaged storage;
+  packaged validation adds identity assertions and a clean-user mode without overrides. WACK is necessary,
+  not sufficient. The Store-delivered update is observed after the first private certification.
+
+## Retired: direct download
+
+Not offered. A sideload MSIX exists only for testing, signed by the development certificate.
 
 ## Model delivery
 

@@ -1,5 +1,12 @@
 # Windows direct distribution and updates
 
+> **SUPERSEDED DIRECTION - do not cut a release from this document.** On 2026-09-05 the founder decided that
+> the Microsoft Store is the single distribution channel (#42): a Store-signed MSIX with Store-managed
+> updates, no direct download, one product identity with package flights. Everything below describes the
+> Velopack path, which stays in the tree only until Phase 19 step E replaces it; the plan, validation record
+> and acceptance evidence are on #42, and the contract is in `.claude/knowledge/distribution.md`. This file is
+> kept as evidence of what shipped before, not as instructions.
+
 ## Release identities
 
 Direct releases are self-contained `win-x64` Velopack packages. Each audience has a separate package,
