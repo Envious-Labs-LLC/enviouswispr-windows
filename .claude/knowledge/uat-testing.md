@@ -64,6 +64,16 @@ intermittently, looking exactly like a flaky hotkey. macOS has the twin: three s
 driven synthetically: hold well past the tick with margin, budget from the observed TAIL not the mean, and
 log the app-side observed hold against what the injector asked for - a disagreement is the instrument.
 
+## RULE: accuracy-is-measured-locally-never-in-cloud-ci
+Founder decision 2026-09-05 (#85): **no cloud-based audio or accuracy tests.** A hosted runner has no
+audio device and no model packs (about 670 MB to fetch per run), and an ASR accuracy regression comes from
+a model pin or an audio-path change, not from an ordinary diff. CI keeps doing what it does - build, logic
+and contract tests on a clean `windows-latest` - and word-error-rate and model evaluation are LOCAL benches
+on a real machine, with the hardware each number came from recorded beside it. The Mac has the same
+posture: its WER runs from an in-app Diagnostics button and appears nowhere in its nine workflows. The
+Windows model-evaluation bench (#127) is that local bench, built once for both engine selection and
+accuracy regression.
+
 ## RULE: the-harness-must-not-reach-the-founders-real-data-or-play-sound
 Isolated profile, isolated credential suffix, its own controlled target, clipboard snapshot and restore. It
 refuses to run while an unowned `EnviousWispr.App` exists, because a second low-level hook would also

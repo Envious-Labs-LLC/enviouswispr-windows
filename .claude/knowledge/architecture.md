@@ -41,6 +41,13 @@ reason but ask rather than assert it, and write the answer here when you get it.
 - Whisper uses a pinned `whisper.cpp` Windows runtime behind the same final-ASR contract.
 - Live preview uses a separate small multilingual Whisper model through `whisper.cpp`. It is display-only,
   runs below final-ASR priority, and yields resources before final transcription.
+- **Which preview and final models ship, per hardware tier, is decided by a local evaluation bench, not by
+  hand** (founder, 2026-09-05, #127). The Mac chose its engine from a 20-candidate rubric (finalize latency
+  30%, English WER 25%, tail accuracy 15%, streaming 15%, integration 10%, memory 5%) and needed no tiering
+  on unified-memory Apple Silicon. Windows spans CPU-only, integrated and discrete GPUs, so memory weighs
+  more here and the expected outcome is tiered models selected by the capability probe. Until the bench
+  exists, Live Preview costing 2.0-2.5 s a pass on CPU against a 2.5 s cadence (#127) is a known limit, not
+  a tuning target - the Mac's rubric numbers are historical and are not to be reused as measurements.
 - CPU execution is mandatory. GPU acceleration is selected only after a real capability probe.
 
 ## Polishing engines
