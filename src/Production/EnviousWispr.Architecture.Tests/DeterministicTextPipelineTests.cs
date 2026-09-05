@@ -176,19 +176,31 @@ public sealed class DeterministicTextPipelineTests
     [Fact]
     public async Task TimedOutStageReturnsLastValidText()
     {
+        // THE STAGE CANNOT FINISH UNTIL THE ASSERTIONS HAVE RUN. This used to race a 5 ms timer
+        // against a 100 ms sleep, and on a loaded CI runner the timer callback arrived after the
+        // sleep had returned - the stage "won" at 117 ms and the run on main went red for a change
+        // in another file entirely. A stage held on a gate the test owns can only end one way.
+        using var release = new ManualResetEventSlim(false);
         var step = new DelegateStep(
             DeterministicTextStage.CustomWords,
             context =>
             {
-                Thread.Sleep(100);
+                release.Wait(TimeSpan.FromSeconds(30));
                 return context with { Text = "too late" };
             },
             TimeSpan.FromMilliseconds(5));
-        var result = await new DeterministicTextPipeline([step]).ProcessAsync(CreateRequest("safe"));
+        try
+        {
+            var result = await new DeterministicTextPipeline([step]).ProcessAsync(CreateRequest("safe"));
 
-        Assert.Equal("safe", result.Output.Text);
-        Assert.True(result.IsDegraded);
-        Assert.Equal(DeterministicStageStatus.TimedOut, Assert.Single(result.Receipts).Status);
+            Assert.Equal("safe", result.Output.Text);
+            Assert.True(result.IsDegraded);
+            Assert.Equal(DeterministicStageStatus.TimedOut, Assert.Single(result.Receipts).Status);
+        }
+        finally
+        {
+            release.Set();
+        }
     }
 
     [Fact]
