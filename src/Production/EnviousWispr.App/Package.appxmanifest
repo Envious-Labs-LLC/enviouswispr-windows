@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!--
+  THE STORE PACKAGE IDENTITY. Ref #42.
+
+  Identity/@Name and Identity/@Publisher below are PLACEHOLDERS until the founder reserves the name in
+  Partner Center; the reservation assigns both, and a package whose identity does not match the
+  reservation is rejected at upload rather than at certification. `scripts/package-store.ps1` overrides
+  them from parameters so the real values never have to be committed here, and the packaging script
+  refuses to produce a Store upload while they are still the placeholders.
+
+  Identity/@Version must be four parts with a revision of 0: the Store assigns the revision itself and
+  rejects a package that sets one.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap desktop desktop6 rescap">
+
+  <Identity
+    Name="EnviousLabsLLC.EnviousWispr"
+    Publisher="CN=EnviousLabsPlaceholder"
+    Version="0.19.0.0" />
+
+  <Properties>
+    <DisplayName>EnviousWispr</DisplayName>
+    <PublisherDisplayName>Envious Labs LLC</PublisherDisplayName>
+    <Logo>Assets\Store\StoreLogo.png</Logo>
+    <Description>Private, on-device dictation for Windows. Your voice, instantly captured.</Description>
+  </Properties>
+
+  <Dependencies>
+    <!-- Windows 11 first, per the product contract. The floor is the SDK the app already targets. -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22000.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-US" />
+  </Resources>
+
+  <Applications>
+    <Application
+      Id="EnviousWispr"
+      Executable="EnviousWispr.App.exe"
+      EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="EnviousWispr"
+        Description="Private, on-device dictation for Windows."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Store\Square150x150Logo.png"
+        Square44x44Logo="Assets\Store\Square44x44Logo.png">
+        <uap:DefaultTile
+          Square71x71Logo="Assets\Store\Square71x71Logo.png"
+          Square310x310Logo="Assets\Store\Square310x310Logo.png"
+          Wide310x150Logo="Assets\Store\Wide310x150Logo.png" />
+        <uap:SplashScreen Image="Assets\Store\Square310x310Logo.png" />
+      </uap:VisualElements>
+
+      <Extensions>
+        <!--
+          LAUNCH AT LOGIN IS A DECLARATION, NOT A CAPABILITY, and it starts DISABLED on purpose.
+          Windows owns the switch once the package is installed: the user can turn this off in Settings
+          or Task Manager, and the app must honour that state rather than re-enabling itself. A packaged
+          app cannot write its own Run key, so the old unpackaged startup path has no meaning here.
+        -->
+        <desktop:Extension
+          Category="windows.startupTask"
+          Executable="EnviousWispr.App.exe"
+          EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask
+            TaskId="EnviousWisprStartup"
+            Enabled="false"
+            DisplayName="EnviousWispr" />
+        </desktop:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!--
+      runFullTrust is what keeps this app the app it is: an ordinary medium-integrity desktop process,
+      not an AppContainer. The global keyboard hook, clipboard-backed delivery into other applications,
+      the out-of-process runtime worker, and loopback to a local Ollama all depend on it. It is a
+      RESTRICTED capability and needs a written justification at certification.
+    -->
+    <rescap:Capability Name="runFullTrust" />
+
+    <!--
+      THE USER'S DATA SURVIVES UNINSTALL, WHICH IS A PRODUCT PROMISE (product-contract.md). Without the
+      exclusion below, writes under the data directory are redirected into package-private storage and
+      Windows deletes them with the package: three gigabytes of models, the whole history, every setting.
+      MSIX gives an app like this one no uninstall-time hook, so the choice cannot live in an uninstaller
+      and lives in Settings instead - Export my data, and Delete all EnviousWispr data.
+
+      Scoped to the PRODUCT folder rather than the company folder, and never by disabling virtualization
+      wholesale: the narrowest exclusion that keeps the promise is the one certification will accept.
+    -->
+    <rescap:Capability Name="unvirtualizedResources" />
+
+    <uap:Capability Name="internetClient" />
+    <DeviceCapability Name="microphone" />
+  </Capabilities>
+
+  <Extensions>
+    <desktop6:Extension Category="windows.fileSystemWriteVirtualization">
+      <desktop6:FileSystemWriteVirtualization>
+        <desktop6:ExcludedDirectories>
+          <desktop6:ExcludedDirectory>$(KnownFolder:LocalAppData)\Envious Labs\EnviousWispr</desktop6:ExcludedDirectory>
+        </desktop6:ExcludedDirectories>
+      </desktop6:FileSystemWriteVirtualization>
+    </desktop6:Extension>
+  </Extensions>
+</Package>
