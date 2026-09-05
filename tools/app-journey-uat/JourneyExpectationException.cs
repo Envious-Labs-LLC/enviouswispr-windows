@@ -41,4 +41,22 @@ internal sealed class JourneyExpectationException : Exception
         : base(message, innerException)
     {
     }
+
+    /// <summary>The HARNESS could not do its job; nothing here is a verdict about the app.</summary>
+    /// <remarks>
+    /// AN INSTRUMENT FAILURE REPORTED AS A PRODUCT VERDICT IS THE DEFECT CLASS THIS EXISTS TO STOP.
+    /// On 2026-09-04 and 05 two sessions here concluded that injected input was inert on the
+    /// development machine and built five explanations on top of it; the injector had been handed an
+    /// all-zero struct and had never injected anything. The macOS harness carries the same lesson from
+    /// 2026-08-10, when a resolver pressed a key nothing was listening for and the FAIL was believed.
+    ///
+    /// So a refusal to press, a key that could not be resolved, a payload that failed its own
+    /// precondition, or a control window too short to mean anything ends the run with its own exit
+    /// code and the words INSTRUMENT INVALID, and a runner can never average it into a pass rate.
+    /// </remarks>
+    public bool InstrumentInvalid { get; private init; }
+
+    /// <summary>A reason the harness cannot proceed that says nothing about the product.</summary>
+    public static JourneyExpectationException Instrument(string message) =>
+        new(message) { InstrumentInvalid = true };
 }
