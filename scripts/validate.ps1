@@ -288,6 +288,16 @@ try {
     Write-Host "Building signed model-delivery UAT harness (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/model-delivery-uat/EnviousWispr.ModelDelivery.Uat.csproj", "-c", "Release", "--nologo")
 
+    Write-Host "Building the model-manifest authoring tool (Release)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/model-manifest/EnviousWispr.ModelManifest.Tool.csproj", "-c", "Release", "--nologo")
+
+    # VERIFY EVERY BUNDLED MANIFEST FROM SOURCE, not only through the embedded copy the tests read.
+    # A manifest edited by hand without its digest recomputed would otherwise be found by a user.
+    Get-ChildItem -Path "models/manifests" -Filter "*.json" | ForEach-Object {
+        Write-Host "Verifying bundled manifest $($_.Name)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--no-build", "-c", "Release", "--project", "tools/model-manifest/EnviousWispr.ModelManifest.Tool.csproj", "--", "verify", $_.FullName)
+    }
+
     Write-Host "Building privacy-safe observability UAT harness (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/observability-uat/EnviousWispr.Observability.Uat.csproj", "-c", "Release", "--nologo")
 

@@ -31,8 +31,12 @@ public sealed class ModelManifestClient
                 manifestUri,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode ||
-                response.Content.Headers.ContentLength > ModelManifestVerifier.MaximumEnvelopeBytes)
+            if (!response.IsSuccessStatusCode)
+            {
+                return new(ManifestVerificationStatus.Unreachable);
+            }
+
+            if (response.Content.Headers.ContentLength > ModelManifestVerifier.MaximumEnvelopeBytes)
             {
                 return new(ManifestVerificationStatus.InvalidEnvelope);
             }
@@ -62,11 +66,11 @@ public sealed class ModelManifestClient
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return new(ManifestVerificationStatus.InvalidEnvelope);
+            return new(ManifestVerificationStatus.Unreachable);
         }
         catch (HttpRequestException)
         {
-            return new(ManifestVerificationStatus.InvalidEnvelope);
+            return new(ManifestVerificationStatus.Unreachable);
         }
     }
 }
