@@ -8,11 +8,28 @@ namespace EnviousWispr.ModelDelivery;
 
 public sealed record ModelLicenseNotice(string Name, Uri Url, string Notice);
 
+/// <summary>One slice of a large artefact, published as its own object so it stays edge-cacheable.</summary>
+/// <remarks>
+/// THE MIRROR CANNOT CACHE AN OBJECT OVER 512 MB on any Cloudflare plan below Enterprise, so a
+/// 650 MB encoder would serve from one origin region to every user, uncached. The EG-1 model on
+/// macOS ships as eight ~361 MB shards for exactly this reason. A part has its own sources and
+/// hash; the whole file keeps its own hash and its own sources, and the whole-file sources are
+/// the fallback when any part cannot be had. Ref: #92.
+/// </remarks>
+public sealed record ModelArtifactPart(
+    long SizeBytes,
+    string Sha256,
+    IReadOnlyList<Uri> Sources);
+
 public sealed record ModelArtifact(
     string RelativePath,
     long SizeBytes,
     string Sha256,
-    IReadOnlyList<Uri> Sources);
+    IReadOnlyList<Uri> Sources,
+    IReadOnlyList<ModelArtifactPart>? Parts = null)
+{
+    public bool IsSharded => Parts is { Count: > 0 };
+}
 
 public sealed record ModelManifestPayload(
     int SchemaVersion,
@@ -56,6 +73,14 @@ public enum ManifestVerificationStatus
     InvalidSignature,
     InvalidPayload,
     UnsupportedSchema,
+
+    /// <summary>The manifest could not be fetched at all: no response, a transport failure, or a non-success status.</summary>
+    /// <remarks>
+    /// SEPARATE FROM InvalidEnvelope, which is what this case used to be reported as. A user whose
+    /// laptop is offline and a user whose manifest is corrupt were told the same sentence, and only
+    /// one of them can fix it by reconnecting. Ref: #92.
+    /// </remarks>
+    Unreachable,
 }
 
 public sealed record ManifestVerificationResult(
@@ -90,6 +115,124 @@ public sealed partial class ModelManifestVerifier
             trustedPublicKeys,
             StringComparer.Ordinal);
         _allowLoopbackHttp = allowLoopbackHttp;
+    }
+
+    /// <summary>The key id a manifest carries when its trust root is the signed application package rather than a signature.</summary>
+    public const string BundledKeyId = "bundled";
+
+    /// <summary>
+    /// Verifies a manifest that ships INSIDE the application, the way the macOS app does it.
+    /// </summary>
+    /// <remarks>
+    /// THE TRUST ROOT IS THE SIGNED PACKAGE, NOT A SIGNATURE. The macOS product bundles its delivery
+    /// manifests as app resources and never fetches one at runtime, so the pinned digests can only
+    /// change through a trusted app update - and it has no signing key at all. This entry point
+    /// gives Windows the same shape: the document is a bare payload plus a `manifestDigest`, which
+    /// is SHA-256 over the canonical JSON of the object with that key removed (sorted keys, no
+    /// insignificant whitespace, slashes unescaped, lowercase hex), exactly as
+    /// `DeliveryManifest.canonicalDigest(of:)` computes it on the Mac.
+    ///
+    /// The digest is a self-check against a corrupted or hand-edited resource, and NOTHING MORE. The
+    /// guarantee that matters is per-file SHA-256 at admission, which the store owns. Ref: #92 and the
+    /// macOS `docs/model-delivery/model-delivery-contract.md` v1.3.
+    ///
+    /// DELIBERATELY NOT REACHABLE FROM <see cref="Verify"/>. A remote fetch goes through the signed
+    /// path only, so a hosting mistake or a hostile mirror can never present an unsigned document and
+    /// have it admitted; only bytes compiled into the assembly arrive here.
+    /// </remarks>
+    public ManifestVerificationResult VerifyBundled(ReadOnlySpan<byte> documentBytes)
+    {
+        if (documentBytes.IsEmpty || documentBytes.Length > MaximumEnvelopeBytes)
+        {
+            return new(ManifestVerificationStatus.InvalidEnvelope);
+        }
+
+        string declaredDigest;
+        byte[] canonicalBytes;
+        try
+        {
+            using var document = JsonDocument.Parse(documentBytes.ToArray());
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !document.RootElement.TryGetProperty(
+                    ModelManifestCanonicalJson.DigestPropertyName,
+                    out var digestElement) ||
+                digestElement.ValueKind != JsonValueKind.String)
+            {
+                return new(ManifestVerificationStatus.InvalidEnvelope);
+            }
+
+            declaredDigest = digestElement.GetString() ?? string.Empty;
+            canonicalBytes = ModelManifestCanonicalJson.CanonicalizeWithoutDigest(document.RootElement);
+        }
+        catch (JsonException)
+        {
+            return new(ManifestVerificationStatus.InvalidEnvelope);
+        }
+
+        var actualDigest = Convert.ToHexString(SHA256.HashData(canonicalBytes)).ToLowerInvariant();
+        if (!IsManifestDigest(declaredDigest) ||
+            !string.Equals(actualDigest, declaredDigest.ToLowerInvariant(), StringComparison.Ordinal))
+        {
+            return new(ManifestVerificationStatus.InvalidSignature);
+        }
+
+        ModelManifestPayload? payload;
+        try
+        {
+            payload = JsonSerializer.Deserialize<ModelManifestPayload>(canonicalBytes, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return new(ManifestVerificationStatus.InvalidPayload);
+        }
+
+        if (payload is null)
+        {
+            return new(ManifestVerificationStatus.InvalidPayload);
+        }
+
+        if (payload.SchemaVersion != CurrentManifestSchemaVersion)
+        {
+            return new(ManifestVerificationStatus.UnsupportedSchema);
+        }
+
+        if (!IsValidPayload(payload, _allowLoopbackHttp))
+        {
+            return new(ManifestVerificationStatus.InvalidPayload);
+        }
+
+        return new(
+            ManifestVerificationStatus.Verified,
+            new VerifiedModelManifest(payload, BundledKeyId, actualDigest, documentBytes.ToArray()));
+    }
+
+    /// <summary>
+    /// Verifies the manifest copy the store keeps beside an installed model, which may be either shape.
+    /// </summary>
+    /// <remarks>
+    /// The signed form is tried first; a bundled document is accepted only when it carries the
+    /// digest property, so a stray signed envelope can never be re-read as a bundled one. This is
+    /// for bytes the store itself wrote at admission and re-checks against every artefact's hash;
+    /// the remote path still goes through <see cref="Verify"/> alone.
+    /// </remarks>
+    public ManifestVerificationResult VerifyStored(ReadOnlySpan<byte> manifestBytes)
+    {
+        var signed = Verify(manifestBytes);
+        if (signed.Status != ManifestVerificationStatus.InvalidEnvelope)
+        {
+            return signed;
+        }
+
+        return VerifyBundled(manifestBytes);
+    }
+
+    /// <summary>Re-verifies a manifest by the path that produced it: bundled documents by digest, everything else by signature.</summary>
+    public ManifestVerificationResult Reverify(VerifiedModelManifest manifest)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        return string.Equals(manifest.KeyId, BundledKeyId, StringComparison.Ordinal)
+            ? VerifyBundled(manifest.EnvelopeBytes)
+            : Verify(manifest.EnvelopeBytes);
     }
 
     public ManifestVerificationResult Verify(ReadOnlySpan<byte> envelopeBytes)
@@ -206,7 +349,8 @@ public sealed partial class ModelManifestVerifier
                 file.Sources is null ||
                 file.Sources.Count == 0 ||
                 file.Sources.Any(uri => !IsAllowedUri(uri, allowLoopbackHttp)) ||
-                !paths.Add(file.RelativePath))
+                !paths.Add(file.RelativePath) ||
+                !PartsAreValid(file, allowLoopbackHttp))
             {
                 return false;
             }
@@ -224,7 +368,7 @@ public sealed partial class ModelManifestVerifier
         return totalBytes > 0;
     }
 
-    internal static bool IsSafeRelativePath(string relativePath)
+    public static bool IsSafeRelativePath(string relativePath)
     {
         if (string.IsNullOrWhiteSpace(relativePath) ||
             Path.IsPathRooted(relativePath) ||
@@ -239,7 +383,47 @@ public sealed partial class ModelManifestVerifier
             segments.All(segment => segment is not "." and not ".." && segment.Length <= 128);
     }
 
-    internal static bool IsSafeModelId(string modelId) =>
+    // PARTS MUST ADD UP TO THE FILE, EXACTLY. A manifest whose slices sum to anything else
+    // describes a file that cannot be reassembled, and it is refused here rather than discovered
+    // after the download.
+    private static bool PartsAreValid(ModelArtifact file, bool allowLoopbackHttp)
+    {
+        if (file.Parts is null)
+        {
+            return true;
+        }
+
+        if (file.Parts.Count == 0)
+        {
+            return false;
+        }
+
+        long total = 0;
+        foreach (var part in file.Parts)
+        {
+            if (part.SizeBytes <= 0 ||
+                !Sha256Regex().IsMatch(part.Sha256) ||
+                part.Sources is null ||
+                part.Sources.Count == 0 ||
+                part.Sources.Any(uri => !IsAllowedUri(uri, allowLoopbackHttp)))
+            {
+                return false;
+            }
+
+            try
+            {
+                total = checked(total + part.SizeBytes);
+            }
+            catch (OverflowException)
+            {
+                return false;
+            }
+        }
+
+        return total == file.SizeBytes;
+    }
+
+    public static bool IsSafeModelId(string modelId) =>
         !string.IsNullOrWhiteSpace(modelId) && SafeIdentifierRegex().IsMatch(modelId);
 
     internal static bool IsSemanticVersion(string version) =>
@@ -292,5 +476,77 @@ public static class ModelManifestSigning
     {
         ArgumentNullException.ThrowIfNull(key);
         return key.ExportSubjectPublicKeyInfoPem();
+    }
+}
+
+/// <summary>
+/// The canonical JSON form the bundled-manifest digest is taken over, matching the macOS rule.
+/// </summary>
+/// <remarks>
+/// Object keys sorted ordinally, no insignificant whitespace, `/` left unescaped, non-ASCII left
+/// raw, and the digest property itself removed at the top level. Numbers are re-emitted from their
+/// source text, so a manifest must carry integers only - the Mac made one field a string for
+/// exactly this reason after a float canonicalised differently across serialisers.
+/// </remarks>
+public static class ModelManifestCanonicalJson
+{
+    public const string DigestPropertyName = "manifestDigest";
+
+    private static readonly JsonWriterOptions WriterOptions = new()
+    {
+        Indented = false,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    public static byte[] CanonicalizeWithoutDigest(JsonElement root)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer, WriterOptions))
+        {
+            WriteCanonical(writer, root, skipDigest: true);
+        }
+
+        return buffer.ToArray();
+    }
+
+    public static string DigestOf(JsonElement root) =>
+        Convert.ToHexString(SHA256.HashData(CanonicalizeWithoutDigest(root))).ToLowerInvariant();
+
+    private static void WriteCanonical(Utf8JsonWriter writer, JsonElement element, bool skipDigest)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                writer.WriteStartObject();
+                foreach (var property in element.EnumerateObject()
+                             .OrderBy(property => property.Name, StringComparer.Ordinal))
+                {
+                    if (skipDigest && property.Name == DigestPropertyName)
+                    {
+                        continue;
+                    }
+
+                    writer.WritePropertyName(property.Name);
+                    WriteCanonical(writer, property.Value, skipDigest: false);
+                }
+
+                writer.WriteEndObject();
+                break;
+            case JsonValueKind.Array:
+                writer.WriteStartArray();
+                foreach (var item in element.EnumerateArray())
+                {
+                    WriteCanonical(writer, item, skipDigest: false);
+                }
+
+                writer.WriteEndArray();
+                break;
+            case JsonValueKind.Number:
+                writer.WriteRawValue(element.GetRawText());
+                break;
+            default:
+                element.WriteTo(writer);
+                break;
+        }
     }
 }

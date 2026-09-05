@@ -390,6 +390,12 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public event Action? RecoveryCleared;
 
+    /// <summary>The person asked for the speech model this build pins to be downloaded.</summary>
+    public event Action? ModelDownloadRequested;
+
+    /// <summary>The person asked for the running download to stop.</summary>
+    public event Action? ModelDownloadCancelRequested;
+
     public event Action<bool, int>? DiagnosticsExportCompleted;
 
     public event Action? UpdateCheckRequested;
@@ -2639,6 +2645,37 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void ApplyUpdateButton_Click(object sender, RoutedEventArgs e) =>
         UpdateApplyRequested?.Invoke();
+
+    private void DownloadModelButton_Click(object sender, RoutedEventArgs e) =>
+        ModelDownloadRequested?.Invoke();
+
+    private void CancelModelDownloadButton_Click(object sender, RoutedEventArgs e) =>
+        ModelDownloadCancelRequested?.Invoke();
+
+    /// <summary>
+    /// Shows the speech-model situation on the Transcription card and the onboarding card together.
+    /// </summary>
+    /// <remarks>
+    /// ONE PRESENTATION, TWO SURFACES. Onboarding is where a new install first meets "model is not
+    /// installed", and Transcription is where the pill sends them; a person must be able to act
+    /// from either without the two disagreeing about what is happening. Ref: #92.
+    /// </remarks>
+    public void SetModelDelivery(ModelDeliveryPresentation presentation)
+    {
+        ArgumentNullException.ThrowIfNull(presentation);
+        SetLiveText(ModelDeliveryStatusText, presentation.Text);
+        ModelDeliveryProgress.Visibility = presentation.Percent is null ? Visibility.Collapsed : Visibility.Visible;
+        ModelDeliveryProgress.Value = presentation.Percent ?? 0;
+        DownloadModelButton.Visibility = presentation.CanDownload ? Visibility.Visible : Visibility.Collapsed;
+        CancelModelDownloadButton.Visibility = presentation.CanCancel ? Visibility.Visible : Visibility.Collapsed;
+        OnboardingDownloadModelButton.Visibility = DownloadModelButton.Visibility;
+        OnboardingModelProgress.Visibility = ModelDeliveryProgress.Visibility;
+        OnboardingModelProgress.Value = ModelDeliveryProgress.Value;
+        if (presentation.CanDownload || presentation.CanCancel || presentation.Percent is not null)
+        {
+            OnboardingModelText.Text = presentation.Text;
+        }
+    }
 
     private async void ImportProfileButton_Click(object sender, RoutedEventArgs e)
     {

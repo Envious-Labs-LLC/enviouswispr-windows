@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "modelId": "whisper-large-v3-turbo",
+  "version": "1.0.0",
+  "minimumAppVersion": "0.19.0",
+  "license": {
+    "name": "MIT",
+    "url": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE",
+    "notice": "OpenAI Whisper large-v3-turbo weights converted to GGML (5-bit) by the whisper.cpp project (Hugging Face ggerganov/whisper.cpp). MIT License."
+  },
+  "files": [
+    {
+      "relativePath": "ggml-large-v3-turbo-q5_0.bin",
+      "sizeBytes": 574041195,
+      "sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+      "sources": [
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q5_0.bin"
+      ],
+      "parts": [
+        {
+          "sizeBytes": 268435456,
+          "sha256": "553d3b64c6e9c32674643bf94511143e6fea2d0fcdb124a432bf58580ad4cdec",
+          "sources": [
+            "https://models.enviouslabs.co/whisper-ggml/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q5_0.bin.part0"
+          ]
+        },
+        {
+          "sizeBytes": 268435456,
+          "sha256": "fdefa556c9d2b71f6a385bcaaecfe379f7d71b64242367f25c3a7a1c6a1ecd96",
+          "sources": [
+            "https://models.enviouslabs.co/whisper-ggml/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q5_0.bin.part1"
+          ]
+        },
+        {
+          "sizeBytes": 37170283,
+          "sha256": "4eb5eb0440925a38711c7585b46758f59f2f9f0f7f1fc94ebffe446593b6b967",
+          "sources": [
+            "https://models.enviouslabs.co/whisper-ggml/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q5_0.bin.part2"
+          ]
+        }
+      ]
+    }
+  ],
+  "manifestDigest": "57287118ef3e4cac2d1a764a430e8b2415dbd847b53aad098ebb096a046970bc"
+}

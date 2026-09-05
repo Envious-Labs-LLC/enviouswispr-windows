@@ -21,5 +21,6 @@ public enum AppFailureCategory
     CloudPolish,
     TextDelivery,
     Observability,
+    ModelDelivery,
     Unknown,
 }
