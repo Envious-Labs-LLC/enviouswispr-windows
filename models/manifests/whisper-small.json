@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "modelId": "whisper-small",
+  "version": "1.0.0",
+  "minimumAppVersion": "0.19.0",
+  "license": {
+    "name": "MIT",
+    "url": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE",
+    "notice": "OpenAI Whisper small weights converted to GGML (5-bit) by the whisper.cpp project (Hugging Face ggerganov/whisper.cpp). MIT License."
+  },
+  "files": [
+    {
+      "relativePath": "ggml-small-q5_1.bin",
+      "sizeBytes": 190085487,
+      "sha256": "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+      "sources": [
+        "https://models.enviouslabs.co/whisper-ggml/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small-q5_1.bin",
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small-q5_1.bin"
+      ]
+    }
+  ],
+  "manifestDigest": "3af0176a8d5aed724fd75669b42f569898dc4c8753e9ed7d071296915d08affa"
+}

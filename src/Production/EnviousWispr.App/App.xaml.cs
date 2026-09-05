@@ -308,6 +308,8 @@ public partial class App : Application, IAsyncDisposable
         _window.DiagnosticsExportCompleted += OnDiagnosticsExportCompleted;
         _window.UpdateCheckRequested += OnUpdateCheckRequested;
         _window.UpdateApplyRequested += OnUpdateApplyRequested;
+        _window.ModelDownloadRequested += OnModelDownloadRequested;
+        _window.ModelDownloadCancelRequested += OnModelDownloadCancelRequested;
         _window.KeybindCaptureActiveChanged += OnKeybindCaptureActiveChanged;
         _window.SpeedCheckRequested += OnSpeedCheckRequested;
         _window.MishearingSuggestionsRequested += OnMishearingSuggestionsRequested;
@@ -339,6 +341,7 @@ public partial class App : Application, IAsyncDisposable
         _window.SetOllamaPolishNotice(_localPolishNotice);
         _window.SetSessionStatus(DictationStatus.Quiet("Preparing local transcription..."));
         await ConfigureTranscriptionAsync(settings.Preferences.Dictation.FinalEngine).ConfigureAwait(true);
+        await PresentModelDeliveryAsync().ConfigureAwait(true);
         ConfigurePushToTalk(settings.Preferences.Dictation);
         if (_polishProvider is EgOnePolishProvider polishProvider)
         {
@@ -449,6 +452,8 @@ public partial class App : Application, IAsyncDisposable
             window.DiagnosticsExportCompleted -= OnDiagnosticsExportCompleted;
             window.UpdateCheckRequested -= OnUpdateCheckRequested;
             window.UpdateApplyRequested -= OnUpdateApplyRequested;
+            window.ModelDownloadRequested -= OnModelDownloadRequested;
+            window.ModelDownloadCancelRequested -= OnModelDownloadCancelRequested;
             window.KeybindCaptureActiveChanged -= OnKeybindCaptureActiveChanged;
             window.SpeedCheckRequested -= OnSpeedCheckRequested;
             window.MishearingSuggestionsRequested -= OnMishearingSuggestionsRequested;
@@ -1517,9 +1522,9 @@ public partial class App : Application, IAsyncDisposable
             whisperLanguage = environmentLanguage;
         }
 
-        var modelDirectory = ResolveModelDirectory(engine == FinalAsrEngine.Whisper
+        var modelDirectory = await ResolveModelDirectoryAsync(engine == FinalAsrEngine.Whisper
             ? WhisperTranscriptionEngine.ModelId
-            : ParakeetTranscriptionEngine.ModelId);
+            : ParakeetTranscriptionEngine.ModelId).ConfigureAwait(true);
         if (modelDirectory is null)
         {
             _window?.SetSessionStatus(
@@ -1537,6 +1542,9 @@ public partial class App : Application, IAsyncDisposable
             .ProbeAsync()
             .ConfigureAwait(true);
         var workerExecutable = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
+        var previewModelDirectory = await ResolveModelDirectoryAsync(
+            WhisperTranscriptionEngine.PreviewModelId,
+            "ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY").ConfigureAwait(true);
         // THE SELECTION IS MADE BEFORE IT IS OBSERVED. This line used to be written above the two
         // Create calls, so it could only ever report the hardware and never what the hardware was
         // used FOR - which is why a machine transcribing on the processor beside an idle graphics
@@ -1596,7 +1604,7 @@ public partial class App : Application, IAsyncDisposable
                 return;
             }
 
-            ConfigureLivePreview(workerExecutable, hardware, whisperLanguage, forceCpu: true);
+            ConfigureLivePreview(workerExecutable, hardware, whisperLanguage, previewModelDirectory, forceCpu: true);
             // THE MEMBER NO SELECTOR CAN PRODUCE. Getting here means the selection SUCCEEDED and the
             // runtime then refused to start, which the selector cannot see and therefore cannot
             // report. Measured on the development machine: the graphics libraries were missing, the
@@ -1627,7 +1635,7 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        ConfigureLivePreview(workerExecutable, hardware, whisperLanguage);
+        ConfigureLivePreview(workerExecutable, hardware, whisperLanguage, previewModelDirectory);
         _window?.SetSessionStatus(
             DictationStatus.Quiet("Local transcription ready").AboutTheTranscriptionEngine());
     }
@@ -1636,11 +1644,9 @@ public partial class App : Application, IAsyncDisposable
         string workerExecutable,
         HardwareSnapshot hardware,
         string language,
+        string? modelDirectory,
         bool forceCpu = false)
     {
-        var modelDirectory = ResolveModelDirectory(
-            WhisperTranscriptionEngine.PreviewModelId,
-            "ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY");
         if (modelDirectory is null ||
             !new LocalWhisperModelProbe().Probe(modelDirectory).PreviewSmallComplete)
         {
@@ -1812,36 +1818,6 @@ public partial class App : Application, IAsyncDisposable
     // gate reported that CUDA could not load. Ref: #129.
     private static string? ResolveCudaRuntimeDirectory(string dataDirectory) =>
         CudaRuntimeDirectory.ForApplication(dataDirectory);
-
-    private string? ResolveModelDirectory(
-        string modelId,
-        string environmentVariable = "ENVIOUSWISPR_MODEL_DIRECTORY")
-    {
-        var configured = Environment.GetEnvironmentVariable(environmentVariable);
-        if (!string.IsNullOrWhiteSpace(configured) && Directory.Exists(configured))
-        {
-            return Path.GetFullPath(configured);
-        }
-
-        var installed = Path.Combine(_dataDirectory, "models", modelId);
-        if (Directory.Exists(installed))
-        {
-            return installed;
-        }
-
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "CLAUDE.md")))
-        {
-            directory = directory.Parent;
-        }
-
-        var developmentModel = directory is null
-            ? null
-            : Path.Combine(directory.FullName, "models", modelId);
-        return developmentModel is not null && Directory.Exists(developmentModel)
-            ? developmentModel
-            : null;
-    }
 
     private void OnPushToTalkSignalled(object? sender, PushToTalkSignalEvent args)
     {

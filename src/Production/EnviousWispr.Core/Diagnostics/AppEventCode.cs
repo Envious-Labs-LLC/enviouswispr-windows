@@ -174,5 +174,14 @@ public enum AppEventCode
     /// <summary>The watcher ended a recording because the speaker had stopped.</summary>
     AutoStopTriggered,
     DictationCompleted,
+
+    /// <summary>A speech-model download began, from the bundled manifest.</summary>
+    ModelDeliveryStarted,
+
+    /// <summary>Every file arrived, matched its published hash, and the model was activated.</summary>
+    ModelDeliveryCompleted,
+
+    /// <summary>The download stopped short; the category says whether the network, the disk, or the manifest was the reason.</summary>
+    ModelDeliveryFailed,
     UnhandledFailure,
 }
