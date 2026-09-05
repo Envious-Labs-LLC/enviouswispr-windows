@@ -29,6 +29,13 @@ profile it could not read, a control window that meant nothing: none of these sa
 and a runner must never average them into a pass rate. Exit **2** is a product expectation not met. A red
 row for a scenario the harness could not STAGE is worse than a skip, because it accuses correct code.
 
+**Unknown arguments are refused for the same reason.** Every flag test in the harness is an exact match, so
+a mistyped or joined flag selects nothing and the DEFAULT journey runs. On 2026-09-05 a wrapper passed
+`--english-parakeet,--synthetic-hotkey` as one token and the named-event French journey came back green in
+place of the Parakeet synthetic-hotkey run that was asked for - caught only because the result's `inputKind`
+was read against the request. A green run of the wrong journey is the most expensive kind of pass; the
+harness now refuses (exit 3) before a journey is chosen, and a wrapper should still assert the label.
+
 ## RULE: resolve-the-binding-or-refuse-never-guess
 Ported from the macOS `ptt_binding` contract. Three states, not two: **absent** (no settings file in the
 isolated profile) resolves through the SAME default the app applies, `DictationPreferences.Default`,

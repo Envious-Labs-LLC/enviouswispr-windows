@@ -230,7 +230,11 @@ that refusal says so rather than reporting a flaky hotkey.
 **Exit codes.** `0` is a pass. `2` is `JOURNEY EXPECTATION NOT MET`: the app did not do what the journey
 required. `3` is `INSTRUMENT INVALID`: the harness could not stage or trust the run - a key it would not
 guess, a payload that failed its own precondition, a control window that meant nothing - and **nothing in a
-code-3 run is evidence about the product.** A runner must never average it into a pass rate.
+code-3 run is evidence about the product.** A runner must never average it into a pass rate. An unrecognised
+argument is also code 3: the harness matches flags exactly, so a mistyped or joined flag would otherwise select
+the default journey and report it green in place of the one requested - which is exactly what happened on
+2026-09-05 when a wrapper passed `--english-parakeet,--synthetic-hotkey` as one token. Read the result's
+`inputKind` against what you asked for; the harness now refuses before it can happen.
 
 This mode cannot be combined with live or manual microphone, Live Preview, the head start, Escape Recovery, or
 failure injection, each of which owns the trigger or the hold differently. It refuses to run while an unowned
