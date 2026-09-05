@@ -2,4 +2,13 @@
   <ItemGroup>
     <ProjectReference Include="..\EnviousWispr.Core\EnviousWispr.Core.csproj" />
   </ItemGroup>
+
+  <!--
+    THE DELIVERY MANIFESTS SHIP INSIDE THE ASSEMBLY. `models/manifests/<modelId>.json` at the repository
+    root is the reviewable source of what each build can install; embedding it is what makes the signed
+    package the trust root, the same way the macOS app bundles its manifests. Ref: #92.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\..\models\manifests\*.json" LogicalName="manifests/%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>

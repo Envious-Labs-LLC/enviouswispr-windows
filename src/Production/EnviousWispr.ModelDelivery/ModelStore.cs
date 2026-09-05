@@ -76,7 +76,7 @@ public sealed class ModelStore
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(manifest);
-        var currentVerification = _verifier.Verify(manifest.EnvelopeBytes);
+        var currentVerification = _verifier.Reverify(manifest);
         if (!currentVerification.Succeeded)
         {
             return Fail(MapVerificationFailure(currentVerification.Status));
@@ -614,6 +614,13 @@ public sealed class ModelStore
         var partialPath = finalPath + ".partial";
         var resumePath = finalPath + ".resume.json";
         Directory.CreateDirectory(Path.GetDirectoryName(finalPath)!);
+        if (artifact.IsSharded &&
+            await TryDownloadPartsAsync(staging, artifact, completedBeforeArtifact, totalBytes, cancellationToken)
+                .ConfigureAwait(false))
+        {
+            return new(true);
+        }
+
         var integrityFailureObserved = false;
         var permanentSourceFailureObserved = false;
 
@@ -696,6 +703,113 @@ public sealed class ModelStore
             : permanentSourceFailureObserved
                 ? ModelDeliveryFailure.SourceRejected
                 : ModelDeliveryFailure.NetworkUnavailable);
+    }
+
+    /// <summary>
+    /// Fetches every part of a sharded artefact, reassembles them in order, and verifies the whole.
+    /// </summary>
+    /// <remarks>
+    /// Each part rides the ordinary artefact path - the same Range and If-Range resume, the same
+    /// per-source budget - under a synthetic name, so a part behaves like a small file. A false
+    /// return means "get it the whole-file way instead": the shard layer exists to make delivery
+    /// faster, and it must never make it fail where the whole-file sources would have succeeded.
+    /// Anything left behind is removed before the fallback runs so a stale concatenation can never
+    /// be mistaken for a resumable whole-file download.
+    /// </remarks>
+    private async Task<bool> TryDownloadPartsAsync(
+        string staging,
+        ModelArtifact artifact,
+        long completedBeforeArtifact,
+        long totalBytes,
+        CancellationToken cancellationToken)
+    {
+        var finalPath = SafeCombine(staging, artifact.RelativePath);
+        var partialPath = finalPath + ".partial";
+        var partPaths = new List<string>();
+        long offset = 0;
+        var complete = true;
+        foreach (var (part, index) in artifact.Parts!.Select((part, index) => (part, index)))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var synthetic = new ModelArtifact(
+                $"{artifact.RelativePath}.part{index}",
+                part.SizeBytes,
+                part.Sha256,
+                part.Sources);
+            partPaths.Add(SafeCombine(staging, synthetic.RelativePath));
+            var downloaded = await DownloadArtifactAsync(
+                staging,
+                synthetic,
+                completedBeforeArtifact + offset,
+                totalBytes,
+                cancellationToken).ConfigureAwait(false);
+            if (!downloaded.Succeeded)
+            {
+                complete = false;
+                break;
+            }
+
+            offset += part.SizeBytes;
+        }
+
+        if (complete)
+        {
+            DeleteIfExists(partialPath);
+            DeleteIfExists(finalPath + ".resume.json");
+            await using (var output = new FileStream(
+                partialPath,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 128 * 1024,
+                useAsync: true))
+            {
+                foreach (var partPath in partPaths)
+                {
+                    await using var input = new FileStream(
+                        partPath,
+                        FileMode.Open,
+                        FileAccess.Read,
+                        FileShare.Read,
+                        bufferSize: 128 * 1024,
+                        useAsync: true);
+                    await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            if (await MatchesAsync(partialPath, artifact, cancellationToken).ConfigureAwait(false))
+            {
+                File.Move(partialPath, finalPath, overwrite: true);
+                foreach (var partPath in partPaths)
+                {
+                    DeleteIfExists(partPath);
+                }
+
+                _observer.Observe(new(
+                    DateTimeOffset.UtcNow,
+                    ModelDeliveryEventCode.ArtifactVerified,
+                    CompletedBytes: completedBeforeArtifact + artifact.SizeBytes,
+                    TotalBytes: totalBytes));
+                return true;
+            }
+
+            // THE PARTS EACH MATCHED AND THE WHOLE DID NOT, which means the manifest describes
+            // slices of a different file. Nothing here can be trusted; the whole-file path decides.
+            _observer.Observe(new(
+                DateTimeOffset.UtcNow,
+                ModelDeliveryEventCode.SourceFailed,
+                ModelDeliveryFailure.IntegrityMismatch));
+        }
+
+        DeleteIfExists(partialPath);
+        foreach (var partPath in partPaths)
+        {
+            DeleteIfExists(partPath);
+            DeleteIfExists(partPath + ".partial");
+            DeleteIfExists(partPath + ".resume.json");
+        }
+
+        return false;
     }
 
     private async Task<DownloadAttemptOutcome> DownloadAttemptAsync(
@@ -941,7 +1055,7 @@ public sealed class ModelStore
         }
 
         var envelope = await File.ReadAllBytesAsync(manifestPath, cancellationToken).ConfigureAwait(false);
-        var verification = _verifier.Verify(envelope);
+        var verification = _verifier.VerifyStored(envelope);
         if (!verification.Succeeded)
         {
             return null;
@@ -1118,9 +1232,13 @@ public sealed class ModelStore
         return Directory.Exists(root) ? Directory.GetDirectories(root) : [];
     }
 
+    // A SHARDED FILE NEEDS ROOM FOR ITS PARTS AND ITS WHOLE AT ONCE, for the moment between the
+    // last part arriving and the reassembled file being verified. Counted here so the disk check
+    // refuses up front rather than the concatenation failing at the end of a long download.
     private static long RemainingBytes(VerifiedModelManifest manifest, string staging) =>
         manifest.Payload.Files.Sum(file =>
-            Math.Max(0, file.SizeBytes - Math.Min(file.SizeBytes, PartialOrCompleteLength(staging, file))));
+            Math.Max(0, file.SizeBytes - Math.Min(file.SizeBytes, PartialOrCompleteLength(staging, file))) +
+            (file.IsSharded && !File.Exists(SafeCombine(staging, file.RelativePath)) ? file.SizeBytes : 0));
 
     private static long PartialOrCompleteLength(string staging, ModelArtifact artifact)
     {
