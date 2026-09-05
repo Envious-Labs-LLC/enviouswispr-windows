@@ -44,6 +44,31 @@ answer. Repo grounding tells you whether a known fix APPLIES; it can never tell 
 **Never write "justify from the repo, not from general practice."** It reads as rigour and functions as a
 gag on the outside world; if the intent is "do not guess", write that.
 
+**Check WHICH hosts were reached, never whether any host was.** The macOS side measured a run that reached
+the web, cited a real vendor page for an unrelated sub-question, and missed the documented one-line fix for
+the symptom under investigation. So for a Store or packaging question, require a `learn.microsoft.com` or
+Store-policy host to appear in the citations:
+`grep -aoE "https?://[a-zA-Z0-9./_-]+" <outfile> | sort -u`. Vendor and docs hosts absent on a
+somebody-else's-subject question means the pass did not happen, whatever any detector says. And when a
+citation does come back, **a technique existing and a technique being TABLE STAKES are different claims,
+and only the second decides whether to build** - check whose domain the citation is from.
+
+## RULE: a verdict with an empty read set is a failed attempt, not a verdict
+The first Store-plan validation here returned `REJECT - validation blocked` having read **nothing**: every
+tool call had failed `os error 206` (see PROC below) and the model wrote a verdict-shaped answer about its
+own inability. Re-armed rather than counted, correctly - but nothing in the output marks it as different
+from a real REJECT, and the conclusion field is the only part that looks authoritative.
+
+So prove the reviewer READ something, not only - per the disposable-worktree proof - that it wrote nothing:
+
+```bash
+grep -aoE "https?://[^ )\"]+|[A-Za-z0-9_./-]+\.(cs|csproj|md|ps1|xaml)" <outfile> | sort -u
+```
+
+Require the files you expected to be named. An empty or irrelevant read set means the run failed; re-arm it.
+Same class as a green suite that skipped its lanes: the part that looks authoritative is the part that is
+wrong. (Method from the macOS project, 2026-09-05.)
+
 ## RULE: a stall is indistinguishable from success by exit code
 `codex exec` can wedge with the process alive, 0% CPU and output frozen at the echoed prompt, indefinitely -
 and **killing a wedged run reports exit 0**. So waiting on the exit notification cannot work.
