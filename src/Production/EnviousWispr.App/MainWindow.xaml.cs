@@ -4110,6 +4110,8 @@ public sealed partial class MainWindow : Window, IDisposable
         toggle.IsOn = !toggle.IsOn;
     }
 
+    private bool _windowFitsOnboarding;
+
     private void ShowOnboarding(bool show)
     {
         OnboardingView.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
@@ -4117,7 +4119,56 @@ public sealed partial class MainWindow : Window, IDisposable
         if (show)
         {
             FinishOnboardingButton.Focus(FocusState.Programmatic);
+            OnboardingView.LayoutUpdated += FitWindowToOnboardingOnce;
         }
+        else if (_windowFitsOnboarding)
+        {
+            // THE RESIZE IS DELIBERATE AND HAPPENS ONCE, when setup finishes and the navigation
+            // list the default height was measured for comes on screen. Leaving the window at
+            // the onboarding height would put that list back behind a scrollbar.
+            _windowFitsOnboarding = false;
+            ResizeToDefault();
+        }
+    }
+
+    /// <summary>
+    /// Fits the first-run window to the onboarding content, measured on the live layout.
+    /// </summary>
+    /// <remarks>
+    /// The default height is measured for the navigation list, and on first run that list is not
+    /// on screen - so the window opened 171 layout pixels taller than the only thing it showed,
+    /// ending in a blank band below the last card. Ref: #83.
+    ///
+    /// NOTHING HERE IS DERIVED. The chrome is whatever the client area holds that is not the
+    /// onboarding view, read from the live window; the content is the scroll content's own laid-out
+    /// height, which a ScrollViewer measures unconstrained, so it is the natural height whatever the
+    /// viewport; the footer is its own laid-out height. Every previous number in this file that was
+    /// derived from arithmetic was wrong, which is why this one reads the layout instead. It runs
+    /// once, on the first layout pass where both parts have a height, and clamps to the work area
+    /// the way the default does, so a short display still opens to fit and scrolls.
+    /// </remarks>
+    private void FitWindowToOnboardingOnce(object? sender, object e)
+    {
+        if (OnboardingContent.DesiredSize.Height <= 0 || OnboardingFooter.DesiredSize.Height <= 0 || OnboardingView.ActualHeight <= 0)
+        {
+            return;
+        }
+
+        OnboardingView.LayoutUpdated -= FitWindowToOnboardingOnce;
+        var scale = DisplayScale();
+        var clientDips = AppWindow.ClientSize.Height / scale;
+        var chromeDips = Math.Max(0, clientDips - OnboardingView.ActualHeight);
+        var wantedClientDips = chromeDips + OnboardingContent.DesiredSize.Height + OnboardingFooter.DesiredSize.Height;
+        var nonClientPixels = AppWindow.Size.Height - AppWindow.ClientSize.Height;
+        var height = wantedClientDips * scale + nonClientPixels;
+        var workArea = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest)?.WorkArea;
+        if (workArea is { } area && area.Height > 0)
+        {
+            height = Math.Min(height, area.Height * 0.94);
+        }
+
+        _windowFitsOnboarding = true;
+        AppWindow.Resize(new SizeInt32(AppWindow.Size.Width, (int)Math.Round(height)));
     }
 
     private void ShowPage(string tag)
