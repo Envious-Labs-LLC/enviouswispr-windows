@@ -167,7 +167,7 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <ScrollViewer x:Name="OnboardingScroll" AutomationProperties.Name="Welcome to EnviousWispr" HorizontalScrollMode="Disabled">
-                <Grid MaxWidth="{StaticResource BrandOnboardingContentMaxWidth}" Padding="{StaticResource BrandOnboardingContentPadding}" HorizontalAlignment="Center">
+                <Grid x:Name="OnboardingContent" MaxWidth="{StaticResource BrandOnboardingContentMaxWidth}" Padding="{StaticResource BrandOnboardingContentPadding}" HorizontalAlignment="Center">
                     <StackPanel Spacing="{StaticResource BrandSectionSpacing}">
                         <Border Style="{StaticResource BrandHeaderCardStyle}">
                             <Grid ColumnSpacing="{StaticResource BrandOnboardingWideSpacing}">
@@ -273,7 +273,7 @@
                     so a card is 960 wide. Padding the Border and capping its child instead let the
                     button reach the full 1040 and hang 40 pixels past the cards on a wide window.
                 -->
-                <Border Grid.Row="1" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="0,1,0,0">
+                <Border x:Name="OnboardingFooter" Grid.Row="1" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="0,1,0,0">
                     <Grid MaxWidth="{StaticResource BrandOnboardingContentMaxWidth}" Padding="{StaticResource BrandOnboardingFooterPadding}">
                     <StackPanel Spacing="{StaticResource BrandSpacingS}">
                         <Button x:Name="FinishOnboardingButton" x:Uid="FinishOnboardingButton" AccessKey="G" AutomationProperties.HelpText="Completes setup and opens the EnviousWispr home page. Press Control plus Enter from anywhere on this screen." Click="FinishOnboardingButton_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Style="{StaticResource BrandPrimaryButtonStyle}" Content="Get started" TabIndex="0">
