@@ -5,6 +5,9 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="EnviousWispr.Architecture.Tests" />
+    <!-- The journey harness resolves the recording key through the app's OWN parser and key map, so
+         it can never press a key nothing is listening for. -->
+    <InternalsVisibleTo Include="EnviousWispr.AppJourney.Uat" />
   </ItemGroup>
 
   <ItemGroup>

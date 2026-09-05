@@ -3,9 +3,11 @@ using EnviousWispr.Audio;
 using EnviousWispr.ASR;
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.ModelDelivery;
+using EnviousWispr.Services.Input;
 using EnviousWispr.Services.Runtime;
 using EnviousWispr.Services.Settings;
 using NAudio.Codecs;
@@ -73,6 +75,15 @@ if (headStart && livePreview)
         "--head-start and --live-preview are mutually exclusive: the head start deliberately stands "
             + "down when Live Preview is on, so asking for both asserts a state the app refuses.");
 }
+// THE ONE TAKE THAT PRESSES THE REAL KEY WITHOUT A SOUND. Every other synthetic mode either asks the
+// app to press for itself over a named event, or presses F8 and plays audio through the speakers. This
+// one injects the resolved recording key with the silent fixture as the microphone, so the installed
+// global hook - the path a finger takes - is what starts the take, and nothing is heard in the room.
+// Verdicts come from app.jsonl and the controlled target; the injector's own account is never one.
+var syntheticHotkey = args.Any(argument => string.Equals(
+    argument,
+    "--synthetic-hotkey",
+    StringComparison.OrdinalIgnoreCase));
 var deterministicProfileArgument = ArgumentValue(args, "--deterministic-profile");
 var deterministicProfile = deterministicProfileArgument?.ToLowerInvariant() switch
 {
@@ -161,6 +172,14 @@ if (deterministicProfile != DeterministicJourneyProfile.None &&
 {
     throw new JourneyExpectationException(
         "Deterministic-profile UAT requires --english-parakeet and cannot be combined with local polish, Live Preview, live microphone, Escape Recovery, or failure injection.");
+}
+if (syntheticHotkey &&
+    (liveMicrophone || livePreview || headStart || escapeRecovery || failureMode != JourneyFailureMode.None))
+{
+    throw new JourneyExpectationException(
+        "--synthetic-hotkey drives the installed global hook with the silent reviewed fixture and cannot be "
+            + "combined with live or manual microphone, Live Preview, the head start, Escape Recovery, or "
+            + "failure injection: each of those owns the trigger or the hold in a different way.");
 }
 if (polishProvider == PolishProvider.EgOne)
 {
@@ -357,6 +376,8 @@ using var readyEvent = new EventWaitHandle(false, EventResetMode.ManualReset, re
 using var runtimeEvent = new EventWaitHandle(false, EventResetMode.ManualReset, runtimeEventName);
 using var startEvent = new EventWaitHandle(false, EventResetMode.ManualReset, startEventName);
 using var completeEvent = new EventWaitHandle(false, EventResetMode.ManualReset, completeEventName);
+var exitEventName = $@"Local\EnviousLabs.EnviousWispr.JourneyUat.{runId}.exit";
+using var exitEvent = new EventWaitHandle(false, EventResetMode.ManualReset, exitEventName);
 
 Process? target = null;
 Process? app = null;
@@ -371,6 +392,7 @@ var ownedWorkerCount = 0;
 var ownedPolishWorkerIds = Array.Empty<int>();
 var ownedPolishWorkerCount = 0;
 ClipboardGuard? clipboardGuard = null;
+SyntheticHotkeyEvidence? syntheticHotkeyEvidence = null;
 var usesPublicFixtureJourney = !liveMicrophone &&
     failureMode is JourneyFailureMode.None or JourneyFailureMode.TargetUnavailable;
 
@@ -456,6 +478,12 @@ try
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_START_EVENT"] = startEventName;
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_COMPLETE_EVENT"] = completeEventName;
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_EXIT_AFTER_COMPLETION"] = "1";
+        if (syntheticHotkey)
+        {
+            // START is never signalled in this mode; the harness ends the run through this event once
+            // the log and the target have spoken, and the app's own exit-after-completion does the rest.
+            appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_EXIT_EVENT"] = exitEventName;
+        }
         if (failureMode == JourneyFailureMode.TargetUnavailable)
         {
             appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_HOLD_MILLISECONDS"] = "2000";
@@ -580,7 +608,20 @@ try
                 clipboardGuard = ClipboardGuard.CaptureOrThrow();
             }
 
-            startEvent.Set();
+            if (syntheticHotkey)
+            {
+                syntheticHotkeyEvidence = DriveSyntheticHotkey(
+                    diagnosticPath,
+                    targetResultPath,
+                    target.MainWindowHandle,
+                    profileDirectory);
+                exitEvent.Set();
+            }
+            else
+            {
+                startEvent.Set();
+            }
+
             if (failureMode == JourneyFailureMode.TargetUnavailable)
             {
                 if (!WaitForDiagnosticEvent(
@@ -768,6 +809,7 @@ try
         provider,
         modelPack,
         acousticProbe,
+        syntheticHotkey = syntheticHotkeyEvidence,
         polish = PolishProviderName(polishProvider),
         polishCompleted = polishEvidence.Completed,
         polishDegraded = polishEvidence.Degraded,
@@ -786,6 +828,7 @@ try
             _ when manualMicrophone => "PhysicalF8-FounderSpeech-ProductionWasapi",
             _ when synthesizedAcoustic => "SyntheticF8-WindowsSpeechPlayback-ProductionWasapi",
             _ when liveMicrophone => "SyntheticF8-ReviewedFixturePlayback-ProductionWasapi",
+            _ when syntheticHotkey => "SyntheticHotkey-InstalledGlobalHook-ReviewedFixtureAudioCapture",
             _ => "NamedEvents-ReviewedFixtureAudioCapture",
         },
         audioCapture = failureMode switch
@@ -850,6 +893,19 @@ finally
         }
     }
 }
+}
+catch (JourneyExpectationException instrument) when (instrument.InstrumentInvalid)
+{
+    // THE HARNESS COULD NOT DO ITS JOB, AND THAT IS NOT A VERDICT ABOUT THE APP. Its own exit code and
+    // its own words, so a runner can never average it into a pass rate or read it as a product FAIL.
+    // The class of defect this stops is written on JourneyExpectationException.Instrument.
+    Console.Error.WriteLine();
+    Console.Error.WriteLine("INSTRUMENT INVALID");
+    Console.Error.WriteLine($"  {instrument.Message}");
+    Console.Error.WriteLine();
+    Console.Error.WriteLine("The harness refused or could not stage this run. Nothing above is evidence about");
+    Console.Error.WriteLine("the product; fix the instrument and run again.");
+    return 3;
 }
 catch (JourneyExpectationException expectation)
 {
@@ -1721,11 +1777,31 @@ static byte[] RepeatPcm(byte[] pcmBytes, int sampleRate, int repetitions)
     return repeated;
 }
 
+/// <summary>Presses or releases one key, and says NOTHING about whether the app saw it.</summary>
+/// <remarks>
+/// THE PAYLOAD IS CHECKED BEFORE THE SYSCALL, BECAUSE NOTHING AFTER IT CAN. On 2026-09-04 and 05 a
+/// probe built its INPUT struct by PowerShell nested assignment, which writes to a copy, and handed
+/// SendInput a well-formed struct requesting nothing. SendInput inserted it and returned 1 - correctly.
+/// Two sessions then concluded injected input was inert on this machine and built five explanations on
+/// a request for zero movement. A 48-byte struct in a second helper was rejected outright for the same
+/// lack of a check. Both are caught here, for someone who never read this.
+///
+/// IT RETURNS VOID ON PURPOSE. SendInput's count is about insertion, not arrival, and a value present
+/// is a value somebody will read as "the OS said it worked". A count mismatch is an instrument failure
+/// and is reported as one; success is only ever established from app.jsonl afterwards.
+/// </remarks>
 static void SendKey(byte virtualKey, bool keyDown)
 {
     if (Marshal.SizeOf<Input>() != 40)
     {
-        throw new JourneyExpectationException("The synthetic keyboard input does not match the Win64 ABI.");
+        throw JourneyExpectationException.Instrument(
+            "The synthetic keyboard input does not match the Win64 ABI (INPUT must be 40 bytes).");
+    }
+
+    if (virtualKey == 0)
+    {
+        throw JourneyExpectationException.Instrument(
+            "Refusing to send an empty keyboard event: no virtual key was resolved.");
     }
 
     var input = new Input
@@ -1740,10 +1816,186 @@ static void SendKey(byte virtualKey, bool keyDown)
             },
         },
     };
+    if (input.Data.Keyboard.VirtualKey == 0 && input.Data.Keyboard.ScanCode == 0)
+    {
+        throw JourneyExpectationException.Instrument(
+            "Refusing to send an empty keyboard event: the payload carries no key.");
+    }
+
     if (NativeMethods.SendInput(1, [input], Marshal.SizeOf<Input>()) != 1)
     {
-        throw new JourneyExpectationException("Synthetic keyboard input was rejected.");
+        throw JourneyExpectationException.Instrument(
+            "Synthetic keyboard input was not inserted into the input stream.");
     }
+}
+
+/// <summary>The take that starts the way a finger starts it, with nothing heard in the room.</summary>
+/// <remarks>
+/// EVERY VERDICT HERE IS READ FROM THE APP'S OWN LOG OR THE TARGET, NEVER FROM THE INJECTOR. This is
+/// the method the macOS harness ("WisprEyes") arrived at after a summer of brute force: make something
+/// happen, then read what the app said about itself. Its failures all came from trusting the harness's
+/// own account instead, and this machine reproduced that failure verbatim on 2026-09-04.
+///
+/// THE CONTROL HAS BOTH HALVES. HotkeyReady proves the hook is installed before anything is pressed; a
+/// quiet window proves DictationRecordingStarted is ABSENT when nothing is pressed; the press proves it
+/// PRESENT; and the observed press-to-marker latency then has to fit comfortably inside the quiet
+/// window, or the absence meant nothing and the run says so. That last check is also a drift alarm: the
+/// day the app gets slower to start a take, this fails loudly instead of the control quietly weakening.
+///
+/// ONE ROUTE, VERIFIED BY READING. WindowsPushToTalkHook detects every press through its low-level
+/// keyboard hook; RegisterHotKey there is a conflict probe that registers and unregisters at once. An
+/// injected key therefore takes the path a finger takes, and the hook does not filter LLKHF_INJECTED.
+///
+/// SINGLE NON-MODIFIER KEYS ONLY. A modifier-only tap completes on a 40 ms poll, so an instant
+/// synthetic press can fall between ticks and vanish - a harness artifact that reads as a flaky hotkey.
+/// That is a declared boundary, refused by the resolver up front, not a scenario to discover at 2am.
+/// </remarks>
+static SyntheticHotkeyEvidence DriveSyntheticHotkey(
+    string diagnosticPath,
+    string targetResultPath,
+    nint targetWindow,
+    string profileDirectory)
+{
+    var quietWindow = TimeSpan.FromSeconds(2);
+    // The app's own default fixture hold (ResolveJourneyUatHoldDuration), so the two fixture-driven
+    // modes differ in their trigger and nothing else.
+    var holdAfterRecording = TimeSpan.FromMilliseconds(150);
+
+    if (!WaitForDiagnosticEvent(diagnosticPath, "HotkeyReady/", TimeSpan.FromSeconds(10)))
+    {
+        throw new JourneyExpectationException(
+            "The app never reported HotkeyReady, so there is no installed hook to press a key for.");
+    }
+
+    var virtualKey = ResolveRecordingVirtualKey(profileDirectory);
+
+    // NEGATIVE HALF: nothing is pressed, so nothing may start.
+    Thread.Sleep(quietWindow);
+    if (ReadDiagnosticEvents(diagnosticPath).Any(value =>
+            value.StartsWith("DictationRecordingStarted/", StringComparison.Ordinal)))
+    {
+        throw new JourneyExpectationException(
+            "A recording started before any key was pressed, so DictationRecordingStarted is not "
+                + "exclusive to the press and this control cannot certify anything.");
+    }
+
+    BringToForeground(targetWindow);
+    Thread.Sleep(250);
+
+    // POSITIVE HALF: the resolved key, held past the moment the app says it is recording.
+    var pressed = Stopwatch.StartNew();
+    SendKey(virtualKey, keyDown: true);
+    var recordingStarted = WaitForDiagnosticEvent(
+        diagnosticPath,
+        "DictationRecordingStarted/",
+        TimeSpan.FromSeconds(3));
+    var pressToRecording = pressed.Elapsed;
+    Thread.Sleep(holdAfterRecording);
+    SendKey(virtualKey, keyDown: false);
+    var heldFor = pressed.Elapsed;
+    if (!recordingStarted)
+    {
+        throw new JourneyExpectationException(
+            "The injected recording key did not start a recording within 3 seconds: the installed hook "
+                + "did not act on it.");
+    }
+
+    // THE QUIET WINDOW HAS TO HAVE MEANT SOMETHING. Absence for N certifies nothing until the same
+    // marker has been watched arriving in well under N.
+    if (pressToRecording * 3 > quietWindow)
+    {
+        throw JourneyExpectationException.Instrument(
+            $"The quiet window ({quietWindow.TotalMilliseconds:F0} ms) is not comfortably longer than the "
+                + $"observed press-to-recording latency ({pressToRecording.TotalMilliseconds:F0} ms), so its "
+                + "absence check meant nothing. Lengthen the window or find out why the app got slower.");
+    }
+
+    if (!WaitForDiagnosticEvent(diagnosticPath, "TextDeliveryCompleted/", TimeSpan.FromSeconds(45)))
+    {
+        throw new JourneyExpectationException(
+            "The synthetic-hotkey take did not reach TextDeliveryCompleted; "
+                + $"events={string.Join(',', ReadDiagnosticEvents(diagnosticPath))}.");
+    }
+
+    var targetObserved = WaitForExpectedTargetResult(targetResultPath, TimeSpan.FromSeconds(5));
+    return new SyntheticHotkeyEvidence(
+        VirtualKey: $"0x{virtualKey:X2}",
+        HeldMilliseconds: (int)heldFor.TotalMilliseconds,
+        QuietWindowMilliseconds: (int)quietWindow.TotalMilliseconds,
+        PressToRecordingMilliseconds: (int)pressToRecording.TotalMilliseconds,
+        TargetObserved: targetObserved);
+}
+
+/// <summary>The key the app is listening for, or a refusal - never a guess.</summary>
+/// <remarks>
+/// PORTED FROM THE macOS HARNESS'S ptt_binding CONTRACT. On 2026-08-10 that harness pressed a key
+/// nothing was listening for and the FAIL was believed, on the one branch where a hotkey FAIL was most
+/// likely to be believed. The defect class is an instrument failure reported as a product verdict, and
+/// the design that stops it has THREE states, not two:
+///   absent    - no settings file in the isolated profile - resolves through the SAME default the app
+///               applies, DictationPreferences.Default, because a fresh profile really is running F8
+///               with nothing on disk, and refusing there would reject a valid configuration;
+///   valid     - a gesture the app's own parser accepts and its own key map can name - the binding;
+///   malformed - anything else - REFUSED, because it says nothing about what the app is using.
+/// The parser and the key map are the app's own (WindowsVirtualKeyMap, through InternalsVisibleTo), so
+/// this cannot decay into a remembered table the way the macOS resolver once did.
+///
+/// CONFIGURATION ONLY. Whether the injector can drive the key is the caller's question. Chords and
+/// modifier taps are refused here because this harness has declared them undrivable, not because they
+/// are misconfigured; the message says which.
+/// </remarks>
+static byte ResolveRecordingVirtualKey(string profileDirectory)
+{
+    var settingsPath = Path.Combine(profileDirectory, "settings.json");
+    string gestureText;
+    if (!File.Exists(settingsPath))
+    {
+        gestureText = DictationPreferences.Default.PushToTalkGesture;
+    }
+    else
+    {
+        var loaded = new JsonSettingsStore(settingsPath).LoadAsync().GetAwaiter().GetResult();
+        if (loaded.Status is not (SettingsLoadStatus.Loaded or SettingsLoadStatus.Migrated))
+        {
+            throw JourneyExpectationException.Instrument(
+                $"The isolated profile's settings could not be read ({loaded.Status}), so the recording "
+                    + "key cannot be established; refusing to guess.");
+        }
+
+        gestureText = loaded.Settings.Preferences.Dictation.PushToTalkGesture;
+    }
+
+    var parsed = HotkeyGestureParser.Parse(gestureText);
+    if (!parsed.Succeeded || parsed.Gesture is null)
+    {
+        throw JourneyExpectationException.Instrument(
+            "The configured recording gesture does not parse with the app's own parser, so nothing can "
+                + "be pressed for it; refusing to guess.");
+    }
+
+    var gesture = parsed.Gesture.Value;
+    if (!WindowsVirtualKeyMap.TryMap(gesture.Key, out var virtualKey))
+    {
+        throw JourneyExpectationException.Instrument(
+            "The configured recording key has no entry in the app's own key map, so nothing can be "
+                + "pressed for it; refusing to guess.");
+    }
+
+    if (gesture.Modifiers != HotkeyModifiers.None || HotkeyEdgeTracker.IsModifierKey(virtualKey))
+    {
+        throw JourneyExpectationException.Instrument(
+            "The recording binding is a chord or a modifier tap. Those complete on a 40 ms poll that an "
+                + "instant synthetic press can fall between, so this harness declares them undrivable "
+                + "rather than report a flaky hotkey. Drive them with a finger.");
+    }
+
+    if (virtualKey is 0 or > 0xFF)
+    {
+        throw JourneyExpectationException.Instrument(
+            "The resolved virtual key is outside the range SendInput takes.");
+    }
+
+    return (byte)virtualKey;
 }
 
 static void RemoveUatDirectory(string path)
@@ -1985,6 +2237,14 @@ static string FailureModeName(JourneyFailureMode failureMode) => failureMode swi
     JourneyFailureMode.TargetUnavailable => "target-unavailable",
     _ => "none",
 };
+
+/// <summary>Content-free evidence of the synthetic-hotkey take: which key, how long, how fast.</summary>
+internal sealed record SyntheticHotkeyEvidence(
+    string VirtualKey,
+    int HeldMilliseconds,
+    int QuietWindowMilliseconds,
+    int PressToRecordingMilliseconds,
+    bool TargetObserved);
 
 [StructLayout(LayoutKind.Sequential)]
 internal struct Input

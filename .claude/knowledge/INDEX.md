@@ -12,6 +12,7 @@ Read only the files relevant to the task, but read each selected file completely
 | A crash, hang, silent exit, or any "why did it do that" | `diagnostics.md` FIRST, then the matching contract |
 | Any shipped implementation | the always-on rules are already in context; add the matching contracts above |
 | Parity with the macOS app, or "does Windows have X yet" | the catalog first (below), then `mac-parity-audit.md` |
+| Driving the real app in a test - the journey harness, synthetic input, a UAT verdict, "did the hotkey work" | `uat-testing.md`, then `diagnostics.md` for the log it reads |
 | Historical measurements or experiments | Matching file under `../../notes/` |
 
 ## The cross-platform catalog answers parity questions first
@@ -46,3 +47,4 @@ surfaces the row without the whole index. One row per line, every row carries a 
 - [architecture.md](architecture.md) — **when:** architecture, dependency, platform choice, project layout, new module, where does this live, out of process, worker
 - [product-contract.md](product-contract.md) — **when:** product decision, scope, invariant, privacy boundary, are we allowed to, should we ship, release gate, is this a defect
 - [mac-parity-audit.md](mac-parity-audit.md) — **when:** macOS parity, does Windows have, missing feature, the Mac does, on macOS, how does the Mac, deliberately different
+- [uat-testing.md](uat-testing.md) — **when:** journey harness, synthetic input, SendInput, injected input, UAT verdict, did the hotkey work, the harness says, synthetic-hotkey, INSTRUMENT INVALID, WisprEyes, drive the app
