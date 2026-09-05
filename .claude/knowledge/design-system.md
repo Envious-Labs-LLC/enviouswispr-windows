@@ -412,6 +412,25 @@ and the hole is silent by construction: a missing tint renders as the card, whic
 Soft tints are the base colour at low alpha: `#1A` in Light, `#24` in Dark. **High Contrast sets every
 soft tint to `Transparent`** so the system's own colours decide, which is what High Contrast is for.
 
+**DISTRESS DELIBERATELY SHARES ERROR'S PICTURE, AND DIFFERS IN TWO WAYS A SINGLE FRAME CANNOT SEE.**
+It is the same bad news arriving louder - a dictation Windows interrupted, with recovery still pending -
+so it keeps error's ring, glyph and red. What separates them: the wash is deeper (`#3D` against error's
+`#1A` in Light, `#4A` against `#24` in Dark), and the wash BREATHES, opacity 1 to 0.35 and back over a
+1.3 s cycle. Measured 2026-09-05 with `tools/ui-capture/capture-window.ps1`, mean interior colour, three
+distress frames 350 ms apart against one error frame:
+
+| frame | mean R |
+|---|---|
+| error | 59.2 |
+| distress, settle 1500 ms | 63.6 |
+| distress, settle 1850 ms | 83.9 |
+| distress, settle 2200 ms | 79.3 |
+
+So a distress frame caught at its trough reads as error, which is exactly what #135's first look saw and
+called indistinguishable. **To photograph distress, take three frames, not one**, and read the spread. A
+novel glyph was considered and refused: a codepoint chosen for difference is a hollow box on a machine
+whose font lacks it, and nothing here can see that (FACT: the-icon-font-has-a-hole). Ref: #135.
+
 **Read this beside RULE: a-change-that-ships-and-does-nothing.** Those four were changes that ARRIVED and
 had no effect. This is the other half: a token that was never created, whose absence renders as a
 plausible default rather than as a gap.
