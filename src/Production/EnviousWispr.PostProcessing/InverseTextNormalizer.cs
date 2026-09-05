@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.RegularExpressions;
 
@@ -159,6 +160,17 @@ public static class InverseTextNormalizer
     private static readonly string SimpleOrdinalAlternation = Alternation(
         Ordinals.Keys.Where(key => !key.Contains(' ')));
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(250);
+
+    // A LOOKBEHIND WOULD KEEP THESE PATTERNS ON THE BACKTRACKING ENGINE, and these four are the ones
+    // that open with a number run, which is exactly where the quadratic re-scan lived: measured on
+    // the 800-word #91 input, the two money patterns cost 593 ms and the two time patterns 138 ms
+    // while every non-backtracking pass cost nothing. So the character that must not precede the
+    // match is CONSUMED as a named group instead of looked behind at, and each evaluator puts it
+    // back in front of what it returns. A match that gives back match.Value is unchanged, because
+    // the lead is already in it.
+    private const string Lead = "lead";
+    private static readonly string NotAfterDigitOrDot = $@"(?<{Lead}>^|[^\d.])";
+    private static readonly string NotAfterDigitOrColon = $@"(?<{Lead}>^|[^\d:])";
 
     public static string Normalize(string text, bool spokenPunctuation = false)
     {
@@ -486,7 +498,7 @@ public static class InverseTextNormalizer
     {
         var result = Replace(
             input,
-            $@"(?<![\d.])\b(?:and\s+)?(?<dollars>{NumberOrDigitRun})\s+dollars?(?:\s+and\s+(?<cents>{NumberOrDigitRun})\s+cents?)?\b",
+            $@"{NotAfterDigitOrDot}\b(?:and\s+)?(?<dollars>{NumberOrDigitRun})\s+dollars?(?:\s+and\s+(?<cents>{NumberOrDigitRun})\s+cents?)?\b",
             match =>
             {
                 var dollars = WordsToInteger(SplitWords(match.Groups["dollars"].Value));
@@ -498,16 +510,16 @@ public static class InverseTextNormalizer
                 if (match.Groups["cents"].Success &&
                     WordsToInteger(SplitWords(match.Groups["cents"].Value)) is long cents)
                 {
-                    return $"${FormatInteger(dollars.Value)}.{cents:00}";
+                    return match.Groups[Lead].Value + $"${FormatInteger(dollars.Value)}.{cents:00}";
                 }
 
-                return "$" + FormatInteger(dollars.Value);
+                return match.Groups[Lead].Value + "$" + FormatInteger(dollars.Value);
             });
         result = Replace(
             result,
-            $@"(?<![\d.])\b(?:and\s+)?(?<cents>{NumberRun})\s+cents?\b",
+            $@"{NotAfterDigitOrDot}\b(?:and\s+)?(?<cents>{NumberRun})\s+cents?\b",
             match => WordsToInteger(SplitWords(match.Groups["cents"].Value)) is long cents
-                ? (cents / 100m).ToString("$0.00", CultureInfo.InvariantCulture)
+                ? match.Groups[Lead].Value + (cents / 100m).ToString("$0.00", CultureInfo.InvariantCulture)
                 : match.Value);
         return Replace(
             result,
@@ -521,7 +533,7 @@ public static class InverseTextNormalizer
     {
         var result = Replace(
             input,
-            $@"(?<![\d:])\b(?<hour>{HourToken})(?:\s+(?<minute>{NumberOrDigitRun}))?\s+(?<period>[ap])\s*m\b",
+            $@"{NotAfterDigitOrColon}\b(?<hour>{HourToken})(?:\s+(?<minute>{NumberOrDigitRun}))?\s+(?<period>[ap])\s*m\b",
             match =>
             {
                 var hour = WordsToInteger(SplitWords(match.Groups["hour"].Value));
@@ -533,13 +545,14 @@ public static class InverseTextNormalizer
                     return match.Value;
                 }
 
-                return $"{hour}:{minute:00} {match.Groups["period"].Value.ToUpperInvariant()}M";
+                return match.Groups[Lead].Value +
+                    $"{hour}:{minute:00} {match.Groups["period"].Value.ToUpperInvariant()}M";
             });
         return Replace(
             result,
-            $@"(?<![\d:])\b(?<hour>{HourToken})\s+o'?clock\b",
+            $@"{NotAfterDigitOrColon}\b(?<hour>{HourToken})\s+o'?clock\b",
             match => WordsToInteger(SplitWords(match.Groups["hour"].Value)) is long hour && hour is >= 1 and <= 12
-                ? $"{hour}:00"
+                ? match.Groups[Lead].Value + $"{hour}:00"
                 : match.Value);
     }
 
@@ -1058,10 +1071,46 @@ public static class InverseTextNormalizer
         string input,
         string pattern,
         MatchEvaluator evaluator,
-        bool ignoreCase = true) => Regex.Replace(
-            input,
-            pattern,
-            evaluator,
-            RegexOptions.CultureInvariant | (ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None),
-            RegexTimeout);
+        bool ignoreCase = true) => Compiled(pattern, ignoreCase).Replace(input, evaluator);
+
+    // EVERY PATTERN IS BUILT ONCE, AND BUILT NON-BACKTRACKING WHEREVER THE ENGINE ALLOWS IT.
+    //
+    // The cost that opened #91 was never one pattern: a run of spoken numbers is re-derived from
+    // every starting position by every pattern that begins with a number run, and a backtracking
+    // engine pays that quadratically to FAIL, which is the common case because most text is not a
+    // number. Atomic grouping was measured and left the exponent alone, because it removes retries
+    // inside the run and not the re-scan of the run per position. The non-backtracking engine
+    // guarantees linear time in the input; the same alternations then cost what they read.
+    //
+    // It refuses lookarounds, backreferences and atomic groups by throwing at construction, so a
+    // pattern that uses one is built the ordinary way and keeps the timeout as its guard. The choice
+    // is made once per pattern and remembered; the static Regex cache holds fifteen entries and this
+    // file has more patterns than that, so it was re-parsing them on every dictation.
+    private static readonly ConcurrentDictionary<(string Pattern, bool IgnoreCase), Regex> Patterns = new();
+
+    private static Regex Compiled(string pattern, bool ignoreCase) =>
+        Patterns.GetOrAdd((pattern, ignoreCase), static key =>
+        {
+            var options = RegexOptions.CultureInvariant |
+                (key.IgnoreCase ? RegexOptions.IgnoreCase : RegexOptions.None);
+            try
+            {
+                return new Regex(key.Pattern, options | RegexOptions.NonBacktracking, RegexTimeout);
+            }
+            catch (NotSupportedException)
+            {
+                return new Regex(key.Pattern, options, RegexTimeout);
+            }
+        });
+
+    /// <summary>The patterns that still run on the backtracking engine, for the test that keeps that list short.</summary>
+    internal static IReadOnlyList<string> BacktrackingPatterns()
+    {
+        _ = Normalize("one point five dollars and two cents at half past three on the fourth of july nineteen ninety nine");
+        return Patterns
+            .Where(pair => (pair.Value.Options & RegexOptions.NonBacktracking) == 0)
+            .Select(pair => pair.Key.Pattern)
+            .OrderBy(pattern => pattern, StringComparer.Ordinal)
+            .ToArray();
+    }
 }
