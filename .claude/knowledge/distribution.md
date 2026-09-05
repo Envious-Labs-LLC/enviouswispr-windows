@@ -11,11 +11,19 @@ The app never updates while recording or processing a dictation.
 
 ## Signing
 
-Windows development itself requires no paid developer membership. Public direct distribution should use
-trusted code signing. Azure Artifact Signing is the preferred managed option when public distribution
-begins. It has an ongoing cost and requires explicit founder approval before enabling paid infrastructure.
-Signing reduces publisher warnings, but reputation-based SmartScreen prompts can still occur early in a
-new product's life.
+Windows development itself requires no paid developer membership. Public direct distribution uses trusted
+code signing, and **the signing identity is decided: SignPath Foundation** (founder, 2026-09-05, #42), the
+free code-signing programme for open-source projects. The project qualifies - GPL v3, public repository, no
+proprietary component; the bundled speech models are open-weight data, not code. Signing runs through
+SignPath's managed pipeline, so no signing key ever sits on a developer machine, which is also what the
+no-write-token rule for this PC requires. Owed before it counts as done: the founder submits the
+application; the installer and update pipeline gain the signing step once the account is approved.
+
+Fallback only if SignPath's review refuses: Azure Trusted Signing, about $10 a month. Envious Labs LLC
+qualifies since the three-year-history requirement was dropped at GA (2026), but it is paid infrastructure
+and needs explicit founder approval before it is enabled. Signing reduces publisher warnings; reputation-
+based SmartScreen prompts can still occur early in a new product's life, and SignPath issues OV-level
+certificates, so expect some until reputation accrues.
 
 ## Secondary path
 
