@@ -8,9 +8,7 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <UseWinUI>true</UseWinUI>
     <WinUISDKReferences>false</WinUISDKReferences>
-    <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
-    <EnableMsixTooling>false</EnableMsixTooling>
     <PublishReadyToRun>false</PublishReadyToRun>
     <PublishTrimmed>false</PublishTrimmed>
     <DefaultLanguage>en-US</DefaultLanguage>
@@ -21,9 +19,42 @@
     <EnviousWisprReleaseChannel Condition="'$(EnviousWisprReleaseChannel)' == ''">stable</EnviousWisprReleaseChannel>
   </PropertyGroup>
 
+  <!--
+    PACKAGING IS OPT-IN, so one property is the whole difference between the build that ships and the
+    build every gate already runs. `validate.ps1` and CI build this project UNPACKAGED today, and step E
+    of #42 is what finally retires that path; until then a switch that changed the default would break
+    the gate that proves the change. `scripts/package-store.ps1` sets EnviousWisprPackaged=true.
+  -->
+  <PropertyGroup Condition="'$(EnviousWisprPackaged)' == 'true'">
+    <WindowsPackageType>MSIX</WindowsPackageType>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <AppxManifest>Package.appxmanifest</AppxManifest>
+    <GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>
+    <!-- The Store re-signs, and a sideload build is signed explicitly by the packaging script. -->
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+    <AppxBundle>Never</AppxBundle>
+    <AppxSymbolPackageEnabled>false</AppxSymbolPackageEnabled>
+    <GenerateTestArtifacts>false</GenerateTestArtifacts>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(EnviousWisprPackaged)' != 'true'">
+    <WindowsPackageType>None</WindowsPackageType>
+    <EnableMsixTooling>false</EnableMsixTooling>
+  </PropertyGroup>
+
   <ItemGroup>
     <Manifest Include="$(ApplicationManifest)" />
     <AssemblyMetadata Include="EnviousWisprReleaseChannel" Value="$(EnviousWisprReleaseChannel)" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(EnviousWisprPackaged)' == 'true'">
+    <AppxManifest Include="Package.appxmanifest">
+      <SubType>Designer</SubType>
+    </AppxManifest>
+    <Content Include="Assets\Store\*.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>

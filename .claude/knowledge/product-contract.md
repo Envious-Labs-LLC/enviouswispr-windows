@@ -104,6 +104,25 @@ limitation is not an exception.
 
 ## Licensing and release
 
-The Windows application follows the same GPLv3 product licensing direction as the macOS project. Direct
-distribution is primary. The Microsoft Store can become a secondary channel after direct installation and
-updates are proven.
+The Windows application follows the same GPLv3 product licensing direction as the macOS project.
+
+**The Microsoft Store is the single distribution channel** (founder, 2026-09-05, #42; supersedes "direct
+distribution is primary"). Microsoft signs the package and delivers updates; no direct download is offered.
+The basis, validated three times by an independent reviewer on #42: an MSIX declaring `runFullTrust` runs as
+an ordinary medium-integrity desktop process - no Mac-App-Store-style sandbox - so the global hook,
+clipboard-backed delivery, WASAPI, the out-of-process runtime worker, localhost Ollama, model downloads and
+BYOK all survive. The promises below are user-visible and stay written out:
+
+- **Uninstalling keeps the user's data.** Models, history and settings under the product's data folder
+  survive uninstall (a Windows 11 folder virtualization exclusion, scoped to the product folder, not the
+  company folder). The customer's choice lives in the app - Settings offers *Export my data* and *Delete all
+  EnviousWispr data*, the latter also clearing stored credentials - and the first run and the Store listing
+  say plainly that data must be deleted before uninstalling, or after reinstalling to reach the control.
+  MSIX offers no uninstall-time hook for an application like this one.
+- **One product identity.** Founder and beta testing happen through a private audience first, then package
+  flights on the same installed identity - never a separately installed channel. Every release therefore
+  ships schema-compatible settings and history migrations, and recovery means a higher-version package.
+- **Updates never apply while recording or processing a dictation.** The app checks the Store for updates
+  itself, offers them, and requests install only when idle; the Store then applies the package. The
+  "last known-good version is recoverable" promise is met by publishing a higher-version recovery package.
+- The parity gate above is **not** waived by this decision.
