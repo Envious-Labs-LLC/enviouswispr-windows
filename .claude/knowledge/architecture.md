@@ -54,7 +54,11 @@ reason but ask rather than assert it, and write the answer here when you get it.
 ## Windows integration
 
 - Audio: WASAPI through a maintained .NET wrapper or a narrow native bridge.
-- Hotkey: `RegisterHotKey` where possible, with a low-level hook only for combinations it cannot express.
+- Hotkey: ONE route, a `WH_KEYBOARD_LL` hook (`WindowsPushToTalkHook`), for every binding. The original
+  intent was `RegisterHotKey` where possible, and it did not survive for a reason worth keeping: push-to-talk
+  needs the key-UP edge and `RegisterHotKey` delivers only the press. `RegisterHotKey` remains in that file
+  as a conflict PROBE - register, unregister, report - and never receives a keystroke, which is why a
+  synthetic press takes exactly the path a finger takes (see `uat-testing.md`).
 - Focus and context: Windows UI Automation with explicit fallbacks and privacy limits.
 - Delivery: clipboard-backed paste through narrowly scoped `SendInput`, with clipboard-only fallback when
   synthetic paste is refused. Two routes, not the macOS cascade of five, and that is deliberate.

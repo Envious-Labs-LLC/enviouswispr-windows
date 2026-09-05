@@ -1963,12 +1963,26 @@ public partial class App : Application, IAsyncDisposable
 
             using (startEvent)
             {
-                var started = await Task.Run(
-                        () => startEvent.WaitOne(TimeSpan.FromSeconds(30)))
-                    .ConfigureAwait(false);
-                if (!started || _exitRequested || _disposed)
+                // A HARNESS THAT DRIVES THE REAL HOTKEY NEVER SIGNALS START. It presses the key itself
+                // and asks this method for one thing only: a clean exit it can trigger once the log and
+                // the target have said the take landed. Without that, the only exit left is this wait
+                // timing out, and a slow transcription would then end the app mid-journey and read as
+                // omitted stages - a harness limit reported as a product defect. The exit event is
+                // optional and lives in the same allowlisted scheme as START; when it is configured the
+                // window is long enough that the harness, not this constant, decides when the run ends.
+                TryOpenJourneyUatEvent("ENVIOUSWISPR_UAT_JOURNEY_EXIT_EVENT", out var exitEvent);
+                using (exitEvent)
                 {
-                    return;
+                    var started = await Task.Run(() => exitEvent is null
+                            ? startEvent.WaitOne(TimeSpan.FromSeconds(30))
+                            : WaitHandle.WaitAny(
+                                [startEvent, exitEvent],
+                                TimeSpan.FromSeconds(120)) == 0)
+                        .ConfigureAwait(false);
+                    if (!started || _exitRequested || _disposed)
+                    {
+                        return;
+                    }
                 }
             }
 
