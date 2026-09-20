@@ -59,6 +59,52 @@ public sealed class AppearanceCommitTests
         Assert.Equal(RecordingPillDesign.LevelRail, store.Saved.Preferences.PillDesignWithoutWords);
     }
 
+    /// <summary>Every choice on Appearance has a field in the snapshot the window hands the presenter.</summary>
+    /// <remarks>
+    /// THE WINDOW BUILDS THE SNAPSHOT AND THE PRESENTER WRITES IT, so a card added to Appearance and
+    /// wired to the handler is still lost if the snapshot has no field for it. A group with one
+    /// card is not a choice - Live Preview's pill has one design today - and is the only kind of
+    /// group allowed to have no field.
+    /// </remarks>
+    [Fact]
+    public void EveryAppearanceChoiceHasAFieldInTheSnapshotTheWindowHandsOver()
+    {
+        var markup = XDocument.Load(Path.Combine(
+            RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var appearance = markup.Descendants().First(element =>
+            (string?)element.Attribute(XName.Get("Name", XamlNamespace)) == "AppearanceSection");
+        var groups = appearance.Descendants()
+            .Where(element => element.Name.LocalName == "RadioButton")
+            .GroupBy(element => (string?)element.Attribute("GroupName") ?? "(no group)")
+            .ToDictionary(group => group.Key, group => group.Count());
+
+        var fieldByGroup = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["PillTheme"] = nameof(AppearanceChoices.Theme),
+            ["PillOverlayPosition"] = nameof(AppearanceChoices.OverlayPosition),
+            ["PillWithoutWords"] = nameof(AppearanceChoices.PillDesignWithoutWords),
+        };
+        var fields = typeof(AppearanceChoices).GetConstructors().Single().GetParameters()
+            .Select(parameter => parameter.Name!)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var (group, cards) in groups)
+        {
+            if (fieldByGroup.TryGetValue(group, out var field))
+            {
+                Assert.True(fields.Contains(field), $"The {group} choice maps to {field}, which the snapshot no longer carries.");
+            }
+            else
+            {
+                Assert.True(
+                    cards == 1,
+                    $"The {group} group offers {cards} cards on Appearance and has no field in the snapshot, so its choice is lost.");
+            }
+        }
+
+        Assert.Equal(fieldByGroup.Values.Order(), fields.Order());
+    }
+
     private sealed class RecordingStore : ISettingsStore
     {
         public AppSettings? Saved { get; private set; }

@@ -1870,19 +1870,24 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private Task<bool> SaveCustomWordFromPickerAsync(string spokenForm, string replacement)
     {
+        // THE PICKER CARRIES THE ANSWER ITSELF, not a position that has to be looked up. A mapping
+        // from index to meaning is a contract between this file and the ORDER of three strings in
+        // the markup, and reordering those strings changes what people choose while every test
+        // stays green. Each choice now holds its own value, so there is nothing left to keep in step.
+        //
+        // READ HERE, ON THE UI THREAD, BEFORE THE SAVE. The transform below runs inside the writer's
+        // gate, after a wait of unknown length on another save, on whatever thread that wait ends
+        // on; a control read in there is a control read off the UI thread. The word is built now
+        // and the transform only places it.
+        var word = new CustomWordEntry(
+            spokenForm,
+            replacement,
+            WordStrictnessComboBox.SelectedValue as MatchStrictness? ?? MatchStrictness.Default);
         return SaveUserDataAsync(
             data => new ReusableUserData(
                 data.CustomWords
                     .Where(entry => !string.Equals(entry.SpokenForm, spokenForm, StringComparison.OrdinalIgnoreCase))
-                    // THE PICKER CARRIES THE ANSWER ITSELF, not a position that has to be looked up.
-                    // A mapping from index to meaning is a contract between this file and the ORDER
-                    // of three strings in the markup, and reordering those strings changes what
-                    // people choose while every test stays green. Each choice now holds its own
-                    // value, so there is nothing left to keep in step.
-                    .Append(new CustomWordEntry(
-                        spokenForm,
-                        replacement,
-                        WordStrictnessComboBox.SelectedValue as MatchStrictness? ?? MatchStrictness.Default))
+                    .Append(word)
                     .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
                     .ToArray(),
                 data.Snippets),

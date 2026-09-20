@@ -1788,6 +1788,15 @@ public sealed partial class DesignSystemTokenTests
             persist.Value.Contains("SaveAppearanceAsync", StringComparison.Ordinal),
             "PersistAppearanceChoicesAsync does not hand the choice to the presenter, so an appearance "
                 + "chosen without a Save button is lost on the next launch.");
+
+        // AND THE SNAPSHOT IT HANDS OVER IS READ FROM THE CONTROLS, each one. A snapshot built from a
+        // default instead of a selection would reach the presenter and be written faithfully.
+        foreach (var reader in new[] { "ThemeChoices", "OverlayPositionChoices", "PillDesignWithoutWordsFromControls" })
+        {
+            Assert.True(
+                persist.Value.Contains(reader, StringComparison.Ordinal),
+                $"PersistAppearanceChoicesAsync does not read {reader}, so that choice on screen is not the one saved.");
+        }
     }
 
     private static Regex RadioButtonInGroup(string group) =>
