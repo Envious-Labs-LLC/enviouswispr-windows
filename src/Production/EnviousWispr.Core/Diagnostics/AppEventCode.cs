@@ -34,6 +34,18 @@ public enum AppEventCode
     DictationRecordingStarted,
 
     /// <summary>
+    /// A push-to-talk signal had to wait for the command ahead of it, or for an outside holder of the
+    /// session gate, before it ran.
+    /// </summary>
+    /// <remarks>
+    /// THE EVIDENCE THAT THE WINDOW WAS ENTERED. A key-up that lands while the press is still starting
+    /// used to be discarded; it is now queued (#86, #148). A journey that wants to prove the queue did
+    /// its job needs the app to say the signal actually waited, because from outside the process a
+    /// quick tap that happened to land after the press finished looks identical to one that did not.
+    /// </remarks>
+    DictationSignalQueued,
+
+    /// <summary>
     /// How a key press split between opening the microphone and starting the stream.
     /// </summary>
     /// <remarks>
