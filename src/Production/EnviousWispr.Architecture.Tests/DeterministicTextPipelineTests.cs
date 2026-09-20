@@ -358,13 +358,26 @@ public sealed class DeterministicTextPipelineTests
     {
         using var release = new ManualResetEventSlim(false);
         using var allowExit = new ManualResetEventSlim(false);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelled = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
         var invocations = 0;
+        // THE DEADLINE IS LONGER THAN THE POOL'S WORST DAY, AND THE STEP SAYS WHEN IT IS IN. The
+        // executor hands the worker to the thread pool with the deadline's own token, so a deadline
+        // that elapses before the pool has started the worker cancels the task without running it -
+        // correct for a stage (a stage that was never reached before its deadline is TimedOut, not
+        // run late), and fatal for this test, whose whole subject is a worker that IS running when
+        // the deadline lands. At 250 ms a starved hosted runner hit exactly that three times in one
+        // day, and the wait for the cancel below never ended (#165); reproduced locally by capping
+        // the pool and filling it past the deadline, where the worker never entered. The step now
+        // reports that it has entered, the test waits for that before it expects anything, and the
+        // deadline is long enough that entering first is the overwhelmingly likely order without
+        // being long enough to make the test slow.
         var step = new DelegateStep(
             DeterministicTextStage.EmojiRestoration,
             (context, token) =>
             {
                 Interlocked.Increment(ref invocations);
+                entered.TrySetResult();
                 try
                 {
                     release.Wait(token);
@@ -377,11 +390,12 @@ public sealed class DeterministicTextPipelineTests
                     throw;
                 }
             },
-            TimeSpan.FromMilliseconds(250));
+            TimeSpan.FromSeconds(2));
         var pipeline = new DeterministicTextPipeline([step]);
         try
         {
             var pending = RunStageAsync(restoration, step, pipeline: pipeline);
+            await entered.Task.WaitAsync(Patience);
             var token = await cancelled.Task.WaitAsync(Patience);
             var worker = GetOutstandingInvocation(pipeline, step);
             var result = await pending.WaitAsync(Patience);
