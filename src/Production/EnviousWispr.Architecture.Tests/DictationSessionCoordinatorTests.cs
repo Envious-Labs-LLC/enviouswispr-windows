@@ -2,6 +2,7 @@ using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Sessions;
 using EnviousWispr.Pipeline;
 
@@ -502,6 +503,84 @@ public sealed class DictationSessionCoordinatorTests
     }
 
     [Fact]
+    public async Task AnInterruptionIsQueuedBehindARunningCommandAndBehindAQueuedRelease()
+    {
+        // Windows locking is a fact whether or not a release was queued: it is never Ignored, it runs
+        // after whatever is ahead of it, and it does not stop a later release from being admitted.
+        var executor = new BarrierExecutor();
+        await using var coordinator = new DictationSessionCoordinator(executor);
+
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        var release = coordinator.SubmitAsync(PushToTalkSignal.Released);
+        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        Assert.False(interruption.IsCompleted);
+        Assert.Equal(3, coordinator.PendingCount);
+
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        await executor.Started(PushToTalkSignal.Released).WaitAsync(Patience);
+        executor.Finish(PushToTalkSignal.Released);
+        await release.WaitAsync(Patience);
+        await executor.StartedKind(SessionCommandKind.Interruption).WaitAsync(Patience);
+        executor.FinishKind(SessionCommandKind.Interruption);
+        var result = await interruption.WaitAsync(Patience);
+
+        Assert.Equal(SessionCommandDisposition.Applied, result.Disposition);
+        Assert.True(result.WasQueued);
+        Assert.Equal([SessionCommandKind.PushToTalk, SessionCommandKind.PushToTalk, SessionCommandKind.Interruption], executor.SeenKinds);
+        Assert.Equal(SystemLifecycleTransition.SessionLocked, executor.LastInterruption);
+        Assert.True(executor.LastSubmittedAt > 0, "an interruption is stamped at admission");
+    }
+
+    [Fact]
+    public async Task ATimeoutIsATerminalAndIsIgnoredWhileAReleaseIsQueued()
+    {
+        var executor = new BarrierExecutor();
+        await using var coordinator = new DictationSessionCoordinator(executor);
+        var session = DictationSessionId.Create();
+
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        var release = coordinator.SubmitAsync(PushToTalkSignal.Released);
+        var timeout = await coordinator.TimeOutAsync(session);
+
+        Assert.Equal(SessionCommandDisposition.Ignored, timeout.Disposition);
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        await executor.Started(PushToTalkSignal.Released).WaitAsync(Patience);
+        executor.Finish(PushToTalkSignal.Released);
+        await release.WaitAsync(Patience);
+
+        // With nothing pending, a timeout runs like any terminal and names its recording.
+        var later = coordinator.TimeOutAsync(session);
+        await executor.StartedKind(SessionCommandKind.Timeout).WaitAsync(Patience);
+        executor.FinishKind(SessionCommandKind.Timeout);
+        Assert.Equal(SessionCommandDisposition.Applied, (await later.WaitAsync(Patience)).Disposition);
+        Assert.Equal(session, executor.LastTimedOut);
+        Assert.DoesNotContain(SessionCommandKind.Timeout, executor.SeenKinds.Take(2));
+    }
+
+    [Fact]
+    public async Task CloseRefusesEverythingWithoutWaitingAndStopStillDrains()
+    {
+        var executor = new BarrierExecutor();
+        await using var coordinator = new DictationSessionCoordinator(executor);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+
+        coordinator.Close();
+
+        Assert.Equal(SessionCommandDisposition.Stopping, (await coordinator.SubmitAsync(PushToTalkSignal.Released)).Disposition);
+        Assert.Equal(SessionCommandDisposition.Stopping, (await coordinator.InterruptAsync(SystemLifecycleTransition.Suspending)).Disposition);
+        Assert.Equal(SessionCommandDisposition.Stopping, (await coordinator.TimeOutAsync(DictationSessionId.Create())).Disposition);
+        Assert.Null(coordinator.TryHold());
+        executor.Finish(PushToTalkSignal.Pressed);
+        Assert.Equal(SessionCommandDisposition.Applied, (await press.WaitAsync(Patience)).Disposition);
+        Assert.True(await coordinator.StopAsync(Patience));
+    }
+
+    [Fact]
     public async Task QuickAddIsNotASessionCommand()
     {
         var executor = new BarrierExecutor();
@@ -639,6 +718,45 @@ public sealed class DictationSessionCoordinatorTests
 
         public PushToTalkSignal? ThrowOn { get; init; }
 
+        public IReadOnlyList<SessionCommandKind> SeenKinds
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return [.. _seenKinds];
+                }
+            }
+        }
+
+        public SystemLifecycleTransition? LastInterruption { get; private set; }
+
+        public DictationSessionId? LastTimedOut { get; private set; }
+
+        public long LastSubmittedAt { get; private set; }
+
+        private readonly List<SessionCommandKind> _seenKinds = [];
+        private readonly Dictionary<SessionCommandKind, TaskCompletionSource> _kindStarted = new();
+        private readonly Dictionary<SessionCommandKind, TaskCompletionSource> _kindFinish = new();
+
+        public Task StartedKind(SessionCommandKind kind) => KindSource(_kindStarted, kind).Task;
+
+        public void FinishKind(SessionCommandKind kind) => KindSource(_kindFinish, kind).SetResult();
+
+        private TaskCompletionSource KindSource(Dictionary<SessionCommandKind, TaskCompletionSource> sources, SessionCommandKind kind)
+        {
+            lock (_lock)
+            {
+                if (!sources.TryGetValue(kind, out var source))
+                {
+                    source = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    sources[kind] = source;
+                }
+
+                return source;
+            }
+        }
+
         public Task Started(PushToTalkSignal signal, int occurrence = 0) =>
             Source(_started, signal, occurrence).Task;
 
@@ -649,6 +767,21 @@ public sealed class DictationSessionCoordinatorTests
             SessionCommand command,
             CancellationToken stoppingToken)
         {
+            lock (_lock)
+            {
+                _seenKinds.Add(command.Kind);
+            }
+
+            if (command.Kind != SessionCommandKind.PushToTalk)
+            {
+                LastInterruption = command.Transition ?? LastInterruption;
+                LastTimedOut = command.TimedOutSession ?? LastTimedOut;
+                LastSubmittedAt = command.SubmittedAt;
+                KindSource(_kindStarted, command.Kind).TrySetResult();
+                await KindSource(_kindFinish, command.Kind).Task;
+                return Answer;
+            }
+
             int occurrence;
             lock (_lock)
             {

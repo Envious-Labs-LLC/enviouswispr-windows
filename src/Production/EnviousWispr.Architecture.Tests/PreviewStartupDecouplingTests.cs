@@ -106,6 +106,94 @@ public sealed class PreviewStartupDecouplingTests
         Assert.Equal([AppEventCode.LivePreviewStartupCancelled], world.Log.Codes);
     }
 
+    [Fact]
+    public async Task WindowsLockingDuringPreviewStartupStopsTheCaptureKeepsTheAudioAndFinalisesOnce()
+    {
+        // STEP 11'S PROOF, ONE: the lock is a command on the same queue as a key. It reaches the capture
+        // while the preview worker is still starting, the audio is kept and finalised exactly as a
+        // release would finalise it, and a release queued behind the lock finds nothing to end.
+        await using var world = await World.StartRecordingWithPreviewStartupHeldAsync();
+
+        var lockCommand = world.Coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        var queuedRelease = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await world.Capture.Stopped.Task.WaitAsync(Patience);
+
+        Assert.False(world.Capture.IsCapturing);
+        await world.Engine.StartCancellationObserved.Task.WaitAsync(Patience);
+        Assert.False(lockCommand.IsCompleted);
+        Assert.DoesNotContain(world.Effects.Trace, effect => effect.StartsWith("Transcribe", StringComparison.Ordinal));
+
+        world.Engine.AllowStartExit.SetResult();
+        var locked = await lockCommand.WaitAsync(Patience);
+        var released = await queuedRelease.WaitAsync(Patience);
+
+        Assert.Equal(SessionCommandDisposition.Applied, locked.Disposition);
+        Assert.Equal(["Capture stopped", "Preview stopped", "Transcribe:recoveryOnly=False"], world.Effects.Trace.Where(IsOrderedEffect));
+        Assert.Contains("ShowInterruptionPreserving:SessionLocked", world.Effects.Trace);
+        Assert.Single(world.Effects.Trace, effect => effect.StartsWith("Transcribe", StringComparison.Ordinal));
+        // The release ran after the lock and found the session finalising: the controller answers
+        // Ignored and nothing is finalised twice.
+        Assert.Equal(SessionCommandDisposition.Applied, released.Disposition);
+        Assert.True(released.WasQueued);
+        Assert.Equal(1, world.Engine.Stops);
+        Assert.Equal([AppEventCode.LivePreviewStartupCancelled], world.Log.Codes);
+    }
+
+    [Fact]
+    public async Task ShutdownDuringPreviewStartupRefusesNewCommandsAndLetsTheRecordingFinishItsOwnStop()
+    {
+        // STEP 11'S PROOF, TWO: the coordinator's stop is the shell's gate now. A release that arrives
+        // after the stop is refused; the release that was queued before it is refused too - the
+        // shell's disposal then tears the session down itself. Nothing runs after the stop reports.
+        await using var world = await World.StartRecordingWithPreviewStartupHeldAsync();
+
+        var stop = world.Coordinator.StopAsync(Patience);
+        var afterStop = await world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+
+        Assert.Equal(SessionCommandDisposition.Stopping, afterStop.Disposition);
+        Assert.True(await stop.WaitAsync(Patience), "the press had finished; the consumer was idle and stops at once");
+        Assert.Equal(SessionCommandDisposition.Stopping, (await world.Coordinator.InterruptAsync(SystemLifecycleTransition.Suspending)).Disposition);
+        Assert.True(world.Capture.IsCapturing, "the stop does not itself end the recording; the shell's disposal does");
+        Assert.DoesNotContain(world.Effects.Trace, effect => effect.StartsWith("Transcribe", StringComparison.Ordinal));
+
+        // The shell's disposal after the stop: preview, then the session, in the order it always had.
+        var previewStop = world.Preview.StopAsync();
+        await world.Engine.StartCancellationObserved.Task.WaitAsync(Patience);
+        world.Engine.AllowStartExit.SetResult();
+        await previewStop.WaitAsync(Patience);
+        Assert.Equal(1, world.Engine.Stops);
+        Assert.Equal([AppEventCode.LivePreviewStartupCancelled], world.Log.Codes);
+    }
+
+    [Fact]
+    public async Task ATimeoutDuringPreviewStartupCancelsTheCaptureAndTheStartup()
+    {
+        // STEP 11'S PROOF, THREE: the watchdog's timeout is a command. If the recording is still the
+        // one that was armed, the loops are stopped first - the preview's startup is cancelled - and
+        // then it is aborted: capture cancelled, not stopped. The order the watchdog always had.
+        await using var world = await World.StartRecordingWithPreviewStartupHeldAsync();
+        var session = world.Controller.CurrentSession!.Id;
+
+        var timeout = world.Coordinator.TimeOutAsync(session);
+        await world.Engine.StartCancellationObserved.Task.WaitAsync(Patience);
+        Assert.False(timeout.IsCompleted);
+        Assert.True(world.Capture.IsCapturing, "the abort follows the stops, as it always did");
+
+        world.Engine.AllowStartExit.SetResult();
+        await world.Capture.Cancelled.Task.WaitAsync(Patience);
+        var result = await timeout.WaitAsync(Patience);
+
+        Assert.Equal(SessionCommandDisposition.Applied, result.Disposition);
+        Assert.Null(world.Controller.CurrentSession);
+        // The adapter records the capture's state at the stop-background call: still open, because
+        // the timeout stops the loops before it aborts the capture. The cancel follows.
+        Assert.Equal(["Capture still open", "Preview stopped"], world.Effects.Trace.Where(IsOrderedEffect));
+        Assert.True(world.Capture.Cancelled.Task.IsCompleted);
+        Assert.Contains("ShowRecordingTimedOut", world.Effects.Trace);
+        Assert.DoesNotContain(world.Effects.Trace, effect => effect.StartsWith("Transcribe", StringComparison.Ordinal));
+        Assert.Equal(1, world.Engine.Stops);
+    }
+
     private static bool IsOrderedEffect(string effect) =>
         effect.StartsWith("Capture ", StringComparison.Ordinal) ||
         effect.StartsWith("Preview ", StringComparison.Ordinal) ||
