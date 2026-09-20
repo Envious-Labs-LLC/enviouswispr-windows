@@ -20,6 +20,7 @@ using Microsoft.UI.Xaml.Media.Animation;
 using Windows.UI.ViewManagement;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.LLM;
+using EnviousWispr.Presentation;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation.Peers;
@@ -133,7 +134,10 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </summary>
     private const double NotificationEntranceCeilingPixels = 400;
 
-    private static readonly SelectableChoiceOption[] FinalEngineChoices =
+    // INSTANCE-OWNED, NOT STATIC. A selection is state, and state shared between two windows is a
+    // choice made in one appearing in the other. There is one window today; the rule costs nothing
+    // and the second instance would otherwise be a defect nobody wrote.
+    private readonly SelectableChoiceOption[] FinalEngineChoices =
     [
         new("Automatic", "Chooses the best available local engine for this PC."),
         new("Parakeet", "Fast local English transcription with automatic hardware selection."),
@@ -144,7 +148,7 @@ public sealed partial class MainWindow : Window, IDisposable
         new("Whisper", "Multilingual, but not yet recommended: with room noise it can add words that were never spoken."),
     ];
 
-    private static readonly SelectableChoiceOption[] PolishProviderChoices =
+    private readonly SelectableChoiceOption[] PolishProviderChoices =
     [
         new("None", "Leaves the deterministic transcript unchanged."),
         new("EG-1", "Polishes locally with the bundled Envious Grammar model."),
@@ -154,33 +158,28 @@ public sealed partial class MainWindow : Window, IDisposable
         new("Gemini", "Sends transcript text directly to your Google Gemini account."),
     ];
 
-    private static readonly SelectableChoiceOption[] ThemeChoices =
+    private readonly SelectableChoiceOption[] ThemeChoices =
     [
         new("Use Windows setting", "Follows the current Windows light or dark setting."),
         new("Light", "Uses the light EnviousWispr palette."),
         new("Dark", "Uses the dark EnviousWispr palette."),
     ];
 
-    private static readonly SelectableChoiceOption[] OverlayPositionChoices =
+    private readonly SelectableChoiceOption[] OverlayPositionChoices =
     [
         new("Top", "Shows the recording pill at the top of the active display."),
         new("Bottom", "Shows the recording pill at the bottom of the active display."),
     ];
 
-    private readonly ISettingsStore _settingsStore;
-
-    /// <summary>Serialises every settings write this window makes.</summary>
+    /// <summary>Every settings write this window makes, and the answer when one is refused.</summary>
     /// <remarks>
-    /// THE RULE LIVES IN Core SO IT CAN BE PROVEN. The defect it prevents only appears while two
-    /// saves overlap, which never happens in a test that drives this window one call at a time - so
-    /// a gate written here would be a gate nothing could demonstrate. SerialSettingsWriterTests
-    /// holds a store open mid-save and shows two changes both surviving.
+    /// THE RULES LIVE OUTSIDE THE WINDOW SO THEY CAN BE PROVEN. Two saves overlapping, a storage
+    /// failure, an Appearance click that must write three fields and no more, a write after the
+    /// drain - none of those happen in a test that drives this window one call at a time, and every
+    /// one of them is a SettingsPresenterTests case. What stays here is reading the controls,
+    /// drawing the outcome and applying the theme.
     /// </remarks>
-    private SerialSettingsWriter? _settingsWriter;
-
-    /// <summary>The writer, created once and kept for the life of the window.</summary>
-    private SerialSettingsWriter SettingsWriter =>
-        _settingsWriter ??= new SerialSettingsWriter(_settingsStore, _settings);
+    private readonly SettingsPresenter _settingsPresenter;
     private readonly IPortableProfileService _profileService;
     private readonly IHistoryStore _historyStore;
     private readonly IApiKeyStore _apiKeyStore;
@@ -250,7 +249,7 @@ public sealed partial class MainWindow : Window, IDisposable
         ArgumentNullException.ThrowIfNull(releaseIdentity);
 
         _settings = settings;
-        _settingsStore = settingsStore;
+        _settingsPresenter = new SettingsPresenter(settingsStore, settings);
         _profileService = profileService;
         _historyStore = historyStore;
         _apiKeyStore = apiKeyStore;
@@ -1258,33 +1257,26 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private async Task PersistAppearanceChoicesAsync()
     {
-        // DERIVED INSIDE THE GATE, so a save that overlaps another writer builds on what is actually
-        // stored rather than on a snapshot taken before the wait.
-        await UpdateSettingsAsync(
-            current => current with
-            {
-                Preferences = current.Preferences with
-                {
-                    Theme = ThemeFromIndex(SelectedIndexOf(ThemeChoices)),
-                    OverlayPosition = OverlayPositionFromIndex(SelectedIndexOf(OverlayPositionChoices)),
-
-                    // THE PILL'S LOOK JOINED THIS PAGE AND HAD TO JOIN THIS WRITE. Appearance is the
-                    // one settings page with no Save button, so a card that only the Save button
-                    // reads is a card that does nothing: somebody picks a design, sees the preview,
-                    // walks away, and it is gone. Moving the cards here without moving them into
-                    // this list would have been a change that ships and does nothing.
-                    PillDesignWithoutWords = PillDesignWithoutWordsFromControls(),
-                },
-            },
-            _ =>
-            {
-                ShowMessage(
-                    "That choice was not kept",
-                    "It is applied for now, but the app will start with your previous appearance until "
-                        + "settings can be written again.",
-                    InfoBarSeverity.Warning);
-                return Task.CompletedTask;
-            }).ConfigureAwait(true);
+        // THE CONTROLS ARE READ HERE, ON THE UI THREAD, AND THE THREE FIELDS ARE APPLIED INSIDE THE
+        // GATE by the presenter - so a click that overlaps another writer builds on what is actually
+        // stored, and no control is read from the thread the wait ends on.
+        var choices = new AppearanceChoices(
+            ThemeFromIndex(SelectedIndexOf(ThemeChoices)),
+            OverlayPositionFromIndex(SelectedIndexOf(OverlayPositionChoices)),
+            PillDesignWithoutWordsFromControls());
+        var result = await _settingsPresenter.SaveAppearanceAsync(choices).ConfigureAwait(true);
+        if (result.Saved)
+        {
+            PublishSettings();
+        }
+        else if (result.Refusal != SettingsSaveRefusal.Closing)
+        {
+            ShowMessage(
+                "That choice was not kept",
+                "It is applied for now, but the app will start with your previous appearance until "
+                    + "settings can be written again.",
+                InfoBarSeverity.Warning);
+        }
     }
 
     private void LivePreviewToggle_Toggled(object sender, RoutedEventArgs e)
@@ -1878,19 +1870,24 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private Task<bool> SaveCustomWordFromPickerAsync(string spokenForm, string replacement)
     {
+        // THE PICKER CARRIES THE ANSWER ITSELF, not a position that has to be looked up. A mapping
+        // from index to meaning is a contract between this file and the ORDER of three strings in
+        // the markup, and reordering those strings changes what people choose while every test
+        // stays green. Each choice now holds its own value, so there is nothing left to keep in step.
+        //
+        // READ HERE, ON THE UI THREAD, BEFORE THE SAVE. The transform below runs inside the writer's
+        // gate, after a wait of unknown length on another save, on whatever thread that wait ends
+        // on; a control read in there is a control read off the UI thread. The word is built now
+        // and the transform only places it.
+        var word = new CustomWordEntry(
+            spokenForm,
+            replacement,
+            WordStrictnessComboBox.SelectedValue as MatchStrictness? ?? MatchStrictness.Default);
         return SaveUserDataAsync(
             data => new ReusableUserData(
                 data.CustomWords
                     .Where(entry => !string.Equals(entry.SpokenForm, spokenForm, StringComparison.OrdinalIgnoreCase))
-                    // THE PICKER CARRIES THE ANSWER ITSELF, not a position that has to be looked up.
-                    // A mapping from index to meaning is a contract between this file and the ORDER
-                    // of three strings in the markup, and reordering those strings changes what
-                    // people choose while every test stays green. Each choice now holds its own
-                    // value, so there is nothing left to keep in step.
-                    .Append(new CustomWordEntry(
-                        spokenForm,
-                        replacement,
-                        WordStrictnessComboBox.SelectedValue as MatchStrictness? ?? MatchStrictness.Default))
+                    .Append(word)
                     .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
                     .ToArray(),
                 data.Snippets),
@@ -3342,52 +3339,58 @@ public sealed partial class MainWindow : Window, IDisposable
     /// plan describes a list that may have changed - and saving its result then overwrites whatever
     /// changed it. The value comes back so the message describes what was actually stored.
     /// </remarks>
-    private async Task<SettingsUpdateOutcome<T>> SaveUserDataAsync<T>(
+    private async Task<SettingsSaveResult<T>> SaveUserDataAsync<T>(
         Func<ReusableUserData, (ReusableUserData Data, T Value)> change)
     {
-        var outcome = await SettingsWriter.UpdateAsync(current =>
+        var result = await _settingsPresenter.SaveAsync(current =>
         {
             var (data, value) = change(current.UserData);
             return (current with { UserData = data }, value);
         }).ConfigureAwait(true);
 
-        if (outcome.Failure is not null)
+        if (!result.Saved)
         {
-            ShowSettingsFailure(outcome.Failure);
-            return outcome;
+            ShowSettingsRefusal(result.Refusal!.Value);
+            return result;
         }
 
-        _settings = SettingsWriter.Current;
-        SettingsChanged?.Invoke(_settings);
+        PublishSettings();
         ApplySettingsToControls();
-        return outcome;
+        return result;
     }
 
-    /// <summary>Says why a settings write did not happen.</summary>
-    private void ShowSettingsFailure(Exception exception)
+    /// <summary>Says why a settings write did not happen, in the words for that cause.</summary>
+    /// <remarks>
+    /// THE CAUSE IS THE PRESENTER'S TO NAME AND THIS WINDOW'S TO SAY. Closing says nothing: a click
+    /// that lands as the window is going away is refused on purpose, and telling somebody their
+    /// settings storage broke as they quit is both alarming and untrue.
+    /// </remarks>
+    private void ShowSettingsRefusal(SettingsSaveRefusal refusal)
     {
-        // THE APP CLOSING IS NOT A STORAGE FAILURE. A click that lands as the window is going away
-        // is refused on purpose, and telling somebody their settings storage broke as they quit is
-        // both alarming and untrue.
-        if (exception is ObjectDisposedException)
+        switch (refusal)
         {
-            return;
+            case SettingsSaveRefusal.Closing:
+                return;
+            case SettingsSaveRefusal.InvalidValues:
+                ShowMessage(
+                    "Settings were not saved",
+                    "One or more values are invalid. Your previous settings remain active.",
+                    InfoBarSeverity.Error);
+                return;
+            case SettingsSaveRefusal.StorageBlocked:
+                ShowMessage("Windows blocked settings storage", "Your previous settings remain active.", InfoBarSeverity.Error);
+                return;
+            default:
+                ShowMessage("Settings storage is unavailable", "Your previous settings remain active.", InfoBarSeverity.Error);
+                return;
         }
+    }
 
-        var (title, body) = exception switch
-        {
-            ArgumentException => (
-                "Settings were not saved",
-                "One or more values are invalid. Your previous settings remain active."),
-            UnauthorizedAccessException or SecurityException => (
-                "Windows blocked settings storage",
-                "Your previous settings remain active."),
-            _ => (
-                "Settings storage is unavailable",
-                "Your previous settings remain active."),
-        };
-
-        ShowMessage(title, body, InfoBarSeverity.Error);
+    /// <summary>Takes the presenter's settings as this window's, and tells the app.</summary>
+    private void PublishSettings()
+    {
+        _settings = _settingsPresenter.Current;
+        SettingsChanged?.Invoke(_settings);
     }
 
     private async Task<bool> SaveUserDataAsync(
@@ -3516,8 +3519,7 @@ public sealed partial class MainWindow : Window, IDisposable
     /// AWAITED AT EXIT, BECAUSE ABANDONING THE WRITER LETS THE PROCESS END MID-WRITE. Synchronous
     /// teardown cannot wait, so it does not try; this is the asynchronous half that can.
     /// </remarks>
-    public Task DrainSettingsAsync() =>
-        _settingsWriter?.DrainAsync() ?? Task.CompletedTask;
+    public Task DrainSettingsAsync() => _settingsPresenter.DrainAsync();
 
     /// <summary>Says whatever history result is still waiting, if anything can hear it now.</summary>
     public void AnnouncePendingHistoryState() => AnnounceHistoryOnPageShown();
@@ -3563,88 +3565,41 @@ public sealed partial class MainWindow : Window, IDisposable
         emptyState.Visibility = itemCount == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    /// <summary>One at a time, and each change derived from what is actually stored.</summary>
+    /// <summary>A quiet write: applied through the presenter, published on success, silent on refusal.</summary>
     /// <remarks>
-    /// EVERY WRITER HERE BUILT ITS RECORD FIRST AND SAVED SECOND, so two of them overlapping wrote
-    /// two different whole-settings snapshots and whichever finished last won - silently discarding
-    /// the other person's change. Saving atomically does not help: each save was atomic and still
-    /// complete, so it replaced everything the other had just written.
-    ///
-    /// THE FIX IS TO DERIVE INSIDE THE GATE, NOT TO PASS A RECORD ACROSS IT. A snapshot built before
-    /// the wait is stale by the time the wait ends, and writing it back is exactly the loss this
-    /// prevents. Callers hand over a function of the CURRENT settings instead.
+    /// THE TRANSACTION IS THE PRESENTER'S. One at a time, each change derived from what is actually
+    /// stored, a transform rather than a record - all of that is SettingsPresenter and its tests.
+    /// This is the window's side: the settings it holds and the app it tells.
     /// </remarks>
-    private async Task<bool> UpdateSettingsAsync(
-        Func<AppSettings, AppSettings> change,
-        Func<Exception, Task>? onFailure = null)
+    private async Task<bool> UpdateSettingsAsync(Func<AppSettings, AppSettings> change)
     {
-        var writer = SettingsWriter;
-        var failure = await writer.UpdateAsync(change).ConfigureAwait(true);
-        if (failure is not null)
+        var result = await _settingsPresenter.SaveAsync(change).ConfigureAwait(true);
+        if (!result.Saved)
         {
-            if (onFailure is not null)
-            {
-                await onFailure(failure).ConfigureAwait(true);
-            }
-
             return false;
         }
 
-        _settings = writer.Current;
-        SettingsChanged?.Invoke(_settings);
+        PublishSettings();
         return true;
     }
 
-    /// <summary>Applies a change to the stored settings and reports how it went.</summary>
-    /// <remarks>
-    /// A TRANSFORM, NOT A RECORD, AND MY REASON FOR ALLOWING A RECORD WAS SIMPLY WRONG. This took a
-    /// prebuilt AppSettings on the grounds that its callers replace the whole thing deliberately.
-    /// They do not: a profile import calls Apply, which preserves machine-local choices and app
-    /// state, so it is a partial change like every other. A record built before the gate is stale by
-    /// the time the gate opens, and writing it back discards whatever ran in between.
-    /// </remarks>
+    /// <summary>A write the user asked for: applied through the presenter, and answered either way.</summary>
     private async Task<bool> TrySaveAsync(
         Func<AppSettings, AppSettings> change,
         string title,
         string message)
     {
-        var saved = await UpdateSettingsAsync(
-            change,
-            exception =>
-            {
-                // THREE CAUSES, THREE ANSWERS, AND FOLDING THEM COST THE MOST USEFUL ONE. The store
-                // reports invalid settings as an ArgumentException; collapsing that into "storage is
-                // unavailable" tells somebody their disk is broken when a value they typed is out of
-                // range, which sends them looking in exactly the wrong place.
-                if (exception is ObjectDisposedException)
-                {
-                    return Task.CompletedTask;
-                }
-
-                var (title, body) = exception switch
-                {
-                    ArgumentException => (
-                        "Settings were not saved",
-                        "One or more values are invalid. Your previous settings remain active."),
-                    UnauthorizedAccessException or SecurityException => (
-                        "Windows blocked settings storage",
-                        "Your previous settings remain active."),
-                    _ => (
-                        "Settings storage is unavailable",
-                        "Your previous settings remain active."),
-                };
-
-                ShowMessage(title, body, InfoBarSeverity.Error);
-                return Task.CompletedTask;
-            }).ConfigureAwait(true);
-
-        if (saved)
+        var result = await _settingsPresenter.SaveAsync(change).ConfigureAwait(true);
+        if (!result.Saved)
         {
-            ApplySettingsToControls();
-            ShowMessage(title, message, InfoBarSeverity.Success);
+            ShowSettingsRefusal(result.Refusal!.Value);
+            return false;
         }
 
-        return saved;
+        PublishSettings();
+        ApplySettingsToControls();
+        ShowMessage(title, message, InfoBarSeverity.Success);
+        return true;
     }
 
     private void ApplySettingsToControls()
