@@ -907,6 +907,18 @@ try
         livePreviewStartupCancelled = diagnosticEvents.Any(value => value.StartsWith(
             "LivePreviewStartupCancelled/",
             StringComparison.Ordinal)),
+        // WHAT THE HEAD START DID, AS COUNTS. The journey only refuses an abandoned head start; whether
+        // any stretch was committed and whether the release used it depends on the fixture having a
+        // pause, and a reader deciding whether the feature paid needs the numbers, not the verdict.
+        streamingSegmentsCommitted = diagnosticEvents.Count(value => value.StartsWith(
+            "StreamingSegmentCommitted/",
+            StringComparison.Ordinal)),
+        streamingHeadStartUsed = diagnosticEvents.Any(value => value.StartsWith(
+            "StreamingHeadStartUsed/",
+            StringComparison.Ordinal)),
+        streamingAbandoned = diagnosticEvents.Any(value => value.StartsWith(
+            "StreamingAbandoned/",
+            StringComparison.Ordinal)),
         appExitedCleanly,
         ownedWorkerStartedCount = ownedWorkerIds.Length,
         ownedWorkerCount,
@@ -1567,12 +1579,11 @@ static void RequireLivePreviewJourneyEvents(IReadOnlyList<string> events)
     }
 }
 
-/// <summary>The head start committed work during the recording and the release used it.</summary>
+/// <summary>Requires a recording and rejects abandonment; reports commits and head-start use rather than requiring them.</summary>
 /// <remarks>
-/// ASSERTS THE OUTCOME AND THE ABSENCE, because either alone passes against the defect. Requiring
-/// only the committed segment would pass on a run that committed once and then abandoned; requiring
-/// only "not abandoned" would pass on a run that never polled at all, which is exactly what every
-/// journey before this one did.
+/// THE SUMMARY USED TO SAY THE RELEASE USED A COMMIT, and the body below explains why it cannot ask
+/// for one on these fixtures. What it asserts is a recording and no abandonment; what it reports, in
+/// the result, is how many segments were committed and whether the release used them.
 ///
 /// ABANDONING IS CORRECT BEHAVIOUR AND IS STILL A FAILURE HERE. The head start gives up on any error
 /// rather than delivering half a dictation, and that design stays. This mode exists to assert the
@@ -1587,11 +1598,12 @@ static void RequireHeadStartJourneyEvents(IReadOnlyList<string> events)
     // the fixture began arriving at the sample rate, as a microphone does, the same run committed
     // NOTHING - and that is correct behaviour rather than a regression.
     //
-    // THE PLANNER CANNOT COMMIT ON THIS FIXTURE AND SHOULD NOT. It refuses to end a commit anywhere
-    // but in silence and never commits the last segment, because a segment at the end of the audio so
-    // far is indistinguishable from the first half of a word still being said. This journey's fixture
-    // is 2.71 seconds of one continuous sentence: no interior silence to commit at, and the tail is
-    // the only thing that ever arrives. Requiring a commit here asserts that the audio is fake.
+    // THESE RUNS HAVE REPORTED ZERO COMMITS, AND THE CAUSE IS NOT ASSERTED HERE. A poll can commit
+    // at least 1.5 s of speech followed by a qualifying silence - including a silence at the end of
+    // the audio so far, since the planner commits through the silence that follows the speech it
+    // visits. Whether these fixtures expose that opportunity depends on how they segment and on when
+    // the polls land, which this journey does not measure. Requiring a commit would assert something
+    // about the audio; the count is reported in the result instead.
     //
     // SO IT ASSERTS THE THING THAT WAS ACTUALLY BROKEN. Before the overflow fix the head start threw
     // on the FIRST poll of every recording ever made and was abandoned every time, so "did not give

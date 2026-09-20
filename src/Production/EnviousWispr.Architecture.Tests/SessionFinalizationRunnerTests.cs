@@ -254,7 +254,10 @@ public sealed class SessionFinalizationRunnerTests
                 PatientPipeline.Create(),
                 new PolishExecutor(new FakeAdmission(), effects, () => []),
                 effects);
-            var runner = new SessionFinalizationRunner(controller, finalizer, persistence, effects, new FrozenClock(Now));
+            // A streaming owner that was never started: it has no head start, so the runner's
+            // transcription is the whole take through the engine, which is what these tests are about.
+            var streaming = new StreamingTranscriptionController(new NoStreaming(), new NullLogger(), new FrozenClock(Now));
+            var runner = new SessionFinalizationRunner(controller, finalizer, persistence, streaming, effects, new FrozenClock(Now));
             return new World
             {
                 Controller = controller,
@@ -291,9 +294,6 @@ public sealed class SessionFinalizationRunnerTests
         public ITextDelivery? Delivery => DeliveryRoute;
 
         public string? DeliveryLanguage(Transcript transcript) => transcript.DetectedLanguage;
-
-        public Task<Transcript> TranscribeAsync(ITranscriptionEngine engine, CapturedAudio audio, CancellationToken cancellationToken) =>
-            engine.TranscribeAsync(audio, cancellationToken);
 
         public Func<FinalizationOptions> Options { get; set; } =
             () => new FinalizationOptions([], new DeterministicTextOptions(true, true, true, true), null);
@@ -462,6 +462,15 @@ public sealed class SessionFinalizationRunnerTests
         public Task<HistoryOperationResult> KeepAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult(new HistoryOperationResult(true));
 
         public Task<HistoryOperationResult> ClearAsync(CancellationToken cancellationToken = default) => Task.FromResult(new HistoryOperationResult(true));
+    }
+
+    private sealed class NoStreaming : IStreamingTranscriptionEffects
+    {
+        public bool LivePreviewEnabled => false;
+
+        public ITranscriptionEngine? Engine => null;
+
+        public IAudioSnapshotSource? Audio => null;
     }
 
     private sealed class NullLogger : IAppLogger
