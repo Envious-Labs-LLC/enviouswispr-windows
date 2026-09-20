@@ -3,7 +3,7 @@ using EnviousWispr.Core.Runtime;
 
 namespace EnviousWispr.Services.Runtime;
 
-public sealed class RuntimeResourceArbiter : IDisposable
+public sealed class RuntimeResourceArbiter : IDisposable, IRuntimeResourceAdmission
 {
     private readonly SemaphoreSlim _cpu = new(1, 1);
     private readonly SemaphoreSlim _accelerator = new(1, 1);
