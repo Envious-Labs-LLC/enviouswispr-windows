@@ -152,15 +152,19 @@ public sealed class AppearanceCommitTests
         var declarator = Assert.IsType<VariableDeclaratorSyntax>(creation.Parent?.Parent);
         var local = declarator.Identifier.ValueText;
         var declaration = Assert.IsType<LocalDeclarationStatementSyntax>(declarator.Parent?.Parent);
+        Assert.Single(declaration.Declaration.Variables);
         var block = Assert.IsType<BlockSyntax>(declaration.Parent);
         var index = block.Statements.IndexOf(declaration);
         Assert.True(index >= 0 && index + 1 < block.Statements.Count, "The snapshot is the last statement of its block; nothing hands it over.");
-        var next = block.Statements[index + 1];
-        var handOver = Assert.Single(
-            next.DescendantNodes().OfType<InvocationExpressionSyntax>(),
-            invocation => invocation.Expression.ToString().EndsWith("SaveAppearanceAsync", StringComparison.Ordinal));
-        var handed = Assert.Single(handOver.ArgumentList.Arguments);
-        Assert.Equal(local, handed.Expression.ToString());
+
+        // THE NEXT STATEMENT IS THE HAND-OVER AND NOTHING ELSE: one local, initialised directly by the
+        // awaited call, with the snapshot as its only argument. A block, a second declarator or any
+        // other shape could do work before the call, so no other shape is accepted.
+        var next = Assert.IsType<LocalDeclarationStatementSyntax>(block.Statements[index + 1]);
+        var result = Assert.Single(next.Declaration.Variables);
+        Assert.Equal(
+            $"await _settingsPresenter.SaveAppearanceAsync({local}).ConfigureAwait(true)",
+            result.Initializer?.Value.ToString());
 
         // And that is the only hand-over in the method, so no other snapshot reaches the presenter.
         Assert.Single(
