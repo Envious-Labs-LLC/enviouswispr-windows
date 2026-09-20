@@ -380,6 +380,9 @@ public sealed class DeterministicTextPipelineTests
 
             AssertStageFallback(result, DeterministicStageStatus.TimedOut);
             Assert.True(token.IsCancellationRequested);
+            // WaitHandle throws on a disposed source where IsCancellationRequested does not, so this is
+            // the assertion that the abandoned worker still owns a live token.
+            Assert.True(token.WaitHandle.WaitOne(0));
             Assert.Equal(1, Volatile.Read(ref invocations));
 
             allowExit.Set();
@@ -528,6 +531,11 @@ public sealed class DeterministicTextPipelineTests
 
             Assert.Equal(cancellation.Token, exception.CancellationToken);
             Assert.True(stepToken.IsCancellationRequested);
+            if (!cooperative)
+            {
+                Assert.True(stepToken.WaitHandle.WaitOne(0));
+            }
+
             Assert.Equal(1, Volatile.Read(ref invocations));
         }
         finally
@@ -539,8 +547,20 @@ public sealed class DeterministicTextPipelineTests
     }
 
     [Theory]
-    [InlineData(false, "cancellation")]
-    [InlineData(true, "cancellation")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IndependentStageCancellationFallsBack(bool restoration)
+    {
+        // Neither the caller nor the deadline asked; the step stopped short on its own. That is a
+        // failed stage, and a failed stage returns the last valid text.
+        var step = new DelegateStep(
+            DeterministicTextStage.EmojiRestoration,
+            _ => throw new OperationCanceledException("independent"));
+
+        AssertStageFallback(await RunStageAsync(restoration, step), DeterministicStageStatus.Failed);
+    }
+
+    [Theory]
     [InlineData(false, "stack-overflow")]
     [InlineData(true, "stack-overflow")]
     [InlineData(false, "out-of-memory")]
@@ -551,7 +571,6 @@ public sealed class DeterministicTextPipelineTests
     {
         Exception expected = failure switch
         {
-            "cancellation" => new OperationCanceledException("synthetic cancellation"),
             "stack-overflow" => new StackOverflowException("synthetic stack overflow"),
             "out-of-memory" => new OutOfMemoryException("synthetic out of memory"),
             _ => throw new ArgumentOutOfRangeException(nameof(failure)),

@@ -52,8 +52,18 @@ internal sealed class DeterministicStageExecutor
             }
 
             deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            deadline.CancelAfter(step.Timeout);
-            invocation = Task.Run(() => step.Process(input, deadline.Token), deadline.Token);
+            try
+            {
+                deadline.CancelAfter(step.Timeout);
+                invocation = Task.Run(() => step.Process(input, deadline.Token), deadline.Token);
+            }
+            catch
+            {
+                // Nothing was scheduled, so nothing will ever run the disposal below.
+                deadline.Dispose();
+                throw;
+            }
+
             _invocations[step] = invocation;
         }
 
@@ -84,9 +94,12 @@ internal sealed class DeterministicStageExecutor
             context = input;
             status = DeterministicStageStatus.TimedOut;
         }
-        catch (Exception exception) when (exception is not (
-            OperationCanceledException or StackOverflowException or OutOfMemoryException))
+        catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
         {
+            // A CANCELLATION NOBODY ASKED FOR IS A FAILURE. The two catches above have already claimed
+            // the caller's and the deadline's; an OperationCanceledException still standing here came
+            // from inside the step for its own reasons, and the contract for a stage that stops short
+            // is the last valid text, not an aborted pipeline.
             context = input;
             status = DeterministicStageStatus.Failed;
         }
