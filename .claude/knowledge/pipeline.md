@@ -38,6 +38,17 @@ remain wordless designs.
 - Device removal, model failure, or accelerator failure preserves captured audio long enough for a safe
   fallback when possible.
 - Focus changes during recording do not silently redirect private text to an unintended window.
+- **One owner of session transitions** (`DictationSessionCoordinator`, since #148 steps 1 and 11): a
+  key press or release, the auto-stop's release, the recording watchdog's timeout, and Windows locking
+  or suspending are all commands on one queue, run one at a time by `DictationSessionExecutor`. A press
+  is refused (`Busy`) while anything holds the session; a release or cancel that arrives while one is
+  running is kept and run after it, not dropped; a second terminal is ignored because the recording it
+  would end is already ending. An interruption (lock or suspend) is queued whatever is ahead of it and,
+  if it then waited more than five seconds, stands down and reports recovery as pending - the shell's
+  old five-second wait for its session gate, kept as policy. The update check holds the session through
+  the coordinator (`TryHold`), so a press during a download is `Busy`. Shutdown stops the coordinator
+  and needs no gate of its own. The shell keeps Windows' notifications, the processing deadline it
+  cancels on lock, and rendering.
 
 ## Deterministic parity
 
