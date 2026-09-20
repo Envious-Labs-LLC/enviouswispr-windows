@@ -84,6 +84,39 @@ public sealed class StreamingTranscriptionControllerTests
     }
 
     [Fact]
+    public async Task AFailureAfterACommitAbandonsTheWholeHeadStartNotJustTheFailedSegment()
+    {
+        // Half a dictation is worse than a slow one: one good commit followed by a failed one must
+        // not become "the good commit plus a tail", because the failed stretch would be missing
+        // from the middle. Everything is transcribed again.
+        var world = World.Build();
+        world.Audio.Samples = Build((false, 200), (true, 3000), (false, 1200), (true, 500));
+        world.Engine.NextText = "the first sentence";
+        world.Controller.Start(world.Session);
+        world.Clock.Advance(Poll);
+        await world.Engine.WhenTranscribed(1).WaitAsync(Patience);
+
+        world.Audio.Samples = Build((false, 200), (true, 3000), (false, 1200), (true, 3000), (false, 1200), (true, 500));
+        world.Engine.ThrowOnTranscribe = new TranscriptionEngineException(
+            new AppError(AppErrorCode.RuntimeWorkerFailed, AppErrorStage.RuntimeWorker, CanRetry: true));
+        world.Clock.Advance(Poll);
+        await world.Controller.Loop!.WaitAsync(Patience);
+        await world.Controller.StopAsync();
+
+        Assert.Equal([AppEventCode.StreamingSegmentCommitted, AppEventCode.StreamingAbandoned], world.Log.Codes);
+        world.Engine.ThrowOnTranscribe = null;
+        world.Engine.NextText = "everything";
+        var whole = world.Audio.Samples;
+        var transcript = await world.Controller.TranscribeUsingAnyHeadStartAsync(
+            world.Engine, new CapturedAudio(world.Session, whole, SampleRate, 1), CancellationToken.None);
+
+        var request = world.Engine.Requests.Last();
+        Assert.Equal(0, request.From);
+        Assert.Equal(whole.Length, request.Length);
+        Assert.Equal("everything", transcript.Text);
+    }
+
+    [Fact]
     public async Task AnUntypedFailureIsAbandonedAsUnknownAndStillFallsBack()
     {
         var world = World.Build();
