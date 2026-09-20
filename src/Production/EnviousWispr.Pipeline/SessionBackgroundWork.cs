@@ -4,13 +4,15 @@ using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Pipeline;
 
-/// <summary>What a recording's background work is told when it starts: how long the watchdog allows, and the dictation preferences the auto-stop reads.</summary>
+/// <summary>What a recording's background work is told when it starts: how long the watchdog allows, and where the auto-stop's preferences are read.</summary>
 /// <remarks>
-/// READ BY THE SHELL AT THE MOMENT THE RECORDING STARTS, and handed over as values. The watchdog's
-/// limit can be shortened by a journey harness through the environment; the preferences are whatever
-/// was last saved. Neither is the executor's to know how to read.
+/// THE WATCHDOG'S LIMIT IS A VALUE, READ AS THE RECORDING STARTS; THE PREFERENCES ARE READ AT THE
+/// AUTO-STOP'S OWN BOUNDARY. The shell always read them immediately before starting the auto-stop,
+/// after the preview had been asked to start, and a save landing in between governs the recording;
+/// the observation is handed over as a function so that boundary is kept. Neither is the executor's
+/// to know how to read: the limit can be shortened by a journey harness through the environment.
 /// </remarks>
-public sealed record RecordingBackgroundSettings(TimeSpan WatchdogDuration, DictationPreferences Dictation);
+public sealed record RecordingBackgroundSettings(TimeSpan WatchdogDuration, Func<DictationPreferences> Dictation);
 
 /// <summary>The four things that run beside a recording, started and stopped in one order.</summary>
 /// <remarks>
@@ -75,7 +77,7 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
         using var dictation = DictationScope.Begin(sessionId.Value);
         _watchdog.Start(sessionId, settings.WatchdogDuration);
         await _preview.StartAsync(sessionId).ConfigureAwait(false);
-        _autoStop.Start(sessionId, settings.Dictation);
+        _autoStop.Start(sessionId, settings.Dictation());
         _streaming.Start(sessionId);
     }
 

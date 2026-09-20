@@ -119,7 +119,24 @@ public sealed record FinalizationOptions(
 /// Escape Recovery, blank text, a shell with no delivery route, or a session that has already moved on
 /// each hold the text instead. A refused delivery holds it too, and says so on screen.
 /// </remarks>
-public sealed class SessionFinalizationRunner
+/// <summary>The record-to-deliver path as the executor asks for it: one call, one deadline token.</summary>
+/// <remarks>
+/// A SEAM FOR THE EXECUTOR'S OWN TESTS, NOT A SECOND OWNER. <see cref="SessionFinalizationRunner"/> is
+/// the one production implementation; the executor's unit tests substitute a fake that can be held
+/// open, so they can prove what the executor does around a finalisation without the finalizer, the
+/// persistence and an engine behind it. The composed tests run the real runner.
+/// </remarks>
+public interface ISessionFinalization
+{
+    /// <summary>Turns captured audio into delivered (or held, or recovered) text, under a deadline.</summary>
+    Task<FinalizationReport> RunAsync(
+        DictationSessionId sessionId,
+        CapturedAudio audio,
+        bool recoveryOnly,
+        CancellationToken cancellationToken);
+}
+
+public sealed class SessionFinalizationRunner : ISessionFinalization
 {
     private readonly PushToTalkSessionController _controller;
     private readonly TranscriptFinalizer _finalizer;

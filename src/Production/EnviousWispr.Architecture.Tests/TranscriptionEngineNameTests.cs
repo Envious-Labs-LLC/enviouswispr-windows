@@ -597,8 +597,9 @@ public sealed partial class DesignSystemTokenTests
             root, "src", "Production", "EnviousWispr.Pipeline", "SessionFinalizationRunner.cs"))).GetRoot();
 
         // The runner: RunAsync has exactly one finally, and it invokes the port there and nowhere else.
+        // (The file also declares the executor's seam, whose RunAsync has no body.)
         var run = runner.DescendantNodes().OfType<MethodDeclarationSyntax>()
-            .Single(method => method.Identifier.ValueText == "RunAsync");
+            .Single(method => method.Identifier.ValueText == "RunAsync" && method.Body is not null);
         var finallys = run.DescendantNodes().OfType<FinallyClauseSyntax>().ToArray();
         Assert.True(finallys.Length == 1, $"Expected one finally in RunAsync, found {finallys.Length}.");
         var reportsInFinally = finallys[0].DescendantNodes().OfType<InvocationExpressionSyntax>()

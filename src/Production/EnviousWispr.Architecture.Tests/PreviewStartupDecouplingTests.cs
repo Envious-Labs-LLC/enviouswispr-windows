@@ -286,7 +286,11 @@ public sealed class PreviewStartupDecouplingTests
                 preview,
                 new AutoStopMonitor(timers, log, TimeProvider.System),
                 new StreamingTranscriptionController(new NoStreaming(), log, TimeProvider.System));
-            var executor = new DictationSessionExecutor(controller, new TracedBackgroundWork(background, capture, preview, effects), effects);
+            var executor = new DictationSessionExecutor(
+                controller,
+                new TracedBackgroundWork(background, capture, preview, effects),
+                new HeldFinalization(effects),
+                effects);
             var coordinator = new DictationSessionCoordinator(
                 executor,
                 () => new RecordingStartContext(new TargetWindowId(101), TextDeliveryOptions.Default));
@@ -372,7 +376,9 @@ public sealed class PreviewStartupDecouplingTests
         public void RecordTransition(SessionTransitionResult result) => Add($"RecordTransition:{result.Kind}");
 
         public RecordingBackgroundSettings RecordingSettings() =>
-            new(TimeSpan.FromMinutes(5), DictationPreferences.Default);
+            new(TimeSpan.FromMinutes(5), () => DictationPreferences.Default);
+
+        public void ShowInterruptionPreserving(SystemLifecycleTransition transition) => Add($"ShowInterruptionPreserving:{transition}");
 
         public void Add(string effect)
         {
@@ -382,28 +388,15 @@ public sealed class PreviewStartupDecouplingTests
             }
         }
 
-        public async Task FinalizeAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly, SystemLifecycleTransition? preserving = null)
-        {
-            Assert.False(preview.IsRunning, "the finalisation is asked for only after the preview has stopped");
-            Assert.False(capture.IsCapturing, "the finalisation is asked for only after the capture has stopped");
-            if (preserving is { } transition)
-            {
-                Add($"ShowInterruptionPreserving:{transition}");
-            }
-
-            Add($"Transcribe:recoveryOnly={recoveryOnly}");
-            if (HoldTranscription)
-            {
-                TranscriptionEntered.TrySetResult();
-                await AllowTranscriptionExit.Task.ConfigureAwait(false);
-            }
-        }
-
         public bool HoldTranscription { get; set; }
 
         public TaskCompletionSource TranscriptionEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource AllowTranscriptionExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public FakeAudioCapture Capture => capture;
+
+        public LivePreviewController Preview => preview;
 
         public int TearDowns { get; private set; }
 
@@ -417,8 +410,6 @@ public sealed class PreviewStartupDecouplingTests
         public void ShowTransitionStatus(SessionTransitionResult result) => Add($"ShowTransitionStatus:{result.Kind}");
 
         public void RecordSessionFailure() => Add("RecordSessionFailure");
-
-        public void ReleaseProcessingDeadline() => Add("ReleaseProcessingDeadline");
 
         public Task RecoverFailedSessionAsync(AppError failure, SessionFailureKind kind)
         {
@@ -439,6 +430,24 @@ public sealed class PreviewStartupDecouplingTests
         public void RecordRecordingTimedOut(AppError failure) => Add($"RecordRecordingTimedOut:{failure.Code}");
 
         public void ShowRecordingTimedOut() => Add("ShowRecordingTimedOut");
+    }
+
+    /// <summary>The finalisation, reduced to the order it was asked in: after the capture and the preview have stopped, and held when a test says so.</summary>
+    private sealed class HeldFinalization(ShellAdapter adapter) : ISessionFinalization
+    {
+        public async Task<FinalizationReport> RunAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly, CancellationToken cancellationToken)
+        {
+            Assert.False(adapter.Preview.IsRunning, "the finalisation is asked for only after the preview has stopped");
+            Assert.False(adapter.Capture.IsCapturing, "the finalisation is asked for only after the capture has stopped");
+            adapter.Add($"Transcribe:recoveryOnly={recoveryOnly}");
+            if (adapter.HoldTranscription)
+            {
+                adapter.TranscriptionEntered.TrySetResult();
+                await adapter.AllowTranscriptionExit.Task.ConfigureAwait(false);
+            }
+
+            return new FinalizationReport(FinalizationOutcome.Held);
+        }
     }
 
     /// <summary>Forwards to the real ordering owner and writes down what the capture and the preview were doing when it was asked.</summary>

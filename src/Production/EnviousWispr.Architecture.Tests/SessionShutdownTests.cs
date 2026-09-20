@@ -222,9 +222,9 @@ public sealed class SessionShutdownTests
                 runnerEffects);
             var streaming = new StreamingTranscriptionController(new NoStreaming(), new NullLogger(), new FrozenClock(Now));
             var runner = new SessionFinalizationRunner(controller, finalizer, persistence, streaming, runnerEffects, new FrozenClock(Now));
-            var effects = new ShellAdapter(runner, controller, runnerEffects);
+            var effects = new ShellAdapter(controller, runnerEffects);
             var background = new NoBackgroundWork();
-            var executor = new DictationSessionExecutor(controller, background, effects);
+            var executor = new DictationSessionExecutor(controller, background, runner, effects);
             var coordinator = new DictationSessionCoordinator(
                 executor,
                 () => new RecordingStartContext(new TargetWindowId(101), TextDeliveryOptions.Default),
@@ -243,7 +243,7 @@ public sealed class SessionShutdownTests
     }
 
     /// <summary>The app's session adapter, reduced to the real runner and the real teardown.</summary>
-    private sealed class ShellAdapter(SessionFinalizationRunner runner, PushToTalkSessionController controller, RunnerEffects runnerEffects) : IDictationSessionEffects
+    private sealed class ShellAdapter(PushToTalkSessionController controller, RunnerEffects runnerEffects) : IDictationSessionEffects
     {
         public int TearDowns { get; private set; }
 
@@ -272,12 +272,9 @@ public sealed class SessionShutdownTests
         {
         }
 
-        public RecordingBackgroundSettings RecordingSettings() => new(TimeSpan.FromMinutes(5), DictationPreferences.Default);
+        public RecordingBackgroundSettings RecordingSettings() => new(TimeSpan.FromMinutes(5), () => DictationPreferences.Default);
 
-        public Task FinalizeAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly, SystemLifecycleTransition? preserving = null) =>
-            runner.RunAsync(sessionId, audio, recoveryOnly, CancellationToken.None);
-
-        public void ReleaseProcessingDeadline()
+        public void ShowInterruptionPreserving(SystemLifecycleTransition transition)
         {
         }
 

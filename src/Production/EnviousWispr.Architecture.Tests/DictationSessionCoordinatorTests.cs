@@ -652,6 +652,42 @@ public sealed class DictationSessionCoordinatorTests
     }
 
     [Fact]
+    public async Task WindowsLockingCancelsTheProcessingInFlightBeforeTheInterruptionIsQueued()
+    {
+        // THE FINALISATION IN FLIGHT IS WHAT THE QUEUE IS WAITING BEHIND, and cancelling it is how the
+        // interruption gets its turn: the executor is asked to cancel synchronously, before the
+        // interruption is even admitted, while the release is still running.
+        var executor = new BarrierExecutor();
+        await using var coordinator = new DictationSessionCoordinator(executor);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+
+        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+
+        Assert.Equal(1, executor.CancelProcessingCalls);
+        Assert.False(interruption.IsCompleted);
+        Assert.Equal([SessionCommandKind.PushToTalk], executor.SeenKinds);
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        await executor.StartedKind(SessionCommandKind.Interruption).WaitAsync(Patience);
+        executor.FinishKind(SessionCommandKind.Interruption);
+        await interruption.WaitAsync(Patience);
+        Assert.Equal(1, executor.CancelProcessingCalls);
+    }
+
+    [Fact]
+    public async Task TheShellsExitCancelsTheProcessingInFlightThroughTheCoordinator()
+    {
+        var executor = new BarrierExecutor();
+        await using var coordinator = new DictationSessionCoordinator(executor);
+
+        coordinator.CancelProcessing();
+
+        Assert.Equal(1, executor.CancelProcessingCalls);
+        Assert.False(coordinator.IsProcessing);
+    }
+
+    [Fact]
     public async Task AnInterruptionParkedBehindAnUpdateHoldExpiresAtFiveSecondsAndIsSkippedWhenTheHoldEnds()
     {
         // THE DEADLINE COUNTS WHILE PARKED BEHIND A HOLD, NOT ONLY BEHIND A COMMAND. The update check
@@ -1119,6 +1155,10 @@ public sealed class DictationSessionCoordinatorTests
         public void ReleaseExpiry() => _expiryRelease.TrySetResult();
 
         public int ShutdownCalls { get; private set; }
+
+        public int CancelProcessingCalls { get; private set; }
+
+        public void CancelProcessing() => CancelProcessingCalls++;
 
         /// <summary>Whether the teardown ran while the coordinator held the session (no command running beside it).</summary>
         public bool ShutdownRanUnderTheSession { get; private set; }

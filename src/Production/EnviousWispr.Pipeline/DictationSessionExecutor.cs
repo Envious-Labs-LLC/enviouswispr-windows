@@ -60,25 +60,8 @@ public interface IDictationSessionEffects
     /// <summary>What the background work is told as a recording starts: read now, handed over as values.</summary>
     RecordingBackgroundSettings RecordingSettings();
 
-    /// <summary>
-    /// Capture is complete and the background work has been stopped: turn the audio into delivered
-    /// text. The processing deadline this arms stays armed until <see cref="ReleaseProcessingDeadline"/>.
-    /// When <paramref name="preserving"/> names the Windows transition that ended the recording, the
-    /// "captured audio is being preserved" status is shown first - after the background work stopped
-    /// and before transcription, where the shell's lifecycle callback used to show it.
-    /// </summary>
-    Task FinalizeAsync(
-        DictationSessionId sessionId,
-        CapturedAudio audio,
-        bool recoveryOnly,
-        SystemLifecycleTransition? preserving = null);
-
-    /// <summary>
-    /// Releases the processing deadline armed by <see cref="FinalizeAsync"/>, if this command armed one.
-    /// Called last, after any recovery, so that lock/suspend recovery and shutdown can still cancel a
-    /// finalisation that is being recovered - the order the shell always had.
-    /// </summary>
-    void ReleaseProcessingDeadline();
+    /// <summary>Windows locked or is suspending with a recording open: the audio is being kept. Shown after the background work has stopped, before transcription.</summary>
+    void ShowInterruptionPreserving(SystemLifecycleTransition transition);
 
     void ShowTransitionStatus(SessionTransitionResult result);
 
@@ -130,22 +113,51 @@ public interface IDictationSessionEffects
 /// </remarks>
 public sealed class DictationSessionExecutor : ISessionCommandExecutor
 {
+    /// <summary>The longest a finalisation may take - transcription, text processing and delivery - before it is cancelled and recovered.</summary>
+    public static readonly TimeSpan MaximumFinalProcessingDuration = TimeSpan.FromMinutes(3);
+
     private readonly PushToTalkSessionController _controller;
     private readonly ISessionBackgroundWork _background;
+    private readonly ISessionFinalization _finalization;
     private readonly IDictationSessionEffects _effects;
+    private readonly TimeSpan _processingDeadline;
+    private readonly TimeProvider _clock;
+    private CancellationTokenSource? _processing;
     private bool _tornDown;
 
     public DictationSessionExecutor(
         PushToTalkSessionController controller,
         ISessionBackgroundWork background,
-        IDictationSessionEffects effects)
+        ISessionFinalization finalization,
+        IDictationSessionEffects effects,
+        TimeSpan? processingDeadline = null,
+        TimeProvider? clock = null)
     {
         ArgumentNullException.ThrowIfNull(controller);
         ArgumentNullException.ThrowIfNull(background);
+        ArgumentNullException.ThrowIfNull(finalization);
         ArgumentNullException.ThrowIfNull(effects);
         _controller = controller;
         _background = background;
+        _finalization = finalization;
         _effects = effects;
+        _processingDeadline = processingDeadline ?? MaximumFinalProcessingDuration;
+        _clock = clock ?? TimeProvider.System;
+    }
+
+    public bool IsProcessing => Volatile.Read(ref _processing) is not null;
+
+    public void CancelProcessing()
+    {
+        var processing = Volatile.Read(ref _processing);
+        try
+        {
+            processing?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The finalisation ended between the read and the cancel, which is the outcome asked for.
+        }
     }
 
     /// <summary>The interruption waited five seconds behind another command: recovery is pending, and it is said so now.</summary>
@@ -248,8 +260,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                     result.Session is not null &&
                     result.Audio is not null)
                 {
-                    await _background.StopAsync().ConfigureAwait(false);
-                    await _effects.FinalizeAsync(result.Session.Id, result.Audio, recoveryOnly: false, preserving: transition)
+                    await FinalizeAsync(result.Session.Id, result.Audio, recoveryOnly: false, preserving: transition)
                         .ConfigureAwait(false);
                     return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
                 }
@@ -282,7 +293,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         }
         finally
         {
-            _effects.ReleaseProcessingDeadline();
+            ReleaseProcessingDeadline();
             await _effects.RecordDictationEdgeAsync().ConfigureAwait(false);
         }
     }
@@ -402,10 +413,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                 result.Session is not null &&
                 result.Audio is not null)
             {
-                // THE CAPTURE HAS ALREADY STOPPED (the release above), so the preview's worker is
-                // waited for here, after the microphone is closed, never before.
-                await _background.StopAsync().ConfigureAwait(false);
-                await _effects.FinalizeAsync(result.Session.Id, result.Audio, recoverCancelledRecording)
+                await FinalizeAsync(result.Session.Id, result.Audio, recoverCancelledRecording, preserving: null)
                     .ConfigureAwait(false);
                 return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
             }
@@ -459,8 +467,43 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         }
         finally
         {
-            _effects.ReleaseProcessingDeadline();
+            ReleaseProcessingDeadline();
             await _effects.RecordDictationEdgeAsync().ConfigureAwait(false);
         }
+    }
+
+    /// <summary>Capture is complete: the background work is stopped and the audio becomes text, under one deadline.</summary>
+    /// <remarks>
+    /// THE DEADLINE IS ARMED BEFORE THE BACKGROUND WORK IS STOPPED and published before the first
+    /// await, so it covers the preview's worker being waited for as well as the transcription and
+    /// the delivery - the shell's order - and so a lock or an exit arriving during those stops finds
+    /// something to cancel. THE CAPTURE HAS ALREADY STOPPED (the release before this), so the preview's
+    /// worker is waited for after the microphone is closed, never before. The deadline stays armed
+    /// until the command's finally, after any recovery, so a lock or an exit can still cancel a
+    /// finalisation that is being recovered.
+    /// </remarks>
+    private async Task FinalizeAsync(
+        DictationSessionId sessionId,
+        CapturedAudio audio,
+        bool recoveryOnly,
+        SystemLifecycleTransition? preserving)
+    {
+        using var dictation = DictationScope.Begin(sessionId.Value);
+        var processing = new CancellationTokenSource(_processingDeadline, _clock);
+        Volatile.Write(ref _processing, processing);
+        await _background.StopAsync().ConfigureAwait(false);
+        if (preserving is { } transition)
+        {
+            _effects.ShowInterruptionPreserving(transition);
+        }
+
+        await _finalization.RunAsync(sessionId, audio, recoveryOnly, processing.Token).ConfigureAwait(false);
+    }
+
+    /// <summary>Releases the deadline this command armed, if it armed one. Called last, after any recovery.</summary>
+    private void ReleaseProcessingDeadline()
+    {
+        var processing = Interlocked.Exchange(ref _processing, null);
+        processing?.Dispose();
     }
 }
