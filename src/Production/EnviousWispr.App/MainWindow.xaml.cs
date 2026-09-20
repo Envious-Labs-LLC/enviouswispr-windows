@@ -182,8 +182,15 @@ public sealed partial class MainWindow : Window, IDisposable
     private readonly SettingsPresenter _settingsPresenter;
     private readonly IPortableProfileService _profileService;
     private readonly IHistoryStore _historyStore;
-    private readonly IApiKeyStore _apiKeyStore;
-    private readonly CloudPolishModelCatalog _cloudModelCatalog;
+    /// <summary>The Polish page's provider, key and model decisions, without the page.</summary>
+    /// <remarks>
+    /// THE DECISIONS LEFT; THE CONTROLS STAYED. Which providers take a key, what a blank key means, what
+    /// Windows Credential Manager refusing means, which model to put in the field when the provider
+    /// changes, and that a discovery overtaken by a later one is thrown away - all of that is
+    /// ProviderSettingsPresenterTests. The password box, the dialog and the live text are here.
+    /// </remarks>
+    private readonly ProviderSettingsPresenter _providerPresenter;
+    private readonly PolishModelSource _polishModelSource;
     private readonly IRecoveryTextStore _recoveryTextStore;
     private readonly IDiagnosticExportService _diagnosticExportService;
     private readonly bool _telemetryAvailable;
@@ -198,7 +205,6 @@ public sealed partial class MainWindow : Window, IDisposable
     private bool _isHistoryLoading = true;
     private bool _isApplyingSettings;
     private bool _initialFocusAssigned;
-    private int _polishModelDiscoveryVersion;
     private DictationOverlayState _currentOverlayState = DictationOverlayState.Hidden;
 
     /// <summary>The language the pill is currently offering to pin, or null when it offers none.</summary>
@@ -252,8 +258,8 @@ public sealed partial class MainWindow : Window, IDisposable
         _settingsPresenter = new SettingsPresenter(settingsStore, settings);
         _profileService = profileService;
         _historyStore = historyStore;
-        _apiKeyStore = apiKeyStore;
-        _cloudModelCatalog = new CloudPolishModelCatalog(apiKeyStore);
+        _polishModelSource = new PolishModelSource(apiKeyStore);
+        _providerPresenter = new ProviderSettingsPresenter(apiKeyStore, _polishModelSource);
         _recoveryTextStore = recoveryTextStore;
         _diagnosticExportService = diagnosticExportService;
         _telemetryAvailable = telemetryAvailable;
@@ -959,7 +965,7 @@ public sealed partial class MainWindow : Window, IDisposable
         _soundPreviewCancellation?.Dispose();
         _soundPreviewCancellation = null;
         _recordingSoundPlayer.Dispose();
-        _cloudModelCatalog.Dispose();
+        _polishModelSource.Dispose();
         if (_deviceCatalog is not null)
         {
             _deviceCatalog.DevicesChanged -= OnAudioDevicesChanged;
@@ -1363,62 +1369,55 @@ public sealed partial class MainWindow : Window, IDisposable
     private async void SaveApiKeyButton_Click(object sender, RoutedEventArgs e)
     {
         var provider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
-        if (!IsCloudProvider(provider))
+        switch (_providerPresenter.SaveKey(provider, ApiKeyPasswordBox.Password))
         {
-            ShowMessage(
-                "No cloud key needed",
-                "Choose OpenAI, Anthropic, or Gemini before storing a provider key.",
-                InfoBarSeverity.Informational);
-            return;
-        }
-
-        var value = ApiKeyPasswordBox.Password.Trim();
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            ShowMessage("Enter an API key", "The key field is empty.", InfoBarSeverity.Warning);
-            ApiKeyPasswordBox.Focus(FocusState.Programmatic);
-            return;
-        }
-
-        try
-        {
-            _apiKeyStore.Store(provider, value);
-            ApiKeyPasswordBox.Password = string.Empty;
-            RefreshApiKeyStatus();
-            ShowMessage(
-                $"{ProviderDisplayName(provider)} key saved",
-                "The key is stored in Windows Credential Manager. It is not part of settings, profiles, history, or diagnostics.",
-                InfoBarSeverity.Success);
-            await RefreshPolishModelChoicesAsync(provider, chooseDefault: true)
-                .ConfigureAwait(true);
-        }
-        catch (Exception exception) when (IsCredentialStorageFailure(exception))
-        {
-            ApiKeyPasswordBox.Password = string.Empty;
-            RefreshApiKeyStatus();
-            ShowMessage(
-                "API key was not saved",
-                "Windows Credential Manager is unavailable. No key was written to settings or exports.",
-                InfoBarSeverity.Error);
+            case ApiKeySaveOutcome.NotACloudProvider:
+                ShowMessage(
+                    "No cloud key needed",
+                    "Choose OpenAI, Anthropic, or Gemini before storing a provider key.",
+                    InfoBarSeverity.Informational);
+                return;
+            case ApiKeySaveOutcome.EmptyKey:
+                ShowMessage("Enter an API key", "The key field is empty.", InfoBarSeverity.Warning);
+                ApiKeyPasswordBox.Focus(FocusState.Programmatic);
+                return;
+            case ApiKeySaveOutcome.Saved:
+                ApiKeyPasswordBox.Password = string.Empty;
+                RefreshApiKeyStatus();
+                ShowMessage(
+                    $"{ProviderDisplayName(provider)} key saved",
+                    "The key is stored in Windows Credential Manager. It is not part of settings, profiles, history, or diagnostics.",
+                    InfoBarSeverity.Success);
+                await RefreshPolishModelChoicesAsync(provider, chooseDefault: true)
+                    .ConfigureAwait(true);
+                return;
+            default:
+                ApiKeyPasswordBox.Password = string.Empty;
+                RefreshApiKeyStatus();
+                ShowMessage(
+                    "API key was not saved",
+                    "Windows Credential Manager is unavailable. No key was written to settings or exports.",
+                    InfoBarSeverity.Error);
+                return;
         }
     }
 
     private async void RemoveApiKeyButton_Click(object sender, RoutedEventArgs e)
     {
         var provider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
-        if (!IsCloudProvider(provider))
+        switch (_providerPresenter.CheckKeyRemoval(provider))
         {
-            return;
-        }
-
-        if (_apiKeyStore.GetStatus(provider) == ApiKeyReadStatus.Missing)
-        {
-            RefreshApiKeyStatus();
-            ShowMessage(
-                "No stored key to remove",
-                $"No {ProviderDisplayName(provider)} key is stored for EnviousWispr in Windows Credential Manager.",
-                InfoBarSeverity.Informational);
-            return;
+            case ApiKeyRemovalCheck.NotACloudProvider:
+                return;
+            case ApiKeyRemovalCheck.NothingStored:
+                RefreshApiKeyStatus();
+                ShowMessage(
+                    "No stored key to remove",
+                    $"No {ProviderDisplayName(provider)} key is stored for EnviousWispr in Windows Credential Manager.",
+                    InfoBarSeverity.Informational);
+                return;
+            default:
+                break;
         }
 
         var dialog = new ContentDialog
@@ -1435,9 +1434,8 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        try
+        if (_providerPresenter.RemoveKey(provider) == ApiKeyRemoveOutcome.Removed)
         {
-            _apiKeyStore.Delete(provider);
             ApiKeyPasswordBox.Password = string.Empty;
             RefreshApiKeyStatus();
             await RefreshPolishModelChoicesAsync(provider, chooseDefault: false)
@@ -1447,7 +1445,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 "The stored credential was removed from Windows Credential Manager.",
                 InfoBarSeverity.Success);
         }
-        catch (Exception exception) when (IsCredentialStorageFailure(exception))
+        else
         {
             RefreshApiKeyStatus();
             ShowMessage(
@@ -3675,7 +3673,6 @@ public sealed partial class MainWindow : Window, IDisposable
         PolishProvider provider,
         bool chooseDefault)
     {
-        var discoveryVersion = Interlocked.Increment(ref _polishModelDiscoveryVersion);
         var isCloudProvider = IsCloudProvider(provider);
         OllamaEndpointTextBoxRow.Visibility = provider == PolishProvider.Ollama
             ? Visibility.Visible
@@ -3692,44 +3689,16 @@ public sealed partial class MainWindow : Window, IDisposable
                 : Visibility.Collapsed;
         RefreshPolishModelsButton.IsEnabled = false;
 
-        IReadOnlyList<string> choices = provider switch
-        {
-            PolishProvider.EgOne => ["eg-1"],
-            PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini =>
-                [CloudPolishOptions.DefaultModel(provider)],
-            _ => [],
-        };
-        string? discoveryNotice = null;
-        if (provider == PolishProvider.Ollama)
-        {
-            await using var catalog = new OllamaApiClient(NullIfBlank(OllamaEndpointTextBox.Text));
-            var discovery = await catalog.DiscoverAsync().ConfigureAwait(true);
-            choices = discovery.LocalModels.Select(model => model.Id).ToArray();
-            discoveryNotice = discovery.Health == OllamaHealth.Ready
-                ? $"{choices.Count.ToString(CultureInfo.CurrentCulture)} local Ollama model{(choices.Count == 1 ? string.Empty : "s")} available on this PC."
-                : "Ollama is not ready at this endpoint. Start Ollama or enter another loopback endpoint.";
-        }
-        else if (isCloudProvider)
-        {
-            var discovery = await _cloudModelCatalog.DiscoverAsync(provider).ConfigureAwait(true);
-            if (discovery.Status == CloudModelCatalogStatus.Ready)
-            {
-                if (discovery.ModelIds.Count > 0)
-                {
-                    choices = discovery.ModelIds;
-                }
-
-                discoveryNotice = discovery.ModelIds.Count > 0
-                    ? $"{discovery.ModelIds.Count.ToString(CultureInfo.CurrentCulture)} compatible {ProviderDisplayName(provider)} model{(discovery.ModelIds.Count == 1 ? string.Empty : "s")} available to the stored key. No transcript or generation request was sent."
-                    : $"{ProviderDisplayName(provider)} returned no compatible transcript-polish models. The recommended model and custom-ID field remain available.";
-            }
-            else
-            {
-                discoveryNotice = CloudModelDiscoveryNotice(provider, discovery.Status);
-            }
-        }
-
-        if (discoveryVersion != Volatile.Read(ref _polishModelDiscoveryVersion))
+        // THE CONTROLS ARE READ HERE, ON THE UI THREAD, BEFORE THE DISCOVERY; the presenter decides
+        // what the field and the picker should show, and a refresh overtaken by a later one comes
+        // back as nothing, so the page shows the provider chosen last.
+        var choices = await _providerPresenter.RefreshModelChoicesAsync(
+                provider,
+                NullIfBlank(OllamaEndpointTextBox.Text),
+                PolishModelTextBox.Text,
+                chooseDefault)
+            .ConfigureAwait(true);
+        if (choices is null)
         {
             return;
         }
@@ -3739,59 +3708,51 @@ public sealed partial class MainWindow : Window, IDisposable
         // the free-text Model ID stayed live and in the tab order, so a user could type a model
         // id for a provider that does not exist. One of a pair got the guard and its sibling did
         // not, which is the shape that survives review because the page looks mostly right.
-        var providerUsesAModel = provider is PolishProvider.Ollama or
-            PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini;
+        var providerUsesAModel = ProviderSettingsPresenter.UsesAModel(provider);
         RefreshPolishModelsButton.IsEnabled = providerUsesAModel;
         PolishModelTextBox.IsEnabled = providerUsesAModel;
-        PolishModelPicker.ItemsSource = choices;
-        PolishModelPicker.IsEnabled = providerUsesAModel && choices.Count > 0;
-        var current = PolishModelTextBox.Text.Trim();
-        var selectedIndex = choices
-            .Select((model, index) => new { model, index })
-            .Where(item => string.Equals(item.model, current, StringComparison.OrdinalIgnoreCase))
-            .Select(item => item.index)
-            .DefaultIfEmpty(-1)
-            .First();
-
-        if (chooseDefault && selectedIndex < 0 && choices.Count > 0)
+        PolishModelPicker.ItemsSource = choices.Models;
+        PolishModelPicker.IsEnabled = providerUsesAModel && choices.Models.Count > 0;
+        if (choices.ModelToApply is { } model)
         {
-            var shouldChoose = provider switch
-            {
-                PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini =>
-                    !CloudPolishOptions.ModelIdLooksLikeProvider(current, provider),
-                _ => string.IsNullOrWhiteSpace(current) ||
-                    !choices.Contains(current, StringComparer.OrdinalIgnoreCase),
-            };
-            if (shouldChoose)
-            {
-                PolishModelTextBox.Text = choices[0];
-                selectedIndex = 0;
-            }
+            PolishModelTextBox.Text = model;
         }
 
-        PolishModelPicker.SelectedIndex = selectedIndex;
-        if (discoveryNotice is not null)
+        PolishModelPicker.SelectedIndex = choices.SelectedIndex;
+        if (choices.Discovery is { } discovery)
         {
-            SetLiveText(ApiKeyStatusText, discoveryNotice);
+            SetLiveText(ApiKeyStatusText, ModelDiscoveryNotice(provider, discovery));
         }
     }
 
-    private static string CloudModelDiscoveryNotice(
-        PolishProvider provider,
-        CloudModelCatalogStatus status) => status switch
+    /// <summary>The words for what a model discovery came back with.</summary>
+    private static string ModelDiscoveryNotice(PolishProvider provider, PolishModelDiscovery discovery)
     {
-        CloudModelCatalogStatus.MissingCredential =>
-            $"Save a {ProviderDisplayName(provider)} API key to discover the compatible models available to that account. The recommended model and custom-ID field remain available.",
-        CloudModelCatalogStatus.CredentialUnavailable =>
-            "Windows Credential Manager could not provide the stored key. No provider request was sent.",
-        CloudModelCatalogStatus.KeyRejected =>
-            $"{ProviderDisplayName(provider)} rejected the stored key while listing models. Replace the key and try again.",
-        CloudModelCatalogStatus.ProviderUnavailable =>
-            $"{ProviderDisplayName(provider)} model discovery is temporarily unavailable. The recommended model and custom-ID field remain available.",
-        CloudModelCatalogStatus.InvalidResponse =>
-            $"{ProviderDisplayName(provider)} returned an unrecognized model catalog. The recommended model and custom-ID field remain available.",
-        _ => throw new ArgumentOutOfRangeException(nameof(status), status, null),
-    };
+        var count = discovery.ModelIds.Count;
+        var plural = count == 1 ? string.Empty : "s";
+        return discovery.Status switch
+        {
+            PolishModelDiscoveryStatus.Ready when provider == PolishProvider.Ollama =>
+                $"{count.ToString(CultureInfo.CurrentCulture)} local Ollama model{plural} available on this PC.",
+            PolishModelDiscoveryStatus.OllamaNotReady =>
+                "Ollama is not ready at this endpoint. Start Ollama or enter another loopback endpoint.",
+            PolishModelDiscoveryStatus.Ready when count > 0 =>
+                $"{count.ToString(CultureInfo.CurrentCulture)} compatible {ProviderDisplayName(provider)} model{plural} available to the stored key. No transcript or generation request was sent.",
+            PolishModelDiscoveryStatus.Ready =>
+                $"{ProviderDisplayName(provider)} returned no compatible transcript-polish models. The recommended model and custom-ID field remain available.",
+            PolishModelDiscoveryStatus.MissingCredential =>
+                $"Save a {ProviderDisplayName(provider)} API key to discover the compatible models available to that account. The recommended model and custom-ID field remain available.",
+            PolishModelDiscoveryStatus.CredentialUnavailable =>
+                "Windows Credential Manager could not provide the stored key. No provider request was sent.",
+            PolishModelDiscoveryStatus.KeyRejected =>
+                $"{ProviderDisplayName(provider)} rejected the stored key while listing models. Replace the key and try again.",
+            PolishModelDiscoveryStatus.ProviderUnavailable =>
+                $"{ProviderDisplayName(provider)} model discovery is temporarily unavailable. The recommended model and custom-ID field remain available.",
+            PolishModelDiscoveryStatus.InvalidResponse =>
+                $"{ProviderDisplayName(provider)} returned an unrecognized model catalog. The recommended model and custom-ID field remain available.",
+            _ => throw new ArgumentOutOfRangeException(nameof(discovery), discovery.Status, null),
+        };
+    }
 
     private void RefreshApiKeyStatus()
     {
@@ -3820,7 +3781,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
         SetLiveText(
             ApiKeyStatusText,
-    _apiKeyStore.GetStatus(provider) switch
+    _providerPresenter.KeyStatus(provider) switch
             {
                 ApiKeyReadStatus.Found =>
                     $"{CredentialArticle(provider)} {ProviderDisplayName(provider)} key is stored in Windows Credential Manager.",
@@ -4794,8 +4755,7 @@ public sealed partial class MainWindow : Window, IDisposable
         _ => PolishProvider.None,
     };
 
-    private static bool IsCloudProvider(PolishProvider provider) =>
-        provider is PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini;
+    private static bool IsCloudProvider(PolishProvider provider) => ProviderSettingsPresenter.IsCloudProvider(provider);
 
     private static string ProviderDisplayName(PolishProvider provider) => provider switch
     {
@@ -4809,12 +4769,6 @@ public sealed partial class MainWindow : Window, IDisposable
         PolishProvider.OpenAI or PolishProvider.Anthropic
             ? "An"
             : "A";
-
-    private static bool IsCredentialStorageFailure(Exception exception) => exception is
-        Win32Exception or
-        UnauthorizedAccessException or
-        SecurityException or
-        ArgumentException;
 
     private static int PolishProviderIndex(PolishProvider provider) => provider switch
     {
