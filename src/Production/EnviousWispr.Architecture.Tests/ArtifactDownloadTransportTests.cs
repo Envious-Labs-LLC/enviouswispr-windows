@@ -15,6 +15,7 @@ namespace EnviousWispr.Architecture.Tests;
 public sealed class ArtifactDownloadTransportTests : IDisposable
 {
     private static readonly byte[] Payload = Encoding.ASCII.GetBytes("0123456789abcdefghijklmnopqrstuvwxyz");
+    private static readonly TimeSpan Patience = TimeSpan.FromSeconds(10);
     private readonly string _directory = Directory.CreateTempSubdirectory("EnviousWispr.Transport.").FullName;
     private readonly List<HttpRequestMessage> _requests = [];
     private readonly List<ModelDeliveryEvent> _events = [];
@@ -179,13 +180,18 @@ public sealed class ArtifactDownloadTransportTests : IDisposable
     }
 
     [Fact]
-    public async Task AResponseThatKeepsGoingPastThePromisedSizeIsAPermanentFailureAtTheFirstByteOver()
+    public async Task AResponseThatKeepsGoingPastThePromisedSizeIsRefusedAtTheChunkThatCrossesAndReadNoFurther()
     {
-        var transport = Transport(_ => Ok([.. Payload, .. Payload]));
+        // BOUNDED READS. The source delivers the promised bytes, then a chunk that crosses the size;
+        // that chunk is refused before it is written, and nothing is read after it.
+        var crossing = new ScriptedStream([Payload, [0xAA, 0xBB, 0xCC]]);
+        var transport = Transport(_ => Ok(crossing));
 
         var outcome = await transport.DownloadAttemptAsync(Source, Artifact(), Partial, Resume, 0, Payload.Length, CancellationToken.None);
 
         Assert.Equal(DownloadAttemptResult.PermanentFailure, outcome.Result);
+        Assert.Equal(2, crossing.Reads);
+        Assert.Equal(Payload, await File.ReadAllBytesAsync(Partial));
     }
 
     [Fact]
@@ -203,34 +209,40 @@ public sealed class ArtifactDownloadTransportTests : IDisposable
     [Fact]
     public async Task AReadThatOutlastsTheTimeoutIsCancelledAsATimeoutNotAsTheCaller()
     {
-        var stalled = new TaskCompletionSource();
-        var transport = Transport(_ => Ok(new StallingStream(Payload[..10], stalled.Task)), requestTimeout: TimeSpan.FromMilliseconds(200));
+        var stream = new StallingStream(Payload[..10]);
+        var transport = Transport(_ => Ok(stream), requestTimeout: TimeSpan.FromMilliseconds(200));
 
         // THE STORE TELLS THE TWO APART BY ITS OWN TOKEN, not by the exception: a cancellation that
-        // arrives while the caller's token is untouched is an inactivity timeout, and transient.
+        // arrives while the caller's token is untouched is an inactivity timeout, and transient. The
+        // outer wait is a watchdog: a timeout that never fired would hang here, not pass.
         using var caller = new CancellationTokenSource();
         var attempt = transport.DownloadAttemptAsync(Source, Artifact(), Partial, Resume, 0, Payload.Length, caller.Token);
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => attempt);
+        await stream.Stalled.Task.WaitAsync(Patience);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => attempt.WaitAsync(Patience));
 
         Assert.False(caller.Token.IsCancellationRequested);
         Assert.Equal(10, new FileInfo(Partial).Length);
-        stalled.SetResult();
+        stream.Release.SetResult();
     }
 
     [Fact]
-    public async Task TheCallersCancellationReachesTheReadAndIsTheirs()
+    public async Task TheCallersCancellationReachesAStalledReadWithinMoments()
     {
+        // THE READ IS STALLED BEFORE THE CANCEL: the stream says when it has entered the wait, so the
+        // cancel cannot land on the metadata write instead. And the attempt must end long before the
+        // thirty-second read timeout could end it, or the cancellation did not reach the read.
         using var cancellation = new CancellationTokenSource();
-        var stalled = new TaskCompletionSource();
-        var transport = Transport(_ => Ok(new StallingStream(Payload[..10], stalled.Task)), requestTimeout: TimeSpan.FromSeconds(30));
+        var stream = new StallingStream(Payload[..10]);
+        var transport = Transport(_ => Ok(stream, etag: "\"v1\""), requestTimeout: TimeSpan.FromSeconds(30));
 
         var attempt = transport.DownloadAttemptAsync(Source, Artifact(), Partial, Resume, 0, Payload.Length, cancellation.Token);
-        Assert.False(attempt.IsCompleted, "the read is stalled; the attempt waits on it");
+        await stream.Stalled.Task.WaitAsync(Patience);
         cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => attempt);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => attempt.WaitAsync(TimeSpan.FromSeconds(5)));
 
-        Assert.True(cancellation.Token.IsCancellationRequested);
-        stalled.SetResult();
+        Assert.Equal(10, new FileInfo(Partial).Length);
+        Assert.True(File.Exists(Resume), "what arrived is kept, with its record, for a resume");
+        stream.Release.SetResult();
     }
 
     public void Dispose()
@@ -304,10 +316,14 @@ public sealed class ArtifactDownloadTransportTests : IDisposable
             Task.FromResult(route(request));
     }
 
-    /// <summary>Delivers its bytes, then stalls until released, honouring the read's token.</summary>
-    private sealed class StallingStream(byte[] bytes, Task release) : Stream
+    /// <summary>Delivers its bytes, then stalls until released, saying when it has, honouring the read's token.</summary>
+    private sealed class StallingStream(byte[] bytes) : Stream
     {
         private int _offset;
+
+        public TaskCompletionSource Stalled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public override bool CanRead => true;
         public override bool CanSeek => false;
@@ -325,8 +341,36 @@ public sealed class ArtifactDownloadTransportTests : IDisposable
                 return count;
             }
 
-            await release.WaitAsync(cancellationToken);
+            Stalled.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
             return 0;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    /// <summary>Answers each read with the next scripted chunk, whole, and fails a read past the script.</summary>
+    private sealed class ScriptedStream(byte[][] chunks) : Stream
+    {
+        public int Reads { get; private set; }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            Assert.True(Reads < chunks.Length, "the transport read past the chunk that crossed the size");
+            var chunk = chunks[Reads++];
+            Assert.True(chunk.Length <= buffer.Length);
+            chunk.CopyTo(buffer);
+            return ValueTask.FromResult(chunk.Length);
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();

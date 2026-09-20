@@ -51,11 +51,13 @@ public sealed class ArtifactDownloadTransport
     private readonly IModelDeliveryObserver _observer;
     private readonly TimeSpan _requestTimeout;
 
-    /// <param name="requestTimeout">The longest any single wait on the source may take: the headers, then each read.</param>
+    /// <param name="requestTimeout">
+    /// The longest any single wait on the source may take: the headers, then each read. Any value the
+    /// cancellation timer accepts is accepted here, as it was when the store armed the timer itself.
+    /// </param>
     public ArtifactDownloadTransport(HttpClient httpClient, TimeSpan requestTimeout, IModelDeliveryObserver? observer = null)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(requestTimeout, TimeSpan.Zero);
         _httpClient = httpClient;
         _requestTimeout = requestTimeout;
         _observer = observer ?? NullModelDeliveryObserver.Instance;
