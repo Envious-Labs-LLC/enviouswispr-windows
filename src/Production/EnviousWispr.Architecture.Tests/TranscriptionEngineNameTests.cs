@@ -671,7 +671,7 @@ public sealed partial class DesignSystemTokenTests
             }
 
             // A call (`await app._livePreview.StopAsync()`) or a method group handed to the cleanup
-            // helper (`TryCleanupAsync(StopAutoStopWatchAsync)`); a comment is neither.
+            // helper (`TryCleanupAsync(_autoStop.StopAsync)`); a comment is neither.
             var references = body.DescendantNodes()
                 .Select(node => node switch
                 {
@@ -682,7 +682,7 @@ public sealed partial class DesignSystemTokenTests
                 .OfType<string>()
                 .ToArray();
             var stopsPreview = references.Any(text => text.EndsWith("_livePreview.StopAsync", StringComparison.Ordinal));
-            var stopsWatcher = references.Any(text => text.EndsWith("StopAutoStopWatchAsync", StringComparison.Ordinal));
+            var stopsWatcher = references.Any(text => text.EndsWith("_autoStop.StopAsync", StringComparison.Ordinal));
             if (!stopsPreview)
             {
                 continue;
@@ -716,19 +716,28 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void AutoStopEndsTheRecordingThroughTheKeyReleasePath()
     {
-        var source = File.ReadAllText(
-            Path.Combine(
-                FindRepositoryRoot(),
-                "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+        var root = FindRepositoryRoot();
+        var timers = File.ReadAllText(
+            Path.Combine(root, "src", "Production", "EnviousWispr.Pipeline", "RecordingTimers.cs"));
+        var shell = File.ReadAllText(
+            Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
 
         // THE LENGTH CONTROL IS GONE BECAUSE WHAT IT GUARDED IS GONE. The pattern this replaces
         // ended at the first line reading exactly four spaces and a brace, so it could capture a
         // FRAGMENT of the method and the assertion below would then be about part of a body; the
         // character count stood in for "did you get the whole thing". The parser returns the method
         // or nothing, so there is no fragment to guard against. Ref: #82.
+        //
+        // TWO HALVES SINCE STEP 10 (#148): the monitor in the pipeline posts a Released signal through
+        // its port, and the shell's adapter for that port hands the signal to the same entry a key
+        // release uses. Either half alone could be rewired to a parallel finish; both are checked.
         Assert.Contains(
-            "HandlePushToTalkAsync(PushToTalkSignal.Released)",
-            DeclarationTextOf(source, "RunAutoStopWatchAsync"),
+            "Post(PushToTalkSignal.Released)",
+            DeclarationTextOf(timers, "RunAsync"),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "HandlePushToTalkAsync(signal)",
+            DeclarationTextOf(shell, "Post"),
             StringComparison.Ordinal);
     }
 
