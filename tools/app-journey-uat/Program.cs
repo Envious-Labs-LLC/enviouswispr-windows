@@ -1579,12 +1579,11 @@ static void RequireLivePreviewJourneyEvents(IReadOnlyList<string> events)
     }
 }
 
-/// <summary>The head start committed work during the recording and the release used it.</summary>
+/// <summary>The head start ran on a recording and did not give up; whether it committed is reported, not required.</summary>
 /// <remarks>
-/// ASSERTS THE OUTCOME AND THE ABSENCE, because either alone passes against the defect. Requiring
-/// only the committed segment would pass on a run that committed once and then abandoned; requiring
-/// only "not abandoned" would pass on a run that never polled at all, which is exactly what every
-/// journey before this one did.
+/// THE SUMMARY USED TO SAY THE RELEASE USED A COMMIT, and the body below explains why it cannot ask
+/// for one on these fixtures. What it asserts is a recording and no abandonment; what it reports, in
+/// the result, is how many segments were committed and whether the release used them.
 ///
 /// ABANDONING IS CORRECT BEHAVIOUR AND IS STILL A FAILURE HERE. The head start gives up on any error
 /// rather than delivering half a dictation, and that design stays. This mode exists to assert the
@@ -1599,11 +1598,14 @@ static void RequireHeadStartJourneyEvents(IReadOnlyList<string> events)
     // the fixture began arriving at the sample rate, as a microphone does, the same run committed
     // NOTHING - and that is correct behaviour rather than a regression.
     //
-    // THE PLANNER CANNOT COMMIT ON THIS FIXTURE AND SHOULD NOT. It refuses to end a commit anywhere
-    // but in silence and never commits the last segment, because a segment at the end of the audio so
-    // far is indistinguishable from the first half of a word still being said. This journey's fixture
-    // is 2.71 seconds of one continuous sentence: no interior silence to commit at, and the tail is
-    // the only thing that ever arrives. Requiring a commit here asserts that the audio is fake.
+    // THE PLANNER CANNOT COMMIT ON THIS FIXTURE AND SHOULD NOT. It ends a commit only at the end of a
+    // silence that follows at least 1.5 s of speech, and never on the last segment of the audio so
+    // far - a stretch at the end is indistinguishable from the first half of a word still being said,
+    // and a silence at the end has nothing after it to prove the speech before it has finished. So a
+    // commit needs, at some poll, enough speech AND a qualifying silence with more audio after it.
+    // This journey's fixture is 2.71 seconds of one continuous sentence, and the acoustic fixtures
+    // played over the cable have committed nothing either; the count is reported in the result and
+    // the cause is not asserted here. Requiring a commit would assert something about the audio.
     //
     // SO IT ASSERTS THE THING THAT WAS ACTUALLY BROKEN. Before the overflow fix the head start threw
     // on the FIRST poll of every recording ever made and was abandoned every time, so "did not give

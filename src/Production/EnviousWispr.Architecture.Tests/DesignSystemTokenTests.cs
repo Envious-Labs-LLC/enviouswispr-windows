@@ -936,7 +936,7 @@ public sealed partial class DesignSystemTokenTests
         // THE FLOOR IS TODAY'S COUNT, so a flow deleted or renamed out of the pattern is noticed.
         // A lower floor lets the set shrink silently, which is how a gate stops covering the thing
         // it was written for while still reporting green.
-        Assert.True(flows >= 12, $"Expected the dictation flows, found {flows}.");
+        Assert.True(flows >= 13, $"Expected the dictation flows, found {flows}.");
         Assert.True(
             unscoped.Count == 0,
             "These methods are handed a dictation and never open its scope, so every line they "
@@ -959,7 +959,9 @@ public sealed partial class DesignSystemTokenTests
                 method.ParameterList.Parameters.Any(parameter =>
                     parameter.Type is IdentifierNameSyntax
                     {
-                        Identifier.ValueText: "DictationSessionId",
+                        // The audio of a dictation carries its id; a flow handed one serves that
+                        // dictation as surely as one handed the id, and the streaming join is one.
+                        Identifier.ValueText: "DictationSessionId" or "CapturedAudio",
                     }))
             .ToArray();
 
@@ -984,6 +986,7 @@ public sealed partial class DesignSystemTokenTests
     [InlineData("private async Task F(string first, DictationSessionId id) { }")]
     [InlineData("public async Task G(DictationSessionId id) { }")]
     [InlineData("internal async Task<int> H(DictationSessionId id) { return 0; }")]
+    [InlineData("public async Task<Transcript> I(ITranscriptionEngine engine, CapturedAudio audio, CancellationToken token) { return null!; }")]
     public void AFlowIsFoundHoweverItsSignatureIsWritten(string declaration)
     {
         // The bar stands for a line break: a signature split across lines is one of the shapes

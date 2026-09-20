@@ -29,7 +29,9 @@ public sealed class StreamingTranscriptionControllerTests
         world.Controller.Start(world.Session);
         Assert.True(world.Controller.IsRunning);
         world.Clock.Advance(Poll);
-        await world.Engine.WhenTranscribed(1).WaitAsync(Patience);
+        // A COMMIT IS COMPLETE WHEN THE NEXT POLL IS REGISTERED: the engine's answer has been
+        // appended and logged by then. The engine's own milestone says only that it was entered.
+        await world.Clock.WhenRegistered(2).WaitAsync(Patience);
 
         var commit = world.Engine.Requests[0];
         Assert.Equal(0, commit.From);
@@ -94,7 +96,7 @@ public sealed class StreamingTranscriptionControllerTests
         world.Engine.NextText = "the first sentence";
         world.Controller.Start(world.Session);
         world.Clock.Advance(Poll);
-        await world.Engine.WhenTranscribed(1).WaitAsync(Patience);
+        await world.Clock.WhenRegistered(2).WaitAsync(Patience);
 
         world.Audio.Samples = Build((false, 200), (true, 3000), (false, 1200), (true, 3000), (false, 1200), (true, 500));
         world.Engine.ThrowOnTranscribe = new TranscriptionEngineException(
@@ -142,7 +144,7 @@ public sealed class StreamingTranscriptionControllerTests
 
         world.Controller.Start(world.Session);
         world.Clock.Advance(Poll);
-        await world.Engine.WhenTranscribed(1).WaitAsync(Patience);
+        await world.Clock.WhenRegistered(2).WaitAsync(Patience);
         var committed = world.Engine.Requests[0].Length;
 
         // More finished speech arrives; the next segment is held inside the engine when the stop lands.
@@ -254,7 +256,7 @@ public sealed class StreamingTranscriptionControllerTests
         world.Engine.NextText = "the first sentence";
         world.Controller.Start(world.Session);
         world.Clock.Advance(Poll);
-        await world.Engine.WhenTranscribed(1).WaitAsync(Patience);
+        await world.Clock.WhenRegistered(2).WaitAsync(Patience);
         var committed = world.Engine.Requests[0].Length;
         await world.Controller.StopAsync();
 
@@ -276,7 +278,7 @@ public sealed class StreamingTranscriptionControllerTests
         world.Engine.NextText = "old words";
         world.Controller.Start(world.Session);
         world.Clock.Advance(Poll);
-        await world.Engine.WhenTranscribed(1).WaitAsync(Patience);
+        await world.Clock.WhenRegistered(2).WaitAsync(Patience);
         await world.Controller.StopAsync();
 
         var next = DictationSessionId.Create();
@@ -368,7 +370,7 @@ public sealed class StreamingTranscriptionControllerTests
         }
     }
 
-    /// <summary>The engine records where each request's samples sit in the take, by identity of the take's array.</summary>
+    /// <summary>The engine records where each request's samples sit in the take: the slice's offset into the array it was cut from.</summary>
     private sealed class FakeEngine : ITranscriptionEngine
     {
         private readonly object _lock = new();
@@ -393,6 +395,7 @@ public sealed class StreamingTranscriptionControllerTests
             }
         }
 
+        /// <summary>Completes once the engine has been ENTERED that many times - not once it has answered.</summary>
         public Task WhenTranscribed(int count) => _transcribed.WhenAtLeast(count);
 
         public async Task<Transcript> TranscribeAsync(CapturedAudio audio, CancellationToken cancellationToken = default)
