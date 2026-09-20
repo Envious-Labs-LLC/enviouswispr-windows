@@ -15,7 +15,7 @@ The order is part of the product behavior and must not drift casually:
 9. Apply cursor-aware insertion repair when safe context is available.
 10. Deliver to the frozen target and record the local history result according to user settings.
 
-Every stage has a typed input, typed output, timeout or cancellation policy, and content-free diagnostic.
+Every stage has a typed input, typed output, timeout or cancellation policy, and content-free diagnostic; on timeout the stage is asked to stop, the pipeline moves on with the last valid text, and a stage still running from a previous request is skipped (Busy) rather than doubled.
 If a stage fails, return the last valid text. Optional polish failure returns deterministic text.
 
 ## Live preview

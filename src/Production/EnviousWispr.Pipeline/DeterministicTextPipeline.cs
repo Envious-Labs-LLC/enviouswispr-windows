@@ -56,12 +56,17 @@ public interface IDeterministicTextStep
 
     bool IsEnabled(DeterministicTextContext context);
 
-    DeterministicTextContext Process(DeterministicTextContext context);
+    DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken);
 }
 
 public sealed class DeterministicTextPipeline
 {
     private readonly IDeterministicTextStep[] _steps;
+    private readonly DeterministicStageExecutor _executor = new();
+
+    /// <summary>See <see cref="DeterministicStageExecutor.OutstandingInvocation"/>.</summary>
+    internal Task<DeterministicTextContext>? OutstandingInvocation(IDeterministicTextStep step) =>
+        _executor.OutstandingInvocation(step);
 
     public DeterministicTextPipeline()
         : this(CreateDefaultSteps())
@@ -109,7 +114,7 @@ public sealed class DeterministicTextPipeline
                 continue;
             }
 
-            var execution = await DeterministicStageExecutor.ExecuteAsync(
+            var execution = await _executor.ExecuteAsync(
                 step,
                 context,
                 static (input, output) =>
@@ -150,7 +155,7 @@ public sealed class DeterministicTextPipeline
             polishedText);
         // INVALID RESTORATION MUST PRESERVE THE POLISH. A null context or null Text now fails just
         // like a main-loop stage, keeping the supplied polish instead of dereferencing invalid output.
-        var execution = await DeterministicStageExecutor.ExecuteAsync(
+        var execution = await _executor.ExecuteAsync(
             step,
             input,
             static (before, after) =>
@@ -204,8 +209,11 @@ public sealed class DeterministicTextPipeline
         public bool IsEnabled(DeterministicTextContext context) =>
             context.Options.WordCorrectionEnabled && context.CustomWords.Count > 0;
 
-        public DeterministicTextContext Process(DeterministicTextContext context) =>
-            context with { Text = CustomWordCorrector.Correct(context.Text, context.CustomWords).Text };
+        public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return context with { Text = CustomWordCorrector.Correct(context.Text, context.CustomWords).Text };
+        }
     }
 
     private sealed class FillerStep : IDeterministicTextStep
@@ -216,10 +224,14 @@ public sealed class DeterministicTextPipeline
 
         public bool IsEnabled(DeterministicTextContext context) => context.Options.FillerRemovalEnabled;
 
-        public DeterministicTextContext Process(DeterministicTextContext context) => context with
+        public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
         {
-            Text = FillerWordRemover.Remove(context.Text, context.Transcript.DetectedLanguage),
-        };
+            cancellationToken.ThrowIfCancellationRequested();
+            return context with
+            {
+                Text = FillerWordRemover.Remove(context.Text, context.Transcript.DetectedLanguage),
+            };
+        }
     }
 
     private sealed class SpokenEmojiStep(SpokenEmojiFormatter? formatter) : IDeterministicTextStep
@@ -233,8 +245,11 @@ public sealed class DeterministicTextPipeline
             formatter is not null &&
             IsEnglishDeterministicLanguage(context.Transcript);
 
-        public DeterministicTextContext Process(DeterministicTextContext context) =>
-            context with { Text = formatter!.Format(context.Text) };
+        public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return context with { Text = formatter!.Format(context.Text) };
+        }
     }
 
     private sealed class InverseTextNormalizationStep : IDeterministicTextStep
@@ -246,12 +261,16 @@ public sealed class DeterministicTextPipeline
         public bool IsEnabled(DeterministicTextContext context)
             => IsEnglishDeterministicLanguage(context.Transcript);
 
-        public DeterministicTextContext Process(DeterministicTextContext context) => context with
+        public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
         {
-            Text = InverseTextNormalizer.Normalize(
-                context.Text,
-                context.Options.SpokenPunctuationEnabled),
-        };
+            cancellationToken.ThrowIfCancellationRequested();
+            return context with
+            {
+                Text = InverseTextNormalizer.Normalize(
+                    context.Text,
+                    context.Options.SpokenPunctuationEnabled),
+            };
+        }
     }
 
     private sealed class EmojiRestorationStep : IDeterministicTextStep
@@ -262,10 +281,14 @@ public sealed class DeterministicTextPipeline
 
         public bool IsEnabled(DeterministicTextContext context) => context.PolishedText is not null;
 
-        public DeterministicTextContext Process(DeterministicTextContext context) => context with
+        public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
         {
-            PolishedText = EmojiRestorer.Restore(context.PolishedText!, context.Text).Text,
-        };
+            cancellationToken.ThrowIfCancellationRequested();
+            return context with
+            {
+                PolishedText = EmojiRestorer.Restore(context.PolishedText!, context.Text).Text,
+            };
+        }
     }
 
     private static bool IsEnglishDeterministicLanguage(Transcript transcript)

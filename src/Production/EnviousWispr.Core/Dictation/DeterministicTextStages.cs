@@ -29,4 +29,6 @@ public enum DeterministicStageStatus
     Skipped,
     TimedOut,
     Failed,
+    /// <summary>A previous invocation of this stage was still running, so this request fell back to its input without starting another.</summary>
+    Busy,
 }

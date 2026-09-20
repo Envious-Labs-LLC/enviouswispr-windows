@@ -286,57 +286,230 @@ public sealed class DeterministicTextPipelineTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task BlockingStagePreservesInputAndReportsTimeout(bool restoration)
+    public async Task BlockingStageIsBusyUntilItsInvocationCompletes(bool restoration)
     {
-        // THE WORKER CANNOT WIN THE DEADLINE RACE. Only the test releases it, after checking the
-        // fallback; waiting for its exit also keeps the gate alive until the worker is done with it.
         using var release = new ManualResetEventSlim(false);
-        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var invocations = 0;
         var step = new DelegateStep(
             DeterministicTextStage.EmojiRestoration,
             context =>
             {
-                try
-                {
-                    release.Wait(TimeSpan.FromSeconds(30));
-                    return context with { Text = "too late", PolishedText = "too late" };
-                }
-                finally
-                {
-                    finished.SetResult();
-                }
+                Interlocked.Increment(ref invocations);
+                entered.TrySetResult();
+                Assert.True(release.Wait(TimeSpan.FromSeconds(30)));
+                return context with { Text = "finished text", PolishedText = "finished polish" };
             },
-            TimeSpan.FromMilliseconds(5));
+            TimeSpan.FromMilliseconds(250));
+        var pipeline = new DeterministicTextPipeline([step]);
+        Task<DeterministicTextContext>? worker = null;
         try
         {
-            var result = await RunStageAsync(restoration, step);
+            var pending = RunStageAsync(restoration, step, pipeline: pipeline);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            worker = GetOutstandingInvocation(pipeline, step);
+            var result = await pending.WaitAsync(TimeSpan.FromSeconds(5));
 
             AssertStageFallback(result, DeterministicStageStatus.TimedOut);
+            Assert.Equal(1, Volatile.Read(ref invocations));
+
+            var busy = await RunStageAsync(restoration, step, pipeline: pipeline);
+
+            AssertStageFallback(busy, DeterministicStageStatus.Busy);
+            Assert.Equal(1, Volatile.Read(ref invocations));
+
+            release.Set();
+            var late = await worker.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("finished text", late.Text);
+            Assert.True(worker.IsCompletedSuccessfully);
+
+            var recovered = await RunStageAsync(restoration, step, pipeline: pipeline);
+
+            Assert.Equal("finished polish", recovered.Output.Text);
+            Assert.Equal(restoration ? "safe" : "finished text", recovered.DeterministicText);
+            Assert.False(recovered.IsDegraded);
+            var receipt = recovered.Receipts.Single(item => item.Stage == step.Stage);
+            Assert.Equal(DeterministicStageStatus.Completed, receipt.Status);
+            Assert.True(receipt.Changed);
+            Assert.Equal(2, Volatile.Read(ref invocations));
         }
         finally
         {
             release.Set();
-            await finished.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            if (worker is not null)
+            {
+                await worker.WaitAsync(TimeSpan.FromSeconds(5));
+            }
         }
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task CallerCancellationDuringStagePropagates(bool restoration)
+    public async Task CooperativeDeadlineCancellationReportsTimeoutAndWorkerCompletes(bool restoration)
+    {
+        using var release = new ManualResetEventSlim(false);
+        using var allowExit = new ManualResetEventSlim(false);
+        var cancelled = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var invocations = 0;
+        var step = new DelegateStep(
+            DeterministicTextStage.EmojiRestoration,
+            (context, token) =>
+            {
+                Interlocked.Increment(ref invocations);
+                try
+                {
+                    release.Wait(token);
+                    return context;
+                }
+                catch (OperationCanceledException)
+                {
+                    cancelled.SetResult(token);
+                    Assert.True(allowExit.Wait(TimeSpan.FromSeconds(5), CancellationToken.None));
+                    throw;
+                }
+            },
+            TimeSpan.FromMilliseconds(250));
+        var pipeline = new DeterministicTextPipeline([step]);
+        try
+        {
+            var pending = RunStageAsync(restoration, step, pipeline: pipeline);
+            var token = await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var worker = GetOutstandingInvocation(pipeline, step);
+            var result = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+
+            AssertStageFallback(result, DeterministicStageStatus.TimedOut);
+            Assert.True(token.IsCancellationRequested);
+            Assert.Equal(1, Volatile.Read(ref invocations));
+
+            allowExit.Set();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => worker.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.True(worker.IsCanceled);
+        }
+        finally
+        {
+            allowExit.Set();
+            release.Set();
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DeadlineOperationCanceledExceptionIsReportedAsTimeout(bool restoration)
+    {
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var invocations = 0;
+        var step = new DelegateStep(
+            DeterministicTextStage.EmojiRestoration,
+            (_, token) =>
+            {
+                Interlocked.Increment(ref invocations);
+                try
+                {
+                    using var release = new ManualResetEventSlim(false);
+                    release.Wait(token);
+                    throw new InvalidOperationException("The cancellation wait unexpectedly returned.");
+                }
+                finally
+                {
+                    finished.SetResult();
+                }
+            },
+            TimeSpan.FromMilliseconds(250));
+
+        var result = await RunStageAsync(restoration, step).WaitAsync(TimeSpan.FromSeconds(5));
+        await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        AssertStageFallback(result, DeterministicStageStatus.TimedOut);
+        Assert.True(finished.Task.IsCompletedSuccessfully);
+        Assert.Equal(1, Volatile.Read(ref invocations));
+    }
+
+    [Fact]
+    public async Task ConcurrentRequestsAcrossBothPathsStartOnlyOneInvocation()
+    {
+        using var release = new ManualResetEventSlim(false);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var invocations = 0;
+        var step = new DelegateStep(
+            DeterministicTextStage.EmojiRestoration,
+            context =>
+            {
+                Interlocked.Increment(ref invocations);
+                entered.SetResult();
+                Assert.True(release.Wait(TimeSpan.FromSeconds(30)));
+                return context with { PolishedText = "finished polish" };
+            },
+            TimeSpan.FromSeconds(30));
+        var pipeline = new DeterministicTextPipeline([step]);
+        var attempts = Enumerable.Range(0, 16).Select(index => Task.Run(async () =>
+        {
+            await start.Task;
+            return await RunStageAsync(index % 2 == 0, step, pipeline: pipeline);
+        })).ToList();
+        try
+        {
+            start.SetResult();
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            for (var index = 0; index < 15; index++)
+            {
+                var completed = await Task.WhenAny(attempts).WaitAsync(TimeSpan.FromSeconds(5));
+                attempts.Remove(completed);
+                AssertStageFallback(await completed, DeterministicStageStatus.Busy);
+                Assert.Equal(1, Volatile.Read(ref invocations));
+            }
+
+            release.Set();
+            var winner = await Assert.Single(attempts).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("finished polish", winner.Output.Text);
+            Assert.Equal("safe", winner.DeterministicText);
+            Assert.False(winner.IsDegraded);
+            Assert.Equal(DeterministicStageStatus.Completed,
+                winner.Receipts.Single(item => item.Stage == step.Stage).Status);
+            Assert.Equal(1, Volatile.Read(ref invocations));
+        }
+        finally
+        {
+            release.Set();
+            await Task.WhenAll(attempts).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    // The actual executor task, so worker completion is established before a recovery request; a
+    // signal from inside Process can fire before Task.Run itself has reached a terminal state.
+    private static Task<DeterministicTextContext> GetOutstandingInvocation(
+        DeterministicTextPipeline pipeline, IDeterministicTextStep step)
+    {
+        var invocation = pipeline.OutstandingInvocation(step);
+        Assert.NotNull(invocation);
+        return invocation;
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task CallerCancellationDuringStagePropagates(bool restoration, bool cooperative)
     {
         using var cancellation = new CancellationTokenSource();
         using var release = new ManualResetEventSlim(false);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var invocations = 0;
+        CancellationToken stepToken = default;
         var step = new DelegateStep(
             DeterministicTextStage.EmojiRestoration,
-            context =>
+            (context, token) =>
             {
+                Interlocked.Increment(ref invocations);
+                stepToken = token;
                 entered.SetResult();
                 try
                 {
-                    release.Wait(TimeSpan.FromSeconds(30));
+                    Assert.True(release.Wait(TimeSpan.FromSeconds(30), cooperative ? token : CancellationToken.None));
                     return context with { Text = "too late", PolishedText = "too late" };
                 }
                 finally
@@ -354,11 +527,14 @@ public sealed class DeterministicTextPipelineTests
             var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
 
             Assert.Equal(cancellation.Token, exception.CancellationToken);
+            Assert.True(stepToken.IsCancellationRequested);
+            Assert.Equal(1, Volatile.Read(ref invocations));
         }
         finally
         {
             release.Set();
             await finished.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.True(finished.Task.IsCompletedSuccessfully);
         }
     }
 
@@ -408,9 +584,10 @@ public sealed class DeterministicTextPipelineTests
         bool restoration,
         IDeterministicTextStep step,
         bool alreadyDegraded = false,
+        DeterministicTextPipeline? pipeline = null,
         CancellationToken cancellationToken = default)
     {
-        var pipeline = new DeterministicTextPipeline([step]);
+        pipeline ??= new DeterministicTextPipeline([step]);
         var request = CreateRequest("safe") with { PolishedText = "polished input" };
         if (!restoration)
         {
@@ -619,15 +796,24 @@ public sealed class DeterministicTextPipelineTests
 
     private sealed class DelegateStep(
         DeterministicTextStage stage,
-        Func<DeterministicTextContext, DeterministicTextContext> process,
+        Func<DeterministicTextContext, CancellationToken, DeterministicTextContext> process,
         TimeSpan? timeout = null) : IDeterministicTextStep
     {
+        public DelegateStep(
+            DeterministicTextStage stage,
+            Func<DeterministicTextContext, DeterministicTextContext> process,
+            TimeSpan? timeout = null)
+            : this(stage, (context, _) => process(context), timeout)
+        {
+        }
+
         public DeterministicTextStage Stage => stage;
 
         public TimeSpan Timeout => timeout ?? TimeSpan.FromSeconds(1);
 
         public bool IsEnabled(DeterministicTextContext context) => true;
 
-        public DeterministicTextContext Process(DeterministicTextContext context) => process(context);
+        public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken) =>
+            process(context, cancellationToken);
     }
 }
