@@ -117,10 +117,11 @@ public sealed class RuntimeWorkerSupervisorTests
     }
 
     [Fact]
-    public async Task AnExplicitlyStoppedWorkerRestartsLazilyWithoutSpendingTheBudget()
+    public async Task AnExplicitlyStoppedWorkerRestartsLazilyWithoutSpendingOrReplenishingTheBudget()
     {
         // Windows suspend stops the worker; the next dictation brings it back. That is not a crash and
-        // must leave the whole budget for one, so a crash after it still recovers.
+        // must leave the budget exactly as it was: a fresh one still has its allowance afterwards, and a
+        // spent one does not get it back merely by being stopped and started for free.
         await using var supervisor = new RuntimeWorkerSupervisor(WorkerPath(), maximumRestarts: 1);
         var observedProcessIds = new List<int>();
         Assert.True((await supervisor.StartAsync(RequestTimeout)).Succeeded);
@@ -128,15 +129,66 @@ public sealed class RuntimeWorkerSupervisorTests
         Assert.True((await supervisor.StopAsync()).Succeeded);
         Assert.Equal(RuntimeWorkerState.Stopped, supervisor.State);
 
+        // A probe on a deliberately stopped worker reports failure and leaves it Stopped.
+        Assert.False((await supervisor.CheckHealthAsync(RequestTimeout)).Succeeded);
+        Assert.Equal(RuntimeWorkerState.Stopped, supervisor.State);
+
         var response = await supervisor.TranscribeAsync(TranscriptionRequest(), RequestTimeout);
-        Assert.NotNull(response);
+        Assert.Equal("failed", response?.Status);
         ObserveReadyWorker(supervisor, observedProcessIds);
         Assert.Equal(2, observedProcessIds.Count);
 
+        // The free start spent nothing: one crash still recovers.
         await KillWorkerAsync(supervisor);
-        Assert.NotNull(await supervisor.TranscribeAsync(TranscriptionRequest(), RequestTimeout));
+        Assert.Equal("failed", (await supervisor.TranscribeAsync(TranscriptionRequest(), RequestTimeout))?.Status);
         ObserveReadyWorker(supervisor, observedProcessIds);
         Assert.Equal(3, observedProcessIds.Count);
+
+        // The allowance is now spent. Stop on purpose, start for free, crash: still denied.
+        Assert.True((await supervisor.StopAsync()).Succeeded);
+        Assert.Equal("failed", (await supervisor.TranscribeAsync(TranscriptionRequest(), RequestTimeout))?.Status);
+        ObserveReadyWorker(supervisor, observedProcessIds);
+        Assert.Equal(4, observedProcessIds.Count);
+        await KillWorkerAsync(supervisor);
+        Assert.Null(await supervisor.TranscribeAsync(TranscriptionRequest(), RequestTimeout));
+        AssertWorkerFailure(await supervisor.EnsureHealthyAsync(RequestTimeout));
+        Assert.Null(supervisor.WorkerProcessId);
+        Assert.Equal(4, observedProcessIds.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task ANeverStartedWorkerWithZeroBudgetStillStartsLazily()
+    {
+        await using var supervisor = new RuntimeWorkerSupervisor(WorkerPath(), maximumRestarts: 0);
+        Assert.Equal(RuntimeWorkerState.Stopped, supervisor.State);
+        Assert.False((await supervisor.CheckHealthAsync(RequestTimeout)).Succeeded);
+        Assert.Equal(RuntimeWorkerState.Stopped, supervisor.State);
+
+        Assert.Equal("failed", (await supervisor.TranscribeAsync(TranscriptionRequest(), RequestTimeout))?.Status);
+        Assert.Equal(RuntimeWorkerState.Ready, supervisor.State);
+        Assert.NotNull(supervisor.WorkerProcessId);
+    }
+
+    [Fact]
+    public async Task AnExplicitStartOnAHealthyReplacementStillResetsTheBudget()
+    {
+        // Choosing an engine again, or the app relaunching a runtime, is a new lifetime even when the
+        // worker it finds is the replacement from the last crash and perfectly healthy.
+        await using var supervisor = new RuntimeWorkerSupervisor(WorkerPath(), maximumRestarts: 1);
+        var observedProcessIds = new List<int>();
+        Assert.True((await supervisor.StartAsync(RequestTimeout)).Succeeded);
+        ObserveReadyWorker(supervisor, observedProcessIds);
+        await KillWorkerAsync(supervisor);
+        Assert.True((await supervisor.EnsureHealthyAsync(RequestTimeout)).Succeeded);
+        ObserveReadyWorker(supervisor, observedProcessIds);
+
+        Assert.True((await supervisor.StartAsync(RequestTimeout)).Succeeded);
+        Assert.Equal(observedProcessIds[1], supervisor.WorkerProcessId);
+
+        await KillWorkerAsync(supervisor);
+        Assert.True((await supervisor.EnsureHealthyAsync(RequestTimeout)).Succeeded);
+        ObserveReadyWorker(supervisor, observedProcessIds);
+        Assert.Equal(3, observedProcessIds.Distinct().Count());
     }
 
     [Fact]

@@ -47,12 +47,15 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            // AN EXPLICIT START RESETS THE BUDGET WHETHER OR NOT IT HAS TO START ANYTHING. Somebody
+            // choosing an engine, or the app relaunching a runtime, is a new lifetime; a replacement
+            // worker that happens to be healthy at that moment does not carry the old loop's count.
+            _restartCount = 0;
             if (_process is { HasExited: false } && State == RuntimeWorkerState.Ready)
             {
                 return Success(RuntimeWorkerState.Ready);
             }
 
-            _restartCount = 0;
             return await StartCoreAsync(timeout, cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -114,13 +117,7 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_process is null || _process.HasExited || State is not RuntimeWorkerState.Ready)
             {
-                // A WORKER THAT WAS NEVER STARTED, OR WAS STOPPED ON PURPOSE, IS NOT A CRASH. Windows
-                // suspend stops the worker and the next dictation brings it back; that start is the
-                // ordinary lazy one the old code made and spends nothing. Every other way to be here -
-                // an exited process, a Faulted state - is recovery, and recovery is what the budget bounds.
-                var start = State == RuntimeWorkerState.Stopped
-                    ? await StartCoreAsync(timeout, cancellationToken).ConfigureAwait(false)
-                    : await RestartCoreAsync(timeout, cancellationToken).ConfigureAwait(false);
+                var start = await RestartCoreAsync(timeout, cancellationToken).ConfigureAwait(false);
                 if (!start.Succeeded)
                 {
                     return null;
@@ -207,11 +204,21 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         GC.SuppressFinalize(this);
     }
 
+    /// <summary>The one admission every automatic start goes through; the gate is held across it.</summary>
     private async Task<RuntimeWorkerResult> RestartCoreAsync(
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
-        // Both automatic recovery paths hold the gate across admission and startup.
+        // A WORKER THAT WAS NEVER STARTED, OR WAS STOPPED ON PURPOSE, IS NOT A CRASH. Windows suspend
+        // stops the worker and the next dictation brings it back; that start is the ordinary lazy one
+        // the old code made and spends nothing. Every other way to be here - an exited process, a
+        // Faulted state - is recovery, and recovery is what the budget bounds. The exemption lives
+        // here, inside the admission, so it cannot depend on which caller reached it first.
+        if (State == RuntimeWorkerState.Stopped)
+        {
+            return await StartCoreAsync(timeout, cancellationToken).ConfigureAwait(false);
+        }
+
         if (_restartCount >= _maximumRestarts)
         {
             State = RuntimeWorkerState.Faulted;
@@ -302,7 +309,14 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
     {
         if (_process is null || _process.HasExited || State is not RuntimeWorkerState.Ready)
         {
-            State = RuntimeWorkerState.Faulted;
+            // A PROBE DOES NOT TURN A DELIBERATE STOP INTO A FAULT. Stopped means never started or
+            // stopped on purpose; a health check finding no process there reports failure and leaves
+            // the reason alone, so the lazy start that follows is still the free one.
+            if (State != RuntimeWorkerState.Stopped)
+            {
+                State = RuntimeWorkerState.Faulted;
+            }
+
             return Failure();
         }
 
