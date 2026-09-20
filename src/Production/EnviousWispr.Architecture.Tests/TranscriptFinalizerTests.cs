@@ -145,7 +145,7 @@ public sealed class TranscriptFinalizerTests
         var effects = new FakeEffects();
         var admission = new FakeAdmission();
         var finalizer = new TranscriptFinalizer(
-            new DeterministicTextPipeline(),
+            PatientPipeline.Create(),
             new PolishExecutor(admission, effects, currentWords ?? (() => [])),
             effects);
         return (finalizer, effects, admission);

@@ -251,7 +251,7 @@ public sealed class SessionFinalizationRunnerTests
                 effects);
             effects.Persistence = persistence;
             var finalizer = new TranscriptFinalizer(
-                new DeterministicTextPipeline(),
+                PatientPipeline.Create(),
                 new PolishExecutor(new FakeAdmission(), effects, () => []),
                 effects);
             var runner = new SessionFinalizationRunner(controller, finalizer, persistence, effects, new FrozenClock(Now));
