@@ -9,6 +9,14 @@ namespace EnviousWispr.Architecture.Tests;
 
 public sealed class DeterministicTextPipelineTests
 {
+    /// <summary>
+    /// How long a test waits for a barrier the executor must cross. A guard against a hang, not a
+    /// measurement: the deadlines under test are the steps' own (250 ms and below), and the guard
+    /// only decides how quickly a broken executor fails. Five seconds was crossed twice in one day
+    /// by a starved hosted runner that had not yet scheduled the blocking step (#165).
+    /// </summary>
+    private static readonly TimeSpan Patience = TimeSpan.FromSeconds(30);
+
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -306,9 +314,9 @@ public sealed class DeterministicTextPipelineTests
         try
         {
             var pending = RunStageAsync(restoration, step, pipeline: pipeline);
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await entered.Task.WaitAsync(Patience);
             worker = GetOutstandingInvocation(pipeline, step);
-            var result = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+            var result = await pending.WaitAsync(Patience);
 
             AssertStageFallback(result, DeterministicStageStatus.TimedOut);
             Assert.Equal(1, Volatile.Read(ref invocations));
@@ -319,7 +327,7 @@ public sealed class DeterministicTextPipelineTests
             Assert.Equal(1, Volatile.Read(ref invocations));
 
             release.Set();
-            var late = await worker.WaitAsync(TimeSpan.FromSeconds(5));
+            var late = await worker.WaitAsync(Patience);
             Assert.Equal("finished text", late.Text);
             Assert.True(worker.IsCompletedSuccessfully);
 
@@ -338,7 +346,7 @@ public sealed class DeterministicTextPipelineTests
             release.Set();
             if (worker is not null)
             {
-                await worker.WaitAsync(TimeSpan.FromSeconds(5));
+                await worker.WaitAsync(Patience);
             }
         }
     }
@@ -365,7 +373,7 @@ public sealed class DeterministicTextPipelineTests
                 catch (OperationCanceledException)
                 {
                     cancelled.SetResult(token);
-                    Assert.True(allowExit.Wait(TimeSpan.FromSeconds(5), CancellationToken.None));
+                    Assert.True(allowExit.Wait(Patience, CancellationToken.None));
                     throw;
                 }
             },
@@ -374,9 +382,9 @@ public sealed class DeterministicTextPipelineTests
         try
         {
             var pending = RunStageAsync(restoration, step, pipeline: pipeline);
-            var token = await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var token = await cancelled.Task.WaitAsync(Patience);
             var worker = GetOutstandingInvocation(pipeline, step);
-            var result = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+            var result = await pending.WaitAsync(Patience);
 
             AssertStageFallback(result, DeterministicStageStatus.TimedOut);
             Assert.True(token.IsCancellationRequested);
@@ -386,7 +394,7 @@ public sealed class DeterministicTextPipelineTests
             Assert.Equal(1, Volatile.Read(ref invocations));
 
             allowExit.Set();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => worker.WaitAsync(TimeSpan.FromSeconds(5)));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => worker.WaitAsync(Patience));
             Assert.True(worker.IsCanceled);
         }
         finally
@@ -421,8 +429,8 @@ public sealed class DeterministicTextPipelineTests
             },
             TimeSpan.FromMilliseconds(250));
 
-        var result = await RunStageAsync(restoration, step).WaitAsync(TimeSpan.FromSeconds(5));
-        await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var result = await RunStageAsync(restoration, step).WaitAsync(Patience);
+        await finished.Task.WaitAsync(Patience);
 
         AssertStageFallback(result, DeterministicStageStatus.TimedOut);
         Assert.True(finished.Task.IsCompletedSuccessfully);
@@ -455,17 +463,17 @@ public sealed class DeterministicTextPipelineTests
         try
         {
             start.SetResult();
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await entered.Task.WaitAsync(Patience);
             for (var index = 0; index < 15; index++)
             {
-                var completed = await Task.WhenAny(attempts).WaitAsync(TimeSpan.FromSeconds(5));
+                var completed = await Task.WhenAny(attempts).WaitAsync(Patience);
                 attempts.Remove(completed);
                 AssertStageFallback(await completed, DeterministicStageStatus.Busy);
                 Assert.Equal(1, Volatile.Read(ref invocations));
             }
 
             release.Set();
-            var winner = await Assert.Single(attempts).WaitAsync(TimeSpan.FromSeconds(5));
+            var winner = await Assert.Single(attempts).WaitAsync(Patience);
             Assert.Equal("finished polish", winner.Output.Text);
             Assert.Equal("safe", winner.DeterministicText);
             Assert.False(winner.IsDegraded);
@@ -476,7 +484,7 @@ public sealed class DeterministicTextPipelineTests
         finally
         {
             release.Set();
-            await Task.WhenAll(attempts).WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.WhenAll(attempts).WaitAsync(Patience);
         }
     }
 
