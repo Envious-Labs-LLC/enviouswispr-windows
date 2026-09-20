@@ -81,6 +81,11 @@ public interface ICaptureStartTimings
     long? LastStreamStartMilliseconds { get; }
 }
 
+/// <summary>A capture that can also say what it received, which is what a microphone test is for.</summary>
+public interface IMicrophoneTestCapture : IAudioCapture, ICaptureDiagnostics
+{
+}
+
 /// <summary>Counts what the microphone actually delivered, so silence can be told from failure.</summary>
 /// <remarks>
 /// AN ALL-SILENT RECORDING LOOKS EXACTLY LIKE A GOOD ONE FROM OUTSIDE. It starts, it runs for the
