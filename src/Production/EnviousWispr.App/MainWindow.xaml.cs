@@ -180,6 +180,9 @@ public sealed partial class MainWindow : Window, IDisposable
     /// drawing the outcome and applying the theme.
     /// </remarks>
     private readonly SettingsPresenter _settingsPresenter;
+
+    /// <summary>What a word or a snippet does to the list, without the page: VocabularyPresenterTests.</summary>
+    private readonly VocabularyPresenter _vocabulary;
     private readonly IPortableProfileService _profileService;
     /// <summary>The history page's decisions about its stores, without the page.</summary>
     /// <remarks>
@@ -261,6 +264,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
         _settings = settings;
         _settingsPresenter = new SettingsPresenter(settingsStore, settings);
+        _vocabulary = new VocabularyPresenter(_settingsPresenter);
         _profileService = profileService;
         _historyPresenter = new HistoryPresenter(historyStore, recoveryTextStore, () => _settings.Preferences.History);
         _polishModelSource = new PolishModelSource(apiKeyStore);
@@ -1797,15 +1801,7 @@ public sealed partial class MainWindow : Window, IDisposable
             spokenForm,
             replacement,
             WordStrictnessComboBox.SelectedValue as MatchStrictness? ?? MatchStrictness.Default);
-        return SaveUserDataAsync(
-            data => new ReusableUserData(
-                data.CustomWords
-                    .Where(entry => !string.Equals(entry.SpokenForm, spokenForm, StringComparison.OrdinalIgnoreCase))
-                    .Append(word)
-                    .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
-                    .ToArray(),
-                data.Snippets),
-            "Dictionary saved");
+        return CommitVocabularyAsync(_vocabulary.AddWordAsync(word), "Dictionary saved");
     }
 
     /// <summary>Puts the picker back to the ordinary rule after a word is saved.</summary>
@@ -1866,15 +1862,8 @@ public sealed partial class MainWindow : Window, IDisposable
         // so a row that another change replaced while this was waiting is no longer the row that was
         // chosen - it is left alone, correctly, and saying "removed" over the top of that tells
         // somebody a word is gone when it is still there.
-        var removal = await SaveUserDataAsync(data =>
-        {
-            var remaining = CustomWordRemoval.Without(data.CustomWords, selected);
-            return (
-                new ReusableUserData(remaining, data.Snippets),
-                data.CustomWords.Count - remaining.Count);
-        }).ConfigureAwait(true);
-
-        if (removal.Failure is not null)
+        var removal = await CommitVocabularyAsync(_vocabulary.RemoveWordsAsync(selected)).ConfigureAwait(true);
+        if (!removal.Saved)
         {
             return;
         }
@@ -1926,15 +1915,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
         // Same reason as the word boxes above: a refused save must not eat the snippet someone
         // just wrote.
-        if (!await SaveUserDataAsync(
-                data => new ReusableUserData(
-                    data.CustomWords,
-                    data.Snippets
-                        .Where(entry => !string.Equals(entry.Name, name, StringComparison.OrdinalIgnoreCase))
-                        .Append(new SnippetEntry(name, body))
-                        .OrderBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase)
-                        .ToArray()),
-                "Snippet saved").ConfigureAwait(true))
+        if (!await CommitVocabularyAsync(_vocabulary.AddSnippetAsync(new SnippetEntry(name, body)), "Snippet saved").ConfigureAwait(true))
         {
             return;
         }
@@ -1951,9 +1932,7 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        await SaveUserDataAsync(data => new ReusableUserData(
-                data.CustomWords,
-                data.Snippets.Where(entry => entry != selected).ToArray()), "Snippet removed").ConfigureAwait(true);
+        await CommitVocabularyAsync(_vocabulary.RemoveSnippetAsync(selected), "Snippet removed").ConfigureAwait(true);
     }
 
     private void HistorySearchBox_TextChanged(object sender, TextChangedEventArgs e) => RefreshHistoryView();
@@ -3246,17 +3225,6 @@ public sealed partial class MainWindow : Window, IDisposable
     private void ListSelectionChanged(object sender, SelectionChangedEventArgs e) =>
         UpdateSelectionDependentButtons();
 
-    /// <summary>Saves with the generic message, and says whether it worked.</summary>
-    /// <remarks>
-    /// IT RETURNS THE OUTCOME FOR THE SAME REASON THE OTHER OVERLOAD DOES. This one used to return a
-    /// bare Task, which is not a decision anybody made - it simply had no reason to report until a
-    /// caller needed to react. Three did: two cleared the user's typing after a refused save, and
-    /// one said "All of them added" and removed the suggestion it had failed to add.
-    /// </remarks>
-    private async Task<bool> SaveUserDataAsync(
-        Func<ReusableUserData, ReusableUserData> change, string title) =>
-        await SaveUserDataAsync(change, title, "The change was saved locally.").ConfigureAwait(true);
-
     /// <summary>Saves the user's words and snippets, and says whether it worked.</summary>
     /// <remarks>
     /// IT RETURNS THE OUTCOME BECAUSE A CALLER THAT SPEAKS AFTER IT NEEDS TO KNOW. TrySaveAsync
@@ -3272,15 +3240,14 @@ public sealed partial class MainWindow : Window, IDisposable
     /// plan describes a list that may have changed - and saving its result then overwrites whatever
     /// changed it. The value comes back so the message describes what was actually stored.
     /// </remarks>
-    private async Task<SettingsSaveResult<T>> SaveUserDataAsync<T>(
-        Func<ReusableUserData, (ReusableUserData Data, T Value)> change)
-    {
-        var result = await _settingsPresenter.SaveAsync(current =>
-        {
-            var (data, value) = change(current.UserData);
-            return (current with { UserData = data }, value);
-        }).ConfigureAwait(true);
+    private Task<SettingsSaveResult<T>> SaveUserDataAsync<T>(
+        Func<ReusableUserData, (ReusableUserData Data, T Value)> change) =>
+        CommitVocabularyAsync(_vocabulary.ChangeAsync(change));
 
+    /// <summary>Takes a vocabulary change's answer onto the page: the refusal said, or the settings published and the controls refreshed.</summary>
+    private async Task<SettingsSaveResult<T>> CommitVocabularyAsync<T>(Task<SettingsSaveResult<T>> change)
+    {
+        var result = await change.ConfigureAwait(true);
         if (!result.Saved)
         {
             ShowSettingsRefusal(result.Refusal!.Value);
@@ -3290,6 +3257,26 @@ public sealed partial class MainWindow : Window, IDisposable
         PublishSettings();
         ApplySettingsToControls();
         return result;
+    }
+
+    /// <summary>The same, for a change with nothing to say beyond whether it worked, with the message a person sees.</summary>
+    private async Task<bool> CommitVocabularyAsync(
+        Task<SettingsSaveResult> change,
+        string title,
+        string message = "The change was saved locally.")
+    {
+        var result = await change.ConfigureAwait(true);
+        if (!result.Saved)
+        {
+            ShowSettingsRefusal(result.Refusal!.Value);
+            return false;
+        }
+
+        PublishSettings();
+        ApplySettingsToControls();
+        ShowMessage(title, message, InfoBarSeverity.Success);
+        RefreshReusableUserDataViews();
+        return true;
     }
 
     /// <summary>Says why a settings write did not happen, in the words for that cause.</summary>
@@ -3326,18 +3313,9 @@ public sealed partial class MainWindow : Window, IDisposable
         SettingsChanged?.Invoke(_settings);
     }
 
-    private async Task<bool> SaveUserDataAsync(
-        Func<ReusableUserData, ReusableUserData> change, string title, string message)
-    {
-        if (!await TrySaveAsync(current => current with { UserData = change(current.UserData) }, title, message)
-            .ConfigureAwait(true))
-        {
-            return false;
-        }
-
-        RefreshReusableUserDataViews();
-        return true;
-    }
+    private Task<bool> SaveUserDataAsync(
+        Func<ReusableUserData, ReusableUserData> change, string title, string message) =>
+        CommitVocabularyAsync(_vocabulary.ChangeAsync(change), title, message);
 
     private void UpdateHistoryListVisibility(string query, int itemCount)
     {
