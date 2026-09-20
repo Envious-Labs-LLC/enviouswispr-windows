@@ -293,7 +293,9 @@ public sealed class LivePreviewController : IAsyncDisposable
     /// THE LAST CALL, BY CONTRACT RATHER THAN BY ENFORCEMENT. The shell disposes this after admission
     /// has closed, the watchdog has stopped and the session gate is held, so nothing can be starting
     /// or stopping a preview at the same time; the gate is disposed on that understanding and a start
-    /// or stop that arrives after it would find a disposed semaphore. A second dispose is a no-op.
+    /// or stop that arrives after it would find a disposed semaphore. A second dispose is a no-op
+    /// once the first has succeeded; one whose stop threw is not remembered as done, so the next
+    /// attempt stops and disposes rather than reporting a release that never happened.
     /// This is the contract the shell's own preview gate had; it is written down here because the
     /// gate now has a type of its own that somebody could reach for elsewhere.
     /// </remarks>
@@ -304,8 +306,8 @@ public sealed class LivePreviewController : IAsyncDisposable
             return;
         }
 
-        _disposed = true;
         await StopAsync().ConfigureAwait(false);
         _gate.Dispose();
+        _disposed = true;
     }
 }
