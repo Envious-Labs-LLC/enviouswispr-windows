@@ -45,7 +45,7 @@ public interface IRecordingTimerEffects
 /// harness sets, and reading environment is not this project's business. What lives here is the wait
 /// and the one decision after it: fire, or find out the recording already ended and say nothing.
 /// </remarks>
-public sealed class RecordingWatchdog
+public sealed class RecordingWatchdog : IAsyncDisposable
 {
     private readonly IRecordingTimerEffects _effects;
     private readonly TimeProvider _clock;
@@ -68,9 +68,8 @@ public sealed class RecordingWatchdog
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(duration, TimeSpan.Zero);
         _cancellation?.Cancel();
         _cancellation?.Dispose();
-        var cancellation = new CancellationTokenSource();
-        _cancellation = cancellation;
-        _watch = WatchAsync(sessionId, duration, cancellation.Token);
+        _cancellation = new CancellationTokenSource();
+        _watch = WatchAsync(sessionId, duration, _cancellation.Token);
     }
 
     private async Task WatchAsync(DictationSessionId sessionId, TimeSpan duration, CancellationToken cancellationToken)
@@ -120,6 +119,9 @@ public sealed class RecordingWatchdog
 
         cancellation?.Dispose();
     }
+
+    /// <summary>The stop, as the last call: the shell's shutdown has already stopped the watch by then.</summary>
+    public ValueTask DisposeAsync() => new(StopAsync());
 }
 
 /// <summary>
@@ -140,7 +142,7 @@ public sealed class RecordingWatchdog
 /// the threshold can never contain enough silence to satisfy it, so the feature would simply never
 /// fire - silently, and looking exactly like a user who had not turned it on.
 /// </remarks>
-public sealed class AutoStopMonitor
+public sealed class AutoStopMonitor : IAsyncDisposable
 {
     /// <summary>How often the watcher asks whether the speaker has finished.</summary>
     /// <remarks>
@@ -185,9 +187,8 @@ public sealed class AutoStopMonitor
             return;
         }
 
-        var cancellation = new CancellationTokenSource();
-        _cancellation = cancellation;
-        _loop = RunAsync(snapshots, sessionId, dictation, cancellation.Token);
+        _cancellation = new CancellationTokenSource();
+        _loop = RunAsync(snapshots, sessionId, dictation, _cancellation.Token);
     }
 
     private async Task RunAsync(
@@ -279,4 +280,7 @@ public sealed class AutoStopMonitor
 
         cancellation.Dispose();
     }
+
+    /// <summary>The stop, as the last call: the shell's shutdown has already stopped the loop by then.</summary>
+    public ValueTask DisposeAsync() => new(StopAsync());
 }

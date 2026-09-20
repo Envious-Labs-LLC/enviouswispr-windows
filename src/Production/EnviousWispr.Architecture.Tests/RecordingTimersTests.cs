@@ -53,8 +53,12 @@ public sealed class RecordingTimersTests
     }
 
     [Fact]
-    public async Task ArmingAgainCancelsTheEarlierWatchAndOnlyTheNewSessionCanTimeOut()
+    public async Task ArmingAgainBeforeTheLimitCancelsTheEarlierWatchAndOnlyTheNewSessionCanTimeOut()
     {
+        // CANCELLATION BEFORE EXPIRY, not a stale expiry. A watch that has already expired and is
+        // parked on the session gate when a new recording starts is ended by the same cancel, and if
+        // it ever reached the guarded section the shell's identity check would still refuse it; that
+        // check lives in the shell until step 11 and is not reached from here.
         var world = World.Build();
         var first = DictationSessionId.Create();
         world.Watchdog.Start(first, Limit);
@@ -79,6 +83,8 @@ public sealed class RecordingTimersTests
     {
         // The release that holds the session gate stops the watchdog from inside it. The watchdog's
         // recovery is parked on the gate; the stop must end that wait, or the two wait for each other.
+        // PROVED AT THE PORT: the fake recovery is the shape of the shell's gate wait with the
+        // watchdog's token. That the shell passes the token is the shell's to keep (step 11).
         var world = World.Build();
         world.Effects.HoldRecovery = true;
         world.Watchdog.Start(world.Session, Limit);
@@ -230,6 +236,68 @@ public sealed class RecordingTimersTests
         Assert.Empty(world.Effects.Posted);
     }
 
+    [Fact]
+    public async Task AnAutoStopThatLandsWhileARealReleaseIsRunningIsIgnoredAndTheLoopStillStops()
+    {
+        // THE PLAN'S SIMULTANEOUS RELEASE AND AUTO-STOP, COMPOSED: the real coordinator, an executor
+        // holding a key release mid-finalisation, and the monitor deciding the speaker has stopped at
+        // that moment. Its Released is refused as Ignored - the recording is already ending - the
+        // executor sees one release, and the monitor's stop, issued from inside that release as the
+        // shell does, completes.
+        var executor = new HeldExecutor();
+        using var gate = new SemaphoreSlim(1, 1);
+        await using var coordinator = new DictationSessionCoordinator(executor, gate);
+        var world = World.Build();
+        world.Effects.PostTo = coordinator;
+        world.Audio.Samples = Build((true, 1000), (false, 2200));
+        world.AutoStop.Start(world.Session, Toggle(silenceSeconds: 2.0));
+
+        var release = coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await executor.Started.Task.WaitAsync(Patience);
+        world.Clock.Advance(Poll);
+        await world.AutoStop.Loop!.WaitAsync(Patience);
+        await world.Effects.WhenSubmitted(1).WaitAsync(Patience);
+
+        Assert.Equal([SessionCommandDisposition.Ignored], world.Effects.Submitted);
+        await world.AutoStop.StopAsync().WaitAsync(Patience);
+        executor.Finish.SetResult();
+        await release.WaitAsync(Patience);
+        Assert.Equal([PushToTalkSignal.Released], executor.Seen);
+        Assert.False(world.AutoStop.IsRunning);
+    }
+
+    private sealed class HeldExecutor : ISessionCommandExecutor
+    {
+        private readonly object _lock = new();
+        private readonly List<PushToTalkSignal> _seen = [];
+
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Finish { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public PushToTalkSignal[] Seen
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _seen.ToArray();
+                }
+            }
+        }
+
+        public async Task<SessionCommandResult> ExecuteAsync(SessionCommand command, CancellationToken stoppingToken)
+        {
+            lock (_lock)
+            {
+                _seen.Add(command.Signal);
+            }
+
+            Started.TrySetResult();
+            await Finish.Task;
+            return new SessionCommandResult(SessionCommandDisposition.Applied);
+        }
+    }
+
     private static DictationPreferences Toggle(double silenceSeconds) => DictationPreferences.Default with
     {
         RecordingMode = DictationRecordingMode.Toggle,
@@ -293,8 +361,27 @@ public sealed class RecordingTimersTests
         private readonly List<(DictationSessionId Session, Guid? Dictation)> _timedOut = [];
         private readonly Deterministic.Milestone _timedOutMilestone = new();
 
+        private readonly List<SessionCommandDisposition> _submitted = [];
+        private readonly Deterministic.Milestone _submittedMilestone = new();
+
         public IAudioSnapshotSource? Audio { get; set; }
         public bool HoldRecovery { get; set; }
+
+        /// <summary>When set, a posted signal goes to this coordinator the way the shell's entry sends it, and the answer is kept.</summary>
+        public DictationSessionCoordinator? PostTo { get; set; }
+
+        public SessionCommandDisposition[] Submitted
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _submitted.ToArray();
+                }
+            }
+        }
+
+        public Task WhenSubmitted(int count) => _submittedMilestone.WhenAtLeast(count);
         public TaskCompletionSource RecoveryEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource RecoveryCancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource AllowRecoveryExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -339,6 +426,22 @@ public sealed class RecordingTimersTests
             lock (_lock)
             {
                 _posted.Add(signal);
+            }
+
+            if (PostTo is { } coordinator)
+            {
+                // Fire and return, as the shell's entry does; the answer arrives on its own.
+                _ = coordinator.SubmitAsync(signal).ContinueWith(
+                    answered =>
+                    {
+                        lock (_lock)
+                        {
+                            _submitted.Add(answered.Result.Disposition);
+                        }
+
+                        _submittedMilestone.Increment();
+                    },
+                    TaskContinuationOptions.OnlyOnRanToCompletion);
             }
         }
 

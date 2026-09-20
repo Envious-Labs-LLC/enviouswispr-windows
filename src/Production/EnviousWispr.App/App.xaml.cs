@@ -1160,6 +1160,12 @@ public partial class App : Application, IAsyncDisposable
         cleanShutdown &= await TryCleanupAsync(
             async () => await _livePreview.DisposeAsync().ConfigureAwait(true))
             .ConfigureAwait(true);
+        cleanShutdown &= await TryCleanupAsync(
+            async () => await _watchdog.DisposeAsync().ConfigureAwait(true))
+            .ConfigureAwait(true);
+        cleanShutdown &= await TryCleanupAsync(
+            async () => await _autoStop.DisposeAsync().ConfigureAwait(true))
+            .ConfigureAwait(true);
         if (_trayIcon is not null)
         {
             cleanShutdown &= TryCleanup(_trayIcon.Dispose);
