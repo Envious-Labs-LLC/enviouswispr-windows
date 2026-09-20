@@ -113,8 +113,6 @@ public sealed class PreviewStartupDecouplingTests
 
     private sealed class World : IAsyncDisposable
     {
-        private readonly SemaphoreSlim _gate = new(1, 1);
-
         public required DictationSessionCoordinator Coordinator { get; init; }
         public required PushToTalkSessionController Controller { get; init; }
         public required LivePreviewController Preview { get; init; }
@@ -134,10 +132,8 @@ public sealed class PreviewStartupDecouplingTests
             var preview = new LivePreviewController(previewEffects, log, TimeProvider.System);
             var effects = new ShellAdapter(preview, capture) { EscapeRecoveryEnabled = escapeRecovery };
             var executor = new DictationSessionExecutor(controller, effects);
-            var gate = new SemaphoreSlim(1, 1);
             var coordinator = new DictationSessionCoordinator(
                 executor,
-                gate,
                 () => new RecordingStartContext(new TargetWindowId(101), TextDeliveryOptions.Default));
             var world = new World
             {
@@ -171,7 +167,6 @@ public sealed class PreviewStartupDecouplingTests
             await Coordinator.DisposeAsync();
             await Preview.DisposeAsync();
             await Controller.DisposeAsync();
-            _gate.Dispose();
         }
     }
 
@@ -263,6 +258,16 @@ public sealed class PreviewStartupDecouplingTests
             Add("RecordDictationEdge");
             return Task.CompletedTask;
         }
+
+        public void RecordInterruptionFailure() => Add("RecordInterruptionFailure");
+
+        public void ShowInterruptionPending() => Add("ShowInterruptionPending");
+
+        public void ShowInterruptionPreserving(SystemLifecycleTransition transition) => Add($"ShowInterruptionPreserving:{transition}");
+
+        public void RecordRecordingTimedOut(AppError failure) => Add($"RecordRecordingTimedOut:{failure.Code}");
+
+        public void ShowRecordingTimedOut() => Add("ShowRecordingTimedOut");
     }
 
     private sealed class PreviewEffects(FakeEngine engine, FakeAudioCapture capture, PushToTalkSessionController controller) : ILivePreviewEffects

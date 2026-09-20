@@ -295,6 +295,16 @@ public sealed class DictationSessionExecutorTests
             Trace.Add("RecordDictationEdge");
             return Task.CompletedTask;
         }
+
+        public void RecordInterruptionFailure() => Trace.Add("RecordInterruptionFailure");
+
+        public void ShowInterruptionPending() => Trace.Add("ShowInterruptionPending");
+
+        public void ShowInterruptionPreserving(SystemLifecycleTransition transition) => Trace.Add($"ShowInterruptionPreserving:{transition}");
+
+        public void RecordRecordingTimedOut(AppError failure) => Trace.Add($"RecordRecordingTimedOut:{failure.Code}");
+
+        public void ShowRecordingTimedOut() => Trace.Add("ShowRecordingTimedOut");
     }
 
     private sealed class FakeTargetProvider(nint window) : IForegroundTargetProvider

@@ -52,7 +52,6 @@ public partial class App : Application, IAsyncDisposable
     private readonly string? _cudaRuntimeDirectory;
     private readonly RuntimeResourceArbiter _resourceArbiter = new();
     private readonly LivePreviewController _livePreview;
-    private readonly SemaphoreSlim _sessionOperationGate = new(1, 1);
     private DictationSessionCoordinator? _sessionCoordinator;
     private SessionFinalizationRunner? _finalizationRunner;
     private readonly DeterministicTextPipeline _deterministicTextPipeline = new();
@@ -709,7 +708,14 @@ public partial class App : Application, IAsyncDisposable
         if (transition is SystemLifecycleTransition.Suspending or
             SystemLifecycleTransition.SessionLocked)
         {
-            _ = RecoverFromSystemTransitionAsync(transition);
+            // THE DEADLINE IS CANCELLED HERE, NOW, not when the interruption reaches the front of the
+            // queue: a finalisation in flight is what the queue is waiting behind, and cancelling it is
+            // how the interruption gets its turn inside the five seconds it allows itself.
+            _activeProcessingCancellation?.Cancel();
+            if (!_exitRequested && !_disposed && _sessionCoordinator is { } coordinator)
+            {
+                _ = coordinator.InterruptAsync(transition);
+            }
         }
         else
         {
@@ -771,21 +777,20 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        if (!await _sessionOperationGate.WaitAsync(0).ConfigureAwait(true))
+        // THE SESSION IS HELD FOR THE WHOLE CHECK, so a press during the download is Busy rather than
+        // a recording under an update; before the coordinator exists there is nothing to hold.
+        var hold = _sessionCoordinator is { } coordinator ? coordinator.TryHold() : NoScope.Instance;
+        if (hold is null)
         {
             _window?.SetUpdateStatus(new UpdateOperationResult(UpdateOperationStatus.BusyDictating));
             return;
         }
 
-        try
+        using (hold)
         {
             _window?.SetUpdateCheckInProgress();
             var result = await _updateService.CheckDownloadAndVerifyAsync().ConfigureAwait(true);
             _window?.SetUpdateStatus(result);
-        }
-        finally
-        {
-            _sessionOperationGate.Release();
         }
     }
 
@@ -796,14 +801,17 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        if (!await _sessionOperationGate.WaitAsync(0).ConfigureAwait(true))
+        // Probed and given straight back, as the gate was: the answer is whether a dictation is in
+        // flight at this instant, and the restart that follows closes admission by leaving.
+        var hold = _sessionCoordinator is { } coordinator ? coordinator.TryHold() : NoScope.Instance;
+        if (hold is null)
         {
             _window?.SetUpdateStatus(new UpdateOperationResult(UpdateOperationStatus.BusyDictating));
             return;
         }
 
+        hold.Dispose();
         _exitRequested = true;
-        _sessionOperationGate.Release();
         try
         {
             if (!_updateService.TryApplyPendingAndRestart())
@@ -1030,19 +1038,6 @@ public partial class App : Application, IAsyncDisposable
 
         cleanShutdown &= await TryCleanupAsync(_watchdog.StopAsync).ConfigureAwait(true);
 
-        var sessionGateHeld = false;
-        try
-        {
-            sessionGateHeld = await _sessionOperationGate
-                .WaitAsync(TimeSpan.FromSeconds(10))
-                .ConfigureAwait(true);
-            cleanShutdown &= sessionGateHeld;
-        }
-        catch (ObjectDisposedException)
-        {
-            cleanShutdown = false;
-        }
-
         if (_lifecycleMonitor is not null)
         {
             _lifecycleMonitor.Transitioned -= OnSystemLifecycleTransitioned;
@@ -1174,12 +1169,6 @@ public partial class App : Application, IAsyncDisposable
         _trayIcon = null;
         cleanShutdown &= TryCleanup(_historyStore.Dispose);
         cleanShutdown &= TryCleanup(_recoveryTextStore.Dispose);
-        if (sessionGateHeld)
-        {
-            _sessionOperationGate.Release();
-            cleanShutdown &= TryCleanup(_sessionOperationGate.Dispose);
-        }
-
         if (_sessionCoordinator is { } stoppedCoordinator)
         {
             cleanShutdown &= await TryCleanupAsync(
@@ -1303,11 +1292,11 @@ public partial class App : Application, IAsyncDisposable
             preferredAudioDevice: string.IsNullOrWhiteSpace(_settings.PreferredMicrophoneId)
                 ? null
                 : new EnviousWispr.Core.Audio.AudioDeviceId(_settings.PreferredMicrophoneId));
-        // THE COORDINATOR SHARES THE SHELL'S SESSION GATE RATHER THAN OWNING ONE, because the watchdog,
-        // lock/suspend recovery, the update check and shutdown all still take that gate directly. One
-        // gate, two kinds of taker; the queue is what changed, not the lock. Built beside the controller
-        // so a press captures its target and delivery choice from the same provider the controller
-        // would have asked, at the instant of the key, before the queue's first hop.
+        // THE COORDINATOR OWNS THE SESSION. The watchdog's timeout and Windows locking or suspending
+        // are commands on its queue; the update check holds the session through it; shutdown stops it
+        // and needs no gate of its own. Built beside the controller so a press captures its target and
+        // delivery choice from the same provider the controller would have asked, at the instant of
+        // the key, before the queue's first hop.
         var sessionController = _sessionController;
         _finalizationRunner = new SessionFinalizationRunner(
             sessionController,
@@ -1317,10 +1306,7 @@ public partial class App : Application, IAsyncDisposable
             new SessionFinalizationEffects(this),
             TimeProvider.System);
         _sessionCoordinator = new DictationSessionCoordinator(
-            new ShellGuardedExecutor(
-                this,
-                new DictationSessionExecutor(sessionController, new SessionEffects(this, sessionController))),
-            _sessionOperationGate,
+            new DictationSessionExecutor(sessionController, new SessionEffects(this, sessionController)),
             sessionController.CaptureStartContext);
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
         // A saved keybind builds a NEW hook, which starts armed and knows nothing about a capture
@@ -2363,105 +2349,65 @@ public partial class App : Application, IAsyncDisposable
             app.RecoverFailedSessionAsync(
                 controller,
                 failure,
-                kind == SessionFailureKind.TimedOut
-                    ? DictationStatus.Quiet("The dictation timed out and was recovered safely")
-                    : DictationStatus.Error("Session failed and was reset safely"));
+                kind switch
+                {
+                    SessionFailureKind.TimedOut => DictationStatus.Quiet("The dictation timed out and was recovered safely"),
+                    SessionFailureKind.Interrupted or SessionFailureKind.InterruptionFailed =>
+                        DictationStatus.Quiet("Windows interrupted the session; it was reset safely"),
+                    SessionFailureKind.InterruptionTimedOut =>
+                        DictationStatus.Quiet("Windows interrupted the session; recovery timed out safely"),
+                    _ => DictationStatus.Error("Session failed and was reset safely"),
+                });
 
         public Task RecordDictationEdgeAsync() => app.RecordDictationEdgeAsync();
-    }
 
-    /// <summary>
-    /// Refuses commands once the shell is leaving, or once it has let go of its controller; otherwise the
-    /// Pipeline executor decides. The two entry checks the old handler made, in the same order.
-    /// </summary>
-    private sealed class ShellGuardedExecutor(App app, ISessionCommandExecutor inner) : ISessionCommandExecutor
-    {
-        public Task<SessionCommandResult> ExecuteAsync(SessionCommand command, CancellationToken stoppingToken)
-        {
-            ArgumentNullException.ThrowIfNull(command);
-            if (app._exitRequested || app._disposed)
-            {
-                return Task.FromResult(new SessionCommandResult(SessionCommandDisposition.Stopping));
-            }
+        public void RecordInterruptionFailure() =>
+            app._logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DictationSessionFailed,
+                AppFailureCategory.SystemLifecycle));
 
-            return app._sessionController is null
-                ? Task.FromResult(new SessionCommandResult(SessionCommandDisposition.Ignored))
-                : inner.ExecuteAsync(command, stoppingToken);
-        }
-    }
+        public void ShowInterruptionPending() =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
+                app._window?.SetSessionStatus(DictationStatus.Distress(
+                    "Windows interrupted the active dictation; recovery is still pending")));
 
-    /// <summary>
-    /// The recording ran for as long as it is allowed. Under the session gate, if the recording that
-    /// was armed is still the one recording, every loop is stopped and the session is aborted and
-    /// reset. Step 11 moves this behind the coordinator; until then it takes the gate itself.
-    /// </summary>
-    private async Task RecoverTimedOutRecordingAsync(DictationSessionId sessionId, CancellationToken cancellationToken)
-    {
-        using var dictation = DictationScope.Begin(sessionId.Value);
-        if (_sessionController is not { } controller)
-        {
-            return;
-        }
+        public void ShowInterruptionPreserving(SystemLifecycleTransition transition) =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
+                app._window?.SetSessionStatus(DictationStatus.Quiet(
+                    transition == SystemLifecycleTransition.Suspending
+                        ? "Windows is suspending. Captured audio is being preserved"
+                        : "Windows locked. Captured audio is being preserved")));
 
-        try
-        {
-            // THE WATCHDOG'S OWN TOKEN GATES THE WAIT. A release in flight holds the session gate and,
-            // from inside it, stops the watchdog; a wait here that ignored that cancel would hold the
-            // release waiting for the watchdog while the watchdog waited for the release.
-            await _sessionOperationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (controller.CurrentSession is
-                    {
-                        Id: var currentId,
-                        State: EnviousWispr.Core.Sessions.DictationSessionState.Recording,
-                    } && currentId == sessionId)
-                {
-                    await _streaming.StopAsync().ConfigureAwait(false);
-                    await _autoStop.StopAsync().ConfigureAwait(false);
-                    await _livePreview.StopAsync().ConfigureAwait(false);
-                    var error = new AppError(
-                        AppErrorCode.SessionTimedOut,
-                        AppErrorStage.Session,
-                        CanRetry: true);
-                    await controller.AbortAsync(error, cancellationToken).ConfigureAwait(false);
-                    await controller.ResetAsync(cancellationToken).ConfigureAwait(false);
-                    _logger.Write(new AppLogEntry(
-                        DateTimeOffset.UtcNow,
-                        AppEventCode.DictationSessionRecovered,
-                        AppFailureCategory.Recovery,
-                        ErrorCode: error.Code));
-                    _window?.DispatcherQueue.TryEnqueue(() =>
-                        _window?.SetSessionStatus(
-                            DictationStatus.Warning("Recording timed out and was cancelled safely")));
-                }
-            }
-            finally
-            {
-                await RecordDictationEdgeAsync().ConfigureAwait(false);
-                _sessionOperationGate.Release();
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-        }
+        public void RecordRecordingTimedOut(AppError failure) =>
+            app._logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DictationSessionRecovered,
+                AppFailureCategory.Recovery,
+                ErrorCode: failure.Code));
+
+        public void ShowRecordingTimedOut() =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
+                app._window?.SetSessionStatus(
+                    DictationStatus.Warning("Recording timed out and was cancelled safely")));
     }
 
     /// <summary>Records whether a dictation is in flight, at every place one can end.</summary>
     /// <remarks>
-    /// THREE FLOWS OWN SESSION TRANSITIONS AND ALL THREE MUST WRITE THIS. The push-to-talk handler
-    /// is the obvious one; the recording watchdog aborts and resets a session that ran too long, and
-    /// Windows locking or suspending releases, transcribes or resets one on its own callback.
-    /// Writing the edge in only the first leaves the flag stuck true after either of the others, and
-    /// a later ordinary restart then tells somebody their dictation was lost when it was not. A
-    /// warning that fires when nothing happened is how the banner this replaces lost its meaning.
+    /// ONE OWNER OF SESSION TRANSITIONS, AND ITS EVERY COMMAND WRITES THIS. A key, the recording
+    /// watchdog's timeout and Windows locking or suspending are all commands on one queue now, and the
+    /// executor records the edge in the finally of each. It used to be three flows, and writing the
+    /// edge in only the first left the flag stuck true after either of the others, so a later ordinary
+    /// restart told somebody their dictation was lost when it was not. A warning that fires when
+    /// nothing happened is how the banner this replaces lost its meaning.
     ///
-    /// READ OFF THE CONTROLLER RATHER THAN INFERRED. Each flow reaches here by several routes and
+    /// READ OFF THE CONTROLLER RATHER THAN INFERRED. Each command reaches here by several routes and
     /// the controller is the only thing that knows the answer on all of them.
     ///
-    /// IT CANNOT THROW, BECAUSE EVERY CALLER IS A FINALLY HOLDING THE SESSION GATE. An exception
-    /// escaping here would skip the release and deadlock every later dictation, which is a far worse
-    /// outcome than a missing flag - so a failed write is logged and swallowed.
+    /// IT CANNOT THROW, BECAUSE ITS CALLER IS A FINALLY INSIDE THE COMMAND THAT HOLDS THE SESSION. An
+    /// exception escaping here would fault the command, which the coordinator survives, but the
+    /// submitter would be told of a storage fault instead of what became of the dictation - so a
+    /// failed write is logged and swallowed.
     /// </remarks>
     private async Task RecordDictationEdgeAsync()
     {
@@ -2525,116 +2471,6 @@ public partial class App : Application, IAsyncDisposable
             ErrorCode: error.Code));
         _sessionPersistence.ShowPendingRecovery();
         _window?.DispatcherQueue.TryEnqueue(() => _window?.SetSessionStatus(status));
-    }
-
-    private async Task RecoverFromSystemTransitionAsync(SystemLifecycleTransition transition)
-    {
-        // WINDOWS LOCKING OR SUSPENDING ARRIVES ON ITS OWN CALLBACK, so this flow inherits nothing
-        // and had no dictation at all - the capture transition, the preview stop, the failure and
-        // the recovery lines all landed joined to nothing, on the path where a user most wants to
-        // know what happened to their words.
-        using var dictation = _sessionController?.CurrentSession is { } interrupted
-            ? DictationScope.Begin(interrupted.Id.Value)
-            : NoScope.Instance;
-        _activeProcessingCancellation?.Cancel();
-        if (!await _sessionOperationGate.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false))
-        {
-            _window?.DispatcherQueue.TryEnqueue(() =>
-                _window?.SetSessionStatus(DictationStatus.Distress(
-                    "Windows interrupted the active dictation; recovery is still pending")));
-            return;
-        }
-
-        CancellationTokenSource? processingCancellation = null;
-        try
-        {
-            var controller = _sessionController;
-            if (controller?.CurrentSession is null)
-            {
-                return;
-            }
-
-            if (controller.CurrentSession.State ==
-                EnviousWispr.Core.Sessions.DictationSessionState.Recording)
-            {
-                await _watchdog.StopAsync().ConfigureAwait(false);
-                var result = await controller.ReleaseAsync().ConfigureAwait(false);
-                WriteSessionEvent(result);
-                if (result.Kind == SessionTransitionKind.FinalizeReady &&
-                    result.Session is not null &&
-                    result.Audio is not null)
-                {
-                    processingCancellation = new CancellationTokenSource(
-                        MaximumFinalProcessingDuration);
-                    _activeProcessingCancellation = processingCancellation;
-                    await _streaming.StopAsync().ConfigureAwait(false);
-                await _autoStop.StopAsync().ConfigureAwait(false);
-                await _livePreview.StopAsync().ConfigureAwait(false);
-                    _window?.DispatcherQueue.TryEnqueue(() =>
-                        _window?.SetSessionStatus(DictationStatus.Quiet(
-                            transition == SystemLifecycleTransition.Suspending
-                                ? "Windows is suspending. Captured audio is being preserved"
-                                : "Windows locked. Captured audio is being preserved")));
-                    await TranscribeFinalAsync(
-                            result.Session.Id,
-                            result.Audio,
-                            processingCancellation.Token)
-                        .ConfigureAwait(false);
-                    return;
-                }
-            }
-
-            await RecoverFailedSessionAsync(
-                controller,
-                new AppError(
-                    AppErrorCode.Cancelled,
-                    AppErrorStage.SystemLifecycle,
-                    CanRetry: true),
-                DictationStatus.Quiet(
-                    "Windows interrupted the session; it was reset safely")).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            if (_sessionController is { } controller)
-            {
-                await RecoverFailedSessionAsync(
-                    controller,
-                    new AppError(
-                        AppErrorCode.SessionTimedOut,
-                        AppErrorStage.SystemLifecycle,
-                        CanRetry: true),
-                    DictationStatus.Quiet("Windows interrupted the session; recovery timed out safely")).ConfigureAwait(false);
-            }
-        }
-        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
-        {
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.DictationSessionFailed,
-                AppFailureCategory.SystemLifecycle));
-            if (_sessionController is { } controller)
-            {
-                await RecoverFailedSessionAsync(
-                    controller,
-                    new AppError(
-                        AppErrorCode.InvalidTransition,
-                        AppErrorStage.SystemLifecycle,
-                        CanRetry: true),
-                    DictationStatus.Quiet(
-                    "Windows interrupted the session; it was reset safely")).ConfigureAwait(false);
-            }
-        }
-        finally
-        {
-            if (ReferenceEquals(_activeProcessingCancellation, processingCancellation))
-            {
-                _activeProcessingCancellation = null;
-            }
-
-            processingCancellation?.Dispose();
-            await RecordDictationEdgeAsync().ConfigureAwait(false);
-            _sessionOperationGate.Release();
-        }
     }
 
     private async Task TranscribeFinalAsync(
@@ -2834,8 +2670,13 @@ public partial class App : Application, IAsyncDisposable
 
         public void Post(PushToTalkSignal signal) => _ = app.HandlePushToTalkAsync(signal);
 
-        public Task RecordingTimedOutAsync(DictationSessionId sessionId, CancellationToken cancellationToken) =>
-            app.RecoverTimedOutRecordingAsync(sessionId, cancellationToken);
+        public void RecordingTimedOut(DictationSessionId sessionId)
+        {
+            if (!app._exitRequested && !app._disposed && app._sessionCoordinator is { } coordinator)
+            {
+                _ = coordinator.TimeOutAsync(sessionId);
+            }
+        }
     }
 
     /// <summary>The shell's half of streaming: the final engine, the capture, and the switch it yields to.</summary>

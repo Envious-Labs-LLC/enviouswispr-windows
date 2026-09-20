@@ -79,25 +79,20 @@ public sealed class RecordingTimersTests
     }
 
     [Fact]
-    public async Task AStopWhileTheRecoveryIsWaitingForTheSessionGateEndsThatWait()
+    public async Task TheWatchdogPostsItsTimeoutAndItsStopDoesNotWaitForWhatItPosted()
     {
-        // The release that holds the session gate stops the watchdog from inside it. The watchdog's
-        // recovery is parked on the gate; the stop must end that wait, or the two wait for each other.
-        // PROVED AT THE PORT: the fake recovery is the shape of the shell's gate wait with the
-        // watchdog's token. That the shell passes the token is the shell's to keep (step 11).
+        // The timeout is a command on the queue, decided there under the session; the watchdog only
+        // posts it. A stop issued from inside that command - the executor stops the watchdog first -
+        // therefore finds a watch that has already returned, and cannot wait for itself.
         var world = World.Build();
-        world.Effects.HoldRecovery = true;
         world.Watchdog.Start(world.Session, Limit);
         world.Clock.Advance(Limit);
-        await world.Effects.RecoveryEntered.Task.WaitAsync(Patience);
+        await world.Effects.WhenTimedOut(1).WaitAsync(Patience);
 
-        var stop = world.Watchdog.StopAsync();
-        await world.Effects.RecoveryCancellationObserved.Task.WaitAsync(Patience);
-        Assert.False(stop.IsCompleted);
-        world.Effects.AllowRecoveryExit.SetResult();
-        await stop.WaitAsync(Patience);
+        await world.Watchdog.StopAsync().WaitAsync(Patience);
 
         Assert.False(world.Watchdog.IsArmed);
+        Assert.Equal([world.Session], world.Effects.TimedOut);
     }
 
     [Fact]
@@ -247,8 +242,7 @@ public sealed class RecordingTimersTests
         // the held release; that the release's own stop cannot wait for the loop is the port's
         // contract (Post returns without waiting), stated on the port and not proved here.
         var executor = new HeldExecutor();
-        using var gate = new SemaphoreSlim(1, 1);
-        await using var coordinator = new DictationSessionCoordinator(executor, gate);
+        await using var coordinator = new DictationSessionCoordinator(executor);
         var world = World.Build();
         world.Effects.PostTo = coordinator;
         world.Audio.Samples = Build((true, 1000), (false, 2200));
@@ -367,7 +361,6 @@ public sealed class RecordingTimersTests
         private readonly Deterministic.Milestone _submittedMilestone = new();
 
         public IAudioSnapshotSource? Audio { get; set; }
-        public bool HoldRecovery { get; set; }
 
         /// <summary>When set, a posted signal goes to this coordinator the way the shell's entry sends it, and the answer is kept.</summary>
         public DictationSessionCoordinator? PostTo { get; set; }
@@ -384,9 +377,6 @@ public sealed class RecordingTimersTests
         }
 
         public Task WhenSubmitted(int count) => _submittedMilestone.WhenAtLeast(count);
-        public TaskCompletionSource RecoveryEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource RecoveryCancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource AllowRecoveryExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public PushToTalkSignal[] Posted
         {
@@ -447,7 +437,7 @@ public sealed class RecordingTimersTests
             }
         }
 
-        public async Task RecordingTimedOutAsync(DictationSessionId sessionId, CancellationToken cancellationToken)
+        public void RecordingTimedOut(DictationSessionId sessionId)
         {
             lock (_lock)
             {
@@ -455,20 +445,6 @@ public sealed class RecordingTimersTests
             }
 
             _timedOutMilestone.Increment();
-            RecoveryEntered.TrySetResult();
-            if (HoldRecovery)
-            {
-                // The shell's recovery parked on the session gate with the watchdog's token.
-                var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                using var registration = cancellationToken.Register(() => cancelled.TrySetResult());
-                await Task.WhenAny(AllowRecoveryExit.Task, cancelled.Task);
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    RecoveryCancellationObserved.TrySetResult();
-                    await AllowRecoveryExit.Task;
-                    throw new OperationCanceledException(cancellationToken);
-                }
-            }
         }
     }
 
