@@ -56,6 +56,19 @@ public sealed record RuntimeResourceAcquireResult(
     IAsyncDisposable? Lease = null,
     AppError? Error = null);
 
+/// <summary>
+/// Admission to a shared runtime resource for one workload. The narrow face of the arbiter that the
+/// dictation pipeline needs: ask, and either hold a lease until disposed or be told why not.
+/// </summary>
+public interface IRuntimeResourceAdmission
+{
+    Task<RuntimeResourceAcquireResult> AcquireAsync(
+        RuntimeResourceKind resource,
+        RuntimeWorkloadKind workload,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default);
+}
+
 public sealed record RuntimeWorkerRequest(
     int ProtocolVersion,
     Guid RequestId,
