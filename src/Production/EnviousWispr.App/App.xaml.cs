@@ -51,7 +51,7 @@ public partial class App : Application, IAsyncDisposable
     private readonly RuntimeResourceArbiter _resourceArbiter = new();
     private readonly SemaphoreSlim _previewGate = new(1, 1);
     private readonly SemaphoreSlim _sessionOperationGate = new(1, 1);
-    private readonly DictationSessionCoordinator _sessionCoordinator;
+    private DictationSessionCoordinator? _sessionCoordinator;
     private readonly DeterministicTextPipeline _deterministicTextPipeline = new();
     private SingleInstanceLock? _singleInstanceLock;
     private SingleInstanceActivationChannel? _activationChannel;
@@ -119,13 +119,6 @@ public partial class App : Application, IAsyncDisposable
     public App()
     {
         InitializeComponent();
-
-        // THE COORDINATOR SHARES THE SHELL'S SESSION GATE RATHER THAN OWNING ONE, because the watchdog,
-        // lock/suspend recovery, the update check and shutdown all still take that gate directly. One
-        // gate, two kinds of taker; the queue is what changed, not the lock.
-        _sessionCoordinator = new DictationSessionCoordinator(
-            new SessionCommandExecutor(this),
-            _sessionOperationGate);
 
         _releaseIdentity = ResolveReleaseIdentity();
 
@@ -1022,7 +1015,11 @@ public partial class App : Application, IAsyncDisposable
         // ADMISSION CLOSES BEFORE THE GATE IS TAKEN. A command still queued would otherwise wait on a
         // gate this method is about to hold and then dispose; closing first refuses it, cancels the
         // consumer's wait, and lets whatever is mid-flight finish on its own deadline.
-        cleanShutdown &= await _sessionCoordinator.StopAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(true);
+        if (_sessionCoordinator is { } coordinator)
+        {
+            cleanShutdown &= await coordinator.StopAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(true);
+        }
+
         cleanShutdown &= await TryCleanupAsync(StopRecordingWatchdogAsync).ConfigureAwait(true);
 
         var sessionGateHeld = false;
@@ -1167,9 +1164,13 @@ public partial class App : Application, IAsyncDisposable
             cleanShutdown &= TryCleanup(_sessionOperationGate.Dispose);
         }
 
-        cleanShutdown &= await TryCleanupAsync(
-            async () => await _sessionCoordinator.DisposeAsync().ConfigureAwait(true))
-            .ConfigureAwait(true);
+        if (_sessionCoordinator is { } stoppedCoordinator)
+        {
+            cleanShutdown &= await TryCleanupAsync(
+                async () => await stoppedCoordinator.DisposeAsync().ConfigureAwait(true))
+                .ConfigureAwait(true);
+            _sessionCoordinator = null;
+        }
 
         if (_runId is { } runId)
         {
@@ -1286,6 +1287,16 @@ public partial class App : Application, IAsyncDisposable
             preferredAudioDevice: string.IsNullOrWhiteSpace(_settings.PreferredMicrophoneId)
                 ? null
                 : new EnviousWispr.Core.Audio.AudioDeviceId(_settings.PreferredMicrophoneId));
+        // THE COORDINATOR SHARES THE SHELL'S SESSION GATE RATHER THAN OWNING ONE, because the watchdog,
+        // lock/suspend recovery, the update check and shutdown all still take that gate directly. One
+        // gate, two kinds of taker; the queue is what changed, not the lock. Built beside the controller
+        // so a press captures its target and delivery choice from the same provider the controller
+        // would have asked, at the instant of the key, before the queue's first hop.
+        var sessionController = _sessionController;
+        _sessionCoordinator = new DictationSessionCoordinator(
+            new SessionCommandExecutor(this),
+            _sessionOperationGate,
+            sessionController.CaptureStartContext);
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
         // A saved keybind builds a NEW hook, which starts armed and knows nothing about a capture
         // field that is still focused. Carrying the state across is what stops the hook re-arming
@@ -2165,9 +2176,15 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
+        var coordinator = _sessionCoordinator;
+        if (coordinator is null)
+        {
+            return;
+        }
+
         try
         {
-            var result = await _sessionCoordinator.SubmitAsync(signal).ConfigureAwait(false);
+            var result = await coordinator.SubmitAsync(signal).ConfigureAwait(false);
             if (result.WasQueued)
             {
                 _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.DictationSignalQueued));
@@ -2192,8 +2209,9 @@ public partial class App : Application, IAsyncDisposable
     /// adapter below: the work in here keeps its own processing deadline, and threading shutdown
     /// through it is part of moving this body out of the shell (#148, step 3).
     /// </remarks>
-    private async Task<SessionCommandResult> ExecuteSessionCommandAsync(PushToTalkSignal signal)
+    private async Task<SessionCommandResult> ExecuteSessionCommandAsync(SessionCommand command)
     {
+        var signal = command.Signal;
         if (_exitRequested || _disposed)
         {
             return new SessionCommandResult(SessionCommandDisposition.Stopping);
@@ -2275,6 +2293,10 @@ public partial class App : Application, IAsyncDisposable
                 signal == PushToTalkSignal.Cancelled && _escapeRecoveryForSession;
             var result = signal switch
             {
+                // THE PRESS BRINGS ITS OWN TARGET. Captured at admission, inside the key callback; the
+                // controller is told rather than asked, so the queue's hop cannot move the words.
+                PushToTalkSignal.Pressed when command.StartContext is { } startContext =>
+                    await controller.PressAsync(startContext).ConfigureAwait(false),
                 PushToTalkSignal.Pressed => await controller.PressAsync().ConfigureAwait(false),
                 PushToTalkSignal.Released => await controller.ReleaseAsync().ConfigureAwait(false),
                 PushToTalkSignal.Cancelled when recoverCancelledRecording =>
@@ -2392,7 +2414,7 @@ public partial class App : Application, IAsyncDisposable
             // on cancellation; a shutdown token reaching the controller mid-transition would turn an
             // orderly finalisation into a timed-out one. Step 3 on #148 owns wiring this properly.
             _ = stoppingToken;
-            return app.ExecuteSessionCommandAsync(command.Signal);
+            return app.ExecuteSessionCommandAsync(command);
         }
     }
 

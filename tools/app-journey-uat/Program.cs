@@ -1971,8 +1971,10 @@ static SyntheticHotkeyEvidence DriveSyntheticHotkey(
     // after the press had already finished starting took the ordinary path, and a build with the old
     // zero-timeout gate would have passed it too. The app writes DictationSignalQueued only when the
     // signal actually waited, so that line is the difference between a certified run and a lucky one.
-    if (quickTap && !ReadDiagnosticEvents(diagnosticPath).Any(value =>
-            value.StartsWith("DictationSignalQueued/", StringComparison.Ordinal)))
+    // WAITED FOR, NOT GLANCED AT. The app writes the queued line when the release's submitter resumes,
+    // which can be after the delivery line the harness just saw; reading once would call a correct run
+    // an instrument failure.
+    if (quickTap && !WaitForDiagnosticEvent(diagnosticPath, "DictationSignalQueued/", TimeSpan.FromSeconds(5)))
     {
         throw JourneyExpectationException.Instrument(
             "The quick tap delivered, but the app never reported DictationSignalQueued, so the key-up did "

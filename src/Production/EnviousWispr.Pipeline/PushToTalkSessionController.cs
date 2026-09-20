@@ -24,6 +24,12 @@ public sealed record SessionTransitionResult(
     CapturedAudio? Audio = null,
     AppError? Error = null);
 
+/// <summary>
+/// What a press is about, taken at the instant of the press: the window under the caret and the
+/// delivery choice in force. Carried with the press so that whatever runs it later cannot ask again.
+/// </summary>
+public sealed record RecordingStartContext(TargetWindowId? Target, TextDeliveryOptions DeliveryOptions);
+
 public sealed class PushToTalkSessionController : IAsyncDisposable
 {
     private readonly IAudioCapture _audioCapture;
@@ -66,6 +72,13 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
 
     public DictationSessionSnapshot? CurrentSession { get; private set; }
 
+    /// <summary>
+    /// Takes the window under the caret and the delivery choice in force, right now, with no await
+    /// in between. The thing that starts the recording later is handed this rather than asking again.
+    /// </summary>
+    public RecordingStartContext CaptureStartContext() =>
+        new(_targetProvider.CaptureForegroundTarget(), _deliveryOptions());
+
     public async Task<SessionTransitionResult> PressAsync(
         CancellationToken cancellationToken = default)
     {
@@ -77,59 +90,97 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            if (CurrentSession is not null)
-            {
-                return Ignored();
-            }
-
-            var target = _targetProvider.CaptureForegroundTarget();
-            if (target is null || !target.Value.IsValid)
-            {
-                return Failure(new AppError(
-                    AppErrorCode.TargetUnavailable,
-                    AppErrorStage.TargetCapture,
-                    CanRetry: true));
-            }
-
-            var sessionId = DictationSessionId.Create();
-            var started = await _audioCapture
-                .StartAsync(new AudioCaptureRequest(sessionId, _preferredAudioDevice), cancellationToken)
+            return await PressCoreAsync(
+                    _targetProvider.CaptureForegroundTarget(),
+                    deliveryOptions,
+                    cancellationToken)
                 .ConfigureAwait(false);
-            AppError? fallbackReason = null;
-            if (!started.Succeeded &&
-                _preferredAudioDevice is not null &&
-                started.Error?.Code is AppErrorCode.AudioDeviceUnavailable or AppErrorCode.AudioDeviceLost)
-            {
-                fallbackReason = started.Error;
-                started = await _audioCapture
-                    .StartAsync(new AudioCaptureRequest(sessionId), cancellationToken)
-                    .ConfigureAwait(false);
-            }
-
-            if (!started.Succeeded)
-            {
-                return Failure(started.Error ?? new AppError(
-                    AppErrorCode.AudioDeviceUnavailable,
-                    AppErrorStage.AudioCapture,
-                    CanRetry: true));
-            }
-
-            CurrentSession = DictationSessionSnapshot.Start(
-                sessionId,
-                _timeProvider.GetUtcNow(),
-                target.Value,
-                deliveryOptions);
-            RaiseChanged();
-            return new SessionTransitionResult(
-                SessionTransitionKind.Started,
-                CurrentSession,
-                Error: fallbackReason);
         }
         finally
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Starts a recording against a target and delivery choice captured earlier, at the press itself.
+    /// </summary>
+    /// <remarks>
+    /// THE HOOK USED TO REACH THE TARGET CAPTURE SYNCHRONOUSLY, inside the key callback, before the
+    /// first await. Anything that puts a scheduler between the press and the start - a queue, a
+    /// thread hop - opens a window in which the person can switch windows or save a setting, and the
+    /// recording would then go where the caret was a moment later. So the press captures, and this
+    /// overload consumes what it captured without looking again.
+    /// </remarks>
+    public async Task<SessionTransitionResult> PressAsync(
+        RecordingStartContext context,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await PressCoreAsync(context.Target, context.DeliveryOptions, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<SessionTransitionResult> PressCoreAsync(
+        TargetWindowId? target,
+        TextDeliveryOptions deliveryOptions,
+        CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (CurrentSession is not null)
+        {
+            return Ignored();
+        }
+
+        if (target is null || !target.Value.IsValid)
+        {
+            return Failure(new AppError(
+                AppErrorCode.TargetUnavailable,
+                AppErrorStage.TargetCapture,
+                CanRetry: true));
+        }
+
+        var sessionId = DictationSessionId.Create();
+        var started = await _audioCapture
+            .StartAsync(new AudioCaptureRequest(sessionId, _preferredAudioDevice), cancellationToken)
+            .ConfigureAwait(false);
+        AppError? fallbackReason = null;
+        if (!started.Succeeded &&
+            _preferredAudioDevice is not null &&
+            started.Error?.Code is AppErrorCode.AudioDeviceUnavailable or AppErrorCode.AudioDeviceLost)
+        {
+            fallbackReason = started.Error;
+            started = await _audioCapture
+                .StartAsync(new AudioCaptureRequest(sessionId), cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        if (!started.Succeeded)
+        {
+            return Failure(started.Error ?? new AppError(
+                AppErrorCode.AudioDeviceUnavailable,
+                AppErrorStage.AudioCapture,
+                CanRetry: true));
+        }
+
+        CurrentSession = DictationSessionSnapshot.Start(
+            sessionId,
+            _timeProvider.GetUtcNow(),
+            target.Value,
+            deliveryOptions);
+        RaiseChanged();
+        return new SessionTransitionResult(
+            SessionTransitionKind.Started,
+            CurrentSession,
+            Error: fallbackReason);
     }
 
     public async Task<SessionTransitionResult> ReleaseAsync(

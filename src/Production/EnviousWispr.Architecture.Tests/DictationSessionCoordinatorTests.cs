@@ -374,10 +374,45 @@ public sealed class DictationSessionCoordinatorTests
         Assert.Equal(2, executor.Transitions.Count);
         Assert.Equal(1, capture.StartCount);
         Assert.Equal(1, capture.StopCount);
-        Assert.NotNull(executor.Transitions[1].Audio);
+        Assert.False(capture.IsCapturing);
+        var audio = executor.Transitions[1].Audio;
+        Assert.NotNull(audio);
+        Assert.Equal(started.Session?.Id, audio.SessionId);
+        Assert.Equal([0.2f], audio.Samples.ToArray());
         Assert.Equal(new TargetWindowId(101), started.Session?.Target);
         Assert.Equal(new TargetWindowId(101), ended.Session?.Target);
         Assert.True(ended.WasQueued);
+    }
+
+    [Fact]
+    public async Task ThroughTheRealControllerThePressCapturesItsTargetBeforeTheQueueHop()
+    {
+        // The window under the caret and the delivery choice belong to the instant of the press. The
+        // executor is held BEFORE it runs, the world changes, and the recording still has what the
+        // press saw. Without capture at admission this test fails: the controller would ask again.
+        var capture = new BlockingCapture();
+        var targets = new FakeTargetProvider(101);
+        var copyInsteadOfPaste = false;
+        await using var controller = new PushToTalkSessionController(
+            capture,
+            targets,
+            deliveryOptions: () => TextDeliveryOptions.Default with { CopyInsteadOfPaste = copyInsteadOfPaste });
+        using var gate = new SemaphoreSlim(1, 1);
+        var executor = new ControllerExecutor(controller);
+        await using var coordinator = new DictationSessionCoordinator(executor, gate, controller.CaptureStartContext);
+
+        executor.BeforeEachCommand = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Entered.Task.WaitAsync(Patience);
+        targets.Window = new TargetWindowId(202);
+        copyInsteadOfPaste = true;
+        executor.BeforeEachCommand.SetResult();
+        capture.Open.SetResult();
+        var started = await press.WaitAsync(Patience);
+
+        Assert.Equal(SessionTransitionKind.Started, executor.Transitions[0].Kind);
+        Assert.Equal(new TargetWindowId(101), started.Session?.Target);
+        Assert.False(started.Session?.DeliveryOptions.CopyInsteadOfPaste);
     }
 
     [Fact]
@@ -396,9 +431,13 @@ public sealed class DictationSessionCoordinatorTests
         await press.WaitAsync(Patience);
         await cancel.WaitAsync(Patience);
 
+        Assert.Equal(2, executor.Transitions.Count);
+        Assert.Equal(SessionTransitionKind.Started, executor.Transitions[0].Kind);
         Assert.Equal(SessionTransitionKind.Cancelled, executor.Transitions[1].Kind);
+        Assert.Equal(1, capture.StartCount);
         Assert.Equal(1, capture.CancelCount);
         Assert.Equal(0, capture.StopCount);
+        Assert.False(capture.IsCapturing);
         Assert.Null(executor.Transitions[1].Audio);
     }
 
@@ -452,14 +491,28 @@ public sealed class DictationSessionCoordinatorTests
     {
         public List<SessionTransitionResult> Transitions { get; } = [];
 
+        /// <summary>Completed when the executor is entered, before it touches the controller.</summary>
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>When set, the executor waits on it after entry and before the controller.</summary>
+        public TaskCompletionSource? BeforeEachCommand { get; set; }
+
         public async Task<SessionCommandResult> ExecuteAsync(
             SessionCommand command,
             CancellationToken stoppingToken)
         {
             // Not forwarded, like the shell's adapter: a transition in flight finishes on its own terms.
             _ = stoppingToken;
+            Entered.TrySetResult();
+            if (BeforeEachCommand is { } barrier)
+            {
+                await barrier.Task.ConfigureAwait(false);
+            }
+
             var result = command.Signal switch
             {
+                PushToTalkSignal.Pressed when command.StartContext is { } context =>
+                    await controller.PressAsync(context, CancellationToken.None).ConfigureAwait(false),
                 PushToTalkSignal.Pressed => await controller.PressAsync(CancellationToken.None).ConfigureAwait(false),
                 PushToTalkSignal.Released => await controller.ReleaseAsync(CancellationToken.None).ConfigureAwait(false),
                 PushToTalkSignal.Cancelled => await controller.CancelAsync(CancellationToken.None).ConfigureAwait(false),

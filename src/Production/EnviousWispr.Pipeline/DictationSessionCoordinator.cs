@@ -34,7 +34,9 @@ public sealed record SessionCommandResult(
     DictationSessionSnapshot? Session = null,
     bool WasQueued = false);
 
-public sealed record SessionCommand(PushToTalkSignal Signal);
+/// <param name="Signal">The push-to-talk signal.</param>
+/// <param name="StartContext">For a press: what it was about, captured at admission. Null otherwise.</param>
+public sealed record SessionCommand(PushToTalkSignal Signal, RecordingStartContext? StartContext = null);
 
 /// <summary>The body of one push-to-talk transition, run by the coordinator one at a time.</summary>
 public interface ISessionCommandExecutor
@@ -74,6 +76,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 {
     private readonly ISessionCommandExecutor _executor;
     private readonly SemaphoreSlim _sessionGate;
+    private readonly Func<RecordingStartContext>? _captureStartContext;
     private readonly Channel<QueuedCommand> _queue;
     private readonly CancellationTokenSource _stopping = new();
     private readonly object _admission = new();
@@ -83,12 +86,22 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     private bool _terminalPending;
     private bool _closed;
 
-    public DictationSessionCoordinator(ISessionCommandExecutor executor, SemaphoreSlim sessionGate)
+    /// <param name="executor">Runs one command at a time.</param>
+    /// <param name="sessionGate">The shell's session gate, shared with the flows that still take it directly.</param>
+    /// <param name="captureStartContext">
+    /// Called synchronously when a press is admitted, before any await, so the target and delivery
+    /// choice belong to the instant of the press rather than to whenever the consumer gets to it.
+    /// </param>
+    public DictationSessionCoordinator(
+        ISessionCommandExecutor executor,
+        SemaphoreSlim sessionGate,
+        Func<RecordingStartContext>? captureStartContext = null)
     {
         ArgumentNullException.ThrowIfNull(executor);
         ArgumentNullException.ThrowIfNull(sessionGate);
         _executor = executor;
         _sessionGate = sessionGate;
+        _captureStartContext = captureStartContext;
         _queue = Channel.CreateUnbounded<QueuedCommand>(new UnboundedChannelOptions
         {
             SingleReader = true,
@@ -101,8 +114,9 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     public int PendingCount => Volatile.Read(ref _pendingOrRunning);
 
     /// <summary>
-    /// How many times the consumer has parked on the session gate. A test that wants to prove a stop
-    /// releases a parked consumer needs to know the consumer was parked first.
+    /// How many times the consumer has actually parked on the session gate - counted only once the
+    /// asynchronous wait exists, never on the fast path, so a test that reads one here knows a waiter
+    /// is registered and not merely about to be.
     /// </summary>
     internal int GateWaitsEntered => Volatile.Read(ref _gateWaitsEntered);
 
@@ -128,6 +142,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             }
 
             var gateReserved = false;
+            RecordingStartContext? startContext = null;
             if (signal == PushToTalkSignal.Pressed)
             {
                 // The counter covers commands this queue knows about; the gate covers everybody else.
@@ -139,6 +154,9 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
                 }
 
                 gateReserved = true;
+                // STILL INSIDE THE CALLER'S FRAME. The hook reached the target capture synchronously
+                // before this queue existed; capturing here keeps that true.
+                startContext = _captureStartContext?.Invoke();
             }
             else if (_terminalPending)
             {
@@ -151,7 +169,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 
             // A terminal admitted while anything is ahead of it has, by definition, waited in the queue.
             // A press is admitted only when nothing is ahead, so it never has.
-            queued = new QueuedCommand(new SessionCommand(signal), gateReserved)
+            queued = new QueuedCommand(new SessionCommand(signal, startContext), gateReserved)
             {
                 WaitedInQueue = _pendingOrRunning > 0,
             };
@@ -233,11 +251,15 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
                 var waited = false;
                 if (!holdingGate)
                 {
-                    Interlocked.Increment(ref _gateWaitsEntered);
-                    waited = !_sessionGate.Wait(0);
-                    if (waited)
+                    if (!_sessionGate.Wait(0))
                     {
-                        await _sessionGate.WaitAsync(_stopping.Token).ConfigureAwait(false);
+                        // THE WAITER EXISTS BEFORE IT IS COUNTED. A test that reads the count and then
+                        // releases the gate must find a registered waiter, not a consumer about to
+                        // probe again and succeed on its own.
+                        var pending = _sessionGate.WaitAsync(_stopping.Token);
+                        Interlocked.Increment(ref _gateWaitsEntered);
+                        await pending.ConfigureAwait(false);
+                        waited = true;
                     }
 
                     holdingGate = true;
@@ -258,17 +280,18 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             // THE EXECUTOR OWNS ITS OWN RECOVERY; this is the last line of defence for a consumer loop
             // that must outlive any single command. Admission is reopened BEFORE the submitter is told,
             // so a retry that runs on the fault's continuation finds the queue open rather than Busy.
-            ReleaseGate(ref holdingGate);
             Undo(queued.Command);
+            ReleaseGate(ref holdingGate);
             queued.Completion.TrySetException(exception);
             return;
         }
-        finally
-        {
-            ReleaseGate(ref holdingGate);
-        }
 
+        // THE COUNT COMES DOWN BEFORE THE GATE GOES UP. A terminal admitted in the gap between the two
+        // would otherwise be marked as having waited behind a press whose work and gate ownership had
+        // both already ended, and the journey that reads that mark would certify an overlap that never
+        // happened. Undercounting in the other direction only makes that journey say "not proven".
         Undo(queued.Command);
+        ReleaseGate(ref holdingGate);
         queued.Completion.TrySetResult(result);
     }
 
