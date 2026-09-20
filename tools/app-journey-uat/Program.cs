@@ -444,7 +444,7 @@ var journeyCompleted = false;
 var targetObserved = false;
 var appExitedCleanly = false;
 var strayWorkerCount = 0;
-var appStartedAt = DateTime.MinValue;
+Process[] preexistingWorkers = [];
 var ownedWorkerIds = Array.Empty<int>();
 var ownedWorkerCount = 0;
 var ownedPolishWorkerIds = Array.Empty<int>();
@@ -555,11 +555,27 @@ try
             appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_HOLD_MILLISECONDS"] = "4000";
         }
     }
+    // THE WORKERS THAT WERE ALREADY THERE, PINNED BY HANDLE. The stray-worker check after the app
+    // exits excludes exactly these and nothing else: a worker that predates this app and is still
+    // the same process. A clock cannot say that - a creation time compared across a daylight-saving
+    // change or a clock adjustment orders two processes wrongly - but a handle held from before the
+    // launch can, and one whose process has since exited excludes nothing, so an id the system reused
+    // for a child of this app is counted.
+    preexistingWorkers = Process.GetProcessesByName("EnviousWispr.RuntimeWorker");
+    foreach (var worker in preexistingWorkers)
+    {
+        try
+        {
+            _ = worker.SafeHandle;
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            // Gone or not ours to open between the listing and now; it excludes nothing.
+        }
+    }
+
     app = StartOrExplain(appStart) ?? throw new JourneyExpectationException(
         "The production WinUI app did not start.");
-    // Read now, while the process is certainly alive; the stray-worker check compares against it
-    // after the app has exited, when its own start time can no longer be asked for.
-    appStartedAt = app.StartTime;
 
     shellReady = readyEvent.WaitOne(TimeSpan.FromSeconds(30));
     runtimeReady = runtimeEvent.WaitOne(
@@ -767,10 +783,11 @@ try
     // snapshot above is taken before the take begins, so a preview worker started during it - or one
     // left behind by a cancelled preview startup - was invisible to the cleanup check. Windows keeps a
     // process's parent id after the parent has exited, so the app's children can still be asked for.
-    // A CHILD IS ONE CREATED AFTER ITS PARENT: a process id is reused, so a worker orphaned by an app
-    // that once had this id would otherwise be counted against this run.
-    strayWorkerCount = ChildProcessIds(app.Id, "EnviousWispr.RuntimeWorker", createdAfter: appStartedAt)
-        .Count(IsProcessRunning);
+    // A process id is reused, so a worker orphaned by an earlier app that once had this id is excluded
+    // only if it was listed and pinned before this app was launched and is still that same process.
+    strayWorkerCount = ChildProcessIds(app.Id, "EnviousWispr.RuntimeWorker")
+        .Where(IsProcessRunning)
+        .Count(processId => !preexistingWorkers.Any(worker => worker.Id == processId && StillAlive(worker)));
     if (strayWorkerCount != 0)
     {
         throw new JourneyExpectationException(
@@ -979,6 +996,11 @@ finally
     }
     finally
     {
+        foreach (var worker in preexistingWorkers)
+        {
+            worker.Dispose();
+        }
+
         try
         {
             RemoveUatDirectory(uatDirectory);
@@ -1633,10 +1655,10 @@ static bool ReadEscapeRecoveryHistory(string path)
     }
 }
 
-static IReadOnlyList<int> ChildProcessIds(int parentProcessId, string processName, DateTime? createdAfter = null)
+static IReadOnlyList<int> ChildProcessIds(int parentProcessId, string processName)
 {
     using var searcher = new ManagementObjectSearcher(
-        $"SELECT ProcessId, Name, CreationDate FROM Win32_Process WHERE ParentProcessId = {parentProcessId}");
+        $"SELECT ProcessId, Name FROM Win32_Process WHERE ParentProcessId = {parentProcessId}");
     using var results = searcher.Get();
     return results
         .Cast<ManagementObject>()
@@ -1646,32 +1668,20 @@ static IReadOnlyList<int> ChildProcessIds(int parentProcessId, string processNam
                 System.Globalization.CultureInfo.InvariantCulture),
             $"{processName}.exe",
             StringComparison.OrdinalIgnoreCase))
-        .Where(process => createdAfter is null || CreatedAfter(process, createdAfter.Value))
         .Select(process => Convert.ToInt32((uint)process["ProcessId"]))
         .ToArray();
 }
 
-/// <summary>Whether the process was created after the instant given; an unreadable creation date counts as yes.</summary>
-/// <remarks>
-/// UNREADABLE MEANS COUNTED. The filter exists to exclude a process that provably predates this run's
-/// app; one whose creation date cannot be read is not proven to, and a stray-worker check that
-/// excused it would be a check that could be argued out of a finding.
-/// </remarks>
-static bool CreatedAfter(ManagementObject process, DateTime instant)
+/// <summary>Whether a process pinned by handle before the launch is still that process; one that cannot say is not.</summary>
+static bool StillAlive(Process pinned)
 {
-    var raw = Convert.ToString(process["CreationDate"], System.Globalization.CultureInfo.InvariantCulture);
-    if (string.IsNullOrWhiteSpace(raw))
-    {
-        return true;
-    }
-
     try
     {
-        return ManagementDateTimeConverter.ToDateTime(raw) >= instant;
+        return !pinned.HasExited;
     }
-    catch (ArgumentOutOfRangeException)
+    catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
     {
-        return true;
+        return false;
     }
 }
 

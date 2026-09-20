@@ -80,6 +80,10 @@ public sealed class RuntimeWorkerSupervisorTests
             await WaitForAsync(() => supervisor.WorkerProcessId is not null, TimeSpan.FromSeconds(10));
             var processId = supervisor.WorkerProcessId!.Value;
             using var worker = Process.GetProcessById(processId);
+            // PINNED BY HANDLE, NOT BY ID. A Process found by id holds no handle until one is asked
+            // for; every later question would reopen the id, which the system may have handed to
+            // something else once the worker is gone. Asking for the handle now keeps it.
+            _ = worker.SafeHandle;
             cancellation.Cancel();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => start.WaitAsync(TimeSpan.FromSeconds(10)));
 
