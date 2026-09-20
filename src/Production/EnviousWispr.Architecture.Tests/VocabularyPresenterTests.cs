@@ -48,14 +48,18 @@ public sealed class VocabularyPresenterTests
         var selected = new CustomWordEntry("one", "1");
         var twin = new CustomWordEntry("one", "1");
         var replaced = new CustomWordEntry("two", "2");
-        var (presenter, store) = Build(words: [selected, twin, new CustomWordEntry("two", "2")]);
+        var replacement = new CustomWordEntry("two", "2");
+        var (presenter, store) = Build(words: [selected, twin, replacement]);
 
         var result = await presenter.RemoveWordsAsync([selected, replaced]).WaitAsync(Patience);
 
         Assert.True(result.Saved);
         Assert.Equal(1, result.Value);
-        Assert.Equal(2, store.Saved!.UserData.CustomWords.Count);
-        Assert.Contains(twin, store.Saved.UserData.CustomWords);
+        var survivors = store.Saved!.UserData.CustomWords;
+        Assert.Equal(2, survivors.Count);
+        // THE VERY ROWS, NOT VALUE-EQUAL ONES: the twin and the replacement survive as themselves.
+        Assert.Same(twin, survivors[0]);
+        Assert.Same(replacement, survivors[1]);
     }
 
     [Fact]
