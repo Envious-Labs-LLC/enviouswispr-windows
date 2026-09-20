@@ -1948,15 +1948,36 @@ static SyntheticHotkeyEvidence DriveSyntheticHotkey(
     }
 
     // A DROPPED KEY-UP LOOKS LIKE A SLOW TRANSCRIPTION FROM HERE, so the wait is bounded and the
-    // events are printed: a recording that is still open when this fires is the defect, not a timeout.
+    // verdict is read off what the app wrote, not off the silence. A capture that was never finalised
+    // is the lost release; a capture that was finalised and then nothing is a downstream failure, and
+    // the two must not share a sentence.
     if (!WaitForDiagnosticEvent(diagnosticPath, "TextDeliveryCompleted/", TimeSpan.FromSeconds(45)))
     {
+        var events = ReadDiagnosticEvents(diagnosticPath);
+        var finalised = events.Any(value =>
+            value.StartsWith("DictationCaptureFinalized/", StringComparison.Ordinal));
         throw new JourneyExpectationException(
-            (quickTap
-                ? "The quick tap did not reach TextDeliveryCompleted: the key-up that arrived during the "
-                    + "press was not honoured, so the recording never finalised; "
-                : "The synthetic-hotkey take did not reach TextDeliveryCompleted; ")
-                + $"events={string.Join(',', ReadDiagnosticEvents(diagnosticPath))}.");
+            (quickTap && !finalised
+                ? "The quick tap did not reach TextDeliveryCompleted and the capture was never finalised: "
+                    + "the key-up that arrived during the press was not honoured; "
+                : finalised
+                    ? "The take finalised its capture but never reached TextDeliveryCompleted: transcription "
+                        + "or delivery failed downstream of the hotkey; "
+                    : "The synthetic-hotkey take did not reach TextDeliveryCompleted; ")
+                + $"events={string.Join(',', events)}.");
+    }
+
+    // THE OVERLAP HAS TO HAVE HAPPENED, OR THE PASS MEANS NOTHING. A quick tap whose key-up landed
+    // after the press had already finished starting took the ordinary path, and a build with the old
+    // zero-timeout gate would have passed it too. The app writes DictationSignalQueued only when the
+    // signal actually waited, so that line is the difference between a certified run and a lucky one.
+    if (quickTap && !ReadDiagnosticEvents(diagnosticPath).Any(value =>
+            value.StartsWith("DictationSignalQueued/", StringComparison.Ordinal)))
+    {
+        throw JourneyExpectationException.Instrument(
+            "The quick tap delivered, but the app never reported DictationSignalQueued, so the key-up did "
+                + "not overlap the press and this run certifies nothing about the queue. Re-run; if it "
+                + "never overlaps, the tap is not quick enough on this machine.");
     }
 
     var targetObserved = WaitForExpectedTargetResult(targetResultPath, TimeSpan.FromSeconds(5));

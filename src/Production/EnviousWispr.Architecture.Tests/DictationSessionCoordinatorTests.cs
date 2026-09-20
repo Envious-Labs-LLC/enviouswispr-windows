@@ -1,3 +1,6 @@
+using EnviousWispr.Core.Audio;
+using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Sessions;
 using EnviousWispr.Pipeline;
@@ -32,7 +35,10 @@ public sealed class DictationSessionCoordinatorTests
         await executor.Started(PushToTalkSignal.Released).WaitAsync(Patience);
         executor.Finish(PushToTalkSignal.Released);
 
-        Assert.Equal(SessionCommandDisposition.Applied, (await release.WaitAsync(Patience)).Disposition);
+        var kept = await release.WaitAsync(Patience);
+        Assert.Equal(SessionCommandDisposition.Applied, kept.Disposition);
+        Assert.True(kept.WasQueued, "the release waited behind the press and must say so");
+        Assert.False((await press).WasQueued, "the press ran first and waited for nothing");
         Assert.Equal([PushToTalkSignal.Pressed, PushToTalkSignal.Released], executor.Seen);
         Assert.Equal(0, coordinator.PendingCount);
     }
@@ -220,6 +226,34 @@ public sealed class DictationSessionCoordinatorTests
     }
 
     [Fact]
+    public async Task APressWhileAnOutsideHolderHasTheGateIsRefusedAndTheGateIsNotTouched()
+    {
+        // An update check holds the gate through a whole download; lock recovery holds it while it
+        // finalises. A press admitted then would open a microphone minutes after the finger left the
+        // key. It is refused on the spot, and the holder's gate is exactly as it was.
+        var executor = new BarrierExecutor();
+        using var gate = new SemaphoreSlim(1, 1);
+        await using var coordinator = new DictationSessionCoordinator(executor, gate);
+
+        await gate.WaitAsync();
+        var press = await coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+
+        Assert.Equal(SessionCommandDisposition.Busy, press.Disposition);
+        Assert.Equal(0, coordinator.PendingCount);
+        Assert.Equal(0, gate.CurrentCount);
+        Assert.Empty(executor.Seen);
+
+        gate.Release();
+        Assert.Equal(1, gate.CurrentCount);
+        var afterwards = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        Assert.Equal(0, gate.CurrentCount);
+        executor.Finish(PushToTalkSignal.Pressed);
+        Assert.Equal(SessionCommandDisposition.Applied, (await afterwards.WaitAsync(Patience)).Disposition);
+        Assert.Equal(1, gate.CurrentCount);
+    }
+
+    [Fact]
     public async Task ACommandWaitsForAnOutsideHolderOfTheSharedGateInsteadOfBeingDropped()
     {
         // The watchdog, lock/suspend recovery and shutdown still take the gate directly. A signal that
@@ -233,11 +267,13 @@ public sealed class DictationSessionCoordinatorTests
         Assert.Equal(1, coordinator.PendingCount);
         Assert.False(executor.Started(PushToTalkSignal.Released).IsCompleted);
 
+        await UntilAsync(() => coordinator.GateWaitsEntered == 1);
         gate.Release();
         await executor.Started(PushToTalkSignal.Released).WaitAsync(Patience);
         Assert.Equal(0, gate.CurrentCount);
         executor.Finish(PushToTalkSignal.Released);
-        await release.WaitAsync(Patience);
+        var kept = await release.WaitAsync(Patience);
+        Assert.True(kept.WasQueued, "the release waited on an outside holder and must say so");
         Assert.Equal(1, gate.CurrentCount);
     }
 
@@ -274,10 +310,110 @@ public sealed class DictationSessionCoordinatorTests
 
         await gate.WaitAsync();
         var release = coordinator.SubmitAsync(PushToTalkSignal.Released);
+        // The consumer has to be PARKED on the gate before the stop, or this proves that stopping an
+        // idle coordinator works, which was never in doubt.
+        await UntilAsync(() => coordinator.GateWaitsEntered == 1);
+        Assert.False(release.IsCompleted);
+
         Assert.True(await coordinator.StopAsync(Patience));
         Assert.Equal(SessionCommandDisposition.Stopping, (await release.WaitAsync(Patience)).Disposition);
         Assert.Empty(executor.Seen);
+        Assert.Equal(0, gate.CurrentCount);
         gate.Release();
+    }
+
+    [Fact]
+    public async Task AnImmediateRetryAfterAnExecutorFaultIsAdmitted()
+    {
+        // The fault's continuation may run before the consumer's next statement. Admission is restored
+        // BEFORE the submitter is told, so a retry that runs on that continuation is not refused.
+        var executor = new BarrierExecutor { ThrowOn = PushToTalkSignal.Released };
+        using var gate = new SemaphoreSlim(1, 1);
+        await using var coordinator = new DictationSessionCoordinator(executor, gate);
+
+        var first = coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await executor.Started(PushToTalkSignal.Released).WaitAsync(Patience);
+        executor.Finish(PushToTalkSignal.Released);
+        SessionCommandDisposition retry = default;
+        var retried = first.ContinueWith(
+            _ => coordinator.SubmitAsync(PushToTalkSignal.Cancelled),
+            TaskScheduler.Default).Unwrap();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => first.WaitAsync(Patience));
+        await executor.Started(PushToTalkSignal.Cancelled).WaitAsync(Patience);
+        executor.Finish(PushToTalkSignal.Cancelled);
+        retry = (await retried.WaitAsync(Patience)).Disposition;
+
+        Assert.Equal(SessionCommandDisposition.Applied, retry);
+    }
+
+    [Fact]
+    public async Task ThroughTheRealControllerAReleaseDuringMicrophoneOpenStillEndsTheRecording()
+    {
+        // The whole point, proven against the state machine that ships rather than a fake that says
+        // Applied: the microphone is still opening when the key-up lands, and the recording still
+        // finalises exactly once, with its audio, and the target it was pressed against.
+        var capture = new BlockingCapture();
+        var targets = new FakeTargetProvider(101);
+        await using var controller = new PushToTalkSessionController(capture, targets, minimumHoldDuration: TimeSpan.Zero);
+        using var gate = new SemaphoreSlim(1, 1);
+        var executor = new ControllerExecutor(controller);
+        await using var coordinator = new DictationSessionCoordinator(executor, gate);
+
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await capture.Opening.Task.WaitAsync(Patience);
+        var release = coordinator.SubmitAsync(PushToTalkSignal.Released);
+        Assert.False(release.IsCompleted);
+        targets.Window = new TargetWindowId(202);
+
+        capture.Open.SetResult();
+        var started = await press.WaitAsync(Patience);
+        var ended = await release.WaitAsync(Patience);
+
+        Assert.Equal(SessionTransitionKind.Started, executor.Transitions[0].Kind);
+        Assert.Equal(SessionTransitionKind.FinalizeReady, executor.Transitions[1].Kind);
+        Assert.Equal(2, executor.Transitions.Count);
+        Assert.Equal(1, capture.StartCount);
+        Assert.Equal(1, capture.StopCount);
+        Assert.NotNull(executor.Transitions[1].Audio);
+        Assert.Equal(new TargetWindowId(101), started.Session?.Target);
+        Assert.Equal(new TargetWindowId(101), ended.Session?.Target);
+        Assert.True(ended.WasQueued);
+    }
+
+    [Fact]
+    public async Task ThroughTheRealControllerACancelDuringMicrophoneOpenCancelsWithoutAudio()
+    {
+        var capture = new BlockingCapture();
+        await using var controller = new PushToTalkSessionController(capture, new FakeTargetProvider(101));
+        using var gate = new SemaphoreSlim(1, 1);
+        var executor = new ControllerExecutor(controller);
+        await using var coordinator = new DictationSessionCoordinator(executor, gate);
+
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await capture.Opening.Task.WaitAsync(Patience);
+        var cancel = coordinator.SubmitAsync(PushToTalkSignal.Cancelled);
+        capture.Open.SetResult();
+        await press.WaitAsync(Patience);
+        await cancel.WaitAsync(Patience);
+
+        Assert.Equal(SessionTransitionKind.Cancelled, executor.Transitions[1].Kind);
+        Assert.Equal(1, capture.CancelCount);
+        Assert.Equal(0, capture.StopCount);
+        Assert.Null(executor.Transitions[1].Audio);
+    }
+
+    private static async Task UntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + Patience;
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline)
+            {
+                throw new TimeoutException("The condition never held.");
+            }
+
+            await Task.Yield();
+        }
     }
 
     [Fact]
@@ -309,6 +445,89 @@ public sealed class DictationSessionCoordinatorTests
             _ = coordinator.SubmitAsync(PushToTalkSignal.QuickAdd);
         });
         Assert.Equal(0, coordinator.PendingCount);
+    }
+
+    /// <summary>The shell's signal switch, without the shell: press, release, cancel onto the real controller.</summary>
+    private sealed class ControllerExecutor(PushToTalkSessionController controller) : ISessionCommandExecutor
+    {
+        public List<SessionTransitionResult> Transitions { get; } = [];
+
+        public async Task<SessionCommandResult> ExecuteAsync(
+            SessionCommand command,
+            CancellationToken stoppingToken)
+        {
+            // Not forwarded, like the shell's adapter: a transition in flight finishes on its own terms.
+            _ = stoppingToken;
+            var result = command.Signal switch
+            {
+                PushToTalkSignal.Pressed => await controller.PressAsync(CancellationToken.None).ConfigureAwait(false),
+                PushToTalkSignal.Released => await controller.ReleaseAsync(CancellationToken.None).ConfigureAwait(false),
+                PushToTalkSignal.Cancelled => await controller.CancelAsync(CancellationToken.None).ConfigureAwait(false),
+                _ => throw new InvalidOperationException("Unsupported signal."),
+            };
+            Transitions.Add(result);
+            return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
+        }
+    }
+
+    private sealed class FakeTargetProvider(nint window) : IForegroundTargetProvider
+    {
+        public TargetWindowId Window { get; set; } = new(window);
+
+        public TargetWindowId? CaptureForegroundTarget() => Window.IsValid ? Window : null;
+    }
+
+    /// <summary>A microphone that does not finish opening until the test lets it.</summary>
+    private sealed class BlockingCapture : IAudioCapture
+    {
+        private static readonly float[] OneSample = [0.2f];
+        private DictationSessionId _sessionId;
+
+        public event EventHandler<AudioLevel>? LevelChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public TaskCompletionSource Opening { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Open { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool IsCapturing { get; private set; }
+
+        public int StartCount { get; private set; }
+
+        public int StopCount { get; private set; }
+
+        public int CancelCount { get; private set; }
+
+        public async Task<AudioOperationResult> StartAsync(
+            AudioCaptureRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            StartCount++;
+            _sessionId = request.SessionId;
+            Opening.TrySetResult();
+            await Open.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            IsCapturing = true;
+            return new AudioOperationResult(Succeeded: true);
+        }
+
+        public Task<CapturedAudio> StopAsync(CancellationToken cancellationToken = default)
+        {
+            StopCount++;
+            IsCapturing = false;
+            return Task.FromResult(new CapturedAudio(_sessionId, OneSample, SampleRate: 16_000, Channels: 1));
+        }
+
+        public Task<AudioOperationResult> CancelAsync(CancellationToken cancellationToken = default)
+        {
+            CancelCount++;
+            IsCapturing = false;
+            return Task.FromResult(new AudioOperationResult(Succeeded: true));
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     /// <summary>

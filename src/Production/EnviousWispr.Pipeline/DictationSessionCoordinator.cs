@@ -13,7 +13,7 @@ public enum SessionCommandDisposition
     /// <summary>A terminal signal arrived while an identical one was already waiting; the first one carries it.</summary>
     Ignored,
 
-    /// <summary>A press arrived while another command was pending or running; nothing was recorded.</summary>
+    /// <summary>A press arrived while the session gate was held or a command was pending; nothing was recorded.</summary>
     Busy,
 
     /// <summary>Admission had closed for shutdown before the command could run.</summary>
@@ -23,9 +23,16 @@ public enum SessionCommandDisposition
     Failed,
 }
 
+/// <param name="Disposition">What happened to the command.</param>
+/// <param name="Session">The session the executor reported, when it reported one.</param>
+/// <param name="WasQueued">
+/// True when the command had to wait for an earlier command or an outside holder of the session gate
+/// before it ran. This is the evidence that the window the queue exists for was actually entered.
+/// </param>
 public sealed record SessionCommandResult(
     SessionCommandDisposition Disposition,
-    DictationSessionSnapshot? Session = null);
+    DictationSessionSnapshot? Session = null,
+    bool WasQueued = false);
 
 public sealed record SessionCommand(PushToTalkSignal Signal);
 
@@ -46,17 +53,22 @@ public interface ISessionCommandExecutor
 /// held, and was discarded without a word - so the recording ran on until the next press, and the person
 /// who tapped the key saw nothing happen. Ref #86, and finding 1 on #148.
 ///
+/// A PRESS AND A RELEASE ARE ADMITTED DIFFERENTLY, ON PURPOSE. A release or cancel is queued and runs when
+/// the gate is next free, because the recording it ends already exists and must end. A press takes the
+/// gate synchronously at admission or is refused as <see cref="SessionCommandDisposition.Busy"/>: a press
+/// that ran later - after an update check that held the gate through a download, after lock recovery -
+/// would open a microphone nobody was still asking for. That is the same answer the old zero-timeout
+/// probe gave a press, now said out loud. The refusal happens before the first await, so a caller that
+/// fires and forgets still gets the decision made at the moment it called.
+///
 /// ONE CONSUMER, SO A COMMAND RUNS AFTER THE ONE BEFORE IT FINISHES. A queued release therefore runs
-/// after the press it belongs to has fully started, which is what the state machine expects, and a
-/// press submitted while anything is pending or running is refused as <see cref="SessionCommandDisposition.Busy"/>
-/// rather than queued, because a press that runs minutes later would open a microphone nobody asked
-/// for. Two terminal signals in a row are one: the second is <see cref="SessionCommandDisposition.Ignored"/>.
-/// That keeps the queue at two entries at most - a press and the terminal that ends it.
+/// after the press it belongs to has fully started, which is what the state machine expects. Two terminal
+/// signals in a row are one: the second is <see cref="SessionCommandDisposition.Ignored"/>. The queue is
+/// never longer than a press and the terminal that ends it.
 ///
 /// THE SESSION GATE IS STILL OWNED BY THE SHELL, AND SHARED. The watchdog, the lock/suspend recovery, the
-/// update check and shutdown all serialise against it, and they keep doing so; this class takes it with a
-/// cancellable wait before every command instead of a zero-timeout probe. Moving those flows behind this
-/// queue is a later step (#148, step 11); until then the gate is injected rather than created here.
+/// update check and shutdown all serialise against it, and they keep doing so. Moving those flows behind
+/// this queue is a later step (#148, step 11); until then the gate is injected rather than created here.
 /// </remarks>
 public sealed class DictationSessionCoordinator : IAsyncDisposable
 {
@@ -67,6 +79,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     private readonly object _admission = new();
     private readonly Task _consumer;
     private int _pendingOrRunning;
+    private int _gateWaitsEntered;
     private bool _terminalPending;
     private bool _closed;
 
@@ -88,13 +101,14 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     public int PendingCount => Volatile.Read(ref _pendingOrRunning);
 
     /// <summary>
+    /// How many times the consumer has parked on the session gate. A test that wants to prove a stop
+    /// releases a parked consumer needs to know the consumer was parked first.
+    /// </summary>
+    internal int GateWaitsEntered => Volatile.Read(ref _gateWaitsEntered);
+
+    /// <summary>
     /// Admits the signal synchronously and returns a task that completes once it has run or been refused.
     /// </summary>
-    /// <remarks>
-    /// ADMISSION HAPPENS BEFORE THE FIRST AWAIT. A caller that fires and forgets still gets the refusal
-    /// decided at the moment it called, not at some later point on a thread pool, so two presses in the
-    /// same instant cannot both be admitted.
-    /// </remarks>
     public Task<SessionCommandResult> SubmitAsync(PushToTalkSignal signal)
     {
         if (signal == PushToTalkSignal.QuickAdd)
@@ -113,12 +127,18 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
                 return Task.FromResult(new SessionCommandResult(SessionCommandDisposition.Stopping));
             }
 
+            var gateReserved = false;
             if (signal == PushToTalkSignal.Pressed)
             {
-                if (_pendingOrRunning > 0)
+                // The counter covers commands this queue knows about; the gate covers everybody else.
+                // Both have to be free for a press, and the gate is taken here, now, so that nothing
+                // can slip in between the decision and the start.
+                if (_pendingOrRunning > 0 || !_sessionGate.Wait(0))
                 {
                     return Task.FromResult(new SessionCommandResult(SessionCommandDisposition.Busy));
                 }
+
+                gateReserved = true;
             }
             else if (_terminalPending)
             {
@@ -129,12 +149,22 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
                 _terminalPending = true;
             }
 
-            queued = new QueuedCommand(new SessionCommand(signal));
+            // A terminal admitted while anything is ahead of it has, by definition, waited in the queue.
+            // A press is admitted only when nothing is ahead, so it never has.
+            queued = new QueuedCommand(new SessionCommand(signal), gateReserved)
+            {
+                WaitedInQueue = _pendingOrRunning > 0,
+            };
             if (!_queue.Writer.TryWrite(queued))
             {
                 // The writer is completed only by StopAsync, under this same lock and after _closed is
                 // set, so an unbounded channel cannot refuse here. Loud rather than silent if that
                 // ordering ever changes.
+                if (gateReserved)
+                {
+                    _sessionGate.Release();
+                }
+
                 throw new InvalidOperationException("The session command queue refused a write while open.");
             }
 
@@ -166,8 +196,13 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await StopAsync(TimeSpan.Zero).ConfigureAwait(false);
-        _stopping.Dispose();
+        // THE CANCELLATION SOURCE OUTLIVES A CONSUMER THAT WOULD NOT STOP. Disposing it under a running
+        // consumer turns the next token read into an ObjectDisposedException inside the loop; a
+        // stranded source is a few bytes, and an unclean stop has already been reported by StopAsync.
+        if (await StopAsync(TimeSpan.Zero).ConfigureAwait(false))
+        {
+            _stopping.Dispose();
+        }
     }
 
     private async Task ConsumeAsync()
@@ -186,6 +221,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     private async Task RunAsync(QueuedCommand queued)
     {
         SessionCommandResult result;
+        var holdingGate = queued.GateReserved;
         try
         {
             if (_stopping.IsCancellationRequested)
@@ -194,17 +230,23 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             }
             else
             {
-                await _sessionGate.WaitAsync(_stopping.Token).ConfigureAwait(false);
-                try
+                var waited = false;
+                if (!holdingGate)
                 {
-                    result = await _executor
-                        .ExecuteAsync(queued.Command, _stopping.Token)
-                        .ConfigureAwait(false);
+                    Interlocked.Increment(ref _gateWaitsEntered);
+                    waited = !_sessionGate.Wait(0);
+                    if (waited)
+                    {
+                        await _sessionGate.WaitAsync(_stopping.Token).ConfigureAwait(false);
+                    }
+
+                    holdingGate = true;
                 }
-                finally
-                {
-                    _sessionGate.Release();
-                }
+
+                var executed = await _executor
+                    .ExecuteAsync(queued.Command, _stopping.Token)
+                    .ConfigureAwait(false);
+                result = executed with { WasQueued = executed.WasQueued || waited || queued.WaitedInQueue };
             }
         }
         catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
@@ -214,15 +256,29 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
         {
             // THE EXECUTOR OWNS ITS OWN RECOVERY; this is the last line of defence for a consumer loop
-            // that must outlive any single command. Handing the exception to the submitter keeps it
-            // observed without letting it end the loop.
-            queued.Completion.TrySetException(exception);
+            // that must outlive any single command. Admission is reopened BEFORE the submitter is told,
+            // so a retry that runs on the fault's continuation finds the queue open rather than Busy.
+            ReleaseGate(ref holdingGate);
             Undo(queued.Command);
+            queued.Completion.TrySetException(exception);
             return;
+        }
+        finally
+        {
+            ReleaseGate(ref holdingGate);
         }
 
         Undo(queued.Command);
         queued.Completion.TrySetResult(result);
+    }
+
+    private void ReleaseGate(ref bool holdingGate)
+    {
+        if (holdingGate)
+        {
+            holdingGate = false;
+            _sessionGate.Release();
+        }
     }
 
     private void Undo(SessionCommand command)
@@ -237,9 +293,15 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         }
     }
 
-    private sealed class QueuedCommand(SessionCommand command)
+    private sealed class QueuedCommand(SessionCommand command, bool gateReserved)
     {
         public SessionCommand Command { get; } = command;
+
+        /// <summary>A press reserved the gate at admission; the consumer inherits it rather than waiting again.</summary>
+        public bool GateReserved { get; } = gateReserved;
+
+        /// <summary>A terminal admitted behind another command: it waited in the queue, not only on the gate.</summary>
+        public bool WaitedInQueue { get; init; }
 
         public TaskCompletionSource<SessionCommandResult> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -2165,7 +2165,24 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        await _sessionCoordinator.SubmitAsync(signal).ConfigureAwait(false);
+        try
+        {
+            var result = await _sessionCoordinator.SubmitAsync(signal).ConfigureAwait(false);
+            if (result.WasQueued)
+            {
+                _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.DictationSignalQueued));
+            }
+        }
+        catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
+        {
+            // THE HOOK AND THE AUTO-STOP LOOP FIRE AND FORGET THIS TASK. The executor recovers its own
+            // failures; anything that escapes it would otherwise fault a task nobody awaits and vanish.
+            // Content-free, like every line in this log.
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.UnhandledFailure,
+                AppFailureCategory.Unknown));
+        }
     }
 
     /// <summary>The body of one push-to-talk transition. Runs under the session gate, one at a time.</summary>
