@@ -445,6 +445,7 @@ var targetObserved = false;
 var appExitedCleanly = false;
 var strayWorkerCount = 0;
 Process[] preexistingWorkers = [];
+var pinnedWorkers = new List<Process>();
 var ownedWorkerIds = Array.Empty<int>();
 var ownedWorkerCount = 0;
 var ownedPolishWorkerIds = Array.Empty<int>();
@@ -567,10 +568,14 @@ try
         try
         {
             _ = worker.SafeHandle;
+            pinnedWorkers.Add(worker);
         }
         catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
-            // Gone or not ours to open between the listing and now; it excludes nothing.
+            // GONE OR NOT OURS TO OPEN, AND THEREFORE NOT AN EXCLUSION. An object whose pin failed
+            // holds no handle; asked later whether it is alive it would reopen its id, which by then
+            // may belong to a child of this app, and answer for the wrong process. Only a pin that
+            // succeeded can exclude; this one is kept for disposal and nothing else.
         }
     }
 
@@ -787,7 +792,7 @@ try
     // only if it was listed and pinned before this app was launched and is still that same process.
     strayWorkerCount = ChildProcessIds(app.Id, "EnviousWispr.RuntimeWorker")
         .Where(IsProcessRunning)
-        .Count(processId => !preexistingWorkers.Any(worker => worker.Id == processId && StillAlive(worker)));
+        .Count(processId => !pinnedWorkers.Any(worker => worker.Id == processId && StillAlive(worker)));
     if (strayWorkerCount != 0)
     {
         throw new JourneyExpectationException(
@@ -1672,7 +1677,11 @@ static IReadOnlyList<int> ChildProcessIds(int parentProcessId, string processNam
         .ToArray();
 }
 
-/// <summary>Whether a process pinned by handle before the launch is still that process; one that cannot say is not.</summary>
+/// <summary>
+/// Whether a process pinned by handle before the launch is still that process; one that cannot say is
+/// not. Only ever asked of a process whose handle was taken, so the answer is the handle's and not a
+/// reopened id's.
+/// </summary>
 static bool StillAlive(Process pinned)
 {
     try
