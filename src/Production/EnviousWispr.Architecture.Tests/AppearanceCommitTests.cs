@@ -138,6 +138,7 @@ public sealed class AppearanceCommitTests
         var creation = Assert.Single(
             persist!.DescendantNodes().OfType<BaseObjectCreationExpressionSyntax>(),
             node => node is ObjectCreationExpressionSyntax { Type: var type } && type.ToString() == nameof(AppearanceChoices));
+        Assert.Null(creation.Initializer);
         var arguments = creation.ArgumentList?.Arguments.Select(argument => argument.Expression.ToString()).ToArray();
         Assert.NotNull(arguments);
         // THE EXACT READER EXPRESSIONS, not a substring: an expression that mentions a control and
