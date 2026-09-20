@@ -91,8 +91,8 @@ public sealed class ProviderSettingsPresenterTests
     {
         var (presenter, _, models) = Build();
 
-        var none = await presenter.RefreshModelChoicesAsync(PolishProvider.None, null, "gpt-4o-mini", chooseDefault: true).WaitAsync(Patience);
-        var egOne = await presenter.RefreshModelChoicesAsync(PolishProvider.EgOne, null, string.Empty, chooseDefault: true).WaitAsync(Patience);
+        var none = await RefreshAsync(presenter, PolishProvider.None, null, "gpt-4o-mini", chooseDefault: true).WaitAsync(Patience);
+        var egOne = await RefreshAsync(presenter, PolishProvider.EgOne, null, string.Empty, chooseDefault: true).WaitAsync(Patience);
 
         Assert.Empty(none!.Models);
         Assert.Null(none.Discovery);
@@ -108,7 +108,7 @@ public sealed class ProviderSettingsPresenterTests
         var (presenter, _, models) = Build();
         models.Answer = new PolishModelDiscovery(PolishModelDiscoveryStatus.MissingCredential, []);
 
-        var choices = await presenter.RefreshModelChoicesAsync(PolishProvider.OpenAI, null, string.Empty, chooseDefault: true).WaitAsync(Patience);
+        var choices = await RefreshAsync(presenter, PolishProvider.OpenAI, null, string.Empty, chooseDefault: true).WaitAsync(Patience);
 
         Assert.Equal(["gpt-recommended"], choices!.Models);
         Assert.Equal("gpt-recommended", choices.ModelToApply);
@@ -122,18 +122,18 @@ public sealed class ProviderSettingsPresenterTests
         models.Answer = new PolishModelDiscovery(PolishModelDiscoveryStatus.Ready, ["gpt-a", "gpt-b"]);
 
         // A typed model of this provider that the listing does not show is kept as typed.
-        var kept = await presenter.RefreshModelChoicesAsync(PolishProvider.OpenAI, null, "gpt-custom", chooseDefault: true).WaitAsync(Patience);
+        var kept = await RefreshAsync(presenter, PolishProvider.OpenAI, null, "gpt-custom", chooseDefault: true).WaitAsync(Patience);
         Assert.Equal(["gpt-a", "gpt-b"], kept!.Models);
         Assert.Null(kept.ModelToApply);
         Assert.Equal(-1, kept.SelectedIndex);
 
         // A model of another provider is replaced by the first choice.
-        var replaced = await presenter.RefreshModelChoicesAsync(PolishProvider.OpenAI, null, "claude-haiku", chooseDefault: true).WaitAsync(Patience);
+        var replaced = await RefreshAsync(presenter, PolishProvider.OpenAI, null, "claude-haiku", chooseDefault: true).WaitAsync(Patience);
         Assert.Equal("gpt-a", replaced!.ModelToApply);
         Assert.Equal(0, replaced.SelectedIndex);
 
         // A model in the listing is selected, whatever its case.
-        var matched = await presenter.RefreshModelChoicesAsync(PolishProvider.OpenAI, null, " GPT-B ", chooseDefault: true).WaitAsync(Patience);
+        var matched = await RefreshAsync(presenter, PolishProvider.OpenAI, null, " GPT-B ", chooseDefault: true).WaitAsync(Patience);
         Assert.Null(matched!.ModelToApply);
         Assert.Equal(1, matched.SelectedIndex);
     }
@@ -144,7 +144,7 @@ public sealed class ProviderSettingsPresenterTests
         var (presenter, _, models) = Build();
         models.Answer = new PolishModelDiscovery(PolishModelDiscoveryStatus.Ready, []);
 
-        var choices = await presenter.RefreshModelChoicesAsync(PolishProvider.Gemini, null, string.Empty, chooseDefault: false).WaitAsync(Patience);
+        var choices = await RefreshAsync(presenter, PolishProvider.Gemini, null, string.Empty, chooseDefault: false).WaitAsync(Patience);
 
         Assert.Equal(["gemini-recommended"], choices!.Models);
         Assert.Null(choices.ModelToApply);
@@ -157,22 +157,59 @@ public sealed class ProviderSettingsPresenterTests
         var (presenter, _, models) = Build();
         models.Answer = new PolishModelDiscovery(PolishModelDiscoveryStatus.Ready, ["llama3", "phi4"]);
 
-        var blank = await presenter.RefreshModelChoicesAsync(PolishProvider.Ollama, "http://127.0.0.1:11434", string.Empty, chooseDefault: true).WaitAsync(Patience);
+        var blank = await RefreshAsync(presenter, PolishProvider.Ollama, "http://127.0.0.1:11434", string.Empty, chooseDefault: true).WaitAsync(Patience);
         Assert.Equal("http://127.0.0.1:11434", models.LastEndpoint);
         Assert.Equal("llama3", blank!.ModelToApply);
 
-        var typed = await presenter.RefreshModelChoicesAsync(PolishProvider.Ollama, null, "phi4", chooseDefault: true).WaitAsync(Patience);
+        var typed = await RefreshAsync(presenter, PolishProvider.Ollama, null, "phi4", chooseDefault: true).WaitAsync(Patience);
         Assert.Null(typed!.ModelToApply);
         Assert.Equal(1, typed.SelectedIndex);
 
-        var unknown = await presenter.RefreshModelChoicesAsync(PolishProvider.Ollama, null, "mistral", chooseDefault: true).WaitAsync(Patience);
+        var unknown = await RefreshAsync(presenter, PolishProvider.Ollama, null, "mistral", chooseDefault: true).WaitAsync(Patience);
         Assert.Equal("llama3", unknown!.ModelToApply);
 
         models.Answer = new PolishModelDiscovery(PolishModelDiscoveryStatus.OllamaNotReady, []);
-        var down = await presenter.RefreshModelChoicesAsync(PolishProvider.Ollama, null, "phi4", chooseDefault: true).WaitAsync(Patience);
+        var down = await RefreshAsync(presenter, PolishProvider.Ollama, null, "phi4", chooseDefault: true).WaitAsync(Patience);
         Assert.Empty(down!.Models);
         Assert.Null(down.ModelToApply);
         Assert.Equal(PolishModelDiscoveryStatus.OllamaNotReady, down.Discovery!.Status);
+    }
+
+    [Fact]
+    public async Task AModelTypedWhileTheListingWasOutIsHonoured()
+    {
+        // THE FIELD IS READ WHEN THE LISTING IS APPLIED. The request left with the field holding the
+        // old provider's model; by the time the listing is applied the person has typed one of the
+        // new provider's, and that is what the decision is made against.
+        var (presenter, _, models) = Build();
+        models.Hold = true;
+        var listing = presenter.ListModelsAsync(PolishProvider.OpenAI, null);
+        await models.Entered.Task.WaitAsync(Patience);
+        models.Answer = new PolishModelDiscovery(PolishModelDiscoveryStatus.Ready, ["gpt-a"]);
+        models.Release.SetResult();
+        var listed = await listing.WaitAsync(Patience);
+
+        var choices = presenter.Choose(listed!, "gpt-typed-meanwhile", chooseDefault: true);
+
+        Assert.Null(choices.ModelToApply);
+        Assert.Equal(-1, choices.SelectedIndex);
+    }
+
+    [Fact]
+    public async Task AListingCurrentWhenItReturnedIsRefusedIfAnotherRefreshBeganBeforeItWasApplied()
+    {
+        // THE SECOND QUESTION. Listing A returns current; before the page applies it, the person
+        // changes provider and listing B completes. Asked again on the page's thread, A is no longer
+        // the latest and is not applied; B is.
+        var (presenter, _, models) = Build();
+        var a = await presenter.ListModelsAsync(PolishProvider.OpenAI, null).WaitAsync(Patience);
+        Assert.NotNull(a);
+        Assert.True(presenter.IsCurrent(a.Ticket));
+
+        var b = await presenter.ListModelsAsync(PolishProvider.None, null).WaitAsync(Patience);
+
+        Assert.False(presenter.IsCurrent(a.Ticket));
+        Assert.True(presenter.IsCurrent(b!.Ticket));
     }
 
     [Fact]
@@ -183,16 +220,30 @@ public sealed class ProviderSettingsPresenterTests
         // chosen last rather than whichever provider's listing happened to arrive last.
         var (presenter, _, models) = Build();
         models.Hold = true;
-        var first = presenter.RefreshModelChoicesAsync(PolishProvider.OpenAI, null, string.Empty, chooseDefault: true);
+        var first = RefreshAsync(presenter, PolishProvider.OpenAI, null, string.Empty, chooseDefault: true);
         await models.Entered.Task.WaitAsync(Patience);
 
         models.Hold = false;
         models.Answer = new PolishModelDiscovery(PolishModelDiscoveryStatus.Ready, ["claude-x"]);
-        var second = await presenter.RefreshModelChoicesAsync(PolishProvider.Anthropic, null, string.Empty, chooseDefault: true).WaitAsync(Patience);
+        var second = await RefreshAsync(presenter, PolishProvider.Anthropic, null, string.Empty, chooseDefault: true).WaitAsync(Patience);
         Assert.Equal(["claude-x"], second!.Models);
 
         models.Release.SetResult();
         Assert.Null(await first.WaitAsync(Patience));
+    }
+
+    /// <summary>The two steps the page takes, as one: list, then choose against the field as it stands.</summary>
+    private static async Task<PolishModelChoices?> RefreshAsync(
+        ProviderSettingsPresenter presenter,
+        PolishProvider provider,
+        string? ollamaEndpoint,
+        string currentModelId,
+        bool chooseDefault)
+    {
+        var listing = await presenter.ListModelsAsync(provider, ollamaEndpoint);
+        return listing is null || !presenter.IsCurrent(listing.Ticket)
+            ? null
+            : presenter.Choose(listing, currentModelId, chooseDefault);
     }
 
     private static (ProviderSettingsPresenter Presenter, FakeKeys Keys, FakeModels Models) Build()

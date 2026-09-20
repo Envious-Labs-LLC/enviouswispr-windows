@@ -3689,19 +3689,19 @@ public sealed partial class MainWindow : Window, IDisposable
                 : Visibility.Collapsed;
         RefreshPolishModelsButton.IsEnabled = false;
 
-        // THE CONTROLS ARE READ HERE, ON THE UI THREAD, BEFORE THE DISCOVERY; the presenter decides
-        // what the field and the picker should show, and a refresh overtaken by a later one comes
-        // back as nothing, so the page shows the provider chosen last.
-        var choices = await _providerPresenter.RefreshModelChoicesAsync(
-                provider,
-                NullIfBlank(OllamaEndpointTextBox.Text),
-                PolishModelTextBox.Text,
-                chooseDefault)
+        // THE ENDPOINT IS READ HERE, ON THE UI THREAD, BEFORE THE DISCOVERY; THE MODEL FIELD IS READ
+        // AFTER IT, so a model typed while the listing was out is the one the decision is made
+        // against. A listing overtaken by a later refresh comes back as nothing, and the one that
+        // came back is asked once more, here with no wait in between, whether it is still the
+        // latest - a person can change provider between the answer and this thread.
+        var listing = await _providerPresenter.ListModelsAsync(provider, NullIfBlank(OllamaEndpointTextBox.Text))
             .ConfigureAwait(true);
-        if (choices is null)
+        if (listing is null || !_providerPresenter.IsCurrent(listing.Ticket))
         {
             return;
         }
+
+        var choices = _providerPresenter.Choose(listing, PolishModelTextBox.Text, chooseDefault);
 
         // All three model controls follow the PROVIDER, not just the two that used to. With the
         // provider set to None the picker and the refresh button were correctly disabled while

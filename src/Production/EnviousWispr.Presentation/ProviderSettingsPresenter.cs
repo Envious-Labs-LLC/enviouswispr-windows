@@ -80,6 +80,15 @@ public sealed record PolishModelChoices(
     string? ModelToApply,
     PolishModelDiscovery? Discovery);
 
+/// <summary>What a provider offers, as listed for one refresh.</summary>
+/// <param name="Ticket">Which refresh asked; the page checks it is still the latest right before applying.</param>
+/// <param name="Discovery">What discovery reported, or null when the provider has nothing to discover.</param>
+public sealed record PolishModelListing(
+    int Ticket,
+    PolishProvider Provider,
+    IReadOnlyList<string> Models,
+    PolishModelDiscovery? Discovery);
+
 /// <summary>The decisions the Polish page makes about providers, their keys and their models, without the page.</summary>
 /// <remarks>
 /// THE SECRET NEVER LEAVES THE STORE THROUGH HERE. The presenter stores and deletes; it reads only a
@@ -87,8 +96,12 @@ public sealed record PolishModelChoices(
 /// no transcript, no generation request - which is the consent line product invariant 4 draws.
 ///
 /// A LATE ANSWER IS THROWN AWAY. Discovery takes as long as the provider takes, and a person can
-/// change provider twice in that time; every refresh carries a version, and a result whose version
-/// has been overtaken is answered with null so the page shows the provider chosen last.
+/// change provider twice in that time; every refresh carries a ticket, a listing overtaken by the
+/// time it returns is answered with null, and the page asks <see cref="IsCurrent"/> once more on its
+/// own thread right before it applies one, so the page shows the provider chosen last.
+///
+/// THE FIELD IS READ WHEN THE LISTING IS APPLIED, NOT WHEN IT WAS ASKED FOR. Listing and choosing are
+/// two steps for that reason: a model typed while the listing was out is honoured.
 /// </remarks>
 public sealed class ProviderSettingsPresenter
 {
@@ -167,19 +180,14 @@ public sealed class ProviderSettingsPresenter
         }
     }
 
-    /// <summary>Works out what the model controls should show for a provider, discovering where the provider allows it.</summary>
-    /// <param name="currentModelId">The model id in the free-text field as it stands.</param>
-    /// <param name="chooseDefault">Whether a field that names no plausible model should be filled with the first choice.</param>
-    /// <returns>The choices, or null when a later refresh has overtaken this one.</returns>
-    public async Task<PolishModelChoices?> RefreshModelChoicesAsync(
+    /// <summary>Lists what the provider offers, discovering where the provider allows it.</summary>
+    /// <returns>The listing, or null when a later refresh has overtaken this one by the time it returns.</returns>
+    public async Task<PolishModelListing?> ListModelsAsync(
         PolishProvider provider,
         string? ollamaEndpoint,
-        string currentModelId,
-        bool chooseDefault,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(currentModelId);
-        var version = Interlocked.Increment(ref _discoveryVersion);
+        var ticket = Interlocked.Increment(ref _discoveryVersion);
 
         IReadOnlyList<string> models = provider switch
         {
@@ -205,11 +213,29 @@ public sealed class ProviderSettingsPresenter
             }
         }
 
-        if (version != Volatile.Read(ref _discoveryVersion))
-        {
-            return null;
-        }
+        return IsCurrent(ticket) ? new PolishModelListing(ticket, provider, models, discovery) : null;
+    }
 
+    /// <summary>Whether a listing is still the latest asked for. The page asks again on its own thread, right before it applies one.</summary>
+    /// <remarks>
+    /// ASKED TWICE, ON PURPOSE. The listing answers its own question when it returns, but the page
+    /// applies it on the UI thread some time later, and a person can change provider in between; the
+    /// second question is asked there, with no wait between the answer and the controls.
+    /// </remarks>
+    public bool IsCurrent(int ticket) => ticket == Volatile.Read(ref _discoveryVersion);
+
+    /// <summary>Works out what the model controls should show, from a listing and the field as it stands now.</summary>
+    /// <param name="currentModelId">The model id in the free-text field at the moment of applying - not when the listing was asked for.</param>
+    /// <param name="chooseDefault">Whether a field that names no plausible model should be filled with the first choice.</param>
+    /// <remarks>
+    /// PURE, AND READ AT THE MOMENT OF APPLYING. A model typed while the listing was out is the one
+    /// the person wants; deciding against the text as it was when the request left would overwrite it.
+    /// </remarks>
+    public PolishModelChoices Choose(PolishModelListing listing, string currentModelId, bool chooseDefault)
+    {
+        ArgumentNullException.ThrowIfNull(listing);
+        ArgumentNullException.ThrowIfNull(currentModelId);
+        var models = listing.Models;
         var current = currentModelId.Trim();
         var selectedIndex = IndexOf(models, current);
         string? modelToApply = null;
@@ -218,8 +244,8 @@ public sealed class ProviderSettingsPresenter
             // A CLOUD FIELD THAT ALREADY NAMES ONE OF THAT PROVIDER'S MODELS IS LEFT ALONE, even when
             // the listing does not include it: somebody typed a model the catalog does not show.
             // Anything else - blank, or a model from another provider - takes the first choice.
-            var shouldChoose = IsCloudProvider(provider)
-                ? !_models.ModelIdBelongsTo(current, provider)
+            var shouldChoose = IsCloudProvider(listing.Provider)
+                ? !_models.ModelIdBelongsTo(current, listing.Provider)
                 : current.Length == 0 || !models.Contains(current, StringComparer.OrdinalIgnoreCase);
             if (shouldChoose)
             {
@@ -228,7 +254,7 @@ public sealed class ProviderSettingsPresenter
             }
         }
 
-        return new PolishModelChoices(provider, models, selectedIndex, modelToApply, discovery);
+        return new PolishModelChoices(listing.Provider, models, selectedIndex, modelToApply, listing.Discovery);
     }
 
     private static int IndexOf(IReadOnlyList<string> models, string current)
