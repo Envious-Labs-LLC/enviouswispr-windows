@@ -147,6 +147,8 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     private readonly Channel<QueuedCommand> _queue;
     private readonly CancellationTokenSource _stopping = new();
     private readonly object _admission = new();
+    private readonly List<Task> _expiries = [];
+    private bool _expiryFaulted;
     private readonly Task _consumer;
     private int _pendingOrRunning;
     private int _gateWaitsEntered;
@@ -217,9 +219,9 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 
     /// <summary>
     /// Windows is locking or suspending. Admitted whatever else is queued - the fact is a fact - and
-    /// run after it; an interruption that then waited longer than <paramref name="patience"/> stands
-    /// down when it runs, reporting that recovery is still pending, which is what the shell's
-    /// five-second wait for the session gate used to do.
+    /// run after it. If it has not reached the session in <see cref="InterruptionPatience"/>, the
+    /// executor is told at that moment that recovery is pending - what the shell's five-second wait
+    /// for its gate used to report - and the interruption is skipped when its turn comes.
     /// </summary>
     public Task<SessionCommandResult> InterruptAsync(SystemLifecycleTransition transition) =>
         Submit(new SessionCommand(SessionCommandKind.Interruption, PushToTalkSignal.Cancelled, Transition: transition));
@@ -369,16 +371,23 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 
         if (command.Kind == SessionCommandKind.Interruption)
         {
-            _ = ExpireIfLateAsync(queued);
+            // OWNED WORK, NOT FIRE-AND-FORGET: the stop waits for every expiry it started, so a
+            // notification cannot land after the shell has torn down what it would touch.
+            lock (_admission)
+            {
+                _expiries.RemoveAll(expiry => expiry.IsCompleted);
+                _expiries.Add(ExpireIfLateAsync(queued));
+            }
         }
 
         return queued.Completion.Task;
     }
 
     /// <summary>
-    /// The five seconds an interruption may wait. If the command has not started by then it is marked
-    /// expired - under the admission lock, so it either starts or expires, never both - and the
-    /// executor is told, outside the session, while whatever is ahead of it carries on.
+    /// The five seconds an interruption may wait. If the command has not started by then - whether it
+    /// is behind a running command or parked behind a hold - it is marked expired, under the admission
+    /// lock, so it either starts or expires, never both, and the executor is told, outside the
+    /// session, while whatever is ahead of it carries on. Nothing is told after admission has closed.
     /// </summary>
     private async Task ExpireIfLateAsync(QueuedCommand queued)
     {
@@ -394,7 +403,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 
         lock (_admission)
         {
-            if (queued.Started)
+            if (queued.Started || _closed)
             {
                 return;
             }
@@ -402,7 +411,16 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             queued.Expired = true;
         }
 
-        await _executor.ExpireAsync(queued.Command).ConfigureAwait(false);
+        try
+        {
+            await _executor.ExpireAsync(queued.Command).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            // OBSERVED, NOT LOST. A notification that threw is a fault in the shell's status line, not
+            // in the session; it is remembered and reported by the stop as an unclean one.
+            Volatile.Write(ref _expiryFaulted, true);
+        }
     }
 
     /// <summary>
@@ -417,8 +435,18 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         // flight owns a microphone or a transcription and finishes on its own terms; what must not
         // happen is a consumer parked on the shared gate forever after the shell has moved on.
         await _stopping.CancelAsync().ConfigureAwait(false);
-        var finished = await Task.WhenAny(_consumer, Task.Delay(timeout)).ConfigureAwait(false);
-        return ReferenceEquals(finished, _consumer);
+        Task[] expiries;
+        lock (_admission)
+        {
+            expiries = [.. _expiries];
+        }
+
+        // THE EXPIRIES ARE JOINED WITH THE CONSUMER. Each is either cancelled by the token above or
+        // already notifying; a notification in flight finishes before the stop reports, so nothing it
+        // touches is torn down under it.
+        var work = Task.WhenAll([_consumer, .. expiries]);
+        var finished = await Task.WhenAny(work, Task.Delay(timeout)).ConfigureAwait(false);
+        return ReferenceEquals(finished, work) && !Volatile.Read(ref _expiryFaulted);
     }
 
     public async ValueTask DisposeAsync()
@@ -459,48 +487,50 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     {
         SessionCommandResult result;
         var holdingGate = queued.GateReserved;
-        bool expired;
-        lock (_admission)
-        {
-            // STARTED OR EXPIRED, DECIDED UNDER ONE LOCK. An interruption that expired while it waited
-            // is skipped here; one that starts here can no longer expire.
-            expired = queued.Expired;
-            queued.Started = !expired;
-        }
-
         try
         {
-            if (expired)
+            var waited = false;
+            if (!holdingGate && !_stopping.IsCancellationRequested)
             {
-                result = new SessionCommandResult(SessionCommandDisposition.Ignored, WasQueued: true);
-            }
-            else if (_stopping.IsCancellationRequested)
-            {
-                result = new SessionCommandResult(SessionCommandDisposition.Stopping);
-            }
-            else
-            {
-                var waited = false;
-                if (!holdingGate)
+                if (!_sessionGate.Wait(0))
                 {
-                    if (!_sessionGate.Wait(0))
-                    {
-                        // THE WAITER EXISTS BEFORE IT IS COUNTED. A test that reads the count and then
-                        // releases the gate must find a registered waiter, not a consumer about to
-                        // probe again and succeed on its own.
-                        var pending = _sessionGate.WaitAsync(_stopping.Token);
-                        Interlocked.Increment(ref _gateWaitsEntered);
-                        await pending.ConfigureAwait(false);
-                        waited = true;
-                    }
-
-                    holdingGate = true;
+                    // THE WAITER EXISTS BEFORE IT IS COUNTED. A test that reads the count and then
+                    // releases the gate must find a registered waiter, not a consumer about to
+                    // probe again and succeed on its own.
+                    var pending = _sessionGate.WaitAsync(_stopping.Token);
+                    Interlocked.Increment(ref _gateWaitsEntered);
+                    await pending.ConfigureAwait(false);
+                    waited = true;
                 }
 
+                holdingGate = true;
+            }
+
+            // COMMITTED UNDER ONE LOCK, WITH THE GATE OWNED: still open, not expired, and only now
+            // started. A wait on the gate that ended just before admission closed does not run; an
+            // interruption that expired while parked behind a hold does not run; one that starts
+            // here can no longer expire.
+            bool committed;
+            lock (_admission)
+            {
+                committed = holdingGate && !_closed && !queued.Expired;
+                queued.Started = committed;
+            }
+
+            if (committed)
+            {
                 var executed = await _executor
                     .ExecuteAsync(queued.Command, _stopping.Token)
                     .ConfigureAwait(false);
                 result = executed with { WasQueued = executed.WasQueued || waited || queued.WaitedInQueue };
+            }
+            else if (queued.Expired)
+            {
+                result = new SessionCommandResult(SessionCommandDisposition.Ignored, WasQueued: true);
+            }
+            else
+            {
+                result = new SessionCommandResult(SessionCommandDisposition.Stopping);
             }
         }
         catch (OperationCanceledException) when (_stopping.IsCancellationRequested)

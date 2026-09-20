@@ -791,7 +791,11 @@ public partial class App : Application, IAsyncDisposable
         {
             _window?.SetUpdateCheckInProgress();
             var result = await _updateService.CheckDownloadAndVerifyAsync().ConfigureAwait(true);
-            _window?.SetUpdateStatus(result);
+            // THE APP MAY HAVE LEFT WHILE THE DOWNLOAD RAN; the window is not told anything then.
+            if (!_exitRequested && !_disposed)
+            {
+                _window?.SetUpdateStatus(result);
+            }
         }
     }
 
@@ -830,6 +834,10 @@ public partial class App : Application, IAsyncDisposable
                 _window?.SetUpdateStatus(new UpdateOperationResult(UpdateOperationStatus.Failed));
                 return;
             }
+
+            // ADMISSION CLOSES INSIDE THE HOLD. The restart is going to happen; a key that lands between
+            // the hold going back and the exit path closing admission would otherwise be admitted.
+            _sessionCoordinator?.Close();
         }
 
         await PrepareForExitAsync().ConfigureAwait(true);
