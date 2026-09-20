@@ -584,32 +584,45 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void TheWaitIsReportedHoweverTheDictationEnds()
     {
-        var source = File.ReadAllText(
-            Path.Combine(
-                FindRepositoryRoot(),
-                "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+        // THE WRITE LIVES IN THE SHELL AND THE FINALLY LIVES IN PIPELINE, since step 6 on #148 moved
+        // the finalisation out of the shell behind an effects port. So the gate has to prove a CHAIN,
+        // not two facts: the runner's finally calls the port unconditionally, and the shell's only
+        // write of the event is the port's implementation, using the number it was handed. Two
+        // disconnected token searches let the write wander anywhere - a reviewer showed the event
+        // could be logged from "Transcribing..." with both searches still green.
+        var root = FindRepositoryRoot();
+        var shell = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(
+            root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"))).GetRoot();
+        var runner = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(
+            root, "src", "Production", "EnviousWispr.Pipeline", "SessionFinalizationRunner.cs"))).GetRoot();
 
-        var writes = source.Split("AppEventCode.DictationCompleted").Length - 1;
-        Assert.True(writes == 1, $"Expected exactly one place to report the wait, found {writes}.");
-
-        var block = FinallyBlock().Matches(source)
-            .Select(match => match.Value)
-            .Where(body => body.Contains("AppEventCode.DictationCompleted", StringComparison.Ordinal))
-            .ToArray();
-
+        // The runner: RunAsync has exactly one finally, and it invokes the port there and nowhere else.
+        var run = runner.DescendantNodes().OfType<MethodDeclarationSyntax>()
+            .Single(method => method.Identifier.ValueText == "RunAsync");
+        var finallys = run.DescendantNodes().OfType<FinallyClauseSyntax>().ToArray();
+        Assert.True(finallys.Length == 1, $"Expected one finally in RunAsync, found {finallys.Length}.");
+        var reportsInFinally = finallys[0].DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Count(call => call.Expression.ToString().EndsWith("RecordDictationCompleted", StringComparison.Ordinal));
+        var reportsAnywhere = run.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Count(call => call.Expression.ToString().EndsWith("RecordDictationCompleted", StringComparison.Ordinal));
         Assert.True(
-            block.Length == 1,
-            "The wait is not reported from a finally, so an exit path can leave without reporting it.");
+            reportsInFinally == 1 && reportsAnywhere == 1,
+            "The wait is not reported from the finally, or is reported elsewhere too, so an exit path can leave "
+                + $"without reporting it or report it twice (finally={reportsInFinally}, total={reportsAnywhere}).");
 
-        // Control: the matcher must find finally blocks that do NOT report the wait, or a matcher
-        // that matched nothing would fail this test for the wrong reason and one that matched
-        // everything would pass it for the wrong reason.
-        var allFinallys = FinallyBlock().Count(source);
-        Assert.True(allFinallys > 1, $"Expected several finally blocks in this file, found {allFinallys}.");
+        // The shell: the only write of the event is the port implementation, and it uses its argument.
+        var writers = shell.DescendantNodes().OfType<MethodDeclarationSyntax>()
+            .Where(method => method.ToString().Contains("AppEventCode.DictationCompleted", StringComparison.Ordinal))
+            .ToArray();
+        var writer = Assert.Single(writers);
+        Assert.Equal("RecordDictationCompleted", writer.Identifier.ValueText);
+        var parameter = Assert.Single(writer.ParameterList.Parameters).Identifier.ValueText;
+        Assert.Contains(
+            writer.DescendantNodes().OfType<IdentifierNameSyntax>(),
+            name => name.Identifier.ValueText == parameter);
+        var writesInShell = shell.ToFullString().Split("AppEventCode.DictationCompleted").Length - 1;
+        Assert.True(writesInShell == 1, $"Expected exactly one place to write the event, found {writesInShell}.");
     }
-
-    [GeneratedRegex(@"finally\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", RegexOptions.Singleline)]
-    private static partial Regex FinallyBlock();
 
     /// <summary>
     /// The auto-stop watcher is torn down everywhere the live preview is.
