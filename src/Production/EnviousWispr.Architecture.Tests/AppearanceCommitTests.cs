@@ -123,7 +123,7 @@ public sealed class AppearanceCommitTests
     /// READING THE CONTROLS IS NOT ENOUGH; THE VALUES READ HAVE TO BE THE ONES SUBMITTED. Three reads
     /// into unused locals and a snapshot of defaults would reach the presenter and be written
     /// faithfully. So the snapshot's constructor arguments are inspected one by one, and the call
-    /// that hands it over must be given that very snapshot.
+    /// that hands it over must be the very next statement, given that very snapshot.
     /// </remarks>
     [Fact]
     public void TheWindowHandsOverASnapshotBuiltFromItsThreeControls()
@@ -146,21 +146,26 @@ public sealed class AppearanceCommitTests
             ["ThemeFromIndex(SelectedIndexOf(ThemeChoices))", "OverlayPositionFromIndex(SelectedIndexOf(OverlayPositionChoices))", "PillDesignWithoutWordsFromControls()"],
             arguments);
 
-        // The snapshot is a named local, that local - not another - is what SaveAppearanceAsync gets,
-        // and nothing writes to it in between: not an assignment, not a ref or out argument.
+        // THE SNAPSHOT IS DECLARED IN ONE STATEMENT AND HANDED OVER IN THE VERY NEXT, in the same
+        // block. Nothing can be written to it in between because there is no in between: not an
+        // assignment, a deconstruction, a ref alias, nor a sibling declaration of the same name.
         var declarator = Assert.IsType<VariableDeclaratorSyntax>(creation.Parent?.Parent);
         var local = declarator.Identifier.ValueText;
+        var declaration = Assert.IsType<LocalDeclarationStatementSyntax>(declarator.Parent?.Parent);
+        var block = Assert.IsType<BlockSyntax>(declaration.Parent);
+        var index = block.Statements.IndexOf(declaration);
+        Assert.True(index >= 0 && index + 1 < block.Statements.Count, "The snapshot is the last statement of its block; nothing hands it over.");
+        var next = block.Statements[index + 1];
         var handOver = Assert.Single(
-            persist.DescendantNodes().OfType<InvocationExpressionSyntax>(),
+            next.DescendantNodes().OfType<InvocationExpressionSyntax>(),
             invocation => invocation.Expression.ToString().EndsWith("SaveAppearanceAsync", StringComparison.Ordinal));
         var handed = Assert.Single(handOver.ArgumentList.Arguments);
         Assert.Equal(local, handed.Expression.ToString());
-        Assert.DoesNotContain(
-            persist.DescendantNodes().OfType<AssignmentExpressionSyntax>(),
-            assignment => assignment.Left.ToString() == local);
-        Assert.DoesNotContain(
-            persist.DescendantNodes().OfType<ArgumentSyntax>(),
-            argument => argument.RefKindKeyword.RawKind != 0 && argument.Expression.ToString() == local);
+
+        // And that is the only hand-over in the method, so no other snapshot reaches the presenter.
+        Assert.Single(
+            persist.DescendantNodes().OfType<InvocationExpressionSyntax>(),
+            invocation => invocation.Expression.ToString().EndsWith("SaveAppearanceAsync", StringComparison.Ordinal));
     }
 
     private sealed class RecordingStore : ISettingsStore
