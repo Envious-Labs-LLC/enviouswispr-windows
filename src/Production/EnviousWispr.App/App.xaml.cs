@@ -1297,7 +1297,7 @@ public partial class App : Application, IAsyncDisposable
         _sessionCoordinator = new DictationSessionCoordinator(
             new ShellGuardedExecutor(
                 this,
-                new DictationSessionExecutor(sessionController, new SessionEffects(this))),
+                new DictationSessionExecutor(sessionController, new SessionEffects(this, sessionController))),
             _sessionOperationGate,
             sessionController.CaptureStartContext);
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
@@ -2211,8 +2211,13 @@ public partial class App : Application, IAsyncDisposable
     /// app log, and the timers, preview, streaming and final processing stay where they are until their
     /// own steps on #148 move them.
     /// </summary>
-    private sealed class SessionEffects(App app) : IDictationSessionEffects
+    private sealed class SessionEffects(App app, PushToTalkSessionController controller) : IDictationSessionEffects
     {
+        // THE DEADLINE OUTLIVES THE FINALISATION IT GUARDS. Armed here, cleared and disposed only when the
+        // executor says the command is over - after any recovery - so lock/suspend recovery and shutdown,
+        // which cancel it from their own callbacks, still find it while the recovery is running.
+        private CancellationTokenSource? _commandProcessing;
+
         public bool HasPendingRecovery => app._hasPendingRecovery;
 
         public bool EscapeRecoveryEnabled => app._settings.Preferences.Dictation.EscapeRecoveryEnabled;
@@ -2272,12 +2277,6 @@ public partial class App : Application, IAsyncDisposable
 
         public async Task OnRecordingStartedAsync(DictationSessionId sessionId)
         {
-            var controller = app._sessionController;
-            if (controller is null)
-            {
-                return;
-            }
-
             app.StartRecordingWatchdog(controller, sessionId);
             await app.StartLivePreviewAsync(sessionId).ConfigureAwait(false);
             app.StartAutoStopWatch(sessionId);
@@ -2286,38 +2285,38 @@ public partial class App : Application, IAsyncDisposable
 
         public async Task FinalizeAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly)
         {
-            var controller = app._sessionController;
-            if (controller is null)
+            // THE PROCESSING DEADLINE IS THE SHELL'S, because lock/suspend recovery and shutdown cancel it
+            // from their own callbacks, and both still live here.
+            var processingCancellation = new CancellationTokenSource(MaximumFinalProcessingDuration);
+            _commandProcessing = processingCancellation;
+            app._activeProcessingCancellation = processingCancellation;
+            await app.StopStreamingTranscriptionAsync().ConfigureAwait(false);
+            await app.StopAutoStopWatchAsync().ConfigureAwait(false);
+            await app.StopLivePreviewAsync().ConfigureAwait(false);
+            await app.TranscribeFinalAsync(
+                    controller,
+                    sessionId,
+                    audio,
+                    processingCancellation.Token,
+                    recoveryOnly)
+                .ConfigureAwait(false);
+        }
+
+        public void ReleaseProcessingDeadline()
+        {
+            var processingCancellation = _commandProcessing;
+            if (processingCancellation is null)
             {
                 return;
             }
 
-            // THE PROCESSING DEADLINE IS THE SHELL'S, because lock/suspend recovery and shutdown cancel it
-            // from their own callbacks, and both still live here.
-            var processingCancellation = new CancellationTokenSource(MaximumFinalProcessingDuration);
-            app._activeProcessingCancellation = processingCancellation;
-            try
+            _commandProcessing = null;
+            if (ReferenceEquals(app._activeProcessingCancellation, processingCancellation))
             {
-                await app.StopStreamingTranscriptionAsync().ConfigureAwait(false);
-                await app.StopAutoStopWatchAsync().ConfigureAwait(false);
-                await app.StopLivePreviewAsync().ConfigureAwait(false);
-                await app.TranscribeFinalAsync(
-                        controller,
-                        sessionId,
-                        audio,
-                        processingCancellation.Token,
-                        recoveryOnly)
-                    .ConfigureAwait(false);
+                app._activeProcessingCancellation = null;
             }
-            finally
-            {
-                if (ReferenceEquals(app._activeProcessingCancellation, processingCancellation))
-                {
-                    app._activeProcessingCancellation = null;
-                }
 
-                processingCancellation.Dispose();
-            }
+            processingCancellation.Dispose();
         }
 
         public async Task StopBackgroundWorkAsync()
@@ -2337,33 +2336,33 @@ public partial class App : Application, IAsyncDisposable
                 AppEventCode.DictationSessionFailed,
                 AppFailureCategory.Unknown));
 
-        public Task RecoverFailedSessionAsync(AppError failure, SessionFailureKind kind)
-        {
-            var controller = app._sessionController;
-            if (controller is null)
-            {
-                return Task.CompletedTask;
-            }
-
-            return app.RecoverFailedSessionAsync(
+        public Task RecoverFailedSessionAsync(AppError failure, SessionFailureKind kind) =>
+            app.RecoverFailedSessionAsync(
                 controller,
                 failure,
                 kind == SessionFailureKind.TimedOut
                     ? DictationStatus.Quiet("The dictation timed out and was recovered safely")
                     : DictationStatus.Error("Session failed and was reset safely"));
-        }
 
         public Task RecordDictationEdgeAsync() => app.RecordDictationEdgeAsync();
     }
 
-    /// <summary>Refuses commands once the shell is leaving; otherwise the Pipeline executor decides.</summary>
+    /// <summary>
+    /// Refuses commands once the shell is leaving, or once it has let go of its controller; otherwise the
+    /// Pipeline executor decides. The two entry checks the old handler made, in the same order.
+    /// </summary>
     private sealed class ShellGuardedExecutor(App app, ISessionCommandExecutor inner) : ISessionCommandExecutor
     {
         public Task<SessionCommandResult> ExecuteAsync(SessionCommand command, CancellationToken stoppingToken)
         {
             ArgumentNullException.ThrowIfNull(command);
-            return app._exitRequested || app._disposed
-                ? Task.FromResult(new SessionCommandResult(SessionCommandDisposition.Stopping))
+            if (app._exitRequested || app._disposed)
+            {
+                return Task.FromResult(new SessionCommandResult(SessionCommandDisposition.Stopping));
+            }
+
+            return app._sessionController is null
+                ? Task.FromResult(new SessionCommandResult(SessionCommandDisposition.Ignored))
                 : inner.ExecuteAsync(command, stoppingToken);
         }
     }

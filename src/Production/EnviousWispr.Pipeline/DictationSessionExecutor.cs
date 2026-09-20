@@ -32,7 +32,7 @@ public interface IDictationSessionEffects
 
     /// <summary>
     /// Whether the recording under way was started with Escape Recovery on. Held by the shell because
-    /// final processing and the recording watchdog clear it on their own paths.
+    /// final processing and the shell's own transition-event handling clear it on their paths.
     /// </summary>
     bool EscapeRecoveryForSession { get; set; }
 
@@ -53,8 +53,18 @@ public interface IDictationSessionEffects
     /// <summary>The recording is open: watchdog, live preview, auto-stop, streaming, in that order.</summary>
     Task OnRecordingStartedAsync(DictationSessionId sessionId);
 
-    /// <summary>Capture is complete: stop the background work and turn the audio into delivered text.</summary>
+    /// <summary>
+    /// Capture is complete: stop the background work and turn the audio into delivered text. The
+    /// processing deadline this arms stays armed until <see cref="ReleaseProcessingDeadline"/>.
+    /// </summary>
     Task FinalizeAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly);
+
+    /// <summary>
+    /// Releases the processing deadline armed by <see cref="FinalizeAsync"/>, if this command armed one.
+    /// Called last, after any recovery, so that lock/suspend recovery and shutdown can still cancel a
+    /// finalisation that is being recovered - the order the shell always had.
+    /// </summary>
+    void ReleaseProcessingDeadline();
 
     /// <summary>The recording ended with nothing to process: stop the background work.</summary>
     Task StopBackgroundWorkAsync();
@@ -217,6 +227,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         }
         finally
         {
+            _effects.ReleaseProcessingDeadline();
             await _effects.RecordDictationEdgeAsync().ConfigureAwait(false);
         }
     }
