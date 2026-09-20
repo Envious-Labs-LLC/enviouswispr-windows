@@ -471,6 +471,37 @@ public sealed class DictationSessionCoordinatorTests
     }
 
     [Fact]
+    public async Task ACaptureThatThrowsAtAdmissionHandsTheGateBack()
+    {
+        var executor = new BarrierExecutor();
+        using var gate = new SemaphoreSlim(1, 1);
+        var throwOnce = true;
+        await using var coordinator = new DictationSessionCoordinator(executor, gate, () =>
+        {
+            if (throwOnce)
+            {
+                throwOnce = false;
+                throw new InvalidOperationException("synthetic capture failure");
+            }
+
+            return new RecordingStartContext(new TargetWindowId(101), TextDeliveryOptions.Default);
+        });
+
+        Assert.Throws<InvalidOperationException>(() =>
+        {
+            _ = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        });
+        Assert.Equal(0, coordinator.PendingCount);
+        Assert.Equal(1, gate.CurrentCount);
+
+        var next = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        executor.Finish(PushToTalkSignal.Pressed);
+        Assert.Equal(SessionCommandDisposition.Applied, (await next.WaitAsync(Patience)).Disposition);
+        Assert.Equal(1, gate.CurrentCount);
+    }
+
+    [Fact]
     public async Task QuickAddIsNotASessionCommand()
     {
         var executor = new BarrierExecutor();

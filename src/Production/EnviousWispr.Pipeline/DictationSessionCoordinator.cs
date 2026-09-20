@@ -155,8 +155,17 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 
                 gateReserved = true;
                 // STILL INSIDE THE CALLER'S FRAME. The hook reached the target capture synchronously
-                // before this queue existed; capturing here keeps that true.
-                startContext = _captureStartContext?.Invoke();
+                // before this queue existed; capturing here keeps that true. A capture that throws hands
+                // the gate back first: nothing has been queued yet, so nothing else ever would.
+                try
+                {
+                    startContext = _captureStartContext?.Invoke();
+                }
+                catch
+                {
+                    _sessionGate.Release();
+                    throw;
+                }
             }
             else if (_terminalPending)
             {

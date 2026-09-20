@@ -90,6 +90,14 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            // THE PROVIDER IS NOT ASKED WHEN THERE IS NOTHING TO START. A second press during a
+            // recording is answered Ignored before the foreground window is read, as it always was.
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (CurrentSession is not null)
+            {
+                return Ignored();
+            }
+
             return await PressCoreAsync(
                     _targetProvider.CaptureForegroundTarget(),
                     deliveryOptions,
