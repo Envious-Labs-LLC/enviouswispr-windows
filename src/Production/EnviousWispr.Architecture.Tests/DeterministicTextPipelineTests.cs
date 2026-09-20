@@ -215,6 +215,248 @@ public sealed class DeterministicTextPipelineTests
                 cancellation.Token));
     }
 
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    public async Task CompletedStagePreservesEachPathsChangedComparison(
+        bool restoration,
+        bool changeText,
+        bool changePolish)
+    {
+        var step = new DelegateStep(
+            DeterministicTextStage.EmojiRestoration,
+            context => context with
+            {
+                Text = changeText ? "changed text" : context.Text,
+                PolishedText = changePolish ? "changed polish" : context.PolishedText,
+            });
+
+        var result = await RunStageAsync(restoration, step);
+
+        Assert.Equal(changePolish ? "changed polish" : "polished input", result.Output.Text);
+        Assert.Equal(!restoration && changeText ? "changed text" : "safe", result.DeterministicText);
+        Assert.False(result.IsDegraded);
+        var receipt = result.Receipts.Single(item => item.Stage == step.Stage);
+        Assert.Equal(DeterministicStageStatus.Completed, receipt.Status);
+        Assert.Equal(changePolish || (!restoration && changeText), receipt.Changed);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ThrowingStagePreservesInputAndReportsFailure(bool restoration, bool timeout)
+    {
+        var step = new DelegateStep(
+            DeterministicTextStage.EmojiRestoration,
+            _ => throw (timeout
+                ? new TimeoutException("synthetic timeout")
+                : new InvalidOperationException("synthetic failure")));
+
+        var result = await RunStageAsync(restoration, step);
+
+        AssertStageFallback(result, timeout
+            ? DeterministicStageStatus.TimedOut
+            : DeterministicStageStatus.Failed);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task InvalidStageResultPreservesInputAndReportsFailure(bool restoration, bool nullText)
+    {
+        var step = new DelegateStep(
+            DeterministicTextStage.EmojiRestoration,
+            context => nullText ? context with { Text = null!, PolishedText = "invalid polish" } : null!);
+
+        var result = await RunStageAsync(restoration, step);
+
+        AssertStageFallback(result, DeterministicStageStatus.Failed);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BlockingStagePreservesInputAndReportsTimeout(bool restoration)
+    {
+        // THE WORKER CANNOT WIN THE DEADLINE RACE. Only the test releases it, after checking the
+        // fallback; waiting for its exit also keeps the gate alive until the worker is done with it.
+        using var release = new ManualResetEventSlim(false);
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var step = new DelegateStep(
+            DeterministicTextStage.EmojiRestoration,
+            context =>
+            {
+                try
+                {
+                    release.Wait(TimeSpan.FromSeconds(30));
+                    return context with { Text = "too late", PolishedText = "too late" };
+                }
+                finally
+                {
+                    finished.SetResult();
+                }
+            },
+            TimeSpan.FromMilliseconds(5));
+        try
+        {
+            var result = await RunStageAsync(restoration, step);
+
+            AssertStageFallback(result, DeterministicStageStatus.TimedOut);
+        }
+        finally
+        {
+            release.Set();
+            await finished.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CallerCancellationDuringStagePropagates(bool restoration)
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var release = new ManualResetEventSlim(false);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var step = new DelegateStep(
+            DeterministicTextStage.EmojiRestoration,
+            context =>
+            {
+                entered.SetResult();
+                try
+                {
+                    release.Wait(TimeSpan.FromSeconds(30));
+                    return context with { Text = "too late", PolishedText = "too late" };
+                }
+                finally
+                {
+                    finished.SetResult();
+                }
+            },
+            TimeSpan.FromSeconds(30));
+        try
+        {
+            var pending = RunStageAsync(restoration, step, cancellationToken: cancellation.Token);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            cancellation.Cancel();
+
+            var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+
+            Assert.Equal(cancellation.Token, exception.CancellationToken);
+        }
+        finally
+        {
+            release.Set();
+            await finished.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+    }
+
+    [Theory]
+    [InlineData(false, "cancellation")]
+    [InlineData(true, "cancellation")]
+    [InlineData(false, "stack-overflow")]
+    [InlineData(true, "stack-overflow")]
+    [InlineData(false, "out-of-memory")]
+    [InlineData(true, "out-of-memory")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2201:Do not raise reserved exception types",
+        Justification = "Synthetic failures verify the exception filter without exhausting memory or the stack.")]
+    public async Task ExcludedStageExceptionsPropagate(bool restoration, string failure)
+    {
+        Exception expected = failure switch
+        {
+            "cancellation" => new OperationCanceledException("synthetic cancellation"),
+            "stack-overflow" => new StackOverflowException("synthetic stack overflow"),
+            "out-of-memory" => new OutOfMemoryException("synthetic out of memory"),
+            _ => throw new ArgumentOutOfRangeException(nameof(failure)),
+        };
+        var step = new DelegateStep(DeterministicTextStage.EmojiRestoration, _ => throw expected);
+
+        var actual = await Assert.ThrowsAsync(expected.GetType(), () => RunStageAsync(restoration, step));
+
+        Assert.Same(expected, actual);
+    }
+
+    [Fact]
+    public async Task SuccessfulRestorationPreservesEarlierDegradation()
+    {
+        var step = new DelegateStep(
+            DeterministicTextStage.EmojiRestoration,
+            context => context with { PolishedText = "restored polish" });
+
+        var result = await RunStageAsync(true, step, alreadyDegraded: true);
+
+        Assert.Equal("restored polish", result.Output.Text);
+        Assert.Equal("safe", result.DeterministicText);
+        Assert.True(result.IsDegraded);
+        var receipt = result.Receipts.Single(item => item.Stage == step.Stage);
+        Assert.Equal(DeterministicStageStatus.Completed, receipt.Status);
+        Assert.True(receipt.Changed);
+    }
+
+    private static async Task<DeterministicTextResult> RunStageAsync(
+        bool restoration,
+        IDeterministicTextStep step,
+        bool alreadyDegraded = false,
+        CancellationToken cancellationToken = default)
+    {
+        var pipeline = new DeterministicTextPipeline([step]);
+        var request = CreateRequest("safe") with { PolishedText = "polished input" };
+        if (!restoration)
+        {
+            var result = await pipeline.ProcessAsync(request, cancellationToken);
+            Assert.Equal(DeterministicTextStage.EmojiRestoration, Assert.Single(result.Receipts).Stage);
+            return result;
+        }
+
+        // A MIDDLE RECEIPT EXPOSES APPEND-OR-REORDER REGRESSIONS. The neighboring receipts must
+        // survive by identity while restoration replaces only its own earlier result.
+        DeterministicStageReceipt[] receipts =
+        [
+            new(DeterministicTextStage.CustomWords, DeterministicStageStatus.Completed, true, 11),
+            new(DeterministicTextStage.EmojiRestoration, DeterministicStageStatus.Skipped, false, 0),
+            new(DeterministicTextStage.InverseTextNormalization, DeterministicStageStatus.Completed, false, 13),
+        ];
+        var deterministic = new DeterministicTextResult(
+            new ProcessedText(request.Transcript.SessionId, "safe"), receipts, alreadyDegraded);
+
+        var restored = await pipeline.ApplyPolishedTextAsync(
+            request, deterministic, "polished input", cancellationToken);
+
+        Assert.Equal(
+            [
+                DeterministicTextStage.CustomWords,
+                DeterministicTextStage.EmojiRestoration,
+                DeterministicTextStage.InverseTextNormalization,
+            ],
+            restored.Receipts.Select(receipt => receipt.Stage));
+        Assert.Same(receipts[0], restored.Receipts[0]);
+        Assert.NotSame(receipts[1], restored.Receipts[1]);
+        Assert.Same(receipts[2], restored.Receipts[2]);
+        Assert.Equal(DeterministicStageStatus.Skipped, deterministic.Receipts[1].Status);
+        return restored;
+    }
+
+    private static void AssertStageFallback(DeterministicTextResult result, DeterministicStageStatus status)
+    {
+        Assert.Equal("polished input", result.Output.Text);
+        Assert.Equal("safe", result.DeterministicText);
+        Assert.True(result.IsDegraded);
+        var receipt = result.Receipts.Single(item => item.Stage == DeterministicTextStage.EmojiRestoration);
+        Assert.Equal(status, receipt.Status);
+        Assert.False(receipt.Changed);
+    }
+
     [Fact]
     public void EmojiDictionaryLoadsAndFormatterIsIdempotent()
     {
