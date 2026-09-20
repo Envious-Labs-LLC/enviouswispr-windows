@@ -1538,8 +1538,9 @@ public sealed partial class MainWindow : Window, IDisposable
                     SetLiveText(MicrophoneTestResultText, "Microphone test stopped.");
                     break;
                 default:
-                    // Already running, or a recording began between the read above and the call:
-                    // the controller refused, and the page has nothing new to say.
+                    // Already running: the controller refused, and the page has nothing new to say.
+                    // (The recording case was answered above; the controller's own refusal of it is
+                    // a contract for callers that do not ask first.)
                     break;
             }
         }

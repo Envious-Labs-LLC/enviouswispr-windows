@@ -1,5 +1,6 @@
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Presentation;
 using EnviousWispr.Presentation;
 
 namespace EnviousWispr.Architecture.Tests;
@@ -66,21 +67,40 @@ public sealed class MicrophoneTestControllerTests
     }
 
     [Fact]
-    public async Task ADictationStartingMidTestCancelsItAndTheDeviceIsClosedNotLeftOpen()
+    public async Task ACancelMidTestEndsItAndTheDeviceIsReleasedThroughDisposal()
     {
-        // THE STOP IS NOT CANCELLED, DELIBERATELY. The whole reason a recording cancels a test is to
-        // take the microphone back; a cancel that left the device open would defeat itself.
+        // A cancel while listening skips the stop and lets the capture go through its disposal, which
+        // is what closes the device; the controller stays busy until that disposal has finished.
         var (controller, capture, clock) = Build();
+        capture.HoldDispose = true;
         var run = controller.RunAsync(null, recordingInProgress: false);
         await capture.Started.Task.WaitAsync(Patience);
         await clock.WhenRegistered(1).WaitAsync(Patience);
 
         controller.Cancel();
+        await capture.DisposeEntered.Task.WaitAsync(Patience);
+        Assert.True(controller.IsRunning, "the test is not over until the device has been let go of");
+        capture.AllowDisposeExit.SetResult();
         var result = await run.WaitAsync(Patience);
 
         Assert.Equal(MicrophoneTestOutcome.Cancelled, result.Outcome);
         Assert.True(capture.Disposed);
+        Assert.False(capture.IsCapturing);
         Assert.False(controller.IsRunning);
+    }
+
+    [Fact]
+    public async Task TheStopAtTheEndOfAListenIsNeverCancelled()
+    {
+        // THE STOP IS NOT CANCELLED, DELIBERATELY: a cancelled stop leaves the device open, which is the
+        // opposite of what a cancel is for. The token the stop receives is nobody's.
+        var (controller, capture, clock) = Build();
+        var run = controller.RunAsync(null, recordingInProgress: false);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        clock.Advance(MicrophoneTestController.Duration);
+        await run.WaitAsync(Patience);
+
+        Assert.Equal(CancellationToken.None, capture.StopToken);
     }
 
     [Fact]
@@ -133,7 +153,7 @@ public sealed class MicrophoneTestControllerTests
     }
 
     [Fact]
-    public async Task AFrameFromAFinishedTestIsRefusedAndOnlyOneFramePerIntervalIsRaised()
+    public async Task OneFramePerIntervalCarriesTheLoudestAndAFrameFromAFinishedTestIsRefused()
     {
         var (controller, capture, clock) = Build();
         var frames = new List<MicrophoneTestFrame>();
@@ -142,18 +162,32 @@ public sealed class MicrophoneTestControllerTests
         await capture.Started.Task.WaitAsync(Patience);
         await clock.WhenRegistered(1).WaitAsync(Patience);
 
-        // A burst of levels inside one meter interval is one frame, carrying the loudest.
+        // THE FIRST LEVEL IS A FRAME OF ITS OWN; the burst that follows inside the interval is one
+        // frame, and it carries the loudest of the burst, not the first - a quiet level after the
+        // interval boundary is what releases it.
         capture.RaiseLevel(0.001f);
         capture.RaiseLevel(0.004f);
         capture.RaiseLevel(0.002f);
         Assert.Single(frames);
-        var frame = frames[0];
-        Assert.True(controller.IsCurrent(frame.TestId), "a frame from the running test is drawn");
+        clock.Advance(RecordingLevelHistory.SampleInterval);
+        capture.RaiseLevel(0.0005f);
+        Assert.Equal(2, frames.Count);
+        Assert.Equal(RecordingLevelHistory.Normalize(0.004f), frames[1].Level);
+        Assert.Equal(frames[0].TestId, frames[1].TestId);
+        Assert.True(controller.IsCurrent(frames[0].TestId), "a frame from the running test is drawn");
 
         clock.Advance(MicrophoneTestController.Duration);
         await run.WaitAsync(Patience);
+        Assert.False(controller.IsCurrent(frames[0].TestId), "a frame posted before the test ended is refused after it");
 
-        Assert.False(controller.IsCurrent(frame.TestId), "a frame posted before the test ended is refused after it");
+        // And the next test does not revive it: a new capture, a new id, the old one still refused.
+        var next = new FakeCapture();
+        var second = new MicrophoneTestController(() => next, clock);
+        var again = second.RunAsync(null, recordingInProgress: false);
+        await next.Started.Task.WaitAsync(Patience);
+        Assert.False(controller.IsCurrent(frames[0].TestId));
+        second.Cancel();
+        await again.WaitAsync(Patience);
     }
 
     private static (MicrophoneTestController Controller, FakeCapture Capture, Deterministic.ManualClock Clock) Build()
@@ -183,6 +217,14 @@ public sealed class MicrophoneTestControllerTests
         public bool Stopped { get; private set; }
 
         public bool Disposed { get; private set; }
+
+        public bool HoldDispose { get; set; }
+
+        public TaskCompletionSource DisposeEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource AllowDisposeExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public CancellationToken? StopToken { get; private set; }
 
         public AudioDeviceId? RequestedDevice { get; private set; }
 
@@ -239,6 +281,7 @@ public sealed class MicrophoneTestControllerTests
         {
             IsCapturing = false;
             Stopped = true;
+            StopToken = cancellationToken;
             return Task.FromResult(new CapturedAudio(_sessionId, OneSample, SampleRate: 16_000, Channels: 1, Outcome: StopOutcome));
         }
 
@@ -248,10 +291,17 @@ public sealed class MicrophoneTestControllerTests
             return Task.FromResult(new AudioOperationResult(Succeeded: true));
         }
 
-        public ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
+            DisposeEntered.TrySetResult();
+            if (HoldDispose)
+            {
+                await AllowDisposeExit.Task;
+            }
+
+            // Disposal is what releases the device, as the real capture's does.
+            IsCapturing = false;
             Disposed = true;
-            return ValueTask.CompletedTask;
         }
     }
 }
