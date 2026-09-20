@@ -2214,9 +2214,10 @@ public partial class App : Application, IAsyncDisposable
 
     /// <summary>
     /// The shell's half of a push-to-talk transition: every concrete effect the executor in Pipeline
-    /// decides on, and nothing that decides. Rendering goes through the dispatcher, logging through the
-    /// app log, and the timers, preview, streaming and final processing stay where they are until their
-    /// own steps on #148 move them.
+    /// decides on. Rendering goes through the dispatcher, logging through the app log. The timers, the
+    /// preview, streaming and final processing each have owners in Pipeline now; what remains here is
+    /// the order they are started and stopped in around a recording, and the processing deadline -
+    /// the sequencing the regrade of #148 named as the shell's last piece of the workflow.
     /// </summary>
     private sealed class SessionEffects(App app, PushToTalkSessionController controller) : IDictationSessionEffects
     {

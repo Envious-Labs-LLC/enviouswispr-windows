@@ -119,7 +119,7 @@ missed something. A feature with a `not-reimplementable` row needs the source re
 **`deliberately-different` IS AN ANSWER, NOT A GAP.** Windows carries 10 of them (measured 2026-08-30),
 each with its reason in `difference_reason`. They exist because the macOS mechanism has no cause on
 Windows: `soft-onset-protection` guards a problem this platform does not have, `warm-engine` was measured
-and rejected, `multi-route-paste` collapses five macOS routes into two. **Never close one toward the macOS
+and rejected, `multi-route-paste` collapses five macOS routes into three. **Never close one toward the macOS
 shape.** Read the reason, and if you disagree, say so as a product argument rather than a parity fix.
 
 ```bash
