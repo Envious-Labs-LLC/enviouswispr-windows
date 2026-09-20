@@ -209,12 +209,16 @@ public sealed class TranscriptFinalizerTests
         Assert.Equal(
             [DeterministicTextStage.CustomWords, DeterministicTextStage.FillerAndFalseStarts, DeterministicTextStage.SpokenEmoji, DeterministicTextStage.InverseTextNormalization, DeterministicTextStage.EmojiRestoration],
             effects.MainReceipts.Select(receipt => receipt.Stage));
-        Assert.Equal(DeterministicStageStatus.Completed, effects.MainReceipts.Single(r => r.Stage == DeterministicTextStage.FillerAndFalseStarts).Status);
+        // NOT "Completed". The filler and restoration stages carry 50 ms deadlines, and on a cold hosted
+        // runner the first pass through a stage pays its compilation and can time out - main went red
+        // on exactly that (#158). What this test is about is which receipts reach which emission, and a
+        // stage that ran is any stage that was not skipped. Timing belongs to the pipeline's own tests.
+        Assert.NotEqual(DeterministicStageStatus.Skipped, effects.MainReceipts.Single(r => r.Stage == DeterministicTextStage.FillerAndFalseStarts).Status);
         // The shell filters each emission to its half; the finalizer hands over the whole list both
         // times, so the restoration receipt in the first list is the not-yet-run Skipped one and the
         // one in the second list is the real thing.
         Assert.Equal(DeterministicStageStatus.Skipped, effects.MainReceipts.Single(r => r.Stage == DeterministicTextStage.EmojiRestoration).Status);
-        Assert.Equal(DeterministicStageStatus.Completed, effects.RestorationReceipts.Single(r => r.Stage == DeterministicTextStage.EmojiRestoration).Status);
+        Assert.NotEqual(DeterministicStageStatus.Skipped, effects.RestorationReceipts.Single(r => r.Stage == DeterministicTextStage.EmojiRestoration).Status);
     }
 
     private sealed class FakeEffects : ITranscriptFinalizationEffects
