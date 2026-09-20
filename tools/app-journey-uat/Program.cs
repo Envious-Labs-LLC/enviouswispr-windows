@@ -907,6 +907,18 @@ try
         livePreviewStartupCancelled = diagnosticEvents.Any(value => value.StartsWith(
             "LivePreviewStartupCancelled/",
             StringComparison.Ordinal)),
+        // WHAT THE HEAD START DID, AS COUNTS. The journey only refuses an abandoned head start; whether
+        // any stretch was committed and whether the release used it depends on the fixture having a
+        // pause, and a reader deciding whether the feature paid needs the numbers, not the verdict.
+        streamingSegmentsCommitted = diagnosticEvents.Count(value => value.StartsWith(
+            "StreamingSegmentCommitted/",
+            StringComparison.Ordinal)),
+        streamingHeadStartUsed = diagnosticEvents.Any(value => value.StartsWith(
+            "StreamingHeadStartUsed/",
+            StringComparison.Ordinal)),
+        streamingAbandoned = diagnosticEvents.Any(value => value.StartsWith(
+            "StreamingAbandoned/",
+            StringComparison.Ordinal)),
         appExitedCleanly,
         ownedWorkerStartedCount = ownedWorkerIds.Length,
         ownedWorkerCount,
