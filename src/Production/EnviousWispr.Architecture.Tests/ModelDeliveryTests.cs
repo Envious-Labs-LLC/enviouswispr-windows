@@ -153,6 +153,184 @@ public sealed class ModelDeliveryTests
     }
 
     [Fact]
+    public async Task ATransientSourceIsRetriedWithinItsBudgetAndThenTheMirrorIsTried()
+    {
+        // THE BUDGET IS PER SOURCE. Two attempts each: the primary answers 503 twice and is left; the
+        // mirror answers 503 once and then the bytes. Four requests, one artifact.
+        using var fixture = new ModelFixture();
+        var bytes = new byte[] { 9, 8, 7 };
+        var hits = new Dictionary<string, int>(StringComparer.Ordinal);
+        using var handler = new RoutingHandler(request =>
+        {
+            var host = request.RequestUri!.Host;
+            hits[host] = hits.GetValueOrDefault(host) + 1;
+            return host == "primary.invalid" || hits[host] == 1
+                ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                : Ok(bytes);
+        });
+        var payload = ModelFixture.Payload("speech", "1.0.0", bytes) with
+        {
+            Files =
+            [
+                ModelFixture.Artifact(bytes) with
+                {
+                    Sources = [new Uri("https://primary.invalid/model.bin"), new Uri("https://mirror.invalid/model.bin")],
+                },
+            ],
+        };
+
+        var result = await fixture.Store(fixture.CreateStoreDirectory(), handler, maximumAttempts: 2)
+            .InstallAsync(fixture.Envelope(payload));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(2, hits["primary.invalid"]);
+        Assert.Equal(2, hits["mirror.invalid"]);
+    }
+
+    [Fact]
+    public async Task EverySourceExhaustedIsNetworkUnavailableAndNothingIsAdmitted()
+    {
+        using var fixture = new ModelFixture();
+        var bytes = new byte[] { 1, 2, 3 };
+        var requests = 0;
+        using var handler = new RoutingHandler(_ =>
+        {
+            requests++;
+            return new HttpResponseMessage(HttpStatusCode.BadGateway);
+        });
+        var payload = ModelFixture.Payload("speech", "1.0.0", bytes) with
+        {
+            Files =
+            [
+                ModelFixture.Artifact(bytes) with
+                {
+                    Sources = [new Uri("https://a.invalid/model.bin"), new Uri("https://b.invalid/model.bin")],
+                },
+            ],
+        };
+        var root = fixture.CreateStoreDirectory();
+
+        var result = await fixture.Store(root, handler, maximumAttempts: 2).InstallAsync(fixture.Envelope(payload));
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ModelDeliveryFailure.NetworkUnavailable, result.Failure);
+        Assert.Equal(4, requests);
+        Assert.False(File.Exists(Path.Combine(root, "speech", "active.json")));
+    }
+
+    [Fact]
+    public async Task AShardThatFailsFallsBackToTheWholeFileAndLeavesNoPartBehind()
+    {
+        // THE SHARD LAYER MUST NEVER MAKE DELIVERY FAIL WHERE THE WHOLE FILE WOULD SUCCEED. The second
+        // part's source refuses; the whole-file source answers; the artifact is installed and no
+        // part, partial or resume record is left in the version directory.
+        using var fixture = new ModelFixture();
+        var bytes = Enumerable.Range(0, 16).Select(value => (byte)value).ToArray();
+        var wholeRequests = 0;
+        using var handler = new RoutingHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/part0", StringComparison.Ordinal))
+            {
+                return Ok(bytes[..8]);
+            }
+
+            if (path.EndsWith("/part1", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
+            wholeRequests++;
+            return Ok(bytes);
+        });
+        var payload = ModelFixture.Payload("speech", "1.0.0", bytes) with
+        {
+            Files =
+            [
+                ModelFixture.Artifact(bytes) with
+                {
+                    Parts =
+                    [
+                        new ModelArtifactPart(8, Convert.ToHexString(SHA256.HashData(bytes[..8])), [new Uri("https://shards.invalid/part0")]),
+                        new ModelArtifactPart(8, Convert.ToHexString(SHA256.HashData(bytes[8..])), [new Uri("https://shards.invalid/part1")]),
+                    ],
+                },
+            ],
+        };
+        var root = fixture.CreateStoreDirectory();
+
+        var result = await fixture.Store(root, handler, maximumAttempts: 1).InstallAsync(fixture.Envelope(payload));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(1, wholeRequests);
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(result.Installed!.DirectoryPath, "model.bin")));
+        Assert.Empty(Directory.GetFiles(result.Installed.DirectoryPath, "*.part*", SearchOption.AllDirectories));
+        Assert.Empty(Directory.GetFiles(result.Installed.DirectoryPath, "*.partial", SearchOption.AllDirectories));
+        Assert.Empty(Directory.GetFiles(result.Installed.DirectoryPath, "*.resume.json", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task ShardsThatEachMatchButDoNotMakeTheWholeAreDiscardedAndTheWholeFileDecides()
+    {
+        // THE MANIFEST DESCRIBES SLICES OF A DIFFERENT FILE: every part hashes, the assembly does not.
+        // Nothing from the parts can be trusted; the whole-file path decides, here successfully.
+        using var fixture = new ModelFixture();
+        var bytes = Enumerable.Range(0, 16).Select(value => (byte)value).ToArray();
+        var wrongHalf = Enumerable.Repeat((byte)0xFF, 8).ToArray();
+        using var handler = new RoutingHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            return path.EndsWith("/part0", StringComparison.Ordinal) ? Ok(bytes[..8])
+                : path.EndsWith("/part1", StringComparison.Ordinal) ? Ok(wrongHalf)
+                : Ok(bytes);
+        });
+        var payload = ModelFixture.Payload("speech", "1.0.0", bytes) with
+        {
+            Files =
+            [
+                ModelFixture.Artifact(bytes) with
+                {
+                    Parts =
+                    [
+                        new ModelArtifactPart(8, Convert.ToHexString(SHA256.HashData(bytes[..8])), [new Uri("https://shards.invalid/part0")]),
+                        new ModelArtifactPart(8, Convert.ToHexString(SHA256.HashData(wrongHalf)), [new Uri("https://shards.invalid/part1")]),
+                    ],
+                },
+            ],
+        };
+
+        var result = await fixture.Store(fixture.CreateStoreDirectory(), handler, maximumAttempts: 1).InstallAsync(fixture.Envelope(payload));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(result.Installed!.DirectoryPath, "model.bin")));
+    }
+
+    [Fact]
+    public async Task AFailedIntegrityCheckOnAnUpgradeNeverChangesTheActiveVersion()
+    {
+        // THE ACTIVE VERSION IS THE STORE'S TO CHANGE, AND ONLY AFTER ADMISSION. A corrupt 2.0.0 fails
+        // its hash on every source; 1.0.0 stays active and opens offline exactly as before.
+        using var fixture = new ModelFixture();
+        var v1 = new byte[] { 1, 1, 1 };
+        var v2 = new byte[] { 2, 2, 2, 2 };
+        using var handler = new RoutingHandler(request =>
+            Ok(request.RequestUri!.AbsolutePath.Contains("2.0.0", StringComparison.Ordinal) ? [0, 0, 0, 0] : v1));
+        var root = fixture.CreateStoreDirectory();
+        var store = fixture.Store(root, handler, maximumAttempts: 1);
+        Assert.True((await store.InstallAsync(fixture.Envelope("speech", "1.0.0", v1))).Succeeded);
+
+        var upgrade = await store.InstallAsync(fixture.Envelope("speech", "2.0.0", v2));
+
+        Assert.False(upgrade.Succeeded);
+        Assert.Equal(ModelDeliveryFailure.IntegrityMismatch, upgrade.Failure);
+        var active = await store.OpenActiveOfflineAsync("speech");
+        Assert.True(active.Succeeded);
+        Assert.Equal("1.0.0", active.Installed!.Version);
+        Assert.Equal(v1, await File.ReadAllBytesAsync(Path.Combine(active.Installed.DirectoryPath, "model.bin")));
+        Assert.Single(await store.ListInstalledAsync("speech"));
+    }
+
+    [Fact]
     public async Task InsufficientDiskFailsBeforeNetworkOrMutation()
     {
         using var fixture = new ModelFixture();

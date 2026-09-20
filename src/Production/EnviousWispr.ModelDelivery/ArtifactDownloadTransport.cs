@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace EnviousWispr.ModelDelivery;
@@ -262,9 +263,47 @@ public sealed class ArtifactDownloadTransport
     private sealed record ResumeMetadata(string Source, string? ETag, DateTimeOffset? LastModified);
 }
 
-/// <summary>The two file operations the store and the transport share.</summary>
+/// <summary>The file operations the store, the downloader and the transport share.</summary>
 internal static class DeliveryFiles
 {
+    /// <summary>Whether the file at the path is exactly the artifact: its size, then its hash.</summary>
+    public static async Task<bool> MatchesAsync(
+        string path,
+        ModelArtifact artifact,
+        CancellationToken cancellationToken)
+    {
+        if (!File.Exists(path) || new FileInfo(path).Length != artifact.SizeBytes)
+        {
+            return false;
+        }
+
+        await using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 128 * 1024,
+            useAsync: true);
+        var hash = await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false);
+        return string.Equals(
+            Convert.ToHexString(hash),
+            artifact.Sha256,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Joins a relative path under a root and refuses one that would escape it.</summary>
+    public static string SafeCombine(string root, string relativePath)
+    {
+        var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var combined = Path.GetFullPath(Path.Combine(rootFull, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+        if (!combined.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new IOException("A model path escaped its store root.");
+        }
+
+        return combined;
+    }
+
     /// <summary>Writes to a sibling temporary file and moves it into place, so a reader never sees half a file.</summary>
     public static async Task WriteAtomicAsync(
         string destination,
