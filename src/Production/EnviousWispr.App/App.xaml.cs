@@ -84,8 +84,8 @@ public partial class App : Application, IAsyncDisposable
     private string? _localPolishNotice;
     private readonly CancellationTokenSource _polishLifetime = new();
     private Task? _polishWarmup;
-    private CancellationTokenSource? _autoStopCancellation;
-    private Task? _autoStopLoop;
+    private readonly AutoStopMonitor _autoStop;
+    private readonly RecordingWatchdog _watchdog;
     private readonly StreamingTranscriptionController _streaming;
     private MainWindow? _window;
     private WindowsTrayIcon? _trayIcon;
@@ -104,8 +104,6 @@ public partial class App : Application, IAsyncDisposable
     private CancellationTokenSource? _heartbeatCancellation;
     private Task? _heartbeatLoop;
     private int _activationPending;
-    private CancellationTokenSource? _recordingWatchdogCancellation;
-    private Task? _recordingWatchdog;
     private CancellationTokenSource? _activeProcessingCancellation;
     private bool _escapeRecoveryForSession;
 
@@ -172,6 +170,9 @@ public partial class App : Application, IAsyncDisposable
             new SessionPersistenceEffects(this));
         _livePreview = new LivePreviewController(new LivePreviewEffects(this), _logger, TimeProvider.System);
         _streaming = new StreamingTranscriptionController(new StreamingTranscriptionEffects(this), _logger, TimeProvider.System);
+        var timerEffects = new RecordingTimerEffects(this);
+        _watchdog = new RecordingWatchdog(timerEffects, TimeProvider.System);
+        _autoStop = new AutoStopMonitor(timerEffects, _logger, TimeProvider.System);
         _resourceProbe = new WindowsSystemResourceProbe(_dataDirectory);
 
         var allowLoopbackUpdates = string.Equals(
@@ -1027,7 +1028,7 @@ public partial class App : Application, IAsyncDisposable
             cleanShutdown &= await coordinator.StopAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(true);
         }
 
-        cleanShutdown &= await TryCleanupAsync(StopRecordingWatchdogAsync).ConfigureAwait(true);
+        cleanShutdown &= await TryCleanupAsync(_watchdog.StopAsync).ConfigureAwait(true);
 
         var sessionGateHeld = false;
         try
@@ -1059,7 +1060,7 @@ public partial class App : Application, IAsyncDisposable
         }
 
         cleanShutdown &= await TryCleanupAsync(_streaming.StopAsync).ConfigureAwait(true);
-        cleanShutdown &= await TryCleanupAsync(StopAutoStopWatchAsync).ConfigureAwait(true);
+        cleanShutdown &= await TryCleanupAsync(_autoStop.StopAsync).ConfigureAwait(true);
         cleanShutdown &= await TryCleanupAsync(_livePreview.StopAsync).ConfigureAwait(true);
 
         if (_audioCapture is not null)
@@ -2286,16 +2287,16 @@ public partial class App : Application, IAsyncDisposable
                     "Disk space is critically low",
                     "Dictation can continue, but EnviousWispr may be unable to save an encrypted crash-recovery copy."));
 
-        public Task StopRecordingWatchdogAsync() => app.StopRecordingWatchdogAsync();
+        public Task StopRecordingWatchdogAsync() => app._watchdog.StopAsync();
 
         public void RecordTransition(SessionTransitionResult result) => app.WriteSessionEvent(result);
 
         public async Task OnRecordingStartedAsync(DictationSessionId sessionId)
         {
             using var dictation = DictationScope.Begin(sessionId.Value);
-            app.StartRecordingWatchdog(controller, sessionId);
+            app._watchdog.Start(sessionId, RecordingWatchdogDuration());
             await app._livePreview.StartAsync(sessionId).ConfigureAwait(false);
-            app.StartAutoStopWatch(sessionId);
+            app._autoStop.Start(sessionId, app._settings.Preferences.Dictation);
             app._streaming.Start(sessionId);
         }
 
@@ -2308,7 +2309,7 @@ public partial class App : Application, IAsyncDisposable
             _commandProcessing = processingCancellation;
             app._activeProcessingCancellation = processingCancellation;
             await app._streaming.StopAsync().ConfigureAwait(false);
-            await app.StopAutoStopWatchAsync().ConfigureAwait(false);
+            await app._autoStop.StopAsync().ConfigureAwait(false);
             await app._livePreview.StopAsync().ConfigureAwait(false);
             await app.TranscribeFinalAsync(
                     sessionId,
@@ -2338,7 +2339,7 @@ public partial class App : Application, IAsyncDisposable
         public async Task StopBackgroundWorkAsync()
         {
             await app._streaming.StopAsync().ConfigureAwait(false);
-            await app.StopAutoStopWatchAsync().ConfigureAwait(false);
+            await app._autoStop.StopAsync().ConfigureAwait(false);
             await app._livePreview.StopAsync().ConfigureAwait(false);
         }
 
@@ -2383,34 +2384,24 @@ public partial class App : Application, IAsyncDisposable
         }
     }
 
-    private void StartRecordingWatchdog(
-        PushToTalkSessionController controller,
-        DictationSessionId sessionId)
+    /// <summary>
+    /// The recording ran for as long as it is allowed. Under the session gate, if the recording that
+    /// was armed is still the one recording, every loop is stopped and the session is aborted and
+    /// reset. Step 11 moves this behind the coordinator; until then it takes the gate itself.
+    /// </summary>
+    private async Task RecoverTimedOutRecordingAsync(DictationSessionId sessionId, CancellationToken cancellationToken)
     {
-        _recordingWatchdogCancellation?.Cancel();
-        _recordingWatchdogCancellation?.Dispose();
-        _recordingWatchdogCancellation = new CancellationTokenSource();
-        _recordingWatchdog = WatchRecordingAsync(
-            controller,
-            sessionId,
-            _recordingWatchdogCancellation.Token);
-    }
-
-    private async Task WatchRecordingAsync(
-        PushToTalkSessionController controller,
-        DictationSessionId sessionId,
-        CancellationToken cancellationToken)
-    {
-        // Every flow that serves a dictation opens the scope for itself. Inheriting one would in
-        // fact work here - a child async flow keeps the AsyncLocal value it captured even after the
-        // caller disposes its own scope - and that is exactly why this does not rely on it: the
-        // join would then be a property of who happened to call whom, invisible at this method and
-        // unprovable by anything. Opening it here makes it a property of this flow, which a gate
-        // can check. One line per flow, and the flows are the methods that take a session id.
         using var dictation = DictationScope.Begin(sessionId.Value);
+        if (_sessionController is not { } controller)
+        {
+            return;
+        }
+
         try
         {
-            await Task.Delay(RecordingWatchdogDuration(), cancellationToken).ConfigureAwait(false);
+            // THE WATCHDOG'S OWN TOKEN GATES THE WAIT. A release in flight holds the session gate and,
+            // from inside it, stops the watchdog; a wait here that ignored that cancel would hold the
+            // release waiting for the watchdog while the watchdog waited for the release.
             await _sessionOperationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
@@ -2421,8 +2412,8 @@ public partial class App : Application, IAsyncDisposable
                     } && currentId == sessionId)
                 {
                     await _streaming.StopAsync().ConfigureAwait(false);
-                await StopAutoStopWatchAsync().ConfigureAwait(false);
-                await _livePreview.StopAsync().ConfigureAwait(false);
+                    await _autoStop.StopAsync().ConfigureAwait(false);
+                    await _livePreview.StopAsync().ConfigureAwait(false);
                     var error = new AppError(
                         AppErrorCode.SessionTimedOut,
                         AppErrorStage.Session,
@@ -2506,33 +2497,14 @@ public partial class App : Application, IAsyncDisposable
                 : MaximumRecordingDuration;
     }
 
-    private async Task StopRecordingWatchdogAsync()
-    {
-        var cancellation = Interlocked.Exchange(ref _recordingWatchdogCancellation, null);
-        var watchdog = Interlocked.Exchange(ref _recordingWatchdog, null);
-        cancellation?.Cancel();
-        if (watchdog is not null)
-        {
-            try
-            {
-                await watchdog.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
-
-        cancellation?.Dispose();
-    }
-
     private async Task RecoverFailedSessionAsync(
         PushToTalkSessionController controller,
         AppError error,
         DictationStatus status)
     {
-        await StopRecordingWatchdogAsync().ConfigureAwait(false);
+        await _watchdog.StopAsync().ConfigureAwait(false);
         await _streaming.StopAsync().ConfigureAwait(false);
-                await StopAutoStopWatchAsync().ConfigureAwait(false);
+                await _autoStop.StopAsync().ConfigureAwait(false);
                 await _livePreview.StopAsync().ConfigureAwait(false);
         if (controller.CurrentSession is not null)
         {
@@ -2579,7 +2551,7 @@ public partial class App : Application, IAsyncDisposable
             if (controller.CurrentSession.State ==
                 EnviousWispr.Core.Sessions.DictationSessionState.Recording)
             {
-                await StopRecordingWatchdogAsync().ConfigureAwait(false);
+                await _watchdog.StopAsync().ConfigureAwait(false);
                 var result = await controller.ReleaseAsync().ConfigureAwait(false);
                 WriteSessionEvent(result);
                 if (result.Kind == SessionTransitionKind.FinalizeReady &&
@@ -2590,7 +2562,7 @@ public partial class App : Application, IAsyncDisposable
                         MaximumFinalProcessingDuration);
                     _activeProcessingCancellation = processingCancellation;
                     await _streaming.StopAsync().ConfigureAwait(false);
-                await StopAutoStopWatchAsync().ConfigureAwait(false);
+                await _autoStop.StopAsync().ConfigureAwait(false);
                 await _livePreview.StopAsync().ConfigureAwait(false);
                     _window?.DispatcherQueue.TryEnqueue(() =>
                         _window?.SetSessionStatus(DictationStatus.Quiet(
@@ -2657,137 +2629,6 @@ public partial class App : Application, IAsyncDisposable
             await RecordDictationEdgeAsync().ConfigureAwait(false);
             _sessionOperationGate.Release();
         }
-    }
-
-    /// <summary>How often the watcher asks whether the speaker has finished.</summary>
-    /// <remarks>
-    /// Far more often than the threshold it is testing, so the recording ends close to when the
-    /// user expects rather than up to a poll late. Cheap: it reads a buffer already being written.
-    /// </remarks>
-    private static readonly TimeSpan AutoStopPollInterval = TimeSpan.FromMilliseconds(250);
-
-    /// <summary>
-    /// Watches a running recording and ends it when the speaker has stopped, if the user asked.
-    /// </summary>
-    /// <remarks>
-    /// IT ENDS THE RECORDING THROUGH THE SAME DOOR A KEY RELEASE USES. Calling
-    /// HandlePushToTalkAsync with a Released signal means the session state machine, the hook's
-    /// own recording flag, transcription, delivery and history all run exactly as they would have.
-    /// A parallel finish path here would be a second implementation of ending a dictation, and the
-    /// two would drift.
-    ///
-    /// HAS-HEARD-SPEECH IS STICKY AND LIVES HERE, not in the snapshot. The buffer only holds a
-    /// window, so a speaker who says one word and then pauses past that window would look to a
-    /// single snapshot like someone who never spoke - and the policy would stop protecting them at
-    /// the exact moment it should fire. Once speech is heard in this recording, it stays heard.
-    ///
-    /// THE SNAPSHOT WINDOW IS LONGER THAN ANY THRESHOLD IT COULD BE ASKED ABOUT. A window shorter
-    /// than the threshold can never contain enough silence to satisfy it, so the feature would
-    /// simply never fire - silently, and looking exactly like a user who had not turned it on.
-    /// </remarks>
-    private void StartAutoStopWatch(DictationSessionId sessionId)
-    {
-        var dictation = _settings.Preferences.Dictation;
-        if (!dictation.AutoStopEnabled ||
-            dictation.RecordingMode != DictationRecordingMode.Toggle ||
-            _audioCapture is not IAudioSnapshotSource snapshots)
-        {
-            return;
-        }
-
-        var cancellation = new CancellationTokenSource();
-        _autoStopCancellation = cancellation;
-        _autoStopLoop = RunAutoStopWatchAsync(snapshots, sessionId, dictation, cancellation.Token);
-    }
-
-    private async Task RunAutoStopWatchAsync(
-        IAudioSnapshotSource snapshots,
-        DictationSessionId sessionId,
-        DictationPreferences dictation,
-        CancellationToken cancellationToken)
-    {
-        // Every flow that serves a dictation opens the scope for itself. Inheriting one would in
-        // fact work here - a child async flow keeps the AsyncLocal value it captured even after the
-        // caller disposes its own scope - and that is exactly why this does not rely on it: the
-        // join would then be a property of who happened to call whom, invisible at this method and
-        // unprovable by anything. Opening it here makes it a property of this flow, which a gate
-        // can check. One line per flow, and the flows are the methods that take a session id.
-        using var scope = DictationScope.Begin(sessionId.Value);
-        var required = TimeSpan.FromSeconds(dictation.AutoStopSilenceSeconds);
-        if (required < AutoStopPolicy.MinimumSilence)
-        {
-            required = AutoStopPolicy.MinimumSilence;
-        }
-
-        // Comfortably more than the threshold, so the window can always hold enough silence to
-        // answer the question being asked of it.
-        var window = required + required;
-        var heardSpeech = false;
-
-        try
-        {
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                await Task.Delay(AutoStopPollInterval, cancellationToken).ConfigureAwait(false);
-
-                var snapshot = snapshots.GetSnapshot(window);
-                if (snapshot is null || snapshot.SessionId != sessionId)
-                {
-                    continue;
-                }
-
-                var segmenter = new SpeechSegmenter(snapshot.SampleRate, TimeSpan.FromMilliseconds(400));
-                var samples = snapshot.Samples.Span;
-                heardSpeech |= segmenter.Segment(samples).Any(segment => segment.IsSpeech);
-
-                var decision = AutoStopPolicy.Decide(
-                    dictation.AutoStopEnabled,
-                    dictation.RecordingMode == DictationRecordingMode.Toggle,
-                    heardSpeech,
-                    segmenter.TrailingSilence(samples),
-                    required);
-                if (decision != AutoStopDecision.Stop)
-                {
-                    continue;
-                }
-
-                _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.AutoStopTriggered));
-                // Fire and return. Awaiting here would hold this loop open across the whole
-                // transcription, and the loop is cancelled as part of ending the recording.
-                _ = HandlePushToTalkAsync(PushToTalkSignal.Released);
-                return;
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // The recording ended some other way, which is the ordinary case.
-        }
-    }
-
-    private async Task StopAutoStopWatchAsync()
-    {
-        var cancellation = _autoStopCancellation;
-        var loop = _autoStopLoop;
-        _autoStopCancellation = null;
-        _autoStopLoop = null;
-        if (cancellation is null)
-        {
-            return;
-        }
-
-        await cancellation.CancelAsync().ConfigureAwait(false);
-        if (loop is not null)
-        {
-            try
-            {
-                await loop.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
-
-        cancellation.Dispose();
     }
 
     private async Task TranscribeFinalAsync(
@@ -2980,6 +2821,17 @@ public partial class App : Application, IAsyncDisposable
     }
 
     /// <summary>What the shell shows when persistence changes what the person should see.</summary>
+    /// <summary>The shell's half of the recording timers: the capture, the command entry, and the timeout recovery.</summary>
+    private sealed class RecordingTimerEffects(App app) : IRecordingTimerEffects
+    {
+        public IAudioSnapshotSource? Audio => app._audioCapture as IAudioSnapshotSource;
+
+        public void Post(PushToTalkSignal signal) => _ = app.HandlePushToTalkAsync(signal);
+
+        public Task RecordingTimedOutAsync(DictationSessionId sessionId, CancellationToken cancellationToken) =>
+            app.RecoverTimedOutRecordingAsync(sessionId, cancellationToken);
+    }
+
     /// <summary>The shell's half of streaming: the final engine, the capture, and the switch it yields to.</summary>
     private sealed class StreamingTranscriptionEffects(App app) : IStreamingTranscriptionEffects
     {
