@@ -156,6 +156,56 @@ public sealed class SessionPersistenceTests
     }
 
     [Fact]
+    public async Task BlankTextIsNeverAHistoryEntryEvenWhenForced()
+    {
+        var (persistence, _, history, _, effects) = Build();
+
+        await persistence.SaveHistoryAsync(Transcript(), "   ", HistoryWriteIntent.EscapeRecovery(wasPolished: false, Now.AddHours(24)));
+
+        Assert.Empty(history.Added);
+        Assert.Empty(effects.Trace);
+    }
+
+    [Fact]
+    public async Task AHeldDictationRecordsItsFlagsAsFalseAndTheClockIsReadTwice()
+    {
+        var clock = new SteppingClock(Now);
+        var (persistence, _, history, _, _) = Build(historyEnabled: () => true, clock: clock);
+
+        await persistence.SaveHistoryAsync(Transcript(), "hello world", HistoryWriteIntent.Held(wasPolished: false));
+
+        var entry = Assert.Single(history.Added);
+        Assert.False(entry.WasPolished);
+        Assert.False(entry.WasDelivered);
+        Assert.Equal(Now, entry.CreatedAt);
+        Assert.Equal(Now.AddSeconds(1), history.LastNow);
+    }
+
+    [Fact]
+    public async Task TheRecoverySaveForwardsTheCallersToken()
+    {
+        var (persistence, recovery, _, _, _) = Build();
+        using var cancellation = new CancellationTokenSource();
+
+        await persistence.SaveRecoveryTextAsync(Text("hello world"), cancellation.Token);
+
+        Assert.Equal(cancellation.Token, recovery.LastToken);
+    }
+
+    [Fact]
+    public async Task ASecondSaveReplacesThePendingRecordEvenWhenTheDiskRefusesIt()
+    {
+        var (persistence, recovery, _, _, _) = Build();
+        await persistence.SaveRecoveryTextAsync(Text("first"), CancellationToken.None);
+        recovery.SaveSucceeds = false;
+
+        await persistence.SaveRecoveryTextAsync(Text("second"), CancellationToken.None);
+
+        Assert.Equal("second", persistence.PendingRecord?.Text);
+        Assert.Equal("first", recovery.Saved?.Text);
+    }
+
+    [Fact]
     public async Task HistorySwitchedOffIsHonouredForAnOrdinaryDictation()
     {
         var (persistence, _, history, _, effects) = Build(historyEnabled: false);
@@ -211,7 +261,8 @@ public sealed class SessionPersistenceTests
         bool historyEnabled = true) => Build(() => historyEnabled);
 
     private static (SessionPersistence Persistence, FakeRecoveryStore Recovery, FakeHistoryStore History, FakeLogger Log, FakeEffects Effects) Build(
-        Func<bool> historyEnabled)
+        Func<bool> historyEnabled,
+        TimeProvider? clock = null)
     {
         var recovery = new FakeRecoveryStore();
         var history = new FakeHistoryStore();
@@ -221,7 +272,7 @@ public sealed class SessionPersistenceTests
             recovery,
             history,
             log,
-            new FrozenClock(Now),
+            clock ?? new FrozenClock(Now),
             () => new HistoryPreferences(historyEnabled(), RetentionDays: 30),
             effects);
         return (persistence, recovery, history, log, effects);
@@ -242,9 +293,12 @@ public sealed class SessionPersistenceTests
         public Task<RecoveryTextLoadResult> LoadAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(new RecoveryTextLoadResult(RecoveryTextLoadStatus.Missing));
 
+        public CancellationToken LastToken { get; private set; }
+
         public Task<bool> SaveAsync(RecoveryTextRecord record, CancellationToken cancellationToken = default)
         {
             SaveCalls++;
+            LastToken = cancellationToken;
             if (SaveSucceeds)
             {
                 Saved = record;
@@ -266,6 +320,8 @@ public sealed class SessionPersistenceTests
 
         public int LastRetentionDays { get; private set; }
 
+        public DateTimeOffset LastNow { get; private set; }
+
         public bool AddSucceeds { get; set; } = true;
 
         public Task<HistoryLoadResult> LoadAsync(int retentionDays, DateTimeOffset now, CancellationToken cancellationToken = default) =>
@@ -274,6 +330,7 @@ public sealed class SessionPersistenceTests
         public Task<HistoryOperationResult> AddAsync(DictationHistoryEntry entry, int retentionDays, DateTimeOffset now, CancellationToken cancellationToken = default)
         {
             LastRetentionDays = retentionDays;
+            LastNow = now;
             if (AddSucceeds)
             {
                 Added.Add(entry);
@@ -295,6 +352,14 @@ public sealed class SessionPersistenceTests
     private sealed class FrozenClock(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    /// <summary>Each read is one second later than the last, so two reads are distinguishable.</summary>
+    private sealed class SteppingClock(DateTimeOffset start) : TimeProvider
+    {
+        private int _reads;
+
+        public override DateTimeOffset GetUtcNow() => start.AddSeconds(_reads++);
     }
 
     private sealed class FakeLogger : IAppLogger

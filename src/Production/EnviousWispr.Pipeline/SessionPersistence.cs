@@ -184,17 +184,19 @@ public sealed class SessionPersistence
             return;
         }
 
-        var now = _clock.GetUtcNow();
+        // TWO READS OF THE CLOCK, AS THE SHELL MADE THEM. The entry's own timestamp and the moment the
+        // store prunes against are separate samples; collapsing them moves a retention decision that
+        // lands exactly on an expiry boundary, and equivalence here means the same decisions.
         var result = await _history.AddAsync(
             DictationHistoryEntry.Create(
-                now,
+                _clock.GetUtcNow(),
                 text,
                 transcript.EngineId,
                 intent.WasPolished,
                 intent.WasDelivered,
                 intent.ExpiresAt),
             preferences.RetentionDays,
-            now).ConfigureAwait(false);
+            _clock.GetUtcNow()).ConfigureAwait(false);
         if (result.Succeeded)
         {
             _effects.NotifyHistoryChanged();
