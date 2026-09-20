@@ -340,6 +340,7 @@ public sealed class PrivacySafeObservabilityTests
     [InlineData(DeterministicTextStage.CustomWords, DeterministicStageStatus.Skipped, false)]
     [InlineData(DeterministicTextStage.InverseTextNormalization, DeterministicStageStatus.TimedOut, false)]
     [InlineData(DeterministicTextStage.EmojiRestoration, DeterministicStageStatus.Failed, false)]
+    [InlineData(DeterministicTextStage.EmojiRestoration, DeterministicStageStatus.Busy, false)]
     public void DeterministicStageDetailSurvivesIntoTheRecord(
         DeterministicTextStage stage,
         DeterministicStageStatus status,
