@@ -1792,8 +1792,11 @@ static bool IsListenToThisDeviceEnabled(MMDevice device)
     {
         value = device.Properties[listenEnabled].Value;
     }
-    catch (Exception exception) when (exception is COMException or CoreAudioException)
+    catch (Exception exception) when (exception is COMException or CoreAudioException
+        or NotImplementedException or NotSupportedException or ArgumentOutOfRangeException)
     {
+        // The last three are NAudio's own decoder refusing a variant it does not understand - the
+        // value never reaches the switch below, and an undecodable answer is still not "off".
         throw JourneyExpectationException.Instrument(
             "--virtual-cable: Windows would not say whether \"Listen to this device\" is on for the cable "
                 + $"({exception.GetType().Name}: {exception.Message}); refusing rather than assuming it is off.",
