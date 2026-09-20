@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.PostProcessing;
@@ -110,51 +109,16 @@ public sealed class DeterministicTextPipeline
                 continue;
             }
 
-            var input = context;
-            var stopwatch = Stopwatch.StartNew();
-            try
-            {
-                context = await Task.Run(
-                        () => step.Process(input),
-                        cancellationToken)
-                    .WaitAsync(step.Timeout, cancellationToken)
-                    .ConfigureAwait(false);
-                stopwatch.Stop();
-                if (context is null || context.Text is null)
-                {
-                    throw new InvalidOperationException("A deterministic text stage returned no context.");
-                }
-
-                receipts.Add(new DeterministicStageReceipt(
-                    step.Stage,
-                    DeterministicStageStatus.Completed,
-                    !string.Equals(input.Text, context.Text, StringComparison.Ordinal) ||
-                    !string.Equals(input.PolishedText, context.PolishedText, StringComparison.Ordinal),
-                    stopwatch.ElapsedMilliseconds));
-            }
-            catch (TimeoutException)
-            {
-                stopwatch.Stop();
-                context = input;
-                degraded = true;
-                receipts.Add(new DeterministicStageReceipt(
-                    step.Stage,
-                    DeterministicStageStatus.TimedOut,
-                    Changed: false,
-                    stopwatch.ElapsedMilliseconds));
-            }
-            catch (Exception exception) when (exception is not (
-                OperationCanceledException or StackOverflowException or OutOfMemoryException))
-            {
-                stopwatch.Stop();
-                context = input;
-                degraded = true;
-                receipts.Add(new DeterministicStageReceipt(
-                    step.Stage,
-                    DeterministicStageStatus.Failed,
-                    Changed: false,
-                    stopwatch.ElapsedMilliseconds));
-            }
+            var execution = await DeterministicStageExecutor.ExecuteAsync(
+                step,
+                context,
+                static (input, output) =>
+                    !string.Equals(input.Text, output.Text, StringComparison.Ordinal) ||
+                    !string.Equals(input.PolishedText, output.PolishedText, StringComparison.Ordinal),
+                cancellationToken).ConfigureAwait(false);
+            context = execution.Context;
+            receipts.Add(execution.Receipt);
+            degraded |= execution.IsDegraded;
         }
 
         var deterministicText = context.Text;
@@ -184,36 +148,17 @@ public sealed class DeterministicTextPipeline
             request.CustomWords,
             request.Options,
             polishedText);
-        var context = input;
-        var stopwatch = Stopwatch.StartNew();
-        var status = DeterministicStageStatus.Completed;
-        var degraded = deterministicResult.IsDegraded;
-        try
-        {
-            context = await Task.Run(() => step.Process(input), cancellationToken)
-                .WaitAsync(step.Timeout, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (TimeoutException)
-        {
-            context = input;
-            status = DeterministicStageStatus.TimedOut;
-            degraded = true;
-        }
-        catch (Exception exception) when (exception is not (
-            OperationCanceledException or StackOverflowException or OutOfMemoryException))
-        {
-            context = input;
-            status = DeterministicStageStatus.Failed;
-            degraded = true;
-        }
-
-        stopwatch.Stop();
-        var receipt = new DeterministicStageReceipt(
-            DeterministicTextStage.EmojiRestoration,
-            status,
-            !string.Equals(input.PolishedText, context.PolishedText, StringComparison.Ordinal),
-            stopwatch.ElapsedMilliseconds);
+        // INVALID RESTORATION MUST PRESERVE THE POLISH. A null context or null Text now fails just
+        // like a main-loop stage, keeping the supplied polish instead of dereferencing invalid output.
+        var execution = await DeterministicStageExecutor.ExecuteAsync(
+            step,
+            input,
+            static (before, after) =>
+                !string.Equals(before.PolishedText, after.PolishedText, StringComparison.Ordinal),
+            cancellationToken).ConfigureAwait(false);
+        var context = execution.Context;
+        var degraded = deterministicResult.IsDegraded || execution.IsDegraded;
+        var receipt = execution.Receipt;
         var receipts = deterministicResult.Receipts
             .Select(existing => existing.Stage == DeterministicTextStage.EmojiRestoration
                 ? receipt
