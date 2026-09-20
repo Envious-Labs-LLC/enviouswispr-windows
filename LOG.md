@@ -21,6 +21,81 @@ No machine paths, no personal data, no credentials. This file is public.
 
 ---
 
+## 2026-09-19 / 20 (overnight)
+
+### An adversarial review of the architecture, and the plan it produced
+
+An independent reviewer was asked to find what is wrong with the architecture - god objects, a
+monolith under a folder structure, code that reads as generated without judgement - and to prove
+each claim from the files. It read 62 of them and returned: the library boundaries are real and
+machine-enforced, and the critical workflow lives in the two classes least able to be tested. The
+application object held fourteen jobs across 4,100 lines; the settings window twelve across 4,800.
+
+**The most useful finding was one the project already knew.** The one blocking item - a key-up that
+arrives while the press is still starting is thrown away by a zero-timeout gate probe - was already
+filed, and its structural cause already diagnosed on 2026-09-03. A second, unprompted diagnosis
+reaching the same conclusion is worth more than a new one.
+
+**The second most useful contradicted the project brain.** `CLAUDE.md` said, under "know this cold",
+that Windows delivers text through two routes. The code had three since 2026-08-26: a direct write
+through UI Automation runs first. A contract that omits a mutation path hides exactly the path that
+most needs validating. Corrected in both files that carried it.
+
+The same reviewer, resumed rather than re-briefed, then wrote a 22-step plan under the project's own
+constraints. The reviewer is now the gate for every step: it reviews, it does not write. That
+division was set by the founder mid-session after two steps had been implemented from briefs; those
+two stand, reviewed, and the third such draft was taken over rather than discarded.
+
+### Eight steps landed, and what each review round caught
+
+Every step went through the reviewer, most through two rounds, one through three. What the rounds
+caught is the record, because each was a thing the author had convinced themself of:
+
+- A press queued behind an update download would have opened the microphone minutes after the
+  finger left the key. A press now takes the gate at admission or is refused, as the old probe did.
+- The old hook captured the target window synchronously inside the key callback; a queue adds a
+  thread hop after that point, and a person can change windows inside it. The author had waved this
+  off as equivalent to the old hop; it was not. The press now captures its target at admission.
+- A stage's own cancellation - neither the caller's nor the deadline's - aborted the whole text
+  pipeline instead of falling back. Pre-existing, and preserved by a test row.
+- The processing deadline had moved from after failure recovery to before it. Lock/suspend recovery
+  cancels that deadline from its own callback and must still find it during the recovery.
+- The polish vocabulary was read from live settings at the provider call, inside the resource lease;
+  the extraction had captured it when the recording ended. A word taught during transcription used
+  to reach the next polish. It does again.
+- Two clock reads collapsed into one moves a retention decision that lands on an expiry boundary.
+
+None of these was visible from a green suite. Every one was found by an equivalence audit of the old
+body against the new, line by line, which is the review shape that earns its cost on an extraction.
+
+### main went red, and the command that let it
+
+A test asserted that a cleanup stage with a 50 ms deadline completed. On a cold hosted runner the
+first pass through that stage pays its compilation and the deadline expires. The test was about which
+receipts reach which emission and had no business asserting timing.
+
+That is the small part. The pull request's final commit had a red check and merged anyway, because the
+merge command was `gh pr checks <n> --watch | tail -1 && gh pr merge <n>` - a pipeline returns its
+last command's status, so the red watch never broke the chain. `validation-discipline.md` lists that
+trap by name, and naming a class raises confidence about it, which is the opposite of what should
+happen while still typing. The rule now carries the exact command shape with no pipe in it.
+
+Earlier the same night, `--auto` had merged a pull request instantly while its last run was still in
+progress, because the rule said to pass it and the repository has no required check. Two merge
+defects in one session, both in the mechanism that was supposed to be the guard, both fixed in the
+rule rather than in memory.
+
+### Instruments that printed the wrong answer
+
+Three, all caught before they mattered, all worth writing down because each printed a confident
+result: a .NET file write with a relative path from the PowerShell tool landed under the process
+directory rather than the shell's, so a "deliberate violation" was never applied and the control
+passed; `dotnet test --no-build` after restoring a violated source ran the violated binary and
+reported ten consecutive failures on a correct tree; and a quick tap that lands after the press has
+already finished looks identical, from outside the process, to one that overlapped it - so the app
+now writes a line when a signal actually waited, and the journey demands that line or declares itself
+invalid rather than green.
+
 ## 2026-09-03 (morning)
 
 ### A feature that had never once run, and the fallback that hid it
