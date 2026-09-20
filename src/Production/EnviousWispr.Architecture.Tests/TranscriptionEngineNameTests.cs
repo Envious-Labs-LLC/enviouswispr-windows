@@ -637,6 +637,17 @@ public sealed partial class DesignSystemTokenTests
     /// covered by construction: the preview teardown is long-established and every stop path
     /// already has one, so requiring the two to appear together makes the existing owner the
     /// enumeration.
+    ///
+    /// PAIRED PER METHOD, NOT AS TWO TOTALS. Two totals let a watcher stop deleted from one path and
+    /// duplicated in another pass as equal, and let a mention in a comment stand in for a call. The
+    /// parser finds each stop as an invocation or as a method group handed to the cleanup helper,
+    /// and every method that stops the preview must stop the watcher inside the same body.
+    ///
+    /// SYNTACTIC CO-LOCATION, AND THE LIMITS ARE STATED. Both stops in one body is what is checked,
+    /// not that both run on every branch or in any order; a local function's body counts for its
+    /// enclosing method whether or not it is called; a nested class's method is its own method; a
+    /// null-conditional call (`_livePreview?.StopAsync()`) loses its receiver in the syntax and would
+    /// not be seen as a preview stop at all. The floor is a count of METHODS that stop the preview.
     /// </remarks>
     [Fact]
     public void TheAutoStopWatcherIsTornDownWhereverTheLivePreviewIs()
@@ -645,17 +656,52 @@ public sealed partial class DesignSystemTokenTests
             Path.Combine(
                 FindRepositoryRoot(),
                 "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+        var methods = CSharpSyntaxTree.ParseText(source).GetRoot()
+            .DescendantNodes()
+            .OfType<MethodDeclarationSyntax>();
 
-        var previewStops = source.Split("StopLivePreviewAsync").Length - 1;
-        var watcherStops = source.Split("StopAutoStopWatchAsync").Length - 1;
+        var previewStops = 0;
+        var unpaired = new List<string>();
+        foreach (var method in methods)
+        {
+            var body = (SyntaxNode?)method.Body ?? method.ExpressionBody;
+            if (body is null)
+            {
+                continue;
+            }
 
-        // One extra mention each for the method's own declaration.
+            // A call (`await app._livePreview.StopAsync()`) or a method group handed to the cleanup
+            // helper (`TryCleanupAsync(StopAutoStopWatchAsync)`); a comment is neither.
+            var references = body.DescendantNodes()
+                .Select(node => node switch
+                {
+                    InvocationExpressionSyntax invocation => invocation.Expression.ToString(),
+                    ArgumentSyntax argument => argument.Expression.ToString(),
+                    _ => null,
+                })
+                .OfType<string>()
+                .ToArray();
+            var stopsPreview = references.Any(text => text.EndsWith("_livePreview.StopAsync", StringComparison.Ordinal));
+            var stopsWatcher = references.Any(text => text.EndsWith("StopAutoStopWatchAsync", StringComparison.Ordinal));
+            if (!stopsPreview)
+            {
+                continue;
+            }
+
+            previewStops++;
+            if (!stopsWatcher)
+            {
+                unpaired.Add(method.Identifier.ValueText);
+            }
+        }
+
+        // THE FLOOR IS TODAY'S COUNT of methods that stop the preview, so a path deleted or renamed
+        // out of the pattern is noticed rather than silently narrowing the gate.
         Assert.True(previewStops >= 6, $"Expected the preview teardown call sites, found {previewStops}.");
-
         Assert.True(
-            watcherStops >= previewStops,
-            $"The live preview is torn down in {previewStops} places and the auto-stop watcher in "
-            + $"{watcherStops}. A watcher that outlives its recording ends the NEXT one early.");
+            unpaired.Count == 0,
+            "These methods stop the live preview without stopping the auto-stop watcher; a watcher that "
+                + "outlives its recording ends the NEXT one early: " + string.Join(", ", unpaired));
     }
 
     /// <summary>

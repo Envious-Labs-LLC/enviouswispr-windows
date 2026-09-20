@@ -276,6 +276,9 @@ public sealed class SessionFinalizationRunner
 
     private async Task CompleteAndResetAsync(DictationSessionId sessionId)
     {
+        // Already inside the run's scope today; opened again because the rule is one line per flow,
+        // and a caller added later that is not inside it would otherwise write joined to nothing.
+        using var dictation = DictationScope.Begin(sessionId.Value);
         await _controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
         await _controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
     }

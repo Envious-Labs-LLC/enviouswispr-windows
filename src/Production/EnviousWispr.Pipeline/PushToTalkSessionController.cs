@@ -1,4 +1,5 @@
 using EnviousWispr.Core.Audio;
+using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
@@ -280,6 +281,8 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         DictationSessionId sessionId,
         CancellationToken cancellationToken = default)
     {
+        // The transition raises a change that whoever listens may log; joined to the dictation named.
+        using var dictation = DictationScope.Begin(sessionId.Value);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -304,6 +307,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         DictationSessionId sessionId,
         CancellationToken cancellationToken = default)
     {
+        using var dictation = DictationScope.Begin(sessionId.Value);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {

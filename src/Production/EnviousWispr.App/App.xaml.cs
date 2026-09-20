@@ -6,6 +6,7 @@ using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Presentation;
+using EnviousWispr.Core.Preview;
 using EnviousWispr.Core.History;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Reliability;
@@ -50,7 +51,7 @@ public partial class App : Application, IAsyncDisposable
     private readonly string _dataDirectory;
     private readonly string? _cudaRuntimeDirectory;
     private readonly RuntimeResourceArbiter _resourceArbiter = new();
-    private readonly SemaphoreSlim _previewGate = new(1, 1);
+    private readonly LivePreviewController _livePreview;
     private readonly SemaphoreSlim _sessionOperationGate = new(1, 1);
     private DictationSessionCoordinator? _sessionCoordinator;
     private SessionFinalizationRunner? _finalizationRunner;
@@ -83,8 +84,6 @@ public partial class App : Application, IAsyncDisposable
     private string? _localPolishNotice;
     private readonly CancellationTokenSource _polishLifetime = new();
     private Task? _polishWarmup;
-    private CancellationTokenSource? _previewCancellation;
-    private Task? _previewLoop;
     private CancellationTokenSource? _autoStopCancellation;
     private Task? _autoStopLoop;
     private CancellationTokenSource? _streamingCancellation;
@@ -93,7 +92,6 @@ public partial class App : Application, IAsyncDisposable
     private int _streamedThroughSample;
 
     private bool _streamingUsable;
-    private long _previewSequence;
     private MainWindow? _window;
     private WindowsTrayIcon? _trayIcon;
     private IReadOnlyList<CustomWordEntry> _customWords = [];
@@ -177,6 +175,7 @@ public partial class App : Application, IAsyncDisposable
             TimeProvider.System,
             () => _settings.Preferences.History,
             new SessionPersistenceEffects(this));
+        _livePreview = new LivePreviewController(new LivePreviewEffects(this), _logger, TimeProvider.System);
         _resourceProbe = new WindowsSystemResourceProbe(_dataDirectory);
 
         var allowLoopbackUpdates = string.Equals(
@@ -1065,7 +1064,7 @@ public partial class App : Application, IAsyncDisposable
 
         cleanShutdown &= await TryCleanupAsync(StopStreamingTranscriptionAsync).ConfigureAwait(true);
         cleanShutdown &= await TryCleanupAsync(StopAutoStopWatchAsync).ConfigureAwait(true);
-        cleanShutdown &= await TryCleanupAsync(StopLivePreviewAsync).ConfigureAwait(true);
+        cleanShutdown &= await TryCleanupAsync(_livePreview.StopAsync).ConfigureAwait(true);
 
         if (_audioCapture is not null)
         {
@@ -1161,7 +1160,9 @@ public partial class App : Application, IAsyncDisposable
 
         cleanShutdown &= TryCleanup(_resourceArbiter.Dispose);
         cleanShutdown &= TryCleanup(_polishLifetime.Dispose);
-        cleanShutdown &= TryCleanup(_previewGate.Dispose);
+        cleanShutdown &= await TryCleanupAsync(
+            async () => await _livePreview.DisposeAsync().ConfigureAwait(true))
+            .ConfigureAwait(true);
         if (_trayIcon is not null)
         {
             cleanShutdown &= TryCleanup(_trayIcon.Dispose);
@@ -2294,14 +2295,16 @@ public partial class App : Application, IAsyncDisposable
 
         public async Task OnRecordingStartedAsync(DictationSessionId sessionId)
         {
+            using var dictation = DictationScope.Begin(sessionId.Value);
             app.StartRecordingWatchdog(controller, sessionId);
-            await app.StartLivePreviewAsync(sessionId).ConfigureAwait(false);
+            await app._livePreview.StartAsync(sessionId).ConfigureAwait(false);
             app.StartAutoStopWatch(sessionId);
             app.StartStreamingTranscription(sessionId);
         }
 
         public async Task FinalizeAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly)
         {
+            using var dictation = DictationScope.Begin(sessionId.Value);
             // THE PROCESSING DEADLINE IS THE SHELL'S, because lock/suspend recovery and shutdown cancel it
             // from their own callbacks, and both still live here.
             var processingCancellation = new CancellationTokenSource(MaximumFinalProcessingDuration);
@@ -2309,7 +2312,7 @@ public partial class App : Application, IAsyncDisposable
             app._activeProcessingCancellation = processingCancellation;
             await app.StopStreamingTranscriptionAsync().ConfigureAwait(false);
             await app.StopAutoStopWatchAsync().ConfigureAwait(false);
-            await app.StopLivePreviewAsync().ConfigureAwait(false);
+            await app._livePreview.StopAsync().ConfigureAwait(false);
             await app.TranscribeFinalAsync(
                     sessionId,
                     audio,
@@ -2339,7 +2342,7 @@ public partial class App : Application, IAsyncDisposable
         {
             await app.StopStreamingTranscriptionAsync().ConfigureAwait(false);
             await app.StopAutoStopWatchAsync().ConfigureAwait(false);
-            await app.StopLivePreviewAsync().ConfigureAwait(false);
+            await app._livePreview.StopAsync().ConfigureAwait(false);
         }
 
         public void ShowTransitionStatus(SessionTransitionResult result) =>
@@ -2422,7 +2425,7 @@ public partial class App : Application, IAsyncDisposable
                 {
                     await StopStreamingTranscriptionAsync().ConfigureAwait(false);
                 await StopAutoStopWatchAsync().ConfigureAwait(false);
-                await StopLivePreviewAsync().ConfigureAwait(false);
+                await _livePreview.StopAsync().ConfigureAwait(false);
                     var error = new AppError(
                         AppErrorCode.SessionTimedOut,
                         AppErrorStage.Session,
@@ -2533,7 +2536,7 @@ public partial class App : Application, IAsyncDisposable
         await StopRecordingWatchdogAsync().ConfigureAwait(false);
         await StopStreamingTranscriptionAsync().ConfigureAwait(false);
                 await StopAutoStopWatchAsync().ConfigureAwait(false);
-                await StopLivePreviewAsync().ConfigureAwait(false);
+                await _livePreview.StopAsync().ConfigureAwait(false);
         if (controller.CurrentSession is not null)
         {
             await controller.AbortAsync(error).ConfigureAwait(false);
@@ -2591,7 +2594,7 @@ public partial class App : Application, IAsyncDisposable
                     _activeProcessingCancellation = processingCancellation;
                     await StopStreamingTranscriptionAsync().ConfigureAwait(false);
                 await StopAutoStopWatchAsync().ConfigureAwait(false);
-                await StopLivePreviewAsync().ConfigureAwait(false);
+                await _livePreview.StopAsync().ConfigureAwait(false);
                     _window?.DispatcherQueue.TryEnqueue(() =>
                         _window?.SetSessionStatus(DictationStatus.Quiet(
                             transition == SystemLifecycleTransition.Suspending
@@ -2947,200 +2950,6 @@ public partial class App : Application, IAsyncDisposable
         cancellation.Dispose();
     }
 
-    private async Task StartLivePreviewAsync(DictationSessionId sessionId)
-    {
-        // Every flow that serves a dictation opens the scope for itself. Inheriting one would in
-        // fact work here - a child async flow keeps the AsyncLocal value it captured even after the
-        // caller disposes its own scope - and that is exactly why this does not rely on it: the
-        // join would then be a property of who happened to call whom, invisible at this method and
-        // unprovable by anything. Opening it here makes it a property of this flow, which a gate
-        // can check. One line per flow, and the flows are the methods that take a session id.
-        using var scope = DictationScope.Begin(sessionId.Value);
-        if (!_settings.Preferences.LivePreviewEnabled)
-        {
-            return;
-        }
-
-        var engine = _previewEngine;
-        var audioCapture = _audioCapture as IAudioSnapshotSource;
-        // THE USER HAS ASKED FOR THIS BY THE TIME WE GET HERE, so a refusal is news and the two
-        // reasons are different facts. A missing preview model is a thing they can fix by installing
-        // one; a capture source that cannot be sampled is not. Reporting them as one silent return
-        // is what let somebody switch Live Preview on, watch the toggle stay on, see nothing happen,
-        // and find no trace of why.
-        if (engine is null)
-        {
-            var reason = _previewUnavailableReason ?? AppErrorCode.RuntimeProviderUnavailable;
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.LivePreviewFailed,
-                reason == AppErrorCode.ModelPackUnavailable
-                    ? AppFailureCategory.AsrUnavailable
-                    : AppFailureCategory.RuntimeProvider,
-                ErrorCode: reason));
-            return;
-        }
-
-        if (audioCapture is null)
-        {
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.LivePreviewFailed,
-                AppFailureCategory.AudioUnavailable,
-                ErrorCode: AppErrorCode.AudioDeviceUnavailable));
-            return;
-        }
-
-        await _previewGate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            if (_previewLoop is not null)
-            {
-                return;
-            }
-
-            var started = await engine.StartAsync().ConfigureAwait(false);
-            if (!started.Succeeded)
-            {
-                _logger.Write(new AppLogEntry(
-                    DateTimeOffset.UtcNow,
-                    AppEventCode.LivePreviewFailed,
-                    FailureFor(started.Error)));
-                return;
-            }
-
-            _previewSequence = 0;
-            _previewCancellation = new CancellationTokenSource();
-            _previewLoop = RunLivePreviewAsync(
-                engine,
-                audioCapture,
-                _previewCancellation.Token);
-            _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.LivePreviewStarted));
-        }
-        finally
-        {
-            _previewGate.Release();
-        }
-    }
-
-    private async Task RunLivePreviewAsync(
-        RuntimeWorkerLivePreviewEngine engine,
-        IAudioSnapshotSource audioCapture,
-        CancellationToken cancellationToken)
-    {
-        var maximumWindow = TimeSpan.FromSeconds(20);
-        try
-        {
-            while (true)
-            {
-                // THE WAIT MOVED TO THE FAR SIDE OF THE WORK, WHICH IS THE WHOLE FIX. It used to sit
-                // here, so the period was the interval PLUS the cost of a pass rather than the larger
-                // of the two, and nothing could reach the screen before both had elapsed however fast
-                // the engine became. On the measured 7.9-second take that bought exactly one update
-                // and the second was not slow but impossible. Ref: #99 and `LivePreviewCadence`.
-                var snapshot = audioCapture.GetSnapshot(maximumWindow);
-                if (snapshot is null || snapshot.Samples.Length < 8_000)
-                {
-                    // NOT THE CADENCE, BECAUSE THIS IS NOT AN UPDATE. There is not yet enough audio to
-                    // transcribe, and waiting the full interval to re-ask is what made a person watch
-                    // "Listening..." for four seconds. Half the threshold this guard enforces, so the
-                    // first pass cannot start more than a quarter second late.
-                    await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken)
-                        .ConfigureAwait(false);
-                    continue;
-                }
-
-                var timer = System.Diagnostics.Stopwatch.StartNew();
-                var update = await engine.PreviewAsync(
-                    snapshot,
-                    Interlocked.Increment(ref _previewSequence),
-                    cancellationToken).ConfigureAwait(false);
-                timer.Stop();
-                if (!update.Succeeded)
-                {
-                    _logger.Write(new AppLogEntry(
-                        DateTimeOffset.UtcNow,
-                        AppEventCode.LivePreviewFailed,
-                        FailureFor(update.Error),
-                        timer.ElapsedMilliseconds));
-                    return;
-                }
-
-                _logger.Write(new AppLogEntry(
-                    DateTimeOffset.UtcNow,
-                    AppEventCode.LivePreviewUpdated,
-                    ElapsedMilliseconds: timer.ElapsedMilliseconds));
-                _window?.DispatcherQueue.TryEnqueue(() =>
-                    _window?.SetLivePreview(update.Text));
-
-                // A FLOOR, NOT AN ADDITION. A pass slower than the interval waits nothing and the next
-                // one starts immediately; a fast one still cannot flood the screen. The engine is a
-                // limb and must not spend the machine the final transcript is waiting on.
-                await Task.Delay(LivePreviewCadence.DelayAfter(timer.Elapsed), cancellationToken)
-                    .ConfigureAwait(false);
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // Release or cancellation intentionally stops preview without affecting final ASR.
-        }
-        catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
-        {
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.LivePreviewFailed,
-                AppFailureCategory.RuntimeWorker));
-        }
-    }
-
-    private async Task StopLivePreviewAsync()
-    {
-        // STOPPING IS REACHED FROM MORE PLACES THAN STARTING, and one of them is quitting the app
-        // from the tray mid-recording - a shutdown path that inherits nothing, where the line saying
-        // the preview stopped was the last thing written about that dictation and was joined to
-        // nothing. Read off the controller rather than taken as a parameter, because the callers
-        // that lose the join are exactly the ones with no id to pass.
-        using var dictation = _sessionController?.CurrentSession is { } recording
-            ? DictationScope.Begin(recording.Id.Value)
-            : NoScope.Instance;
-        await _previewGate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            var cancellation = _previewCancellation;
-            var loop = _previewLoop;
-            _previewCancellation = null;
-            _previewLoop = null;
-            cancellation?.Cancel();
-            if (loop is not null)
-            {
-                try
-                {
-                    await loop.ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    // The preview task observes cancellation as its normal stop path.
-                }
-            }
-
-            cancellation?.Dispose();
-            if (_previewEngine is not null)
-            {
-                await _previewEngine.StopAsync().ConfigureAwait(false);
-            }
-
-            _window?.DispatcherQueue.TryEnqueue(() => _window?.SetLivePreview(text: null));
-            if (loop is not null)
-            {
-                _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.LivePreviewStopped));
-            }
-        }
-        finally
-        {
-            _previewGate.Release();
-        }
-    }
-
     private async Task TranscribeFinalAsync(
         DictationSessionId sessionId,
         CapturedAudio audio,
@@ -3384,6 +3193,26 @@ public partial class App : Application, IAsyncDisposable
     }
 
     /// <summary>What the shell shows when persistence changes what the person should see.</summary>
+    /// <summary>The shell's half of live preview: what it built, what it can sample, and the surface.</summary>
+    private sealed class LivePreviewEffects(App app) : ILivePreviewEffects
+    {
+        public bool Enabled => app._settings.Preferences.LivePreviewEnabled;
+
+        public ILivePreviewEngine? Engine => app._previewEngine;
+
+        public AppErrorCode? EngineUnavailableReason => app._previewUnavailableReason;
+
+        public IAudioSnapshotSource? Audio => app._audioCapture as IAudioSnapshotSource;
+
+        public DictationSessionId? RecordingSessionId => app._sessionController?.CurrentSession?.Id;
+
+        public void ShowPreview(DictationSessionId sessionId, string text) =>
+            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetLivePreview(text));
+
+        public void ClearPreview() =>
+            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetLivePreview(text: null));
+    }
+
     private sealed class SessionPersistenceEffects(App app) : ISessionPersistenceEffects
     {
         public void ShowPendingRecovery(RecoveryTextRecord record) =>
@@ -3624,24 +3453,7 @@ public partial class App : Application, IAsyncDisposable
         _ => "Cleaned locally; AI polish failed safely",
     };
 
-    private static AppFailureCategory FailureFor(AppError? error) => error?.Code switch
-    {
-        AppErrorCode.HotkeyConflict => AppFailureCategory.HotkeyConflict,
-        AppErrorCode.HotkeyInvalid or AppErrorCode.HotkeyUnavailable =>
-            AppFailureCategory.HotkeyUnavailable,
-        AppErrorCode.TargetUnavailable => AppFailureCategory.TargetUnavailable,
-        AppErrorCode.AccessDenied when error?.Stage == AppErrorStage.AudioCapture =>
-            AppFailureCategory.AudioUnavailable,
-        AppErrorCode.AudioDeviceUnavailable or AppErrorCode.AudioDeviceLost =>
-            AppFailureCategory.AudioUnavailable,
-        AppErrorCode.RuntimeProviderUnavailable or AppErrorCode.RuntimeProviderIncompatible =>
-            AppFailureCategory.RuntimeProvider,
-        AppErrorCode.RuntimeWorkerFailed => AppFailureCategory.RuntimeWorker,
-        AppErrorCode.ModelPackUnavailable or AppErrorCode.TranscriptionFailed =>
-            AppFailureCategory.AsrUnavailable,
-        null => AppFailureCategory.None,
-        _ => AppFailureCategory.Unknown,
-    };
+    private static AppFailureCategory FailureFor(AppError? error) => AppFailureCategories.For(error);
 
     private static DiagnosticHardwareClass DiagnosticHardwareClassFor(HardwareSnapshot hardware)
     {
