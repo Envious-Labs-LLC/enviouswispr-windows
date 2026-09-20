@@ -211,12 +211,14 @@ if (quickTap && !syntheticHotkey)
             + "key-up to time.");
 }
 if (syntheticHotkey &&
-    (liveMicrophone || livePreview || headStart || escapeRecovery || failureMode != JourneyFailureMode.None))
+    (liveMicrophone || (livePreview && !quickTap) || headStart || escapeRecovery || failureMode != JourneyFailureMode.None))
 {
     throw new JourneyExpectationException(
         "--synthetic-hotkey drives the installed global hook with the silent reviewed fixture and cannot be "
-            + "combined with live or manual microphone, Live Preview, the head start, Escape Recovery, or "
-            + "failure injection: each of those owns the trigger or the hold in a different way.");
+            + "combined with live or manual microphone, the head start, Escape Recovery, or failure "
+            + "injection: each of those owns the trigger or the hold in a different way. Live Preview is "
+            + "accepted only with --quick-tap, where the question is what a key-up does to a preview "
+            + "worker that is still starting.");
 }
 if (polishProvider == PolishProvider.EgOne)
 {
@@ -441,6 +443,7 @@ var runtimeReady = false;
 var journeyCompleted = false;
 var targetObserved = false;
 var appExitedCleanly = false;
+var strayWorkerCount = 0;
 var ownedWorkerIds = Array.Empty<int>();
 var ownedWorkerCount = 0;
 var ownedPolishWorkerIds = Array.Empty<int>();
@@ -756,6 +759,17 @@ try
         throw new JourneyExpectationException("The production app did not exit cleanly after journey completion.");
     }
 
+    // EVERY WORKER THE APP EVER OWNED, NOT THE ONE COUNTED BEFORE THE RECORDING. The owned-worker
+    // snapshot above is taken before the take begins, so a preview worker started during it - or one
+    // left behind by a cancelled preview startup - was invisible to the cleanup check. Windows keeps a
+    // process's parent id after the parent has exited, so the app's children can still be asked for.
+    strayWorkerCount = ChildProcessIds(app.Id, "EnviousWispr.RuntimeWorker").Count(IsProcessRunning);
+    if (strayWorkerCount != 0)
+    {
+        throw new JourneyExpectationException(
+            $"The production app exited and left {strayWorkerCount} runtime worker(s) it had started still running.");
+    }
+
     if (app.ExitCode != 0)
     {
         throw new JourneyExpectationException(
@@ -780,7 +794,11 @@ try
     {
         RequireProductionJourneyEvents(diagnosticEvents);
     }
-    if (livePreview)
+    if (livePreview && syntheticHotkey && quickTap)
+    {
+        RequireQuickTapCancelledThePreviewStartup(diagnosticEvents);
+    }
+    else if (livePreview)
     {
         RequireLivePreviewJourneyEvents(diagnosticEvents);
     }
@@ -856,9 +874,14 @@ try
         livePreviewUpdateCount = diagnosticEvents.Count(value => value.StartsWith(
             "LivePreviewUpdated/",
             StringComparison.Ordinal)),
+        // The quick-tap-with-preview certificate, in the result rather than only in the verdict.
+        livePreviewStartupCancelled = diagnosticEvents.Any(value => value.StartsWith(
+            "LivePreviewStartupCancelled/",
+            StringComparison.Ordinal)),
         appExitedCleanly,
         ownedWorkerStartedCount = ownedWorkerIds.Length,
         ownedWorkerCount,
+        strayWorkerCount,
         ownedPolishWorkerStartedCount = ownedPolishWorkerIds.Length,
         ownedPolishWorkerCount,
         elapsedMilliseconds = timer.ElapsedMilliseconds,
@@ -1463,6 +1486,35 @@ static void RequireProductionJourneyEvents(IReadOnlyList<string> events)
         throw new JourneyExpectationException(
             $"The production journey omitted required content-free stages: {string.Join(", ", missing)}.");
     }
+}
+
+/// <summary>
+/// A quick tap with Live Preview on: the key-up runs while the preview worker is still starting, and
+/// the app must record that it cancelled the startup rather than wait for the worker to answer. A run
+/// where the worker answered before the queued release ran certifies nothing about that and is asked
+/// to run again, the same way a quick tap that did not overlap the press is.
+/// </summary>
+static void RequireQuickTapCancelledThePreviewStartup(IReadOnlyList<string> events)
+{
+    static bool Has(IReadOnlyList<string> events, string name) =>
+        events.Any(value => value.StartsWith(name + '/', StringComparison.Ordinal));
+    if (Has(events, "LivePreviewStartupCancelled"))
+    {
+        return;
+    }
+
+    if (Has(events, "LivePreviewStarted"))
+    {
+        throw JourneyExpectationException.Instrument(
+            "The quick tap delivered, but the preview worker had answered before the queued key-up ran, so "
+                + "this run says nothing about a release during preview startup. Re-run; if the worker always "
+                + "wins, the tap is not quick enough on this machine. "
+                + $"events={string.Join(',', events)}.");
+    }
+
+    throw new JourneyExpectationException(
+        "The quick tap with Live Preview on recorded neither a cancelled preview startup nor a started preview; "
+            + $"events={string.Join(',', events)}.");
 }
 
 static void RequireLivePreviewJourneyEvents(IReadOnlyList<string> events)

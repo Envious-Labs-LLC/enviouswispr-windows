@@ -227,14 +227,17 @@ public sealed class LivePreviewControllerTests
         world.Engine.AllowStartExit.SetResult();
         await stop.WaitAsync(Patience);
 
-        // A startup that never finished started nothing: no Started, no Stopped, no pass, no words.
-        // The engine is still told to stop, so whatever its start acquired is released.
+        // A startup that never finished started nothing: no Started, no Stopped, no pass, no words -
+        // one line saying the startup was cancelled, joined to the dictation, so the take is not
+        // mistaken for one where Live Preview never tried. The engine is still told to stop, so
+        // whatever its start acquired is released.
         Assert.False(world.Controller.IsRunning);
         Assert.Equal(1, world.Engine.Stops);
         Assert.Equal(0, world.Engine.Starts);
         Assert.Equal(0, world.Engine.Passes);
         Assert.Empty(world.Effects.Previews);
-        Assert.Empty(world.Log.Entries);
+        Assert.Equal([AppEventCode.LivePreviewStartupCancelled], world.Log.Codes);
+        Assert.Equal([world.Session.Value], world.Log.Dictations);
         Assert.Equal(1, world.Effects.Clears);
     }
 

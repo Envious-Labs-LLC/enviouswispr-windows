@@ -247,7 +247,13 @@ public sealed class LivePreviewController : IAsyncDisposable
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // Release or cancellation intentionally stops preview without affecting final ASR. A
-            // startup cancelled before the engine answered leaves the same way, having started nothing.
+            // startup cancelled before the engine answered leaves the same way, having started
+            // nothing - and says so, because a dictation released inside the worker's startup would
+            // otherwise read exactly like one where Live Preview never tried.
+            if (!_started)
+            {
+                _logger.Write(new AppLogEntry(_clock.GetUtcNow(), AppEventCode.LivePreviewStartupCancelled));
+            }
         }
         catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
         {
