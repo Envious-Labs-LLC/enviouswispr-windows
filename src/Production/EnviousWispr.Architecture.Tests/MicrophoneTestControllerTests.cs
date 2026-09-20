@@ -155,7 +155,10 @@ public sealed class MicrophoneTestControllerTests
     [Fact]
     public async Task OneFramePerIntervalCarriesTheLoudestAndAFrameFromAFinishedTestIsRefused()
     {
-        var (controller, capture, clock) = Build();
+        var capture = new FakeCapture();
+        var captures = new CaptureSource { Next = capture };
+        var clock = new Deterministic.ManualClock();
+        var controller = new MicrophoneTestController(() => captures.Next, clock);
         var frames = new List<MicrophoneTestFrame>();
         controller.Frame += (_, frame) => frames.Add(frame);
         var run = controller.RunAsync(null, recordingInProgress: false);
@@ -180,14 +183,25 @@ public sealed class MicrophoneTestControllerTests
         await run.WaitAsync(Patience);
         Assert.False(controller.IsCurrent(frames[0].TestId), "a frame posted before the test ended is refused after it");
 
-        // And the next test does not revive it: a new capture, a new id, the old one still refused.
+        // And the next test on the SAME controller does not revive it: a fresh capture, a new id that
+        // is current, and the old id still refused while the new one runs.
         var next = new FakeCapture();
-        var second = new MicrophoneTestController(() => next, clock);
-        var again = second.RunAsync(null, recordingInProgress: false);
+        captures.Next = next;
+        var again = controller.RunAsync(null, recordingInProgress: false);
         await next.Started.Task.WaitAsync(Patience);
+        next.RaiseLevel(0.003f);
+        Assert.Equal(3, frames.Count);
+        Assert.NotEqual(frames[0].TestId, frames[2].TestId);
+        Assert.True(controller.IsCurrent(frames[2].TestId));
         Assert.False(controller.IsCurrent(frames[0].TestId));
-        second.Cancel();
+        controller.Cancel();
         await again.WaitAsync(Patience);
+    }
+
+    /// <summary>Which capture the factory hands out next; a controller opens a fresh one per test.</summary>
+    private sealed class CaptureSource
+    {
+        public required FakeCapture Next { get; set; }
     }
 
     private static (MicrophoneTestController Controller, FakeCapture Capture, Deterministic.ManualClock Clock) Build()
