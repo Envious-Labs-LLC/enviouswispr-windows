@@ -49,8 +49,10 @@ diagnosis alone.
 
 ## RULE: the-pull-request-workflow
 Branch from `main` in its own worktree, implement, commit, push, open the pull request, clear review, then
-merge and delete the branch. Always pass `--auto` so the merge waits for CI rather than no-opping while
-checks run.
+merge and delete the branch. **Never pass `--auto`.** With no required check it does not wait for CI, it
+merges at once - measured 2026-08-30 and again 2026-09-19, when #151 landed with its last commit's run
+still in progress - and since 2026-09-19 the repository refuses it outright. Wait with
+`gh pr checks <n> --watch`, then `gh pr merge <n> --squash --delete-branch`.
 
 **The gate IS the approval.** Merge your own work once it clears; never ask, and never leave finished work
 open waiting to be asked (founder standing instruction, 2026-08-30).
