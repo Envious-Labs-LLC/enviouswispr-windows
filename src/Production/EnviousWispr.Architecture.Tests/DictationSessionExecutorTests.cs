@@ -185,6 +185,204 @@ public sealed class DictationSessionExecutorTests
         Assert.True(effects.DeadlineArmedDuringRecovery, "recovery ran after the deadline had already been released");
     }
 
+    [Fact]
+    public async Task WindowsLockingMidRecordingReleasesAndKeepsTheAudioAsAKeyReleaseWould()
+    {
+        var (executor, capture, effects, controller) = Build();
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        var recording = controller.CurrentSession;
+        effects.Trace.Clear();
+
+        var result = await executor.ExecuteAsync(Interruption(SystemLifecycleTransition.SessionLocked), CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Applied, result.Disposition);
+        Assert.Equal(recording?.Id, result.Session?.Id);
+        Assert.Equal(1, capture.StopCount);
+        Assert.Equal(0, capture.CancelCount);
+        // The order the shell's lifecycle callback had: watchdog off, release, then the same
+        // finalisation a key release gets, told which transition it is preserving for so the status is
+        // shown after the loops have stopped and before transcription, where it always was.
+        Assert.Equal(
+            ["StopRecordingWatchdog", "RecordTransition:FinalizeReady", "Finalize:recoveryOnly=False:preserving=SessionLocked", "ReleaseProcessingDeadline", "RecordDictationEdge"],
+            effects.Trace);
+        Assert.Single(effects.Finalized);
+    }
+
+    [Fact]
+    public async Task WindowsSuspendingWithNothingRecordingDoesNothingButRecordTheEdge()
+    {
+        // The shell's callback returned when there was no session; so does the command, and the
+        // edge is still recorded in its finally, as it was.
+        var (executor, capture, effects, _) = Build();
+
+        var result = await executor.ExecuteAsync(Interruption(SystemLifecycleTransition.Suspending), CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Ignored, result.Disposition);
+        Assert.Equal(0, capture.StopCount);
+        Assert.Equal(["ReleaseProcessingDeadline", "RecordDictationEdge"], effects.Trace);
+    }
+
+    [Fact]
+    public async Task WindowsLockingMidFinalisationResetsSafelyAndSaysSo()
+    {
+        // A session that is finalising is not recording: the interruption recovers it as the shell
+        // did - stops everything, aborts, resets, and says Windows interrupted it.
+        var (executor, capture, effects, controller) = Build();
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        await controller.ReleaseAsync();
+        Assert.Equal(DictationSessionState.Finalizing, controller.CurrentSession?.State);
+        effects.Trace.Clear();
+
+        var result = await executor.ExecuteAsync(Interruption(SystemLifecycleTransition.SessionLocked), CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Applied, result.Disposition);
+        Assert.Equal(1, capture.StopCount);
+        Assert.Equal(["RecoverFailedSession:Cancelled:Interrupted", "ReleaseProcessingDeadline", "RecordDictationEdge"], effects.Trace);
+    }
+
+    [Fact]
+    public async Task AnExpiredInterruptionSaysRecoveryIsPendingAndTouchesNothing()
+    {
+        // The coordinator decides that an interruption waited too long; the executor is told and
+        // says so, outside the session, as the shell said it when its five-second gate wait failed.
+        var (executor, capture, effects, controller) = Build();
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        effects.Trace.Clear();
+
+        await executor.ExpireAsync(Interruption(SystemLifecycleTransition.SessionLocked));
+
+        Assert.Equal(DictationSessionState.Recording, controller.CurrentSession?.State);
+        Assert.Equal(0, capture.StopCount);
+        Assert.Equal(["ShowInterruptionPending"], effects.Trace);
+    }
+
+    [Fact]
+    public async Task ShutdownRunsTheShellsSessionTeardownThroughThePort()
+    {
+        var (executor, _, effects, _) = Build();
+
+        await executor.ShutdownAsync();
+
+        Assert.Equal(["TearDownSession"], effects.Trace);
+    }
+
+    [Fact]
+    public async Task ADisposedDependencyWhileTheSessionIsLiveIsAnOrdinaryFailureAndIsRecovered()
+    {
+        // TORN DOWN IS A STATE, NOT AN EXCEPTION TYPE. A shell effect that throws ObjectDisposedException
+        // while nothing has been torn down is a bug in the shell, and it gets the ordinary recovery.
+        var (executor, _, effects, _) = Build();
+        effects.OnRecordingStartedThrows = new ObjectDisposedException("a status line");
+
+        var result = await executor.ExecuteAsync(Press(), CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
+        Assert.Equal(
+            ["EvaluateAdmission", "RecordTransition:Started", "OnRecordingStarted", "RecordSessionFailure", "RecoverFailedSession:InvalidTransition:Failed", "ReleaseProcessingDeadline", "RecordDictationEdge"],
+            effects.Trace);
+    }
+
+    [Fact]
+    public async Task AfterTheTeardownACommandThatFailsEndsAsFailedWithoutRecovery()
+    {
+        // The session was torn down beside this command (the shutdown outlived both of its waits).
+        // Whatever it then fails on, there is nothing to recover into: written, answered, no abort.
+        var (executor, capture, effects, _) = Build();
+        await executor.ShutdownAsync();
+        effects.Trace.Clear();
+        capture.StartResultFactory = _ => throw new InvalidOperationException("the capture is gone");
+
+        var result = await executor.ExecuteAsync(Press(), CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
+        Assert.Equal(
+            ["EvaluateAdmission", "RecordSessionFailure", "ReleaseProcessingDeadline", "RecordDictationEdge"],
+            effects.Trace);
+    }
+
+    [Fact]
+    public async Task AfterTheTeardownATimeoutThatFailsEndsAsFailedRatherThanFaultingItsTask()
+    {
+        var (executor, _, effects, controller) = Build();
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        var recording = controller.CurrentSession!.Id;
+        await executor.ShutdownAsync();
+        effects.Trace.Clear();
+        effects.StopBackgroundWorkThrows = new ObjectDisposedException("the preview");
+
+        var result = await executor.ExecuteAsync(Timeout(recording), CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
+        Assert.Equal(["StopBackgroundWork", "RecordDictationEdge", "RecordSessionFailure"], effects.Trace);
+    }
+
+    [Fact]
+    public async Task AnInterruptionWhoseFinalisationThrowsIsRecoveredAsAnInterruptionFailure()
+    {
+        var (executor, _, effects, _) = Build();
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        effects.Trace.Clear();
+        effects.FinalizeThrows = true;
+
+        var result = await executor.ExecuteAsync(Interruption(SystemLifecycleTransition.SessionLocked), CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
+        Assert.Equal(
+            ["StopRecordingWatchdog", "RecordTransition:FinalizeReady", "Finalize:recoveryOnly=False:preserving=SessionLocked", "RecordInterruptionFailure", "RecoverFailedSession:InvalidTransition:InterruptionFailed", "ReleaseProcessingDeadline", "RecordDictationEdge"],
+            effects.Trace);
+        Assert.True(effects.DeadlineArmedDuringRecovery, "recovery ran after the deadline had already been released");
+    }
+
+    [Fact]
+    public async Task ATimeoutForTheRecordingStillInFlightAbortsResetsAndWarns()
+    {
+        var (executor, capture, effects, controller) = Build();
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        var recording = controller.CurrentSession!;
+        effects.Trace.Clear();
+
+        var result = await executor.ExecuteAsync(Timeout(recording.Id), CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Applied, result.Disposition);
+        Assert.Null(controller.CurrentSession);
+        Assert.Equal(1, capture.CancelCount);
+        Assert.Equal(0, capture.StopCount);
+        Assert.Equal(
+            ["StopBackgroundWork", "RecordRecordingTimedOut:SessionTimedOut", "ShowRecordingTimedOut", "RecordDictationEdge"],
+            effects.Trace);
+    }
+
+    [Fact]
+    public async Task ATimeoutForARecordingThatHasMovedOnDoesNothing()
+    {
+        // The watchdog of an earlier recording fires after that recording ended and a new one began.
+        var (executor, capture, effects, controller) = Build();
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        var first = controller.CurrentSession!.Id;
+        await executor.ExecuteAsync(new SessionCommand(PushToTalkSignal.Cancelled), CancellationToken.None);
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        var second = controller.CurrentSession!.Id;
+        effects.Trace.Clear();
+
+        var stale = await executor.ExecuteAsync(Timeout(first), CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Ignored, stale.Disposition);
+        Assert.Equal(second, controller.CurrentSession?.Id);
+        Assert.Equal(DictationSessionState.Recording, controller.CurrentSession?.State);
+        Assert.Equal(1, capture.CancelCount);
+        Assert.Equal(["RecordDictationEdge"], effects.Trace);
+    }
+
+    private static SessionCommand Interruption(SystemLifecycleTransition transition) => new(
+        SessionCommandKind.Interruption,
+        PushToTalkSignal.Cancelled,
+        Transition: transition);
+
+    private static SessionCommand Timeout(DictationSessionId sessionId) => new(
+        SessionCommandKind.Timeout,
+        PushToTalkSignal.Cancelled,
+        TimedOutSession: sessionId);
+
     private static SessionCommand Press() => new(
         PushToTalkSignal.Pressed,
         new RecordingStartContext(new TargetWindowId(101), TextDeliveryOptions.Default));
@@ -216,6 +414,10 @@ public sealed class DictationSessionExecutorTests
         public required DictationAdmissionResult Admission { get; init; }
 
         public bool FinalizeThrows { get; set; }
+
+        public Exception? OnRecordingStartedThrows { get; set; }
+
+        public Exception? StopBackgroundWorkThrows { get; set; }
 
         public bool DeadlineArmed { get; private set; }
 
@@ -251,12 +453,17 @@ public sealed class DictationSessionExecutorTests
         {
             Trace.Add("OnRecordingStarted");
             StartedSession = sessionId;
+            if (OnRecordingStartedThrows is { } failure)
+            {
+                throw failure;
+            }
+
             return Task.CompletedTask;
         }
 
-        public Task FinalizeAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly)
+        public Task FinalizeAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly, SystemLifecycleTransition? preserving = null)
         {
-            Trace.Add($"Finalize:recoveryOnly={recoveryOnly}");
+            Trace.Add(preserving is { } transition ? $"Finalize:recoveryOnly={recoveryOnly}:preserving={transition}" : $"Finalize:recoveryOnly={recoveryOnly}");
             DeadlineArmed = true;
             Finalized.Add(audio);
             if (FinalizeThrows)
@@ -270,6 +477,11 @@ public sealed class DictationSessionExecutorTests
         public Task StopBackgroundWorkAsync()
         {
             Trace.Add("StopBackgroundWork");
+            if (StopBackgroundWorkThrows is { } failure)
+            {
+                throw failure;
+            }
+
             return Task.CompletedTask;
         }
 
@@ -295,6 +507,20 @@ public sealed class DictationSessionExecutorTests
             Trace.Add("RecordDictationEdge");
             return Task.CompletedTask;
         }
+
+        public void RecordInterruptionFailure() => Trace.Add("RecordInterruptionFailure");
+
+        public void ShowInterruptionPending() => Trace.Add("ShowInterruptionPending");
+
+        public Task TearDownSessionAsync()
+        {
+            Trace.Add("TearDownSession");
+            return Task.CompletedTask;
+        }
+
+        public void RecordRecordingTimedOut(AppError failure) => Trace.Add($"RecordRecordingTimedOut:{failure.Code}");
+
+        public void ShowRecordingTimedOut() => Trace.Add("ShowRecordingTimedOut");
     }
 
     private sealed class FakeTargetProvider(nint window) : IForegroundTargetProvider

@@ -6,16 +6,16 @@ using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Pipeline;
 
-/// <summary>Where a timer's verdict goes.</summary>
+/// <summary>Where a timer's verdict goes: it posts a command and returns, and never waits for what follows.</summary>
 /// <remarks>
 /// PRODUCERS, NOT OWNERS. The auto-stop ends a recording through the same door a key release uses,
 /// by posting a Released signal to the shell's command entry, so the session state machine, the
 /// hook's own recording flag, transcription, delivery and history all run exactly as they would
-/// have. A parallel finish path would be a second implementation of ending a dictation, and the two
-/// would drift. It posts rather than awaits, because ending the recording is what stops that very
-/// loop: a loop that awaited its own teardown would wait for itself. The watchdog's timeout is the
-/// one verdict with no signal to post yet; its recovery is awaited, and stops everything but the
-/// watchdog.
+/// have; the watchdog posts a timeout command to the same queue, where the executor decides whether
+/// the recording it was armed for is still the one recording. A parallel finish path would be a
+/// second implementation of ending a dictation, and the two would drift. Both post rather than
+/// await, because what they post is what stops these very loops: a loop that awaited its own
+/// teardown would wait for itself.
 /// </remarks>
 public interface IRecordingTimerEffects
 {
@@ -25,16 +25,8 @@ public interface IRecordingTimerEffects
     /// <summary>Posts a push-to-talk signal and returns; the caller does not wait for it to run.</summary>
     void Post(PushToTalkSignal signal);
 
-    /// <summary>
-    /// The recording has run for as long as it is allowed. The shell's recovery - take the session
-    /// gate, check the recording is still the one that was armed, stop the other loops, abort and
-    /// reset - still lives on the far side of this call until step 11 moves it. It is awaited, not
-    /// posted, because nothing in it stops the watchdog: the watchdog cannot wait for itself here.
-    /// The token is the watchdog's own: a stop that arrives while the recovery is waiting for the
-    /// session gate must be able to end that wait, or a release holding the gate and stopping the
-    /// watchdog would wait for a watchdog waiting for the gate.
-    /// </summary>
-    Task RecordingTimedOutAsync(DictationSessionId sessionId, CancellationToken cancellationToken);
+    /// <summary>Posts that the recording armed as <paramref name="sessionId"/> has run for as long as it is allowed, and returns.</summary>
+    void RecordingTimedOut(DictationSessionId sessionId);
 }
 
 /// <summary>
@@ -43,7 +35,8 @@ public interface IRecordingTimerEffects
 /// <remarks>
 /// THE DURATION IS THE SHELL'S TO SUPPLY, because it is read from an environment variable the UAT
 /// harness sets, and reading environment is not this project's business. What lives here is the wait
-/// and the one decision after it: fire, or find out the recording already ended and say nothing.
+/// and the one decision after it: post, or find out the watch was cancelled and say nothing. Whether
+/// the recording is still the one that was armed is the executor's question, asked under the queue.
 /// </remarks>
 public sealed class RecordingWatchdog : IAsyncDisposable
 {
@@ -91,14 +84,7 @@ public sealed class RecordingWatchdog : IAsyncDisposable
             return;
         }
 
-        try
-        {
-            await _effects.RecordingTimedOutAsync(sessionId, cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // Stopped while the recovery was still waiting its turn: the recording ended another way.
-        }
+        _effects.RecordingTimedOut(sessionId);
     }
 
     public async Task StopAsync()

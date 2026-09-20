@@ -696,8 +696,10 @@ public sealed partial class DesignSystemTokenTests
         }
 
         // THE FLOOR IS TODAY'S COUNT of methods that stop the preview, so a path deleted or renamed
-        // out of the pattern is noticed rather than silently narrowing the gate.
-        Assert.True(previewStops >= 6, $"Expected the preview teardown call sites, found {previewStops}.");
+        // out of the pattern is noticed rather than silently narrowing the gate. Six until step 11 of
+        // #148 moved the watchdog's and Windows' recoveries behind the executor, which reaches these
+        // same four shell methods through its effects; four since.
+        Assert.True(previewStops >= 4, $"Expected the preview teardown call sites, found {previewStops}.");
         Assert.True(
             unpaired.Count == 0,
             "These methods stop the live preview without stopping the auto-stop watcher; a watcher that "

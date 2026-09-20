@@ -321,9 +321,11 @@ public sealed class LivePreviewController : IAsyncDisposable
     /// <summary>Stops whatever is running and releases the gate. The engine is the shell's to dispose.</summary>
     /// <remarks>
     /// THE LAST CALL, BY CONTRACT RATHER THAN BY ENFORCEMENT. The shell disposes this after admission
-    /// has closed, the watchdog has stopped and the session gate is held, so nothing can be starting
-    /// or stopping a preview at the same time; the gate is disposed on that understanding and a start
-    /// or stop that arrives after it would find a disposed semaphore. A second dispose is a no-op
+    /// has closed and the session's own teardown has stopped the preview - under the session when
+    /// the shutdown's two waits were enough, beside a command that outlived them when they were not -
+    /// so nothing is expected to be starting or stopping a preview at the same time; the gate is
+    /// disposed on that understanding and a start or stop that arrives after it would find a
+    /// disposed semaphore. A second dispose is a no-op
     /// once the first has succeeded; one whose stop threw is not remembered as done, so the next
     /// attempt stops and disposes rather than reporting a release that never happened.
     /// This is the contract the shell's own preview gate had; it is written down here because the

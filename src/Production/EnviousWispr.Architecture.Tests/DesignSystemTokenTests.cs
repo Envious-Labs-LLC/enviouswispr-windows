@@ -936,7 +936,7 @@ public sealed partial class DesignSystemTokenTests
         // THE FLOOR IS TODAY'S COUNT, so a flow deleted or renamed out of the pattern is noticed.
         // A lower floor lets the set shrink silently, which is how a gate stops covering the thing
         // it was written for while still reporting green.
-        Assert.True(flows >= 14, $"Expected the dictation flows, found {flows}.");
+        Assert.True(flows >= 16, $"Expected the dictation flows, found {flows}.");
         Assert.True(
             unscoped.Count == 0,
             "These methods are handed a dictation and never open its scope, so every line they "
@@ -960,8 +960,10 @@ public sealed partial class DesignSystemTokenTests
                     parameter.Type is IdentifierNameSyntax
                     {
                         // The audio of a dictation carries its id; a flow handed one serves that
-                        // dictation as surely as one handed the id, and the streaming join is one.
-                        Identifier.ValueText: "DictationSessionId" or "CapturedAudio",
+                        // dictation as surely as one handed the id, and the streaming join is one. A
+                        // session command names the dictation it is about, or is about the one in
+                        // flight; the executor's flows are handed those.
+                        Identifier.ValueText: "DictationSessionId" or "CapturedAudio" or "SessionCommand",
                     }))
             .ToArray();
 
@@ -987,6 +989,7 @@ public sealed partial class DesignSystemTokenTests
     [InlineData("public async Task G(DictationSessionId id) { }")]
     [InlineData("internal async Task<int> H(DictationSessionId id) { return 0; }")]
     [InlineData("public async Task<Transcript> I(ITranscriptionEngine engine, CapturedAudio audio, CancellationToken token) { return null!; }")]
+    [InlineData("private async Task<SessionCommandResult> J(SessionCommand command) { return null!; }")]
     public void AFlowIsFoundHoweverItsSignatureIsWritten(string declaration)
     {
         // The bar stands for a line break: a signature split across lines is one of the shapes
