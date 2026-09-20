@@ -178,6 +178,12 @@ public sealed class DeterministicTextPipeline
         };
     }
 
+    /// <summary>
+    /// The production stages in their production order, for a test that wants the real text decisions
+    /// without the real deadlines: wrap each one and hand the list to the other constructor.
+    /// </summary>
+    internal static IReadOnlyList<IDeterministicTextStep> DefaultSteps() => CreateDefaultSteps();
+
     private static IReadOnlyList<IDeterministicTextStep> CreateDefaultSteps()
     {
         SpokenEmojiFormatter? emojiFormatter;
