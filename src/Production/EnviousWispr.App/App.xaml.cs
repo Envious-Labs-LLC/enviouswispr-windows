@@ -949,6 +949,7 @@ public partial class App : Application, IAsyncDisposable
                 AppEventCode.DeterministicStageObserved,
                 receipt.Status is DeterministicStageStatus.Failed
                     or DeterministicStageStatus.TimedOut
+                    or DeterministicStageStatus.Busy
                     ? AppFailureCategory.PostProcessing
                     : AppFailureCategory.None,
                 receipt.ElapsedMilliseconds,
