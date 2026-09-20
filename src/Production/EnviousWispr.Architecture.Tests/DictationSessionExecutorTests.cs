@@ -4,6 +4,7 @@ using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Sessions;
+using EnviousWispr.Core.Settings;
 using EnviousWispr.Pipeline;
 
 namespace EnviousWispr.Architecture.Tests;
@@ -56,9 +57,9 @@ public sealed class DictationSessionExecutorTests
         Assert.Equal(DictationSessionState.Recording, controller.CurrentSession?.State);
         Assert.True(effects.EscapeRecoveryForSession, "the recording carries the setting it was started with");
         Assert.Equal(
-            ["EvaluateAdmission", "ShowDiskLow", "RecordTransition:Started", "OnRecordingStarted", "ShowTransitionStatus:Started", "ReleaseProcessingDeadline", "RecordDictationEdge"],
+            ["EvaluateAdmission", "ShowDiskLow", "RecordTransition:Started", "RecordingSettings", "Background:Start", "ShowTransitionStatus:Started", "ReleaseProcessingDeadline", "RecordDictationEdge"],
             effects.Trace);
-        Assert.Equal(controller.CurrentSession?.Id, effects.StartedSession);
+        Assert.Equal(controller.CurrentSession?.Id, TracingBackgroundWork.StartedSession);
         Assert.Same(controller.CurrentSession, result.Session);
     }
 
@@ -75,7 +76,7 @@ public sealed class DictationSessionExecutorTests
         Assert.Equal(1, capture.StopCount);
         Assert.Equal(0, capture.CancelCount);
         Assert.Equal(
-            ["StopRecordingWatchdog", "RecordTransition:FinalizeReady", "Finalize:recoveryOnly=False", "ReleaseProcessingDeadline", "RecordDictationEdge"],
+            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "Finalize:recoveryOnly=False", "ReleaseProcessingDeadline", "RecordDictationEdge"],
             effects.Trace);
         Assert.Single(effects.Finalized);
         Assert.Equal([0.2f], effects.Finalized[0].Samples.ToArray());
@@ -96,7 +97,7 @@ public sealed class DictationSessionExecutorTests
         Assert.Equal(1, capture.StopCount);
         Assert.Equal(0, capture.CancelCount);
         Assert.Equal(
-            ["StopRecordingWatchdog", "RecordTransition:FinalizeReady", "Finalize:recoveryOnly=True", "ReleaseProcessingDeadline", "RecordDictationEdge"],
+            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "Finalize:recoveryOnly=True", "ReleaseProcessingDeadline", "RecordDictationEdge"],
             effects.Trace);
     }
 
@@ -117,7 +118,7 @@ public sealed class DictationSessionExecutorTests
         Assert.Null(controller.CurrentSession);
         Assert.False(effects.EscapeRecoveryForSession);
         Assert.Equal(
-            ["StopRecordingWatchdog", "RecordTransition:Cancelled", "StopBackgroundWork", "ShowTransitionStatus:Cancelled", "ReleaseProcessingDeadline", "RecordDictationEdge"],
+            ["Background:StopWatchdog", "RecordTransition:Cancelled", "Background:Stop", "ShowTransitionStatus:Cancelled", "ReleaseProcessingDeadline", "RecordDictationEdge"],
             effects.Trace);
     }
 
@@ -131,7 +132,7 @@ public sealed class DictationSessionExecutorTests
         Assert.Equal(SessionCommandDisposition.Applied, result.Disposition);
         Assert.Null(result.Session);
         Assert.Equal(
-            ["StopRecordingWatchdog", "RecordTransition:Ignored", "ShowTransitionStatus:Ignored", "ReleaseProcessingDeadline", "RecordDictationEdge"],
+            ["Background:StopWatchdog", "RecordTransition:Ignored", "ShowTransitionStatus:Ignored", "ReleaseProcessingDeadline", "RecordDictationEdge"],
             effects.Trace);
     }
 
@@ -180,7 +181,7 @@ public sealed class DictationSessionExecutorTests
         // released, then the edge - exactly as the shell always did it. Lock/suspend and shutdown cancel
         // that deadline from their own callbacks and must still find it during the recovery.
         Assert.Equal(
-            ["StopRecordingWatchdog", "RecordTransition:FinalizeReady", "Finalize:recoveryOnly=False", "RecordSessionFailure", "RecoverFailedSession:InvalidTransition:Failed", "ReleaseProcessingDeadline", "RecordDictationEdge"],
+            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "Finalize:recoveryOnly=False", "RecordSessionFailure", "RecoverFailedSession:InvalidTransition:Failed", "ReleaseProcessingDeadline", "RecordDictationEdge"],
             effects.Trace);
         Assert.True(effects.DeadlineArmedDuringRecovery, "recovery ran after the deadline had already been released");
     }
@@ -203,7 +204,7 @@ public sealed class DictationSessionExecutorTests
         // finalisation a key release gets, told which transition it is preserving for so the status is
         // shown after the loops have stopped and before transcription, where it always was.
         Assert.Equal(
-            ["StopRecordingWatchdog", "RecordTransition:FinalizeReady", "Finalize:recoveryOnly=False:preserving=SessionLocked", "ReleaseProcessingDeadline", "RecordDictationEdge"],
+            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "Finalize:recoveryOnly=False:preserving=SessionLocked", "ReleaseProcessingDeadline", "RecordDictationEdge"],
             effects.Trace);
         Assert.Single(effects.Finalized);
     }
@@ -272,13 +273,13 @@ public sealed class DictationSessionExecutorTests
         // TORN DOWN IS A STATE, NOT AN EXCEPTION TYPE. A shell effect that throws ObjectDisposedException
         // while nothing has been torn down is a bug in the shell, and it gets the ordinary recovery.
         var (executor, _, effects, _) = Build();
-        effects.OnRecordingStartedThrows = new ObjectDisposedException("a status line");
+        TracingBackgroundWork.StartThrows = new ObjectDisposedException("a status line");
 
         var result = await executor.ExecuteAsync(Press(), CancellationToken.None);
 
         Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
         Assert.Equal(
-            ["EvaluateAdmission", "RecordTransition:Started", "OnRecordingStarted", "RecordSessionFailure", "RecoverFailedSession:InvalidTransition:Failed", "ReleaseProcessingDeadline", "RecordDictationEdge"],
+            ["EvaluateAdmission", "RecordTransition:Started", "RecordingSettings", "Background:Start", "RecordSessionFailure", "RecoverFailedSession:InvalidTransition:Failed", "ReleaseProcessingDeadline", "RecordDictationEdge"],
             effects.Trace);
     }
 
@@ -308,12 +309,12 @@ public sealed class DictationSessionExecutorTests
         var recording = controller.CurrentSession!.Id;
         await executor.ShutdownAsync();
         effects.Trace.Clear();
-        effects.StopBackgroundWorkThrows = new ObjectDisposedException("the preview");
+        TracingBackgroundWork.StopThrows = new ObjectDisposedException("the preview");
 
         var result = await executor.ExecuteAsync(Timeout(recording), CancellationToken.None);
 
         Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
-        Assert.Equal(["StopBackgroundWork", "RecordDictationEdge", "RecordSessionFailure"], effects.Trace);
+        Assert.Equal(["Background:Stop", "RecordDictationEdge", "RecordSessionFailure"], effects.Trace);
     }
 
     [Fact]
@@ -328,7 +329,7 @@ public sealed class DictationSessionExecutorTests
 
         Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
         Assert.Equal(
-            ["StopRecordingWatchdog", "RecordTransition:FinalizeReady", "Finalize:recoveryOnly=False:preserving=SessionLocked", "RecordInterruptionFailure", "RecoverFailedSession:InvalidTransition:InterruptionFailed", "ReleaseProcessingDeadline", "RecordDictationEdge"],
+            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "Finalize:recoveryOnly=False:preserving=SessionLocked", "RecordInterruptionFailure", "RecoverFailedSession:InvalidTransition:InterruptionFailed", "ReleaseProcessingDeadline", "RecordDictationEdge"],
             effects.Trace);
         Assert.True(effects.DeadlineArmedDuringRecovery, "recovery ran after the deadline had already been released");
     }
@@ -348,7 +349,7 @@ public sealed class DictationSessionExecutorTests
         Assert.Equal(1, capture.CancelCount);
         Assert.Equal(0, capture.StopCount);
         Assert.Equal(
-            ["StopBackgroundWork", "RecordRecordingTimedOut:SessionTimedOut", "ShowRecordingTimedOut", "RecordDictationEdge"],
+            ["Background:Stop", "RecordRecordingTimedOut:SessionTimedOut", "ShowRecordingTimedOut", "RecordDictationEdge"],
             effects.Trace);
     }
 
@@ -400,7 +401,7 @@ public sealed class DictationSessionExecutorTests
             Admission = admission ?? new DictationAdmissionResult(
                 DictationAdmissionStatus.Ready, CanStart: true, CanPersistRecovery: true),
         };
-        return (new DictationSessionExecutor(controller, effects), capture, effects, controller);
+        return (new DictationSessionExecutor(controller, new TracingBackgroundWork(effects.Trace), effects), capture, effects, controller);
     }
 
     private sealed class FakeEffects : IDictationSessionEffects
@@ -409,15 +410,11 @@ public sealed class DictationSessionExecutorTests
 
         public List<CapturedAudio> Finalized { get; } = [];
 
-        public DictationSessionId? StartedSession { get; private set; }
 
         public required DictationAdmissionResult Admission { get; init; }
 
         public bool FinalizeThrows { get; set; }
 
-        public Exception? OnRecordingStartedThrows { get; set; }
-
-        public Exception? StopBackgroundWorkThrows { get; set; }
 
         public bool DeadlineArmed { get; private set; }
 
@@ -441,24 +438,12 @@ public sealed class DictationSessionExecutorTests
 
         public void ShowDiskLow() => Trace.Add("ShowDiskLow");
 
-        public Task StopRecordingWatchdogAsync()
-        {
-            Trace.Add("StopRecordingWatchdog");
-            return Task.CompletedTask;
-        }
-
         public void RecordTransition(SessionTransitionResult result) => Trace.Add($"RecordTransition:{result.Kind}");
 
-        public Task OnRecordingStartedAsync(DictationSessionId sessionId)
+        public RecordingBackgroundSettings RecordingSettings()
         {
-            Trace.Add("OnRecordingStarted");
-            StartedSession = sessionId;
-            if (OnRecordingStartedThrows is { } failure)
-            {
-                throw failure;
-            }
-
-            return Task.CompletedTask;
+            Trace.Add("RecordingSettings");
+            return new RecordingBackgroundSettings(TimeSpan.FromMinutes(5), DictationPreferences.Default);
         }
 
         public Task FinalizeAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly, SystemLifecycleTransition? preserving = null)
@@ -469,17 +454,6 @@ public sealed class DictationSessionExecutorTests
             if (FinalizeThrows)
             {
                 throw new InvalidOperationException("synthetic finalisation failure");
-            }
-
-            return Task.CompletedTask;
-        }
-
-        public Task StopBackgroundWorkAsync()
-        {
-            Trace.Add("StopBackgroundWork");
-            if (StopBackgroundWorkThrows is { } failure)
-            {
-                throw failure;
             }
 
             return Task.CompletedTask;
@@ -521,6 +495,39 @@ public sealed class DictationSessionExecutorTests
         public void RecordRecordingTimedOut(AppError failure) => Trace.Add($"RecordRecordingTimedOut:{failure.Code}");
 
         public void ShowRecordingTimedOut() => Trace.Add("ShowRecordingTimedOut");
+    }
+
+    /// <summary>The executor's seam for the four things beside a recording: traced, and made to fail on request.</summary>
+    private sealed class TracingBackgroundWork(List<string> trace) : ISessionBackgroundWork
+    {
+        public static DictationSessionId? StartedSession { get; private set; }
+
+        public static Exception? StartThrows { get; set; }
+
+        public static Exception? StopThrows { get; set; }
+
+        public Task StartAsync(DictationSessionId sessionId, RecordingBackgroundSettings settings)
+        {
+            trace.Add("Background:Start");
+            StartedSession = sessionId;
+            var failure = StartThrows;
+            StartThrows = null;
+            return failure is null ? Task.CompletedTask : Task.FromException(failure);
+        }
+
+        public Task StopAsync()
+        {
+            trace.Add("Background:Stop");
+            var failure = StopThrows;
+            StopThrows = null;
+            return failure is null ? Task.CompletedTask : Task.FromException(failure);
+        }
+
+        public Task StopWatchdogAsync()
+        {
+            trace.Add("Background:StopWatchdog");
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeTargetProvider(nint window) : IForegroundTargetProvider

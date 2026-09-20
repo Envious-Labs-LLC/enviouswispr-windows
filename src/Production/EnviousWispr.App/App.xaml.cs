@@ -1305,7 +1305,10 @@ public partial class App : Application, IAsyncDisposable
             new SessionFinalizationEffects(this),
             TimeProvider.System);
         _sessionCoordinator = new DictationSessionCoordinator(
-            new DictationSessionExecutor(sessionController, new SessionEffects(this, sessionController)),
+            new DictationSessionExecutor(
+                sessionController,
+                new SessionBackgroundWork(_watchdog, _livePreview, _autoStop, _streaming),
+                new SessionEffects(this, sessionController)),
             sessionController.CaptureStartContext);
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
         // A saved keybind builds a NEW hook, which starts armed and knows nothing about a capture
@@ -2279,18 +2282,10 @@ public partial class App : Application, IAsyncDisposable
                     "Disk space is critically low",
                     "Dictation can continue, but EnviousWispr may be unable to save an encrypted crash-recovery copy."));
 
-        public Task StopRecordingWatchdogAsync() => app._watchdog.StopAsync();
-
         public void RecordTransition(SessionTransitionResult result) => app.WriteSessionEvent(result);
 
-        public async Task OnRecordingStartedAsync(DictationSessionId sessionId)
-        {
-            using var dictation = DictationScope.Begin(sessionId.Value);
-            app._watchdog.Start(sessionId, RecordingWatchdogDuration());
-            await app._livePreview.StartAsync(sessionId).ConfigureAwait(false);
-            app._autoStop.Start(sessionId, app._settings.Preferences.Dictation);
-            app._streaming.Start(sessionId);
-        }
+        public RecordingBackgroundSettings RecordingSettings() =>
+            new(RecordingWatchdogDuration(), app._settings.Preferences.Dictation);
 
         public async Task FinalizeAsync(
             DictationSessionId sessionId,
@@ -2304,9 +2299,6 @@ public partial class App : Application, IAsyncDisposable
             var processingCancellation = new CancellationTokenSource(MaximumFinalProcessingDuration);
             _commandProcessing = processingCancellation;
             app._activeProcessingCancellation = processingCancellation;
-            await app._streaming.StopAsync().ConfigureAwait(false);
-            await app._autoStop.StopAsync().ConfigureAwait(false);
-            await app._livePreview.StopAsync().ConfigureAwait(false);
             if (preserving is { } transition)
             {
                 app._window?.DispatcherQueue.TryEnqueue(() =>
@@ -2339,13 +2331,6 @@ public partial class App : Application, IAsyncDisposable
             }
 
             processingCancellation.Dispose();
-        }
-
-        public async Task StopBackgroundWorkAsync()
-        {
-            await app._streaming.StopAsync().ConfigureAwait(false);
-            await app._autoStop.StopAsync().ConfigureAwait(false);
-            await app._livePreview.StopAsync().ConfigureAwait(false);
         }
 
         public void ShowTransitionStatus(SessionTransitionResult result) =>

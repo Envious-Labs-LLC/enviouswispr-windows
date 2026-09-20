@@ -652,13 +652,18 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void TheAutoStopWatcherIsTornDownWhereverTheLivePreviewIs()
     {
-        var source = File.ReadAllText(
-            Path.Combine(
-                FindRepositoryRoot(),
-                "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
-        var methods = CSharpSyntaxTree.ParseText(source).GetRoot()
-            .DescendantNodes()
-            .OfType<MethodDeclarationSyntax>();
+        // TWO OWNERS SINCE THE REGRADE OF #148: the order around a recording is Pipeline's
+        // (SessionBackgroundWork), the recovery's and the teardown's stops are still the shell's.
+        // Both files are read, and the field names differ between them.
+        var root = FindRepositoryRoot();
+        var methods = new[]
+            {
+                Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"),
+                Path.Combine(root, "src", "Production", "EnviousWispr.Pipeline", "SessionBackgroundWork.cs"),
+            }
+            .SelectMany(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path)).GetRoot()
+                .DescendantNodes()
+                .OfType<MethodDeclarationSyntax>());
 
         var previewStops = 0;
         var unpaired = new List<string>();
@@ -681,7 +686,9 @@ public sealed partial class DesignSystemTokenTests
                 })
                 .OfType<string>()
                 .ToArray();
-            var stopsPreview = references.Any(text => text.EndsWith("_livePreview.StopAsync", StringComparison.Ordinal));
+            var stopsPreview = references.Any(text =>
+                text.EndsWith("_livePreview.StopAsync", StringComparison.Ordinal) ||
+                text.EndsWith("_preview.StopAsync", StringComparison.Ordinal));
             var stopsWatcher = references.Any(text => text.EndsWith("_autoStop.StopAsync", StringComparison.Ordinal));
             if (!stopsPreview)
             {
@@ -697,9 +704,10 @@ public sealed partial class DesignSystemTokenTests
 
         // THE FLOOR IS TODAY'S COUNT of methods that stop the preview, so a path deleted or renamed
         // out of the pattern is noticed rather than silently narrowing the gate. Six until step 11 of
-        // #148 moved the watchdog's and Windows' recoveries behind the executor, which reaches these
-        // same four shell methods through its effects; four since.
-        Assert.True(previewStops >= 4, $"Expected the preview teardown call sites, found {previewStops}.");
+        // #148 moved the watchdog's and Windows' recoveries behind the executor; four while the
+        // executor reached the shell's stops through its effects; three since the order around a
+        // recording moved into Pipeline (one method there, the recovery and the teardown here).
+        Assert.True(previewStops >= 3, $"Expected the preview teardown call sites, found {previewStops}.");
         Assert.True(
             unpaired.Count == 0,
             "These methods stop the live preview without stopping the auto-stop watcher; a watcher that "

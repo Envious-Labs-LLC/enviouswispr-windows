@@ -54,20 +54,18 @@ public interface IDictationSessionEffects
 
     void ShowDiskLow();
 
-    Task StopRecordingWatchdogAsync();
-
     /// <summary>Writes the transition's content-free event.</summary>
     void RecordTransition(SessionTransitionResult result);
 
-    /// <summary>The recording is open: watchdog, live preview, auto-stop, streaming, in that order.</summary>
-    Task OnRecordingStartedAsync(DictationSessionId sessionId);
+    /// <summary>What the background work is told as a recording starts: read now, handed over as values.</summary>
+    RecordingBackgroundSettings RecordingSettings();
 
     /// <summary>
-    /// Capture is complete: stop the background work and turn the audio into delivered text. The
-    /// processing deadline this arms stays armed until <see cref="ReleaseProcessingDeadline"/>.
+    /// Capture is complete and the background work has been stopped: turn the audio into delivered
+    /// text. The processing deadline this arms stays armed until <see cref="ReleaseProcessingDeadline"/>.
     /// When <paramref name="preserving"/> names the Windows transition that ended the recording, the
-    /// "captured audio is being preserved" status is shown after the background work has stopped and
-    /// before transcription - where the shell's lifecycle callback used to show it.
+    /// "captured audio is being preserved" status is shown first - after the background work stopped
+    /// and before transcription, where the shell's lifecycle callback used to show it.
     /// </summary>
     Task FinalizeAsync(
         DictationSessionId sessionId,
@@ -81,9 +79,6 @@ public interface IDictationSessionEffects
     /// finalisation that is being recovered - the order the shell always had.
     /// </summary>
     void ReleaseProcessingDeadline();
-
-    /// <summary>The recording ended with nothing to process: stop the background work.</summary>
-    Task StopBackgroundWorkAsync();
 
     void ShowTransitionStatus(SessionTransitionResult result);
 
@@ -136,14 +131,20 @@ public interface IDictationSessionEffects
 public sealed class DictationSessionExecutor : ISessionCommandExecutor
 {
     private readonly PushToTalkSessionController _controller;
+    private readonly ISessionBackgroundWork _background;
     private readonly IDictationSessionEffects _effects;
     private bool _tornDown;
 
-    public DictationSessionExecutor(PushToTalkSessionController controller, IDictationSessionEffects effects)
+    public DictationSessionExecutor(
+        PushToTalkSessionController controller,
+        ISessionBackgroundWork background,
+        IDictationSessionEffects effects)
     {
         ArgumentNullException.ThrowIfNull(controller);
+        ArgumentNullException.ThrowIfNull(background);
         ArgumentNullException.ThrowIfNull(effects);
         _controller = controller;
+        _background = background;
         _effects = effects;
     }
 
@@ -240,13 +241,14 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
 
             if (_controller.CurrentSession.State == DictationSessionState.Recording)
             {
-                await _effects.StopRecordingWatchdogAsync().ConfigureAwait(false);
+                await _background.StopWatchdogAsync().ConfigureAwait(false);
                 var result = await _controller.ReleaseAsync(CancellationToken.None).ConfigureAwait(false);
                 _effects.RecordTransition(result);
                 if (result.Kind == SessionTransitionKind.FinalizeReady &&
                     result.Session is not null &&
                     result.Audio is not null)
                 {
+                    await _background.StopAsync().ConfigureAwait(false);
                     await _effects.FinalizeAsync(result.Session.Id, result.Audio, recoveryOnly: false, preserving: transition)
                         .ConfigureAwait(false);
                     return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
@@ -307,7 +309,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                     State: DictationSessionState.Recording,
                 } && currentId == sessionId)
             {
-                await _effects.StopBackgroundWorkAsync().ConfigureAwait(false);
+                await _background.StopAsync().ConfigureAwait(false);
                 var error = new AppError(AppErrorCode.SessionTimedOut, AppErrorStage.Session, CanRetry: true);
                 await _controller.AbortAsync(error, CancellationToken.None).ConfigureAwait(false);
                 await _controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
@@ -360,7 +362,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             }
             else
             {
-                await _effects.StopRecordingWatchdogAsync().ConfigureAwait(false);
+                await _background.StopWatchdogAsync().ConfigureAwait(false);
             }
 
             var recoverCancelledRecording =
@@ -392,12 +394,17 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             if (result.Kind == SessionTransitionKind.Started && result.Session is not null)
             {
                 _effects.EscapeRecoveryForSession = _effects.EscapeRecoveryEnabled;
-                await _effects.OnRecordingStartedAsync(result.Session.Id).ConfigureAwait(false);
+                // THE SETTINGS ARE READ ONCE, HERE, and the background work is told them: a recording
+                // that started under one auto-stop preference finishes under it.
+                await _background.StartAsync(result.Session.Id, _effects.RecordingSettings()).ConfigureAwait(false);
             }
             else if (result.Kind == SessionTransitionKind.FinalizeReady &&
                 result.Session is not null &&
                 result.Audio is not null)
             {
+                // THE CAPTURE HAS ALREADY STOPPED (the release above), so the preview's worker is
+                // waited for here, after the microphone is closed, never before.
+                await _background.StopAsync().ConfigureAwait(false);
                 await _effects.FinalizeAsync(result.Session.Id, result.Audio, recoverCancelledRecording)
                     .ConfigureAwait(false);
                 return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
@@ -405,7 +412,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             else if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
             {
                 _effects.EscapeRecoveryForSession = false;
-                await _effects.StopBackgroundWorkAsync().ConfigureAwait(false);
+                await _background.StopAsync().ConfigureAwait(false);
                 await _controller.ResetAsync(none).ConfigureAwait(false);
             }
 
