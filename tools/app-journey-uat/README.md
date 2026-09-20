@@ -164,15 +164,24 @@ while an unowned EnviousWispr or controlled-target process exists.
 
 ### Silent acoustic journeys over a virtual cable
 
-Add `--virtual-cable` to either live-microphone command to run the same production capture and hook with the
-speakers silent and the real microphone untouched. It needs VB-Audio's free VB-CABLE driver installed: the
-fixture plays to the cable's playback endpoint (`CABLE Input`) and the isolated journey profile names the
-cable's recording endpoint (`CABLE Output`) as its preferred microphone, so the app records exactly what was
-played, through the same WASAPI path a real microphone takes, with no room, echo suppression or webcam in
-between. Both endpoints are found by their own names; the machine's default playback and recording devices
-are never read and never changed. If either endpoint is missing the run is INSTRUMENT INVALID (exit 3), not a
-product failure. It cannot combine with `--synthesized-acoustic` (Windows speech synthesis plays to the
-default device) or `--manual-microphone`.
+Add `--virtual-cable` to either live-microphone command to run the same production capture and hook without
+using the speakers or the real microphone. It needs VB-Audio's free VB-CABLE driver installed: the fixture
+plays to the cable's playback endpoint (`CABLE Input`) and the isolated journey profile is the default profile
+plus one line naming the cable's recording endpoint (`CABLE Output`) as its preferred microphone, so the app
+records exactly what was played, through the same WASAPI path a real microphone takes, with no room, echo
+suppression or webcam in between. The harness opens both endpoints explicitly and never changes the machine's
+default devices (the app's own device picker still reads which one is the default, as it always does).
+
+Four things are staging, not product, and make the run INSTRUMENT INVALID (exit 3): either endpoint missing or
+duplicated (Windows allows two endpoints to share a name, so exactly one of each is required); Windows "Listen
+to this device" enabled on `CABLE Output`, which would forward the cable to a playback device and make the run
+audible; the preflight fixture not coming back through the cable (not started, not completed, or a peak below
+0.05); and the app's own log showing it fell back to the default microphone because the cable failed to open
+when the key went down. The last check is what keeps the label honest: the product deliberately falls back to
+the default microphone when a preferred one is unavailable, and in this mode "default" is the founder's real
+one, so a run in which that happened is refused after the fact rather than reported as silent. It cannot
+combine with `--synthesized-acoustic` (Windows speech synthesis plays to the default device) or
+`--manual-microphone`.
 
 ```powershell
 dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
@@ -182,9 +191,11 @@ dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.
 ```
 
 The result carries `audioRoute` (`VirtualCable: CABLE Input ... -> CABLE Output ...`, or `MachineDefaultEndpoints`
-for the audible mode) and an `inputKind` that says `VirtualCable`, so a silent pass can never be read as an
-acoustic one. The VB-CABLE installer makes the cable the default playback device on some machines; check
-Windows sound settings after installing it, once, before trusting the speakers again.
+for the audible mode, which names the routing asked for, not what is physically wired to it) and an `inputKind`
+that says `VirtualCable`, so a silent pass can never be read as an acoustic one. The VB-CABLE installer can make
+the cable the default playback or recording device; check both in Windows sound settings after installing it,
+once, before trusting the speakers or the microphone again. Other monitoring or repeater software that forwards
+the cable to a playback device is outside what the harness can see.
 
 The remaining physical acceptance path is a separate guided mode. Exit any normally installed EnviousWispr
 instance first, run the command below, keep the controlled target focused, and follow the fixed public instruction
