@@ -15,6 +15,15 @@ public enum SessionFailureKind
 
     /// <summary>A transition threw; the session is reset safely.</summary>
     Failed,
+
+    /// <summary>Windows locked or suspended with nothing recording, or mid-finalisation; the session is reset safely.</summary>
+    Interrupted,
+
+    /// <summary>Windows locked or suspended and the recovery itself exceeded its deadline; reset safely.</summary>
+    InterruptionTimedOut,
+
+    /// <summary>Windows locked or suspended and the recovery threw; reset safely.</summary>
+    InterruptionFailed,
 }
 
 /// <summary>
@@ -56,8 +65,15 @@ public interface IDictationSessionEffects
     /// <summary>
     /// Capture is complete: stop the background work and turn the audio into delivered text. The
     /// processing deadline this arms stays armed until <see cref="ReleaseProcessingDeadline"/>.
+    /// When <paramref name="preserving"/> names the Windows transition that ended the recording, the
+    /// "captured audio is being preserved" status is shown after the background work has stopped and
+    /// before transcription - where the shell's lifecycle callback used to show it.
     /// </summary>
-    Task FinalizeAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly);
+    Task FinalizeAsync(
+        DictationSessionId sessionId,
+        CapturedAudio audio,
+        bool recoveryOnly,
+        SystemLifecycleTransition? preserving = null);
 
     /// <summary>
     /// Releases the processing deadline armed by <see cref="FinalizeAsync"/>, if this command armed one.
@@ -74,11 +90,30 @@ public interface IDictationSessionEffects
     /// <summary>The transition threw for a reason that is not a timeout.</summary>
     void RecordSessionFailure();
 
+    /// <summary>The interruption's recovery threw.</summary>
+    void RecordInterruptionFailure();
+
     /// <summary>Stops everything, aborts and resets the session, logs the recovery, shows the status.</summary>
     Task RecoverFailedSessionAsync(AppError failure, SessionFailureKind kind);
 
     /// <summary>Records whether a dictation is in flight, at every place one can end.</summary>
     Task RecordDictationEdgeAsync();
+
+    /// <summary>Windows interrupted while the previous command was still running, and the recovery has waited too long.</summary>
+    void ShowInterruptionPending();
+
+    /// <summary>
+    /// Shutdown: the session-specific disposal - the timers, streaming and the preview stopped, the
+    /// capture let go of, the session controller and the delivery route disposed. After the last
+    /// command when the shutdown's waits were enough; beside a command that outlived them when not.
+    /// </summary>
+    Task TearDownSessionAsync();
+
+    /// <summary>The recording ran to its limit and was aborted: the log line.</summary>
+    void RecordRecordingTimedOut(AppError failure);
+
+    /// <summary>The recording ran to its limit and was aborted: the status.</summary>
+    void ShowRecordingTimedOut();
 }
 
 /// <summary>
@@ -102,6 +137,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
 {
     private readonly PushToTalkSessionController _controller;
     private readonly IDictationSessionEffects _effects;
+    private bool _tornDown;
 
     public DictationSessionExecutor(PushToTalkSessionController controller, IDictationSessionEffects effects)
     {
@@ -111,9 +147,185 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         _effects = effects;
     }
 
+    /// <summary>The interruption waited five seconds behind another command: recovery is pending, and it is said so now.</summary>
+    public Task ExpireAsync(SessionCommand command)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        using var dictation = _controller.CurrentSession is { } interrupted
+            ? DictationScope.Begin(interrupted.Id.Value)
+            : NoScope.Instance;
+        _effects.ShowInterruptionPending();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The shell's session-specific disposal, through its port. Run by the coordinator's shutdown once
+    /// the queue is closed and, when its two waits were enough, once the last command has finished;
+    /// when they were not, beside the command still running, which then finds the session torn down.
+    /// </summary>
+    public Task ShutdownAsync()
+    {
+        // THE STATE IS WRITTEN BEFORE THE TEARDOWN STARTS, so a command that fails from here on fails
+        // as one torn down beside, whichever disposed dependency it happened to reach first.
+        Volatile.Write(ref _tornDown, true);
+        return _effects.TearDownSessionAsync();
+    }
+
     public async Task<SessionCommandResult> ExecuteAsync(SessionCommand command, CancellationToken stoppingToken)
     {
         ArgumentNullException.ThrowIfNull(command);
+        try
+        {
+            return await (command.Kind switch
+            {
+                SessionCommandKind.Interruption => InterruptAsync(command),
+                SessionCommandKind.Timeout => TimeOutAsync(command),
+                _ => ExecutePushToTalkAsync(command, stoppingToken),
+            }).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (TornDown && exception is not (StackOverflowException or OutOfMemoryException))
+        {
+            // TORN DOWN BESIDE THIS COMMAND, AND ITS OWN RECOVERY FOUND THE SAME. A command's catches
+            // recover into the session; when the session has been torn down under them, the recovery
+            // itself fails on a disposed dependency, and that failure ends here rather than faulting
+            // the submitter's task: written as a failure, under the dictation it was about where one
+            // is still known, and answered as one.
+            using var dictation = (command.TimedOutSession ?? _controller.CurrentSession?.Id) is { } known
+                ? DictationScope.Begin(known.Value)
+                : NoScope.Instance;
+            RecordFailure(command.Kind);
+            return new SessionCommandResult(SessionCommandDisposition.Failed);
+        }
+    }
+
+    /// <summary>Whether the shutdown has torn the session down - under a command still running, when it outlived both waits.</summary>
+    private bool TornDown => Volatile.Read(ref _tornDown);
+
+    private void RecordFailure(SessionCommandKind kind)
+    {
+        if (kind == SessionCommandKind.Interruption)
+        {
+            _effects.RecordInterruptionFailure();
+        }
+        else
+        {
+            _effects.RecordSessionFailure();
+        }
+    }
+
+    /// <summary>
+    /// Windows is locking or suspending. A recording is released and finalised exactly as a key release
+    /// would finalise it - transcribed, delivered where it can be, held for recovery where it cannot -
+    /// and anything else in flight is reset; with nothing in flight, nothing is done. The body the
+    /// shell's lifecycle callback used to run under the session gate, in its order.
+    /// </summary>
+    private async Task<SessionCommandResult> InterruptAsync(SessionCommand command)
+    {
+        // WINDOWS LOCKING OR SUSPENDING ARRIVES ON ITS OWN CALLBACK, so this flow inherits nothing
+        // and had no dictation at all - the capture transition, the preview stop, the failure and
+        // the recovery lines all landed joined to nothing, on the path where a user most wants to
+        // know what happened to their words.
+        using var dictation = _controller.CurrentSession is { } interrupted
+            ? DictationScope.Begin(interrupted.Id.Value)
+            : NoScope.Instance;
+        var transition = command.Transition ?? SystemLifecycleTransition.SessionLocked;
+        try
+        {
+            // NOTHING TO INTERRUPT, NOTHING DONE - as the shell's callback did. The edge is still
+            // recorded in the finally, as it was.
+            if (_controller.CurrentSession is null)
+            {
+                return new SessionCommandResult(SessionCommandDisposition.Ignored);
+            }
+
+            if (_controller.CurrentSession.State == DictationSessionState.Recording)
+            {
+                await _effects.StopRecordingWatchdogAsync().ConfigureAwait(false);
+                var result = await _controller.ReleaseAsync(CancellationToken.None).ConfigureAwait(false);
+                _effects.RecordTransition(result);
+                if (result.Kind == SessionTransitionKind.FinalizeReady &&
+                    result.Session is not null &&
+                    result.Audio is not null)
+                {
+                    await _effects.FinalizeAsync(result.Session.Id, result.Audio, recoveryOnly: false, preserving: transition)
+                        .ConfigureAwait(false);
+                    return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
+                }
+            }
+
+            await RecoverInterruptedAsync(AppErrorCode.Cancelled, SessionFailureKind.Interrupted).ConfigureAwait(false);
+            return new SessionCommandResult(SessionCommandDisposition.Applied);
+        }
+        catch (Exception exception) when (TornDown && exception is not (StackOverflowException or OutOfMemoryException))
+        {
+            // TORN DOWN BESIDE THIS COMMAND: the shutdown outlived both of its waits. Decided by the
+            // state, not by the exception - any failure once the session is gone is this one. There
+            // is nothing left to recover into, so nothing is aborted or reset; the failure is written
+            // and the command ends. What the delivery route did before the teardown reached it stands.
+            _effects.RecordInterruptionFailure();
+            return new SessionCommandResult(SessionCommandDisposition.Failed);
+        }
+        catch (OperationCanceledException)
+        {
+            await RecoverInterruptedAsync(AppErrorCode.SessionTimedOut, SessionFailureKind.InterruptionTimedOut)
+                .ConfigureAwait(false);
+            return new SessionCommandResult(SessionCommandDisposition.Failed);
+        }
+        catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
+        {
+            _effects.RecordInterruptionFailure();
+            await RecoverInterruptedAsync(AppErrorCode.InvalidTransition, SessionFailureKind.InterruptionFailed)
+                .ConfigureAwait(false);
+            return new SessionCommandResult(SessionCommandDisposition.Failed);
+        }
+        finally
+        {
+            _effects.ReleaseProcessingDeadline();
+            await _effects.RecordDictationEdgeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private Task RecoverInterruptedAsync(AppErrorCode code, SessionFailureKind kind) =>
+        _effects.RecoverFailedSessionAsync(
+            new AppError(code, AppErrorStage.SystemLifecycle, CanRetry: true),
+            kind);
+
+    /// <summary>
+    /// The recording armed as the command's session has run for as long as it is allowed. If it is
+    /// still the one recording, every loop is stopped and it is aborted and reset; if the recording
+    /// has moved on, nothing. The body the watchdog used to run under the session gate.
+    /// </summary>
+    private async Task<SessionCommandResult> TimeOutAsync(SessionCommand command)
+    {
+        var sessionId = command.TimedOutSession ?? throw new InvalidOperationException("A timeout names the recording it was armed for.");
+        using var dictation = DictationScope.Begin(sessionId.Value);
+        try
+        {
+            if (_controller.CurrentSession is
+                {
+                    Id: var currentId,
+                    State: DictationSessionState.Recording,
+                } && currentId == sessionId)
+            {
+                await _effects.StopBackgroundWorkAsync().ConfigureAwait(false);
+                var error = new AppError(AppErrorCode.SessionTimedOut, AppErrorStage.Session, CanRetry: true);
+                await _controller.AbortAsync(error, CancellationToken.None).ConfigureAwait(false);
+                await _controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
+                _effects.RecordRecordingTimedOut(error);
+                _effects.ShowRecordingTimedOut();
+                return new SessionCommandResult(SessionCommandDisposition.Applied);
+            }
+
+            return new SessionCommandResult(SessionCommandDisposition.Ignored);
+        }
+        finally
+        {
+            await _effects.RecordDictationEdgeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async Task<SessionCommandResult> ExecutePushToTalkAsync(SessionCommand command, CancellationToken stoppingToken)
+    {
         // DELIBERATELY NOT FORWARDED. A transition in flight owns a microphone or a transcription and
         // finishes on its own terms; a shutdown token reaching the controller mid-transition would turn
         // an orderly finalisation into a timed-out one. Step 11 on #148 owns wiring shutdown properly.
@@ -199,6 +411,19 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
 
             _effects.ShowTransitionStatus(result);
             return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
+        }
+        catch (Exception exception) when (TornDown && exception is not (StackOverflowException or OutOfMemoryException))
+        {
+            // TORN DOWN BESIDE THIS COMMAND: the shutdown outlived both of its waits and the session
+            // controller went with the teardown. Decided by the state, not by the exception - any
+            // failure once the session is gone is this one. There is nothing to abort or reset, so the
+            // recovery that would try is not run; the failure is written under the dictation and the
+            // command ends as failed. What the delivery route did before the teardown reached it stands.
+            using var failed = interrupted is { } tornDown
+                ? DictationScope.Begin(tornDown)
+                : NoScope.Instance;
+            _effects.RecordSessionFailure();
+            return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session);
         }
         catch (OperationCanceledException)
         {
