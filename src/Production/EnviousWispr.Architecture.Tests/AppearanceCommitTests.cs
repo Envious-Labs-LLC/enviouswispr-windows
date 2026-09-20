@@ -1,6 +1,8 @@
 using System.Xml.Linq;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Presentation;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace EnviousWispr.Architecture.Tests;
 
@@ -62,9 +64,11 @@ public sealed class AppearanceCommitTests
     /// <summary>Every choice on Appearance has a field in the snapshot the window hands the presenter.</summary>
     /// <remarks>
     /// THE WINDOW BUILDS THE SNAPSHOT AND THE PRESENTER WRITES IT, so a card added to Appearance and
-    /// wired to the handler is still lost if the snapshot has no field for it. A group with one
-    /// card is not a choice - Live Preview's pill has one design today - and is the only kind of
-    /// group allowed to have no field.
+    /// wired to the handler is still lost if the snapshot has no field for it. Every radio group on
+    /// the page must be mapped to a field, with one named exception: the Live Preview pill has one
+    /// design today, declared as one plain card rather than through a template - ONE DECLARATION IN
+    /// A TEMPLATE IS ANY NUMBER OF CARDS, which is how the theme and position groups are built, so
+    /// "one RadioButton in the markup" is not an exemption anything else can claim.
     /// </remarks>
     [Fact]
     public void EveryAppearanceChoiceHasAFieldInTheSnapshotTheWindowHandsOver()
@@ -73,10 +77,12 @@ public sealed class AppearanceCommitTests
             RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
         var appearance = markup.Descendants().First(element =>
             (string?)element.Attribute(XName.Get("Name", XamlNamespace)) == "AppearanceSection");
-        var groups = appearance.Descendants()
+        var buttons = appearance.Descendants()
             .Where(element => element.Name.LocalName == "RadioButton")
+            .ToArray();
+        var groups = buttons
             .GroupBy(element => (string?)element.Attribute("GroupName") ?? "(no group)")
-            .ToDictionary(group => group.Key, group => group.Count());
+            .ToDictionary(group => group.Key, group => group.ToArray());
 
         var fieldByGroup = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -84,25 +90,68 @@ public sealed class AppearanceCommitTests
             ["PillOverlayPosition"] = nameof(AppearanceChoices.OverlayPosition),
             ["PillWithoutWords"] = nameof(AppearanceChoices.PillDesignWithoutWords),
         };
+        const string fixedGroup = "PillWithWords";
+        const string fixedCard = "ReadingWellPillButton";
         var fields = typeof(AppearanceChoices).GetConstructors().Single().GetParameters()
             .Select(parameter => parameter.Name!)
             .ToHashSet(StringComparer.Ordinal);
 
         foreach (var (group, cards) in groups)
         {
-            if (fieldByGroup.TryGetValue(group, out var field))
+            if (group == fixedGroup)
             {
-                Assert.True(fields.Contains(field), $"The {group} choice maps to {field}, which the snapshot no longer carries.");
+                var card = Assert.Single(cards);
+                Assert.Equal(fixedCard, (string?)card.Attribute(XName.Get("Name", XamlNamespace)));
+                Assert.False(
+                    card.Ancestors().Any(ancestor => ancestor.Name.LocalName == "DataTemplate"),
+                    $"{fixedCard} is declared through a template now, so it may be any number of cards and needs a field.");
+                continue;
             }
-            else
-            {
-                Assert.True(
-                    cards == 1,
-                    $"The {group} group offers {cards} cards on Appearance and has no field in the snapshot, so its choice is lost.");
-            }
+
+            Assert.True(
+                fieldByGroup.TryGetValue(group, out var field),
+                $"The {group} group on Appearance has no field in the snapshot the window hands over, so its choice is lost.");
+            Assert.True(fields.Contains(field!), $"The {group} choice maps to {field}, which the snapshot no longer carries.");
         }
 
         Assert.Equal(fieldByGroup.Values.Order(), fields.Order());
+        Assert.True(groups.ContainsKey(fixedGroup), $"The {fixedGroup} group is gone; drop its exemption here.");
+    }
+
+    /// <summary>The snapshot the window hands over is built from the controls and is what is handed over.</summary>
+    /// <remarks>
+    /// READING THE CONTROLS IS NOT ENOUGH; THE VALUES READ HAVE TO BE THE ONES SUBMITTED. Three reads
+    /// into unused locals and a snapshot of defaults would reach the presenter and be written
+    /// faithfully. So the snapshot's constructor arguments are inspected one by one, and the call
+    /// that hands it over must be given that very snapshot.
+    /// </remarks>
+    [Fact]
+    public void TheWindowHandsOverASnapshotBuiltFromItsThreeControls()
+    {
+        var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(
+            RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs")));
+        var persist = tree.GetRoot().DescendantNodes()
+            .OfType<MethodDeclarationSyntax>()
+            .FirstOrDefault(method => method.Identifier.ValueText == "PersistAppearanceChoicesAsync");
+        Assert.True(persist is not null, "PersistAppearanceChoicesAsync is gone.");
+
+        var creation = Assert.Single(
+            persist!.DescendantNodes().OfType<BaseObjectCreationExpressionSyntax>(),
+            node => node is ObjectCreationExpressionSyntax { Type: var type } && type.ToString() == nameof(AppearanceChoices));
+        var arguments = creation.ArgumentList?.Arguments.Select(argument => argument.Expression.ToString()).ToArray();
+        Assert.NotNull(arguments);
+        Assert.Equal(3, arguments.Length);
+        Assert.Contains("ThemeChoices", arguments[0], StringComparison.Ordinal);
+        Assert.Contains("OverlayPositionChoices", arguments[1], StringComparison.Ordinal);
+        Assert.Contains("PillDesignWithoutWordsFromControls", arguments[2], StringComparison.Ordinal);
+
+        // The snapshot is a named local, and that local - not another - is what SaveAppearanceAsync gets.
+        var declarator = Assert.IsType<VariableDeclaratorSyntax>(creation.Parent?.Parent);
+        var handOver = Assert.Single(
+            persist.DescendantNodes().OfType<InvocationExpressionSyntax>(),
+            invocation => invocation.Expression.ToString().EndsWith("SaveAppearanceAsync", StringComparison.Ordinal));
+        var handed = Assert.Single(handOver.ArgumentList.Arguments);
+        Assert.Equal(declarator.Identifier.ValueText, handed.Expression.ToString());
     }
 
     private sealed class RecordingStore : ISettingsStore
