@@ -1295,7 +1295,9 @@ public partial class App : Application, IAsyncDisposable
         // would have asked, at the instant of the key, before the queue's first hop.
         var sessionController = _sessionController;
         _sessionCoordinator = new DictationSessionCoordinator(
-            new SessionCommandExecutor(this),
+            new ShellGuardedExecutor(
+                this,
+                new DictationSessionExecutor(sessionController, new SessionEffects(this))),
             _sessionOperationGate,
             sessionController.CaptureStartContext);
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
@@ -2203,219 +2205,166 @@ public partial class App : Application, IAsyncDisposable
         }
     }
 
-    /// <summary>The body of one push-to-talk transition. Runs under the session gate, one at a time.</summary>
-    /// <remarks>
-    /// NOT CALLED DIRECTLY. The coordinator is the only caller and holds the session gate for the
-    /// duration, which is why nothing in here takes it. The coordinator's stopping token stops at the
-    /// adapter below: the work in here keeps its own processing deadline, and threading shutdown
-    /// through it is part of moving this body out of the shell (#148, step 3).
-    /// </remarks>
-    private async Task<SessionCommandResult> ExecuteSessionCommandAsync(SessionCommand command)
+    /// <summary>
+    /// The shell's half of a push-to-talk transition: every concrete effect the executor in Pipeline
+    /// decides on, and nothing that decides. Rendering goes through the dispatcher, logging through the
+    /// app log, and the timers, preview, streaming and final processing stay where they are until their
+    /// own steps on #148 move them.
+    /// </summary>
+    private sealed class SessionEffects(App app) : IDictationSessionEffects
     {
-        var signal = command.Signal;
-        if (_exitRequested || _disposed)
+        public bool HasPendingRecovery => app._hasPendingRecovery;
+
+        public bool EscapeRecoveryEnabled => app._settings.Preferences.Dictation.EscapeRecoveryEnabled;
+
+        public bool EscapeRecoveryForSession
         {
-            return new SessionCommandResult(SessionCommandDisposition.Stopping);
+            get => app._escapeRecoveryForSession;
+            set => app._escapeRecoveryForSession = value;
         }
 
-        var controller = _sessionController;
-        if (controller is null)
+        public DictationAdmissionResult EvaluateAdmission()
         {
-            return new SessionCommandResult(SessionCommandDisposition.Ignored);
+            var admission = SystemResourceAdmissionPolicy.Evaluate(app._resourceProbe.Probe());
+            app._canPersistRecoveryForSession = admission.CanPersistRecovery;
+            if (admission.Status != DictationAdmissionStatus.Ready)
+            {
+                app._logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.ResourcePressureDetected,
+                    AppFailureCategory.ResourcePressure,
+                    ErrorCode: admission.Error?.Code));
+            }
+
+            return admission;
         }
 
-        SessionTransitionResult? transition = null;
+        public void ShowRecoveredTextWaiting() =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
+            {
+                app.ShowMainWindow(openSettings: false);
+                app._window?.SetReliabilityNotice(
+                    "Recovered text is waiting",
+                    "Copy or delete the unfinished dictation on Home before starting another recording.");
+                app._window?.SetSessionStatus(DictationStatus.Quiet("Review recovered text before recording again"));
+            });
 
-        // Carried rather than inherited, because the catch blocks below run after the try's scope
-        // has been disposed and are exactly the lines somebody reads first when a dictation went
-        // wrong.
-        //
-        // SEEDED FROM THE CONTROLLER RATHER THAN LEFT NULL, because a release or a cancel can throw
-        // BEFORE it returns a transition, and the recording those lines are about already exists.
-        // Left null, the two catches lost the dictation on exactly the paths that create them.
-        var interrupted = controller.CurrentSession?.Id.Value;
-        CancellationTokenSource? processingCancellation = null;
-        try
+        public void ShowMemoryCritical() =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
+            {
+                app._window?.SetReliabilityNotice(
+                    "Windows memory is critically low",
+                    "Close another memory-heavy app, then try dictation again. No recording was started.",
+                    isError: true);
+                app._window?.SetSessionStatus(DictationStatus.Distress(
+                    "Recording paused because Windows memory is critically low"));
+            });
+
+        public void ShowDiskLow() =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
+                app._window?.SetReliabilityNotice(
+                    "Disk space is critically low",
+                    "Dictation can continue, but EnviousWispr may be unable to save an encrypted crash-recovery copy."));
+
+        public Task StopRecordingWatchdogAsync() => app.StopRecordingWatchdogAsync();
+
+        public void RecordTransition(SessionTransitionResult result) => app.WriteSessionEvent(result);
+
+        public async Task OnRecordingStartedAsync(DictationSessionId sessionId)
         {
-            if (signal == PushToTalkSignal.Pressed)
+            var controller = app._sessionController;
+            if (controller is null)
             {
-                if (_hasPendingRecovery)
-                {
-                    _window?.DispatcherQueue.TryEnqueue(() =>
-                    {
-                        ShowMainWindow(openSettings: false);
-                        _window?.SetReliabilityNotice(
-                            "Recovered text is waiting",
-                            "Copy or delete the unfinished dictation on Home before starting another recording.");
-                        _window?.SetSessionStatus(DictationStatus.Quiet("Review recovered text before recording again"));
-                    });
-                    return new SessionCommandResult(SessionCommandDisposition.Applied);
-                }
-
-                var admission = SystemResourceAdmissionPolicy.Evaluate(_resourceProbe.Probe());
-                _canPersistRecoveryForSession = admission.CanPersistRecovery;
-                if (admission.Status != DictationAdmissionStatus.Ready)
-                {
-                    _logger.Write(new AppLogEntry(
-                        DateTimeOffset.UtcNow,
-                        AppEventCode.ResourcePressureDetected,
-                        AppFailureCategory.ResourcePressure,
-                        ErrorCode: admission.Error?.Code));
-                }
-
-                if (!admission.CanStart)
-                {
-                    _window?.DispatcherQueue.TryEnqueue(() =>
-                    {
-                        _window?.SetReliabilityNotice(
-                            "Windows memory is critically low",
-                            "Close another memory-heavy app, then try dictation again. No recording was started.",
-                            isError: true);
-                        _window?.SetSessionStatus(DictationStatus.Distress(
-                            "Recording paused because Windows memory is critically low"));
-                    });
-                    return new SessionCommandResult(SessionCommandDisposition.Applied);
-                }
-
-                if (!admission.CanPersistRecovery)
-                {
-                    _window?.DispatcherQueue.TryEnqueue(() =>
-                        _window?.SetReliabilityNotice(
-                            "Disk space is critically low",
-                            "Dictation can continue, but EnviousWispr may be unable to save an encrypted crash-recovery copy."));
-                }
-            }
-            else
-            {
-                await StopRecordingWatchdogAsync().ConfigureAwait(false);
+                return;
             }
 
-            var recoverCancelledRecording =
-                signal == PushToTalkSignal.Cancelled && _escapeRecoveryForSession;
-            var result = signal switch
-            {
-                // THE PRESS BRINGS ITS OWN TARGET. Captured at admission, inside the key callback; the
-                // controller is told rather than asked, so the queue's hop cannot move the words.
-                PushToTalkSignal.Pressed when command.StartContext is { } startContext =>
-                    await controller.PressAsync(startContext).ConfigureAwait(false),
-                PushToTalkSignal.Pressed => await controller.PressAsync().ConfigureAwait(false),
-                PushToTalkSignal.Released => await controller.ReleaseAsync().ConfigureAwait(false),
-                PushToTalkSignal.Cancelled when recoverCancelledRecording =>
-                    await controller.ReleaseAsync().ConfigureAwait(false),
-                PushToTalkSignal.Cancelled => await controller.CancelAsync().ConfigureAwait(false),
-                _ => throw new InvalidOperationException("Unsupported push-to-talk signal."),
-            };
+            app.StartRecordingWatchdog(controller, sessionId);
+            await app.StartLivePreviewAsync(sessionId).ConfigureAwait(false);
+            app.StartAutoStopWatch(sessionId);
+            app.StartStreamingTranscription(sessionId);
+        }
 
-            // FROM HERE THE DICTATION IS KNOWN, AND EVERYTHING BELOW BELONGS TO IT. Above this line
-            // the session either does not exist yet (a press) or is being read off the controller,
-            // and lines written there honestly have no dictation. `Begin` restores rather than
-            // clears, so this nesting inside another scope is safe.
-            transition = result;
-            interrupted = result.Session?.Id.Value;
-            using var dictation = interrupted is { } known
-                ? DictationScope.Begin(known)
-                : NoScope.Instance;
-            WriteSessionEvent(result);
-            if (result.Kind == SessionTransitionKind.Started && result.Session is not null)
+        public async Task FinalizeAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly)
+        {
+            var controller = app._sessionController;
+            if (controller is null)
             {
-                _escapeRecoveryForSession = _settings.Preferences.Dictation.EscapeRecoveryEnabled;
-                StartRecordingWatchdog(controller, result.Session.Id);
-                await StartLivePreviewAsync(result.Session.Id).ConfigureAwait(false);
-                StartAutoStopWatch(result.Session.Id);
-                StartStreamingTranscription(result.Session.Id);
+                return;
             }
-            else if (result.Kind == SessionTransitionKind.FinalizeReady &&
-                result.Session is not null &&
-                result.Audio is not null)
+
+            // THE PROCESSING DEADLINE IS THE SHELL'S, because lock/suspend recovery and shutdown cancel it
+            // from their own callbacks, and both still live here.
+            var processingCancellation = new CancellationTokenSource(MaximumFinalProcessingDuration);
+            app._activeProcessingCancellation = processingCancellation;
+            try
             {
-                processingCancellation = new CancellationTokenSource(
-                    MaximumFinalProcessingDuration);
-                _activeProcessingCancellation = processingCancellation;
-                await StopStreamingTranscriptionAsync().ConfigureAwait(false);
-                await StopAutoStopWatchAsync().ConfigureAwait(false);
-                await StopLivePreviewAsync().ConfigureAwait(false);
-                await TranscribeFinalAsync(
+                await app.StopStreamingTranscriptionAsync().ConfigureAwait(false);
+                await app.StopAutoStopWatchAsync().ConfigureAwait(false);
+                await app.StopLivePreviewAsync().ConfigureAwait(false);
+                await app.TranscribeFinalAsync(
                         controller,
-                        result.Session.Id,
-                        result.Audio,
+                        sessionId,
+                        audio,
                         processingCancellation.Token,
-                        recoveryOnly: recoverCancelledRecording)
+                        recoveryOnly)
                     .ConfigureAwait(false);
-                return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
             }
-            else if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
+            finally
             {
-                _escapeRecoveryForSession = false;
-                await StopStreamingTranscriptionAsync().ConfigureAwait(false);
-                await StopAutoStopWatchAsync().ConfigureAwait(false);
-                await StopLivePreviewAsync().ConfigureAwait(false);
-                await controller.ResetAsync().ConfigureAwait(false);
-            }
+                if (ReferenceEquals(app._activeProcessingCancellation, processingCancellation))
+                {
+                    app._activeProcessingCancellation = null;
+                }
 
-            _window?.DispatcherQueue.TryEnqueue(() =>
-                _window?.SetSessionStatus(SessionStatus(result)));
-            return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
+                processingCancellation.Dispose();
+            }
         }
-        catch (OperationCanceledException)
+
+        public async Task StopBackgroundWorkAsync()
         {
-            // THE CATCH RUNS AFTER THE TRY'S SCOPE HAS BEEN DISPOSED, so the id is carried in a
-            // variable rather than inherited. Failure and recovery are the lines somebody reads
-            // FIRST when a dictation went wrong, and they were the ones losing their dictation.
-            using var failed = interrupted is { } timedOut
-                ? DictationScope.Begin(timedOut)
-                : NoScope.Instance;
-            await RecoverFailedSessionAsync(
-                controller,
-                new AppError(
-                    AppErrorCode.SessionTimedOut,
-                    AppErrorStage.Session,
-                    CanRetry: true),
-                DictationStatus.Quiet("The dictation timed out and was recovered safely")).ConfigureAwait(false);
-            return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session);
+            await app.StopStreamingTranscriptionAsync().ConfigureAwait(false);
+            await app.StopAutoStopWatchAsync().ConfigureAwait(false);
+            await app.StopLivePreviewAsync().ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
-        {
-            using var failed = interrupted is { } broken
-                ? DictationScope.Begin(broken)
-                : NoScope.Instance;
-            _logger.Write(new AppLogEntry(
+
+        public void ShowTransitionStatus(SessionTransitionResult result) =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
+                app._window?.SetSessionStatus(SessionStatus(result)));
+
+        public void RecordSessionFailure() =>
+            app._logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationSessionFailed,
                 AppFailureCategory.Unknown));
-            await RecoverFailedSessionAsync(
-                controller,
-                new AppError(
-                    AppErrorCode.InvalidTransition,
-                    AppErrorStage.Session,
-                    CanRetry: true),
-                DictationStatus.Error("Session failed and was reset safely")).ConfigureAwait(false);
-            return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session);
-        }
-        finally
+
+        public Task RecoverFailedSessionAsync(AppError failure, SessionFailureKind kind)
         {
-            if (ReferenceEquals(_activeProcessingCancellation, processingCancellation))
+            var controller = app._sessionController;
+            if (controller is null)
             {
-                _activeProcessingCancellation = null;
+                return Task.CompletedTask;
             }
 
-            processingCancellation?.Dispose();
-            await RecordDictationEdgeAsync().ConfigureAwait(false);
+            return app.RecoverFailedSessionAsync(
+                controller,
+                failure,
+                kind == SessionFailureKind.TimedOut
+                    ? DictationStatus.Quiet("The dictation timed out and was recovered safely")
+                    : DictationStatus.Error("Session failed and was reset safely"));
         }
+
+        public Task RecordDictationEdgeAsync() => app.RecordDictationEdgeAsync();
     }
 
-    /// <summary>The seam the coordinator runs commands through; the body still lives in the shell.</summary>
-    private sealed class SessionCommandExecutor(App app) : ISessionCommandExecutor
+    /// <summary>Refuses commands once the shell is leaving; otherwise the Pipeline executor decides.</summary>
+    private sealed class ShellGuardedExecutor(App app, ISessionCommandExecutor inner) : ISessionCommandExecutor
     {
-        public Task<SessionCommandResult> ExecuteAsync(
-            SessionCommand command,
-            CancellationToken stoppingToken)
+        public Task<SessionCommandResult> ExecuteAsync(SessionCommand command, CancellationToken stoppingToken)
         {
             ArgumentNullException.ThrowIfNull(command);
-            // DELIBERATELY NOT FORWARDED. The body has its own processing deadline and its own recovery
-            // on cancellation; a shutdown token reaching the controller mid-transition would turn an
-            // orderly finalisation into a timed-out one. Step 3 on #148 owns wiring this properly.
-            _ = stoppingToken;
-            return app.ExecuteSessionCommandAsync(command);
+            return app._exitRequested || app._disposed
+                ? Task.FromResult(new SessionCommandResult(SessionCommandDisposition.Stopping))
+                : inner.ExecuteAsync(command, stoppingToken);
         }
     }
 
