@@ -217,7 +217,10 @@ dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.
   -c Release -- --english-parakeet --manual-microphone --app-executable $installedApp
 ```
 
-Add `--live-preview` to the same command when the gitignored small preview model is installed. The guided mode
+Add `--live-preview` to the same command when the gitignored small preview model is installed. On a machine with
+an NVIDIA card, also set `ENVIOUSWISPR_CUDA_RUNTIME_DIR` to a directory holding the CUDA runtime: the isolated
+profile has no `runtime/cuda`, and the preview asks for the card without checking for it, so every take records
+`LivePreviewFailed/RuntimeWorker` and the journey fails (#163). The guided mode
 passes only when the real global hook starts and stops recording, production WASAPI captures the spoken phrase,
 the real worker and deterministic pipeline complete, the known public word appears in the native edit target,
 the app exits cleanly, and no owned worker remains. It retains the same content-free boolean, character-count,
