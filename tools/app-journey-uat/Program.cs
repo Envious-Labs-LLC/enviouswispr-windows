@@ -143,6 +143,27 @@ if (manualMicrophone && !englishParakeet)
     throw new JourneyExpectationException(
         "--manual-microphone requires --english-parakeet for the fixed English acceptance phrase.");
 }
+// THE SPEAKERS STAY SILENT AND THE MICROPHONE STAYS UNTOUCHED. Acoustic journeys played the fixture
+// through whatever the machine's default playback device was and recorded it through whatever its
+// default microphone was - the founder's monitor speakers and webcam microphone, in the same room as
+// the founder. `--virtual-cable` routes the same fixture, through the same production capture code,
+// across VB-Audio's virtual cable instead: playback goes to the cable's render endpoint and the
+// journey profile names the cable's capture endpoint as its preferred microphone. Both endpoints are
+// opened by their own identity; the machine's default devices are never changed (the app's own device
+// picker still reads which one is the default, as it always has).
+var virtualCable = args.Any(argument => string.Equals(
+    argument,
+    "--virtual-cable",
+    StringComparison.OrdinalIgnoreCase));
+if (virtualCable && !syntheticMicrophonePlayback)
+{
+    throw new JourneyExpectationException("--virtual-cable requires --live-microphone.");
+}
+if (virtualCable && synthesizedAcoustic)
+{
+    throw new JourneyExpectationException(
+        "--virtual-cable plays the reviewed fixture; Windows speech synthesis cannot be routed to the cable.");
+}
 if (manualMicrophone && ArgumentValue(args, "--acoustic-gain") is not null)
 {
     throw new JourneyExpectationException(
@@ -326,15 +347,21 @@ if (livePreview && !new LocalWhisperModelProbe().Probe(previewModelDirectory).Pr
 }
 
 EnsureNoUnownedProcesses("EnviousWispr.App", "EnviousWispr.Delivery.Target.Uat");
+var audioRoute = virtualCable ? FindVirtualCableEndpoints() : null;
 Func<Task> acousticStimulus = synthesizedAcoustic
     ? () => SpeakPublicPhraseAsync(SynthesizedAcousticPhrase)
     : () => PlayPublicFixtureAsync(
         fixturePath,
         acousticPlaybackGain,
-        AcousticPlaybackRepetitions);
+        AcousticPlaybackRepetitions,
+        audioRoute?.RenderId);
 var acousticProbe = syntheticMicrophonePlayback
-    ? await MeasureAcousticPlaybackAsync(acousticStimulus)
+    ? await MeasureAcousticPlaybackAsync(acousticStimulus, audioRoute?.CaptureId)
     : null;
+if (audioRoute is not null)
+{
+    RequireVirtualCableCarriedTheProbe(acousticProbe!);
+}
 
 var runId = Guid.NewGuid().ToString("N");
 var uatDirectory = Path.Combine(Path.GetTempPath(), $"EnviousWispr-AppJourney-Uat-{runId}");
@@ -359,6 +386,7 @@ if (livePreview || escapeRecovery || failureMode == JourneyFailureMode.Microphon
     var journeySettings = AppSettings.Default with
     {
         HasCompletedOnboarding = true,
+        PreferredMicrophoneId = audioRoute?.CaptureId,
         Preferences = AppSettings.Default.Preferences with
         {
             LivePreviewEnabled = livePreview,
@@ -380,6 +408,16 @@ if (livePreview || escapeRecovery || failureMode == JourneyFailureMode.Microphon
     };
     await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"))
         .SaveAsync(journeySettings);
+}
+else if (audioRoute is not null)
+{
+    // THE DEFAULT PROFILE PLUS ONE LINE. The block above is a staged profile - onboarding done, the
+    // deterministic text features switched on - and the first cut of this mode fell into it just to name
+    // a microphone, so adding `--virtual-cable` to the audible journey also changed what the text
+    // pipeline did to the words. The silent journey must differ from the audible one by the endpoint
+    // and nothing else.
+    await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"))
+        .SaveAsync(AppSettings.Default with { PreferredMicrophoneId = audioRoute.CaptureId });
 }
 
 var diagnosticPath = Path.Combine(profileDirectory, "diagnostics", "app.jsonl");
@@ -672,6 +710,14 @@ try
         }
     }
 
+    if (audioRoute is not null)
+    {
+        // BEFORE THE TARGET VERDICT. A take that fell back to the real microphone is staging whatever the
+        // target saw: heard, it would be a silent pass that was not silent; unheard, a product failure
+        // that was not the product's. The start line is on disk long before the app exits.
+        RequireNoMicrophoneFallback(ReadDiagnosticEvents(diagnosticPath));
+    }
+
     if (!targetObserved && !escapeRecovery && failureMode == JourneyFailureMode.None)
     {
         if (liveMicrophone)
@@ -826,6 +872,9 @@ try
         provider,
         modelPack,
         acousticProbe,
+        audioRoute = audioRoute is null
+            ? liveMicrophone ? "MachineDefaultEndpoints" : null
+            : $"VirtualCable: {audioRoute.RenderName} -> {audioRoute.CaptureName}",
         syntheticHotkey = syntheticHotkeyEvidence,
         polish = PolishProviderName(polishProvider),
         polishCompleted = polishEvidence.Completed,
@@ -844,6 +893,7 @@ try
             JourneyFailureMode.WorkerStartup => "StartupFault-MissingOwnedWorkerExecutable",
             _ when manualMicrophone => "PhysicalF8-FounderSpeech-ProductionWasapi",
             _ when synthesizedAcoustic => "SyntheticF8-WindowsSpeechPlayback-ProductionWasapi",
+            _ when virtualCable => "SyntheticF8-ReviewedFixturePlayback-VirtualCable-ProductionWasapi",
             _ when liveMicrophone => "SyntheticF8-ReviewedFixturePlayback-ProductionWasapi",
             _ when syntheticHotkey && quickTap => "SyntheticHotkeyQuickTap-InstalledGlobalHook-ReviewedFixtureAudioCapture",
             _ when syntheticHotkey => "SyntheticHotkey-InstalledGlobalHook-ReviewedFixtureAudioCapture",
@@ -1554,7 +1604,8 @@ static bool IsProcessRunning(int processId)
 static async Task PlayPublicFixtureAsync(
     string fixturePath,
     int gain,
-    int repetitions)
+    int repetitions,
+    string? renderEndpointId = null)
 {
     var (pcmBytes, sampleRate) = ReadReviewedMuLawFixture(
         fixturePath,
@@ -1562,26 +1613,60 @@ static async Task PlayPublicFixtureAsync(
     pcmBytes = RepeatPcm(pcmBytes, sampleRate, repetitions);
     using var stream = new MemoryStream(pcmBytes, writable: false);
     using var source = new RawSourceWaveStream(stream, new WaveFormat(sampleRate, 16, 1));
-    await using var output = await new WasapiPlayerBuilder()
-        .WithDefaultDeviceStreamRouting()
-        .BuildAsync();
-    var completed = new TaskCompletionSource<Exception?>(
-        TaskCreationOptions.RunContinuationsAsynchronously);
-    output.PlaybackStopped += (_, args) => completed.TrySetResult(args.Exception);
-    output.Init(source);
-    output.Volume = 1f;
-    output.Play();
+    // THE PLAYER KEEPS THE DEVICE. Disposing the device before the player left the player's volume
+    // control on a released session manager and the first cable run crashed setting it; the player
+    // does not dispose the device either. Declared before the player, so it is released after it.
+    using var enumerator = new MMDeviceEnumerator();
     var playbackDuration = TimeSpan.FromSeconds(
         pcmBytes.Length / (sampleRate * sizeof(short) * 1d));
-    var failure = await completed.Task.WaitAsync(playbackDuration + TimeSpan.FromSeconds(5));
+    Exception? failure;
+    try
+    {
+        using var renderDevice = renderEndpointId is null ? null : enumerator.GetDevice(renderEndpointId);
+        await using var output = renderDevice is null
+            ? await new WasapiPlayerBuilder()
+                .WithDefaultDeviceStreamRouting()
+                .BuildAsync()
+            : new WasapiPlayerBuilder()
+                .WithDevice(renderDevice)
+                .Build();
+        var completed = new TaskCompletionSource<Exception?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        output.PlaybackStopped += (_, args) => completed.TrySetResult(args.Exception);
+        output.Init(source);
+        output.Volume = 1f;
+        output.Play();
+        failure = await completed.Task.WaitAsync(playbackDuration + TimeSpan.FromSeconds(5));
+    }
+    catch (Exception exception) when (renderEndpointId is not null &&
+        exception is COMException or CoreAudioException or InvalidOperationException or TimeoutException)
+    {
+        // ON THE CABLE, A PLAYBACK FAILURE IS STAGING. The cable's render endpoint could not be opened,
+        // was taken exclusively, changed under the player, or never finished: the driver or another
+        // program, never the product. Anything else that escapes is a programming fault and stays one.
+        throw JourneyExpectationException.Instrument(
+            $"--virtual-cable: the fixture could not be played into the cable ({exception.GetType().Name}: "
+                + $"{exception.Message}). The cable, not the product, refused playback.",
+            exception);
+    }
+
     if (failure is not null)
     {
+        if (renderEndpointId is not null)
+        {
+            throw JourneyExpectationException.Instrument(
+                $"--virtual-cable: playback into the cable stopped with {failure.GetType().Name}: {failure.Message}. "
+                    + "The cable, not the product, interrupted playback.",
+                failure);
+        }
+
         throw new JourneyExpectationException("The reviewed public fixture could not be played.", failure);
     }
 }
 
 static async Task<AcousticProbeMetrics> MeasureAcousticPlaybackAsync(
-    Func<Task> playStimulus)
+    Func<Task> playStimulus,
+    string? captureEndpointId = null)
 {
     ArgumentNullException.ThrowIfNull(playStimulus);
     await using var capture = new WasapiAudioCapture();
@@ -1599,7 +1684,9 @@ static async Task<AcousticProbeMetrics> MeasureAcousticPlaybackAsync(
         }
     };
 
-    var started = await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
+    var started = await capture.StartAsync(new AudioCaptureRequest(
+        DictationSessionId.Create(),
+        captureEndpointId is null ? null : new AudioDeviceId(captureEndpointId)));
     if (!started.Succeeded)
     {
         return new AcousticProbeMetrics(
@@ -1634,6 +1721,139 @@ static async Task<AcousticProbeMetrics> MeasureAcousticPlaybackAsync(
         Peak: observedPeak,
         AverageLevelRootMeanSquare: averageLevelRootMeanSquare,
         CapturedRootMeanSquare: samples.Length == 0 ? 0 : Math.Sqrt(sumOfSquares / samples.Length));
+}
+
+/// <summary>
+/// The two ends of VB-Audio's virtual cable, found by their own names. The machine's default playback
+/// and recording devices are never consulted: the whole point of the cable is that a journey can run
+/// without touching, or depending on, whatever the founder has selected. Either end missing is a
+/// staging failure - the driver is not installed or not running - and says nothing about the product.
+/// </summary>
+static VirtualCableRoute FindVirtualCableEndpoints()
+{
+    const string RenderName = "CABLE Input (VB-Audio Virtual Cable)";
+    const string CaptureName = "CABLE Output (VB-Audio Virtual Cable)";
+    using var enumerator = new MMDeviceEnumerator();
+    using var devices = enumerator.EnumerateAudioEndPoints(DataFlow.All, DeviceState.Active);
+    var renderIds = new List<string>();
+    var captureIds = new List<string>();
+    var monitoredCapture = false;
+    foreach (var device in devices)
+    {
+        using (device)
+        {
+            if (device.DataFlow == DataFlow.Render && device.FriendlyName == RenderName)
+            {
+                renderIds.Add(device.ID);
+            }
+            else if (device.DataFlow == DataFlow.Capture && device.FriendlyName == CaptureName)
+            {
+                captureIds.Add(device.ID);
+                monitoredCapture |= IsListenToThisDeviceEnabled(device);
+            }
+        }
+    }
+
+    if (renderIds.Count != 1 || captureIds.Count != 1)
+    {
+        // A NAME IS NOT AN IDENTITY. Windows allows two endpoints to share a friendly name, so one of each
+        // is the only count this mode accepts; more is ambiguity and none is absence, and both are staging.
+        throw JourneyExpectationException.Instrument(
+            $"--virtual-cable needs exactly one active \"{RenderName}\" playback endpoint and exactly one "
+                + $"active \"{CaptureName}\" recording endpoint; found playback={renderIds.Count}, "
+                + $"recording={captureIds.Count}. Install VB-CABLE, or check the device is enabled.");
+    }
+
+    if (monitoredCapture)
+    {
+        // "LISTEN TO THIS DEVICE" TURNS THE CABLE BACK INTO SOUND. Windows can forward a recording endpoint
+        // to a playback device, so a cable with that switch on plays the fixture through the speakers
+        // after all. The endpoint choice cannot promise silence while that switch is on; refuse instead.
+        throw JourneyExpectationException.Instrument(
+            $"--virtual-cable: Windows \"Listen to this device\" is enabled on \"{CaptureName}\", which "
+                + "forwards the cable to a playback device and would make this run audible. Turn it off in the "
+                + "recording device's properties before running a silent journey.");
+    }
+
+    return new VirtualCableRoute(RenderName, renderIds[0], CaptureName, captureIds[0]);
+}
+
+/// <summary>
+/// The endpoint property behind the "Listen to this device" checkbox. Windows answers an absent setting with
+/// an empty value (off); a read that FAILS is not "off" - NAudio's `Contains` folds both into false, which
+/// is how the first cut would have let a monitored cable play. The indexer throws on a failed read, and that
+/// throw is a refusal.
+/// </summary>
+static bool IsListenToThisDeviceEnabled(MMDevice device)
+{
+    var listenEnabled = new PropertyKey(new Guid("24dbb0fc-9311-4b3d-9cf0-18ff155639d4"), 1);
+    object? value;
+    try
+    {
+        value = device.Properties[listenEnabled].Value;
+    }
+    catch (Exception exception) when (exception is COMException or CoreAudioException
+        or NotImplementedException or NotSupportedException or ArgumentOutOfRangeException)
+    {
+        // The last three are NAudio's own decoder refusing a variant it does not understand - the
+        // value never reaches the switch below, and an undecodable answer is still not "off".
+        throw JourneyExpectationException.Instrument(
+            "--virtual-cable: Windows would not say whether \"Listen to this device\" is on for the cable "
+                + $"({exception.GetType().Name}: {exception.Message}); refusing rather than assuming it is off.",
+            exception);
+    }
+
+    return value switch
+    {
+        null => false,
+        bool enabled => enabled,
+        _ => throw JourneyExpectationException.Instrument(
+            $"--virtual-cable: the \"Listen to this device\" setting came back as {value.GetType().Name}, not a "
+                + "yes or no; refusing rather than guessing."),
+    };
+}
+
+/// <summary>
+/// The cable must have carried the preflight stimulus, or nothing about the journey is staged. A probe that
+/// did not start, did not finish, or heard nothing is the driver, an exclusive-mode holder or a muted cable -
+/// staging, never the product - and the first cut only recorded it in the result while the journey ran on.
+/// </summary>
+static void RequireVirtualCableCarriedTheProbe(AcousticProbeMetrics probe)
+{
+    const float MinimumAudiblePeak = 0.05f;
+    if (!probe.Started || probe.Outcome != "Completed" || probe.Peak < MinimumAudiblePeak)
+    {
+        throw JourneyExpectationException.Instrument(
+            "--virtual-cable: the preflight fixture did not come back through the cable "
+                + $"(started={probe.Started}, outcome={probe.Outcome}, error={probe.Error ?? "none"}, "
+                + $"peak={probe.Peak:F3}, minimum={MinimumAudiblePeak:F2}). The cable, not the product, is not "
+                + "carrying audio: check the driver is running, nothing holds the endpoint exclusively, and the "
+                + "cable is not muted.");
+    }
+}
+
+/// <summary>
+/// The app keeps dictating on the machine's default microphone when its preferred one fails to open - the
+/// right thing for a founder whose headset unplugged, and the wrong thing here, where the "default"
+/// microphone is the founder's real one. The recording-start log line carries the fallback reason when
+/// that happened, so the take's own record decides, after the fact, whether the cable was the microphone
+/// for the whole take. A preflight cannot close this: the endpoint can vanish between it and the key.
+/// </summary>
+static void RequireNoMicrophoneFallback(IReadOnlyList<string> events)
+{
+    // A clean start is logged as "DictationRecordingStarted/None"; a fallback start carries the failure
+    // category and the error code after the slash instead.
+    var fallbacks = events
+        .Where(value => value.StartsWith("DictationRecordingStarted/", StringComparison.Ordinal)
+            && value != "DictationRecordingStarted/None")
+        .ToList();
+    if (fallbacks.Count > 0)
+    {
+        throw JourneyExpectationException.Instrument(
+            "--virtual-cable: the app could not open the cable when the key went down and recorded from the "
+                + $"machine's default microphone instead ({string.Join(", ", fallbacks)}). The result is not a "
+                + "silent run and is not reported as one.");
+    }
 }
 
 static async Task SpeakPublicPhraseAsync(string phrase)
@@ -2143,7 +2363,7 @@ static void RequireKnownArguments(string[] arguments)
     [
         "--live-microphone", "--manual-microphone", "--english-parakeet", "--live-preview",
         "--head-start", "--escape-recovery", "--synthesized-acoustic", "--synthetic-hotkey",
-        "--quick-tap",
+        "--quick-tap", "--virtual-cable",
     ];
     string[] valuedFlags =
     [
@@ -2438,6 +2658,12 @@ internal sealed record PolishJourneyEvidence(
     bool Degraded,
     string? ErrorCode,
     long? ElapsedMilliseconds);
+
+internal sealed record VirtualCableRoute(
+    string RenderName,
+    string RenderId,
+    string CaptureName,
+    string CaptureId);
 
 internal sealed record AcousticProbeMetrics(
     bool Started,
