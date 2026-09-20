@@ -2053,6 +2053,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var result = await _historyPresenter.DeleteAsync(selected.Id).ConfigureAwait(true);
         if (result.Succeeded)
         {
+            BeginHistoryReload();
             ShowHistory(result.View!);
             ShowMessage("History entry deleted", "The local copy was removed.", InfoBarSeverity.Success);
         }
@@ -2073,6 +2074,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var result = await _historyPresenter.KeepAsync(selected.Id).ConfigureAwait(true);
         if (result.Succeeded)
         {
+            BeginHistoryReload();
             ShowHistory(result.View!);
             ShowMessage("History entry kept", "Its 24-hour Escape Recovery expiry was removed.", InfoBarSeverity.Success);
         }
@@ -2101,6 +2103,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var result = await _historyPresenter.ClearAsync().ConfigureAwait(true);
         if (result.Succeeded)
         {
+            BeginHistoryReload();
             ShowHistory(result.View!);
             ShowMessage("History cleared", "All locally saved dictations were removed.", InfoBarSeverity.Success);
         }
@@ -2717,10 +2720,22 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private async Task ReloadHistoryAsync()
     {
-        _isHistoryLoading = true;
-        UpdateHistoryListVisibility(HistorySearchBox.Text.Trim(), itemCount: 0);
+        BeginHistoryReload();
         var view = await _historyPresenter.LoadAsync().ConfigureAwait(true);
         ShowHistory(view);
+    }
+
+    /// <summary>The loading transition every reload goes through, whether the page or a command asked for it.</summary>
+    /// <remarks>
+    /// THE SAME TRANSITION FOR A COMMAND'S RELOAD AS FOR THE PAGE'S. The rows go away and the loading
+    /// card shows, which is also what resets the announcement bookkeeping - so a command that ends
+    /// with the same count as before is still announced, exactly as it was when every command
+    /// reloaded through the page's own path.
+    /// </remarks>
+    private void BeginHistoryReload()
+    {
+        _isHistoryLoading = true;
+        UpdateHistoryListVisibility(HistorySearchBox.Text.Trim(), itemCount: 0);
     }
 
     /// <summary>Puts what the presenter loaded on the page: the rows, and the one line about them.</summary>

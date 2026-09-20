@@ -68,6 +68,7 @@ public sealed class HistoryPresenterTests
         Assert.False(result.Succeeded);
         Assert.Null(result.View);
         Assert.Single(history.Rows);
+        Assert.Equal(0, history.Loads);
     }
 
     [Fact]
@@ -130,16 +131,56 @@ public sealed class HistoryPresenterTests
     }
 
     [Fact]
-    public void ACancelledConfirmationReachesNoStore()
+    public async Task ARefusedKeepPreservesTheRowAndDoesNotReload()
     {
-        // THE PAGE ASKS; THE PRESENTER DOES NOT. A confirmation that was dismissed never calls in,
-        // so there is nothing for the presenter to undo - which is the point of asking first.
-        var (_, history, recovery, _) = Build();
-        history.Rows.Add(Entry("one"));
+        var (presenter, history, _, _) = Build();
+        var temporary = Entry("temporary") with { ExpiresAt = Now.AddHours(24) };
+        history.Rows.Add(temporary);
+        history.RefuseChanges = true;
 
-        Assert.Single(history.Rows);
-        Assert.Equal(0, history.Changes);
-        Assert.Equal(0, recovery.Clears);
+        var result = await presenter.KeepAsync(temporary.Id);
+
+        Assert.False(result.Succeeded);
+        Assert.Null(result.View);
+        Assert.NotNull(history.Rows.Single().ExpiresAt);
+        Assert.Equal(0, history.Loads);
+    }
+
+    /// <summary>The page tells the app the recovery copy is gone only when the presenter says it is.</summary>
+    /// <remarks>
+    /// THE PAGE ASKS AND THE PAGE NOTIFIES; THE PRESENTER CLEARS. The confirmation dialog and the
+    /// notice to the app both stay in the window, so the wiring is checked at the source: the notice
+    /// sits inside the branch the presenter's true answer selects, and nowhere else in the handler.
+    /// </remarks>
+    [Fact]
+    public void TheRecoveryDeletionHandlerNotifiesTheAppOnlyWhenTheCopyIsGone()
+    {
+        var window = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var start = window.IndexOf("private async void DeleteRecoveryButton_Click(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "The recovery deletion handler is gone.");
+        var end = window.IndexOf("\n    }\n", start, StringComparison.Ordinal);
+        var handler = window[start..end];
+
+        var asked = handler.IndexOf("if (await _historyPresenter.DeleteRecoveryAsync()", StringComparison.Ordinal);
+        var refused = handler.IndexOf("\n        else\n", StringComparison.Ordinal);
+        var notified = handler.IndexOf("RecoveryCleared?.Invoke();", StringComparison.Ordinal);
+        Assert.True(asked >= 0, "The handler does not ask the presenter to delete the copy.");
+        Assert.True(refused > asked, "The handler has no branch for a copy Windows left untouched.");
+        Assert.True(notified > asked && notified < refused, "The app is not told inside the branch where the copy is gone.");
+        Assert.Equal(notified, handler.LastIndexOf("RecoveryCleared?.Invoke();", StringComparison.Ordinal));
+        Assert.Contains("ContentDialogResult.Primary", handler[..asked], StringComparison.Ordinal);
+    }
+
+    private static string RepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "EnviousWispr.Windows.slnx")))
+        {
+            directory = directory.Parent;
+        }
+
+        Assert.NotNull(directory);
+        return directory.FullName;
     }
 
     [Fact]
@@ -198,8 +239,11 @@ public sealed class HistoryPresenterTests
 
         public (int RetentionDays, DateTimeOffset Now) LastLoad { get; private set; }
 
+        public int Loads { get; private set; }
+
         public Task<HistoryLoadResult> LoadAsync(int retentionDays, DateTimeOffset now, CancellationToken cancellationToken = default)
         {
+            Loads++;
             LastLoad = (retentionDays, now);
             return Task.FromResult(new HistoryLoadResult([.. Rows], Status));
         }
