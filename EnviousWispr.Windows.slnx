@@ -14,6 +14,7 @@
     <Project Path="src/Production/EnviousWispr.ModelDelivery/EnviousWispr.ModelDelivery.csproj" />
     <Project Path="src/Production/EnviousWispr.Pipeline/EnviousWispr.Pipeline.csproj" />
     <Project Path="src/Production/EnviousWispr.PostProcessing/EnviousWispr.PostProcessing.csproj" />
+    <Project Path="src/Production/EnviousWispr.Presentation/EnviousWispr.Presentation.csproj" />
     <Project Path="src/Production/EnviousWispr.RuntimeWorker/EnviousWispr.RuntimeWorker.csproj" />
     <Project Path="src/Production/EnviousWispr.Services/EnviousWispr.Services.csproj" />
   </Folder>

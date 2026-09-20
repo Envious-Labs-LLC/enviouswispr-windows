@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- HEADLESS PRESENTATION: the decisions a window makes, without the window. Depends on Core and
+       nothing else, so every rule that used to live behind a WinUI control can run under xunit. -->
+  <ItemGroup>
+    <ProjectReference Include="..\EnviousWispr.Core\EnviousWispr.Core.csproj" />
+  </ItemGroup>
+</Project>

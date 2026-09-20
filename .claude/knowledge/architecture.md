@@ -18,6 +18,10 @@ build so customers do not need to install developer tooling.
 - `PostProcessing`: deterministic cleanup, inverse text normalization, and emoji rules.
 - `LLM`: optional local and cloud polish providers.
 - `Pipeline`: recording-to-delivery orchestration and cancellation.
+- `Presentation`: the decisions a window makes, without the window - settings transactions and their
+  failure answers, and (as #148 lanes 15-20 land) provider configuration, the microphone test, history
+  commands, vocabulary editing and import. Depends on Core only, so every rule that used to sit behind a
+  WinUI control runs under xunit. Windows keep control reads, rendering and WinUI events.
 - `Services`: storage, credentials, updates, telemetry boundaries, and Windows integration.
 - `ModelDelivery`: manifests, downloads, hashes, versions, storage, and cleanup.
 - `RuntimeWorker`: a **separate executable** that hosts the native speech runtimes, including the CUDA
