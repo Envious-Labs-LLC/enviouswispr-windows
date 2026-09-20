@@ -94,7 +94,10 @@ public interface ISessionCommandExecutor
     /// </summary>
     Task ExpireAsync(SessionCommand command) => Task.CompletedTask;
 
-    /// <summary>The session is being torn down for shutdown, after the last command has finished.</summary>
+    /// <summary>
+    /// The session is being torn down for shutdown: after the last command has finished when the
+    /// shutdown's waits were enough, beside a command that outlived them when they were not.
+    /// </summary>
     Task ShutdownAsync() => Task.CompletedTask;
 }
 
@@ -266,12 +269,16 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         var drained = await StopAsync(drainTimeout).ConfigureAwait(false);
         // THE SECOND WAIT IS MADE WHETHER OR NOT THE FIRST WAS ENOUGH: a command that outlived the
         // drain may still finish inside the gate's wait, and the old shell gave it exactly that.
+        var secondWait = _clock.GetTimestamp();
         var held = await WaitForSessionAsync(drainTimeout).ConfigureAwait(false);
-        // COMPLETION IS REASSESSED AFTER THE SECOND WAIT. The command giving the gate back proves its
+        // COMPLETION IS REASSESSED INSIDE THE SECOND WAIT. The command giving the gate back proves its
         // own finish, not the queue's tail nor a notification still in flight - and a notification
         // runs outside the session, so the gate says nothing about it. Work that outlived the first
-        // wait is asked again, with the same patience, before the shutdown calls itself clean.
-        var settled = drained || (held && await OutstandingWorkFinishedAsync(drainTimeout).ConfigureAwait(false));
+        // wait is asked again for what is left of the second - the two waits are the whole budget,
+        // as they were the shell's - before the shutdown calls itself clean.
+        var remaining = drainTimeout - _clock.GetElapsedTime(secondWait);
+        var settled = drained ||
+            (held && await OutstandingWorkFinishedAsync(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero).ConfigureAwait(false));
         try
         {
             await _executor.ShutdownAsync().ConfigureAwait(false);
@@ -396,8 +403,9 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
                 // OWNED WORK, NOT FIRE-AND-FORGET, AND OWNED FROM THE SAME LOCK THAT ADMITTED IT: the
                 // stop's snapshot is taken under this lock after admission has closed, so an expiry
                 // registered here is either in that snapshot or was refused before it existed. The
-                // stop waits for every one it started, so a notification cannot land after the shell
-                // has torn down what it would touch.
+                // stop waits for every one it started, so a notification that finishes inside the
+                // shutdown's patience lands before the shell tears down what it touches; one that
+                // does not is reported as an unclean stop.
                 _expiries.RemoveAll(expiry => expiry.IsCompleted);
                 _expiries.Add(ExpireIfLateAsync(queued));
             }
@@ -464,8 +472,9 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     /// <summary>
     /// Waits up to <paramref name="timeout"/> for the consumer and every expiry notification it owns.
     /// THE EXPIRIES ARE JOINED WITH THE CONSUMER: each is either cancelled by the stopping token or
-    /// already notifying, and a notification in flight finishes before this reports, so nothing it
-    /// touches is torn down under it. False when the work outlived the wait or a notification threw.
+    /// already notifying, and a notification that finishes inside the wait is reported before anything
+    /// it touches is torn down. False when the work outlived the wait - the caller then proceeds beside
+    /// it and says so - or a notification threw.
     /// </summary>
     private async Task<bool> OutstandingWorkFinishedAsync(TimeSpan timeout)
     {

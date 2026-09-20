@@ -743,6 +743,43 @@ public sealed class DictationSessionCoordinatorTests
     }
 
     [Fact]
+    public async Task ACommandAndANotificationOutstandingTogetherShareTheSecondWaitNotExtendIt()
+    {
+        // THE TWO WAITS ARE THE WHOLE BUDGET. The command finishes one second before the second wait
+        // ends; the notification is still out; the reassessment gets that one second, not a fresh
+        // ten, and the teardown starts at twenty seconds beside the notification.
+        var executor = new BarrierExecutor { HoldExpiry = true };
+        var clock = new Deterministic.ManualClock();
+        await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        clock.Advance(DictationSessionCoordinator.InterruptionPatience);
+        await executor.Expired(SessionCommandKind.Interruption).WaitAsync(Patience);
+
+        var drain = TimeSpan.FromSeconds(10);
+        var shutdown = coordinator.ShutdownAsync(drain);
+        await clock.WhenRegistered(2).WaitAsync(Patience);
+        clock.Advance(drain);
+        // Inside the second wait now; nine of its ten seconds pass with the command still running.
+        await clock.WhenRegistered(3).WaitAsync(Patience);
+        clock.Advance(drain - TimeSpan.FromSeconds(1));
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        await interruption.WaitAsync(Patience);
+        // The session is held; the reassessment asks for the notification with the second that is left.
+        await clock.WhenRegistered(4).WaitAsync(Patience);
+        Assert.Equal(TimeSpan.FromSeconds(1), clock.NextDue);
+        Assert.Equal(0, executor.ShutdownCalls);
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        Assert.False(await shutdown.WaitAsync(Patience));
+        Assert.Equal(1, executor.ShutdownCalls);
+        executor.ReleaseExpiry();
+    }
+
+    [Fact]
     public async Task ANotificationThatFinishesInsideTheShutdownsFirstWaitLeavesItClean()
     {
         var executor = new BarrierExecutor { HoldExpiry = true };
