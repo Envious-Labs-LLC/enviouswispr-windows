@@ -44,6 +44,7 @@ public partial class App : Application, IAsyncDisposable
     private readonly JsonHistoryStore _historyStore;
     private readonly JsonApplicationRunStateStore _runStateStore;
     private readonly WindowsRecoveryTextStore _recoveryTextStore;
+    private readonly SessionPersistence _sessionPersistence;
     private readonly WindowsSystemResourceProbe _resourceProbe;
     private readonly WindowsCredentialApiKeyStore _credentialStore;
     private readonly string _dataDirectory;
@@ -112,9 +113,6 @@ public partial class App : Application, IAsyncDisposable
     private CancellationTokenSource? _recordingWatchdogCancellation;
     private Task? _recordingWatchdog;
     private CancellationTokenSource? _activeProcessingCancellation;
-    private bool _canPersistRecoveryForSession = true;
-    private bool _hasPendingRecovery;
-    private RecoveryTextRecord? _pendingRecoveryRecord;
     private bool _escapeRecoveryForSession;
 
     public App()
@@ -171,6 +169,13 @@ public partial class App : Application, IAsyncDisposable
         _historyStore = new JsonHistoryStore(Path.Combine(_dataDirectory, "history.json"));
         _runStateStore = new JsonApplicationRunStateStore(Path.Combine(_dataDirectory, "run-state.json"));
         _recoveryTextStore = new WindowsRecoveryTextStore(Path.Combine(_dataDirectory, "recovery.json"));
+        _sessionPersistence = new SessionPersistence(
+            _recoveryTextStore,
+            _historyStore,
+            _logger,
+            TimeProvider.System,
+            () => _settings.Preferences.History,
+            new SessionPersistenceEffects(this));
         _resourceProbe = new WindowsSystemResourceProbe(_dataDirectory);
 
         var allowLoopbackUpdates = string.Equals(
@@ -335,8 +340,7 @@ public partial class App : Application, IAsyncDisposable
         ConfigureTrayIcon();
         await _window.InitializeProductDataAsync().ConfigureAwait(true);
         var recovery = await LoadStartupRecoveryAsync().ConfigureAwait(true);
-        _hasPendingRecovery = recovery.Status == RecoveryTextLoadStatus.Found;
-        _pendingRecoveryRecord = recovery.Record;
+        _sessionPersistence.AdoptStartupRecovery(recovery);
         _window.SetRecoveredText(recovery);
         if (StartupNoticeDecision.For(
                 runStart.RecoveredInterruptedRun,
@@ -734,11 +738,7 @@ public partial class App : Application, IAsyncDisposable
                 : AppFailureCategory.None));
     }
 
-    private void OnRecoveryCleared()
-    {
-        _hasPendingRecovery = false;
-        _pendingRecoveryRecord = null;
-    }
+    private void OnRecoveryCleared() => _sessionPersistence.ForgetPendingRecovery();
 
     private void OnSettingsChanged(AppSettings settings)
     {
@@ -2228,7 +2228,7 @@ public partial class App : Application, IAsyncDisposable
         // which cancel it from their own callbacks, still find it while the recovery is running.
         private CancellationTokenSource? _commandProcessing;
 
-        public bool HasPendingRecovery => app._hasPendingRecovery;
+        public bool HasPendingRecovery => app._sessionPersistence.HasPendingRecovery;
 
         public bool EscapeRecoveryEnabled => app._settings.Preferences.Dictation.EscapeRecoveryEnabled;
 
@@ -2241,7 +2241,7 @@ public partial class App : Application, IAsyncDisposable
         public DictationAdmissionResult EvaluateAdmission()
         {
             var admission = SystemResourceAdmissionPolicy.Evaluate(app._resourceProbe.Probe());
-            app._canPersistRecoveryForSession = admission.CanPersistRecovery;
+            app._sessionPersistence.CanPersistRecovery = admission.CanPersistRecovery;
             if (admission.Status != DictationAdmissionStatus.Ready)
             {
                 app._logger.Write(new AppLogEntry(
@@ -2539,7 +2539,7 @@ public partial class App : Application, IAsyncDisposable
             AppEventCode.DictationSessionRecovered,
             AppFailureCategory.Recovery,
             ErrorCode: error.Code));
-        ShowPendingRecovery();
+        _sessionPersistence.ShowPendingRecovery();
         _window?.DispatcherQueue.TryEnqueue(() => _window?.SetSessionStatus(status));
     }
 
@@ -3226,17 +3226,16 @@ public partial class App : Application, IAsyncDisposable
                     WriteDeliveryEvent(delivery, deliveryTimer.ElapsedMilliseconds);
                     if (delivery.Delivered || delivery.ClipboardFallback)
                     {
-                        await ClearRecoveryTextAsync().ConfigureAwait(false);
+                        await _sessionPersistence.ClearRecoveryTextAsync().ConfigureAwait(false);
                     }
                     else
                     {
-                        ShowPendingRecovery();
+                        _sessionPersistence.ShowPendingRecovery();
                     }
-                    await SaveHistoryAsync(
+                    await _sessionPersistence.SaveHistoryAsync(
                         transcript,
                         processed.Output.Text,
-                        finalized.WasPolished,
-                        delivery.Delivered).ConfigureAwait(false);
+                        HistoryWriteIntent.Delivered(finalized.WasPolished, delivery.Delivered)).ConfigureAwait(false);
                     await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
                     await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
                     _window?.DispatcherQueue.TryEnqueue(() =>
@@ -3247,17 +3246,16 @@ public partial class App : Application, IAsyncDisposable
                 }
             }
 
-            await SaveHistoryAsync(
+            await _sessionPersistence.SaveHistoryAsync(
                 transcript,
                 processed.Output.Text,
-                finalized.WasPolished,
-                wasDelivered: false,
-                expiresAt: recoveryOnly ? DateTimeOffset.UtcNow.AddHours(24) : null,
-                forceSave: recoveryOnly)
+                recoveryOnly
+                    ? HistoryWriteIntent.EscapeRecovery(finalized.WasPolished, DateTimeOffset.UtcNow.AddHours(24))
+                    : HistoryWriteIntent.Held(finalized.WasPolished))
                 .ConfigureAwait(false);
             await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
             await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
-            ShowPendingRecovery();
+            _sessionPersistence.ShowPendingRecovery();
             if (recoveryOnly && !string.IsNullOrWhiteSpace(processed.Output.Text))
             {
                 _window?.DispatcherQueue.TryEnqueue(() =>
@@ -3410,108 +3408,29 @@ public partial class App : Application, IAsyncDisposable
         return tail with { Text = joined.ToString() };
     }
 
-    private async Task SaveRecoveryTextAsync(
-        ProcessedText text,
-        CancellationToken cancellationToken)
+    /// <summary>What the shell shows when persistence changes what the person should see.</summary>
+    private sealed class SessionPersistenceEffects(App app) : ISessionPersistenceEffects
     {
-        if (string.IsNullOrWhiteSpace(text.Text))
-        {
-            return;
-        }
-
-        var record = new RecoveryTextRecord(text.SessionId, DateTimeOffset.UtcNow, text.Text);
-        _pendingRecoveryRecord = record;
-        _hasPendingRecovery = true;
-        if (!_canPersistRecoveryForSession)
-        {
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.RecoveryTextUnavailable,
-                AppFailureCategory.ResourcePressure,
-                ErrorCode: AppErrorCode.LowDiskSpace));
-            return;
-        }
-
-        var saved = await _recoveryTextStore.SaveAsync(record, cancellationToken)
-            .ConfigureAwait(false);
-        _logger.Write(new AppLogEntry(
-            DateTimeOffset.UtcNow,
-            saved ? AppEventCode.RecoveryTextSaved : AppEventCode.RecoveryTextUnavailable,
-            saved ? AppFailureCategory.None : AppFailureCategory.Recovery,
-            ErrorCode: saved ? null : AppErrorCode.StorageUnavailable));
-    }
-
-    private async Task ClearRecoveryTextAsync()
-    {
-        if (!await _recoveryTextStore.ClearAsync().ConfigureAwait(false))
-        {
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.RecoveryTextUnavailable,
-                AppFailureCategory.Recovery,
-                ErrorCode: AppErrorCode.StorageUnavailable));
-            return;
-        }
-
-        _pendingRecoveryRecord = null;
-        _hasPendingRecovery = false;
-        _logger.Write(new AppLogEntry(
-            DateTimeOffset.UtcNow,
-            AppEventCode.RecoveryTextCleared));
-        _window?.DispatcherQueue.TryEnqueue(() => _window?.ClearRecoveredText());
-    }
-
-    private void ShowPendingRecovery()
-    {
-        var record = _pendingRecoveryRecord;
-        if (record is null)
-        {
-            return;
-        }
-
-        _window?.DispatcherQueue.TryEnqueue(() =>
-        {
-            ShowMainWindow(openSettings: false);
-            _window?.SetRecoveredText(new RecoveryTextLoadResult(
-                RecoveryTextLoadStatus.Found,
-                record));
-        });
-    }
-
-    private async Task SaveHistoryAsync(
-        Transcript transcript,
-        string text,
-        bool wasPolished,
-        bool wasDelivered,
-        DateTimeOffset? expiresAt = null,
-        bool forceSave = false)
-    {
-        var historyPreferences = _settings.Preferences.History;
-        if ((!historyPreferences.IsEnabled && !forceSave) || string.IsNullOrWhiteSpace(text))
-        {
-            return;
-        }
-
-        var result = await _historyStore.AddAsync(
-            DictationHistoryEntry.Create(
-                DateTimeOffset.UtcNow,
-                text,
-                transcript.EngineId,
-                wasPolished,
-                wasDelivered,
-                expiresAt),
-            historyPreferences.RetentionDays,
-            DateTimeOffset.UtcNow).ConfigureAwait(false);
-        if (result.Succeeded)
-        {
-            _window?.DispatcherQueue.TryEnqueue(() =>
+        public void ShowPendingRecovery(RecoveryTextRecord record) =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
             {
-                if (_window is not null)
+                app.ShowMainWindow(openSettings: false);
+                app._window?.SetRecoveredText(new RecoveryTextLoadResult(
+                    RecoveryTextLoadStatus.Found,
+                    record));
+            });
+
+        public void ClearRecoveredText() =>
+            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.ClearRecoveredText());
+
+        public void NotifyHistoryChanged() =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
+            {
+                if (app._window is not null)
                 {
-                    _ = _window.NotifyHistoryChangedAsync();
+                    _ = app._window.NotifyHistoryChangedAsync();
                 }
             });
-        }
     }
 
     /// <summary>The polish provider in force, and how it is hosted, or null when there is none.</summary>
@@ -3532,7 +3451,7 @@ public partial class App : Application, IAsyncDisposable
             app.EmitStageReceipts(receipts, emojiRestorationOnly);
 
         public Task SaveRecoveryTextAsync(ProcessedText output, CancellationToken cancellationToken) =>
-            app.SaveRecoveryTextAsync(output, cancellationToken);
+            app._sessionPersistence.SaveRecoveryTextAsync(output, cancellationToken);
 
         public void RecordPolishStarted(string providerId) =>
             app._logger.Write(new AppLogEntry(
