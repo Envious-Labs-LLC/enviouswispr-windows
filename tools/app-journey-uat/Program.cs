@@ -143,6 +143,26 @@ if (manualMicrophone && !englishParakeet)
     throw new JourneyExpectationException(
         "--manual-microphone requires --english-parakeet for the fixed English acceptance phrase.");
 }
+// THE SPEAKERS STAY SILENT AND THE MICROPHONE STAYS UNTOUCHED. Acoustic journeys played the fixture
+// through whatever the machine's default playback device was and recorded it through whatever its
+// default microphone was - the founder's monitor speakers and webcam microphone, in the same room as
+// the founder. `--virtual-cable` routes the same fixture, through the same production capture code,
+// across VB-Audio's virtual cable instead: playback goes to the cable's render endpoint and the
+// journey profile names the cable's capture endpoint as its preferred microphone. Both endpoints are
+// chosen by their own identity; the machine's default devices are never read and never changed.
+var virtualCable = args.Any(argument => string.Equals(
+    argument,
+    "--virtual-cable",
+    StringComparison.OrdinalIgnoreCase));
+if (virtualCable && !syntheticMicrophonePlayback)
+{
+    throw new JourneyExpectationException("--virtual-cable requires --live-microphone.");
+}
+if (virtualCable && synthesizedAcoustic)
+{
+    throw new JourneyExpectationException(
+        "--virtual-cable plays the reviewed fixture; Windows speech synthesis cannot be routed to the cable.");
+}
 if (manualMicrophone && ArgumentValue(args, "--acoustic-gain") is not null)
 {
     throw new JourneyExpectationException(
@@ -326,14 +346,16 @@ if (livePreview && !new LocalWhisperModelProbe().Probe(previewModelDirectory).Pr
 }
 
 EnsureNoUnownedProcesses("EnviousWispr.App", "EnviousWispr.Delivery.Target.Uat");
+var audioRoute = virtualCable ? FindVirtualCableEndpoints() : null;
 Func<Task> acousticStimulus = synthesizedAcoustic
     ? () => SpeakPublicPhraseAsync(SynthesizedAcousticPhrase)
     : () => PlayPublicFixtureAsync(
         fixturePath,
         acousticPlaybackGain,
-        AcousticPlaybackRepetitions);
+        AcousticPlaybackRepetitions,
+        audioRoute?.RenderId);
 var acousticProbe = syntheticMicrophonePlayback
-    ? await MeasureAcousticPlaybackAsync(acousticStimulus)
+    ? await MeasureAcousticPlaybackAsync(acousticStimulus, audioRoute?.CaptureId)
     : null;
 
 var runId = Guid.NewGuid().ToString("N");
@@ -353,12 +375,13 @@ Directory.CreateDirectory(Path.Combine(uatDirectory, "no-preview-model"));
 var profileDirectory = Path.Combine(uatDirectory, "profile");
 Directory.CreateDirectory(profileDirectory);
 if (livePreview || escapeRecovery || failureMode == JourneyFailureMode.MicrophoneUnavailable ||
-    deterministicProfile != DeterministicJourneyProfile.None)
+    deterministicProfile != DeterministicJourneyProfile.None || audioRoute is not null)
 {
     var deterministicFeaturesEnabled = deterministicProfile != DeterministicJourneyProfile.Disabled;
     var journeySettings = AppSettings.Default with
     {
         HasCompletedOnboarding = true,
+        PreferredMicrophoneId = audioRoute?.CaptureId,
         Preferences = AppSettings.Default.Preferences with
         {
             LivePreviewEnabled = livePreview,
@@ -826,6 +849,9 @@ try
         provider,
         modelPack,
         acousticProbe,
+        audioRoute = audioRoute is null
+            ? liveMicrophone ? "MachineDefaultEndpoints" : null
+            : $"VirtualCable: {audioRoute.RenderName} -> {audioRoute.CaptureName}",
         syntheticHotkey = syntheticHotkeyEvidence,
         polish = PolishProviderName(polishProvider),
         polishCompleted = polishEvidence.Completed,
@@ -844,6 +870,7 @@ try
             JourneyFailureMode.WorkerStartup => "StartupFault-MissingOwnedWorkerExecutable",
             _ when manualMicrophone => "PhysicalF8-FounderSpeech-ProductionWasapi",
             _ when synthesizedAcoustic => "SyntheticF8-WindowsSpeechPlayback-ProductionWasapi",
+            _ when virtualCable => "SyntheticF8-ReviewedFixturePlayback-VirtualCable-ProductionWasapi",
             _ when liveMicrophone => "SyntheticF8-ReviewedFixturePlayback-ProductionWasapi",
             _ when syntheticHotkey && quickTap => "SyntheticHotkeyQuickTap-InstalledGlobalHook-ReviewedFixtureAudioCapture",
             _ when syntheticHotkey => "SyntheticHotkey-InstalledGlobalHook-ReviewedFixtureAudioCapture",
@@ -1554,7 +1581,8 @@ static bool IsProcessRunning(int processId)
 static async Task PlayPublicFixtureAsync(
     string fixturePath,
     int gain,
-    int repetitions)
+    int repetitions,
+    string? renderEndpointId = null)
 {
     var (pcmBytes, sampleRate) = ReadReviewedMuLawFixture(
         fixturePath,
@@ -1562,9 +1590,7 @@ static async Task PlayPublicFixtureAsync(
     pcmBytes = RepeatPcm(pcmBytes, sampleRate, repetitions);
     using var stream = new MemoryStream(pcmBytes, writable: false);
     using var source = new RawSourceWaveStream(stream, new WaveFormat(sampleRate, 16, 1));
-    await using var output = await new WasapiPlayerBuilder()
-        .WithDefaultDeviceStreamRouting()
-        .BuildAsync();
+    await using var output = await BuildFixturePlayerAsync(renderEndpointId);
     var completed = new TaskCompletionSource<Exception?>(
         TaskCreationOptions.RunContinuationsAsynchronously);
     output.PlaybackStopped += (_, args) => completed.TrySetResult(args.Exception);
@@ -1581,7 +1607,8 @@ static async Task PlayPublicFixtureAsync(
 }
 
 static async Task<AcousticProbeMetrics> MeasureAcousticPlaybackAsync(
-    Func<Task> playStimulus)
+    Func<Task> playStimulus,
+    string? captureEndpointId = null)
 {
     ArgumentNullException.ThrowIfNull(playStimulus);
     await using var capture = new WasapiAudioCapture();
@@ -1599,7 +1626,9 @@ static async Task<AcousticProbeMetrics> MeasureAcousticPlaybackAsync(
         }
     };
 
-    var started = await capture.StartAsync(new AudioCaptureRequest(DictationSessionId.Create()));
+    var started = await capture.StartAsync(new AudioCaptureRequest(
+        DictationSessionId.Create(),
+        captureEndpointId is null ? null : new AudioDeviceId(captureEndpointId)));
     if (!started.Succeeded)
     {
         return new AcousticProbeMetrics(
@@ -1634,6 +1663,62 @@ static async Task<AcousticProbeMetrics> MeasureAcousticPlaybackAsync(
         Peak: observedPeak,
         AverageLevelRootMeanSquare: averageLevelRootMeanSquare,
         CapturedRootMeanSquare: samples.Length == 0 ? 0 : Math.Sqrt(sumOfSquares / samples.Length));
+}
+
+/// <summary>
+/// The two ends of VB-Audio's virtual cable, found by their own names. The machine's default playback
+/// and recording devices are never consulted: the whole point of the cable is that a journey can run
+/// without touching, or depending on, whatever the founder has selected. Either end missing is a
+/// staging failure - the driver is not installed or not running - and says nothing about the product.
+/// </summary>
+static VirtualCableRoute FindVirtualCableEndpoints()
+{
+    const string RenderName = "CABLE Input (VB-Audio Virtual Cable)";
+    const string CaptureName = "CABLE Output (VB-Audio Virtual Cable)";
+    using var enumerator = new MMDeviceEnumerator();
+    string? renderId = null;
+    string? captureId = null;
+    foreach (var device in enumerator.EnumerateAudioEndPoints(DataFlow.All, DeviceState.Active))
+    {
+        using (device)
+        {
+            if (device.DataFlow == DataFlow.Render && device.FriendlyName == RenderName)
+            {
+                renderId = device.ID;
+            }
+            else if (device.DataFlow == DataFlow.Capture && device.FriendlyName == CaptureName)
+            {
+                captureId = device.ID;
+            }
+        }
+    }
+
+    if (renderId is null || captureId is null)
+    {
+        throw JourneyExpectationException.Instrument(
+            $"--virtual-cable needs an active \"{RenderName}\" playback endpoint and an active "
+                + $"\"{CaptureName}\" recording endpoint; found playback={(renderId is null ? "no" : "yes")}, "
+                + $"recording={(captureId is null ? "no" : "yes")}. Install VB-CABLE, or check the device is enabled.");
+    }
+
+    return new VirtualCableRoute(RenderName, renderId, CaptureName, captureId);
+}
+
+static async Task<WasapiPlayer> BuildFixturePlayerAsync(string? renderEndpointId)
+{
+    if (renderEndpointId is null)
+    {
+        return await new WasapiPlayerBuilder()
+            .WithDefaultDeviceStreamRouting()
+            .BuildAsync();
+    }
+
+    // THE PLAYER KEEPS THE DEVICE; disposing it here left the player's volume control pointing at a
+    // released session manager, and the first run crashed setting the volume. The process is the owner.
+    using var enumerator = new MMDeviceEnumerator();
+    return new WasapiPlayerBuilder()
+        .WithDevice(enumerator.GetDevice(renderEndpointId))
+        .Build();
 }
 
 static async Task SpeakPublicPhraseAsync(string phrase)
@@ -2143,7 +2228,7 @@ static void RequireKnownArguments(string[] arguments)
     [
         "--live-microphone", "--manual-microphone", "--english-parakeet", "--live-preview",
         "--head-start", "--escape-recovery", "--synthesized-acoustic", "--synthetic-hotkey",
-        "--quick-tap",
+        "--quick-tap", "--virtual-cable",
     ];
     string[] valuedFlags =
     [
@@ -2438,6 +2523,12 @@ internal sealed record PolishJourneyEvidence(
     bool Degraded,
     string? ErrorCode,
     long? ElapsedMilliseconds);
+
+internal sealed record VirtualCableRoute(
+    string RenderName,
+    string RenderId,
+    string CaptureName,
+    string CaptureId);
 
 internal sealed record AcousticProbeMetrics(
     bool Started,

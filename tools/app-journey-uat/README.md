@@ -162,6 +162,30 @@ and are discarded. The actual journey records only while F8 is held, never persi
 profile, and stores only a temporary phrase-match boolean and character count before cleanup. It refuses to run
 while an unowned EnviousWispr or controlled-target process exists.
 
+### Silent acoustic journeys over a virtual cable
+
+Add `--virtual-cable` to either live-microphone command to run the same production capture and hook with the
+speakers silent and the real microphone untouched. It needs VB-Audio's free VB-CABLE driver installed: the
+fixture plays to the cable's playback endpoint (`CABLE Input`) and the isolated journey profile names the
+cable's recording endpoint (`CABLE Output`) as its preferred microphone, so the app records exactly what was
+played, through the same WASAPI path a real microphone takes, with no room, echo suppression or webcam in
+between. Both endpoints are found by their own names; the machine's default playback and recording devices
+are never read and never changed. If either endpoint is missing the run is INSTRUMENT INVALID (exit 3), not a
+product failure. It cannot combine with `--synthesized-acoustic` (Windows speech synthesis plays to the
+default device) or `--manual-microphone`.
+
+```powershell
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --live-microphone --virtual-cable
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --live-microphone --virtual-cable
+```
+
+The result carries `audioRoute` (`VirtualCable: CABLE Input ... -> CABLE Output ...`, or `MachineDefaultEndpoints`
+for the audible mode) and an `inputKind` that says `VirtualCable`, so a silent pass can never be read as an
+acoustic one. The VB-CABLE installer makes the cable the default playback device on some machines; check
+Windows sound settings after installing it, once, before trusting the speakers again.
+
 The remaining physical acceptance path is a separate guided mode. Exit any normally installed EnviousWispr
 instance first, run the command below, keep the controlled target focused, and follow the fixed public instruction
 shown in that window. The person must physically hold F8, speak the displayed sentence into the microphone, and
