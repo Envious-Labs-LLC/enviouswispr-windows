@@ -39,8 +39,8 @@ public sealed class SessionFinalizationRunnerTests
         Assert.Equal(
             [
                 "ClearEscapeRecovery", "ShowTranscribing", "RecordTranscriptionStarted", "ArchiveAudio",
-                "RecordTranscriptionFinished", "SaveRecovery:hello world", "ShowDelivering", "RecordDeliveryStarted",
-                "RecordDelivery:delivered=True", "ClearRecovery", "HistoryChanged", "ReportDelivery", "RecordDictationCompleted",
+                "RecordTranscriptionFinished", "CurrentOptions", "SaveRecovery:hello world", "ShowDelivering", "RecordDeliveryStarted",
+                "Deliver:hello world", "RecordDelivery:delivered=True", "ClearRecovery", "HistoryChanged", "ReportDelivery", "RecordDictationCompleted",
             ],
             world.Trace);
         Assert.False(world.Persistence.HasPendingRecovery);
@@ -56,8 +56,25 @@ public sealed class SessionFinalizationRunnerTests
         await world.RunAsync();
 
         var saved = world.Trace.IndexOf("SaveRecovery:hello world");
-        var delivered = world.Trace.IndexOf("RecordDelivery:delivered=True");
+        var delivered = world.Trace.IndexOf("Deliver:hello world");
         Assert.True(saved >= 0 && delivered > saved, $"recovery at {saved}, delivery at {delivered}");
+    }
+
+    [Fact]
+    public async Task ASettingSavedWhileTheEngineWasWorkingReachesThisDictation()
+    {
+        // The shell always read its custom words and cleanup switches AFTER the speech engine
+        // returned, so a word taught during a slow transcription corrected that very dictation. The
+        // engine here flips the options source mid-call; the later values must be the ones used.
+        var world = await World.RecordingFinishedAsync("envy wisper is here");
+        var words = new List<CustomWordEntry>();
+        world.OptionsOverride = () => new FinalizationOptions(words.ToArray(), new DeterministicTextOptions(true, true, true, true), null);
+        world.Engine.BeforeReturning = () => words.Add(new CustomWordEntry("envy wisper", "EnviousWispr"));
+
+        var report = await world.RunAsync();
+
+        Assert.Equal("EnviousWispr is here", world.Delivery.Requests.Single().Text.Text);
+        Assert.Equal(FinalizationOutcome.Delivered, report.Outcome);
     }
 
     [Fact]
@@ -138,7 +155,7 @@ public sealed class SessionFinalizationRunnerTests
         Assert.Equal(
             [
                 "ClearEscapeRecovery", "ShowTranscribing", "RecordTranscriptionStarted", "ArchiveAudio",
-                "RecordTranscriptionFinished", "SaveRecovery:hello world", "HistoryChanged", "ShowPendingRecovery:hello world",
+                "RecordTranscriptionFinished", "CurrentOptions", "SaveRecovery:hello world", "HistoryChanged", "ShowPendingRecovery:hello world",
                 "ShowEscapeRecoveryFinished", "ShowHeldStatus:EscapeRecovery", "RecordDictationCompleted",
             ],
             world.Trace);
@@ -221,7 +238,7 @@ public sealed class SessionFinalizationRunnerTests
 
             var effects = new FakeEffects();
             var engine = new FakeEngine(spoken);
-            var delivery = new FakeDelivery();
+            var delivery = new FakeDelivery { Trace = effects.Trace };
             effects.Engine = engine;
             effects.DeliveryRoute = delivery;
             var history = new FakeHistoryStore();
@@ -252,12 +269,15 @@ public sealed class SessionFinalizationRunnerTests
             };
         }
 
-        public Task<FinalizationReport> RunAsync(bool recoveryOnly = false) => Runner.RunAsync(
-            SessionId,
-            Audio,
-            new FinalizationOptions([], new DeterministicTextOptions(true, true, true, true), Polish),
-            recoveryOnly,
-            CancellationToken.None);
+        public Func<FinalizationOptions>? OptionsOverride { get; set; }
+
+        public Task<FinalizationReport> RunAsync(bool recoveryOnly = false)
+        {
+            var polish = Polish;
+            Effects.Options = OptionsOverride
+                ?? (() => new FinalizationOptions([], new DeterministicTextOptions(true, true, true, true), polish));
+            return Runner.RunAsync(SessionId, Audio, recoveryOnly, CancellationToken.None);
+        }
     }
 
     private sealed class FakeEffects : ISessionFinalizationEffects, ITranscriptFinalizationEffects, ISessionPersistenceEffects
@@ -274,6 +294,15 @@ public sealed class SessionFinalizationRunnerTests
 
         public Task<Transcript> TranscribeAsync(ITranscriptionEngine engine, CapturedAudio audio, CancellationToken cancellationToken) =>
             engine.TranscribeAsync(audio, cancellationToken);
+
+        public Func<FinalizationOptions> Options { get; set; } =
+            () => new FinalizationOptions([], new DeterministicTextOptions(true, true, true, true), null);
+
+        public FinalizationOptions CurrentOptions()
+        {
+            Trace.Add("CurrentOptions");
+            return Options();
+        }
 
         public void ClearEscapeRecoveryForSession() => Trace.Add("ClearEscapeRecovery");
 
@@ -352,12 +381,16 @@ public sealed class SessionFinalizationRunnerTests
 
         public AppError? Failure { get; set; }
 
+        public Action? BeforeReturning { get; set; }
+
         public Task<Transcript> TranscribeAsync(CapturedAudio audio, CancellationToken cancellationToken = default)
         {
             if (Failure is { } failure)
             {
                 throw new TranscriptionEngineException(failure);
             }
+
+            BeforeReturning?.Invoke();
 
             return Task.FromResult(new Transcript(audio.SessionId, spoken, EngineId, DetectedLanguage: "en"));
         }
@@ -367,12 +400,15 @@ public sealed class SessionFinalizationRunnerTests
     {
         public List<TextDeliveryRequest> Requests { get; } = [];
 
+        public List<string>? Trace { get; set; }
+
         public Func<DictationSessionId, TextDeliveryRequest, DeliveryResult> Answer { get; set; } =
             (id, _) => new DeliveryResult(id, Delivered: true, ClipboardFallback: false, TextDeliveryRoute.ClipboardPaste);
 
         public Task<DeliveryResult> DeliverAsync(TextDeliveryRequest request, CancellationToken cancellationToken = default)
         {
             Requests.Add(request);
+            Trace?.Add($"Deliver:{request.Text.Text}");
             return Task.FromResult(Answer(request.Text.SessionId, request));
         }
     }

@@ -3152,22 +3152,16 @@ public partial class App : Application, IAsyncDisposable
         // the next line added to it will be a log line. Begin restores rather than clears, so the
         // runner opening the same scope inside is safe.
         using var dictation = DictationScope.Begin(sessionId.Value);
-        var runner = _finalizationRunner;
-        if (runner is null)
-        {
-            return;
-        }
+        // LOUD, NOT SILENT. The runner is built beside the controller, and a finalisation with no
+        // controller cannot be requested; a null here is an invariant broken elsewhere, and the caller's
+        // recovery handling is the right place for it to surface.
+        var runner = _finalizationRunner
+            ?? throw new InvalidOperationException("A finalisation was requested before the session was configured.");
 
-        // THE WHOLE RECORD-TO-DELIVER PATH RUNS IN PIPELINE NOW. The shell hands over what its settings
-        // say at this moment and keeps what is drawn, what is logged, and the two operations still
-        // waiting for their own steps: the head-start transcription and the audio archive.
-        await runner.RunAsync(
-                sessionId,
-                audio,
-                new FinalizationOptions(_customWords, _deterministicTextOptions, CurrentPolishSetup()),
-                recoveryOnly,
-                cancellationToken)
-            .ConfigureAwait(false);
+        // THE WHOLE RECORD-TO-DELIVER PATH RUNS IN PIPELINE NOW. The shell keeps what is drawn, what
+        // is logged, its settings read at the moment the text decisions need them, and the two
+        // operations still waiting for their own steps: the head-start transcription and the archive.
+        await runner.RunAsync(sessionId, audio, recoveryOnly, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>The shell's half of a finalisation: rendering, logging, and the two operations still living here.</summary>
@@ -3181,6 +3175,9 @@ public partial class App : Application, IAsyncDisposable
 
         public Task<Transcript> TranscribeAsync(ITranscriptionEngine engine, CapturedAudio audio, CancellationToken cancellationToken) =>
             app.TranscribeUsingAnyHeadStartAsync(engine, audio, cancellationToken);
+
+        public FinalizationOptions CurrentOptions() =>
+            new(app._customWords, app._deterministicTextOptions, app.CurrentPolishSetup());
 
         public void ClearEscapeRecoveryForSession() => app._escapeRecoveryForSession = false;
 

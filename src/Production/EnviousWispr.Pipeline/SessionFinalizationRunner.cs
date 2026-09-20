@@ -56,6 +56,13 @@ public interface ISessionFinalizationEffects
     /// <summary>Transcribes the capture, using any streaming head start the shell collected. Step 9 moves this.</summary>
     Task<Transcript> TranscribeAsync(ITranscriptionEngine engine, CapturedAudio audio, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The settings the text decisions run under, read AFTER transcription, at the moment they are
+    /// needed. A custom word or a cleanup switch saved while the speech engine was still working
+    /// reaches this dictation, which is what the shell always did by reading its fields there.
+    /// </summary>
+    FinalizationOptions CurrentOptions();
+
     void ClearEscapeRecoveryForSession();
 
     void ArchiveAudio(CapturedAudio audio);
@@ -146,12 +153,10 @@ public sealed class SessionFinalizationRunner
     public async Task<FinalizationReport> RunAsync(
         DictationSessionId sessionId,
         CapturedAudio audio,
-        FinalizationOptions options,
         bool recoveryOnly,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(audio);
-        ArgumentNullException.ThrowIfNull(options);
         using var dictation = DictationScope.Begin(sessionId.Value);
         _effects.ClearEscapeRecoveryForSession();
         var engine = _effects.Engine;
@@ -173,6 +178,7 @@ public sealed class SessionFinalizationRunner
             var transcript = await _effects.TranscribeAsync(engine, audio, cancellationToken).ConfigureAwait(false);
             timer.Stop();
             _effects.RecordTranscriptionFinished(transcript, timer.ElapsedMilliseconds);
+            var options = _effects.CurrentOptions();
             var finalized = await _finalizer
                 .FinalizeAsync(transcript, options.CustomWords, options.TextOptions, options.Polish, cancellationToken)
                 .ConfigureAwait(false);
