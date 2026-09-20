@@ -652,6 +652,106 @@ public sealed class DictationSessionCoordinatorTests
     }
 
     [Fact]
+    public async Task AnInterruptionParkedBehindAnUpdateHoldExpiresAtFiveSecondsAndIsSkippedWhenTheHoldEnds()
+    {
+        // THE DEADLINE COUNTS WHILE PARKED BEHIND A HOLD, NOT ONLY BEHIND A COMMAND. The update check
+        // holds the session; Windows locks; at five seconds the shell is told recovery is pending while
+        // the download carries on; when the hold ends the interruption is skipped, not run late.
+        var executor = new BarrierExecutor();
+        var clock = new Deterministic.ManualClock();
+        await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
+        var hold = coordinator.TryHold();
+        Assert.NotNull(hold);
+
+        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        await UntilAsync(() => coordinator.GateWaitsEntered == 1);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        Assert.Equal(DictationSessionCoordinator.InterruptionPatience, clock.NextDue);
+        clock.Advance(DictationSessionCoordinator.InterruptionPatience);
+        await executor.Expired(SessionCommandKind.Interruption).WaitAsync(Patience);
+        Assert.False(interruption.IsCompleted);
+
+        hold.Dispose();
+        var result = await interruption.WaitAsync(Patience);
+
+        Assert.Equal(SessionCommandDisposition.Ignored, result.Disposition);
+        Assert.True(result.WasQueued);
+        Assert.Empty(executor.SeenKinds);
+        Assert.Equal([SessionCommandKind.Interruption], executor.ExpiredKinds);
+        Assert.True(coordinator.IsIdle);
+    }
+
+    [Fact]
+    public async Task CloseBeforeFiveSecondsCancelsTheExpiryAndTheStopIsClean()
+    {
+        // Shutdown while an interruption is still waiting: its turn is refused, the timer is cancelled
+        // rather than left to fire into a torn-down shell, and the stop has nothing outstanding.
+        var executor = new BarrierExecutor();
+        var clock = new Deterministic.ManualClock();
+        await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+
+        coordinator.Close();
+        clock.Advance(DictationSessionCoordinator.InterruptionPatience);
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        Assert.Equal(SessionCommandDisposition.Stopping, (await interruption.WaitAsync(Patience)).Disposition);
+
+        Assert.True(await coordinator.StopAsync(Patience).WaitAsync(Patience));
+        Assert.Empty(executor.ExpiredKinds);
+        Assert.Equal([SessionCommandKind.PushToTalk], executor.SeenKinds);
+    }
+
+    [Fact]
+    public async Task AnExpiryNotificationAlreadyRunningIsWaitedForByTheStop()
+    {
+        // The timer has fired and the shell is being told; Close cannot take that back. The stop joins
+        // it, so the notification finishes before anything it touches is torn down.
+        var executor = new BarrierExecutor { HoldExpiry = true };
+        var clock = new Deterministic.ManualClock();
+        await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        clock.Advance(DictationSessionCoordinator.InterruptionPatience);
+        await executor.Expired(SessionCommandKind.Interruption).WaitAsync(Patience);
+
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        await interruption.WaitAsync(Patience);
+        var stop = coordinator.StopAsync(Patience);
+        await Task.Delay(50);
+        Assert.False(stop.IsCompleted, "the notification is still in flight; the stop waits for it");
+
+        executor.ReleaseExpiry();
+        Assert.True(await stop.WaitAsync(Patience));
+    }
+
+    [Fact]
+    public async Task AnExpiryNotificationThatThrowsIsObservedAndTheStopSaysSo()
+    {
+        var executor = new BarrierExecutor { ThrowOnExpiry = true };
+        var clock = new Deterministic.ManualClock();
+        await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        clock.Advance(DictationSessionCoordinator.InterruptionPatience);
+        await executor.Expired(SessionCommandKind.Interruption).WaitAsync(Patience);
+
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        Assert.Equal(SessionCommandDisposition.Ignored, (await interruption.WaitAsync(Patience)).Disposition);
+
+        Assert.False(await coordinator.StopAsync(Patience).WaitAsync(Patience), "a notification that threw is an unclean stop");
+    }
+
+    [Fact]
     public async Task AReleaseQueuedBeforeCloseIsRefusedWhenItsTurnComes()
     {
         // The exit path closes admission before its first await. A release that was queued behind
@@ -887,6 +987,14 @@ public sealed class DictationSessionCoordinatorTests
 
         public Task Expired(SessionCommandKind kind) => KindSource(_kindExpired, kind).Task;
 
+        public bool HoldExpiry { get; init; }
+
+        public bool ThrowOnExpiry { get; init; }
+
+        private readonly TaskCompletionSource _expiryRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void ReleaseExpiry() => _expiryRelease.TrySetResult();
+
         public int ShutdownCalls { get; private set; }
 
         /// <summary>Whether the teardown ran while the coordinator held the session (no command running beside it).</summary>
@@ -894,7 +1002,7 @@ public sealed class DictationSessionCoordinatorTests
 
         private int _running;
 
-        public Task ExpireAsync(SessionCommand command)
+        public async Task ExpireAsync(SessionCommand command)
         {
             lock (_lock)
             {
@@ -902,7 +1010,15 @@ public sealed class DictationSessionCoordinatorTests
             }
 
             KindSource(_kindExpired, command.Kind).TrySetResult();
-            return Task.CompletedTask;
+            if (HoldExpiry)
+            {
+                await _expiryRelease.Task;
+            }
+
+            if (ThrowOnExpiry)
+            {
+                throw new InvalidOperationException("the status line is gone");
+            }
         }
 
         public Task ShutdownAsync()

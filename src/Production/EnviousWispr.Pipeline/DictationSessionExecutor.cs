@@ -156,7 +156,11 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         return Task.CompletedTask;
     }
 
-    /// <summary>The last thing on the queue: the shell's session-specific disposal, through its port.</summary>
+    /// <summary>
+    /// The shell's session-specific disposal, through its port. Run by the coordinator's shutdown once
+    /// the queue is closed and, when its two waits were enough, once the last command has finished;
+    /// when they were not, beside the command still running, which then finds the session torn down.
+    /// </summary>
     public Task ShutdownAsync() => _effects.TearDownSessionAsync();
 
     public Task<SessionCommandResult> ExecuteAsync(SessionCommand command, CancellationToken stoppingToken)
@@ -217,6 +221,14 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         {
             await RecoverInterruptedAsync(AppErrorCode.SessionTimedOut, SessionFailureKind.InterruptionTimedOut)
                 .ConfigureAwait(false);
+            return new SessionCommandResult(SessionCommandDisposition.Failed);
+        }
+        catch (ObjectDisposedException)
+        {
+            // TORN DOWN BESIDE THIS COMMAND: the shutdown outlived both of its waits. There is no session
+            // left to recover into, so nothing is aborted or reset; the failure is written and the
+            // command ends. Nothing has been delivered: the route went with the teardown.
+            _effects.RecordInterruptionFailure();
             return new SessionCommandResult(SessionCommandDisposition.Failed);
         }
         catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
@@ -371,6 +383,18 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                     new AppError(AppErrorCode.SessionTimedOut, AppErrorStage.Session, CanRetry: true),
                     SessionFailureKind.TimedOut)
                 .ConfigureAwait(false);
+            return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session);
+        }
+        catch (ObjectDisposedException)
+        {
+            // TORN DOWN BESIDE THIS COMMAND: the shutdown outlived both of its waits and the session
+            // controller went with the teardown. There is nothing to abort or reset, so the recovery
+            // that would try is not run; the failure is written under the dictation and the command ends
+            // as failed. Nothing has been delivered: the route went with the teardown too.
+            using var failed = interrupted is { } tornDown
+                ? DictationScope.Begin(tornDown)
+                : NoScope.Instance;
+            _effects.RecordSessionFailure();
             return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session);
         }
         catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))

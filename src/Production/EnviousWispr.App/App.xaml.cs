@@ -2500,8 +2500,8 @@ public partial class App : Application, IAsyncDisposable
     {
         await _watchdog.StopAsync().ConfigureAwait(false);
         await _streaming.StopAsync().ConfigureAwait(false);
-                await _autoStop.StopAsync().ConfigureAwait(false);
-                await _livePreview.StopAsync().ConfigureAwait(false);
+        await _autoStop.StopAsync().ConfigureAwait(false);
+        await _livePreview.StopAsync().ConfigureAwait(false);
         if (controller.CurrentSession is not null)
         {
             await controller.AbortAsync(error).ConfigureAwait(false);
