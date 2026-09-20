@@ -123,7 +123,11 @@ public partial class App : Application, IAsyncDisposable
 
         _transcriptFinalizer = new TranscriptFinalizer(
             _deterministicTextPipeline,
-            new PolishExecutor(_resourceArbiter, new TranscriptFinalizationEffects(this)),
+            new PolishExecutor(
+                _resourceArbiter,
+                new TranscriptFinalizationEffects(this),
+                // Read at the call, as before: a word taught mid-dictation reaches this polish.
+                () => _settings.UserData.CustomWords),
             new TranscriptFinalizationEffects(this));
 
         _releaseIdentity = ResolveReleaseIdentity();

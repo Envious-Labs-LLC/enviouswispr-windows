@@ -97,7 +97,7 @@ public sealed class TranscriptFinalizer
         await _effects.SaveRecoveryTextAsync(processed.Output, cancellationToken).ConfigureAwait(false);
 
         var polishResult = await _polish
-            .TryPolishAsync(polish, processed.Output, transcript.DetectedLanguage, customWords, cancellationToken)
+            .TryPolishAsync(polish, processed.Output, transcript.DetectedLanguage, cancellationToken)
             .ConfigureAwait(false);
         var polishReview = polishResult is null || polishResult.UsedFallback
             ? new PolishOutputReview(PolishOutputVerdict.Accepted, string.Empty)

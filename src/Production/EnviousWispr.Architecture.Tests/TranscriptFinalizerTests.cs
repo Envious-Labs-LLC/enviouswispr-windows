@@ -77,6 +77,8 @@ public sealed class TranscriptFinalizerTests
 
         Assert.True(finalized.WasPolished);
         Assert.Equal([RuntimeResourceKind.Accelerator], admission.Requested);
+        Assert.Equal(RuntimeWorkloadKind.LocalPolish, admission.Workload);
+        Assert.Equal(TimeSpan.FromSeconds(2), admission.Timeout);
         Assert.True(provider.HeldLeaseWhenAsked, "the provider ran before the lease was taken or after it was released");
         Assert.True(admission.Released);
         Assert.Contains("PolishFinished:fake:Polished:local=True", effects.Trace);
@@ -118,12 +120,13 @@ public sealed class TranscriptFinalizerTests
     [Fact]
     public async Task TheCustomWordsReachBothTheStagesAndThePolishVocabulary()
     {
+        IReadOnlyList<CustomWordEntry> words = [new CustomWordEntry("envy wisper", "EnviousWispr")];
         var provider = new FakePolishProvider(_ => "EnviousWispr is here.");
-        var (finalizer, _, _) = Build();
+        var (finalizer, _, _) = Build(() => words);
 
         var finalized = await finalizer.FinalizeAsync(
             Spoken("envy wisper is here"),
-            [new CustomWordEntry("envy wisper", "EnviousWispr")],
+            words,
             AllOn,
             new PolishSetup(provider, UsesLocalRuntime: false, RuntimeResourceKind.Cpu),
             CancellationToken.None);
@@ -136,15 +139,82 @@ public sealed class TranscriptFinalizerTests
     private static Transcript Spoken(string text) =>
         new(DictationSessionId.Create(), text, "whisper", DetectedLanguage: "en");
 
-    private static (TranscriptFinalizer Finalizer, FakeEffects Effects, FakeAdmission Admission) Build()
+    private static (TranscriptFinalizer Finalizer, FakeEffects Effects, FakeAdmission Admission) Build(
+        Func<IReadOnlyList<CustomWordEntry>>? currentWords = null)
     {
         var effects = new FakeEffects();
         var admission = new FakeAdmission();
         var finalizer = new TranscriptFinalizer(
             new DeterministicTextPipeline(),
-            new PolishExecutor(admission, effects),
+            new PolishExecutor(admission, effects, currentWords ?? (() => [])),
             effects);
         return (finalizer, effects, admission);
+    }
+
+    [Fact]
+    public async Task ThePolishVocabularyIsReadAtTheCallNotWhenTheRecordingEnded()
+    {
+        // A word taught while the local provider was still waiting for its resource reaches the very
+        // next polish, which is what the shell did by reading its settings at the call.
+        IReadOnlyList<CustomWordEntry> words = [];
+        var provider = new FakePolishProvider(_ => "Hello world.");
+        var (finalizer, _, admission) = Build(() => words);
+        admission.BeforeGranting = () => words = [new CustomWordEntry("hello", "Hello")];
+
+        var finalized = await finalizer.FinalizeAsync(
+            Spoken("hello world"), [], AllOn, new PolishSetup(provider, UsesLocalRuntime: true, RuntimeResourceKind.Cpu), CancellationToken.None);
+
+        Assert.True(finalized.WasPolished);
+        Assert.Equal(["Hello"], provider.LastVocabulary);
+    }
+
+    [Fact]
+    public async Task ARefusedAdmissionNeverReadsTheVocabulary()
+    {
+        var reads = 0;
+        var provider = new FakePolishProvider(_ => "never");
+        var (finalizer, _, admission) = Build(() => { reads++; return []; });
+        admission.Refuse = true;
+
+        await finalizer.FinalizeAsync(
+            Spoken("hello world"), [], AllOn, new PolishSetup(provider, UsesLocalRuntime: true, RuntimeResourceKind.Cpu), CancellationToken.None);
+
+        Assert.Equal(0, reads);
+    }
+
+    [Fact]
+    public async Task TheReviewedTextIsUsedNotWhatTheProviderSent()
+    {
+        var provider = new FakePolishProvider(_ => "Sure, here is the cleaned transcript:" + "\n" + "Hello, world.");
+        var (finalizer, effects, _) = Build();
+
+        var finalized = await finalizer.FinalizeAsync(
+            Spoken("hello world"), [], AllOn, new PolishSetup(provider, UsesLocalRuntime: false, RuntimeResourceKind.Cpu), CancellationToken.None);
+
+        Assert.True(finalized.WasPolished);
+        Assert.Equal("Hello, world.", finalized.Processed.Output.Text);
+        Assert.Contains("SaveRecovery:Hello, world.", effects.Trace);
+        Assert.DoesNotContain(effects.Trace, entry => entry.Contains("Sure, here", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TheMainReceiptsCarryTheStagesThatRanAndTheRestorationReceiptComesAlone()
+    {
+        var provider = new FakePolishProvider(_ => "Hello world.");
+        var (finalizer, effects, _) = Build();
+
+        await finalizer.FinalizeAsync(
+            Spoken("um hello world"), [], AllOn, new PolishSetup(provider, UsesLocalRuntime: false, RuntimeResourceKind.Cpu), CancellationToken.None);
+
+        Assert.Equal(
+            [DeterministicTextStage.CustomWords, DeterministicTextStage.FillerAndFalseStarts, DeterministicTextStage.SpokenEmoji, DeterministicTextStage.InverseTextNormalization, DeterministicTextStage.EmojiRestoration],
+            effects.MainReceipts.Select(receipt => receipt.Stage));
+        Assert.Equal(DeterministicStageStatus.Completed, effects.MainReceipts.Single(r => r.Stage == DeterministicTextStage.FillerAndFalseStarts).Status);
+        // The shell filters each emission to its half; the finalizer hands over the whole list both
+        // times, so the restoration receipt in the first list is the not-yet-run Skipped one and the
+        // one in the second list is the real thing.
+        Assert.Equal(DeterministicStageStatus.Skipped, effects.MainReceipts.Single(r => r.Stage == DeterministicTextStage.EmojiRestoration).Status);
+        Assert.Equal(DeterministicStageStatus.Completed, effects.RestorationReceipts.Single(r => r.Stage == DeterministicTextStage.EmojiRestoration).Status);
     }
 
     private sealed class FakeEffects : ITranscriptFinalizationEffects
@@ -153,8 +223,15 @@ public sealed class TranscriptFinalizerTests
 
         public void RecordDeterministicProcessingStarted() => Trace.Add("DeterministicProcessingStarted");
 
-        public void EmitStageReceipts(IReadOnlyList<DeterministicStageReceipt> receipts, bool emojiRestorationOnly) =>
+        public List<DeterministicStageReceipt> MainReceipts { get; } = [];
+
+        public List<DeterministicStageReceipt> RestorationReceipts { get; } = [];
+
+        public void EmitStageReceipts(IReadOnlyList<DeterministicStageReceipt> receipts, bool emojiRestorationOnly)
+        {
             Trace.Add(emojiRestorationOnly ? "StageReceipts:restoration" : "StageReceipts:main");
+            (emojiRestorationOnly ? RestorationReceipts : MainReceipts).AddRange(receipts);
+        }
 
         public Task SaveRecoveryTextAsync(ProcessedText output, CancellationToken cancellationToken)
         {
@@ -177,6 +254,12 @@ public sealed class TranscriptFinalizerTests
     {
         public List<RuntimeResourceKind> Requested { get; } = [];
 
+        public RuntimeWorkloadKind? Workload { get; private set; }
+
+        public TimeSpan? Timeout { get; private set; }
+
+        public Action? BeforeGranting { get; set; }
+
         public bool Refuse { get; set; }
 
         public bool Held { get; private set; }
@@ -190,6 +273,9 @@ public sealed class TranscriptFinalizerTests
             CancellationToken cancellationToken = default)
         {
             Requested.Add(resource);
+            Workload = workload;
+            Timeout = timeout;
+            BeforeGranting?.Invoke();
             if (Refuse)
             {
                 return Task.FromResult(new RuntimeResourceAcquireResult(

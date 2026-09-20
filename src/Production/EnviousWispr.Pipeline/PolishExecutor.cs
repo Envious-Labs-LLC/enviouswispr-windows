@@ -37,13 +37,26 @@ public sealed class PolishExecutor
     private static readonly TimeSpan ResourceWait = TimeSpan.FromSeconds(2);
     private readonly IRuntimeResourceAdmission _admission;
     private readonly IPolishAttemptEffects _effects;
+    private readonly Func<IReadOnlyList<CustomWordEntry>> _currentCustomWords;
 
-    public PolishExecutor(IRuntimeResourceAdmission admission, IPolishAttemptEffects effects)
+    /// <param name="admission">Who hands out the runtime resource a local provider needs.</param>
+    /// <param name="effects">Who writes the attempt's log lines.</param>
+    /// <param name="currentCustomWords">
+    /// The person's words AS THEY ARE at the moment the provider is asked - not as they were when the
+    /// recording ended. A word taught or removed while transcription was running reaches the very
+    /// next polish, which is what the shell always did by reading its settings at the call.
+    /// </param>
+    public PolishExecutor(
+        IRuntimeResourceAdmission admission,
+        IPolishAttemptEffects effects,
+        Func<IReadOnlyList<CustomWordEntry>> currentCustomWords)
     {
         ArgumentNullException.ThrowIfNull(admission);
         ArgumentNullException.ThrowIfNull(effects);
+        ArgumentNullException.ThrowIfNull(currentCustomWords);
         _admission = admission;
         _effects = effects;
+        _currentCustomWords = currentCustomWords;
     }
 
     /// <summary>Returns null when there is no provider or nothing to polish; otherwise the attempt's result.</summary>
@@ -51,11 +64,9 @@ public sealed class PolishExecutor
         PolishSetup? setup,
         ProcessedText input,
         string? detectedLanguage,
-        IReadOnlyList<CustomWordEntry> customWords,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(input);
-        ArgumentNullException.ThrowIfNull(customWords);
         if (setup is null || string.IsNullOrWhiteSpace(input.Text))
         {
             return null;
@@ -65,13 +76,10 @@ public sealed class PolishExecutor
         _effects.RecordPolishStarted(provider.ProviderId);
         var timer = Stopwatch.StartNew();
         PolishResult result;
-        var request = new PolishRequest(
-            input,
-            detectedLanguage,
-            PolishVocabulary.Eligible(input.Text, customWords));
         if (!setup.UsesLocalRuntime)
         {
-            result = await provider.TryPolishAsync(request, cancellationToken).ConfigureAwait(false);
+            result = await provider.TryPolishAsync(Request(input, detectedLanguage), cancellationToken)
+                .ConfigureAwait(false);
         }
         else
         {
@@ -96,7 +104,10 @@ public sealed class PolishExecutor
             {
                 await using (acquired.Lease.ConfigureAwait(false))
                 {
-                    result = await provider.TryPolishAsync(request, cancellationToken).ConfigureAwait(false);
+                    // BUILT INSIDE THE LEASE, NOT BEFORE THE WAIT. The vocabulary is read at the last
+                    // moment, and a refused admission never pays for scanning the dictionary.
+                    result = await provider.TryPolishAsync(Request(input, detectedLanguage), cancellationToken)
+                        .ConfigureAwait(false);
                 }
             }
         }
@@ -105,4 +116,9 @@ public sealed class PolishExecutor
         _effects.RecordPolishFinished(provider.ProviderId, result, setup.UsesLocalRuntime, timer.ElapsedMilliseconds);
         return result;
     }
+
+    private PolishRequest Request(ProcessedText input, string? detectedLanguage) => new(
+        input,
+        detectedLanguage,
+        PolishVocabulary.Eligible(input.Text, _currentCustomWords()));
 }
