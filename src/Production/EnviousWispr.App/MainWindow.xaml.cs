@@ -181,7 +181,13 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private readonly SettingsPresenter _settingsPresenter;
     private readonly IPortableProfileService _profileService;
-    private readonly IHistoryStore _historyStore;
+    /// <summary>The history page's decisions about its stores, without the page.</summary>
+    /// <remarks>
+    /// THE PAGE KEEPS THE CONFIRMATIONS, THE CLIPBOARD, THE LIST AND THE ANNOUNCEMENTS. A command that
+    /// failed leaves the rows as they were; one that worked shows what the file holds now; the
+    /// retention window is read at each load - HistoryPresenterTests, every one.
+    /// </remarks>
+    private readonly HistoryPresenter _historyPresenter;
     /// <summary>The Polish page's provider, key and model decisions, without the page.</summary>
     /// <remarks>
     /// THE DECISIONS LEFT; THE CONTROLS STAYED. Which providers take a key, what a blank key means, what
@@ -191,13 +197,12 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private readonly ProviderSettingsPresenter _providerPresenter;
     private readonly PolishModelSource _polishModelSource;
-    private readonly IRecoveryTextStore _recoveryTextStore;
     private readonly IDiagnosticExportService _diagnosticExportService;
     private readonly bool _telemetryAvailable;
     private readonly DictationOverlayWindow _overlayWindow;
     private readonly RecordingSoundCuePlayer _recordingSoundPlayer = new();
     private readonly RecordingSoundCueCoordinator _recordingSoundCoordinator;
-    private readonly List<HistoryItemViewModel> _history = [];
+    private readonly List<DictationHistoryEntry> _history = [];
     private IReadOnlyList<MicrophoneChoice> _microphones = [];
     private WasapiDeviceCatalog? _deviceCatalog;
     private AppSettings _settings;
@@ -257,10 +262,9 @@ public sealed partial class MainWindow : Window, IDisposable
         _settings = settings;
         _settingsPresenter = new SettingsPresenter(settingsStore, settings);
         _profileService = profileService;
-        _historyStore = historyStore;
+        _historyPresenter = new HistoryPresenter(historyStore, recoveryTextStore, () => _settings.Preferences.History);
         _polishModelSource = new PolishModelSource(apiKeyStore);
         _providerPresenter = new ProviderSettingsPresenter(apiKeyStore, _polishModelSource);
-        _recoveryTextStore = recoveryTextStore;
         _diagnosticExportService = diagnosticExportService;
         _telemetryAvailable = telemetryAvailable;
 
@@ -2016,7 +2020,7 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        if (await _recoveryTextStore.ClearAsync().ConfigureAwait(true))
+        if (await _historyPresenter.DeleteRecoveryAsync().ConfigureAwait(true))
         {
             ClearRecoveredText();
             FoundationInfoBar.Title = "No recovered dictation is pending";
@@ -2046,10 +2050,11 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var result = await _historyStore.DeleteAsync(selected.Id).ConfigureAwait(true);
+        var result = await _historyPresenter.DeleteAsync(selected.Id).ConfigureAwait(true);
         if (result.Succeeded)
         {
-            await ReloadHistoryAsync().ConfigureAwait(true);
+            BeginHistoryReload();
+            ShowHistory(result.View!);
             ShowMessage("History entry deleted", "The local copy was removed.", InfoBarSeverity.Success);
         }
         else
@@ -2066,10 +2071,11 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var result = await _historyStore.KeepAsync(selected.Id).ConfigureAwait(true);
+        var result = await _historyPresenter.KeepAsync(selected.Id).ConfigureAwait(true);
         if (result.Succeeded)
         {
-            await ReloadHistoryAsync().ConfigureAwait(true);
+            BeginHistoryReload();
+            ShowHistory(result.View!);
             ShowMessage("History entry kept", "Its 24-hour Escape Recovery expiry was removed.", InfoBarSeverity.Success);
         }
         else
@@ -2094,10 +2100,11 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var result = await _historyStore.ClearAsync().ConfigureAwait(true);
+        var result = await _historyPresenter.ClearAsync().ConfigureAwait(true);
         if (result.Succeeded)
         {
-            await ReloadHistoryAsync().ConfigureAwait(true);
+            BeginHistoryReload();
+            ShowHistory(result.View!);
             ShowMessage("History cleared", "All locally saved dictations were removed.", InfoBarSeverity.Success);
         }
         else
@@ -2713,22 +2720,38 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private async Task ReloadHistoryAsync()
     {
+        BeginHistoryReload();
+        var view = await _historyPresenter.LoadAsync().ConfigureAwait(true);
+        ShowHistory(view);
+    }
+
+    /// <summary>The loading transition every reload goes through, whether the page or a command asked for it.</summary>
+    /// <remarks>
+    /// THE SAME TRANSITION FOR A COMMAND'S RELOAD AS FOR THE PAGE'S. The rows go away and the loading
+    /// card shows, which is also what resets the announcement bookkeeping - so a command that ends
+    /// with the same count as before is still announced, exactly as it was when every command
+    /// reloaded through the page's own path.
+    /// </remarks>
+    private void BeginHistoryReload()
+    {
         _isHistoryLoading = true;
         UpdateHistoryListVisibility(HistorySearchBox.Text.Trim(), itemCount: 0);
-        var result = await _historyStore.LoadAsync(
-            _settings.Preferences.History.RetentionDays,
-            DateTimeOffset.UtcNow).ConfigureAwait(true);
-        _historyLoadStatus = result.Status;
+    }
+
+    /// <summary>Puts what the presenter loaded on the page: the rows, and the one line about them.</summary>
+    private void ShowHistory(HistoryView view)
+    {
+        _historyLoadStatus = view.Status;
         _history.Clear();
-        _history.AddRange(result.Entries.Select(entry => new HistoryItemViewModel(entry)));
+        _history.AddRange(view.Entries);
         _isHistoryLoading = false;
         RefreshHistoryView();
-        HistorySummaryText.Text = result.Status switch
+        HistorySummaryText.Text = view.Summary switch
         {
-            HistoryLoadStatus.Invalid => "History is unavailable because its local file is invalid; the source was preserved for recovery.",
-            HistoryLoadStatus.Unavailable => "Windows could not open the private history file.",
-            _ when !_settings.Preferences.History.IsEnabled => "History is off. New dictations will not be saved.",
-            _ when _history.Count == 0 => "No dictations saved yet.",
+            HistorySummary.Invalid => "History is unavailable because its local file is invalid; the source was preserved for recovery.",
+            HistorySummary.Unavailable => "Windows could not open the private history file.",
+            HistorySummary.Off => "History is off. New dictations will not be saved.",
+            HistorySummary.Empty => "No dictations saved yet.",
             _ => $"{_history.Count.ToString(CultureInfo.CurrentCulture)} local dictation{(_history.Count == 1 ? string.Empty : "s")} saved.",
         };
     }
@@ -2736,9 +2759,9 @@ public sealed partial class MainWindow : Window, IDisposable
     private void RefreshHistoryView()
     {
         var query = HistorySearchBox.Text.Trim();
-        var visibleHistory = string.IsNullOrWhiteSpace(query)
-            ? _history.ToArray()
-            : _history.Where(item => item.Text.Contains(query, StringComparison.CurrentCultureIgnoreCase)).ToArray();
+        var visibleHistory = HistoryPresenter.Filter(_history, query)
+            .Select(entry => new HistoryItemViewModel(entry))
+            .ToArray();
         HistoryList.ItemsSource = visibleHistory;
         UpdateHistoryListVisibility(query, visibleHistory.Length);
         UpdateSelectionDependentButtons();
