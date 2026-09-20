@@ -149,7 +149,8 @@ if (manualMicrophone && !englishParakeet)
 // the founder. `--virtual-cable` routes the same fixture, through the same production capture code,
 // across VB-Audio's virtual cable instead: playback goes to the cable's render endpoint and the
 // journey profile names the cable's capture endpoint as its preferred microphone. Both endpoints are
-// chosen by their own identity; the machine's default devices are never read and never changed.
+// opened by their own identity; the machine's default devices are never changed (the app's own device
+// picker still reads which one is the default, as it always has).
 var virtualCable = args.Any(argument => string.Equals(
     argument,
     "--virtual-cable",
@@ -1616,25 +1617,49 @@ static async Task PlayPublicFixtureAsync(
     // control on a released session manager and the first cable run crashed setting it; the player
     // does not dispose the device either. Declared before the player, so it is released after it.
     using var enumerator = new MMDeviceEnumerator();
-    using var renderDevice = renderEndpointId is null ? null : enumerator.GetDevice(renderEndpointId);
-    await using var output = renderDevice is null
-        ? await new WasapiPlayerBuilder()
-            .WithDefaultDeviceStreamRouting()
-            .BuildAsync()
-        : new WasapiPlayerBuilder()
-            .WithDevice(renderDevice)
-            .Build();
-    var completed = new TaskCompletionSource<Exception?>(
-        TaskCreationOptions.RunContinuationsAsynchronously);
-    output.PlaybackStopped += (_, args) => completed.TrySetResult(args.Exception);
-    output.Init(source);
-    output.Volume = 1f;
-    output.Play();
     var playbackDuration = TimeSpan.FromSeconds(
         pcmBytes.Length / (sampleRate * sizeof(short) * 1d));
-    var failure = await completed.Task.WaitAsync(playbackDuration + TimeSpan.FromSeconds(5));
+    Exception? failure;
+    try
+    {
+        using var renderDevice = renderEndpointId is null ? null : enumerator.GetDevice(renderEndpointId);
+        await using var output = renderDevice is null
+            ? await new WasapiPlayerBuilder()
+                .WithDefaultDeviceStreamRouting()
+                .BuildAsync()
+            : new WasapiPlayerBuilder()
+                .WithDevice(renderDevice)
+                .Build();
+        var completed = new TaskCompletionSource<Exception?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        output.PlaybackStopped += (_, args) => completed.TrySetResult(args.Exception);
+        output.Init(source);
+        output.Volume = 1f;
+        output.Play();
+        failure = await completed.Task.WaitAsync(playbackDuration + TimeSpan.FromSeconds(5));
+    }
+    catch (Exception exception) when (renderEndpointId is not null &&
+        exception is COMException or CoreAudioException or InvalidOperationException or TimeoutException)
+    {
+        // ON THE CABLE, A PLAYBACK FAILURE IS STAGING. The cable's render endpoint could not be opened,
+        // was taken exclusively, changed under the player, or never finished: the driver or another
+        // program, never the product. Anything else that escapes is a programming fault and stays one.
+        throw JourneyExpectationException.Instrument(
+            $"--virtual-cable: the fixture could not be played into the cable ({exception.GetType().Name}: "
+                + $"{exception.Message}). The cable, not the product, refused playback.",
+            exception);
+    }
+
     if (failure is not null)
     {
+        if (renderEndpointId is not null)
+        {
+            throw JourneyExpectationException.Instrument(
+                $"--virtual-cable: playback into the cable stopped with {failure.GetType().Name}: {failure.Message}. "
+                    + "The cable, not the product, interrupted playback.",
+                failure);
+        }
+
         throw new JourneyExpectationException("The reviewed public fixture could not be played.", failure);
     }
 }
@@ -1753,24 +1778,35 @@ static VirtualCableRoute FindVirtualCableEndpoints()
     return new VirtualCableRoute(RenderName, renderIds[0], CaptureName, captureIds[0]);
 }
 
-/// <summary>The endpoint property behind the "Listen to this device" checkbox; absent means off.</summary>
+/// <summary>
+/// The endpoint property behind the "Listen to this device" checkbox. Windows answers an absent setting with
+/// an empty value (off); a read that FAILS is not "off" - NAudio's `Contains` folds both into false, which
+/// is how the first cut would have let a monitored cable play. The indexer throws on a failed read, and that
+/// throw is a refusal.
+/// </summary>
 static bool IsListenToThisDeviceEnabled(MMDevice device)
 {
     var listenEnabled = new PropertyKey(new Guid("24dbb0fc-9311-4b3d-9cf0-18ff155639d4"), 1);
-    var properties = device.Properties;
-    if (!properties.Contains(listenEnabled))
+    object? value;
+    try
     {
-        return false;
+        value = device.Properties[listenEnabled].Value;
+    }
+    catch (Exception exception) when (exception is COMException or CoreAudioException)
+    {
+        throw JourneyExpectationException.Instrument(
+            "--virtual-cable: Windows would not say whether \"Listen to this device\" is on for the cable "
+                + $"({exception.GetType().Name}: {exception.Message}); refusing rather than assuming it is off.",
+            exception);
     }
 
-    return properties[listenEnabled].Value switch
+    return value switch
     {
+        null => false,
         bool enabled => enabled,
-        short flag => flag != 0,
-        ushort flag => flag != 0,
-        int flag => flag != 0,
-        byte[] blob => blob.Any(value => value != 0),
-        _ => false,
+        _ => throw JourneyExpectationException.Instrument(
+            $"--virtual-cable: the \"Listen to this device\" setting came back as {value.GetType().Name}, not a "
+                + "yes or no; refusing rather than guessing."),
     };
 }
 

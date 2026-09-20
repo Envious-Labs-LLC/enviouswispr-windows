@@ -231,8 +231,8 @@ only whether the known public
 phrase appeared and the character count, then the harness deletes it with the isolated profile.
 
 The default mode is real production pipeline proof, but not microphone or global-registration proof. The live
-mode adds production WASAPI, the installed global hook, and an acoustic speaker-to-microphone path, but its key
-edges and playback source are still synthetic. On the current webcam-microphone hardware, both the reviewed
+mode adds production WASAPI, the installed global hook, and an acoustic speaker-to-microphone path (without
+`--virtual-cable`; with it, the path is the cable), but its key edges and playback source are still synthetic. On the current webcam-microphone hardware, both the reviewed
 fixture and Windows-synthesized sentence were detected by the content-free probe but failed their lexical gates;
 speaker echo suppression is the likely boundary. The `--manual-microphone` mode makes the remaining requirement
 directly runnable, but it is not evidence until a person completes it successfully on the exact candidate build.
