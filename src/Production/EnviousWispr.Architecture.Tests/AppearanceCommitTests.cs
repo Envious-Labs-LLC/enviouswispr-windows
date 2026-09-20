@@ -154,7 +154,9 @@ public sealed class AppearanceCommitTests
         var local = declarator.Identifier.ValueText;
         var declaration = Assert.IsType<LocalDeclarationStatementSyntax>(declarator.Parent?.Parent);
         Assert.Single(declaration.Declaration.Variables);
+        // IN THE METHOD'S OWN BODY, not a nested block or a lambda that nothing invokes.
         var block = Assert.IsType<BlockSyntax>(declaration.Parent);
+        Assert.Same(persist.Body, block);
         var index = block.Statements.IndexOf(declaration);
         Assert.True(index >= 0 && index + 1 < block.Statements.Count, "The snapshot is the last statement of its block; nothing hands it over.");
 
