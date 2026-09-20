@@ -34,7 +34,7 @@ public sealed class PreviewStartupDecouplingTests
         // The capture has stopped while the engine's start is still held: the release did not wait.
         Assert.False(world.Capture.IsCapturing);
         Assert.False(release.IsCompleted);
-        Assert.DoesNotContain("Transcribe", world.Effects.Trace);
+        Assert.DoesNotContain(world.Effects.Trace, effect => effect.StartsWith("Transcribe", StringComparison.Ordinal));
         Assert.Equal(0, world.Engine.Stops);
 
         // The engine has seen its start cancelled; it is let out of that start but held in its stop,
@@ -44,7 +44,7 @@ public sealed class PreviewStartupDecouplingTests
         world.Engine.AllowStartExit.SetResult();
         await world.Engine.StopStarted.Task.WaitAsync(Patience);
         Assert.False(release.IsCompleted);
-        Assert.DoesNotContain("Transcribe", world.Effects.Trace);
+        Assert.DoesNotContain(world.Effects.Trace, effect => effect.StartsWith("Transcribe", StringComparison.Ordinal));
 
         world.Engine.AllowStopExit.SetResult();
         var result = await release.WaitAsync(Patience);
@@ -77,7 +77,7 @@ public sealed class PreviewStartupDecouplingTests
 
         Assert.Equal(SessionCommandDisposition.Applied, result.Disposition);
         Assert.Equal(["Capture cancelled", "Preview stopped"], world.Effects.Trace.Where(IsOrderedEffect));
-        Assert.DoesNotContain("Transcribe", string.Join(",", world.Effects.Trace));
+        Assert.DoesNotContain(world.Effects.Trace, effect => effect.StartsWith("Transcribe", StringComparison.Ordinal));
         Assert.Equal(1, world.Engine.Stops);
         Assert.Equal(0, world.Engine.Passes);
         Assert.Equal([AppEventCode.LivePreviewStartupCancelled], world.Log.Codes);
@@ -95,7 +95,7 @@ public sealed class PreviewStartupDecouplingTests
         Assert.False(world.Capture.IsCapturing);
         await world.Engine.StartCancellationObserved.Task.WaitAsync(Patience);
         Assert.False(cancel.IsCompleted);
-        Assert.DoesNotContain("Transcribe", string.Join(",", world.Effects.Trace));
+        Assert.DoesNotContain(world.Effects.Trace, effect => effect.StartsWith("Transcribe", StringComparison.Ordinal));
 
         world.Engine.AllowStartExit.SetResult();
         var result = await cancel.WaitAsync(Patience);

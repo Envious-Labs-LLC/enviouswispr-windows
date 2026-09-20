@@ -65,31 +65,39 @@ public sealed class RuntimeWorkerSupervisorTests
         // out of its health wait without touching the process: the worker is alive, the state is
         // Starting, and the gate is free. The stop that the preview controller issues next is what
         // takes the process down. This proves that stop does, on the real worker.
+        // DISPOSED IN A FINALLY, AND ONLY AFTER THE ASSERTIONS. Disposal stops the worker too, so a
+        // disposal before the check would let a stop that stopped nothing pass on disposal's work.
+        // The worker is held as a Process object from the moment its id is known, so the exit that is
+        // asserted is that process's and not a reused id's.
         var supervisor = new RuntimeWorkerSupervisor(
             WorkerPath(),
             ["--health-delay-ms", "10000"],
             maximumRestarts: 0);
-        using var cancellation = new CancellationTokenSource();
-
-        var start = supervisor.StartAsync(TimeSpan.FromSeconds(30), cancellation.Token);
-        await WaitForAsync(() => supervisor.WorkerProcessId is not null, TimeSpan.FromSeconds(10));
-        var processId = supervisor.WorkerProcessId!.Value;
-        cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => start.WaitAsync(TimeSpan.FromSeconds(10)));
-
-        Assert.Equal(RuntimeWorkerState.Starting, supervisor.State);
-        Assert.Equal(processId, supervisor.WorkerProcessId);
-        using (var worker = Process.GetProcessById(processId))
+        try
         {
+            using var cancellation = new CancellationTokenSource();
+            var start = supervisor.StartAsync(TimeSpan.FromSeconds(30), cancellation.Token);
+            await WaitForAsync(() => supervisor.WorkerProcessId is not null, TimeSpan.FromSeconds(10));
+            var processId = supervisor.WorkerProcessId!.Value;
+            using var worker = Process.GetProcessById(processId);
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => start.WaitAsync(TimeSpan.FromSeconds(10)));
+
+            Assert.Equal(RuntimeWorkerState.Starting, supervisor.State);
+            Assert.Equal(processId, supervisor.WorkerProcessId);
             Assert.False(worker.HasExited, "the cancelled start left the worker running for the stop to take down");
+
+            var stopped = await supervisor.StopAsync();
+
+            Assert.True(stopped.Succeeded);
+            Assert.Equal(RuntimeWorkerState.Stopped, supervisor.State);
+            Assert.Null(supervisor.WorkerProcessId);
+            Assert.True(worker.WaitForExit(TimeSpan.FromSeconds(10)), "the stop after a cancelled start killed the worker it left behind");
         }
-
-        var stopped = await supervisor.StopAsync();
-        await supervisor.DisposeAsync();
-
-        Assert.True(stopped.Succeeded);
-        Assert.Null(supervisor.WorkerProcessId);
-        Assert.True(HasExited(processId), "the stop after a cancelled start killed the worker it left behind");
+        finally
+        {
+            await supervisor.DisposeAsync();
+        }
     }
 
     /// <summary>The one poll in this file: the supervisor exposes the process id and nothing else about its start.</summary>
@@ -100,19 +108,6 @@ public sealed class RuntimeWorkerSupervisorTests
         {
             Assert.True(deadline.Elapsed < patience, "the condition was not met in time");
             await Task.Delay(20);
-        }
-    }
-
-    private static bool HasExited(int processId)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(processId);
-            return process.HasExited;
-        }
-        catch (ArgumentException)
-        {
-            return true;
         }
     }
 
