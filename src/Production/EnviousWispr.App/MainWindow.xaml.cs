@@ -1473,52 +1473,37 @@ public sealed partial class MainWindow : Window, IDisposable
             .ConfigureAwait(true);
     }
 
-    /// <summary>How long a microphone test listens for.</summary>
+    /// <summary>The microphone test's lifecycle, without the page: who may open the device, for how long, and what the counts mean.</summary>
     /// <remarks>
-    /// LONG ENOUGH TO SAY SOMETHING AND SHORT ENOUGH THAT NOBODY WAITS. Three seconds is about one
-    /// sentence, which is what somebody naturally does when a button says to speak.
+    /// THE PAGE KEEPS THE METER, THE WORDS AND THE PRIVACY LINK. The rules - a dictation outranks a
+    /// test, one test at a time, the token goes all the way into the capture, the stop is never
+    /// cancelled, a frame from a finished test is not drawn - are MicrophoneTestControllerTests.
     /// </remarks>
-    private static readonly TimeSpan MicrophoneTestDuration = TimeSpan.FromSeconds(3);
-
-    private bool _microphoneTestRunning;
-
-    /// <summary>Cancels a microphone test that a recording, a page change or shutdown has overtaken.</summary>
-    private CancellationTokenSource? _microphoneTest;
-
-    /// <summary>Which test a queued meter update belongs to.</summary>
-    /// <remarks>
-    /// AN UPDATE ALREADY ON THE QUEUE OUTLIVES THE UNSUBSCRIBE. Removing the handler stops new ones
-    /// being posted and does nothing about the ones already waiting, so a late update could relight
-    /// the meter after the test had finished and cleared it, or during the next one. A generation
-    /// read inside the callback is the only thing that can refuse a message that is already in
-    /// flight.
-    /// </remarks>
-    private int _microphoneTestGeneration;
+    private readonly MicrophoneTestController _microphoneTest = new(() => new WasapiAudioCapture());
 
     /// <summary>Opens the microphone for a moment and shows what actually arrives.</summary>
     /// <remarks>
-    /// THIS IS THE PAGE WHERE SOMEBODY CONFIRMS THEIR MICROPHONE WORKS, AND IT COULD NOT TELL THEM.
-    /// It named a device and stopped, so an app receiving pure digital silence looked exactly like
-    /// one that was working. That is not hypothetical: it happened on the development machine, the
-    /// meter sat at its floor for seventy frames, nothing transcribed, and it took a day of measuring
-    /// to find. A person would have seen it here in three seconds.
-    ///
     /// IT SAYS WHICH KIND OF NOTHING. A device that could not be opened, a device that opened and
     /// delivered packets Windows marked as deliberately silent, and a device that delivered real
     /// packets of zeroes are three different faults with three different answers, and a bare "no
-    /// sound" sends somebody to look in the wrong place for all three.
+    /// sound" sends somebody to look in the wrong place for all three. The verdict is the
+    /// controller's; the sentences for the ways a test does not reach one are here.
     /// </remarks>
     private async void MicrophoneTestButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_microphoneTestRunning)
+        if (_microphoneTest.IsRunning)
         {
             return;
         }
 
-        // A TEST AND A DICTATION MUST NOT BOTH OPEN THE MICROPHONE. The button guard only stopped a
-        // second press; nothing stopped somebody pressing the record key while a test held the
-        // device. Refusing here and cancelling from the other side is the pair that closes it.
-        if (_currentOverlayState == DictationOverlayState.Recording)
+        // THE DEVICE IS READ HERE, ON THE UI THREAD, and the test is told whether a recording holds
+        // the microphone - the pair that, with the cancel from the other side, keeps a test and a
+        // dictation from both opening it.
+        AudioDeviceId? device = (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id is { } id
+            ? new AudioDeviceId(id)
+            : null;
+        var recording = _currentOverlayState == DictationOverlayState.Recording;
+        if (recording)
         {
             SetLiveText(
                 MicrophoneTestResultText,
@@ -1526,140 +1511,66 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        _microphoneTestRunning = true;
-        _microphoneTestGeneration++;
-        using var cancellation = new CancellationTokenSource();
-        _microphoneTest = cancellation;
         MicrophoneTestButton.IsEnabled = false;
+        SetLiveText(MicrophoneTestResultText, "Listening. Say a few words.");
+        _microphoneTest.Frame += OnMicrophoneTestFrame;
         try
         {
-            await RunMicrophoneTestAsync(cancellation.Token).ConfigureAwait(true);
-        }
-        catch (OperationCanceledException)
-        {
-            SetLiveText(MicrophoneTestResultText, "Microphone test stopped.");
+            var result = await _microphoneTest.RunAsync(device, recording).ConfigureAwait(true);
+            switch (result.Outcome)
+            {
+                case MicrophoneTestOutcome.Completed:
+                    SetLiveText(MicrophoneTestResultText, result.Verdict!);
+                    break;
+                case MicrophoneTestOutcome.DeviceWouldNotOpen:
+                    SetLiveText(
+                        MicrophoneTestResultText,
+                        "Windows would not open that microphone. Check it is plugged in and that "
+                            + "microphone privacy allows desktop apps.");
+                    break;
+                case MicrophoneTestOutcome.StoppedPartWay:
+                    SetLiveText(
+                        MicrophoneTestResultText,
+                        "The microphone stopped part way through the test. It may have been unplugged, "
+                            + "or taken by another app.");
+                    break;
+                case MicrophoneTestOutcome.Cancelled:
+                    SetLiveText(MicrophoneTestResultText, "Microphone test stopped.");
+                    break;
+                default:
+                    // Already running, or a recording began between the read above and the call:
+                    // the controller refused, and the page has nothing new to say.
+                    break;
+            }
         }
         finally
         {
-            _microphoneTest = null;
-            _microphoneTestRunning = false;
-            _microphoneTestGeneration++;
+            _microphoneTest.Frame -= OnMicrophoneTestFrame;
             MicrophoneTestButton.IsEnabled = true;
             DrawMicrophoneTestLevel(0f);
         }
     }
 
     /// <summary>Stops a microphone test, because something with a better claim wants the device.</summary>
-    private void CancelMicrophoneTest()
-    {
-        try
-        {
-            _microphoneTest?.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
-            // The test finished between the read and the call, which is the outcome asked for.
-        }
-    }
+    private void CancelMicrophoneTest() => _microphoneTest.Cancel();
 
-    private async Task RunMicrophoneTestAsync(CancellationToken cancellationToken)
-    {
-        SetLiveText(MicrophoneTestResultText, "Listening. Say a few words.");
-        await using var capture = new WasapiAudioCapture();
-        var generation = _microphoneTestGeneration;
-        // ONE POST PER METER FRAME, NOT ONE PER AUDIO PACKET, AND THAT WAS THE WHOLE BUG.
-        // Capture reports a level per audio buffer, about two hundred times a second, and every one
-        // of them was posting its own callback to the UI thread. Layout and render run on that same
-        // dispatcher queue, so a flood at that rate keeps it permanently busy: measured on this
-        // machine as five hundred and ninety-eight draws that each assigned height, opacity and
-        // brush to the correct live Border, against a camera that recorded no change in any of the
-        // three across the entire test. Nothing was ignored and nothing was reverted. No frame was
-        // ever produced. The tell was that the verdict sentence, the one thing on that page written
-        // AFTER the flood stops, was also the only thing that ever appeared.
-        //
-        // FIFTY MILLISECONDS IS THE RATE THE PILL'S RAIL ALREADY USES, for the same reason, and it
-        // is already written down as RecordingLevelHistory.SampleInterval. This meter joins that
-        // answer rather than inventing a second one.
-        //
-        // AND IT KEEPS THE LOUDEST OF EACH FRAME RATHER THAN THE FIRST. Taking the first level after
-        // each boundary chooses at random with respect to loudness, so the attack of a consonant -
-        // which is the thing somebody watches a meter for - disappears whenever it lands mid-frame.
-        var meterClock = System.Diagnostics.Stopwatch.StartNew();
-        var meterFrames = new MicrophoneMeterFrameSampler();
-        capture.LevelChanged += OnLevel;
-        try
+    /// <summary>One meter frame, posted to the UI thread and refused there if its test has ended.</summary>
+    /// <remarks>
+    /// AN UPDATE ALREADY ON THE QUEUE OUTLIVES THE UNSUBSCRIBE. Removing the handler stops new ones
+    /// being posted and does nothing about the ones already waiting, so a late update could relight
+    /// the meter after the test had finished and cleared it, or during the next one. The frame
+    /// carries its test, and the controller says whether that test is still the one running.
+    /// </remarks>
+    private void OnMicrophoneTestFrame(object? sender, MicrophoneTestFrame frame) =>
+        MicrophoneTestBars.DispatcherQueue.TryEnqueue(() =>
         {
-            // THE TOKEN GOES ALL THE WAY IN. A recording cancels a running test, and a test that
-            // does not forward its own cancellation would keep opening a device the app has already
-            // decided somebody else should have.
-            var started = await capture
-                .StartAsync(
-                    new AudioCaptureRequest(
-                        DictationSessionId.Create(),
-                        (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id is { } id
-                            ? new AudioDeviceId(id)
-                            : null),
-                    cancellationToken)
-                .ConfigureAwait(true);
-            if (!started.Succeeded)
-            {
-                SetLiveText(
-                    MicrophoneTestResultText,
-                    "Windows would not open that microphone. Check it is plugged in and that "
-                        + "microphone privacy allows desktop apps.");
-                return;
-            }
-
-            await Task.Delay(MicrophoneTestDuration, cancellationToken).ConfigureAwait(true);
-            // STOPPING IS NOT CANCELLED, DELIBERATELY, AND IT IS THE ONE EXCEPTION. A cancelled stop
-            // leaves the device open, which is the opposite of what a cancel is for: the whole reason
-            // a recording cancels a test is to take the microphone back.
-            var captured = await capture.StopAsync(CancellationToken.None).ConfigureAwait(true);
-
-            // WHAT THE STOP SAID, BEFORE WHAT THE PACKETS SAID. A device that vanished after one loud
-            // packet leaves counts that read as healthy, so throwing away the outcome let an
-            // interrupted test report a working microphone.
-            if (captured.Outcome != AudioCaptureOutcome.Completed)
-            {
-                SetLiveText(
-                    MicrophoneTestResultText,
-                    "The microphone stopped part way through the test. It may have been unplugged, "
-                        + "or taken by another app.");
-                return;
-            }
-
-            // THE ROOT-MEAN-SQUARE, NOT THE PEAK, because that is the number the recording meter is
-            // driven from. A verdict read off the peak could call a microphone healthy while the
-            // meter it is meant to explain sits flat.
-            SetLiveText(MicrophoneTestResultText, MicrophoneTestVerdict.For(
-                capture.LastPacketCount,
-                capture.LastSilentPacketCount,
-                capture.LastRootMeanSquare));
-        }
-        finally
-        {
-            capture.LevelChanged -= OnLevel;
-        }
-
-        void OnLevel(object? sender, AudioLevel level)
-        {
-            if (!meterFrames.TryTakeFrame(level.RootMeanSquare, meterClock.Elapsed, out var loudest))
+            if (!_microphoneTest.IsCurrent(frame.TestId))
             {
                 return;
             }
 
-            var normalized = RecordingLevelHistory.Normalize(loudest);
-            MicrophoneTestBars.DispatcherQueue.TryEnqueue(() =>
-            {
-                if (generation != _microphoneTestGeneration)
-                {
-                    return;
-                }
-
-                DrawMicrophoneTestLevel(normalized);
-            });
-        }
-    }
+            DrawMicrophoneTestLevel(frame.Level);
+        });
 
     private void DrawMicrophoneTestLevel(float level)
     {

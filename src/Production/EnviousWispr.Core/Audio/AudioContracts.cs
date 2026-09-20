@@ -94,6 +94,11 @@ public interface ICaptureStartTimings
 /// and delivering nothing, which is a different fault with a different cause. Counting both is what
 /// makes the difference visible in one run instead of a day of guessing.
 /// </remarks>
+/// <summary>A capture that can also say what it received, which is what a microphone test is for.</summary>
+public interface IMicrophoneTestCapture : IAudioCapture, ICaptureDiagnostics
+{
+}
+
 public interface ICaptureDiagnostics
 {
     /// <summary>Audio packets delivered during the last capture.</summary>

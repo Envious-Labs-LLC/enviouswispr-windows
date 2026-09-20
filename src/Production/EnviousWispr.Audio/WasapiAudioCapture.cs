@@ -6,7 +6,7 @@ using System.Runtime.InteropServices;
 namespace EnviousWispr.Audio;
 
 public sealed class WasapiAudioCapture :
-    IAudioCapture, IAudioSnapshotSource, ICaptureStartTimings, ICaptureDiagnostics
+    IMicrophoneTestCapture, IAudioSnapshotSource, ICaptureStartTimings
 {
     private static readonly AudioBufferFormat CaptureFormat = new(
         AudioSampleConverter.TargetSampleRate,
