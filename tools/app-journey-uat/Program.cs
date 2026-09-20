@@ -211,12 +211,14 @@ if (quickTap && !syntheticHotkey)
             + "key-up to time.");
 }
 if (syntheticHotkey &&
-    (liveMicrophone || livePreview || headStart || escapeRecovery || failureMode != JourneyFailureMode.None))
+    (liveMicrophone || (livePreview && !quickTap) || headStart || escapeRecovery || failureMode != JourneyFailureMode.None))
 {
     throw new JourneyExpectationException(
         "--synthetic-hotkey drives the installed global hook with the silent reviewed fixture and cannot be "
-            + "combined with live or manual microphone, Live Preview, the head start, Escape Recovery, or "
-            + "failure injection: each of those owns the trigger or the hold in a different way.");
+            + "combined with live or manual microphone, the head start, Escape Recovery, or failure "
+            + "injection: each of those owns the trigger or the hold in a different way. Live Preview is "
+            + "accepted only with --quick-tap, where the question is what a key-up does to a preview "
+            + "worker that is still starting.");
 }
 if (polishProvider == PolishProvider.EgOne)
 {
@@ -441,6 +443,9 @@ var runtimeReady = false;
 var journeyCompleted = false;
 var targetObserved = false;
 var appExitedCleanly = false;
+var strayWorkerCount = 0;
+Process[] preexistingWorkers = [];
+var pinnedWorkers = new List<Process>();
 var ownedWorkerIds = Array.Empty<int>();
 var ownedWorkerCount = 0;
 var ownedPolishWorkerIds = Array.Empty<int>();
@@ -551,6 +556,29 @@ try
             appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_HOLD_MILLISECONDS"] = "4000";
         }
     }
+    // THE WORKERS THAT WERE ALREADY THERE, PINNED BY HANDLE. The stray-worker check after the app
+    // exits excludes exactly these and nothing else: a worker that predates this app and is still
+    // the same process. A clock cannot say that - a creation time compared across a daylight-saving
+    // change or a clock adjustment orders two processes wrongly - but a handle held from before the
+    // launch can, and one whose process has since exited excludes nothing, so an id the system reused
+    // for a child of this app is counted.
+    preexistingWorkers = Process.GetProcessesByName("EnviousWispr.RuntimeWorker");
+    foreach (var worker in preexistingWorkers)
+    {
+        try
+        {
+            _ = worker.SafeHandle;
+            pinnedWorkers.Add(worker);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            // GONE OR NOT OURS TO OPEN, AND THEREFORE NOT AN EXCLUSION. An object whose pin failed
+            // holds no handle; asked later whether it is alive it would reopen its id, which by then
+            // may belong to a child of this app, and answer for the wrong process. Only a pin that
+            // succeeded can exclude; this one is kept for disposal and nothing else.
+        }
+    }
+
     app = StartOrExplain(appStart) ?? throw new JourneyExpectationException(
         "The production WinUI app did not start.");
 
@@ -756,6 +784,21 @@ try
         throw new JourneyExpectationException("The production app did not exit cleanly after journey completion.");
     }
 
+    // EVERY WORKER THE APP EVER OWNED, NOT THE ONE COUNTED BEFORE THE RECORDING. The owned-worker
+    // snapshot above is taken before the take begins, so a preview worker started during it - or one
+    // left behind by a cancelled preview startup - was invisible to the cleanup check. Windows keeps a
+    // process's parent id after the parent has exited, so the app's children can still be asked for.
+    // A process id is reused, so a worker orphaned by an earlier app that once had this id is excluded
+    // only if it was listed and pinned before this app was launched and is still that same process.
+    strayWorkerCount = ChildProcessIds(app.Id, "EnviousWispr.RuntimeWorker")
+        .Where(IsProcessRunning)
+        .Count(processId => !pinnedWorkers.Any(worker => worker.Id == processId && StillAlive(worker)));
+    if (strayWorkerCount != 0)
+    {
+        throw new JourneyExpectationException(
+            $"The production app exited and left {strayWorkerCount} runtime worker(s) it had started still running.");
+    }
+
     if (app.ExitCode != 0)
     {
         throw new JourneyExpectationException(
@@ -780,7 +823,11 @@ try
     {
         RequireProductionJourneyEvents(diagnosticEvents);
     }
-    if (livePreview)
+    if (livePreview && syntheticHotkey && quickTap)
+    {
+        RequireQuickTapCancelledThePreviewStartup(diagnosticEvents);
+    }
+    else if (livePreview)
     {
         RequireLivePreviewJourneyEvents(diagnosticEvents);
     }
@@ -856,9 +903,14 @@ try
         livePreviewUpdateCount = diagnosticEvents.Count(value => value.StartsWith(
             "LivePreviewUpdated/",
             StringComparison.Ordinal)),
+        // The quick-tap-with-preview certificate, in the result rather than only in the verdict.
+        livePreviewStartupCancelled = diagnosticEvents.Any(value => value.StartsWith(
+            "LivePreviewStartupCancelled/",
+            StringComparison.Ordinal)),
         appExitedCleanly,
         ownedWorkerStartedCount = ownedWorkerIds.Length,
         ownedWorkerCount,
+        strayWorkerCount,
         ownedPolishWorkerStartedCount = ownedPolishWorkerIds.Length,
         ownedPolishWorkerCount,
         elapsedMilliseconds = timer.ElapsedMilliseconds,
@@ -949,6 +1001,11 @@ finally
     }
     finally
     {
+        foreach (var worker in preexistingWorkers)
+        {
+            worker.Dispose();
+        }
+
         try
         {
             RemoveUatDirectory(uatDirectory);
@@ -1465,6 +1522,35 @@ static void RequireProductionJourneyEvents(IReadOnlyList<string> events)
     }
 }
 
+/// <summary>
+/// A quick tap with Live Preview on: the key-up runs while the preview worker is still starting, and
+/// the app must record that it cancelled the startup rather than wait for the worker to answer. A run
+/// where the worker answered before the queued release ran certifies nothing about that and is asked
+/// to run again, the same way a quick tap that did not overlap the press is.
+/// </summary>
+static void RequireQuickTapCancelledThePreviewStartup(IReadOnlyList<string> events)
+{
+    static bool Has(IReadOnlyList<string> events, string name) =>
+        events.Any(value => value.StartsWith(name + '/', StringComparison.Ordinal));
+    if (Has(events, "LivePreviewStartupCancelled"))
+    {
+        return;
+    }
+
+    if (Has(events, "LivePreviewStarted"))
+    {
+        throw JourneyExpectationException.Instrument(
+            "The quick tap delivered, but the preview worker had answered before the queued key-up ran, so "
+                + "this run says nothing about a release during preview startup. Re-run; if the worker always "
+                + "wins, the tap is not quick enough on this machine. "
+                + $"events={string.Join(',', events)}.");
+    }
+
+    throw new JourneyExpectationException(
+        "The quick tap with Live Preview on recorded neither a cancelled preview startup nor a started preview; "
+            + $"events={string.Join(',', events)}.");
+}
+
 static void RequireLivePreviewJourneyEvents(IReadOnlyList<string> events)
 {
     var required = new[] { "LivePreviewStarted", "LivePreviewUpdated", "LivePreviewStopped" };
@@ -1589,6 +1675,23 @@ static IReadOnlyList<int> ChildProcessIds(int parentProcessId, string processNam
             StringComparison.OrdinalIgnoreCase))
         .Select(process => Convert.ToInt32((uint)process["ProcessId"]))
         .ToArray();
+}
+
+/// <summary>
+/// Whether a process pinned by handle before the launch is still that process; one that cannot say is
+/// not. Only ever asked of a process whose handle was taken, so the answer is the handle's and not a
+/// reopened id's.
+/// </summary>
+static bool StillAlive(Process pinned)
+{
+    try
+    {
+        return !pinned.HasExited;
+    }
+    catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+    {
+        return false;
+    }
 }
 
 static bool IsProcessRunning(int processId)
