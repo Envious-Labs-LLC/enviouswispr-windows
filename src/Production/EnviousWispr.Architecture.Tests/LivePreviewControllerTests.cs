@@ -79,7 +79,7 @@ public sealed class LivePreviewControllerTests
     }
 
     [Fact]
-    public async Task AnEngineThatRefusesToStartLeavesNoLoopAndSaysWhy()
+    public async Task AnEngineThatRefusesToStartSaysWhyAndTheStopThatFollowsClosesNothing()
     {
         var world = World.Build();
         world.Engine.StartResult = new RuntimeWorkerResult(
@@ -88,12 +88,21 @@ public sealed class LivePreviewControllerTests
             new AppError(AppErrorCode.RuntimeWorkerFailed, AppErrorStage.RuntimeWorker, CanRetry: true));
 
         await world.Controller.StartAsync(world.Session);
+        await world.Controller.Work!.WaitAsync(Patience);
 
         var line = Assert.Single(world.Log.Entries);
         Assert.Equal(AppEventCode.LivePreviewFailed, line.Event);
         Assert.Equal(AppFailureCategory.RuntimeWorker, line.Failure);
-        Assert.False(world.Controller.IsRunning);
         Assert.Equal(0, world.Engine.Passes);
+
+        await world.Controller.StopAsync();
+
+        // Nothing started, so nothing is reported stopped; the engine is still told to stop and
+        // the surface is still cleared, as they were for an idle stop.
+        Assert.False(world.Controller.IsRunning);
+        Assert.Equal([AppEventCode.LivePreviewFailed], world.Log.Codes);
+        Assert.Equal(1, world.Engine.Stops);
+        Assert.Equal(1, world.Effects.Clears);
     }
 
     [Fact]
@@ -191,30 +200,65 @@ public sealed class LivePreviewControllerTests
     }
 
     [Fact]
-    public async Task AStopQueuedBehindAHeldStartWaitsForTheEngineToStart()
+    public async Task AStartReturnsWhileTheEngineIsStillStartingAndAStopCancelsThatStartup()
     {
+        // THE STEP 8 PROOF. The engine's start is held; the controller's start must come back
+        // anyway, because that is what lets the recording-start transition complete and a release
+        // reach the capture while the preview worker is still coming up.
         var world = World.Build();
         world.Engine.HoldStarts = true;
-        world.Audio.Samples = 0;
 
-        var start = world.Controller.StartAsync(world.Session);
+        await world.Controller.StartAsync(world.Session).WaitAsync(Patience);
         await world.Engine.StartStarted.Task.WaitAsync(Patience);
-        var stop = world.Controller.StopAsync();
 
-        // The start holds the gate while the engine is still starting, so the stop is parked
-        // before it can cancel anything or stop the engine.
-        Assert.False(start.IsCompleted);
-        Assert.False(stop.IsCompleted);
-        Assert.Equal(0, world.Engine.Stops);
+        Assert.True(world.Controller.IsRunning);
+        Assert.Equal(0, world.Engine.Starts);
         Assert.Empty(world.Log.Entries);
 
+        var stop = world.Controller.StopAsync();
+        await world.Engine.StartCancellationObserved.Task.WaitAsync(Patience);
+
+        // The engine has seen the cancel but has not left its start; the stop waits for it and has
+        // stopped nothing yet.
+        Assert.False(stop.IsCompleted);
+        Assert.Equal(0, world.Engine.Stops);
+        Assert.Equal(0, world.Effects.Clears);
+
         world.Engine.AllowStartExit.SetResult();
-        await start.WaitAsync(Patience);
         await stop.WaitAsync(Patience);
 
+        // A startup that never finished started nothing: no Started, no Stopped, no pass, no words.
+        // The engine is still told to stop, so whatever its start acquired is released.
         Assert.False(world.Controller.IsRunning);
         Assert.Equal(1, world.Engine.Stops);
+        Assert.Equal(0, world.Engine.Starts);
         Assert.Equal(0, world.Engine.Passes);
+        Assert.Empty(world.Effects.Previews);
+        Assert.Empty(world.Log.Entries);
+        Assert.Equal(1, world.Effects.Clears);
+    }
+
+    [Fact]
+    public async Task AStartupThatFinishesAfterAStopHasBeenAskedForStillStartsNothing()
+    {
+        // The narrow window: the engine finishes starting (ignoring the cancel) after the stop has
+        // cancelled. The work sees its token cancelled and leaves before the first pass.
+        var world = World.Build();
+        world.Engine.HoldStarts = true;
+        world.Engine.StartIgnoresCancellation = true;
+
+        await world.Controller.StartAsync(world.Session).WaitAsync(Patience);
+        await world.Engine.StartStarted.Task.WaitAsync(Patience);
+        var stop = world.Controller.StopAsync();
+        await world.Engine.StartCancellationObserved.Task.WaitAsync(Patience);
+        world.Engine.AllowStartExit.SetResult();
+        await stop.WaitAsync(Patience);
+
+        Assert.Equal(1, world.Engine.Starts);
+        Assert.Equal(0, world.Engine.Passes);
+        Assert.Empty(world.Effects.Previews);
+        Assert.Equal(1, world.Engine.Stops);
+        // The engine did start, so the log says it started and then stopped; nothing in between.
         Assert.Equal([AppEventCode.LivePreviewStarted, AppEventCode.LivePreviewStopped], world.Log.Codes);
     }
 
@@ -225,7 +269,7 @@ public sealed class LivePreviewControllerTests
         world.Engine.NextError = new AppError(AppErrorCode.TranscriptionFailed, AppErrorStage.RuntimeWorker, CanRetry: true);
 
         await world.Controller.StartAsync(world.Session);
-        await world.Controller.Loop!.WaitAsync(Patience);
+        await world.Controller.Work!.WaitAsync(Patience);
 
         Assert.Empty(world.Effects.Previews);
         Assert.Equal(1, world.Engine.Passes);
@@ -459,7 +503,7 @@ public sealed class LivePreviewControllerTests
         world.Engine.ThrowOnPass = new InvalidOperationException("worker gone");
 
         await world.Controller.StartAsync(world.Session);
-        await world.Controller.Loop!.WaitAsync(Patience);
+        await world.Controller.Work!.WaitAsync(Patience);
 
         Assert.Equal([AppEventCode.LivePreviewStarted, AppEventCode.LivePreviewFailed], world.Log.Codes);
         Assert.Equal(AppFailureCategory.RuntimeWorker, world.Log.Entries[1].Failure);
@@ -626,6 +670,7 @@ public sealed class LivePreviewControllerTests
         public Guid? TagUpdatesWith { get; set; }
         public bool HoldPasses { get; set; }
         public bool HoldStarts { get; set; }
+        public bool StartIgnoresCancellation { get; set; }
         public bool HoldStops { get; set; }
         public Exception? ThrowOnStop { get; set; }
         public int Starts { get; private set; }
@@ -638,16 +683,33 @@ public sealed class LivePreviewControllerTests
         public TaskCompletionSource CancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource AllowPassExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource StartStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource StartCancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource AllowStartExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource StopStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource AllowStopExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        /// <summary>
+        /// A held start that is cancelled says so and waits to be let out before throwing, the way
+        /// the real engine releases what it acquired and then rethrows; one told to ignore the cancel
+        /// waits to be let out and then starts anyway, which is the window a stop can lose.
+        /// </summary>
         public async Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default)
         {
             StartStarted.TrySetResult();
             if (HoldStarts)
             {
-                await AllowStartExit.Task;
+                var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                using var registration = cancellationToken.Register(() => cancelled.TrySetResult());
+                await Task.WhenAny(AllowStartExit.Task, cancelled.Task);
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    StartCancellationObserved.TrySetResult();
+                    await AllowStartExit.Task;
+                    if (!StartIgnoresCancellation)
+                    {
+                        throw new OperationCanceledException(cancellationToken);
+                    }
+                }
             }
 
             Starts++;

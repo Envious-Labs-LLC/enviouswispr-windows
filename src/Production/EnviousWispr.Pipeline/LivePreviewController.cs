@@ -49,6 +49,15 @@ public interface ILivePreviewEffects
 /// already stopping the loop. Under the gate a second start finds the first loop and returns; a
 /// second stop finds nothing and returns. Neither can observe the other half-way.
 ///
+/// THE ENGINE STARTS IN THE BACKGROUND, AND THE GATE IS NOT HELD WHILE IT DOES. Starting the preview
+/// worker can take seconds and is allowed fifteen; the recording-start transition used to wait for
+/// it, so a key released during that wait was queued behind it and the microphone stayed open until
+/// the worker answered. Now the start returns once the work is owned, the transition completes, and a
+/// release reaches the capture at once. The stop cancels a startup still in flight through the same
+/// token the loop uses, waits for it to leave, and stops the engine, which releases whatever the
+/// startup had acquired; the final transcription still waits for that, so it never shares the
+/// machine with a preview worker that is half-way up.
+///
 /// THE LOOP IS DISPLAY-ONLY. It can never change the final transcript, and a failed pass ends the loop
 /// with a line in the log rather than a word on screen. Release or cancellation stops it through the
 /// token, which is its normal exit and not a failure.
@@ -69,8 +78,9 @@ public sealed class LivePreviewController : IAsyncDisposable
     private readonly IAppLogger _logger;
     private readonly TimeProvider _clock;
     private CancellationTokenSource? _cancellation;
-    private Task? _loop;
+    private Task? _work;
     private long _sequence;
+    private bool _started;
     private bool _disposed;
 
     public LivePreviewController(ILivePreviewEffects effects, IAppLogger logger, TimeProvider clock)
@@ -83,11 +93,11 @@ public sealed class LivePreviewController : IAsyncDisposable
         _clock = clock;
     }
 
-    /// <summary>Whether a preview loop has been started and not yet stopped.</summary>
-    public bool IsRunning => _loop is not null;
+    /// <summary>Whether a preview has been started - its engine may still be starting - and not yet stopped.</summary>
+    public bool IsRunning => _work is not null;
 
-    /// <summary>The loop itself, so a test can wait for one that ends on its own rather than poll for it.</summary>
-    internal Task? Loop => _loop;
+    /// <summary>The owned work, startup and loop, so a test can wait for one that ends on its own rather than poll.</summary>
+    internal Task? Work => _work;
 
     public async Task StartAsync(DictationSessionId sessionId)
     {
@@ -136,28 +146,15 @@ public sealed class LivePreviewController : IAsyncDisposable
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (_loop is not null)
+            if (_work is not null)
             {
                 return;
             }
 
-            var started = await engine.StartAsync().ConfigureAwait(false);
-            if (!started.Succeeded)
-            {
-                _logger.Write(new AppLogEntry(
-                    _clock.GetUtcNow(),
-                    AppEventCode.LivePreviewFailed,
-                    AppFailureCategories.For(started.Error)));
-                return;
-            }
-
-            // WRITTEN BEFORE THE LOOP IS LAUNCHED, because an engine that answers synchronously runs
-            // the first pass before this line, and a log whose first update precedes its start reads
-            // as two previews.
-            _logger.Write(new AppLogEntry(_clock.GetUtcNow(), AppEventCode.LivePreviewStarted));
             _sequence = 0;
+            _started = false;
             _cancellation = new CancellationTokenSource();
-            _loop = RunAsync(sessionId, engine, audio, _cancellation.Token);
+            _work = RunAsync(sessionId, engine, audio, _cancellation.Token);
         }
         finally
         {
@@ -171,13 +168,33 @@ public sealed class LivePreviewController : IAsyncDisposable
         IAudioSnapshotSource audio,
         CancellationToken cancellationToken)
     {
-        // The loop inherits the start's scope as a child flow and would stay joined without this;
+        // The work inherits the start's scope as a child flow and would stay joined without this;
         // opened anyway, because the rule is one line per flow and not a property of who called whom.
         using var dictation = DictationScope.Begin(sessionId.Value);
         try
         {
+            var startup = await engine.StartAsync(cancellationToken).ConfigureAwait(false);
+            if (!startup.Succeeded)
+            {
+                _logger.Write(new AppLogEntry(
+                    _clock.GetUtcNow(),
+                    AppEventCode.LivePreviewFailed,
+                    AppFailureCategories.For(startup.Error)));
+                return;
+            }
+
+            // WRITTEN BEFORE THE FIRST PASS, so a log whose first update precedes its start cannot
+            // read as two previews. The stop reads the flag to decide whether there is a start to
+            // close: a startup that was cancelled or refused never started, and says nothing more.
+            _started = true;
+            _logger.Write(new AppLogEntry(_clock.GetUtcNow(), AppEventCode.LivePreviewStarted));
             while (true)
             {
+                // ASKED BEFORE EVERY SNAPSHOT, not only inside the waits. An engine that finished
+                // starting after the stop had already cancelled would otherwise run one pass on a
+                // dictation that is over and put its words on a screen the stop is about to clear.
+                cancellationToken.ThrowIfCancellationRequested();
+
                 // THE WAIT MOVED TO THE FAR SIDE OF THE WORK, WHICH IS THE WHOLE FIX. It used to sit
                 // here, so the period was the interval PLUS the cost of a pass rather than the larger
                 // of the two, and nothing could reach the screen before both had elapsed however fast
@@ -229,7 +246,8 @@ public sealed class LivePreviewController : IAsyncDisposable
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Release or cancellation intentionally stops preview without affecting final ASR.
+            // Release or cancellation intentionally stops preview without affecting final ASR. A
+            // startup cancelled before the engine answered leaves the same way, having started nothing.
         }
         catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
         {
@@ -254,15 +272,15 @@ public sealed class LivePreviewController : IAsyncDisposable
         try
         {
             var cancellation = _cancellation;
-            var loop = _loop;
+            var work = _work;
             _cancellation = null;
-            _loop = null;
+            _work = null;
             cancellation?.Cancel();
-            if (loop is not null)
+            if (work is not null)
             {
                 try
                 {
-                    await loop.ConfigureAwait(false);
+                    await work.ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -271,16 +289,22 @@ public sealed class LivePreviewController : IAsyncDisposable
             }
 
             cancellation?.Dispose();
+            // STOPPED EVEN WHEN THE START WAS CANCELLED HALF-WAY. The engine's own start releases
+            // what it acquired when it is cancelled or refused; its stop is still called so a worker
+            // that came up between the cancel and the check is taken down, and so the engine's
+            // answer to "are you stopped" is always its own.
             if (_effects.Engine is { } engine)
             {
                 await engine.StopAsync().ConfigureAwait(false);
             }
 
             _effects.ClearPreview();
-            if (loop is not null)
+            if (work is not null && _started)
             {
                 _logger.Write(new AppLogEntry(_clock.GetUtcNow(), AppEventCode.LivePreviewStopped));
             }
+
+            _started = false;
         }
         finally
         {
