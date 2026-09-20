@@ -1579,7 +1579,7 @@ static void RequireLivePreviewJourneyEvents(IReadOnlyList<string> events)
     }
 }
 
-/// <summary>The head start ran on a recording and did not give up; whether it committed is reported, not required.</summary>
+/// <summary>Requires a recording and rejects abandonment; reports commits and head-start use rather than requiring them.</summary>
 /// <remarks>
 /// THE SUMMARY USED TO SAY THE RELEASE USED A COMMIT, and the body below explains why it cannot ask
 /// for one on these fixtures. What it asserts is a recording and no abandonment; what it reports, in
@@ -1598,14 +1598,12 @@ static void RequireHeadStartJourneyEvents(IReadOnlyList<string> events)
     // the fixture began arriving at the sample rate, as a microphone does, the same run committed
     // NOTHING - and that is correct behaviour rather than a regression.
     //
-    // THE PLANNER CANNOT COMMIT ON THIS FIXTURE AND SHOULD NOT. It ends a commit only at the end of a
-    // silence that follows at least 1.5 s of speech, and never on the last segment of the audio so
-    // far - a stretch at the end is indistinguishable from the first half of a word still being said,
-    // and a silence at the end has nothing after it to prove the speech before it has finished. So a
-    // commit needs, at some poll, enough speech AND a qualifying silence with more audio after it.
-    // This journey's fixture is 2.71 seconds of one continuous sentence, and the acoustic fixtures
-    // played over the cable have committed nothing either; the count is reported in the result and
-    // the cause is not asserted here. Requiring a commit would assert something about the audio.
+    // THESE RUNS HAVE REPORTED ZERO COMMITS, AND THE CAUSE IS NOT ASSERTED HERE. A poll can commit
+    // at least 1.5 s of speech followed by a qualifying silence - including a silence at the end of
+    // the audio so far, since the planner commits through the silence that follows the speech it
+    // visits. Whether these fixtures expose that opportunity depends on how they segment and on when
+    // the polls land, which this journey does not measure. Requiring a commit would assert something
+    // about the audio; the count is reported in the result instead.
     //
     // SO IT ASSERTS THE THING THAT WAS ACTUALLY BROKEN. Before the overflow fix the head start threw
     // on the FIRST poll of every recording ever made and was abandoned every time, so "did not give
