@@ -53,6 +53,7 @@ public partial class App : Application, IAsyncDisposable
     private readonly SemaphoreSlim _previewGate = new(1, 1);
     private readonly SemaphoreSlim _sessionOperationGate = new(1, 1);
     private DictationSessionCoordinator? _sessionCoordinator;
+    private SessionFinalizationRunner? _finalizationRunner;
     private readonly DeterministicTextPipeline _deterministicTextPipeline = new();
     private readonly TranscriptFinalizer _transcriptFinalizer;
     private SingleInstanceLock? _singleInstanceLock;
@@ -1304,6 +1305,12 @@ public partial class App : Application, IAsyncDisposable
         // so a press captures its target and delivery choice from the same provider the controller
         // would have asked, at the instant of the key, before the queue's first hop.
         var sessionController = _sessionController;
+        _finalizationRunner = new SessionFinalizationRunner(
+            sessionController,
+            _transcriptFinalizer,
+            _sessionPersistence,
+            new SessionFinalizationEffects(this),
+            TimeProvider.System);
         _sessionCoordinator = new DictationSessionCoordinator(
             new ShellGuardedExecutor(
                 this,
@@ -2304,7 +2311,6 @@ public partial class App : Application, IAsyncDisposable
             await app.StopAutoStopWatchAsync().ConfigureAwait(false);
             await app.StopLivePreviewAsync().ConfigureAwait(false);
             await app.TranscribeFinalAsync(
-                    controller,
                     sessionId,
                     audio,
                     processingCancellation.Token,
@@ -2592,7 +2598,6 @@ public partial class App : Application, IAsyncDisposable
                                 ? "Windows is suspending. Captured audio is being preserved"
                                 : "Windows locked. Captured audio is being preserved")));
                     await TranscribeFinalAsync(
-                            controller,
                             result.Session.Id,
                             result.Audio,
                             processingCancellation.Token)
@@ -3137,50 +3142,73 @@ public partial class App : Application, IAsyncDisposable
     }
 
     private async Task TranscribeFinalAsync(
-        PushToTalkSessionController controller,
         DictationSessionId sessionId,
         CapturedAudio audio,
         CancellationToken cancellationToken,
         bool recoveryOnly = false)
     {
-        // EVERY LINE WRITTEN FROM HERE ON SAYS WHICH DICTATION IT BELONGED TO. The scope is ambient,
-        // so helpers that have never heard of it - polish, delivery, the recovery write - are joined
-        // without being handed anything, and one added next month is joined on arrival.
+        // OPENED HERE AS WELL AS IN THE RUNNER. This flow is handed a dictation, and the rule the
+        // scope gate enforces is that every such flow opens its scope before it does anything, because
+        // the next line added to it will be a log line. Begin restores rather than clears, so the
+        // runner opening the same scope inside is safe.
         using var dictation = DictationScope.Begin(sessionId.Value);
-        _escapeRecoveryForSession = false;
-        var engine = _transcriptionEngine;
-        if (engine is null)
+        var runner = _finalizationRunner;
+        if (runner is null)
         {
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.DictationTranscriptionFailed,
-                AppFailureCategory.AsrUnavailable));
-            await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
-            await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
-            _window?.DispatcherQueue.TryEnqueue(() =>
-                _window?.SetSessionStatus(DictationStatus.Advisory(
-                        "Audio captured, but local transcription is unavailable", OpenTranscription)
-                    .AboutTheTranscriptionEngine()));
             return;
         }
 
-        _window?.DispatcherQueue.TryEnqueue(() =>
-            _window?.SetSessionStatus(DictationStatus.Processing("Transcribing locally...")));
-        _logger.Write(new AppLogEntry(
-            DateTimeOffset.UtcNow,
-            AppEventCode.DictationTranscriptionStarted));
-        // The whole wait, not the sum of the stages. A sum reports zero for every await and
-        // dispatcher hop BETWEEN them, which is exactly where an unexplained delay would hide.
-        // In a finally, so a path that throws still reports what the user waited before it did.
-        var waitTimer = System.Diagnostics.Stopwatch.StartNew();
-        ArchiveDictationAudio(audio);
-        var timer = System.Diagnostics.Stopwatch.StartNew();
-        try
-        {
-            var transcript = await TranscribeUsingAnyHeadStartAsync(engine, audio, cancellationToken)
-                .ConfigureAwait(false);
-            timer.Stop();
-            _logger.Write(new AppLogEntry(
+        // THE WHOLE RECORD-TO-DELIVER PATH RUNS IN PIPELINE NOW. The shell hands over what its settings
+        // say at this moment and keeps what is drawn, what is logged, and the two operations still
+        // waiting for their own steps: the head-start transcription and the audio archive.
+        await runner.RunAsync(
+                sessionId,
+                audio,
+                new FinalizationOptions(_customWords, _deterministicTextOptions, CurrentPolishSetup()),
+                recoveryOnly,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>The shell's half of a finalisation: rendering, logging, and the two operations still living here.</summary>
+    private sealed class SessionFinalizationEffects(App app) : ISessionFinalizationEffects
+    {
+        public ITranscriptionEngine? Engine => app._transcriptionEngine;
+
+        public ITextDelivery? Delivery => app._textDelivery;
+
+        public string? DeliveryLanguage(Transcript transcript) => App.DeliveryLanguage(transcript);
+
+        public Task<Transcript> TranscribeAsync(ITranscriptionEngine engine, CapturedAudio audio, CancellationToken cancellationToken) =>
+            app.TranscribeUsingAnyHeadStartAsync(engine, audio, cancellationToken);
+
+        public void ClearEscapeRecoveryForSession() => app._escapeRecoveryForSession = false;
+
+        public void ArchiveAudio(CapturedAudio audio) => app.ArchiveDictationAudio(audio);
+
+        public void RecordTranscriptionUnavailable() =>
+            app._logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DictationTranscriptionFailed,
+                AppFailureCategory.AsrUnavailable));
+
+        public void ShowTranscriptionUnavailable() =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
+                app._window?.SetSessionStatus(DictationStatus.Advisory(
+                        "Audio captured, but local transcription is unavailable", OpenTranscription)
+                    .AboutTheTranscriptionEngine()));
+
+        public void ShowTranscribing() =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
+                app._window?.SetSessionStatus(DictationStatus.Processing("Transcribing locally...")));
+
+        public void RecordTranscriptionStarted() =>
+            app._logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DictationTranscriptionStarted));
+
+        public void RecordTranscriptionFinished(Transcript transcript, long elapsedMilliseconds) =>
+            app._logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 transcript.UsedFallback
                     ? AppEventCode.DictationTranscriptionDegraded
@@ -3188,82 +3216,51 @@ public partial class App : Application, IAsyncDisposable
                 transcript.UsedFallback
                     ? FailureFor(transcript.DegradedError)
                     : AppFailureCategory.None,
-                timer.ElapsedMilliseconds));
-            // THE TEXT DECISIONS LIVE IN PIPELINE NOW. Deterministic stages, the polish attempt, the review
-            // that decides whether the polish is worth using, the restoration, and every receipt in
-            // between come back as one answer; this method keeps delivery, history and the screen.
-            var finalized = await _transcriptFinalizer
-                .FinalizeAsync(transcript, _customWords, _deterministicTextOptions, CurrentPolishSetup(), cancellationToken)
-                .ConfigureAwait(false);
-            var processed = finalized.Processed;
-            var polishResult = finalized.Polish;
+                elapsedMilliseconds));
 
-            if (!recoveryOnly &&
-                !string.IsNullOrWhiteSpace(processed.Output.Text) &&
-                _textDelivery is not null &&
-                controller.CurrentSession is { } pendingSession)
-            {
-                var deliveryTransition = await controller
-                    .BeginDeliveryAsync(sessionId, cancellationToken)
-                    .ConfigureAwait(false);
-                if (deliveryTransition.Kind == SessionTransitionKind.Delivering)
-                {
-                    _window?.DispatcherQueue.TryEnqueue(() =>
-                        _window?.SetSessionStatus(
-                            DictationStatus.Processing("Delivering to the app you started in...")));
-                    _logger.Write(new AppLogEntry(
-                        DateTimeOffset.UtcNow,
-                        AppEventCode.TextDeliveryStarted));
-                    var deliveryTimer = System.Diagnostics.Stopwatch.StartNew();
-                    var delivery = await _textDelivery.DeliverAsync(
-                        new TextDeliveryRequest(
-                            processed.Output,
-                            pendingSession.Target,
-                            DeliveryLanguage(transcript),
-                            pendingSession.DeliveryOptions),
-                        cancellationToken).ConfigureAwait(false);
-                    deliveryTimer.Stop();
-                    WriteDeliveryEvent(delivery, deliveryTimer.ElapsedMilliseconds);
-                    if (delivery.Delivered || delivery.ClipboardFallback)
-                    {
-                        await _sessionPersistence.ClearRecoveryTextAsync().ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        _sessionPersistence.ShowPendingRecovery();
-                    }
-                    await _sessionPersistence.SaveHistoryAsync(
-                        transcript,
-                        processed.Output.Text,
-                        HistoryWriteIntent.Delivered(finalized.WasPolished, delivery.Delivered)).ConfigureAwait(false);
-                    await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
-                    await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
-                    _window?.DispatcherQueue.TryEnqueue(() =>
-                        _window?.ReportDeliveryAndMaybeOfferLanguage(
-                            DeliveryStatusReport.For(delivery),
-                            DeliveryLanguage(transcript)));
-                    return;
-                }
-            }
+        public void RecordTranscriptionFailed(AppError? failure, long elapsedMilliseconds) =>
+            app._logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DictationTranscriptionFailed,
+                FailureFor(failure),
+                elapsedMilliseconds));
 
-            await _sessionPersistence.SaveHistoryAsync(
-                transcript,
-                processed.Output.Text,
-                recoveryOnly
-                    ? HistoryWriteIntent.EscapeRecovery(finalized.WasPolished, DateTimeOffset.UtcNow.AddHours(24))
-                    : HistoryWriteIntent.Held(finalized.WasPolished))
-                .ConfigureAwait(false);
-            await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
-            await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
-            _sessionPersistence.ShowPendingRecovery();
-            if (recoveryOnly && !string.IsNullOrWhiteSpace(processed.Output.Text))
-            {
-                _window?.DispatcherQueue.TryEnqueue(() =>
-                    _window?.SetReliabilityNotice(
-                        "Escape Recovery finished",
-                        "The dictation is ready to copy on Home and stays in History for 24 hours unless you Keep it."));
-            }
-            var status = string.IsNullOrWhiteSpace(processed.Output.Text)
+        public void ShowTranscriptionFailed() =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
+                app._window?.SetSessionStatus(DictationStatus.Error("Local transcription failed safely")));
+
+        public void ShowDelivering() =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
+                app._window?.SetSessionStatus(
+                    DictationStatus.Processing("Delivering to the app you started in...")));
+
+        public void RecordDeliveryStarted() =>
+            app._logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.TextDeliveryStarted));
+
+        public void RecordDelivery(DeliveryResult delivery, long elapsedMilliseconds) =>
+            app.WriteDeliveryEvent(delivery, elapsedMilliseconds);
+
+        public void ReportDelivery(DeliveryResult delivery, string? language) =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
+                app._window?.ReportDeliveryAndMaybeOfferLanguage(
+                    DeliveryStatusReport.For(delivery),
+                    language));
+
+        public void ShowEscapeRecoveryFinished() =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
+                app._window?.SetReliabilityNotice(
+                    "Escape Recovery finished",
+                    "The dictation is ready to copy on Home and stays in History for 24 hours unless you Keep it."));
+
+        public void ShowHeldStatus(FinalizationReport report)
+        {
+            var processed = report.Finalized?.Processed;
+            var polishResult = report.Finalized?.Polish;
+            var transcript = report.Transcript;
+            var recoveryOnly = report.Outcome == FinalizationOutcome.EscapeRecovery;
+            var status = processed is null || string.IsNullOrWhiteSpace(processed.Output.Text)
                     ? DictationStatus.Quiet("No speech detected")
                     : recoveryOnly
                         ? DictationStatus.Quiet("Escape Recovery finished. Text is ready to copy")
@@ -3272,41 +3269,22 @@ public partial class App : Application, IAsyncDisposable
                     : polishResult is { UsedFallback: true }
                         ? DictationStatus.Success(PolishFallbackStatus(polishResult))
                     : polishResult is { UsedFallback: false }
-                        ? _cloudPolishConsent is null
+                        ? app._cloudPolishConsent is null
                             ? DictationStatus.Success("Transcribed and polished locally")
                             : DictationStatus.Success(
-                                $"Transcribed and polished directly with {_cloudPolishConsent.ProviderName}")
-                    : transcript.UsedFallback
+                                $"Transcribed and polished directly with {app._cloudPolishConsent.ProviderName}")
+                    : transcript is { UsedFallback: true }
                         ? DictationStatus.Success("Transcribed and cleaned locally with CPU fallback")
                         : DictationStatus.Success("Transcribed and cleaned locally");
-            _window?.DispatcherQueue.TryEnqueue(() => _window?.SetSessionStatus(status));
+            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetSessionStatus(status));
         }
-        catch (TranscriptionEngineException exception)
-        {
-            timer.Stop();
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.DictationTranscriptionFailed,
-                FailureFor(exception.Error),
-                timer.ElapsedMilliseconds));
-            await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
-            await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
-            _window?.DispatcherQueue.TryEnqueue(() =>
-                _window?.SetSessionStatus(DictationStatus.Error("Local transcription failed safely")));
-        }
-        finally
-        {
-            // In a finally rather than beside each return, because this method leaves by several
-            // paths - delivered, held for recovery, and a transcription failure - and a wait the
-            // user sat through is worth the same whichever one it took. Beside the returns, the
-            // failure path is the one that would have been missed, and it is the slowest.
-            waitTimer.Stop();
-            _logger.Write(new AppLogEntry(
+
+        public void RecordDictationCompleted(long waitMilliseconds) =>
+            app._logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationCompleted,
                 AppFailureCategory.None,
-                waitTimer.ElapsedMilliseconds));
-        }
+                waitMilliseconds));
     }
 
     /// <summary>
@@ -3376,7 +3354,7 @@ public partial class App : Application, IAsyncDisposable
     /// timings are the tail's alone and are already only used for diagnostics.
     /// </remarks>
     private async Task<Transcript> TranscribeUsingAnyHeadStartAsync(
-        RuntimeWorkerTranscriptionEngine engine,
+        ITranscriptionEngine engine,
         CapturedAudio audio,
         CancellationToken cancellationToken)
     {

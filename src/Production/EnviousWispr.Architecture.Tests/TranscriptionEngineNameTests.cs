@@ -584,17 +584,24 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void TheWaitIsReportedHoweverTheDictationEnds()
     {
-        var source = File.ReadAllText(
+        // THE WRITE LIVES IN THE SHELL AND THE FINALLY LIVES IN PIPELINE, since step 6 on #148 moved
+        // the finalisation out of the shell behind an effects port. The shell still owns the one place
+        // that writes the event; the runner is what guarantees it is reached on every exit.
+        var shell = File.ReadAllText(
             Path.Combine(
                 FindRepositoryRoot(),
                 "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+        var source = File.ReadAllText(
+            Path.Combine(
+                FindRepositoryRoot(),
+                "src", "Production", "EnviousWispr.Pipeline", "SessionFinalizationRunner.cs"));
 
-        var writes = source.Split("AppEventCode.DictationCompleted").Length - 1;
+        var writes = shell.Split("AppEventCode.DictationCompleted").Length - 1;
         Assert.True(writes == 1, $"Expected exactly one place to report the wait, found {writes}.");
 
         var block = FinallyBlock().Matches(source)
             .Select(match => match.Value)
-            .Where(body => body.Contains("AppEventCode.DictationCompleted", StringComparison.Ordinal))
+            .Where(body => body.Contains("RecordDictationCompleted", StringComparison.Ordinal))
             .ToArray();
 
         Assert.True(
@@ -604,8 +611,14 @@ public sealed partial class DesignSystemTokenTests
         // Control: the matcher must find finally blocks that do NOT report the wait, or a matcher
         // that matched nothing would fail this test for the wrong reason and one that matched
         // everything would pass it for the wrong reason.
-        var allFinallys = FinallyBlock().Count(source);
-        Assert.True(allFinallys > 1, $"Expected several finally blocks in this file, found {allFinallys}.");
+        // The runner has one finally, so the control that the matcher can find blocks that do NOT
+        // report the wait runs against the shell, which has several.
+        var allFinallys = FinallyBlock().Count(shell);
+        Assert.True(allFinallys > 1, $"Expected several finally blocks in the shell, found {allFinallys}.");
+        Assert.True(
+            FinallyBlock().Count(shell) > FinallyBlock().Matches(shell).Count(match =>
+                match.Value.Contains("RecordDictationCompleted", StringComparison.Ordinal)),
+            "The control found no finally block that does not report the wait.");
     }
 
     [GeneratedRegex(@"finally\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", RegexOptions.Singleline)]
