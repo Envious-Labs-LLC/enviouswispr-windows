@@ -88,6 +88,65 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
     }
 
     [Fact]
+    public async Task AStartCancelledWhileTheRuntimeIsStartingReleasesTheResourceAndStopStillStopsTheRuntime()
+    {
+        // Step 8 cancels a preview start that is already inside the worker's own start. The lease
+        // was taken before that; it must be released by the cancellation, and the stop that the
+        // controller issues afterwards must still reach the runtime so a half-started worker is
+        // taken down.
+        using var arbiter = new RuntimeResourceArbiter();
+        var runtime = new FakePreviewRuntime(holdStart: true);
+        await using var preview = new RuntimeWorkerLivePreviewEngine(
+            runtime,
+            arbiter,
+            RuntimeResourceKind.Cpu);
+        using var cancellation = new CancellationTokenSource();
+
+        var start = preview.StartAsync(cancellation.Token);
+        await runtime.StartEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var whileStarting = await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero);
+        Assert.False(whileStarting.Succeeded, "the lease is held while the runtime is starting");
+
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => start.WaitAsync(TimeSpan.FromSeconds(10)));
+
+        var afterCancel = await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero);
+        Assert.True(afterCancel.Succeeded, "the cancelled start released its lease");
+        await afterCancel.Lease!.DisposeAsync();
+
+        var stopped = await preview.StopAsync();
+
+        Assert.True(stopped.Succeeded);
+        Assert.True(runtime.Stopped, "the runtime is still told to stop after a cancelled start");
+    }
+
+    [Fact]
+    public async Task AStartCancelledWhileWaitingForTheResourceTakesNothingAndStartsNothing()
+    {
+        using var arbiter = new RuntimeResourceArbiter();
+        var runtime = new FakePreviewRuntime();
+        await using var preview = new RuntimeWorkerLivePreviewEngine(
+            runtime,
+            arbiter,
+            RuntimeResourceKind.Cpu,
+            resourceTimeout: TimeSpan.FromSeconds(30));
+        var holder = await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero);
+        Assert.True(holder.Succeeded);
+        using var cancellation = new CancellationTokenSource();
+
+        var start = preview.StartAsync(cancellation.Token);
+        Assert.False(start.IsCompleted, "the start is waiting for the resource another workload holds");
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => start.WaitAsync(TimeSpan.FromSeconds(10)));
+
+        Assert.Equal(0, runtime.Starts);
+        await holder.Lease!.DisposeAsync();
+        var afterwards = await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero);
+        Assert.True(afterwards.Succeeded, "nothing was left holding the resource");
+        await afterwards.Lease!.DisposeAsync();
+    }
+
+    [Fact]
     public async Task DisabledPreviewReturnsTypedFailureWithoutCallingRuntime()
     {
         using var arbiter = new RuntimeResourceArbiter();
@@ -109,18 +168,35 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
 
     private sealed class FakePreviewRuntime(
         bool startSucceeds = true,
-        bool cancelStart = false) : IWorkerTranscriptionRuntime
+        bool cancelStart = false,
+        bool holdStart = false) : IWorkerTranscriptionRuntime
     {
         public string EngineId => "whisper-small:cpu:isolated";
 
         public bool Stopped { get; private set; }
 
+        public int Starts { get; private set; }
+
         public int TranscriptionCount { get; private set; }
 
-        public Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default) =>
-            cancelStart
-                ? Task.FromException<RuntimeWorkerResult>(new OperationCanceledException())
-                : Task.FromResult(startSucceeds
+        public TaskCompletionSource StartEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default)
+        {
+            Starts++;
+            StartEntered.TrySetResult();
+            if (cancelStart)
+            {
+                throw new OperationCanceledException();
+            }
+
+            if (holdStart)
+            {
+                // The real supervisor's health wait: a cancellable read that throws the caller's cancel.
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+
+            return startSucceeds
                 ? new RuntimeWorkerResult(true, RuntimeWorkerState.Ready)
                 : new RuntimeWorkerResult(
                     false,
@@ -128,7 +204,8 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
                     new AppError(
                         AppErrorCode.RuntimeWorkerFailed,
                         AppErrorStage.RuntimeWorker,
-                        CanRetry: true)));
+                        CanRetry: true));
+        }
 
         public Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default)
         {

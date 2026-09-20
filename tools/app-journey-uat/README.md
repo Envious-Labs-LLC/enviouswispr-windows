@@ -217,6 +217,13 @@ dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.
   -c Release -- --english-parakeet --manual-microphone --app-executable $installedApp
 ```
 
+Add `--live-preview` to `--synthetic-hotkey --quick-tap` to ask what a key-up does to a preview worker that is
+still starting: the run passes only when the app records `LivePreviewStartupCancelled` - the release reached the
+capture and the startup was cancelled rather than waited for - and leaves no runtime worker behind. A run where the
+worker answered first is INSTRUMENT INVALID and asks to be re-run. Live Preview is refused with any other
+synthetic-hotkey take. Every journey now also refuses to pass if the app exits leaving any runtime worker it started
+still running (`strayWorkerCount`), whichever take started it.
+
 Add `--live-preview` to the same command when the gitignored small preview model is installed. On a machine with
 an NVIDIA card, also set `ENVIOUSWISPR_CUDA_RUNTIME_DIR` to a directory holding the CUDA runtime: the isolated
 profile has no `runtime/cuda`, and the preview asks for the card without checking for it, so every take records
