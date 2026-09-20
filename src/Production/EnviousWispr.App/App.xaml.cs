@@ -86,12 +86,7 @@ public partial class App : Application, IAsyncDisposable
     private Task? _polishWarmup;
     private CancellationTokenSource? _autoStopCancellation;
     private Task? _autoStopLoop;
-    private CancellationTokenSource? _streamingCancellation;
-    private Task? _streamingLoop;
-    private readonly StreamingTranscriptAccumulator _streamed = new();
-    private int _streamedThroughSample;
-
-    private bool _streamingUsable;
+    private readonly StreamingTranscriptionController _streaming;
     private MainWindow? _window;
     private WindowsTrayIcon? _trayIcon;
     private IReadOnlyList<CustomWordEntry> _customWords = [];
@@ -176,6 +171,7 @@ public partial class App : Application, IAsyncDisposable
             () => _settings.Preferences.History,
             new SessionPersistenceEffects(this));
         _livePreview = new LivePreviewController(new LivePreviewEffects(this), _logger, TimeProvider.System);
+        _streaming = new StreamingTranscriptionController(new StreamingTranscriptionEffects(this), _logger, TimeProvider.System);
         _resourceProbe = new WindowsSystemResourceProbe(_dataDirectory);
 
         var allowLoopbackUpdates = string.Equals(
@@ -1062,7 +1058,7 @@ public partial class App : Application, IAsyncDisposable
             _pushToTalkHook = null;
         }
 
-        cleanShutdown &= await TryCleanupAsync(StopStreamingTranscriptionAsync).ConfigureAwait(true);
+        cleanShutdown &= await TryCleanupAsync(_streaming.StopAsync).ConfigureAwait(true);
         cleanShutdown &= await TryCleanupAsync(StopAutoStopWatchAsync).ConfigureAwait(true);
         cleanShutdown &= await TryCleanupAsync(_livePreview.StopAsync).ConfigureAwait(true);
 
@@ -1310,6 +1306,7 @@ public partial class App : Application, IAsyncDisposable
             sessionController,
             _transcriptFinalizer,
             _sessionPersistence,
+            _streaming,
             new SessionFinalizationEffects(this),
             TimeProvider.System);
         _sessionCoordinator = new DictationSessionCoordinator(
@@ -2299,7 +2296,7 @@ public partial class App : Application, IAsyncDisposable
             app.StartRecordingWatchdog(controller, sessionId);
             await app._livePreview.StartAsync(sessionId).ConfigureAwait(false);
             app.StartAutoStopWatch(sessionId);
-            app.StartStreamingTranscription(sessionId);
+            app._streaming.Start(sessionId);
         }
 
         public async Task FinalizeAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly)
@@ -2310,7 +2307,7 @@ public partial class App : Application, IAsyncDisposable
             var processingCancellation = new CancellationTokenSource(MaximumFinalProcessingDuration);
             _commandProcessing = processingCancellation;
             app._activeProcessingCancellation = processingCancellation;
-            await app.StopStreamingTranscriptionAsync().ConfigureAwait(false);
+            await app._streaming.StopAsync().ConfigureAwait(false);
             await app.StopAutoStopWatchAsync().ConfigureAwait(false);
             await app._livePreview.StopAsync().ConfigureAwait(false);
             await app.TranscribeFinalAsync(
@@ -2340,7 +2337,7 @@ public partial class App : Application, IAsyncDisposable
 
         public async Task StopBackgroundWorkAsync()
         {
-            await app.StopStreamingTranscriptionAsync().ConfigureAwait(false);
+            await app._streaming.StopAsync().ConfigureAwait(false);
             await app.StopAutoStopWatchAsync().ConfigureAwait(false);
             await app._livePreview.StopAsync().ConfigureAwait(false);
         }
@@ -2423,7 +2420,7 @@ public partial class App : Application, IAsyncDisposable
                         State: EnviousWispr.Core.Sessions.DictationSessionState.Recording,
                     } && currentId == sessionId)
                 {
-                    await StopStreamingTranscriptionAsync().ConfigureAwait(false);
+                    await _streaming.StopAsync().ConfigureAwait(false);
                 await StopAutoStopWatchAsync().ConfigureAwait(false);
                 await _livePreview.StopAsync().ConfigureAwait(false);
                     var error = new AppError(
@@ -2534,7 +2531,7 @@ public partial class App : Application, IAsyncDisposable
         DictationStatus status)
     {
         await StopRecordingWatchdogAsync().ConfigureAwait(false);
-        await StopStreamingTranscriptionAsync().ConfigureAwait(false);
+        await _streaming.StopAsync().ConfigureAwait(false);
                 await StopAutoStopWatchAsync().ConfigureAwait(false);
                 await _livePreview.StopAsync().ConfigureAwait(false);
         if (controller.CurrentSession is not null)
@@ -2592,7 +2589,7 @@ public partial class App : Application, IAsyncDisposable
                     processingCancellation = new CancellationTokenSource(
                         MaximumFinalProcessingDuration);
                     _activeProcessingCancellation = processingCancellation;
-                    await StopStreamingTranscriptionAsync().ConfigureAwait(false);
+                    await _streaming.StopAsync().ConfigureAwait(false);
                 await StopAutoStopWatchAsync().ConfigureAwait(false);
                 await _livePreview.StopAsync().ConfigureAwait(false);
                     _window?.DispatcherQueue.TryEnqueue(() =>
@@ -2688,163 +2685,6 @@ public partial class App : Application, IAsyncDisposable
     /// than the threshold can never contain enough silence to satisfy it, so the feature would
     /// simply never fire - silently, and looking exactly like a user who had not turned it on.
     /// </remarks>
-    /// <summary>How often the streaming loop looks for a stretch it can commit.</summary>
-    private static readonly TimeSpan StreamingPollInterval = TimeSpan.FromMilliseconds(500);
-
-    /// <summary>
-    /// Transcribes finished parts of a recording while the user is still speaking.
-    /// </summary>
-    /// <remarks>
-    /// ITS WORST CASE IS TODAY'S BEHAVIOUR, and that is the design rather than a safety net bolted
-    /// on. The full audio is kept regardless; the streamed text is only USED if every commit
-    /// succeeded. Any failure - a dead worker, a cancelled request, an exception - clears
-    /// <see cref="_streamingUsable"/> and the release transcribes the whole take exactly as it does
-    /// now. Dictation working is the first rule this product has, and a speed feature must not be
-    /// able to break it.
-    ///
-    /// SO THERE IS NO SETTING. A change that cannot make things worse does not need one, and every
-    /// switch added is a thing a user has to understand before they benefit.
-    ///
-    /// IT DOES NOT RUN WITH LIVE PREVIEW ON. Both transcribe during the recording and both use the
-    /// same worker, so together they would queue behind each other and make the release SLOWER than
-    /// doing nothing. Live Preview is the user's explicit choice and is display-only; this is
-    /// invisible and makes the real text faster. Turning off the thing they chose would be wrong,
-    /// so the invisible one stands down.
-    /// </remarks>
-    private void StartStreamingTranscription(DictationSessionId sessionId)
-    {
-        _streamed.Clear();
-        _streamedThroughSample = 0;
-        _streamingUsable = false;
-
-        if (_settings.Preferences.LivePreviewEnabled ||
-            _transcriptionEngine is not { } engine ||
-            _audioCapture is not IAudioSnapshotSource snapshots)
-        {
-            return;
-        }
-
-        _streamingUsable = true;
-        var cancellation = new CancellationTokenSource();
-        _streamingCancellation = cancellation;
-        _streamingLoop = RunStreamingTranscriptionAsync(
-            snapshots,
-            engine,
-            sessionId,
-            cancellation.Token);
-    }
-
-    private async Task RunStreamingTranscriptionAsync(
-        IAudioSnapshotSource snapshots,
-        RuntimeWorkerTranscriptionEngine engine,
-        DictationSessionId sessionId,
-        CancellationToken cancellationToken)
-    {
-        // Every flow that serves a dictation opens the scope for itself. Inheriting one would in
-        // fact work here - a child async flow keeps the AsyncLocal value it captured even after the
-        // caller disposes its own scope - and that is exactly why this does not rely on it: the
-        // join would then be a property of who happened to call whom, invisible at this method and
-        // unprovable by anything. Opening it here makes it a property of this flow, which a gate
-        // can check. One line per flow, and the flows are the methods that take a session id.
-        using var dictation = DictationScope.Begin(sessionId.Value);
-        var segmenter = new SpeechSegmenter(
-            AudioSampleConverter.TargetSampleRate,
-            TimeSpan.FromMilliseconds(400));
-
-        try
-        {
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                await Task.Delay(StreamingPollInterval, cancellationToken).ConfigureAwait(false);
-
-                // The WHOLE recording so far, not a window: a commit is a range measured from the
-                // start, and a rolling window would make those indices mean something different on
-                // every poll.
-                var snapshot = snapshots.GetSnapshot(TimeSpan.MaxValue);
-                if (snapshot is null || snapshot.SessionId != sessionId)
-                {
-                    continue;
-                }
-
-                var commit = StreamingCommitPlanner.NextCommit(
-                    snapshot.Samples.Span,
-                    snapshot.SampleRate,
-                    _streamedThroughSample,
-                    segmenter);
-                if (commit is not { } range)
-                {
-                    continue;
-                }
-
-                var slice = snapshot.Samples.Slice(
-                    range.StartSample,
-                    range.EndSample - range.StartSample);
-                var transcript = await engine.TranscribeAsync(
-                    new CapturedAudio(sessionId, slice, snapshot.SampleRate, snapshot.Channels),
-                    cancellationToken).ConfigureAwait(false);
-
-                _streamed.Append(transcript.Text);
-                _streamedThroughSample = range.EndSample;
-                _logger.Write(new AppLogEntry(
-                    DateTimeOffset.UtcNow,
-                    AppEventCode.StreamingSegmentCommitted));
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // The recording ended, which is the ordinary case. What has been committed so far
-            // stays usable - the ranges already transcribed are still correct.
-        }
-        catch (Exception exception) when (
-            exception is not (StackOverflowException or OutOfMemoryException))
-        {
-            // ANY failure gives up on the head start entirely rather than delivering a partial
-            // transcript. Half a dictation is worse than a slow one.
-            _streamingUsable = false;
-            // THE CAUGHT EXCEPTION IS READ RATHER THAN DISCARDED. This handler used to assert
-            // AsrUnavailable whatever had happened, so a busy runtime, a dead worker and a missing
-            // model pack wrote one identical line and no log could tell them apart. The engine
-            // already carries the code it failed with, so the category is now observed instead of
-            // chosen when the handler was written.
-            var error = (exception as TranscriptionEngineException)?.Error;
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.StreamingAbandoned,
-                // UNKNOWN WHEN THE EXCEPTION IS UNTYPED, because the catch takes almost anything -
-                // a disposed runtime, a memory-mapped read, an infrastructure fault - and calling
-                // all of those AsrUnavailable is the same false assertion this change removed for
-                // the typed case.
-                error is null ? AppFailureCategory.Unknown : FailureFor(error),
-                ErrorCode: error?.Code));
-        }
-    }
-
-    private async Task StopStreamingTranscriptionAsync()
-    {
-        var cancellation = _streamingCancellation;
-        var loop = _streamingLoop;
-        _streamingCancellation = null;
-        _streamingLoop = null;
-        if (cancellation is null)
-        {
-            return;
-        }
-
-        await cancellation.CancelAsync().ConfigureAwait(false);
-        if (loop is not null)
-        {
-            try
-            {
-                await loop.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
-
-        cancellation.Dispose();
-    }
-
     private void StartAutoStopWatch(DictationSessionId sessionId)
     {
         var dictation = _settings.Preferences.Dictation;
@@ -2981,9 +2821,6 @@ public partial class App : Application, IAsyncDisposable
         public ITextDelivery? Delivery => app._textDelivery;
 
         public string? DeliveryLanguage(Transcript transcript) => App.DeliveryLanguage(transcript);
-
-        public Task<Transcript> TranscribeAsync(ITranscriptionEngine engine, CapturedAudio audio, CancellationToken cancellationToken) =>
-            app.TranscribeUsingAnyHeadStartAsync(engine, audio, cancellationToken);
 
         public FinalizationOptions CurrentOptions() =>
             new(app._customWords, app._deterministicTextOptions, app.CurrentPolishSetup());
@@ -3142,57 +2979,17 @@ public partial class App : Application, IAsyncDisposable
         }
     }
 
-    /// <summary>
-    /// Transcribes only what streaming did not already cover, and joins the two.
-    /// </summary>
-    /// <remarks>
-    /// THIS IS WHERE STREAMING PAYS. Everything committed while the user was speaking is already
-    /// text, so the release only has to recognise the tail - which is why a long dictation stops
-    /// costing a long wait.
-    ///
-    /// IT FALLS BACK TO THE WHOLE RECORDING ON ANY DOUBT, and the conditions are checked here
-    /// rather than trusted from the loop. No head start, a failure flag, or a tail that would be
-    /// longer than the audio all mean transcribe everything, exactly as before streaming existed.
-    /// Half a dictation is worse than a slow one, and this is the last place to refuse.
-    ///
-    /// THE TAIL'S ENGINE ID AND LANGUAGE ARE THE ONES REPORTED, because they came from the same
-    /// engine on the same audio and the committed pieces cannot disagree about them. The token
-    /// timings are the tail's alone and are already only used for diagnostics.
-    /// </remarks>
-    private async Task<Transcript> TranscribeUsingAnyHeadStartAsync(
-        ITranscriptionEngine engine,
-        CapturedAudio audio,
-        CancellationToken cancellationToken)
+    /// <summary>What the shell shows when persistence changes what the person should see.</summary>
+    /// <summary>The shell's half of streaming: the final engine, the capture, and the switch it yields to.</summary>
+    private sealed class StreamingTranscriptionEffects(App app) : IStreamingTranscriptionEffects
     {
-        var headStart = _streamed.ToString();
-        var usable = _streamingUsable &&
-            _streamedThroughSample > 0 &&
-            _streamedThroughSample < audio.Samples.Length &&
-            !string.IsNullOrWhiteSpace(headStart);
+        public bool LivePreviewEnabled => app._settings.Preferences.LivePreviewEnabled;
 
-        if (!usable)
-        {
-            return await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
-        }
+        public ITranscriptionEngine? Engine => app._transcriptionEngine;
 
-        var tailAudio = audio with
-        {
-            Samples = audio.Samples[_streamedThroughSample..],
-        };
-        var tail = await engine.TranscribeAsync(tailAudio, cancellationToken).ConfigureAwait(false);
-
-        var joined = new StreamingTranscriptAccumulator();
-        joined.Append(headStart);
-        joined.Append(tail.Text);
-
-        _logger.Write(new AppLogEntry(
-            DateTimeOffset.UtcNow,
-            AppEventCode.StreamingHeadStartUsed));
-
-        return tail with { Text = joined.ToString() };
+        public IAudioSnapshotSource? Audio => app._audioCapture as IAudioSnapshotSource;
     }
 
-    /// <summary>What the shell shows when persistence changes what the person should see.</summary>
     /// <summary>The shell's half of live preview: what it built, what it can sample, and the surface.</summary>
     private sealed class LivePreviewEffects(App app) : ILivePreviewEffects
     {

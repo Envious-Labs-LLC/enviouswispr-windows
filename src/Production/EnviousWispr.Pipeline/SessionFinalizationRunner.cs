@@ -38,9 +38,8 @@ public sealed record FinalizationReport(
     long TranscriptionMilliseconds = 0);
 
 /// <summary>
-/// The shell's half of a finalisation: what is rendered, what is logged, and the two operations that
-/// still live there until their own steps move them - the speech engine call with its head start, and
-/// the audio archive.
+/// The shell's half of a finalisation: what is rendered, what is logged, and the one operation that
+/// still lives there - the audio archive.
 /// </summary>
 public interface ISessionFinalizationEffects
 {
@@ -52,9 +51,6 @@ public interface ISessionFinalizationEffects
 
     /// <summary>The language delivery should be told, or null when the engine's answer is not to be trusted.</summary>
     string? DeliveryLanguage(Transcript transcript);
-
-    /// <summary>Transcribes the capture, using any streaming head start the shell collected. Step 9 moves this.</summary>
-    Task<Transcript> TranscribeAsync(ITranscriptionEngine engine, CapturedAudio audio, CancellationToken cancellationToken);
 
     /// <summary>
     /// The settings the text decisions run under, read AFTER transcription, at the moment they are
@@ -128,6 +124,7 @@ public sealed class SessionFinalizationRunner
     private readonly PushToTalkSessionController _controller;
     private readonly TranscriptFinalizer _finalizer;
     private readonly SessionPersistence _persistence;
+    private readonly StreamingTranscriptionController _streaming;
     private readonly ISessionFinalizationEffects _effects;
     private readonly TimeProvider _clock;
 
@@ -135,17 +132,20 @@ public sealed class SessionFinalizationRunner
         PushToTalkSessionController controller,
         TranscriptFinalizer finalizer,
         SessionPersistence persistence,
+        StreamingTranscriptionController streaming,
         ISessionFinalizationEffects effects,
         TimeProvider clock)
     {
         ArgumentNullException.ThrowIfNull(controller);
         ArgumentNullException.ThrowIfNull(finalizer);
         ArgumentNullException.ThrowIfNull(persistence);
+        ArgumentNullException.ThrowIfNull(streaming);
         ArgumentNullException.ThrowIfNull(effects);
         ArgumentNullException.ThrowIfNull(clock);
         _controller = controller;
         _finalizer = finalizer;
         _persistence = persistence;
+        _streaming = streaming;
         _effects = effects;
         _clock = clock;
     }
@@ -175,7 +175,11 @@ public sealed class SessionFinalizationRunner
         var timer = Stopwatch.StartNew();
         try
         {
-            var transcript = await _effects.TranscribeAsync(engine, audio, cancellationToken).ConfigureAwait(false);
+            // THE HEAD START IS THE STREAMING OWNER'S TO USE. The loop was stopped by the finalisation
+            // before this ran, so what it committed is settled; the owner decides whether it is usable.
+            var transcript = await _streaming
+                .TranscribeUsingAnyHeadStartAsync(engine, audio, cancellationToken)
+                .ConfigureAwait(false);
             timer.Stop();
             _effects.RecordTranscriptionFinished(transcript, timer.ElapsedMilliseconds);
             var options = _effects.CurrentOptions();
