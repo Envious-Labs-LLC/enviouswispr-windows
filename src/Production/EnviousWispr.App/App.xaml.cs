@@ -53,6 +53,7 @@ public partial class App : Application, IAsyncDisposable
     private readonly SemaphoreSlim _sessionOperationGate = new(1, 1);
     private DictationSessionCoordinator? _sessionCoordinator;
     private readonly DeterministicTextPipeline _deterministicTextPipeline = new();
+    private readonly TranscriptFinalizer _transcriptFinalizer;
     private SingleInstanceLock? _singleInstanceLock;
     private SingleInstanceActivationChannel? _activationChannel;
     private WindowsSystemLifecycleMonitor? _lifecycleMonitor;
@@ -119,6 +120,11 @@ public partial class App : Application, IAsyncDisposable
     public App()
     {
         InitializeComponent();
+
+        _transcriptFinalizer = new TranscriptFinalizer(
+            _deterministicTextPipeline,
+            new PolishExecutor(_resourceArbiter, new TranscriptFinalizationEffects(this)),
+            new TranscriptFinalizationEffects(this));
 
         _releaseIdentity = ResolveReleaseIdentity();
 
@@ -3179,88 +3185,14 @@ public partial class App : Application, IAsyncDisposable
                     ? FailureFor(transcript.DegradedError)
                     : AppFailureCategory.None,
                 timer.ElapsedMilliseconds));
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.DeterministicProcessingStarted));
-            var processingTimer = System.Diagnostics.Stopwatch.StartNew();
-            var deterministicRequest = new DeterministicTextRequest(
-                transcript,
-                _customWords,
-                _deterministicTextOptions);
-            var processed = await _deterministicTextPipeline.ProcessAsync(
-                deterministicRequest,
-                cancellationToken).ConfigureAwait(false);
-            processingTimer.Stop();
-            var deterministicMilliseconds = processingTimer.ElapsedMilliseconds;
-            // THE FOUR STAGES THAT ARE FINISHED REPORT NOW; THE ONE THAT IS NOT WAITS.
-            // ApplyPolishedTextAsync runs EmojiRestoration further down and REPLACES its receipt, so
-            // reporting that stage from here recorded Skipped and left a later restoration failure
-            // hidden behind a healthy line. The other four cannot change after this point.
-            //
-            // SPLIT RATHER THAN ALL-AFTER-POLISH, because this file is append-ordered and read
-            // oldest-first by retention and pruning. Holding these four back and stamping them with
-            // an earlier time put older lines after newer ones whenever polish was slow, which
-            // breaks that contract to fix a different one. Every line now carries the moment it was
-            // written, and the ordering holds.
-            EmitStageReceipts(processed.Receipts, emojiRestorationOnly: false);
-            await SaveRecoveryTextAsync(processed.Output, cancellationToken).ConfigureAwait(false);
-            var polishResult = await TryPolishAsync(
-                    processed.Output,
-                    transcript.DetectedLanguage,
-                    cancellationToken)
+            // THE TEXT DECISIONS LIVE IN PIPELINE NOW. Deterministic stages, the polish attempt, the review
+            // that decides whether the polish is worth using, the restoration, and every receipt in
+            // between come back as one answer; this method keeps delivery, history and the screen.
+            var finalized = await _transcriptFinalizer
+                .FinalizeAsync(transcript, _customWords, _deterministicTextOptions, CurrentPolishSetup(), cancellationToken)
                 .ConfigureAwait(false);
-            // A model that comes off the rails returns a CONFIDENT string rather than an error, so
-            // polishResult.UsedFallback is false and every check above says the call succeeded.
-            // This is the only place that asks whether what came back is worth showing anyone.
-            //
-            // Polish is a limb and the transcript is the heart: a refusal leaves the user with the
-            // cleaned text they already had, which is the same outcome as any other limb failure.
-            var polishReview = polishResult is null || polishResult.UsedFallback
-                ? new PolishOutputReview(PolishOutputVerdict.Accepted, string.Empty)
-                : PolishOutputGuard.Review(processed.Output.Text, polishResult.Output.Text);
-            var polishVerdict = polishReview.Verdict;
-            if (polishVerdict != PolishOutputVerdict.Accepted)
-            {
-                _logger.Write(new AppLogEntry(
-                    DateTimeOffset.UtcNow,
-                    AppEventCode.PolishOutputRefused,
-                    // InvalidData rather than LocalPolish or CloudPolish: the refusal is about
-                    // what came BACK, and either provider can produce it. Attributing it to one
-                    // would make the log claim a cause it does not know.
-                    AppFailureCategory.InvalidData));
-            }
-
-            if (polishResult is not null && !polishResult.UsedFallback &&
-                polishVerdict == PolishOutputVerdict.Accepted)
-            {
-                // THE REVIEWED TEXT, NOT WHAT THE PROVIDER SENT. The guard strips what the model
-                // wrote ABOUT the text - "Sure, here is the cleaned transcript:" - and using the
-                // raw string here would put that chatter in somebody's document with their words.
-                processed = await _deterministicTextPipeline.ApplyPolishedTextAsync(
-                    deterministicRequest,
-                    processed,
-                    polishReview.Text,
-                    cancellationToken).ConfigureAwait(false);
-                await SaveRecoveryTextAsync(processed.Output, cancellationToken).ConfigureAwait(false);
-            }
-
-            EmitStageReceipts(processed.Receipts, emojiRestorationOnly: true);
-            var restorationMilliseconds = processed.Receipts
-                .Where(receipt => receipt.Stage == DeterministicTextStage.EmojiRestoration)
-                .Sum(receipt => receipt.ElapsedMilliseconds);
-            // THE SUMMARY IS LAST, BECAUSE IT IS THE ONLY LINE THAT CAN STILL BE WRONG. IsDegraded
-            // turns true when restoration times out or fails, and the duration has to include the
-            // restoration that a failure happened inside. Written before polish, a degraded pass
-            // reported itself as clean.
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                processed.IsDegraded
-                    ? AppEventCode.DeterministicProcessingDegraded
-                    : AppEventCode.DeterministicProcessingCompleted,
-                processed.IsDegraded
-                    ? AppFailureCategory.PostProcessing
-                    : AppFailureCategory.None,
-                deterministicMilliseconds + restorationMilliseconds));
+            var processed = finalized.Processed;
+            var polishResult = finalized.Polish;
 
             if (!recoveryOnly &&
                 !string.IsNullOrWhiteSpace(processed.Output.Text) &&
@@ -3299,8 +3231,7 @@ public partial class App : Application, IAsyncDisposable
                     await SaveHistoryAsync(
                         transcript,
                         processed.Output.Text,
-                        polishResult is { Status: PolishAttemptStatus.Polished } &&
-                            polishVerdict == PolishOutputVerdict.Accepted,
+                        finalized.WasPolished,
                         delivery.Delivered).ConfigureAwait(false);
                     await controller.CompleteAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
                     await controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
@@ -3315,8 +3246,7 @@ public partial class App : Application, IAsyncDisposable
             await SaveHistoryAsync(
                 transcript,
                 processed.Output.Text,
-                polishResult is { Status: PolishAttemptStatus.Polished } &&
-                    polishVerdict == PolishOutputVerdict.Accepted,
+                finalized.WasPolished,
                 wasDelivered: false,
                 expiresAt: recoveryOnly ? DateTimeOffset.UtcNow.AddHours(24) : null,
                 forceSave: recoveryOnly)
@@ -3580,76 +3510,64 @@ public partial class App : Application, IAsyncDisposable
         }
     }
 
-    private async Task<PolishResult?> TryPolishAsync(
-        ProcessedText input,
-        string? detectedLanguage,
-        CancellationToken cancellationToken)
+    /// <summary>The polish provider in force, and how it is hosted, or null when there is none.</summary>
+    private PolishSetup? CurrentPolishSetup() =>
+        _polishProvider is { } provider
+            ? new PolishSetup(provider, _polishUsesLocalRuntime, _polishResource)
+            : null;
+
+    /// <summary>The shell's half of a finalisation: the log lines and the recovery writes, nothing that decides.</summary>
+    private sealed class TranscriptFinalizationEffects(App app) : ITranscriptFinalizationEffects
     {
-        var provider = _polishProvider;
-        if (provider is null || string.IsNullOrWhiteSpace(input.Text))
-        {
-            return null;
-        }
+        public void RecordDeterministicProcessingStarted() =>
+            app._logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DeterministicProcessingStarted));
 
-        _logger.Write(new AppLogEntry(
-            DateTimeOffset.UtcNow,
-            AppEventCode.PolishStarted,
-            Provider: DiagnosticProviderIds.FromProviderId(provider.ProviderId)));
-        var timer = System.Diagnostics.Stopwatch.StartNew();
-        PolishResult result;
-        if (!_polishUsesLocalRuntime)
-        {
-            result = await provider.TryPolishAsync(
-                new PolishRequest(input, detectedLanguage, PolishVocabulary.Eligible(
-                    input.Text,
-                    _settings.UserData.CustomWords)),
-                cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            var acquired = await _resourceArbiter.AcquireAsync(
-                _polishResource,
-                RuntimeWorkloadKind.LocalPolish,
-                TimeSpan.FromSeconds(2),
-                cancellationToken).ConfigureAwait(false);
-            if (!acquired.Succeeded || acquired.Lease is null)
-            {
-                timer.Stop();
-                result = new PolishResult(
-                    input,
-                    PolishAttemptStatus.Unavailable,
-                    acquired.Error ?? new AppError(
-                        AppErrorCode.RuntimeResourceBusy,
-                        AppErrorStage.RuntimeResource,
-                        CanRetry: true),
-                    timer.ElapsedMilliseconds);
-            }
-            else
-            {
-                await using (acquired.Lease.ConfigureAwait(false))
-                {
-                    result = await provider.TryPolishAsync(
-                        new PolishRequest(input, detectedLanguage, PolishVocabulary.Eligible(
-                    input.Text,
-                    _settings.UserData.CustomWords)),
-                        cancellationToken).ConfigureAwait(false);
-                }
-            }
-        }
+        public void EmitStageReceipts(IReadOnlyList<DeterministicStageReceipt> receipts, bool emojiRestorationOnly) =>
+            app.EmitStageReceipts(receipts, emojiRestorationOnly);
 
-        timer.Stop();
-        _logger.Write(new AppLogEntry(
-            DateTimeOffset.UtcNow,
-            result.UsedFallback ? AppEventCode.PolishDegraded : AppEventCode.PolishCompleted,
-            result.UsedFallback
-                ? _polishUsesLocalRuntime
-                    ? AppFailureCategory.LocalPolish
-                    : AppFailureCategory.CloudPolish
-                : AppFailureCategory.None,
-            timer.ElapsedMilliseconds,
-            DiagnosticProviderIds.FromProviderId(provider.ProviderId),
-            result.Error?.Code));
-        return result;
+        public Task SaveRecoveryTextAsync(ProcessedText output, CancellationToken cancellationToken) =>
+            app.SaveRecoveryTextAsync(output, cancellationToken);
+
+        public void RecordPolishStarted(string providerId) =>
+            app._logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.PolishStarted,
+                Provider: DiagnosticProviderIds.FromProviderId(providerId)));
+
+        public void RecordPolishFinished(string providerId, PolishResult result, bool usedLocalRuntime, long elapsedMilliseconds) =>
+            app._logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                result.UsedFallback ? AppEventCode.PolishDegraded : AppEventCode.PolishCompleted,
+                result.UsedFallback
+                    ? usedLocalRuntime
+                        ? AppFailureCategory.LocalPolish
+                        : AppFailureCategory.CloudPolish
+                    : AppFailureCategory.None,
+                elapsedMilliseconds,
+                DiagnosticProviderIds.FromProviderId(providerId),
+                result.Error?.Code));
+
+        public void RecordPolishRefused() =>
+            app._logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.PolishOutputRefused,
+                // InvalidData rather than LocalPolish or CloudPolish: the refusal is about what came
+                // BACK, and either provider can produce it. Attributing it to one would make the log
+                // claim a cause it does not know.
+                AppFailureCategory.InvalidData));
+
+        public void RecordDeterministicProcessingFinished(bool degraded, long elapsedMilliseconds) =>
+            app._logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                degraded
+                    ? AppEventCode.DeterministicProcessingDegraded
+                    : AppEventCode.DeterministicProcessingCompleted,
+                degraded
+                    ? AppFailureCategory.PostProcessing
+                    : AppFailureCategory.None,
+                elapsedMilliseconds));
     }
 
     private void WriteSessionEvent(SessionTransitionResult result)
