@@ -80,7 +80,13 @@ refuses to run while an unowned `EnviousWispr.App` exists, because a second low-
 receive the injected key and start a REAL take into whatever is focused. **The refusal is by process
 name**; a differently-named build holds the same hook and is invisible to it (macOS identifies by
 executable path for that reason). And the machine is in the founder's home: the fixture is the microphone,
-and the modes that play audio through the speakers are for a free room, not the small hours.
+and the modes that play audio through the speakers are for a free room, not the small hours - unless
+`--virtual-cable` is added, which routes the same fixture through VB-CABLE's virtual endpoints (opened
+explicitly, defaults never changed) and keeps the production WASAPI capture and global hook in the loop
+without the speakers or the real microphone. It refuses, as staging, a missing or duplicated endpoint, Windows
+"Listen to this device" on the cable, a preflight the cable did not carry, and - from the app's own log,
+after the take - the product's deliberate fallback to the default microphone. That is the everyday shape of
+the live-microphone journey now; the audible one is for proving the room.
 
 ## RULE: read-the-log-during-ordinary-use-before-building-a-driver
 The founder dictates all day and `app.jsonl` carries the whole chain. A staged take proves the path runs;

@@ -162,6 +162,41 @@ and are discarded. The actual journey records only while F8 is held, never persi
 profile, and stores only a temporary phrase-match boolean and character count before cleanup. It refuses to run
 while an unowned EnviousWispr or controlled-target process exists.
 
+### Silent acoustic journeys over a virtual cable
+
+Add `--virtual-cable` to either live-microphone command to run the same production capture and hook without
+using the speakers or the real microphone. It needs VB-Audio's free VB-CABLE driver installed: the fixture
+plays to the cable's playback endpoint (`CABLE Input`) and the isolated journey profile is the default profile
+plus one line naming the cable's recording endpoint (`CABLE Output`) as its preferred microphone, so the app
+records exactly what was played, through the same WASAPI path a real microphone takes, with no room, echo
+suppression or webcam in between. The harness opens both endpoints explicitly and never changes the machine's
+default devices (the app's own device picker still reads which one is the default, as it always does).
+
+Four things are staging, not product, and make the run INSTRUMENT INVALID (exit 3): either endpoint missing or
+duplicated (Windows allows two endpoints to share a name, so exactly one of each is required); Windows "Listen
+to this device" enabled on `CABLE Output`, which would forward the cable to a playback device and make the run
+audible; the preflight fixture not coming back through the cable (not started, not completed, or a peak below
+0.05); and the app's own log showing it fell back to the default microphone because the cable failed to open
+when the key went down. The last check is what keeps the label honest: the product deliberately falls back to
+the default microphone when a preferred one is unavailable, and in this mode "default" is the founder's real
+one, so a run in which that happened is refused after the fact rather than reported as silent. It cannot
+combine with `--synthesized-acoustic` (Windows speech synthesis plays to the default device) or
+`--manual-microphone`.
+
+```powershell
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --live-microphone --virtual-cable
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --live-microphone --virtual-cable
+```
+
+The result carries `audioRoute` (`VirtualCable: CABLE Input ... -> CABLE Output ...`, or `MachineDefaultEndpoints`
+for the audible mode, which names the routing asked for, not what is physically wired to it) and an `inputKind`
+that says `VirtualCable`, so a silent pass can never be read as an acoustic one. The VB-CABLE installer can make
+the cable the default playback or recording device; check both in Windows sound settings after installing it,
+once, before trusting the speakers or the microphone again. Other monitoring or repeater software that forwards
+the cable to a playback device is outside what the harness can see.
+
 The remaining physical acceptance path is a separate guided mode. Exit any normally installed EnviousWispr
 instance first, run the command below, keep the controlled target focused, and follow the fixed public instruction
 shown in that window. The person must physically hold F8, speak the displayed sentence into the microphone, and
@@ -196,8 +231,8 @@ only whether the known public
 phrase appeared and the character count, then the harness deletes it with the isolated profile.
 
 The default mode is real production pipeline proof, but not microphone or global-registration proof. The live
-mode adds production WASAPI, the installed global hook, and an acoustic speaker-to-microphone path, but its key
-edges and playback source are still synthetic. On the current webcam-microphone hardware, both the reviewed
+mode adds production WASAPI, the installed global hook, and an acoustic speaker-to-microphone path (without
+`--virtual-cable`; with it, the path is the cable), but its key edges and playback source are still synthetic. On the current webcam-microphone hardware, both the reviewed
 fixture and Windows-synthesized sentence were detected by the content-free probe but failed their lexical gates;
 speaker echo suppression is the likely boundary. The `--manual-microphone` mode makes the remaining requirement
 directly runnable, but it is not evidence until a person completes it successfully on the exact candidate build.

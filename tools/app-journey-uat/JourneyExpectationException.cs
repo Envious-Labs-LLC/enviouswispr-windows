@@ -59,4 +59,8 @@ internal sealed class JourneyExpectationException : Exception
     /// <summary>A reason the harness cannot proceed that says nothing about the product.</summary>
     public static JourneyExpectationException Instrument(string message) =>
         new(message) { InstrumentInvalid = true };
+
+    /// <summary>The same refusal, keeping what Windows said underneath it.</summary>
+    public static JourneyExpectationException Instrument(string message, Exception innerException) =>
+        new(message, innerException) { InstrumentInvalid = true };
 }
