@@ -1,6 +1,6 @@
 using System.Xml.Linq;
-using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
+using EnviousWispr.Core.Settings;
+using EnviousWispr.Presentation;
 
 namespace EnviousWispr.Architecture.Tests;
 
@@ -42,25 +42,38 @@ public sealed class AppearanceCommitTests
     }
 
     [Fact]
-    public void ThePillDesignIsAmongTheFieldsAppearanceActuallyWrites()
+    public async Task ThePillDesignIsAmongTheFieldsAppearanceActuallyWrites()
     {
-        // A HANDLER THAT WRITES THE WRONG FIELDS IS THE SAME BUG WEARING A CALLBACK. The persist
-        // method names its fields one by one, so a card can be wired to it and still be dropped.
-        var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(
-            RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs")));
-        var persist = tree.GetRoot().DescendantNodes()
-            .OfType<MethodDeclarationSyntax>()
-            .FirstOrDefault(method => method.Identifier.ValueText == "PersistAppearanceChoicesAsync");
-        Assert.True(persist is not null, "PersistAppearanceChoicesAsync is gone.");
+        // A HANDLER THAT WRITES THE WRONG FIELDS IS THE SAME BUG WEARING A CALLBACK. This used to read
+        // the window's source for the three assignments; the write is the presenter's now, so the
+        // proof is behaviour: what the window hands over is what reaches the store, all three of it.
+        var store = new RecordingStore();
+        using var presenter = new SettingsPresenter(store, AppSettings.Default);
 
-        var written = persist!.DescendantNodes()
-            .OfType<AssignmentExpressionSyntax>()
-            .Select(assignment => assignment.Left.ToString())
-            .ToArray();
+        var result = await presenter.SaveAppearanceAsync(
+            new AppearanceChoices(AppTheme.Light, OverlayPillPosition.Bottom, RecordingPillDesign.LevelRail));
 
-        Assert.Contains("Theme", written);
-        Assert.Contains("OverlayPosition", written);
-        Assert.Contains("PillDesignWithoutWords", written);
+        Assert.True(result.Saved);
+        Assert.Equal(AppTheme.Light, store.Saved!.Preferences.Theme);
+        Assert.Equal(OverlayPillPosition.Bottom, store.Saved.Preferences.OverlayPosition);
+        Assert.Equal(RecordingPillDesign.LevelRail, store.Saved.Preferences.PillDesignWithoutWords);
+    }
+
+    private sealed class RecordingStore : ISettingsStore
+    {
+        public AppSettings? Saved { get; private set; }
+
+        public Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
+        {
+            Saved = settings;
+            return Task.CompletedTask;
+        }
+
+        public Task<SettingsLoadResult> LoadAsync(CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<SettingsResetResult> ResetAsync(AppSettings replacement, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private static string RepositoryRoot()
