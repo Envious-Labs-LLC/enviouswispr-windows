@@ -51,6 +51,7 @@ public partial class App : Application, IAsyncDisposable
     private readonly RuntimeResourceArbiter _resourceArbiter = new();
     private readonly SemaphoreSlim _previewGate = new(1, 1);
     private readonly SemaphoreSlim _sessionOperationGate = new(1, 1);
+    private DictationSessionCoordinator? _sessionCoordinator;
     private readonly DeterministicTextPipeline _deterministicTextPipeline = new();
     private SingleInstanceLock? _singleInstanceLock;
     private SingleInstanceActivationChannel? _activationChannel;
@@ -1011,6 +1012,14 @@ public partial class App : Application, IAsyncDisposable
         _disposed = true;
         var cleanShutdown = true;
         _activeProcessingCancellation?.Cancel();
+        // ADMISSION CLOSES BEFORE THE GATE IS TAKEN. A command still queued would otherwise wait on a
+        // gate this method is about to hold and then dispose; closing first refuses it, cancels the
+        // consumer's wait, and lets whatever is mid-flight finish on its own deadline.
+        if (_sessionCoordinator is { } coordinator)
+        {
+            cleanShutdown &= await coordinator.StopAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(true);
+        }
+
         cleanShutdown &= await TryCleanupAsync(StopRecordingWatchdogAsync).ConfigureAwait(true);
 
         var sessionGateHeld = false;
@@ -1155,6 +1164,14 @@ public partial class App : Application, IAsyncDisposable
             cleanShutdown &= TryCleanup(_sessionOperationGate.Dispose);
         }
 
+        if (_sessionCoordinator is { } stoppedCoordinator)
+        {
+            cleanShutdown &= await TryCleanupAsync(
+                async () => await stoppedCoordinator.DisposeAsync().ConfigureAwait(true))
+                .ConfigureAwait(true);
+            _sessionCoordinator = null;
+        }
+
         if (_runId is { } runId)
         {
             var completed = cleanShutdown &&
@@ -1270,6 +1287,16 @@ public partial class App : Application, IAsyncDisposable
             preferredAudioDevice: string.IsNullOrWhiteSpace(_settings.PreferredMicrophoneId)
                 ? null
                 : new EnviousWispr.Core.Audio.AudioDeviceId(_settings.PreferredMicrophoneId));
+        // THE COORDINATOR SHARES THE SHELL'S SESSION GATE RATHER THAN OWNING ONE, because the watchdog,
+        // lock/suspend recovery, the update check and shutdown all still take that gate directly. One
+        // gate, two kinds of taker; the queue is what changed, not the lock. Built beside the controller
+        // so a press captures its target and delivery choice from the same provider the controller
+        // would have asked, at the instant of the key, before the queue's first hop.
+        var sessionController = _sessionController;
+        _sessionCoordinator = new DictationSessionCoordinator(
+            new SessionCommandExecutor(this),
+            _sessionOperationGate,
+            sessionController.CaptureStartContext);
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
         // A saved keybind builds a NEW hook, which starts armed and knows nothing about a capture
         // field that is still focused. Carrying the state across is what stops the hook re-arming
@@ -2132,6 +2159,16 @@ public partial class App : Application, IAsyncDisposable
         }
     }
 
+    /// <summary>Submits a push-to-talk signal and returns once it has run or been refused.</summary>
+    /// <remarks>
+    /// A RELEASE THAT ARRIVES WHILE THE PRESS IS STILL STARTING IS KEPT, NOT DROPPED. This used to probe
+    /// the session gate with a zero timeout and return silently when it was held - and it is held for
+    /// the whole of starting a recording, microphone and live preview included, so a quick tap on a
+    /// busy machine lost its key-up and the recording ran on until the next press (#86). The
+    /// coordinator queues the terminal signal behind the press and runs it exactly once when the press
+    /// is done. A press during another command is still refused, now explicitly (Busy), because a
+    /// press that ran later would open a microphone nobody asked for.
+    /// </remarks>
     private async Task HandlePushToTalkAsync(PushToTalkSignal signal)
     {
         if (_exitRequested || _disposed)
@@ -2139,16 +2176,54 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        var controller = _sessionController;
-        if (controller is null)
+        var coordinator = _sessionCoordinator;
+        if (coordinator is null)
         {
             return;
         }
 
-        if (!await _sessionOperationGate.WaitAsync(0).ConfigureAwait(false))
+        try
         {
-            return;
+            var result = await coordinator.SubmitAsync(signal).ConfigureAwait(false);
+            if (result.WasQueued)
+            {
+                _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.DictationSignalQueued));
+            }
         }
+        catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
+        {
+            // THE HOOK AND THE AUTO-STOP LOOP FIRE AND FORGET THIS TASK. The executor recovers its own
+            // failures; anything that escapes it would otherwise fault a task nobody awaits and vanish.
+            // Content-free, like every line in this log.
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.UnhandledFailure,
+                AppFailureCategory.Unknown));
+        }
+    }
+
+    /// <summary>The body of one push-to-talk transition. Runs under the session gate, one at a time.</summary>
+    /// <remarks>
+    /// NOT CALLED DIRECTLY. The coordinator is the only caller and holds the session gate for the
+    /// duration, which is why nothing in here takes it. The coordinator's stopping token stops at the
+    /// adapter below: the work in here keeps its own processing deadline, and threading shutdown
+    /// through it is part of moving this body out of the shell (#148, step 3).
+    /// </remarks>
+    private async Task<SessionCommandResult> ExecuteSessionCommandAsync(SessionCommand command)
+    {
+        var signal = command.Signal;
+        if (_exitRequested || _disposed)
+        {
+            return new SessionCommandResult(SessionCommandDisposition.Stopping);
+        }
+
+        var controller = _sessionController;
+        if (controller is null)
+        {
+            return new SessionCommandResult(SessionCommandDisposition.Ignored);
+        }
+
+        SessionTransitionResult? transition = null;
 
         // Carried rather than inherited, because the catch blocks below run after the try's scope
         // has been disposed and are exactly the lines somebody reads first when a dictation went
@@ -2173,7 +2248,7 @@ public partial class App : Application, IAsyncDisposable
                             "Copy or delete the unfinished dictation on Home before starting another recording.");
                         _window?.SetSessionStatus(DictationStatus.Quiet("Review recovered text before recording again"));
                     });
-                    return;
+                    return new SessionCommandResult(SessionCommandDisposition.Applied);
                 }
 
                 var admission = SystemResourceAdmissionPolicy.Evaluate(_resourceProbe.Probe());
@@ -2198,7 +2273,7 @@ public partial class App : Application, IAsyncDisposable
                         _window?.SetSessionStatus(DictationStatus.Distress(
                             "Recording paused because Windows memory is critically low"));
                     });
-                    return;
+                    return new SessionCommandResult(SessionCommandDisposition.Applied);
                 }
 
                 if (!admission.CanPersistRecovery)
@@ -2218,6 +2293,10 @@ public partial class App : Application, IAsyncDisposable
                 signal == PushToTalkSignal.Cancelled && _escapeRecoveryForSession;
             var result = signal switch
             {
+                // THE PRESS BRINGS ITS OWN TARGET. Captured at admission, inside the key callback; the
+                // controller is told rather than asked, so the queue's hop cannot move the words.
+                PushToTalkSignal.Pressed when command.StartContext is { } startContext =>
+                    await controller.PressAsync(startContext).ConfigureAwait(false),
                 PushToTalkSignal.Pressed => await controller.PressAsync().ConfigureAwait(false),
                 PushToTalkSignal.Released => await controller.ReleaseAsync().ConfigureAwait(false),
                 PushToTalkSignal.Cancelled when recoverCancelledRecording =>
@@ -2230,6 +2309,7 @@ public partial class App : Application, IAsyncDisposable
             // the session either does not exist yet (a press) or is being read off the controller,
             // and lines written there honestly have no dictation. `Begin` restores rather than
             // clears, so this nesting inside another scope is safe.
+            transition = result;
             interrupted = result.Session?.Id.Value;
             using var dictation = interrupted is { } known
                 ? DictationScope.Begin(known)
@@ -2260,7 +2340,7 @@ public partial class App : Application, IAsyncDisposable
                         processingCancellation.Token,
                         recoveryOnly: recoverCancelledRecording)
                     .ConfigureAwait(false);
-                return;
+                return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
             }
             else if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
             {
@@ -2273,6 +2353,7 @@ public partial class App : Application, IAsyncDisposable
 
             _window?.DispatcherQueue.TryEnqueue(() =>
                 _window?.SetSessionStatus(SessionStatus(result)));
+            return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
         }
         catch (OperationCanceledException)
         {
@@ -2289,6 +2370,7 @@ public partial class App : Application, IAsyncDisposable
                     AppErrorStage.Session,
                     CanRetry: true),
                 DictationStatus.Quiet("The dictation timed out and was recovered safely")).ConfigureAwait(false);
+            return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session);
         }
         catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
         {
@@ -2306,6 +2388,7 @@ public partial class App : Application, IAsyncDisposable
                     AppErrorStage.Session,
                     CanRetry: true),
                 DictationStatus.Error("Session failed and was reset safely")).ConfigureAwait(false);
+            return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session);
         }
         finally
         {
@@ -2316,7 +2399,22 @@ public partial class App : Application, IAsyncDisposable
 
             processingCancellation?.Dispose();
             await RecordDictationEdgeAsync().ConfigureAwait(false);
-            _sessionOperationGate.Release();
+        }
+    }
+
+    /// <summary>The seam the coordinator runs commands through; the body still lives in the shell.</summary>
+    private sealed class SessionCommandExecutor(App app) : ISessionCommandExecutor
+    {
+        public Task<SessionCommandResult> ExecuteAsync(
+            SessionCommand command,
+            CancellationToken stoppingToken)
+        {
+            ArgumentNullException.ThrowIfNull(command);
+            // DELIBERATELY NOT FORWARDED. The body has its own processing deadline and its own recovery
+            // on cancellation; a shutdown token reaching the controller mid-transition would turn an
+            // orderly finalisation into a timed-out one. Step 3 on #148 owns wiring this properly.
+            _ = stoppingToken;
+            return app.ExecuteSessionCommandAsync(command);
         }
     }
 

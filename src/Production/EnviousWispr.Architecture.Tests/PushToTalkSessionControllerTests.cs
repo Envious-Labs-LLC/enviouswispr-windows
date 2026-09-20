@@ -234,7 +234,36 @@ public sealed class PushToTalkSessionControllerTests
     {
         public TargetWindowId Window { get; set; } = new(window);
 
-        public TargetWindowId? CaptureForegroundTarget() => Window.IsValid ? Window : null;
+        public bool ThrowIfAsked { get; set; }
+
+        public int Captures { get; private set; }
+
+        public TargetWindowId? CaptureForegroundTarget()
+        {
+            if (ThrowIfAsked)
+            {
+                throw new InvalidOperationException("the foreground window was asked for when nothing could start");
+            }
+
+            Captures++;
+            return Window.IsValid ? Window : null;
+        }
+    }
+
+    [Fact]
+    public async Task ASecondPressDuringARecordingNeverAsksForTheForegroundWindow()
+    {
+        var audio = new FakeAudioCapture();
+        var targets = new FakeTargetProvider(101);
+        await using var controller = new PushToTalkSessionController(audio, targets);
+
+        var started = await controller.PressAsync();
+        targets.ThrowIfAsked = true;
+        var overlap = await controller.PressAsync();
+
+        Assert.Equal(SessionTransitionKind.Started, started.Kind);
+        Assert.Equal(SessionTransitionKind.Ignored, overlap.Kind);
+        Assert.Equal(1, targets.Captures);
     }
 
     [Fact]

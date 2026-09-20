@@ -85,6 +85,15 @@ var syntheticHotkey = args.Any(argument => string.Equals(
     argument,
     "--synthetic-hotkey",
     StringComparison.OrdinalIgnoreCase));
+// THE KEY-UP LANDS WHILE THE PRESS IS STILL STARTING. The ordinary synthetic take waits for the app to
+// say it is recording before it lets go, so the release always finds the session gate free. A tap that
+// lets go at once puts the release inside the window where the shell used to probe that gate with a
+// zero timeout and discard the signal (#86): the recording then ran on and no delivery ever came. This
+// variant exists to make that window a test, and it MUST fail against a build with the old gate.
+var quickTap = args.Any(argument => string.Equals(
+    argument,
+    "--quick-tap",
+    StringComparison.OrdinalIgnoreCase));
 var deterministicProfileArgument = ArgumentValue(args, "--deterministic-profile");
 var deterministicProfile = deterministicProfileArgument?.ToLowerInvariant() switch
 {
@@ -173,6 +182,12 @@ if (deterministicProfile != DeterministicJourneyProfile.None &&
 {
     throw new JourneyExpectationException(
         "Deterministic-profile UAT requires --english-parakeet and cannot be combined with local polish, Live Preview, live microphone, Escape Recovery, or failure injection.");
+}
+if (quickTap && !syntheticHotkey)
+{
+    throw new JourneyExpectationException(
+        "--quick-tap modifies --synthetic-hotkey and means nothing without it: only the injected key has a "
+            + "key-up to time.");
 }
 if (syntheticHotkey &&
     (liveMicrophone || livePreview || headStart || escapeRecovery || failureMode != JourneyFailureMode.None))
@@ -615,7 +630,8 @@ try
                     diagnosticPath,
                     targetResultPath,
                     target.MainWindowHandle,
-                    profileDirectory);
+                    profileDirectory,
+                    quickTap);
                 exitEvent.Set();
             }
             else
@@ -829,6 +845,7 @@ try
             _ when manualMicrophone => "PhysicalF8-FounderSpeech-ProductionWasapi",
             _ when synthesizedAcoustic => "SyntheticF8-WindowsSpeechPlayback-ProductionWasapi",
             _ when liveMicrophone => "SyntheticF8-ReviewedFixturePlayback-ProductionWasapi",
+            _ when syntheticHotkey && quickTap => "SyntheticHotkeyQuickTap-InstalledGlobalHook-ReviewedFixtureAudioCapture",
             _ when syntheticHotkey => "SyntheticHotkey-InstalledGlobalHook-ReviewedFixtureAudioCapture",
             _ => "NamedEvents-ReviewedFixtureAudioCapture",
         },
@@ -1855,7 +1872,8 @@ static SyntheticHotkeyEvidence DriveSyntheticHotkey(
     string diagnosticPath,
     string targetResultPath,
     nint targetWindow,
-    string profileDirectory)
+    string profileDirectory,
+    bool quickTap)
 {
     var quietWindow = TimeSpan.FromSeconds(2);
     // The app's own default fixture hold (ResolveJourneyUatHoldDuration), so the two fixture-driven
@@ -1883,17 +1901,35 @@ static SyntheticHotkeyEvidence DriveSyntheticHotkey(
     BringToForeground(targetWindow);
     Thread.Sleep(250);
 
-    // POSITIVE HALF: the resolved key, held past the moment the app says it is recording.
+    // POSITIVE HALF: the resolved key, held past the moment the app says it is recording - or, for a
+    // quick tap, let go at once so the key-up arrives while the press is still opening the microphone.
+    // The tap still has to produce a recording AND a delivery: the app owes the debounce, not the finger.
     var pressed = Stopwatch.StartNew();
     SendKey(virtualKey, keyDown: true);
-    var recordingStarted = WaitForDiagnosticEvent(
-        diagnosticPath,
-        "DictationRecordingStarted/",
-        TimeSpan.FromSeconds(3));
-    var pressToRecording = pressed.Elapsed;
-    Thread.Sleep(holdAfterRecording);
-    SendKey(virtualKey, keyDown: false);
-    var heldFor = pressed.Elapsed;
+    TimeSpan heldFor;
+    bool recordingStarted;
+    TimeSpan pressToRecording;
+    if (quickTap)
+    {
+        SendKey(virtualKey, keyDown: false);
+        heldFor = pressed.Elapsed;
+        recordingStarted = WaitForDiagnosticEvent(
+            diagnosticPath,
+            "DictationRecordingStarted/",
+            TimeSpan.FromSeconds(3));
+        pressToRecording = pressed.Elapsed;
+    }
+    else
+    {
+        recordingStarted = WaitForDiagnosticEvent(
+            diagnosticPath,
+            "DictationRecordingStarted/",
+            TimeSpan.FromSeconds(3));
+        pressToRecording = pressed.Elapsed;
+        Thread.Sleep(holdAfterRecording);
+        SendKey(virtualKey, keyDown: false);
+        heldFor = pressed.Elapsed;
+    }
     if (!recordingStarted)
     {
         throw new JourneyExpectationException(
@@ -1911,11 +1947,39 @@ static SyntheticHotkeyEvidence DriveSyntheticHotkey(
                 + "absence check meant nothing. Lengthen the window or find out why the app got slower.");
     }
 
+    // A DROPPED KEY-UP LOOKS LIKE A SLOW TRANSCRIPTION FROM HERE, so the wait is bounded and the
+    // verdict is read off what the app wrote, not off the silence. A capture that was never finalised
+    // is the lost release; a capture that was finalised and then nothing is a downstream failure, and
+    // the two must not share a sentence.
     if (!WaitForDiagnosticEvent(diagnosticPath, "TextDeliveryCompleted/", TimeSpan.FromSeconds(45)))
     {
+        var events = ReadDiagnosticEvents(diagnosticPath);
+        var finalised = events.Any(value =>
+            value.StartsWith("DictationCaptureFinalized/", StringComparison.Ordinal));
         throw new JourneyExpectationException(
-            "The synthetic-hotkey take did not reach TextDeliveryCompleted; "
-                + $"events={string.Join(',', ReadDiagnosticEvents(diagnosticPath))}.");
+            (quickTap && !finalised
+                ? "The quick tap did not reach TextDeliveryCompleted and the capture was never finalised: "
+                    + "the key-up that arrived during the press was not honoured; "
+                : finalised
+                    ? "The take finalised its capture but never reached TextDeliveryCompleted: transcription "
+                        + "or delivery failed downstream of the hotkey; "
+                    : "The synthetic-hotkey take did not reach TextDeliveryCompleted; ")
+                + $"events={string.Join(',', events)}.");
+    }
+
+    // THE OVERLAP HAS TO HAVE HAPPENED, OR THE PASS MEANS NOTHING. A quick tap whose key-up landed
+    // after the press had already finished starting took the ordinary path, and a build with the old
+    // zero-timeout gate would have passed it too. The app writes DictationSignalQueued only when the
+    // signal actually waited, so that line is the difference between a certified run and a lucky one.
+    // WAITED FOR, NOT GLANCED AT. The app writes the queued line when the release's submitter resumes,
+    // which can be after the delivery line the harness just saw; reading once would call a correct run
+    // an instrument failure.
+    if (quickTap && !WaitForDiagnosticEvent(diagnosticPath, "DictationSignalQueued/", TimeSpan.FromSeconds(5)))
+    {
+        throw JourneyExpectationException.Instrument(
+            "The quick tap delivered, but the app never reported DictationSignalQueued, so the key-up did "
+                + "not overlap the press and this run certifies nothing about the queue. Re-run; if it "
+                + "never overlaps, the tap is not quick enough on this machine.");
     }
 
     var targetObserved = WaitForExpectedTargetResult(targetResultPath, TimeSpan.FromSeconds(5));
@@ -1924,7 +1988,8 @@ static SyntheticHotkeyEvidence DriveSyntheticHotkey(
         HeldMilliseconds: (int)heldFor.TotalMilliseconds,
         QuietWindowMilliseconds: (int)quietWindow.TotalMilliseconds,
         PressToRecordingMilliseconds: (int)pressToRecording.TotalMilliseconds,
-        TargetObserved: targetObserved);
+        TargetObserved: targetObserved,
+        QuickTap: quickTap);
 }
 
 /// <summary>The key the app is listening for, or a refusal - never a guess.</summary>
@@ -2078,6 +2143,7 @@ static void RequireKnownArguments(string[] arguments)
     [
         "--live-microphone", "--manual-microphone", "--english-parakeet", "--live-preview",
         "--head-start", "--escape-recovery", "--synthesized-acoustic", "--synthetic-hotkey",
+        "--quick-tap",
     ];
     string[] valuedFlags =
     [
@@ -2299,7 +2365,8 @@ internal sealed record SyntheticHotkeyEvidence(
     int HeldMilliseconds,
     int QuietWindowMilliseconds,
     int PressToRecordingMilliseconds,
-    bool TargetObserved);
+    bool TargetObserved,
+    bool QuickTap);
 
 [StructLayout(LayoutKind.Sequential)]
 internal struct Input
