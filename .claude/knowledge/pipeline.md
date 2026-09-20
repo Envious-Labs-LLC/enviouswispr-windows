@@ -43,11 +43,14 @@ remain wordless designs.
   or suspending are all commands on one queue, run one at a time by `DictationSessionExecutor`. A press
   is refused (`Busy`) while anything holds the session; a release or cancel that arrives while one is
   running is kept and run after it, not dropped; a second terminal is ignored because the recording it
-  would end is already ending. An interruption (lock or suspend) is queued whatever is ahead of it and,
-  if it then waited more than five seconds, stands down and reports recovery as pending - the shell's
-  old five-second wait for its session gate, kept as policy. The update check holds the session through
-  the coordinator (`TryHold`), so a press during a download is `Busy`. Shutdown stops the coordinator
-  and needs no gate of its own. The shell keeps Windows' notifications, the processing deadline it
+  would end is already ending. An interruption (lock or suspend) is queued whatever is ahead of it; if the
+  command ahead has not finished in five seconds, "recovery is still pending" is reported at that
+  moment, while that command carries on, and the interruption is skipped when its turn comes - the
+  shell's old five-second wait for its session gate, kept as a deadline on the coordinator's clock.
+  With nothing in flight, an interruption does nothing. The update check holds the session through
+  the coordinator (`TryHold`), so a press during a download is `Busy`. Shutdown closes admission before its
+  first await, gives the running command ten seconds, and runs the shell's session teardown as the last
+  thing under the session (or after a further ten seconds, beside a command that would not finish). The shell keeps Windows' notifications, the processing deadline it
   cancels on lock, and rendering.
 
 ## Deterministic parity

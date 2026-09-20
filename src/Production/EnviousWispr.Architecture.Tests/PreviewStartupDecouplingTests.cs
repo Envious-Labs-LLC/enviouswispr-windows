@@ -194,6 +194,57 @@ public sealed class PreviewStartupDecouplingTests
         Assert.Equal(1, world.Engine.Stops);
     }
 
+    [Fact]
+    public async Task ShutdownWhileTheMicrophoneIsStillOpeningRefusesTheQueuedReleaseAndTearsDownAfterThePress()
+    {
+        // STEP 11'S PROOF, FOUR: quit while a press is still opening the microphone with a release
+        // already queued behind it. The release is refused when its turn comes; the press finishes on
+        // its own terms; the teardown runs after it, once, and nothing is transcribed.
+        var world = World.BuildWithMicrophoneOpeningHeld();
+        var press = world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await world.Capture.StartEntered.Task.WaitAsync(Patience);
+        var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+
+        var shutdown = world.Coordinator.ShutdownAsync(Patience);
+        Assert.False(shutdown.IsCompleted);
+        Assert.Equal(0, world.Effects.TearDowns);
+
+        world.Capture.AllowStartExit.SetResult();
+        Assert.Equal(SessionCommandDisposition.Applied, (await press.WaitAsync(Patience)).Disposition);
+        Assert.Equal(SessionCommandDisposition.Stopping, (await release.WaitAsync(Patience)).Disposition);
+        Assert.True(await shutdown.WaitAsync(Patience));
+
+        Assert.Equal(1, world.Effects.TearDowns);
+        Assert.DoesNotContain(world.Effects.Trace, effect => effect.StartsWith("Transcribe", StringComparison.Ordinal));
+        Assert.Equal("TearDownSession", world.Effects.Trace.Last());
+        await world.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task ShutdownDuringFinalisationWaitsForItAndTranscribesExactlyOnce()
+    {
+        // STEP 11'S PROOF, FIVE: quit while a release is transcribing. The teardown waits for the
+        // transcription, which is delivered once; nothing is torn down under it and nothing runs after.
+        await using var world = await World.StartRecordingWithPreviewStartupHeldAsync();
+        world.Engine.AllowStartExit.SetResult();
+        world.Effects.HoldTranscription = true;
+        var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await world.Effects.TranscriptionEntered.Task.WaitAsync(Patience);
+
+        var shutdown = world.Coordinator.ShutdownAsync(Patience);
+        Assert.False(shutdown.IsCompleted);
+        Assert.Equal(0, world.Effects.TearDowns);
+        Assert.Equal(SessionCommandDisposition.Stopping, (await world.Coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked)).Disposition);
+
+        world.Effects.AllowTranscriptionExit.SetResult();
+        Assert.Equal(SessionCommandDisposition.Applied, (await release.WaitAsync(Patience)).Disposition);
+        Assert.True(await shutdown.WaitAsync(Patience));
+
+        Assert.Single(world.Effects.Trace, effect => effect.StartsWith("Transcribe", StringComparison.Ordinal));
+        Assert.Equal(1, world.Effects.TearDowns);
+        Assert.True(world.Effects.Trace.ToList().IndexOf("TearDownSession") > world.Effects.Trace.ToList().FindIndex(effect => effect.StartsWith("Transcribe", StringComparison.Ordinal)));
+    }
+
     private static bool IsOrderedEffect(string effect) =>
         effect.StartsWith("Capture ", StringComparison.Ordinal) ||
         effect.StartsWith("Preview ", StringComparison.Ordinal) ||
@@ -209,10 +260,17 @@ public sealed class PreviewStartupDecouplingTests
         public required ShellAdapter Effects { get; init; }
         public required FakeLogger Log { get; init; }
 
-        /// <summary>A press has been admitted and run to completion while the preview engine's start is still held.</summary>
-        public static async Task<World> StartRecordingWithPreviewStartupHeldAsync(bool escapeRecovery = false)
+        /// <summary>A world whose microphone will not finish opening until told; nothing has been pressed yet.</summary>
+        public static World BuildWithMicrophoneOpeningHeld()
         {
-            var capture = new FakeAudioCapture();
+            var world = Build(escapeRecovery: false, holdMicrophoneOpening: true);
+            world.Engine.AllowStartExit.TrySetResult();
+            return world;
+        }
+
+        private static World Build(bool escapeRecovery, bool holdMicrophoneOpening)
+        {
+            var capture = new FakeAudioCapture { HoldStart = holdMicrophoneOpening };
             var controller = new PushToTalkSessionController(capture, new FakeTargetProvider(101), minimumHoldDuration: TimeSpan.Zero);
             var engine = new FakeEngine { HoldStarts = true };
             var log = new FakeLogger();
@@ -223,7 +281,7 @@ public sealed class PreviewStartupDecouplingTests
             var coordinator = new DictationSessionCoordinator(
                 executor,
                 () => new RecordingStartContext(new TargetWindowId(101), TextDeliveryOptions.Default));
-            var world = new World
+            return new World
             {
                 Coordinator = coordinator,
                 Controller = controller,
@@ -233,6 +291,17 @@ public sealed class PreviewStartupDecouplingTests
                 Effects = effects,
                 Log = log,
             };
+        }
+
+        /// <summary>A press has been admitted and run to completion while the preview engine's start is still held.</summary>
+        public static async Task<World> StartRecordingWithPreviewStartupHeldAsync(bool escapeRecovery = false)
+        {
+            var world = Build(escapeRecovery, holdMicrophoneOpening: false);
+            var capture = world.Capture;
+            var controller = world.Controller;
+            var engine = world.Engine;
+            var preview = world.Preview;
+            var coordinator = world.Coordinator;
 
             var press = await coordinator.SubmitAsync(PushToTalkSignal.Pressed).WaitAsync(Patience);
             await engine.StartStarted.Task.WaitAsync(Patience);
@@ -325,10 +394,24 @@ public sealed class PreviewStartupDecouplingTests
             }
 
             Add($"Transcribe:recoveryOnly={recoveryOnly}");
+            if (HoldTranscription)
+            {
+                TranscriptionEntered.TrySetResult();
+                await AllowTranscriptionExit.Task.ConfigureAwait(false);
+            }
         }
+
+        public bool HoldTranscription { get; set; }
+
+        public TaskCompletionSource TranscriptionEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource AllowTranscriptionExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int TearDowns { get; private set; }
 
         public Task TearDownSessionAsync()
         {
+            TearDowns++;
             Add("TearDownSession");
             return Task.CompletedTask;
         }
@@ -410,11 +493,23 @@ public sealed class PreviewStartupDecouplingTests
 
         public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Task<AudioOperationResult> StartAsync(AudioCaptureRequest request, CancellationToken cancellationToken = default)
+        public bool HoldStart { get; set; }
+
+        public TaskCompletionSource StartEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource AllowStartExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<AudioOperationResult> StartAsync(AudioCaptureRequest request, CancellationToken cancellationToken = default)
         {
             _sessionId = request.SessionId;
+            StartEntered.TrySetResult();
+            if (HoldStart)
+            {
+                await AllowStartExit.Task.ConfigureAwait(false);
+            }
+
             IsCapturing = true;
-            return Task.FromResult(new AudioOperationResult(Succeeded: true));
+            return new AudioOperationResult(Succeeded: true);
         }
 
         public Task<CapturedAudio> StopAsync(CancellationToken cancellationToken = default)

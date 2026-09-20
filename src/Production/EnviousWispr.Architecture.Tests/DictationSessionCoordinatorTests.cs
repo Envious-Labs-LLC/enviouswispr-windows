@@ -580,6 +580,137 @@ public sealed class DictationSessionCoordinatorTests
     }
 
     [Fact]
+    public async Task AHoldStillOutWhenTheCoordinatorIsDisposedIsGivenBackWithoutAThrow()
+    {
+        // An update check downloading when the app quits: the consumer is idle, the coordinator stops
+        // at once and is disposed; the check's hold comes back afterwards and must find nothing to
+        // throw on. The gate is simply not disposed while a hold is out.
+        var executor = new BarrierExecutor();
+        var coordinator = new DictationSessionCoordinator(executor);
+        var hold = coordinator.TryHold();
+        Assert.NotNull(hold);
+
+        Assert.True(await coordinator.StopAsync(Patience));
+        await coordinator.DisposeAsync();
+
+        hold.Dispose();
+        hold.Dispose();
+        Assert.Null(coordinator.TryHold());
+    }
+
+    [Fact]
+    public async Task AnInterruptionThatWaitsFiveSecondsBehindARunningCommandExpiresAndIsSkipped()
+    {
+        // THE FIVE SECONDS ARE A DEADLINE, NOT AN AGE. At five seconds, while the press is still
+        // running, the executor is told the recovery is pending; when the press finishes, the
+        // interruption is skipped rather than run late.
+        var executor = new BarrierExecutor();
+        var clock = new Deterministic.ManualClock();
+        await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+
+        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        Assert.Equal(DictationSessionCoordinator.InterruptionPatience, clock.NextDue);
+        clock.Advance(DictationSessionCoordinator.InterruptionPatience);
+        await executor.Expired(SessionCommandKind.Interruption).WaitAsync(Patience);
+
+        Assert.False(interruption.IsCompleted);
+        Assert.False(press.IsCompleted);
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        var result = await interruption.WaitAsync(Patience);
+
+        Assert.Equal(SessionCommandDisposition.Ignored, result.Disposition);
+        Assert.True(result.WasQueued);
+        Assert.Equal([SessionCommandKind.PushToTalk], executor.SeenKinds);
+        Assert.Equal([SessionCommandKind.Interruption], executor.ExpiredKinds);
+    }
+
+    [Fact]
+    public async Task AnInterruptionThatStartsInsideFiveSecondsDoesNotExpireAfterwards()
+    {
+        var executor = new BarrierExecutor();
+        var clock = new Deterministic.ManualClock();
+        await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        await executor.StartedKind(SessionCommandKind.Interruption).WaitAsync(Patience);
+        // It is running; the five seconds elapsing now change nothing.
+        clock.Advance(DictationSessionCoordinator.InterruptionPatience + TimeSpan.FromSeconds(1));
+        executor.FinishKind(SessionCommandKind.Interruption);
+        var result = await interruption.WaitAsync(Patience);
+
+        Assert.Equal(SessionCommandDisposition.Applied, result.Disposition);
+        Assert.Empty(executor.ExpiredKinds);
+    }
+
+    [Fact]
+    public async Task AReleaseQueuedBeforeCloseIsRefusedWhenItsTurnComes()
+    {
+        // The exit path closes admission before its first await. A release that was queued behind
+        // the press running at that moment must not start a finalisation the shell is about to tear
+        // down under; it is refused when the press finishes.
+        var executor = new BarrierExecutor();
+        await using var coordinator = new DictationSessionCoordinator(executor);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        var release = coordinator.SubmitAsync(PushToTalkSignal.Released);
+
+        coordinator.Close();
+        executor.Finish(PushToTalkSignal.Pressed);
+
+        Assert.Equal(SessionCommandDisposition.Applied, (await press.WaitAsync(Patience)).Disposition);
+        Assert.Equal(SessionCommandDisposition.Stopping, (await release.WaitAsync(Patience)).Disposition);
+        Assert.Equal([PushToTalkSignal.Pressed], executor.Seen);
+    }
+
+    [Fact]
+    public async Task ShutdownRunsTheTeardownAfterTheLastCommandAndUnderTheSession()
+    {
+        var executor = new BarrierExecutor();
+        await using var coordinator = new DictationSessionCoordinator(executor);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+
+        var shutdown = coordinator.ShutdownAsync(Patience);
+        Assert.False(shutdown.IsCompleted);
+        Assert.Equal(0, executor.ShutdownCalls);
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+
+        Assert.True(await shutdown.WaitAsync(Patience));
+        Assert.Equal(1, executor.ShutdownCalls);
+        Assert.True(executor.ShutdownRanUnderTheSession);
+    }
+
+    [Fact]
+    public async Task ShutdownStillTearsDownWhenTheRunningCommandOutlivesBothWaits()
+    {
+        // The two waits the shell had: one for the queue, one for the gate. A command that outlives
+        // both - a three-minute transcription - is not waited for any longer than that; the teardown
+        // runs beside it, as the shell's did, and the answer says so.
+        var executor = new BarrierExecutor();
+        await using var coordinator = new DictationSessionCoordinator(executor);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+
+        var clean = await coordinator.ShutdownAsync(TimeSpan.FromMilliseconds(100)).WaitAsync(Patience);
+
+        Assert.False(clean);
+        Assert.Equal(1, executor.ShutdownCalls);
+        Assert.False(executor.ShutdownRanUnderTheSession);
+        executor.Finish(PushToTalkSignal.Pressed);
+        Assert.Equal(SessionCommandDisposition.Applied, (await press.WaitAsync(Patience)).Disposition);
+    }
+
+    [Fact]
     public async Task QuickAddIsNotASessionCommand()
     {
         var executor = new BarrierExecutor();
@@ -740,6 +871,47 @@ public sealed class DictationSessionCoordinatorTests
 
         public void FinishKind(SessionCommandKind kind) => KindSource(_kindFinish, kind).SetResult();
 
+        private readonly List<SessionCommandKind> _expiredKinds = [];
+        private readonly Dictionary<SessionCommandKind, TaskCompletionSource> _kindExpired = new();
+
+        public IReadOnlyList<SessionCommandKind> ExpiredKinds
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return [.. _expiredKinds];
+                }
+            }
+        }
+
+        public Task Expired(SessionCommandKind kind) => KindSource(_kindExpired, kind).Task;
+
+        public int ShutdownCalls { get; private set; }
+
+        /// <summary>Whether the teardown ran while the coordinator held the session (no command running beside it).</summary>
+        public bool ShutdownRanUnderTheSession { get; private set; }
+
+        private int _running;
+
+        public Task ExpireAsync(SessionCommand command)
+        {
+            lock (_lock)
+            {
+                _expiredKinds.Add(command.Kind);
+            }
+
+            KindSource(_kindExpired, command.Kind).TrySetResult();
+            return Task.CompletedTask;
+        }
+
+        public Task ShutdownAsync()
+        {
+            ShutdownCalls++;
+            ShutdownRanUnderTheSession = Volatile.Read(ref _running) == 0;
+            return Task.CompletedTask;
+        }
+
         private TaskCompletionSource KindSource(Dictionary<SessionCommandKind, TaskCompletionSource> sources, SessionCommandKind kind)
         {
             lock (_lock)
@@ -761,6 +933,21 @@ public sealed class DictationSessionCoordinatorTests
             Source(_finish, signal, occurrence).SetResult();
 
         public async Task<SessionCommandResult> ExecuteAsync(
+            SessionCommand command,
+            CancellationToken stoppingToken)
+        {
+            Interlocked.Increment(ref _running);
+            try
+            {
+                return await ExecuteCoreAsync(command, stoppingToken);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _running);
+            }
+        }
+
+        private async Task<SessionCommandResult> ExecuteCoreAsync(
             SessionCommand command,
             CancellationToken stoppingToken)
         {
