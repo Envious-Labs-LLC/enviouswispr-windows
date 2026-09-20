@@ -21,6 +21,66 @@ No machine paths, no personal data, no credentials. This file is public.
 
 ---
 
+## 2026-09-20 (day): the refactor plan, finished
+
+### Twenty-two steps, one author, one reviewer, thirty-odd rounds
+
+The plan from the overnight review is landed in full. The main lane (session coordinator through
+interruption and shutdown, steps 1-11) took the morning and afternoon; the presentation lane
+(steps 15-20) and the model-delivery lane (21-22) took the evening. Every step was one pull request,
+written here, reviewed by the second author in an adversarial round or several, merged once its
+gates and the review cleared. Twelve PRs today, #170 to #180, on top of the eight before.
+
+**What the reviewer found that the tests did not, and the shape of it.** Step 11 took five rounds.
+Each caught something real about shutdown: a hold outliving disposal; a command whose gate wait
+ended just before admission closed and ran anyway; a status notification that could land after the
+shell had torn down what it touched, and a stop that reported clean when one had thrown; a command
+torn down beside the shutdown faulting its caller twice on the way out; a reassessment that
+extended the shutdown budget to nearly three intervals. None of these was a test failure. Every one
+was an interleaving that a test with one actor cannot produce and a reviewer reading the two lock
+sections side by side can. The pattern that held across all of them: **commit under one lock, after
+owning the resource, and decide torn-down by state rather than by exception type.**
+
+**A source gate is a chase with no end, and the end has to be stated.** Step 15 moved the settings
+transaction out of the window and replaced a Roslyn assertion that read three assignments off the
+window's source with a behaviour test on the new presenter. The reviewer then found, over six
+rounds, six ways to rewrite the window so the choice on screen was not the one saved while every
+gate stayed green: a templated group counted as one card; a substring that mentions a control and
+ignores it; an assignment, a deconstruction, a ref alias, a sibling declaration between the
+snapshot and its hand-over; a block that does work before the call; an object initializer; a lambda
+nothing invokes. Each was closed, and each closure invited the next. It ended when the pull request
+said where the gate stops - it pins the shape of one method's hand-over and does not prove the
+method runs - and the reviewer approved the scope rather than the absence of further shapes. The
+lesson is not that the gate was wrong to tighten; it is that a gate over source needs its scope
+written down, or the review becomes a proof that no gate over source is complete.
+
+**The threading rule that a plan line can carry.** "Never pass control-reading closures into
+background transactions" was one line in the plan. The reviewer found the one place the window
+broke it - a strictness picker read inside the writer's gate, on whatever thread the wait ended on
+- which had been there before the refactor began. It is the kind of defect that never fires in a
+test that drives a window one call at a time, and it was found by reading the plan's rule against
+every lambda handed to the presenter.
+
+**Model delivery separated in two moves with the bodies untouched.** The transport (one attempt
+against one source) and the downloader (sources, attempts, delays, what a failure means, shards
+first) came out of the store byte-for-byte, with the store keeping the lock, admission and
+activation. The reviewer's contribution there was to the tests: a cancel test that could pass
+without the cancellation reaching the read; an oversized-response test that could pass while the
+whole response was read; a constructor guard that quietly refused inputs the old code accepted. The
+tests now say what they prove.
+
+**Cost.** One session. Around thirty reviewer rounds across twelve PRs; the reviewer does not merge
+and did not write, which kept one author on the window at a time, as the plan asked.
+
+**What is still the founder's to see.** Every settings page the presentation lane touched needs a
+hand on it once: a Save, a theme click and a restart, a provider key and a model refresh, the
+microphone test with a dictation pressed during it, delete/keep/clear on History and the
+recovery-copy deletion, a word and a snippet added and removed, a word-list paste with a conflict
+offer. And the two interruptions no harness on this machine can raise: a lock and a sleep during a
+recording.
+
+---
+
 ## 2026-09-19 / 20 (overnight)
 
 ### An adversarial review of the architecture, and the plan it produced
