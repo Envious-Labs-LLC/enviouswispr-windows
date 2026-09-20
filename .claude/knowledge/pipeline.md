@@ -52,6 +52,30 @@ remain wordless designs.
   first await, gives the running command ten seconds, and runs the shell's session teardown as the last
   thing under the session (or after a further ten seconds, beside a command that would not finish). The shell keeps Windows' notifications, the processing deadline it
   cancels on lock, and rendering.
+- **How the macOS app owns the same workflow** (read from its source by the Mac session on 2026-09-20;
+  its owners are `.claude/knowledge/session-lifecycle.md`, `pipeline-mechanics.md` and `live-preview.md`
+  in the macOS repository). One recording-session kernel is the single state machine every dictation
+  runs through: idle, arming, live, stopping, delivering (transcribing, then finalizing); the ending is
+  a separate declared outcome, and a transition is a method that refuses an illegal move rather than
+  asserting. The kernel prepares, records, stops, transcribes and finalizes; ASR and everything after
+  it (text chain, storage, paste cascade) are injected seams filled by a wiring file. The shell only
+  presses start, stop and cancel and observes state. Live preview is outside the kernel. Deadlines are
+  owned where the work is - each post-ASR step computes its own budget from its input, ITN runs before
+  polish so a polish timeout delivers post-ITN text - and there is no single global processing
+  deadline; the kernel bounds only the retry it owns. Cancellation is a declared outcome legal only from
+  certain phases; finalizing is the safe point no cancel or fresh interruption reaches, so delivery
+  always completes once it starts. Quit does not wait for an in-flight transcription: the safety net is
+  persisted-audio recovery on the next launch, and teardown is bounded by being small and synchronous.
+  Its own advice for a platform wanting more: make quit-mid-take a declared outcome the kernel
+  concludes, and bound the drain by the same per-limb budgets. Views receive typed models built by
+  coordinators and call back; decisions live in coordinator and setup types, tested with fakes.
+
+  What Windows takes from that, for the work after the regrade of #148: the session executor's
+  effects port should carry effects, with the start/stop order of the preview, streaming and timers
+  and the processing deadline owned in Pipeline; finalizing should be a safe point; and a quit during
+  a take should be a declared outcome rather than a teardown beside unfinished work. What Windows keeps
+  deliberately: the speech runtime out of process (the Mac's is in-process), and the three delivery
+  routes.
 
 ## Deterministic parity
 
