@@ -140,18 +140,27 @@ public sealed class AppearanceCommitTests
             node => node is ObjectCreationExpressionSyntax { Type: var type } && type.ToString() == nameof(AppearanceChoices));
         var arguments = creation.ArgumentList?.Arguments.Select(argument => argument.Expression.ToString()).ToArray();
         Assert.NotNull(arguments);
-        Assert.Equal(3, arguments.Length);
-        Assert.Contains("ThemeChoices", arguments[0], StringComparison.Ordinal);
-        Assert.Contains("OverlayPositionChoices", arguments[1], StringComparison.Ordinal);
-        Assert.Contains("PillDesignWithoutWordsFromControls", arguments[2], StringComparison.Ordinal);
+        // THE EXACT READER EXPRESSIONS, not a substring: an expression that mentions a control and
+        // ignores its selection would otherwise pass.
+        Assert.Equal(
+            ["ThemeFromIndex(SelectedIndexOf(ThemeChoices))", "OverlayPositionFromIndex(SelectedIndexOf(OverlayPositionChoices))", "PillDesignWithoutWordsFromControls()"],
+            arguments);
 
-        // The snapshot is a named local, and that local - not another - is what SaveAppearanceAsync gets.
+        // The snapshot is a named local, that local - not another - is what SaveAppearanceAsync gets,
+        // and nothing writes to it in between: not an assignment, not a ref or out argument.
         var declarator = Assert.IsType<VariableDeclaratorSyntax>(creation.Parent?.Parent);
+        var local = declarator.Identifier.ValueText;
         var handOver = Assert.Single(
             persist.DescendantNodes().OfType<InvocationExpressionSyntax>(),
             invocation => invocation.Expression.ToString().EndsWith("SaveAppearanceAsync", StringComparison.Ordinal));
         var handed = Assert.Single(handOver.ArgumentList.Arguments);
-        Assert.Equal(declarator.Identifier.ValueText, handed.Expression.ToString());
+        Assert.Equal(local, handed.Expression.ToString());
+        Assert.DoesNotContain(
+            persist.DescendantNodes().OfType<AssignmentExpressionSyntax>(),
+            assignment => assignment.Left.ToString() == local);
+        Assert.DoesNotContain(
+            persist.DescendantNodes().OfType<ArgumentSyntax>(),
+            argument => argument.RefKindKeyword.RawKind != 0 && argument.Expression.ToString() == local);
     }
 
     private sealed class RecordingStore : ISettingsStore
