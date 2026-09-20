@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.Net;
-using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -21,7 +19,7 @@ public sealed class ModelStore
     };
 
     private readonly string _rootDirectory;
-    private readonly HttpClient _httpClient;
+    private readonly ArtifactDownloadTransport _transport;
     private readonly ModelManifestVerifier _verifier;
     private readonly IDiskSpaceProbe _diskSpaceProbe;
     private readonly IModelDeliveryObserver _observer;
@@ -43,7 +41,6 @@ public sealed class ModelStore
         ArgumentNullException.ThrowIfNull(appVersion);
 
         _rootDirectory = Path.GetFullPath(rootDirectory);
-        _httpClient = httpClient;
         _verifier = verifier;
         _appVersion = appVersion;
         _diskSpaceProbe = diskSpaceProbe ?? new WindowsDiskSpaceProbe();
@@ -53,6 +50,11 @@ public sealed class ModelStore
         {
             throw new ArgumentOutOfRangeException(nameof(options));
         }
+
+        // THE MECHANICS OF ONE ATTEMPT LIVE BESIDE THE STORE, NOT IN IT. The store keeps the retries,
+        // the source order, the admission and what a complete file becomes; the transport knows how
+        // to ask a source for the bytes a partial file lacks.
+        _transport = new ArtifactDownloadTransport(httpClient, _options.EffectiveRequestTimeout, _observer);
     }
 
     public async Task<ModelDeliveryResult> InstallAsync(
@@ -632,7 +634,7 @@ public sealed class ModelStore
                 TimeSpan? retryAfter = null;
                 try
                 {
-                    var outcome = await DownloadAttemptAsync(
+                    var outcome = await _transport.DownloadAttemptAsync(
                         source,
                         artifact,
                         partialPath,
@@ -646,7 +648,7 @@ public sealed class ModelStore
                         if (!await MatchesAsync(partialPath, artifact, cancellationToken).ConfigureAwait(false))
                         {
                             File.Delete(partialPath);
-                            DeleteIfExists(resumePath);
+                            DeliveryFiles.DeleteIfExists(resumePath);
                             _observer.Observe(new(
                                 DateTimeOffset.UtcNow,
                                 ModelDeliveryEventCode.SourceFailed,
@@ -656,7 +658,7 @@ public sealed class ModelStore
                         }
 
                         File.Move(partialPath, finalPath, overwrite: true);
-                        DeleteIfExists(resumePath);
+                        DeliveryFiles.DeleteIfExists(resumePath);
                         _observer.Observe(new(
                             DateTimeOffset.UtcNow,
                             ModelDeliveryEventCode.ArtifactVerified,
@@ -754,8 +756,8 @@ public sealed class ModelStore
 
         if (complete)
         {
-            DeleteIfExists(partialPath);
-            DeleteIfExists(finalPath + ".resume.json");
+            DeliveryFiles.DeleteIfExists(partialPath);
+            DeliveryFiles.DeleteIfExists(finalPath + ".resume.json");
             await using (var output = new FileStream(
                 partialPath,
                 FileMode.Create,
@@ -782,7 +784,7 @@ public sealed class ModelStore
                 File.Move(partialPath, finalPath, overwrite: true);
                 foreach (var partPath in partPaths)
                 {
-                    DeleteIfExists(partPath);
+                    DeliveryFiles.DeleteIfExists(partPath);
                 }
 
                 _observer.Observe(new(
@@ -801,179 +803,15 @@ public sealed class ModelStore
                 ModelDeliveryFailure.IntegrityMismatch));
         }
 
-        DeleteIfExists(partialPath);
+        DeliveryFiles.DeleteIfExists(partialPath);
         foreach (var partPath in partPaths)
         {
-            DeleteIfExists(partPath);
-            DeleteIfExists(partPath + ".partial");
-            DeleteIfExists(partPath + ".resume.json");
+            DeliveryFiles.DeleteIfExists(partPath);
+            DeliveryFiles.DeleteIfExists(partPath + ".partial");
+            DeliveryFiles.DeleteIfExists(partPath + ".resume.json");
         }
 
         return false;
-    }
-
-    private async Task<DownloadAttemptOutcome> DownloadAttemptAsync(
-        Uri source,
-        ModelArtifact artifact,
-        string partialPath,
-        string resumePath,
-        long completedBeforeArtifact,
-        long totalBytes,
-        CancellationToken cancellationToken)
-    {
-        var offset = File.Exists(partialPath) ? new FileInfo(partialPath).Length : 0;
-        if (offset > artifact.SizeBytes)
-        {
-            File.Delete(partialPath);
-            DeleteIfExists(resumePath);
-            offset = 0;
-        }
-
-        ResumeMetadata? resume = null;
-        if (offset > 0 && File.Exists(resumePath))
-        {
-            try
-            {
-                resume = JsonSerializer.Deserialize<ResumeMetadata>(
-                    await File.ReadAllBytesAsync(resumePath, cancellationToken).ConfigureAwait(false),
-                    JsonOptions);
-            }
-            catch (JsonException)
-            {
-                resume = null;
-            }
-        }
-
-        if (offset > 0 &&
-            (resume is null || !string.Equals(resume.Source, source.AbsoluteUri, StringComparison.Ordinal)))
-        {
-            File.Delete(partialPath);
-            DeleteIfExists(resumePath);
-            offset = 0;
-            resume = null;
-        }
-
-        if (offset > 0 &&
-            string.IsNullOrWhiteSpace(resume?.ETag) &&
-            resume?.LastModified is null)
-        {
-            File.Delete(partialPath);
-            DeleteIfExists(resumePath);
-            offset = 0;
-            resume = null;
-        }
-
-        using var request = new HttpRequestMessage(HttpMethod.Get, source);
-        if (offset > 0)
-        {
-            request.Headers.Range = new RangeHeaderValue(offset, null);
-            if (!string.IsNullOrWhiteSpace(resume?.ETag))
-            {
-                request.Headers.TryAddWithoutValidation("If-Range", resume.ETag);
-            }
-            else if (resume?.LastModified is not null)
-            {
-                request.Headers.IfRange = new RangeConditionHeaderValue(resume.LastModified.Value);
-            }
-
-            _observer.Observe(new(
-                DateTimeOffset.UtcNow,
-                ModelDeliveryEventCode.DownloadResumed,
-                CompletedBytes: completedBeforeArtifact + offset,
-                TotalBytes: totalBytes));
-        }
-        else
-        {
-            _observer.Observe(new(
-                DateTimeOffset.UtcNow,
-                ModelDeliveryEventCode.DownloadStarted,
-                CompletedBytes: completedBeforeArtifact,
-                TotalBytes: totalBytes));
-        }
-
-        using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        requestTimeout.CancelAfter(_options.EffectiveRequestTimeout);
-        using var response = await _httpClient.SendAsync(
-            request,
-            HttpCompletionOption.ResponseHeadersRead,
-            requestTimeout.Token).ConfigureAwait(false);
-
-        if (response.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
-        {
-            return new(offset == artifact.SizeBytes
-                ? DownloadAttemptResult.Complete
-                : DownloadAttemptResult.PermanentFailure);
-        }
-
-        if (IsTransientStatus(response.StatusCode))
-        {
-            return new(DownloadAttemptResult.TransientFailure, RetryAfter(response));
-        }
-
-        if (!response.IsSuccessStatusCode)
-        {
-            return new(DownloadAttemptResult.PermanentFailure);
-        }
-
-        var append = response.StatusCode == HttpStatusCode.PartialContent && offset > 0;
-        if (append && response.Content.Headers.ContentRange?.From != offset)
-        {
-            return new(DownloadAttemptResult.PermanentFailure);
-        }
-
-        if (!append)
-        {
-            offset = 0;
-        }
-
-        var metadata = new ResumeMetadata(
-            source.AbsoluteUri,
-            response.Headers.ETag?.ToString(),
-            response.Content.Headers.LastModified);
-        await WriteAtomicAsync(
-            resumePath,
-            JsonSerializer.SerializeToUtf8Bytes(metadata, JsonOptions),
-            cancellationToken).ConfigureAwait(false);
-
-        await using var input = await response.Content.ReadAsStreamAsync(cancellationToken)
-            .ConfigureAwait(false);
-        await using var output = new FileStream(
-            partialPath,
-            append ? FileMode.Append : FileMode.Create,
-            FileAccess.Write,
-            FileShare.Read,
-            bufferSize: 128 * 1024,
-            useAsync: true);
-        var buffer = new byte[128 * 1024];
-        long written = offset;
-        while (true)
-        {
-            using var readTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            readTimeout.CancelAfter(_options.EffectiveRequestTimeout);
-            var read = await input.ReadAsync(buffer, readTimeout.Token).ConfigureAwait(false);
-            if (read == 0)
-            {
-                break;
-            }
-
-            written = checked(written + read);
-            if (written > artifact.SizeBytes)
-            {
-                return new(DownloadAttemptResult.PermanentFailure);
-            }
-
-            await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
-            _observer.Observe(new(
-                DateTimeOffset.UtcNow,
-                ModelDeliveryEventCode.DownloadStarted,
-                CompletedBytes: completedBeforeArtifact + written,
-                TotalBytes: totalBytes));
-        }
-
-        await output.FlushAsync(cancellationToken).ConfigureAwait(false);
-        return new(written == artifact.SizeBytes
-            ? DownloadAttemptResult.Complete
-            : DownloadAttemptResult.TransientFailure);
     }
 
     private async Task<ModelDeliveryResult> AdmitAsync(
@@ -1003,14 +841,14 @@ public sealed class ModelStore
             File.Delete(SafeCombine(staging, path));
         }
 
-        await WriteAtomicAsync(
+        await DeliveryFiles.WriteAtomicAsync(
             Path.Combine(staging, ManifestFileName),
             manifest.EnvelopeBytes,
             cancellationToken).ConfigureAwait(false);
         var licenseText = $"{manifest.Payload.License.Name}{Environment.NewLine}" +
             $"{manifest.Payload.License.Url}{Environment.NewLine}{Environment.NewLine}" +
             manifest.Payload.License.Notice.Trim() + Environment.NewLine;
-        await WriteAtomicAsync(
+        await DeliveryFiles.WriteAtomicAsync(
             Path.Combine(staging, LicenseFileName),
             Encoding.UTF8.GetBytes(licenseText),
             cancellationToken).ConfigureAwait(false);
@@ -1125,7 +963,7 @@ public sealed class ModelStore
             installed.ModelId,
             installed.Version,
             installed.ManifestDigest);
-        await WriteAtomicAsync(
+        await DeliveryFiles.WriteAtomicAsync(
             Path.Combine(ModelRoot(installed.ModelId), ActiveFileName),
             JsonSerializer.SerializeToUtf8Bytes(pointer, JsonOptions),
             cancellationToken).ConfigureAwait(false);
@@ -1167,25 +1005,6 @@ public sealed class ModelStore
             destination, FileMode.CreateNew, FileAccess.Write, FileShare.None, 128 * 1024, useAsync: true);
         await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    private static async Task WriteAtomicAsync(
-        string destination,
-        ReadOnlyMemory<byte> bytes,
-        CancellationToken cancellationToken)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-        var temporary = destination + $".{Guid.NewGuid():N}.tmp";
-        try
-        {
-            await File.WriteAllBytesAsync(temporary, bytes.ToArray(), cancellationToken)
-                .ConfigureAwait(false);
-            File.Move(temporary, destination, overwrite: true);
-        }
-        finally
-        {
-            DeleteIfExists(temporary);
-        }
     }
 
     private async Task<FileStream> AcquireProcessLockAsync(
@@ -1306,37 +1125,9 @@ public sealed class ModelStore
         }
     }
 
-    private static bool IsTransientStatus(HttpStatusCode statusCode) =>
-        statusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests ||
-        (int)statusCode is 425 or 500 or 502 or 503 or 504 or 522 or 524;
-
     private bool HasSufficientDisk(long requiredBytes, long availableBytes) =>
         requiredBytes <= long.MaxValue - _options.DiskReserveBytes &&
         availableBytes >= requiredBytes + _options.DiskReserveBytes;
-
-    private static TimeSpan? RetryAfter(HttpResponseMessage response)
-    {
-        var header = response.Headers.RetryAfter;
-        var delay = header?.Delta ??
-            (header?.Date is null ? null : header.Date.Value - DateTimeOffset.UtcNow);
-        if (delay is null)
-        {
-            return null;
-        }
-
-        return TimeSpan.FromMilliseconds(Math.Clamp(
-            delay.Value.TotalMilliseconds,
-            0,
-            TimeSpan.FromSeconds(10).TotalMilliseconds));
-    }
-
-    private static void DeleteIfExists(string path)
-    {
-        if (File.Exists(path))
-        {
-            File.Delete(path);
-        }
-    }
 
     private ModelDeliveryResult Fail(
         ModelDeliveryFailure failure,
@@ -1367,22 +1158,10 @@ public sealed class ModelStore
         _ => ModelDeliveryFailure.InvalidManifest,
     };
 
-    private sealed record ResumeMetadata(string Source, string? ETag, DateTimeOffset? LastModified);
-
     private sealed record ActiveModelPointer(
         int SchemaVersion,
         string ModelId,
         string Version,
         string ManifestDigest);
 
-    private enum DownloadAttemptResult
-    {
-        Complete,
-        TransientFailure,
-        PermanentFailure,
-    }
-
-    private readonly record struct DownloadAttemptOutcome(
-        DownloadAttemptResult Result,
-        TimeSpan? RetryAfter = null);
 }
