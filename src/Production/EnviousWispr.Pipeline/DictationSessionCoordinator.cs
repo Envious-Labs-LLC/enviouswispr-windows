@@ -259,7 +259,9 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     public async Task<bool> ShutdownAsync(TimeSpan drainTimeout)
     {
         var drained = await StopAsync(drainTimeout).ConfigureAwait(false);
-        var held = drained && await _sessionGate.WaitAsync(drainTimeout).ConfigureAwait(false);
+        // THE SECOND WAIT IS MADE WHETHER OR NOT THE FIRST WAS ENOUGH: a command that outlived the
+        // drain may still finish inside the gate's wait, and the old shell gave it exactly that.
+        var held = await _sessionGate.WaitAsync(drainTimeout).ConfigureAwait(false);
         try
         {
             await _executor.ShutdownAsync().ConfigureAwait(false);
