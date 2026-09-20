@@ -267,6 +267,56 @@ public sealed class DictationSessionExecutorTests
     }
 
     [Fact]
+    public async Task ADisposedDependencyWhileTheSessionIsLiveIsAnOrdinaryFailureAndIsRecovered()
+    {
+        // TORN DOWN IS A STATE, NOT AN EXCEPTION TYPE. A shell effect that throws ObjectDisposedException
+        // while nothing has been torn down is a bug in the shell, and it gets the ordinary recovery.
+        var (executor, _, effects, _) = Build();
+        effects.OnRecordingStartedThrows = new ObjectDisposedException("a status line");
+
+        var result = await executor.ExecuteAsync(Press(), CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
+        Assert.Equal(
+            ["EvaluateAdmission", "RecordTransition:Started", "OnRecordingStarted", "RecordSessionFailure", "RecoverFailedSession:InvalidTransition:Failed", "ReleaseProcessingDeadline", "RecordDictationEdge"],
+            effects.Trace);
+    }
+
+    [Fact]
+    public async Task AfterTheTeardownACommandThatFailsEndsAsFailedWithoutRecovery()
+    {
+        // The session was torn down beside this command (the shutdown outlived both of its waits).
+        // Whatever it then fails on, there is nothing to recover into: written, answered, no abort.
+        var (executor, capture, effects, _) = Build();
+        await executor.ShutdownAsync();
+        effects.Trace.Clear();
+        capture.StartResultFactory = _ => throw new InvalidOperationException("the capture is gone");
+
+        var result = await executor.ExecuteAsync(Press(), CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
+        Assert.Equal(
+            ["EvaluateAdmission", "RecordSessionFailure", "ReleaseProcessingDeadline", "RecordDictationEdge"],
+            effects.Trace);
+    }
+
+    [Fact]
+    public async Task AfterTheTeardownATimeoutThatFailsEndsAsFailedRatherThanFaultingItsTask()
+    {
+        var (executor, _, effects, controller) = Build();
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        var recording = controller.CurrentSession!.Id;
+        await executor.ShutdownAsync();
+        effects.Trace.Clear();
+        effects.StopBackgroundWorkThrows = new ObjectDisposedException("the preview");
+
+        var result = await executor.ExecuteAsync(Timeout(recording), CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
+        Assert.Equal(["StopBackgroundWork", "RecordDictationEdge", "RecordSessionFailure"], effects.Trace);
+    }
+
+    [Fact]
     public async Task AnInterruptionWhoseFinalisationThrowsIsRecoveredAsAnInterruptionFailure()
     {
         var (executor, _, effects, _) = Build();
@@ -365,6 +415,10 @@ public sealed class DictationSessionExecutorTests
 
         public bool FinalizeThrows { get; set; }
 
+        public Exception? OnRecordingStartedThrows { get; set; }
+
+        public Exception? StopBackgroundWorkThrows { get; set; }
+
         public bool DeadlineArmed { get; private set; }
 
         public bool DeadlineArmedDuringRecovery { get; private set; }
@@ -399,6 +453,11 @@ public sealed class DictationSessionExecutorTests
         {
             Trace.Add("OnRecordingStarted");
             StartedSession = sessionId;
+            if (OnRecordingStartedThrows is { } failure)
+            {
+                throw failure;
+            }
+
             return Task.CompletedTask;
         }
 
@@ -418,6 +477,11 @@ public sealed class DictationSessionExecutorTests
         public Task StopBackgroundWorkAsync()
         {
             Trace.Add("StopBackgroundWork");
+            if (StopBackgroundWorkThrows is { } failure)
+            {
+                throw failure;
+            }
+
             return Task.CompletedTask;
         }
 

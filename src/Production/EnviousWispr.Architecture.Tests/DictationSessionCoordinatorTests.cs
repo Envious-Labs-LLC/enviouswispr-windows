@@ -682,6 +682,92 @@ public sealed class DictationSessionCoordinatorTests
     }
 
     [Fact]
+    public async Task ShutdownAfterAnExpiryNotificationThrewStillTearsDownAndSaysUnclean()
+    {
+        // The stop knows a notification threw; the shutdown must not lose that on the way to the
+        // shell's clean-shutdown line just because the session itself was free.
+        var executor = new BarrierExecutor { ThrowOnExpiry = true };
+        var clock = new Deterministic.ManualClock();
+        await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        clock.Advance(DictationSessionCoordinator.InterruptionPatience);
+        await executor.Expired(SessionCommandKind.Interruption).WaitAsync(Patience);
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        await interruption.WaitAsync(Patience);
+
+        var clean = await coordinator.ShutdownAsync(Patience).WaitAsync(Patience);
+
+        Assert.False(clean);
+        Assert.Equal(1, executor.ShutdownCalls);
+        Assert.True(executor.ShutdownRanUnderTheSession);
+    }
+
+    [Fact]
+    public async Task ANotificationStillInFlightAtShutdownIsWaitedForThroughBothWaitsAndThenTornDownBeside()
+    {
+        // A notification runs outside the session, so the gate says nothing about it. The shutdown
+        // asks for it in its first wait, finds the session free at once, asks again with the same
+        // patience, and only then tears down beside it and says so. Crossed on the manual clock: the
+        // first wait's timer, then the second wait's, then the reassessment's.
+        var executor = new BarrierExecutor { HoldExpiry = true };
+        var clock = new Deterministic.ManualClock();
+        await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        clock.Advance(DictationSessionCoordinator.InterruptionPatience);
+        await executor.Expired(SessionCommandKind.Interruption).WaitAsync(Patience);
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        await interruption.WaitAsync(Patience);
+
+        var drain = TimeSpan.FromSeconds(10);
+        var shutdown = coordinator.ShutdownAsync(drain);
+        await clock.WhenRegistered(2).WaitAsync(Patience);
+        Assert.Equal(drain, clock.NextDue);
+        clock.Advance(drain);
+        // The session is free, so the second wait ends at once and the reassessment registers its own.
+        await clock.WhenRegistered(4).WaitAsync(Patience);
+        Assert.False(shutdown.IsCompleted);
+        Assert.Equal(0, executor.ShutdownCalls);
+        clock.Advance(drain);
+
+        Assert.False(await shutdown.WaitAsync(Patience));
+        Assert.Equal(1, executor.ShutdownCalls);
+        executor.ReleaseExpiry();
+    }
+
+    [Fact]
+    public async Task ANotificationThatFinishesInsideTheShutdownsFirstWaitLeavesItClean()
+    {
+        var executor = new BarrierExecutor { HoldExpiry = true };
+        var clock = new Deterministic.ManualClock();
+        await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        clock.Advance(DictationSessionCoordinator.InterruptionPatience);
+        await executor.Expired(SessionCommandKind.Interruption).WaitAsync(Patience);
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        await interruption.WaitAsync(Patience);
+
+        var shutdown = coordinator.ShutdownAsync(TimeSpan.FromSeconds(10));
+        await clock.WhenRegistered(2).WaitAsync(Patience);
+        Assert.False(shutdown.IsCompleted);
+        executor.ReleaseExpiry();
+
+        Assert.True(await shutdown.WaitAsync(Patience));
+        Assert.True(executor.ShutdownRanUnderTheSession);
+    }
+
+    [Fact]
     public async Task CloseBeforeFiveSecondsCancelsTheExpiryAndTheStopIsClean()
     {
         // Shutdown while an interruption is still waiting: its turn is refused, the timer is cancelled

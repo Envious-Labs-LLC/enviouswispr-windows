@@ -83,22 +83,76 @@ public sealed class SessionShutdownTests
     {
         // The two waits the shell had: one for the queue, one for the gate. A transcription that
         // outlives the first and finishes inside the second is delivered before the teardown, and the
-        // shutdown reports a clean one.
-        var world = World.Build();
+        // shutdown reports a clean one. Crossed on the manual clock: the first wait's timer is
+        // registered and advanced past; the second wait's registration is the milestone that says the
+        // shutdown is inside it, and only then is the engine let go.
+        var clock = new Deterministic.ManualClock();
+        var world = World.Build(clock: clock);
         await world.PressAsync();
         world.Engine.Hold = true;
         var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
         await world.Engine.Entered.Task.WaitAsync(Patience);
 
-        var drain = TimeSpan.FromSeconds(1);
+        var drain = TimeSpan.FromSeconds(10);
         var shutdown = world.Coordinator.ShutdownAsync(drain);
-        await Task.Delay(drain + TimeSpan.FromMilliseconds(500));
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        Assert.Equal(drain, clock.NextDue);
+        clock.Advance(drain);
+        await clock.WhenRegistered(2).WaitAsync(Patience);
         Assert.False(shutdown.IsCompleted);
+        Assert.Equal(0, world.Effects.TearDowns);
         world.Engine.AllowExit.SetResult();
 
         Assert.Equal(SessionCommandDisposition.Applied, (await release.WaitAsync(Patience)).Disposition);
         Assert.True(await shutdown.WaitAsync(Patience), "the transcription finished inside the second wait");
         Assert.Equal(1, world.Delivery.Deliveries);
+        Assert.True(world.Capture.Disposed);
+        Assert.Equal(1, world.Effects.TearDowns);
+    }
+
+    [Fact]
+    public async Task ATimeoutStillRunningWhenTheTeardownComesEndsAsFailedWithTheMicrophoneClosed()
+    {
+        // The watchdog's timeout was stopping the loops when the shutdown gave up waiting. The
+        // teardown cancels the open recording and disposes the controller beside it; when the timeout
+        // resumes it finds the session gone and ends as failed - answered, not a faulted task the
+        // watchdog would have discarded.
+        var world = World.Build();
+        await world.PressAsync();
+        world.Effects.HoldBackgroundStop = true;
+        var timeout = world.Coordinator.TimeOutAsync(world.SessionId);
+        await world.Effects.BackgroundStopEntered.Task.WaitAsync(Patience);
+
+        var clean = await world.Coordinator.ShutdownAsync(TimeSpan.FromMilliseconds(100)).WaitAsync(Patience);
+
+        Assert.False(clean);
+        Assert.Equal(1, world.Effects.TearDowns);
+        Assert.True(world.Capture.Cancelled);
+        Assert.True(world.Capture.Disposed);
+
+        world.Effects.AllowBackgroundStopExit.SetResult();
+        Assert.Equal(SessionCommandDisposition.Failed, (await timeout.WaitAsync(Patience)).Disposition);
+        Assert.Equal(0, world.Delivery.Deliveries);
+        Assert.Equal(0, world.Engine.Transcriptions);
+    }
+
+    [Fact]
+    public async Task ATranscriptionThatFailsAfterTheTeardownEndsAsFailedAndDeliversNothing()
+    {
+        // Not a disposed dependency but an ordinary engine failure, after the teardown: the state
+        // decides, and no recovery is attempted into a session that is gone.
+        var world = World.Build();
+        await world.PressAsync();
+        world.Engine.Hold = true;
+        world.Engine.ThrowOnExit = true;
+        var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await world.Engine.Entered.Task.WaitAsync(Patience);
+
+        Assert.False(await world.Coordinator.ShutdownAsync(TimeSpan.FromMilliseconds(100)).WaitAsync(Patience));
+        world.Engine.AllowExit.SetResult();
+
+        Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
+        Assert.Equal(0, world.Delivery.Deliveries);
         Assert.True(world.Capture.Disposed);
     }
 
@@ -146,7 +200,7 @@ public sealed class SessionShutdownTests
             SessionId = Controller.CurrentSession!.Id;
         }
 
-        public static World Build(bool holdMicrophoneOpening = false)
+        public static World Build(bool holdMicrophoneOpening = false, TimeProvider? clock = null)
         {
             var capture = new FakeAudioCapture { HoldStart = holdMicrophoneOpening };
             var controller = new PushToTalkSessionController(capture, new FakeTargetProvider(101), minimumHoldDuration: TimeSpan.Zero);
@@ -171,7 +225,8 @@ public sealed class SessionShutdownTests
             var executor = new DictationSessionExecutor(controller, effects);
             var coordinator = new DictationSessionCoordinator(
                 executor,
-                () => new RecordingStartContext(new TargetWindowId(101), TextDeliveryOptions.Default));
+                () => new RecordingStartContext(new TargetWindowId(101), TextDeliveryOptions.Default),
+                clock);
             return new World
             {
                 Coordinator = coordinator,
@@ -188,6 +243,12 @@ public sealed class SessionShutdownTests
     private sealed class ShellAdapter(SessionFinalizationRunner runner, PushToTalkSessionController controller, RunnerEffects runnerEffects) : IDictationSessionEffects
     {
         public int TearDowns { get; private set; }
+
+        public bool HoldBackgroundStop { get; set; }
+
+        public TaskCompletionSource BackgroundStopEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource AllowBackgroundStopExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public bool HasPendingRecovery => false;
 
@@ -225,7 +286,14 @@ public sealed class SessionShutdownTests
         {
         }
 
-        public Task StopBackgroundWorkAsync() => Task.CompletedTask;
+        public async Task StopBackgroundWorkAsync()
+        {
+            BackgroundStopEntered.TrySetResult();
+            if (HoldBackgroundStop)
+            {
+                await AllowBackgroundStopExit.Task;
+            }
+        }
 
         public void ShowTransitionStatus(SessionTransitionResult result)
         {
@@ -276,6 +344,7 @@ public sealed class SessionShutdownTests
     {
         public string EngineId => "held";
         public bool Hold { get; set; }
+        public bool ThrowOnExit { get; set; }
         public int Transcriptions { get; private set; }
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource AllowExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -287,6 +356,11 @@ public sealed class SessionShutdownTests
             if (Hold)
             {
                 await AllowExit.Task;
+            }
+
+            if (ThrowOnExit)
+            {
+                throw new InvalidOperationException("the engine fell over");
             }
 
             return new Transcript(audio.SessionId, "hello world", EngineId, DetectedLanguage: "en");
