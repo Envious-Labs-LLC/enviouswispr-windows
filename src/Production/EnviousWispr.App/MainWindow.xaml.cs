@@ -183,6 +183,9 @@ public sealed partial class MainWindow : Window, IDisposable
 
     /// <summary>What a word or a snippet does to the list, without the page: VocabularyPresenterTests.</summary>
     private readonly VocabularyPresenter _vocabulary;
+
+    /// <summary>What a word list does to the dictionary, without the page: VocabularyImportControllerTests.</summary>
+    private readonly VocabularyImportController _vocabularyImport;
     private readonly IPortableProfileService _profileService;
     /// <summary>The history page's decisions about its stores, without the page.</summary>
     /// <remarks>
@@ -265,6 +268,7 @@ public sealed partial class MainWindow : Window, IDisposable
         _settings = settings;
         _settingsPresenter = new SettingsPresenter(settingsStore, settings);
         _vocabulary = new VocabularyPresenter(_settingsPresenter);
+        _vocabularyImport = new VocabularyImportController(_vocabulary);
         _profileService = profileService;
         _historyPresenter = new HistoryPresenter(historyStore, recoveryTextStore, () => _settings.Preferences.History);
         _polishModelSource = new PolishModelSource(apiKeyStore);
@@ -2149,19 +2153,10 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        // NO DECISION OUTSIDE THE GATE AT ALL, INCLUDING "THERE IS NOTHING TO ADD". Reading the
-        // words first to decide whether to bother meant a removal finishing in between could leave
-        // this saying "already set up" about a list that would in fact have gained words. The plan
-        // is computed once, where it is applied, and the message is chosen from what came back.
-        var outcome = await SaveUserDataAsync(data =>
-        {
-            var actual = CustomWordImport.Read(pack.Words, data.CustomWords);
-            return (
-                new ReusableUserData([.. data.CustomWords, .. actual.Additions], data.Snippets),
-                actual);
-        }).ConfigureAwait(true);
-
-        if (outcome.Failure is not null)
+        // THE PLAN IS THE CONTROLLER'S, COMPUTED INSIDE THE GATE; the message is chosen from what
+        // came back, so "already set up" is said about the list that was actually there.
+        var outcome = await CommitVocabularyAsync(_vocabularyImport.ApplyPackAsync(pack)).ConfigureAwait(true);
+        if (!outcome.Saved)
         {
             return;
         }
@@ -2236,24 +2231,15 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private async Task ApplyWordListAsync(string text)
     {
-        // NO DECISION OUTSIDE THE GATE AT ALL, INCLUDING "THERE IS NOTHING TO ADD". Reading the
-        // words first to decide whether to bother meant a removal finishing in between could leave
-        // this saying "no new words" about a list that would in fact have gained some. The plan is
-        // computed once, where it is applied, and the message is chosen from what came back.
+        // THE PLAN IS THE CONTROLLER'S, COMPUTED INSIDE THE GATE, and the message is chosen from
+        // what came back.
         //
         // THE ITEMISED DESCRIPTION IS USED ON BOTH OUTCOMES. An earlier version fell back to the
         // generic save message the moment ONE word imported, so a hundred-line file with sixty good
         // rows and forty unreadable ones said "the change was saved locally" and the forty were
         // never mentioned.
-        var outcome = await SaveUserDataAsync(data =>
-        {
-            var actual = CustomWordImport.Read(text, data.CustomWords);
-            return (
-                new ReusableUserData([.. data.CustomWords, .. actual.Additions], data.Snippets),
-                actual);
-        }).ConfigureAwait(true);
-
-        if (outcome.Failure is not null)
+        var outcome = await CommitVocabularyAsync(_vocabularyImport.ImportAsync(text)).ConfigureAwait(true);
+        if (!outcome.Saved)
         {
             // The save refused and has already said why. Speaking again here would paint over that
             // with a success, and offering to replace corrections nothing imported would be worse.
@@ -2326,17 +2312,13 @@ public sealed partial class MainWindow : Window, IDisposable
         return new ImportConflictOffer($"Replace my {plan.Conflicts.Count} {word}", plan.Conflicts);
     }
 
-    private async Task<bool> ReplaceConflictsAsync(IReadOnlyList<CustomWordEntry> replacements)
+    private Task<bool> ReplaceConflictsAsync(IReadOnlyList<CustomWordEntry> replacements)
     {
         var word = replacements.Count == 1 ? "correction" : "corrections";
-        // MERGED INSIDE THE GATE, against the words that are there when it happens. Merging outside
-        // built a list from a snapshot, and saving it put back whatever had changed since.
-        return await SaveUserDataAsync(
-            data => new ReusableUserData(
-                CustomWordImport.Merge(data.CustomWords, replacements),
-                data.Snippets),
+        return CommitVocabularyAsync(
+            _vocabularyImport.ReplaceConflictsAsync(replacements),
             "Corrections replaced",
-            $"{replacements.Count} {word} now match the list you imported.").ConfigureAwait(true);
+            $"{replacements.Count} {word} now match the list you imported.");
     }
 
     /// <summary>A button a message can carry, and what pressing it applies.</summary>
@@ -3240,10 +3222,6 @@ public sealed partial class MainWindow : Window, IDisposable
     /// plan describes a list that may have changed - and saving its result then overwrites whatever
     /// changed it. The value comes back so the message describes what was actually stored.
     /// </remarks>
-    private Task<SettingsSaveResult<T>> SaveUserDataAsync<T>(
-        Func<ReusableUserData, (ReusableUserData Data, T Value)> change) =>
-        CommitVocabularyAsync(_vocabulary.ChangeAsync(change));
-
     /// <summary>Takes a vocabulary change's answer onto the page: the refusal said, or the settings published and the controls refreshed.</summary>
     private async Task<SettingsSaveResult<T>> CommitVocabularyAsync<T>(Task<SettingsSaveResult<T>> change)
     {
@@ -3312,10 +3290,6 @@ public sealed partial class MainWindow : Window, IDisposable
         _settings = _settingsPresenter.Current;
         SettingsChanged?.Invoke(_settings);
     }
-
-    private Task<bool> SaveUserDataAsync(
-        Func<ReusableUserData, ReusableUserData> change, string title, string message) =>
-        CommitVocabularyAsync(_vocabulary.ChangeAsync(change), title, message);
 
     private void UpdateHistoryListVisibility(string query, int itemCount)
     {
