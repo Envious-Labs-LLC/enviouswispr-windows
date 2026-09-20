@@ -105,19 +105,26 @@ public sealed class RecordingWatchdog : IAsyncDisposable
     {
         var cancellation = Interlocked.Exchange(ref _cancellation, null);
         var watch = Interlocked.Exchange(ref _watch, null);
-        cancellation?.Cancel();
-        if (watch is not null)
+        try
         {
-            try
+            cancellation?.Cancel();
+            if (watch is not null)
             {
-                await watch.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
+                try
+                {
+                    await watch.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                }
             }
         }
-
-        cancellation?.Dispose();
+        finally
+        {
+            // DISPOSED HOWEVER THE DRAIN ENDS. The field was cleared before the wait, so a recovery
+            // that faulted would otherwise leave a source nobody can reach again.
+            cancellation?.Dispose();
+        }
     }
 
     /// <summary>The stop, as the last call: the shell's shutdown has already stopped the watch by then.</summary>
@@ -266,19 +273,25 @@ public sealed class AutoStopMonitor : IAsyncDisposable
             return;
         }
 
-        await cancellation.CancelAsync().ConfigureAwait(false);
-        if (loop is not null)
+        try
         {
-            try
+            await cancellation.CancelAsync().ConfigureAwait(false);
+            if (loop is not null)
             {
-                await loop.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
+                try
+                {
+                    await loop.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                }
             }
         }
-
-        cancellation.Dispose();
+        finally
+        {
+            // Disposed however the drain ends; the field was cleared before the wait.
+            cancellation.Dispose();
+        }
     }
 
     /// <summary>The stop, as the last call: the shell's shutdown has already stopped the loop by then.</summary>

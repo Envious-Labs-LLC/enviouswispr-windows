@@ -242,8 +242,10 @@ public sealed class RecordingTimersTests
         // THE PLAN'S SIMULTANEOUS RELEASE AND AUTO-STOP, COMPOSED: the real coordinator, an executor
         // holding a key release mid-finalisation, and the monitor deciding the speaker has stopped at
         // that moment. Its Released is refused as Ignored - the recording is already ending - the
-        // executor sees one release, and the monitor's stop, issued from inside that release as the
-        // shell does, completes.
+        // post did not block the loop, the executor sees one release, and a loop that has posted
+        // stops cleanly. The stop is issued from the test, after the loop has ended, not from inside
+        // the held release; that the release's own stop cannot wait for the loop is the port's
+        // contract (Post returns without waiting), stated on the port and not proved here.
         var executor = new HeldExecutor();
         using var gate = new SemaphoreSlim(1, 1);
         await using var coordinator = new DictationSessionCoordinator(executor, gate);
