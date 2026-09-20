@@ -191,6 +191,34 @@ public sealed class LivePreviewControllerTests
     }
 
     [Fact]
+    public async Task AStopQueuedBehindAHeldStartWaitsForTheEngineToStart()
+    {
+        var world = World.Build();
+        world.Engine.HoldStarts = true;
+        world.Audio.Samples = 0;
+
+        var start = world.Controller.StartAsync(world.Session);
+        await world.Engine.StartStarted.Task.WaitAsync(Patience);
+        var stop = world.Controller.StopAsync();
+
+        // The start holds the gate while the engine is still starting, so the stop is parked
+        // before it can cancel anything or stop the engine.
+        Assert.False(start.IsCompleted);
+        Assert.False(stop.IsCompleted);
+        Assert.Equal(0, world.Engine.Stops);
+        Assert.Empty(world.Log.Entries);
+
+        world.Engine.AllowStartExit.SetResult();
+        await start.WaitAsync(Patience);
+        await stop.WaitAsync(Patience);
+
+        Assert.False(world.Controller.IsRunning);
+        Assert.Equal(1, world.Engine.Stops);
+        Assert.Equal(0, world.Engine.Passes);
+        Assert.Equal([AppEventCode.LivePreviewStarted, AppEventCode.LivePreviewStopped], world.Log.Codes);
+    }
+
+    [Fact]
     public async Task AFailedPassEndsTheLoopWithoutAWordOnScreen()
     {
         var world = World.Build();
@@ -235,14 +263,18 @@ public sealed class LivePreviewControllerTests
         await world.Controller.StartAsync(world.Session);
 
         // One snapshot was taken at once and found short; the re-ask is a quarter second out, not
-        // the cadence.
-        Assert.Equal(1, world.Audio.Snapshots);
+        // the cadence. THE DUE TIME IS READ, NOT WAITED FOR: a negative ("nothing before then") is
+        // proved by what the loop registered with the clock, which cannot be raced.
+        await world.Audio.WhenSampled(1).WaitAsync(Patience);
+        await world.Clock.WhenRegistered(1).WaitAsync(Patience);
         Assert.Equal(0, world.Engine.Passes);
-        world.Clock.Advance(TimeSpan.FromMilliseconds(249));
-        Assert.Equal(1, world.Audio.Snapshots);
-        world.Clock.Advance(TimeSpan.FromMilliseconds(1));
-        Assert.Equal(2, world.Audio.Snapshots);
+        Assert.Equal(TimeSpan.FromMilliseconds(250), world.Clock.NextDue);
+
+        world.Clock.Advance(TimeSpan.FromMilliseconds(250));
+        await world.Audio.WhenSampled(2).WaitAsync(Patience);
+        await world.Clock.WhenRegistered(2).WaitAsync(Patience);
         Assert.Equal(0, world.Engine.Passes);
+        Assert.Equal(TimeSpan.FromMilliseconds(250), world.Clock.NextDue);
 
         world.Audio.Samples = 8_000;
         world.Clock.Advance(TimeSpan.FromMilliseconds(250));
@@ -262,15 +294,17 @@ public sealed class LivePreviewControllerTests
 
         await world.Controller.StartAsync(world.Session);
         await world.Effects.WhenShown(1).WaitAsync(Patience);
+        await world.Clock.WhenRegistered(1).WaitAsync(Patience);
 
-        // A pass that cost nothing waits the whole interval, and not a tick less.
-        world.Clock.Advance(LivePreviewCadence.Interval - TimeSpan.FromMilliseconds(1));
+        // A pass that cost nothing waits the whole interval, to the tick: the due time the loop
+        // registered is the interval itself.
         Assert.Equal(1, world.Engine.Passes);
-        world.Clock.Advance(TimeSpan.FromMilliseconds(1));
+        Assert.Equal(LivePreviewCadence.Interval, world.Clock.NextDue);
+        world.Clock.Advance(LivePreviewCadence.Interval);
         await world.Effects.WhenShown(2).WaitAsync(Patience);
 
         Assert.Equal([1L, 2L], world.Engine.Sequences);
-        Assert.Equal(2, world.Effects.Previews.Count);
+        Assert.Equal(2, world.Effects.Previews.Length);
         await world.Controller.StopAsync().WaitAsync(Patience);
     }
 
@@ -287,6 +321,7 @@ public sealed class LivePreviewControllerTests
         // Three seconds pass inside the engine; the cadence owes nothing after that, so the second
         // pass follows without the clock moving again.
         world.Clock.Advance(TimeSpan.FromSeconds(3));
+        Assert.Null(world.Clock.NextDue);
         world.Engine.AllowPassExit.SetResult();
         await world.Effects.WhenShown(2).WaitAsync(Patience);
 
@@ -402,6 +437,22 @@ public sealed class LivePreviewControllerTests
     }
 
     [Fact]
+    public async Task ADisposeWhoseStopThrewIsNotRememberedAsDone()
+    {
+        var world = World.Build();
+        world.Engine.ThrowOnStop = new IOException("worker pipe gone");
+
+        await Assert.ThrowsAsync<IOException>(async () => await world.Controller.DisposeAsync());
+
+        world.Engine.ThrowOnStop = null;
+        await world.Controller.DisposeAsync();
+        await world.Controller.DisposeAsync();
+
+        Assert.Equal(1, world.Engine.Stops);
+        Assert.Equal(1, world.Effects.Clears);
+    }
+
+    [Fact]
     public async Task AnEngineThatThrowsEndsTheLoopAsARuntimeWorkerFailure()
     {
         var world = World.Build();
@@ -446,38 +497,95 @@ public sealed class LivePreviewControllerTests
         }
     }
 
+    /// <summary>
+    /// A count that a test can wait to reach. The check and the registration happen under one lock,
+    /// and so do the increment and the choice of whom to wake, so a milestone crossed between "is it
+    /// there yet" and "tell me when it is" cannot be missed. Waiters are woken outside the lock.
+    /// </summary>
+    private sealed class Milestone
+    {
+        private readonly object _lock = new();
+        private readonly List<(int Count, TaskCompletionSource Reached)> _waiters = [];
+        private int _count;
+
+        public int Count
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _count;
+                }
+            }
+        }
+
+        public Task WhenAtLeast(int count)
+        {
+            lock (_lock)
+            {
+                if (_count >= count)
+                {
+                    return Task.CompletedTask;
+                }
+
+                var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _waiters.Add((count, reached));
+                return reached.Task;
+            }
+        }
+
+        public void Increment()
+        {
+            List<TaskCompletionSource> due;
+            lock (_lock)
+            {
+                _count++;
+                due = _waiters.Where(waiter => waiter.Count <= _count).Select(waiter => waiter.Reached).ToList();
+                _waiters.RemoveAll(waiter => waiter.Count <= _count);
+            }
+
+            foreach (var reached in due)
+            {
+                reached.TrySetResult();
+            }
+        }
+    }
+
     private sealed class FakeEffects : ILivePreviewEffects
     {
-        private readonly List<(int Count, TaskCompletionSource Reached)> _waiters = [];
+        private readonly object _lock = new();
+        private readonly Milestone _shown = new();
+        private readonly List<(DictationSessionId Session, string Text)> _previews = [];
 
         public bool Enabled { get; set; } = true;
         public ILivePreviewEngine? Engine { get; set; }
         public AppErrorCode? EngineUnavailableReason { get; set; }
         public IAudioSnapshotSource? Audio { get; set; }
         public DictationSessionId? RecordingSessionId { get; set; }
-        public List<(DictationSessionId Session, string Text)> Previews { get; } = [];
         public int Clears { get; private set; }
 
-        /// <summary>Completes once at least <paramref name="count"/> previews have been shown.</summary>
-        public Task WhenShown(int count)
+        public (DictationSessionId Session, string Text)[] Previews
         {
-            if (Previews.Count >= count)
+            get
             {
-                return Task.CompletedTask;
+                lock (_lock)
+                {
+                    return _previews.ToArray();
+                }
             }
-
-            var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            _waiters.Add((count, reached));
-            return reached.Task;
         }
+
+        /// <summary>Completes once at least <paramref name="count"/> previews have been shown.</summary>
+        public Task WhenShown(int count) => _shown.WhenAtLeast(count);
 
         public void ShowPreview(DictationSessionId sessionId, string text)
         {
-            Previews.Add((sessionId, text));
-            foreach (var (count, reached) in _waiters.Where(waiter => waiter.Count <= Previews.Count).ToArray())
+            lock (_lock)
             {
-                reached.TrySetResult();
+                _previews.Add((sessionId, text));
             }
+
+            _shown.Increment();
         }
 
         public void ClearPreview() => Clears++;
@@ -485,16 +593,21 @@ public sealed class LivePreviewControllerTests
 
     private sealed class FakeAudio : IAudioSnapshotSource
     {
+        private readonly Milestone _sampled = new();
+
         public DictationSessionId Session { get; set; }
         public int Samples { get; set; } = 16_000;
-        public int Snapshots { get; private set; }
         public TimeSpan LastWindow { get; private set; }
+
+        /// <summary>Completes once at least <paramref name="count"/> snapshots have been taken.</summary>
+        public Task WhenSampled(int count) => _sampled.WhenAtLeast(count);
 
         public AudioSnapshot? GetSnapshot(TimeSpan maximumDuration)
         {
-            Snapshots++;
             LastWindow = maximumDuration;
-            return new AudioSnapshot(Session, new float[Samples], 16_000, 1);
+            var snapshot = new AudioSnapshot(Session, new float[Samples], 16_000, 1);
+            _sampled.Increment();
+            return snapshot;
         }
     }
 
@@ -512,7 +625,9 @@ public sealed class LivePreviewControllerTests
         public Exception? ThrowOnPass { get; set; }
         public Guid? TagUpdatesWith { get; set; }
         public bool HoldPasses { get; set; }
+        public bool HoldStarts { get; set; }
         public bool HoldStops { get; set; }
+        public Exception? ThrowOnStop { get; set; }
         public int Starts { get; private set; }
         public int Stops { get; private set; }
         public int Passes { get; private set; }
@@ -522,13 +637,21 @@ public sealed class LivePreviewControllerTests
         public TaskCompletionSource PassFinished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource CancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource AllowPassExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource StartStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource AllowStartExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource StopStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource AllowStopExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default)
+        public async Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default)
         {
+            StartStarted.TrySetResult();
+            if (HoldStarts)
+            {
+                await AllowStartExit.Task;
+            }
+
             Starts++;
-            return Task.FromResult(StartResult);
+            return StartResult;
         }
 
         public async Task<LivePreviewUpdate> PreviewAsync(AudioSnapshot snapshot, long sequence, CancellationToken cancellationToken = default)
@@ -570,6 +693,11 @@ public sealed class LivePreviewControllerTests
                 await AllowStopExit.Task;
             }
 
+            if (ThrowOnStop is not null)
+            {
+                throw ThrowOnStop;
+            }
+
             Stops++;
             return new RuntimeWorkerResult(true, RuntimeWorkerState.Stopped);
         }
@@ -595,13 +723,35 @@ public sealed class LivePreviewControllerTests
     /// A clock that moves only when told to. `Task.Delay` on it becomes a timer this clock owns, fired
     /// in due order as time is advanced, so the loop's quarter-second re-ask and its cadence are
     /// crossed by a test in one call rather than waited for.
+    ///
+    /// ADVANCING FIRES THE TIMER; IT DOES NOT RUN THE LOOP. The delay's continuation may be posted
+    /// rather than run inline (the test framework installs a synchronization context), so a test
+    /// that advances and then reads a count is racing. Positive steps are awaited on a milestone the
+    /// loop crosses - a snapshot taken, a preview shown, a timer registered - and negative ones read
+    /// <see cref="NextDue"/>, which is what the loop asked the clock for and cannot be raced.
     /// </summary>
     private sealed class ManualClock : TimeProvider
     {
         private static readonly DateTimeOffset Start = new(2026, 9, 20, 12, 0, 0, TimeSpan.Zero);
         private readonly object _lock = new();
         private readonly List<ManualTimer> _timers = [];
+        private readonly Milestone _registered = new();
         private long _ticks;
+
+        /// <summary>How far from now the earliest registered timer is due, or null when none is.</summary>
+        public TimeSpan? NextDue
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _timers.Count == 0 ? null : TimeSpan.FromTicks(_timers.Min(timer => timer.Due) - _ticks);
+                }
+            }
+        }
+
+        /// <summary>Completes once at least <paramref name="count"/> timers have been registered.</summary>
+        public Task WhenRegistered(int count) => _registered.WhenAtLeast(count);
 
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
 
@@ -659,6 +809,8 @@ public sealed class LivePreviewControllerTests
                 timer.Due = due;
                 _timers.Add(timer);
             }
+
+            _registered.Increment();
         }
 
         private void Cancel(ManualTimer timer)

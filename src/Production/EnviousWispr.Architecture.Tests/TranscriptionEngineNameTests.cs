@@ -642,6 +642,12 @@ public sealed partial class DesignSystemTokenTests
     /// duplicated in another pass as equal, and let a mention in a comment stand in for a call. The
     /// parser finds each stop as an invocation or as a method group handed to the cleanup helper,
     /// and every method that stops the preview must stop the watcher inside the same body.
+    ///
+    /// SYNTACTIC CO-LOCATION, AND THE LIMITS ARE STATED. Both stops in one body is what is checked,
+    /// not that both run on every branch or in any order; a local function's body counts for its
+    /// enclosing method whether or not it is called; a nested class's method is its own method; a
+    /// null-conditional call (`_livePreview?.StopAsync()`) loses its receiver in the syntax and would
+    /// not be seen as a preview stop at all. The floor is a count of METHODS that stop the preview.
     /// </remarks>
     [Fact]
     public void TheAutoStopWatcherIsTornDownWhereverTheLivePreviewIs()
