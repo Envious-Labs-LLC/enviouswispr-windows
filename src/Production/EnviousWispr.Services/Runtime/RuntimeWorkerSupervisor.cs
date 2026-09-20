@@ -93,13 +93,7 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
                 return health;
             }
 
-            if (_restartCount >= _maximumRestarts)
-            {
-                return Failure();
-            }
-
-            _restartCount++;
-            return await StartCoreAsync(timeout, cancellationToken).ConfigureAwait(false);
+            return await RestartCoreAsync(timeout, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -120,7 +114,13 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_process is null || _process.HasExited || State is not RuntimeWorkerState.Ready)
             {
-                var start = await StartCoreAsync(timeout, cancellationToken).ConfigureAwait(false);
+                // A WORKER THAT WAS NEVER STARTED, OR WAS STOPPED ON PURPOSE, IS NOT A CRASH. Windows
+                // suspend stops the worker and the next dictation brings it back; that start is the
+                // ordinary lazy one the old code made and spends nothing. Every other way to be here -
+                // an exited process, a Faulted state - is recovery, and recovery is what the budget bounds.
+                var start = State == RuntimeWorkerState.Stopped
+                    ? await StartCoreAsync(timeout, cancellationToken).ConfigureAwait(false)
+                    : await RestartCoreAsync(timeout, cancellationToken).ConfigureAwait(false);
                 if (!start.Succeeded)
                 {
                     return null;
@@ -136,6 +136,13 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             {
                 await StopCoreAsync().ConfigureAwait(false);
                 State = RuntimeWorkerState.Faulted;
+            }
+            else if (string.Equals(response.Status, "complete", StringComparison.Ordinal))
+            {
+                // A successful request ends the crash loop: one transient crash must not strand
+                // the user until the app restarts, but a worker that crashes on every request
+                // must not be restarted on every dictation forever.
+                _restartCount = 0;
             }
 
             return response;
@@ -198,6 +205,21 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
 
         _gate.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    private async Task<RuntimeWorkerResult> RestartCoreAsync(
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        // Both automatic recovery paths hold the gate across admission and startup.
+        if (_restartCount >= _maximumRestarts)
+        {
+            State = RuntimeWorkerState.Faulted;
+            return Failure();
+        }
+
+        _restartCount++;
+        return await StartCoreAsync(timeout, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<RuntimeWorkerResult> StartCoreAsync(
