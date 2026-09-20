@@ -67,8 +67,20 @@ reason but ask rather than assert it, and write the answer here when you get it.
   as a conflict PROBE - register, unregister, report - and never receives a keystroke, which is why a
   synthetic press takes exactly the path a finger takes (see `uat-testing.md`).
 - Focus and context: Windows UI Automation with explicit fallbacks and privacy limits.
-- Delivery: clipboard-backed paste through narrowly scoped `SendInput`, with clipboard-only fallback when
-  synthetic paste is refused. Two routes, not the macOS cascade of five, and that is deliberate.
+- Delivery: three routes, tried in this order by `WindowsTextTargetAdapter.CommitAsync`, and every
+  result names the one that ran (`TextDeliveryRoute`).
+  1. `UiAutomationValue`: a direct value write through UI Automation. Taken only when the caret context is a
+     standard edit field that supports the value pattern, nothing is selected, and the text is within
+     `MaximumDirectValueCharacters` (16,384). Once the write has been issued the adapter returns whether or
+     not it verified (`DirectWriteUnverified`) and never falls through to a paste. The source records no
+     reason for that; the likely one is that a paste after a write of unknown effect could insert the text
+     twice. Confirm before relying on it.
+  2. `ClipboardPaste`: clipboard-backed paste through narrowly scoped `SendInput`.
+  3. `ClipboardOnly`: the text is left on the clipboard when the paste is refused, or when the target is
+     elevated, protected, changed since recording began, or unsupported.
+  Three routes, not the macOS cascade of five, and that is deliberate. This entry said "two routes" from
+  2026-08-26 to 2026-09-19 while the code had three (#148); a contract that omits a mutation path hides
+  the path that most needs validating.
 - Secrets: Windows Credential Manager.
 - Storage: versioned user data outside the install directory with atomic writes and migrations.
 
