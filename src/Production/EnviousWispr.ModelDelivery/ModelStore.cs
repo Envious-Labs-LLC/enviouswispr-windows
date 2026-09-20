@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -19,7 +18,7 @@ public sealed class ModelStore
     };
 
     private readonly string _rootDirectory;
-    private readonly ArtifactDownloadTransport _transport;
+    private readonly ArtifactDownloader _downloader;
     private readonly ModelManifestVerifier _verifier;
     private readonly IDiskSpaceProbe _diskSpaceProbe;
     private readonly IModelDeliveryObserver _observer;
@@ -51,10 +50,13 @@ public sealed class ModelStore
             throw new ArgumentOutOfRangeException(nameof(options));
         }
 
-        // THE MECHANICS OF ONE ATTEMPT LIVE BESIDE THE STORE, NOT IN IT. The store keeps the retries,
-        // the source order, the admission and what a complete file becomes; the transport knows how
-        // to ask a source for the bytes a partial file lacks.
-        _transport = new ArtifactDownloadTransport(httpClient, _options.EffectiveRequestTimeout, _observer);
+        // THE TRANSFER LIVES BESIDE THE STORE, NOT IN IT. The transport makes one attempt against one
+        // source; the downloader decides sources, attempts, delays and what a failure means for the
+        // artifact; the store keeps the lock, the staging admission, activation, migration and cleanup.
+        _downloader = new ArtifactDownloader(
+            new ArtifactDownloadTransport(httpClient, _options.EffectiveRequestTimeout, _observer),
+            _options,
+            _observer);
     }
 
     public async Task<ModelDeliveryResult> InstallAsync(
@@ -164,8 +166,8 @@ public sealed class ModelStore
             var modelRoot = ModelRoot(manifest.Payload.ModelId);
             foreach (var artifact in manifest.Payload.Files)
             {
-                var legacyPath = SafeCombine(modelRoot, artifact.RelativePath);
-                if (!await MatchesAsync(legacyPath, artifact, cancellationToken).ConfigureAwait(false))
+                var legacyPath = DeliveryFiles.SafeCombine(modelRoot, artifact.RelativePath);
+                if (!await DeliveryFiles.MatchesAsync(legacyPath, artifact, cancellationToken).ConfigureAwait(false))
                 {
                     return Fail(ModelDeliveryFailure.IntegrityMismatch);
                 }
@@ -183,8 +185,8 @@ public sealed class ModelStore
             foreach (var artifact in manifest.Payload.Files)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var source = SafeCombine(modelRoot, artifact.RelativePath);
-                var destination = SafeCombine(staging, artifact.RelativePath);
+                var source = DeliveryFiles.SafeCombine(modelRoot, artifact.RelativePath);
+                var destination = DeliveryFiles.SafeCombine(staging, artifact.RelativePath);
                 Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
                 await CopyFileAsync(source, destination, cancellationToken).ConfigureAwait(false);
             }
@@ -198,7 +200,7 @@ public sealed class ModelStore
 
             foreach (var artifact in manifest.Payload.Files)
             {
-                File.Delete(SafeCombine(modelRoot, artifact.RelativePath));
+                File.Delete(DeliveryFiles.SafeCombine(modelRoot, artifact.RelativePath));
             }
 
             RemoveEmptyLegacyDirectories(modelRoot, manifest.Payload.Files);
@@ -578,7 +580,7 @@ public sealed class ModelStore
         foreach (var artifact in manifest.Payload.Files)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var downloaded = await DownloadArtifactAsync(
+            var downloaded = await _downloader.DownloadArtifactAsync(
                 staging,
                 artifact,
                 completedBytes,
@@ -595,225 +597,6 @@ public sealed class ModelStore
         return await AdmitAsync(manifest, staging, activate, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<ModelDeliveryResult> DownloadArtifactAsync(
-        string staging,
-        ModelArtifact artifact,
-        long completedBeforeArtifact,
-        long totalBytes,
-        CancellationToken cancellationToken)
-    {
-        var finalPath = SafeCombine(staging, artifact.RelativePath);
-        if (await MatchesAsync(finalPath, artifact, cancellationToken).ConfigureAwait(false))
-        {
-            return new(true);
-        }
-
-        if (File.Exists(finalPath))
-        {
-            File.Delete(finalPath);
-        }
-
-        var partialPath = finalPath + ".partial";
-        var resumePath = finalPath + ".resume.json";
-        Directory.CreateDirectory(Path.GetDirectoryName(finalPath)!);
-        if (artifact.IsSharded &&
-            await TryDownloadPartsAsync(staging, artifact, completedBeforeArtifact, totalBytes, cancellationToken)
-                .ConfigureAwait(false))
-        {
-            return new(true);
-        }
-
-        var integrityFailureObserved = false;
-        var permanentSourceFailureObserved = false;
-
-        foreach (var source in artifact.Sources)
-        {
-            for (var attempt = 1; attempt <= _options.MaximumAttemptsPerSource; attempt++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                TimeSpan? retryAfter = null;
-                try
-                {
-                    var outcome = await _transport.DownloadAttemptAsync(
-                        source,
-                        artifact,
-                        partialPath,
-                        resumePath,
-                        completedBeforeArtifact,
-                        totalBytes,
-                        cancellationToken).ConfigureAwait(false);
-                    retryAfter = outcome.RetryAfter;
-                    if (outcome.Result == DownloadAttemptResult.Complete)
-                    {
-                        if (!await MatchesAsync(partialPath, artifact, cancellationToken).ConfigureAwait(false))
-                        {
-                            File.Delete(partialPath);
-                            DeliveryFiles.DeleteIfExists(resumePath);
-                            _observer.Observe(new(
-                                DateTimeOffset.UtcNow,
-                                ModelDeliveryEventCode.SourceFailed,
-                                ModelDeliveryFailure.IntegrityMismatch));
-                            integrityFailureObserved = true;
-                            break;
-                        }
-
-                        File.Move(partialPath, finalPath, overwrite: true);
-                        DeliveryFiles.DeleteIfExists(resumePath);
-                        _observer.Observe(new(
-                            DateTimeOffset.UtcNow,
-                            ModelDeliveryEventCode.ArtifactVerified,
-                            CompletedBytes: completedBeforeArtifact + artifact.SizeBytes,
-                            TotalBytes: totalBytes));
-                        return new(true);
-                    }
-
-                    if (outcome.Result == DownloadAttemptResult.PermanentFailure)
-                    {
-                        permanentSourceFailureObserved = true;
-                        break;
-                    }
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (OperationCanceledException)
-                {
-                    // A request inactivity timeout is transient.
-                }
-                catch (HttpRequestException)
-                {
-                    // A transport failure is transient within the bounded source budget.
-                }
-
-                _observer.Observe(new(
-                    DateTimeOffset.UtcNow,
-                    ModelDeliveryEventCode.SourceFailed,
-                    ModelDeliveryFailure.NetworkUnavailable));
-                if (attempt < _options.MaximumAttemptsPerSource)
-                {
-                    await Task.Delay(
-                        retryAfter ?? _options.DelayForAttempt(attempt),
-                        cancellationToken)
-                        .ConfigureAwait(false);
-                }
-            }
-        }
-
-        return Fail(integrityFailureObserved
-            ? ModelDeliveryFailure.IntegrityMismatch
-            : permanentSourceFailureObserved
-                ? ModelDeliveryFailure.SourceRejected
-                : ModelDeliveryFailure.NetworkUnavailable);
-    }
-
-    /// <summary>
-    /// Fetches every part of a sharded artefact, reassembles them in order, and verifies the whole.
-    /// </summary>
-    /// <remarks>
-    /// Each part rides the ordinary artefact path - the same Range and If-Range resume, the same
-    /// per-source budget - under a synthetic name, so a part behaves like a small file. A false
-    /// return means "get it the whole-file way instead": the shard layer exists to make delivery
-    /// faster, and it must never make it fail where the whole-file sources would have succeeded.
-    /// Anything left behind is removed before the fallback runs so a stale concatenation can never
-    /// be mistaken for a resumable whole-file download.
-    /// </remarks>
-    private async Task<bool> TryDownloadPartsAsync(
-        string staging,
-        ModelArtifact artifact,
-        long completedBeforeArtifact,
-        long totalBytes,
-        CancellationToken cancellationToken)
-    {
-        var finalPath = SafeCombine(staging, artifact.RelativePath);
-        var partialPath = finalPath + ".partial";
-        var partPaths = new List<string>();
-        long offset = 0;
-        var complete = true;
-        foreach (var (part, index) in artifact.Parts!.Select((part, index) => (part, index)))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var synthetic = new ModelArtifact(
-                $"{artifact.RelativePath}.part{index}",
-                part.SizeBytes,
-                part.Sha256,
-                part.Sources);
-            partPaths.Add(SafeCombine(staging, synthetic.RelativePath));
-            var downloaded = await DownloadArtifactAsync(
-                staging,
-                synthetic,
-                completedBeforeArtifact + offset,
-                totalBytes,
-                cancellationToken).ConfigureAwait(false);
-            if (!downloaded.Succeeded)
-            {
-                complete = false;
-                break;
-            }
-
-            offset += part.SizeBytes;
-        }
-
-        if (complete)
-        {
-            DeliveryFiles.DeleteIfExists(partialPath);
-            DeliveryFiles.DeleteIfExists(finalPath + ".resume.json");
-            await using (var output = new FileStream(
-                partialPath,
-                FileMode.Create,
-                FileAccess.Write,
-                FileShare.None,
-                bufferSize: 128 * 1024,
-                useAsync: true))
-            {
-                foreach (var partPath in partPaths)
-                {
-                    await using var input = new FileStream(
-                        partPath,
-                        FileMode.Open,
-                        FileAccess.Read,
-                        FileShare.Read,
-                        bufferSize: 128 * 1024,
-                        useAsync: true);
-                    await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
-                }
-            }
-
-            if (await MatchesAsync(partialPath, artifact, cancellationToken).ConfigureAwait(false))
-            {
-                File.Move(partialPath, finalPath, overwrite: true);
-                foreach (var partPath in partPaths)
-                {
-                    DeliveryFiles.DeleteIfExists(partPath);
-                }
-
-                _observer.Observe(new(
-                    DateTimeOffset.UtcNow,
-                    ModelDeliveryEventCode.ArtifactVerified,
-                    CompletedBytes: completedBeforeArtifact + artifact.SizeBytes,
-                    TotalBytes: totalBytes));
-                return true;
-            }
-
-            // THE PARTS EACH MATCHED AND THE WHOLE DID NOT, which means the manifest describes
-            // slices of a different file. Nothing here can be trusted; the whole-file path decides.
-            _observer.Observe(new(
-                DateTimeOffset.UtcNow,
-                ModelDeliveryEventCode.SourceFailed,
-                ModelDeliveryFailure.IntegrityMismatch));
-        }
-
-        DeliveryFiles.DeleteIfExists(partialPath);
-        foreach (var partPath in partPaths)
-        {
-            DeliveryFiles.DeleteIfExists(partPath);
-            DeliveryFiles.DeleteIfExists(partPath + ".partial");
-            DeliveryFiles.DeleteIfExists(partPath + ".resume.json");
-        }
-
-        return false;
-    }
-
     private async Task<ModelDeliveryResult> AdmitAsync(
         VerifiedModelManifest manifest,
         string staging,
@@ -822,7 +605,7 @@ public sealed class ModelStore
     {
         foreach (var artifact in manifest.Payload.Files)
         {
-            if (!await MatchesAsync(SafeCombine(staging, artifact.RelativePath), artifact, cancellationToken)
+            if (!await DeliveryFiles.MatchesAsync(DeliveryFiles.SafeCombine(staging, artifact.RelativePath), artifact, cancellationToken)
                 .ConfigureAwait(false))
             {
                 return Fail(ModelDeliveryFailure.IntegrityMismatch);
@@ -838,7 +621,7 @@ public sealed class ModelStore
             .ToArray();
         foreach (var path in unexpected)
         {
-            File.Delete(SafeCombine(staging, path));
+            File.Delete(DeliveryFiles.SafeCombine(staging, path));
         }
 
         await DeliveryFiles.WriteAtomicAsync(
@@ -914,7 +697,7 @@ public sealed class ModelStore
 
         foreach (var artifact in manifest.Payload.Files)
         {
-            if (!await MatchesAsync(SafeCombine(directory, artifact.RelativePath), artifact, cancellationToken)
+            if (!await DeliveryFiles.MatchesAsync(DeliveryFiles.SafeCombine(directory, artifact.RelativePath), artifact, cancellationToken)
                 .ConfigureAwait(false))
             {
                 return null;
@@ -970,30 +753,6 @@ public sealed class ModelStore
         _observer.Observe(new(DateTimeOffset.UtcNow, ModelDeliveryEventCode.ModelActivated));
     }
 
-    private static async Task<bool> MatchesAsync(
-        string path,
-        ModelArtifact artifact,
-        CancellationToken cancellationToken)
-    {
-        if (!File.Exists(path) || new FileInfo(path).Length != artifact.SizeBytes)
-        {
-            return false;
-        }
-
-        await using var stream = new FileStream(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            bufferSize: 128 * 1024,
-            useAsync: true);
-        var hash = await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false);
-        return string.Equals(
-            Convert.ToHexString(hash),
-            artifact.Sha256,
-            StringComparison.OrdinalIgnoreCase);
-    }
-
     private static async Task CopyFileAsync(
         string source,
         string destination,
@@ -1036,14 +795,14 @@ public sealed class ModelStore
         }
     }
 
-    private string ModelRoot(string modelId) => SafeCombine(_rootDirectory, modelId);
+    private string ModelRoot(string modelId) => DeliveryFiles.SafeCombine(_rootDirectory, modelId);
 
-    private string StagingDirectory(VerifiedModelManifest manifest) => SafeCombine(
+    private string StagingDirectory(VerifiedModelManifest manifest) => DeliveryFiles.SafeCombine(
         ModelRoot(manifest.Payload.ModelId),
         $".staging/{manifest.Payload.Version}-{manifest.ManifestDigest}");
 
     private string FinalDirectory(string modelId, string version, string digest) =>
-        SafeCombine(ModelRoot(modelId), $"versions/{version}/{digest}");
+        DeliveryFiles.SafeCombine(ModelRoot(modelId), $"versions/{version}/{digest}");
 
     private string[] VersionDirectories(string modelId, string version)
     {
@@ -1057,11 +816,11 @@ public sealed class ModelStore
     private static long RemainingBytes(VerifiedModelManifest manifest, string staging) =>
         manifest.Payload.Files.Sum(file =>
             Math.Max(0, file.SizeBytes - Math.Min(file.SizeBytes, PartialOrCompleteLength(staging, file))) +
-            (file.IsSharded && !File.Exists(SafeCombine(staging, file.RelativePath)) ? file.SizeBytes : 0));
+            (file.IsSharded && !File.Exists(DeliveryFiles.SafeCombine(staging, file.RelativePath)) ? file.SizeBytes : 0));
 
     private static long PartialOrCompleteLength(string staging, ModelArtifact artifact)
     {
-        var final = SafeCombine(staging, artifact.RelativePath);
+        var final = DeliveryFiles.SafeCombine(staging, artifact.RelativePath);
         if (File.Exists(final))
         {
             return new FileInfo(final).Length;
@@ -1069,18 +828,6 @@ public sealed class ModelStore
 
         var partial = final + ".partial";
         return File.Exists(partial) ? new FileInfo(partial).Length : 0;
-    }
-
-    private static string SafeCombine(string root, string relativePath)
-    {
-        var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        var combined = Path.GetFullPath(Path.Combine(rootFull, relativePath.Replace('/', Path.DirectorySeparatorChar)));
-        if (!combined.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new IOException("A model path escaped its store root.");
-        }
-
-        return combined;
     }
 
     private string LockKey(string modelId) =>
@@ -1113,7 +860,7 @@ public sealed class ModelStore
         IReadOnlyList<ModelArtifact> artifacts)
     {
         foreach (var directory in artifacts
-            .Select(file => Path.GetDirectoryName(SafeCombine(modelRoot, file.RelativePath)))
+            .Select(file => Path.GetDirectoryName(DeliveryFiles.SafeCombine(modelRoot, file.RelativePath)))
             .Where(path => path is not null && !string.Equals(path, modelRoot, StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderByDescending(path => path!.Length))
