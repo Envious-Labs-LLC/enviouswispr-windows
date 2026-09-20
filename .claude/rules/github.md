@@ -51,8 +51,17 @@ diagnosis alone.
 Branch from `main` in its own worktree, implement, commit, push, open the pull request, clear review, then
 merge and delete the branch. **Never pass `--auto`.** With no required check it does not wait for CI, it
 merges at once - measured 2026-08-30 and again 2026-09-19, when #151 landed with its last commit's run
-still in progress - and since 2026-09-19 the repository refuses it outright. Wait with
-`gh pr checks <n> --watch`, then `gh pr merge <n> --squash --delete-branch`.
+still in progress - and since 2026-09-19 the repository refuses it outright.
+
+**The watch's exit code is the gate, and a pipe eats it.** `gh pr checks <n> --watch --fail-fast` exits
+non-zero on a red check; `gh pr checks <n> --watch | tail -1 && gh pr merge <n>` returns `tail`'s status
+and merges anyway, which is how #156 landed red on 2026-09-20 (#158). The shape is:
+
+```bash
+gh pr checks <n> --watch --fail-fast && gh pr merge <n> --squash --delete-branch
+```
+
+No pipe between the watch and the `&&`. Print the watch's output afterwards if you want to see it.
 
 **The gate IS the approval.** Merge your own work once it clears; never ask, and never leave finished work
 open waiting to be asked (founder standing instruction, 2026-08-30).
