@@ -646,10 +646,13 @@ public sealed partial class DesignSystemTokenTests
                 FindRepositoryRoot(),
                 "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
 
-        var previewStops = source.Split("StopLivePreviewAsync").Length - 1;
-        var watcherStops = source.Split("StopAutoStopWatchAsync").Length - 1;
+        // The preview's stop is a call on its controller, so every mention is a call site. The
+        // watcher's is still a method of the shell until step 10 moves it, so its own declaration
+        // is taken back out: a free mention would let one missing stop pass as equal.
+        var previewStops = source.Split("_livePreview.StopAsync").Length - 1;
+        var watcherStops = source.Split("StopAutoStopWatchAsync").Length - 1
+            - (source.Split("Task StopAutoStopWatchAsync(").Length - 1);
 
-        // One extra mention each for the method's own declaration.
         Assert.True(previewStops >= 6, $"Expected the preview teardown call sites, found {previewStops}.");
 
         Assert.True(

@@ -877,12 +877,21 @@ public sealed partial class DesignSystemTokenTests
     ///
     /// It closes the shape the flows actually take. The callbacks are the known hole, and they are
     /// few enough to be read.
+    ///
+    /// THE PIPELINE IS READ AS WELL AS THE SHELL, because the flows are leaving the shell one step
+    /// at a time (#148) and a gate that read only the shell would have shrunk with each move while
+    /// still reporting green - by the last step it would have guarded nothing. A flow is a flow
+    /// wherever it lives, and in the pipeline it is public by necessity, so accessibility is not
+    /// part of the rule.
     /// </remarks>
     [Fact]
     public void EveryFlowThatServesADictationOpensItsScope()
     {
-        var shell = File.ReadAllText(Path.Combine(
-            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+        var root = FindRepositoryRoot();
+        var sources = new[] { Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs") }
+            .Concat(Directory.GetFiles(Path.Combine(root, "src", "Production", "EnviousWispr.Pipeline"), "*.cs"))
+            .Select(File.ReadAllText)
+            .ToArray();
 
         // THE PARSER DECIDES WHAT A FLOW IS, BECAUSE THE REGEX FAILED GREEN. It required the exact
         // text `private async Task`, and C# lets a method carry its modifiers in any order with any
@@ -891,7 +900,7 @@ public sealed partial class DesignSystemTokenTests
         // ABSENT rather than as unscoped, which is the one outcome a check must never have. Ref: #82.
         //
         //     private static async Task HandleAsync(DictationSessionId sessionId) { ... }
-        var methods = DictationFlows(shell);
+        var methods = sources.SelectMany(DictationFlows).ToArray();
 
         var unscoped = new List<string>();
         var flows = methods.Length;
@@ -927,7 +936,7 @@ public sealed partial class DesignSystemTokenTests
         // THE FLOOR IS TODAY'S COUNT, so a flow deleted or renamed out of the pattern is noticed.
         // A lower floor lets the set shrink silently, which is how a gate stops covering the thing
         // it was written for while still reporting green.
-        Assert.True(flows >= 5, $"Expected the dictation flows, found {flows}.");
+        Assert.True(flows >= 12, $"Expected the dictation flows, found {flows}.");
         Assert.True(
             unscoped.Count == 0,
             "These methods are handed a dictation and never open its scope, so every line they "
@@ -945,7 +954,6 @@ public sealed partial class DesignSystemTokenTests
             .DescendantNodes()
             .OfType<MethodDeclarationSyntax>()
             .Where(method =>
-                method.Modifiers.Any(SyntaxKind.PrivateKeyword) &&
                 method.Modifiers.Any(SyntaxKind.AsyncKeyword) &&
                 ReturnsTask(method.ReturnType) &&
                 method.ParameterList.Parameters.Any(parameter =>
@@ -974,6 +982,8 @@ public sealed partial class DesignSystemTokenTests
     [InlineData("private|async|Task D(DictationSessionId id) { }")]
     [InlineData("private async Task E(|DictationSessionId id) { }")]
     [InlineData("private async Task F(string first, DictationSessionId id) { }")]
+    [InlineData("public async Task G(DictationSessionId id) { }")]
+    [InlineData("internal async Task<int> H(DictationSessionId id) { return 0; }")]
     public void AFlowIsFoundHoweverItsSignatureIsWritten(string declaration)
     {
         // The bar stands for a line break: a signature split across lines is one of the shapes
@@ -990,7 +1000,7 @@ public sealed partial class DesignSystemTokenTests
     /// </remarks>
     [Theory]
     [InlineData("private Task Starts(DictationSessionId id) => Task.CompletedTask;")]
-    [InlineData("public async Task NotPrivate(DictationSessionId id) { }")]
+    [InlineData("public Task PublicStarts(DictationSessionId id) => Task.CompletedTask;")]
     [InlineData("private async void NotATask(DictationSessionId id) { }")]
     [InlineData("private async Task NoDictation(string id) { }")]
     public void SomethingThatIsNotAFlowIsNotFound(string declaration)
