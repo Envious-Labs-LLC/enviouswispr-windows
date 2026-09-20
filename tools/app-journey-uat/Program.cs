@@ -1473,8 +1473,11 @@ static void RequireLivePreviewJourneyEvents(IReadOnlyList<string> events)
         StringComparison.Ordinal))).ToArray();
     if (missing.Length > 0)
     {
+        // THE EVENTS THAT WERE SEEN ARE NAMED, because "omitted" alone sends whoever reads it back to
+        // rerun with a log copy. They are event names and failure categories, never content.
         throw new JourneyExpectationException(
-            $"The live-preview journey omitted content-free stages: {string.Join(", ", missing)}.");
+            $"The live-preview journey omitted content-free stages: {string.Join(", ", missing)}; "
+                + $"events={string.Join(',', events)}.");
     }
 }
 
