@@ -54,14 +54,12 @@ public enum SessionCommandKind
 /// <param name="StartContext">For a press: what it was about, captured at admission. Null otherwise.</param>
 /// <param name="Transition">For an interruption: which one.</param>
 /// <param name="TimedOutSession">For a timeout: the recording that was armed.</param>
-/// <param name="SubmittedAt">The clock's timestamp at admission; an interruption that waited too long stands down.</param>
 public sealed record SessionCommand(
     SessionCommandKind Kind,
     PushToTalkSignal Signal,
     RecordingStartContext? StartContext = null,
     SystemLifecycleTransition? Transition = null,
-    DictationSessionId? TimedOutSession = null,
-    long SubmittedAt = 0)
+    DictationSessionId? TimedOutSession = null)
 {
     public SessionCommand(PushToTalkSignal signal, RecordingStartContext? startContext = null)
         : this(SessionCommandKind.PushToTalk, signal, startContext)
@@ -84,10 +82,20 @@ public sealed record SessionCommand(
     };
 }
 
-/// <summary>The body of one push-to-talk transition, run by the coordinator one at a time.</summary>
+/// <summary>The body of one session command, run by the coordinator one at a time.</summary>
 public interface ISessionCommandExecutor
 {
     Task<SessionCommandResult> ExecuteAsync(SessionCommand command, CancellationToken stoppingToken);
+
+    /// <summary>
+    /// A queued interruption has waited longer than it may behind the command that was running when
+    /// Windows locked. Runs outside the session, while that command is still running, as the shell's
+    /// five-second wait used to report from outside the gate; the command itself will not run.
+    /// </summary>
+    Task ExpireAsync(SessionCommand command) => Task.CompletedTask;
+
+    /// <summary>The session is being torn down for shutdown, after the last command has finished.</summary>
+    Task ShutdownAsync() => Task.CompletedTask;
 }
 
 /// <summary>
@@ -114,15 +122,27 @@ public interface ISessionCommandExecutor
 /// signals in a row are one: the second is <see cref="SessionCommandDisposition.Ignored"/>. The queue is
 /// never longer than a press and the terminal that ends it.
 ///
-/// THE SESSION GATE IS STILL OWNED BY THE SHELL, AND SHARED. The watchdog, the lock/suspend recovery, the
-/// update check and shutdown all serialise against it, and they keep doing so. Moving those flows behind
-/// this queue is a later step (#148, step 11); until then the gate is injected rather than created here.
+/// THE SESSION IS OWNED HERE. The watchdog's timeout and Windows locking or suspending are commands on
+/// this queue; the update check holds the session through <see cref="TryHold"/>; shutdown is
+/// <see cref="ShutdownAsync"/>, which runs the executor's teardown after the last command. Nothing
+/// outside this class takes the gate.
+///
+/// AN INTERRUPTION HAS FIVE SECONDS TO REACH THE FRONT. The shell used to wait that long for its gate
+/// and then report recovery as pending, while whatever held the gate carried on. The queue keeps that:
+/// an interruption admitted behind a running command expires if the command has not finished in
+/// <see cref="InterruptionPatience"/>, the executor is told so at that moment - outside the session,
+/// as the shell reported it - and the command is skipped when its turn comes.
 /// </remarks>
 public sealed class DictationSessionCoordinator : IAsyncDisposable
 {
+    /// <summary>How long an interruption may wait behind the command that was running when Windows locked.</summary>
+    public static readonly TimeSpan InterruptionPatience = TimeSpan.FromSeconds(5);
+
     private readonly ISessionCommandExecutor _executor;
     private readonly SemaphoreSlim _sessionGate = new(1, 1);
     private readonly TimeProvider _clock;
+    private int _holds;
+    private bool _gateDisposed;
     private readonly Func<RecordingStartContext>? _captureStartContext;
     private readonly Channel<QueuedCommand> _queue;
     private readonly CancellationTokenSource _stopping = new();
@@ -160,7 +180,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     public int PendingCount => Volatile.Read(ref _pendingOrRunning);
 
     /// <summary>Whether nothing holds the session: no command running, no hold taken.</summary>
-    internal bool IsIdle => _sessionGate.CurrentCount == 1;
+    internal bool IsIdle => !_gateDisposed && _sessionGate.CurrentCount == 1;
 
     /// <summary>
     /// Takes the session for something that is not a dictation - an update check that must not run
@@ -177,7 +197,21 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
                 return null;
             }
 
-            return new Hold(_sessionGate);
+            _holds++;
+            return new Hold(this);
+        }
+    }
+
+    /// <summary>A hold is given back under the admission lock; a gate already disposed is not released.</summary>
+    private void ReleaseHold()
+    {
+        lock (_admission)
+        {
+            _holds--;
+            if (!_gateDisposed)
+            {
+                _sessionGate.Release();
+            }
         }
     }
 
@@ -188,11 +222,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     /// five-second wait for the session gate used to do.
     /// </summary>
     public Task<SessionCommandResult> InterruptAsync(SystemLifecycleTransition transition) =>
-        Submit(new SessionCommand(
-            SessionCommandKind.Interruption,
-            PushToTalkSignal.Cancelled,
-            Transition: transition,
-            SubmittedAt: _clock.GetTimestamp()));
+        Submit(new SessionCommand(SessionCommandKind.Interruption, PushToTalkSignal.Cancelled, Transition: transition));
 
     /// <summary>
     /// The recording armed as <paramref name="sessionId"/> has run for as long as it is allowed. A
@@ -202,7 +232,11 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     public Task<SessionCommandResult> TimeOutAsync(DictationSessionId sessionId) =>
         Submit(new SessionCommand(SessionCommandKind.Timeout, PushToTalkSignal.Cancelled, TimedOutSession: sessionId));
 
-    /// <summary>Refuses everything from now on, without waiting; the shell calls this when leaving.</summary>
+    /// <summary>
+    /// Refuses everything from now on, without waiting: nothing more is admitted, and a command already
+    /// queued but not yet started is refused when its turn comes. The command running now finishes on
+    /// its own terms. The shell calls this before its first await when leaving.
+    /// </summary>
     public void Close()
     {
         lock (_admission)
@@ -210,6 +244,35 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             _closed = true;
             _queue.Writer.TryComplete();
         }
+
+        _stopping.Cancel();
+    }
+
+    /// <summary>
+    /// Shutdown: admission closes, the command running now is given <paramref name="drainTimeout"/> to
+    /// finish, and the executor's teardown then runs under the session - or, if the command outlived
+    /// the wait, after a further <paramref name="drainTimeout"/> for the session, without it. The two
+    /// waits are the ones the shell had (one for its queue, one for its gate); the teardown is the
+    /// session-specific disposal the shell used to do between them.
+    /// </summary>
+    /// <returns>True when the last command finished and the teardown ran under the session.</returns>
+    public async Task<bool> ShutdownAsync(TimeSpan drainTimeout)
+    {
+        var drained = await StopAsync(drainTimeout).ConfigureAwait(false);
+        var held = drained && await _sessionGate.WaitAsync(drainTimeout).ConfigureAwait(false);
+        try
+        {
+            await _executor.ShutdownAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            if (held)
+            {
+                _sessionGate.Release();
+            }
+        }
+
+        return held;
     }
 
     /// <summary>
@@ -302,7 +365,42 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             _pendingOrRunning++;
         }
 
+        if (command.Kind == SessionCommandKind.Interruption)
+        {
+            _ = ExpireIfLateAsync(queued);
+        }
+
         return queued.Completion.Task;
+    }
+
+    /// <summary>
+    /// The five seconds an interruption may wait. If the command has not started by then it is marked
+    /// expired - under the admission lock, so it either starts or expires, never both - and the
+    /// executor is told, outside the session, while whatever is ahead of it carries on.
+    /// </summary>
+    private async Task ExpireIfLateAsync(QueuedCommand queued)
+    {
+        try
+        {
+            await Task.Delay(InterruptionPatience, _clock, _stopping.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutting down: the command is refused when its turn comes, and nothing is reported.
+            return;
+        }
+
+        lock (_admission)
+        {
+            if (queued.Started)
+            {
+                return;
+            }
+
+            queued.Expired = true;
+        }
+
+        await _executor.ExpireAsync(queued.Command).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -323,14 +421,22 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        // THE CANCELLATION SOURCE AND THE GATE OUTLIVE A CONSUMER THAT WOULD NOT STOP. Disposing them
-        // under a running consumer turns the next token read or gate release into an
-        // ObjectDisposedException inside the loop; a stranded pair is a few bytes, and an unclean stop
-        // has already been reported by StopAsync.
+        // THE CANCELLATION SOURCE AND THE GATE OUTLIVE A CONSUMER THAT WOULD NOT STOP, AND THE GATE
+        // OUTLIVES A HOLD STILL OUT. Disposing them under a running consumer turns the next token read
+        // or gate release into an ObjectDisposedException inside the loop, and disposing the gate under
+        // an update check still downloading would throw when that check gave its hold back. A stranded
+        // pair is a few bytes, and an unclean stop has already been reported by StopAsync.
         if (await StopAsync(TimeSpan.Zero).ConfigureAwait(false))
         {
             _stopping.Dispose();
-            _sessionGate.Dispose();
+            lock (_admission)
+            {
+                if (_holds == 0)
+                {
+                    _gateDisposed = true;
+                    _sessionGate.Dispose();
+                }
+            }
         }
     }
 
@@ -351,9 +457,22 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     {
         SessionCommandResult result;
         var holdingGate = queued.GateReserved;
+        bool expired;
+        lock (_admission)
+        {
+            // STARTED OR EXPIRED, DECIDED UNDER ONE LOCK. An interruption that expired while it waited
+            // is skipped here; one that starts here can no longer expire.
+            expired = queued.Expired;
+            queued.Started = !expired;
+        }
+
         try
         {
-            if (_stopping.IsCancellationRequested)
+            if (expired)
+            {
+                result = new SessionCommandResult(SessionCommandDisposition.Ignored, WasQueued: true);
+            }
+            else if (_stopping.IsCancellationRequested)
             {
                 result = new SessionCommandResult(SessionCommandDisposition.Stopping);
             }
@@ -428,7 +547,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     }
 
     /// <summary>The session, held by something that is not a dictation; disposing gives it back.</summary>
-    private sealed class Hold(SemaphoreSlim gate) : IDisposable
+    private sealed class Hold(DictationSessionCoordinator owner) : IDisposable
     {
         private int _released;
 
@@ -436,7 +555,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         {
             if (Interlocked.Exchange(ref _released, 1) == 0)
             {
-                gate.Release();
+                owner.ReleaseHold();
             }
         }
     }
@@ -450,6 +569,12 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 
         /// <summary>A terminal admitted behind another command: it waited in the queue, not only on the gate.</summary>
         public bool WaitedInQueue { get; init; }
+
+        /// <summary>Set under the admission lock when the consumer takes the command up.</summary>
+        public bool Started { get; set; }
+
+        /// <summary>Set under the admission lock when an interruption waited too long; it will not run.</summary>
+        public bool Expired { get; set; }
 
         public TaskCompletionSource<SessionCommandResult> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);

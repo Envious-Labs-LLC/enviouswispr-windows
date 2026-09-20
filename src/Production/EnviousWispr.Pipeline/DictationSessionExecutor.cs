@@ -65,8 +65,15 @@ public interface IDictationSessionEffects
     /// <summary>
     /// Capture is complete: stop the background work and turn the audio into delivered text. The
     /// processing deadline this arms stays armed until <see cref="ReleaseProcessingDeadline"/>.
+    /// When <paramref name="preserving"/> names the Windows transition that ended the recording, the
+    /// "captured audio is being preserved" status is shown after the background work has stopped and
+    /// before transcription - where the shell's lifecycle callback used to show it.
     /// </summary>
-    Task FinalizeAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly);
+    Task FinalizeAsync(
+        DictationSessionId sessionId,
+        CapturedAudio audio,
+        bool recoveryOnly,
+        SystemLifecycleTransition? preserving = null);
 
     /// <summary>
     /// Releases the processing deadline armed by <see cref="FinalizeAsync"/>, if this command armed one.
@@ -95,8 +102,11 @@ public interface IDictationSessionEffects
     /// <summary>Windows interrupted while the previous command was still running, and the recovery has waited too long.</summary>
     void ShowInterruptionPending();
 
-    /// <summary>Windows is locking or suspending and the recording's audio is being kept.</summary>
-    void ShowInterruptionPreserving(SystemLifecycleTransition transition);
+    /// <summary>
+    /// Shutdown, after the last command: the session-specific disposal - the timers, streaming and the
+    /// preview stopped, the capture let go of, the session controller and the delivery route disposed.
+    /// </summary>
+    Task TearDownSessionAsync();
 
     /// <summary>The recording ran to its limit and was aborted: the log line.</summary>
     void RecordRecordingTimedOut(AppError failure);
@@ -124,28 +134,30 @@ public interface IDictationSessionEffects
 /// </remarks>
 public sealed class DictationSessionExecutor : ISessionCommandExecutor
 {
-    /// <summary>
-    /// How long an interruption may wait behind the command that was running when Windows locked. The
-    /// shell used to wait this long for the session gate and then report the recovery as pending;
-    /// the queue waits as long as it takes and the executor applies the same limit when it runs.
-    /// </summary>
-    internal static readonly TimeSpan InterruptionPatience = TimeSpan.FromSeconds(5);
-
     private readonly PushToTalkSessionController _controller;
     private readonly IDictationSessionEffects _effects;
-    private readonly TimeProvider _clock;
 
-    public DictationSessionExecutor(
-        PushToTalkSessionController controller,
-        IDictationSessionEffects effects,
-        TimeProvider? clock = null)
+    public DictationSessionExecutor(PushToTalkSessionController controller, IDictationSessionEffects effects)
     {
         ArgumentNullException.ThrowIfNull(controller);
         ArgumentNullException.ThrowIfNull(effects);
         _controller = controller;
         _effects = effects;
-        _clock = clock ?? TimeProvider.System;
     }
+
+    /// <summary>The interruption waited five seconds behind another command: recovery is pending, and it is said so now.</summary>
+    public Task ExpireAsync(SessionCommand command)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        using var dictation = _controller.CurrentSession is { } interrupted
+            ? DictationScope.Begin(interrupted.Id.Value)
+            : NoScope.Instance;
+        _effects.ShowInterruptionPending();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>The last thing on the queue: the shell's session-specific disposal, through its port.</summary>
+    public Task ShutdownAsync() => _effects.TearDownSessionAsync();
 
     public Task<SessionCommandResult> ExecuteAsync(SessionCommand command, CancellationToken stoppingToken)
     {
@@ -159,9 +171,10 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     }
 
     /// <summary>
-    /// Windows is locking or suspending. A recording is released and its audio kept - transcribed and
-    /// held for recovery, exactly as a key release would - and anything else in flight is reset. The
-    /// body the shell's lifecycle callback used to run under the session gate, unchanged in order.
+    /// Windows is locking or suspending. A recording is released and finalised exactly as a key release
+    /// would finalise it - transcribed, delivered where it can be, held for recovery where it cannot -
+    /// and anything else in flight is reset; with nothing in flight, nothing is done. The body the
+    /// shell's lifecycle callback used to run under the session gate, in its order.
     /// </summary>
     private async Task<SessionCommandResult> InterruptAsync(SessionCommand command)
     {
@@ -172,19 +185,14 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         using var dictation = _controller.CurrentSession is { } interrupted
             ? DictationScope.Begin(interrupted.Id.Value)
             : NoScope.Instance;
-        if (_clock.GetElapsedTime(command.SubmittedAt) > InterruptionPatience)
-        {
-            _effects.ShowInterruptionPending();
-            return new SessionCommandResult(SessionCommandDisposition.Ignored);
-        }
-
         var transition = command.Transition ?? SystemLifecycleTransition.SessionLocked;
         try
         {
+            // NOTHING TO INTERRUPT, NOTHING DONE - as the shell's callback did. The edge is still
+            // recorded in the finally, as it was.
             if (_controller.CurrentSession is null)
             {
-                await RecoverInterruptedAsync(AppErrorCode.Cancelled, SessionFailureKind.Interrupted).ConfigureAwait(false);
-                return new SessionCommandResult(SessionCommandDisposition.Applied);
+                return new SessionCommandResult(SessionCommandDisposition.Ignored);
             }
 
             if (_controller.CurrentSession.State == DictationSessionState.Recording)
@@ -196,8 +204,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                     result.Session is not null &&
                     result.Audio is not null)
                 {
-                    _effects.ShowInterruptionPreserving(transition);
-                    await _effects.FinalizeAsync(result.Session.Id, result.Audio, recoveryOnly: false)
+                    await _effects.FinalizeAsync(result.Session.Id, result.Audio, recoveryOnly: false, preserving: transition)
                         .ConfigureAwait(false);
                     return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
                 }

@@ -96,6 +96,7 @@ public partial class App : Application, IAsyncDisposable
     private DeterministicTextOptions _deterministicTextOptions =
         DeterministicTextOptions.From(DictationPreferences.Default);
     private bool _disposed;
+    private bool _sessionTornDownCleanly = true;
     private bool _exitRequested;
     private Task? _shutdownPreparation;
     private bool _backgroundNoticeShown;
@@ -801,8 +802,9 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        // Probed and given straight back, as the gate was: the answer is whether a dictation is in
-        // flight at this instant, and the restart that follows closes admission by leaving.
+        // THE SESSION IS HELD THROUGH THE ATTEMPT, and the leaving flag is set before it is given
+        // back: a press admitted between the two would have opened a microphone under a restart. If the
+        // restart does not happen the flag comes off and the hold goes back, and dictation resumes.
         var hold = _sessionCoordinator is { } coordinator ? coordinator.TryHold() : NoScope.Instance;
         if (hold is null)
         {
@@ -810,22 +812,24 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        hold.Dispose();
-        _exitRequested = true;
-        try
+        using (hold)
         {
-            if (!_updateService.TryApplyPendingAndRestart())
+            _exitRequested = true;
+            try
+            {
+                if (!_updateService.TryApplyPendingAndRestart())
+                {
+                    _exitRequested = false;
+                    _window?.SetUpdateStatus(new UpdateOperationResult(UpdateOperationStatus.Failed));
+                    return;
+                }
+            }
+            catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
             {
                 _exitRequested = false;
                 _window?.SetUpdateStatus(new UpdateOperationResult(UpdateOperationStatus.Failed));
                 return;
             }
-        }
-        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
-        {
-            _exitRequested = false;
-            _window?.SetUpdateStatus(new UpdateOperationResult(UpdateOperationStatus.Failed));
-            return;
         }
 
         await PrepareForExitAsync().ConfigureAwait(true);
@@ -1004,6 +1008,11 @@ public partial class App : Application, IAsyncDisposable
         using var dictation = _sessionController?.CurrentSession is { } recording
             ? DictationScope.Begin(recording.Id.Value)
             : NoScope.Instance;
+        // ADMISSION CLOSES BEFORE THE FIRST AWAIT ON THE WAY OUT. A release queued behind a press that
+        // is still opening the microphone would otherwise run while the settings drain below waits,
+        // and start a finalisation the shell is about to tear down under. Closing refuses it when its
+        // turn comes; the press already running finishes on its own terms.
+        _sessionCoordinator?.Close();
         // THE SETTINGS WRITE FINISHES BEFORE THE WINDOW GOES. Teardown is synchronous and cannot
         // wait, so abandoning a save in flight let the process end mid-write - which is how a choice
         // somebody just made disappears. This is the one place on the exit path that can await it.
@@ -1028,15 +1037,9 @@ public partial class App : Application, IAsyncDisposable
         _disposed = true;
         var cleanShutdown = true;
         _activeProcessingCancellation?.Cancel();
-        // ADMISSION CLOSES BEFORE THE GATE IS TAKEN. A command still queued would otherwise wait on a
-        // gate this method is about to hold and then dispose; closing first refuses it, cancels the
-        // consumer's wait, and lets whatever is mid-flight finish on its own deadline.
-        if (_sessionCoordinator is { } coordinator)
-        {
-            cleanShutdown &= await coordinator.StopAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(true);
-        }
-
-        cleanShutdown &= await TryCleanupAsync(_watchdog.StopAsync).ConfigureAwait(true);
+        // ADMISSION CLOSES BEFORE THE FIRST AWAIT, idempotently: the exit path has usually closed it
+        // already, and a disposal reached another way closes it now.
+        _sessionCoordinator?.Close();
 
         if (_lifecycleMonitor is not null)
         {
@@ -1054,31 +1057,19 @@ public partial class App : Application, IAsyncDisposable
             _pushToTalkHook = null;
         }
 
-        cleanShutdown &= await TryCleanupAsync(_streaming.StopAsync).ConfigureAwait(true);
-        cleanShutdown &= await TryCleanupAsync(_autoStop.StopAsync).ConfigureAwait(true);
-        cleanShutdown &= await TryCleanupAsync(_livePreview.StopAsync).ConfigureAwait(true);
-
-        if (_audioCapture is not null)
+        // THE SESSION IS TORN DOWN BY ITS OWNER, after the last command: the coordinator gives the
+        // command running now ten seconds, then runs the shell's session teardown under the session,
+        // or after a further ten seconds without it - the two waits the shell used to make itself.
+        if (_sessionCoordinator is { } coordinator)
         {
-            _audioCapture.LevelChanged -= OnAudioLevelChanged;
+            cleanShutdown &= await coordinator.ShutdownAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(true);
+        }
+        else
+        {
+            await TearDownSessionAsync().ConfigureAwait(true);
         }
 
-        if (_sessionController is not null)
-        {
-            cleanShutdown &= await TryCleanupAsync(
-                async () => await _sessionController.DisposeAsync().ConfigureAwait(true))
-                .ConfigureAwait(true);
-            _sessionController = null;
-            _audioCapture = null;
-        }
-
-        if (_textTargetAdapter is not null)
-        {
-            cleanShutdown &= TryCleanup(_textTargetAdapter.Dispose);
-        }
-
-        _textTargetAdapter = null;
-        _textDelivery = null;
+        cleanShutdown &= _sessionTornDownCleanly;
 
         if (_previewEngine is not null)
         {
@@ -2292,10 +2283,14 @@ public partial class App : Application, IAsyncDisposable
             app._streaming.Start(sessionId);
         }
 
-        public async Task FinalizeAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly)
+        public async Task FinalizeAsync(
+            DictationSessionId sessionId,
+            CapturedAudio audio,
+            bool recoveryOnly,
+            SystemLifecycleTransition? preserving = null)
         {
             using var dictation = DictationScope.Begin(sessionId.Value);
-            // THE PROCESSING DEADLINE IS THE SHELL'S, because lock/suspend recovery and shutdown cancel it
+            // THE PROCESSING DEADLINE IS THE SHELL'S, because the lifecycle callback and shutdown cancel it
             // from their own callbacks, and both still live here.
             var processingCancellation = new CancellationTokenSource(MaximumFinalProcessingDuration);
             _commandProcessing = processingCancellation;
@@ -2303,6 +2298,15 @@ public partial class App : Application, IAsyncDisposable
             await app._streaming.StopAsync().ConfigureAwait(false);
             await app._autoStop.StopAsync().ConfigureAwait(false);
             await app._livePreview.StopAsync().ConfigureAwait(false);
+            if (preserving is { } transition)
+            {
+                app._window?.DispatcherQueue.TryEnqueue(() =>
+                    app._window?.SetSessionStatus(DictationStatus.Quiet(
+                        transition == SystemLifecycleTransition.Suspending
+                            ? "Windows is suspending. Captured audio is being preserved"
+                            : "Windows locked. Captured audio is being preserved")));
+            }
+
             await app.TranscribeFinalAsync(
                     sessionId,
                     audio,
@@ -2372,12 +2376,7 @@ public partial class App : Application, IAsyncDisposable
                 app._window?.SetSessionStatus(DictationStatus.Distress(
                     "Windows interrupted the active dictation; recovery is still pending")));
 
-        public void ShowInterruptionPreserving(SystemLifecycleTransition transition) =>
-            app._window?.DispatcherQueue.TryEnqueue(() =>
-                app._window?.SetSessionStatus(DictationStatus.Quiet(
-                    transition == SystemLifecycleTransition.Suspending
-                        ? "Windows is suspending. Captured audio is being preserved"
-                        : "Windows locked. Captured audio is being preserved")));
+        public Task TearDownSessionAsync() => app.TearDownSessionAsync();
 
         public void RecordRecordingTimedOut(AppError failure) =>
             app._logger.Write(new AppLogEntry(
@@ -2390,6 +2389,43 @@ public partial class App : Application, IAsyncDisposable
             app._window?.DispatcherQueue.TryEnqueue(() =>
                 app._window?.SetSessionStatus(
                     DictationStatus.Warning("Recording timed out and was cancelled safely")));
+    }
+
+    /// <summary>
+    /// The session-specific disposal, run by the coordinator after its last command: the timers,
+    /// streaming and the preview stopped; the capture let go of; the session controller and the
+    /// delivery route disposed. The engines and the rest of the shell follow in the shell.
+    /// </summary>
+    private async Task TearDownSessionAsync()
+    {
+        var clean = true;
+        clean &= await TryCleanupAsync(_watchdog.StopAsync).ConfigureAwait(true);
+        clean &= await TryCleanupAsync(_streaming.StopAsync).ConfigureAwait(true);
+        clean &= await TryCleanupAsync(_autoStop.StopAsync).ConfigureAwait(true);
+        clean &= await TryCleanupAsync(_livePreview.StopAsync).ConfigureAwait(true);
+
+        if (_audioCapture is not null)
+        {
+            _audioCapture.LevelChanged -= OnAudioLevelChanged;
+        }
+
+        if (_sessionController is not null)
+        {
+            clean &= await TryCleanupAsync(
+                async () => await _sessionController.DisposeAsync().ConfigureAwait(true))
+                .ConfigureAwait(true);
+            _sessionController = null;
+            _audioCapture = null;
+        }
+
+        if (_textTargetAdapter is not null)
+        {
+            clean &= TryCleanup(_textTargetAdapter.Dispose);
+        }
+
+        _textTargetAdapter = null;
+        _textDelivery = null;
+        _sessionTornDownCleanly = clean;
     }
 
     /// <summary>Records whether a dictation is in flight, at every place one can end.</summary>

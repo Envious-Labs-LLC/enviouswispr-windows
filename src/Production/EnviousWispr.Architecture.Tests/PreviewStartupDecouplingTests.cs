@@ -314,12 +314,23 @@ public sealed class PreviewStartupDecouplingTests
             Add("OnRecordingStarted:returned");
         }
 
-        public async Task FinalizeAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly)
+        public async Task FinalizeAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly, SystemLifecycleTransition? preserving = null)
         {
             Add(capture.IsCapturing ? "Capture still open" : "Capture stopped");
             await preview.StopAsync().ConfigureAwait(false);
             Add("Preview stopped");
+            if (preserving is { } transition)
+            {
+                Add($"ShowInterruptionPreserving:{transition}");
+            }
+
             Add($"Transcribe:recoveryOnly={recoveryOnly}");
+        }
+
+        public Task TearDownSessionAsync()
+        {
+            Add("TearDownSession");
+            return Task.CompletedTask;
         }
 
         public async Task StopBackgroundWorkAsync()
@@ -350,8 +361,6 @@ public sealed class PreviewStartupDecouplingTests
         public void RecordInterruptionFailure() => Add("RecordInterruptionFailure");
 
         public void ShowInterruptionPending() => Add("ShowInterruptionPending");
-
-        public void ShowInterruptionPreserving(SystemLifecycleTransition transition) => Add($"ShowInterruptionPreserving:{transition}");
 
         public void RecordRecordingTimedOut(AppError failure) => Add($"RecordRecordingTimedOut:{failure.Code}");
 

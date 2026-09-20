@@ -530,7 +530,6 @@ public sealed class DictationSessionCoordinatorTests
         Assert.True(result.WasQueued);
         Assert.Equal([SessionCommandKind.PushToTalk, SessionCommandKind.PushToTalk, SessionCommandKind.Interruption], executor.SeenKinds);
         Assert.Equal(SystemLifecycleTransition.SessionLocked, executor.LastInterruption);
-        Assert.True(executor.LastSubmittedAt > 0, "an interruption is stamped at admission");
     }
 
     [Fact]
@@ -733,8 +732,6 @@ public sealed class DictationSessionCoordinatorTests
 
         public DictationSessionId? LastTimedOut { get; private set; }
 
-        public long LastSubmittedAt { get; private set; }
-
         private readonly List<SessionCommandKind> _seenKinds = [];
         private readonly Dictionary<SessionCommandKind, TaskCompletionSource> _kindStarted = new();
         private readonly Dictionary<SessionCommandKind, TaskCompletionSource> _kindFinish = new();
@@ -776,7 +773,6 @@ public sealed class DictationSessionCoordinatorTests
             {
                 LastInterruption = command.Transition ?? LastInterruption;
                 LastTimedOut = command.TimedOutSession ?? LastTimedOut;
-                LastSubmittedAt = command.SubmittedAt;
                 KindSource(_kindStarted, command.Kind).TrySetResult();
                 await KindSource(_kindFinish, command.Kind).Task;
                 return Answer;
