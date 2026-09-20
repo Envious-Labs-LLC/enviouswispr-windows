@@ -71,6 +71,7 @@ public sealed class LivePreviewController : IAsyncDisposable
     private CancellationTokenSource? _cancellation;
     private Task? _loop;
     private long _sequence;
+    private bool _disposed;
 
     public LivePreviewController(ILivePreviewEffects effects, IAppLogger logger, TimeProvider clock)
     {
@@ -288,8 +289,22 @@ public sealed class LivePreviewController : IAsyncDisposable
     }
 
     /// <summary>Stops whatever is running and releases the gate. The engine is the shell's to dispose.</summary>
+    /// <remarks>
+    /// THE LAST CALL, BY CONTRACT RATHER THAN BY ENFORCEMENT. The shell disposes this after admission
+    /// has closed, the watchdog has stopped and the session gate is held, so nothing can be starting
+    /// or stopping a preview at the same time; the gate is disposed on that understanding and a start
+    /// or stop that arrives after it would find a disposed semaphore. A second dispose is a no-op.
+    /// This is the contract the shell's own preview gate had; it is written down here because the
+    /// gate now has a type of its own that somebody could reach for elsewhere.
+    /// </remarks>
     public async ValueTask DisposeAsync()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
         await StopAsync().ConfigureAwait(false);
         _gate.Dispose();
     }
