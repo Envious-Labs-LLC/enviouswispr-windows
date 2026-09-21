@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>EnviousWispr.ExitProbe</AssemblyName>
+    <RootNamespace>EnviousWispr.ExitProbe</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EnviousWispr.Core\EnviousWispr.Core.csproj" />
+    <ProjectReference Include="..\EnviousWispr.Pipeline\EnviousWispr.Pipeline.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      THE PRODUCTION LIFETIME, COMPILED HERE RATHER THAN COPIED, as the tests compile it: the shell's
+      exit is a WinUI-free file under App/Composition, and this probe is a host process that runs it
+      with a step that will not finish, so a test can watch the real escalation end a real process.
+    -->
+    <Compile Include="..\EnviousWispr.App\Composition\ApplicationLifetime.cs" Link="Composition\ApplicationLifetime.cs" />
+  </ItemGroup>
+</Project>

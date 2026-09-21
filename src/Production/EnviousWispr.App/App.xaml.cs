@@ -96,7 +96,7 @@ public partial class App : Application, IAsyncDisposable
     private bool _disposed;
     private bool _sessionTornDownCleanly = true;
     private bool _exitRequested;
-    private Task? _shutdownPreparation;
+    private ApplicationLifetime? _lifetime;
     private bool _backgroundNoticeShown;
     private Guid? _runId;
     private CancellationTokenSource? _heartbeatCancellation;
@@ -968,263 +968,223 @@ public partial class App : Application, IAsyncDisposable
         _window?.Close();
     }
 
-    private Task PrepareForExitAsync() =>
-        _shutdownPreparation ??= PrepareForExitCoreAsync();
-
-    private async Task PrepareForExitCoreAsync()
+    /// <summary>
+    /// Leaving, shared by every path out - the tray, the window, an update, a system ending: admission
+    /// closes before the first await and the exit budget starts; the settings write finishes; the shell
+    /// closes its windows; then the exit under the one budget - the session shut down by its owner,
+    /// what it used disposed only once nothing uses it, the run completed only when everything
+    /// finished, and the host ended by force when something would not. A second caller shares the
+    /// first's task; the window closing behind the first is one such caller.
+    /// </summary>
+    private Task<ExitReport> PrepareForExitAsync()
     {
         // ONE SCOPE FOR THE WHOLE TEARDOWN, rather than one per line found. Quitting mid-recording
         // is a fact about that recording, and everything written on the way out - the shell closing,
-        // the preview stopping, whatever a future teardown step logs - belongs to it. Five review
-        // rounds each named one more unscoped line on this path; scoping the path is the answer that
-        // does not need a sixth.
+        // the preview stopping, whatever a teardown step logs - belongs to it. The lifetime's flow
+        // captures the scope at the call and keeps it after this method lets it go.
         using var dictation = _sessionController?.CurrentSession is { } recording
             ? DictationScope.Begin(recording.Id.Value)
             : NoScope.Instance;
-        // ADMISSION CLOSES BEFORE THE FIRST AWAIT ON THE WAY OUT. A release queued behind a press that
-        // is still opening the microphone would otherwise run while the settings drain below waits,
-        // and start a finalisation the shell is about to tear down under. Closing refuses it when its
-        // turn comes; the press already running finishes on its own terms.
-        _sessionCoordinator?.Close();
-        // THE SETTINGS WRITE FINISHES BEFORE THE WINDOW GOES. Teardown is synchronous and cannot
-        // wait, so abandoning a save in flight let the process end mid-write - which is how a choice
-        // somebody just made disappears. This is the one place on the exit path that can await it.
-        if (_window is not null)
-        {
-            await _window.DrainSettingsAsync().ConfigureAwait(true);
-        }
-
-        _window?.ShutdownProductWindows();
-        (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately();
-        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellClosed));
-        await DisposeAsync().ConfigureAwait(true);
+        _disposed = true;
+        return Lifetime().ExitAsync();
     }
 
+    /// <summary>The exit, reached as a disposal: the same shared task the exit paths await.</summary>
     public async ValueTask DisposeAsync()
     {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _disposed = true;
-        var cleanShutdown = true;
-        _sessionCoordinator?.CancelProcessing();
-        // ADMISSION CLOSES BEFORE THE FIRST AWAIT, idempotently: the exit path has usually closed it
-        // already, and a disposal reached another way closes it now.
-        _sessionCoordinator?.Close();
-
-        if (_lifecycleMonitor is not null)
-        {
-            _lifecycleMonitor.Transitioned -= OnSystemLifecycleTransitioned;
-            cleanShutdown &= TryCleanup(_lifecycleMonitor.Dispose);
-            _lifecycleMonitor = null;
-        }
-
-        if (_pushToTalkHook is not null)
-        {
-            _pushToTalkHook.Signalled -= OnPushToTalkSignalled;
-            cleanShutdown &= await TryCleanupAsync(
-                async () => await _pushToTalkHook.DisposeAsync().ConfigureAwait(true))
-                .ConfigureAwait(true);
-            _pushToTalkHook = null;
-        }
-
-        // THE SESSION IS TORN DOWN BY ITS OWNER, AND ONLY ONCE NOTHING IS USING IT. The coordinator
-        // closes admission, gives the command running now, the expiry notifications and the holds
-        // ten seconds between them, and runs the session's teardown under the session with what is
-        // left of that; what did not finish is named in its report, and nothing is torn down beside
-        // it. An unclean end is an unclean shutdown - and what it left running is left running.
-        var sessionQuiescent = true;
-        if (_sessionCoordinator is { } coordinator)
-        {
-            var shutdown = await coordinator.ShutdownAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(true);
-            cleanShutdown &= shutdown.Clean;
-            sessionQuiescent = shutdown.SessionQuiescent;
-            if (!sessionQuiescent)
-            {
-                _logger.Write(new AppLogEntry(
-                    DateTimeOffset.UtcNow,
-                    AppEventCode.ApplicationShutdownUnclean,
-                    AppFailureCategory.SystemLifecycle));
-            }
-        }
-        else
-        {
-            await TearDownSessionAsync().ConfigureAwait(true);
-        }
-
-        cleanShutdown &= _sessionTornDownCleanly;
-
-        // WHAT THE SESSION USES IS DISPOSED ONLY ONCE NOTHING USES IT. A command or a background loop
-        // the shutdown reported still running is inside the engines, the polish provider, the stores;
-        // disposing those under it would be the teardown-beside-work the protocol exists to end. They
-        // are kept, the shutdown is unclean, and the process ends with them still owned.
-        _polishLifetime.Cancel();
-        if (sessionQuiescent)
-        {
-            cleanShutdown &= await DisposeSessionDependenciesAsync().ConfigureAwait(true);
-        }
-        else
-        {
-            cleanShutdown = false;
-        }
-
-        if (_activationChannel is not null)
-        {
-            _activationChannel.ActivationRequested -= OnDuplicateActivationRequested;
-            cleanShutdown &= await TryCleanupAsync(
-                async () => await _activationChannel.DisposeAsync().ConfigureAwait(true))
-                .ConfigureAwait(true);
-            _activationChannel = null;
-        }
-
-        var heartbeatCancellation = Interlocked.Exchange(ref _heartbeatCancellation, null);
-        var heartbeatLoop = Interlocked.Exchange(ref _heartbeatLoop, null);
-        heartbeatCancellation?.Cancel();
-        if (heartbeatLoop is not null)
-        {
-            cleanShutdown &= await TryCleanupAsync(async () =>
-            {
-                try
-                {
-                    await heartbeatLoop.ConfigureAwait(true);
-                }
-                catch (OperationCanceledException)
-                {
-                }
-            }).ConfigureAwait(true);
-        }
-
-        heartbeatCancellation?.Dispose();
-
-        if (_trayIcon is not null)
-        {
-            cleanShutdown &= TryCleanup(_trayIcon.Dispose);
-        }
-
-        _trayIcon = null;
-        if (_sessionCoordinator is { } stoppedCoordinator)
-        {
-            cleanShutdown &= await TryCleanupAsync(
-                async () => await stoppedCoordinator.DisposeAsync().ConfigureAwait(true))
-                .ConfigureAwait(true);
-            _sessionCoordinator = null;
-        }
-
-        if (_runId is { } runId)
-        {
-            var completed = cleanShutdown &&
-                await _runStateStore.CompleteRunAsync(runId, DateTimeOffset.UtcNow)
-                    .ConfigureAwait(true);
-            cleanShutdown &= completed;
-            if (completed)
-            {
-                _logger.Write(new AppLogEntry(
-                    DateTimeOffset.UtcNow,
-                    AppEventCode.ApplicationCleanShutdown));
-            }
-        }
-
-        if (_singleInstanceLock is not null)
-        {
-            cleanShutdown &= TryCleanup(_singleInstanceLock.Dispose);
-        }
-
-        _singleInstanceLock = null;
-        // THE RUN-STATE STORE IS A SESSION DEPENDENCY TOO: a command that outlived the shutdown writes
-        // its last edge - "the dictation is over" - into it when it ends, and a store disposed under
-        // that write leaves the next launch warning of words that were in fact kept. Kept with the rest
-        // behind an unclean report; disposed here, after the heartbeat that also writes to it has
-        // been joined, behind a quiescent one.
-        if (sessionQuiescent)
-        {
-            cleanShutdown &= TryCleanup(_runStateStore.Dispose);
-        }
-
-        if (!cleanShutdown)
-        {
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.UnhandledFailure,
-                AppFailureCategory.Recovery));
-        }
-
-        try
-        {
-            await _logger.DisposeAsync().ConfigureAwait(true);
-        }
-        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
-        {
-            // Telemetry disposal is best-effort and cannot make the product shutdown unclean.
-        }
-
+        await PrepareForExitAsync().ConfigureAwait(true);
         GC.SuppressFinalize(this);
     }
 
+    /// <summary>The lifetime, built once; its parts read the shell's fields at the step, not at the build.</summary>
+    private ApplicationLifetime Lifetime() =>
+        _lifetime ??= new ApplicationLifetime(LifetimeParts(), _logger, TimeProvider.System, new HostTerminator());
+
     /// <summary>
-    /// Disposes what a session uses: the engines, the polish provider and its warm-up, the worker
-    /// arbiter, the background owners (already stopped; their disposal is the stop again, a no-op),
-    /// the history and recovery stores. Called only behind a quiescent shutdown.
+    /// The shell's steps of leaving, in the order the lifetime runs them. What each touches is the
+    /// shell's; the order, the budget and the retention are the lifetime's.
     /// </summary>
-    private async Task<bool> DisposeSessionDependenciesAsync()
-    {
-        var cleanShutdown = true;
-        if (_previewEngine is not null)
+    /// <remarks>
+    /// WHAT THE SESSION USES IS LISTED UNDER DisposeSessionDependencies AND DisposeLast, AND NOWHERE
+    /// ELSE. A command or a background loop the session's shutdown reported still running is inside
+    /// the engines, the polish provider, the stores; the lifetime runs those two lists only behind a
+    /// quiescent session with nothing outstanding - a gate reads this method for that. The run-state
+    /// store is last because the heartbeat, joined under Quiesce, writes to it too.
+    /// </remarks>
+    private LifetimeParts LifetimeParts() => new(
+        CloseAdmission: () => _sessionCoordinator?.Close(),
+        DrainSettings: () => _window?.DrainSettingsAsync() ?? Task.CompletedTask,
+        ShellClosing: () =>
         {
-            cleanShutdown &= await TryCleanupAsync(
-                async () => await _previewEngine.DisposeAsync().ConfigureAwait(true))
-                .ConfigureAwait(true);
-            _previewEngine = null;
-        }
-
-        if (_transcriptionEngine is not null)
+            _window?.ShutdownProductWindows();
+            (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately();
+            _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellClosed));
+        },
+        // THE EXIT POLICY: a transcription in flight is cut short rather than waited for, and so is the
+        // polish warm-up; the session's shutdown then waits for the cut to land. Cancellation is not
+        // quiescence - the shutdown's report says whether it landed.
+        CancelProcessing: () =>
         {
-            cleanShutdown &= await TryCleanupAsync(
-                async () => await _transcriptionEngine.DisposeAsync().ConfigureAwait(true))
-                .ConfigureAwait(true);
-            _transcriptionEngine = null;
-        }
-
-        if (_polishProvider is not null)
-        {
-            if (_polishWarmup is not null)
+            _sessionCoordinator?.CancelProcessing();
+            _polishLifetime.Cancel();
+        },
+        ReleaseInputs:
+        [
+            LifetimeStep.Of("lifecycle monitor", () =>
             {
-                cleanShutdown &= await TryCleanupAsync(async () =>
+                if (_lifecycleMonitor is { } monitor)
                 {
+                    monitor.Transitioned -= OnSystemLifecycleTransitioned;
+                    _lifecycleMonitor = null;
+                    monitor.Dispose();
+                }
+            }),
+            new LifetimeStep("push-to-talk hook", async () =>
+            {
+                if (_pushToTalkHook is { } hook)
+                {
+                    hook.Signalled -= OnPushToTalkSignalled;
+                    _pushToTalkHook = null;
+                    await hook.DisposeAsync().ConfigureAwait(true);
+                }
+            }),
+        ],
+        ShutDownSession: _sessionCoordinator is { } coordinator ? budget => coordinator.ShutdownAsync(budget) : null,
+        Quiesce:
+        [
+            new LifetimeStep("polish warm-up", async () =>
+            {
+                if (_polishWarmup is { } warmup)
+                {
+                    _polishWarmup = null;
                     try
                     {
-                        await _polishWarmup.ConfigureAwait(true);
+                        await warmup.ConfigureAwait(true);
                     }
                     catch (OperationCanceledException)
                     {
-                        // App shutdown cancels an in-flight fixed semantic readiness probe.
+                        // The exit cancels an in-flight readiness probe; a cancelled probe is over.
                     }
-                }).ConfigureAwait(true);
+                }
+            }),
+            new LifetimeStep("heartbeat", async () =>
+            {
+                var cancellation = Interlocked.Exchange(ref _heartbeatCancellation, null);
+                var loop = Interlocked.Exchange(ref _heartbeatLoop, null);
+                cancellation?.Cancel();
+                if (loop is not null)
+                {
+                    try
+                    {
+                        await loop.ConfigureAwait(true);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                    }
+                }
 
-                _polishWarmup = null;
-            }
+                cancellation?.Dispose();
+            }),
+        ],
+        DisposeSessionDependencies:
+        [
+            // A shell that never composed a session tears its controller down here, in the session's
+            // place; one that did has had the coordinator do it under the session.
+            new LifetimeStep("session teardown", async () =>
+            {
+                if (_sessionCoordinator is null)
+                {
+                    await TearDownSessionAsync().ConfigureAwait(true);
+                }
 
-            cleanShutdown &= await TryCleanupAsync(
-                async () => await _polishProvider.DisposeAsync().ConfigureAwait(true))
-                .ConfigureAwait(true);
-            _polishProvider = null;
-        }
+                if (!_sessionTornDownCleanly)
+                {
+                    throw new InvalidOperationException("The session teardown reported a failure.");
+                }
+            }),
+            new LifetimeStep("preview engine", async () =>
+            {
+                if (_previewEngine is { } engine)
+                {
+                    _previewEngine = null;
+                    await engine.DisposeAsync().ConfigureAwait(true);
+                }
+            }),
+            new LifetimeStep("transcription engine", async () =>
+            {
+                if (_transcriptionEngine is { } engine)
+                {
+                    _transcriptionEngine = null;
+                    await engine.DisposeAsync().ConfigureAwait(true);
+                }
+            }),
+            new LifetimeStep("polish provider", async () =>
+            {
+                if (_polishProvider is { } provider)
+                {
+                    _polishProvider = null;
+                    await provider.DisposeAsync().ConfigureAwait(true);
+                }
+            }),
+            LifetimeStep.Of("worker arbiter", _resourceArbiter.Dispose),
+            LifetimeStep.Of("polish lifetime", _polishLifetime.Dispose),
+            new LifetimeStep("live preview", () => _livePreview.DisposeAsync().AsTask()),
+            new LifetimeStep("watchdog", () => _watchdog.DisposeAsync().AsTask()),
+            new LifetimeStep("auto-stop", () => _autoStop.DisposeAsync().AsTask()),
+            LifetimeStep.Of("history store", _historyStore.Dispose),
+            LifetimeStep.Of("recovery store", _recoveryTextStore.Dispose),
+        ],
+        DisposeShell:
+        [
+            new LifetimeStep("activation channel", async () =>
+            {
+                if (_activationChannel is { } channel)
+                {
+                    channel.ActivationRequested -= OnDuplicateActivationRequested;
+                    _activationChannel = null;
+                    await channel.DisposeAsync().ConfigureAwait(true);
+                }
+            }),
+            LifetimeStep.Of("tray icon", () =>
+            {
+                var tray = _trayIcon;
+                _trayIcon = null;
+                tray?.Dispose();
+            }),
+            new LifetimeStep("session coordinator", async () =>
+            {
+                if (_sessionCoordinator is { } stopped)
+                {
+                    _sessionCoordinator = null;
+                    await stopped.DisposeAsync().ConfigureAwait(true);
+                }
+            }),
+        ],
+        CompleteRun: () => _runId is { } runId
+            ? _runStateStore.CompleteRunAsync(runId, DateTimeOffset.UtcNow)
+            : Task.FromResult(true),
+        DisposeLast:
+        [
+            LifetimeStep.Of("single-instance lock", () =>
+            {
+                var singleInstance = _singleInstanceLock;
+                _singleInstanceLock = null;
+                singleInstance?.Dispose();
+            }),
+            LifetimeStep.Of("run-state store", _runStateStore.Dispose),
+        ],
+        DisposeLogger: () => _logger.DisposeAsync().AsTask());
 
-        cleanShutdown &= TryCleanup(_resourceArbiter.Dispose);
-        cleanShutdown &= TryCleanup(_polishLifetime.Dispose);
-        cleanShutdown &= await TryCleanupAsync(
-            async () => await _livePreview.DisposeAsync().ConfigureAwait(true))
-            .ConfigureAwait(true);
-        cleanShutdown &= await TryCleanupAsync(
-            async () => await _watchdog.DisposeAsync().ConfigureAwait(true))
-            .ConfigureAwait(true);
-        cleanShutdown &= await TryCleanupAsync(
-            async () => await _autoStop.DisposeAsync().ConfigureAwait(true))
-            .ConfigureAwait(true);
-        cleanShutdown &= TryCleanup(_historyStore.Dispose);
-        cleanShutdown &= TryCleanup(_recoveryTextStore.Dispose);
-        return cleanShutdown;
+    /// <summary>
+    /// Ends the process when the exit could not: something would not finish inside the budget and is
+    /// still running, holding whatever it holds; the log has said so and been closed; the next launch
+    /// reads an interrupted run. The exit code is the escalation's own, so a harness can tell it apart.
+    /// </summary>
+    private sealed class HostTerminator : IHostTerminator
+    {
+        public const int ExitCode = 70;
+
+        public void Terminate(ExitReport report) => Environment.Exit(ExitCode);
     }
 
     private async Task<bool> TryCleanupAsync(Func<Task> cleanup)

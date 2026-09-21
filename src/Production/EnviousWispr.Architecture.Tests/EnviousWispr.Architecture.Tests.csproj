@@ -32,6 +32,7 @@
     <ProjectReference Include="..\EnviousWispr.PostProcessing\EnviousWispr.PostProcessing.csproj" />
     <ProjectReference Include="..\EnviousWispr.Presentation\EnviousWispr.Presentation.csproj" />
     <ProjectReference Include="..\EnviousWispr.RuntimeWorker\EnviousWispr.RuntimeWorker.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\EnviousWispr.ExitProbe\EnviousWispr.ExitProbe.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\EnviousWispr.Services\EnviousWispr.Services.csproj" />
   </ItemGroup>
 
@@ -55,7 +56,10 @@
   <Target Name="CopyRuntimeWorkerForTests" AfterTargets="Build">
     <ItemGroup>
       <RuntimeWorkerFiles Include="..\EnviousWispr.RuntimeWorker\bin\$(Configuration)\net10.0-windows10.0.26100.0\EnviousWispr.RuntimeWorker*" />
+      <!-- The exit probe: a host process that leaves through the production lifetime, for the escalation proof. -->
+      <ExitProbeFiles Include="..\EnviousWispr.ExitProbe\bin\$(Configuration)\net10.0-windows10.0.26100.0\EnviousWispr.ExitProbe*" />
     </ItemGroup>
     <Copy SourceFiles="@(RuntimeWorkerFiles)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(ExitProbeFiles)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
   </Target>
 </Project>

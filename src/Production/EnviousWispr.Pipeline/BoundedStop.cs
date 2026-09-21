@@ -35,7 +35,7 @@ public sealed record BackgroundStopReport(StopOutcome Streaming, StopOutcome Aut
 public sealed record LivePreviewFrame(DictationSessionId SessionId, string Text, Func<bool> IsCurrent);
 
 /// <summary>What is left of a stop's deadline, phase by phase; null when the stop has no deadline.</summary>
-internal sealed class StopBudget(TimeSpan? deadline, TimeProvider clock)
+public sealed class StopBudget(TimeSpan? deadline, TimeProvider clock)
 {
     private readonly long _started = clock.GetTimestamp();
 
@@ -98,7 +98,7 @@ internal sealed class StopBudget(TimeSpan? deadline, TimeProvider clock)
 }
 
 /// <summary>Joins a loop that has been asked to stop: without limit, or for as long as a deadline allows.</summary>
-internal static class BoundedJoin
+public static class BoundedJoin
 {
     /// <summary>Waits for the work; a cancelled ending counts as completion, a deadline that passes first does not.</summary>
     public static async Task<StopOutcome> JoinAsync(Task work, TimeSpan? deadline, TimeProvider clock)
