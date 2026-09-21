@@ -206,7 +206,7 @@ public sealed class SettingsPresenterTests
         OverlayPositionIndex: 1,
         LevelRailPill: true,
         PlayRecordingSounds: true,
-        RecordingSoundPairing: RecordingSoundPairing.WhisperTick,
+        RecordingSoundPairing: RecordingSoundPairing.AirGlint,
         CopyInsteadOfPaste: true,
         LocalDiagnostics: true,
         DiagnosticRetentionDays: 30,
@@ -214,14 +214,18 @@ public sealed class SettingsPresenterTests
         TelemetryAvailable: true,
         MicrophoneId: "mic-2");
 
-    [Fact]
-    public async Task GeneralSaveStoresEveryFieldItReplacesAsTheOldHandlerDid()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GeneralSaveStoresEveryFieldItReplacesAsTheOldHandlerDid(bool inverted)
     {
         // THE CHARACTERISATION: every field the Save replaces, from inputs chosen so that no two are
-        // alike, against a record built independently the way the window's handler used to build it.
-        // A save that hard-coded any toggle, ignored the pairing, forgot the microphone, dropped the
-        // endpoint or moved a field would differ from this record somewhere. The production store on a
-        // file, read back as a launch would.
+        // alike and none is what the default would give, against a record built independently the way
+        // the window's handler used to build it - and once more with every toggle inverted, so a save
+        // that hard-coded any toggle either way, ignored the pairing, forgot the microphone, dropped the
+        // endpoint or moved a field differs from one of the two records somewhere. Telemetry consent is
+        // off while the build could share in the inverted case. The production store on a file, read
+        // back as a launch would.
         await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
         {
             var store = new JsonSettingsStore(Path.Combine(directory, "settings.json"));
@@ -229,18 +233,20 @@ public sealed class SettingsPresenterTests
             using var presenter = new SettingsPresenter(store, before);
             var input = General() with
             {
-                WordCorrection = true,
-                FillerRemoval = false,
-                EmojiFormatter = true,
-                SpokenPunctuation = false,
-                EscapeRecovery = true,
-                AutoStop = false,
-                LivePreview = true,
-                PlayRecordingSounds = true,
-                RecordingSoundPairing = RecordingSoundPairing.WhisperTick,
-                CopyInsteadOfPaste = true,
-                LocalDiagnostics = false,
-                ShareTelemetry = true,
+                WordCorrection = !inverted,
+                FillerRemoval = inverted,
+                EmojiFormatter = !inverted,
+                SpokenPunctuation = inverted,
+                EscapeRecovery = !inverted,
+                AutoStop = inverted,
+                HistoryEnabled = !inverted,
+                LivePreview = !inverted,
+                LevelRailPill = !inverted,
+                PlayRecordingSounds = !inverted,
+                RecordingSoundPairing = inverted ? RecordingSoundPairing.CloudPop : RecordingSoundPairing.AirGlint,
+                CopyInsteadOfPaste = !inverted,
+                LocalDiagnostics = inverted,
+                ShareTelemetry = !inverted,
                 TelemetryAvailable = true,
             };
 
@@ -254,28 +260,28 @@ public sealed class SettingsPresenterTests
                     new DictationPreferences(
                         FinalAsrEngine.Parakeet,
                         "F8",
-                        WordCorrectionEnabled: true,
-                        FillerRemovalEnabled: false,
-                        EmojiFormatterEnabled: true,
-                        SpokenPunctuationEnabled: false,
+                        WordCorrectionEnabled: !inverted,
+                        FillerRemovalEnabled: inverted,
+                        EmojiFormatterEnabled: !inverted,
+                        SpokenPunctuationEnabled: inverted,
                         (WhisperLanguagePreference)2,
                         (DictationRecordingMode)1,
                         "Escape",
-                        EscapeRecoveryEnabled: true,
+                        EscapeRecoveryEnabled: !inverted,
                         "Ctrl+Alt+W",
-                        AutoStopEnabled: false,
+                        AutoStopEnabled: inverted,
                         AutoStopSilenceSeconds: 3.5),
                     new PolishPreferences(PolishProvider.Ollama, "llama3", "http://localhost:11434"),
-                    new HistoryPreferences(true, 45),
+                    new HistoryPreferences(!inverted, 45),
                     AppTheme.Dark,
-                    LivePreviewEnabled: true,
+                    LivePreviewEnabled: !inverted,
                     OverlayPillPosition.Bottom,
-                    RecordingPillDesign.LevelRail,
+                    inverted ? RecordingPillDesign.Classic : RecordingPillDesign.LevelRail,
                     RecordingPillDesign.ReadingWell,
-                    PlayRecordingSounds: true,
-                    RecordingSoundPairing.WhisperTick,
-                    CopyInsteadOfPaste: true),
-                Observability = new ObservabilityPreferences(false, 30, true),
+                    PlayRecordingSounds: !inverted,
+                    inverted ? RecordingSoundPairing.CloudPop : RecordingSoundPairing.AirGlint,
+                    CopyInsteadOfPaste: !inverted),
+                Observability = new ObservabilityPreferences(inverted, 30, !inverted),
             };
             Assert.Equal(expected, (await store.LoadAsync()).Settings);
             Assert.Equal(expected, presenter.Current);
