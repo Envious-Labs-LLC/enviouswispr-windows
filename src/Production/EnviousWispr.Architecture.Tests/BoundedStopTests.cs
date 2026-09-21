@@ -254,6 +254,13 @@ public sealed class BoundedStopTests
         Assert.Equal(StopOutcome.StillRunning, await stubborn.Runtime.Preview.AbortAsync(Patience));
         Assert.True(stubborn.Runtime.Preview.IsRunning, "a worker not seen gone is still owned");
         Assert.DoesNotContain(AppEventCode.LivePreviewAborted, stubborn.Log.Events);
+
+        // NOTHING LEFT OF THE DEADLINE IS AN HONEST NON-COMPLETION, not a call the runtime refuses:
+        // the engine is not asked, and the preview stays owned.
+        var aborts = stubborn.PreviewEngine.Aborts;
+        Assert.Equal(StopOutcome.StillRunning, await stubborn.Runtime.Preview.AbortAsync(TimeSpan.Zero));
+        Assert.Equal(aborts, stubborn.PreviewEngine.Aborts);
+        Assert.True(stubborn.Runtime.Preview.IsRunning);
     }
 
     [Fact]

@@ -99,7 +99,7 @@ public interface IDictationSessionEffects
     /// <summary>The recording ran to its limit and was aborted: the log line.</summary>
     void RecordRecordingTimedOut(AppError failure);
 
-    /// <summary>The preview's worker refused its stop at the release and could not be ended inside the executor's deadline: the log line. The final transcription goes on regardless.</summary>
+    /// <summary>The preview's worker refused its stop at the release and was not seen gone after two kills under the executor's deadlines: the log line. The dictation ends as a failed session rather than a transcription beside it.</summary>
     void RecordPreviewStillRunning();
 
     /// <summary>The recording ran to its limit and was aborted: the status.</summary>
@@ -127,7 +127,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     /// <summary>The longest a finalisation may take - transcription, text processing and delivery - before it is cancelled and recovered.</summary>
     public static readonly TimeSpan MaximumFinalProcessingDuration = TimeSpan.FromMinutes(3);
 
-    /// <summary>How long a preview worker that refused its stop is given to be seen gone before the final transcription begins without it.</summary>
+    /// <summary>How long a preview worker that refused its stop is given to be seen gone, twice over, before the dictation is given up rather than transcribed beside it.</summary>
     public static readonly TimeSpan PreviewAbortDeadline = TimeSpan.FromSeconds(3);
 
     private readonly PushToTalkSessionController _controller;
@@ -366,6 +366,14 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                 .ConfigureAwait(false);
             return new SessionCommandResult(SessionCommandDisposition.Failed);
         }
+        catch (PreviewNotRetiredException)
+        {
+            // The preview's worker could not be retired for the interruption's own finalisation
+            // either; the take is not transcribed beside it, and the session is reset as interrupted.
+            await RecoverInterruptedAsync(AppErrorCode.RuntimeResourceBusy, SessionFailureKind.InterruptionFailed)
+                .ConfigureAwait(false);
+            return new SessionCommandResult(SessionCommandDisposition.Failed);
+        }
         catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
         {
             _effects.RecordInterruptionFailure();
@@ -576,6 +584,20 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                 .ConfigureAwait(false);
             return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session);
         }
+        catch (PreviewNotRetiredException)
+        {
+            // THE RUNTIME COULD NOT BE RETIRED, and the take is not transcribed beside it. Recorded
+            // already as the preview's; the session is reset as a failed one with the runtime's own
+            // error, so the log says what ended the dictation and the status says it was reset safely.
+            using var failed = interrupted is { } busy
+                ? DictationScope.Begin(busy)
+                : NoScope.Instance;
+            await RecoverFailedSessionAsync(
+                    new AppError(AppErrorCode.RuntimeResourceBusy, AppErrorStage.RuntimeResource, CanRetry: true),
+                    SessionFailureKind.Failed)
+                .ConfigureAwait(false);
+            return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session);
+        }
         catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
         {
             using var failed = interrupted is { } broken
@@ -595,6 +617,9 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         }
     }
 
+    /// <summary>The preview's worker was not seen gone after two kills: the finalisation does not begin.</summary>
+    private sealed class PreviewNotRetiredException : Exception;
+
     /// <summary>Capture is complete: the background work is stopped and the audio becomes text, under one deadline.</summary>
     /// <remarks>
     /// THE DEADLINE IS ARMED BEFORE THE BACKGROUND WORK IS STOPPED and published before the first
@@ -608,8 +633,12 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     /// PREVIEW RELEASES ITS RESOURCES BEFORE THE FINAL TRANSCRIPTION, AND A REFUSED STOP IS NOT A
     /// RELEASE. The stop's report is read, not dropped: a preview whose engine refused to stop - its
     /// worker still there, still holding the lease the final engine needs - is ended by force under
-    /// <see cref="PreviewAbortDeadline"/>; one still not seen gone is recorded, and the transcription
-    /// goes on regardless, because a preview failure must not fail the recording.
+    /// <see cref="PreviewAbortDeadline"/>, and asked for once more under the same when the first kill
+    /// was not seen through (a killed worker's exit takes time to see; the second attempt kills again
+    /// and watches again). One still not seen gone after both is a runtime that cannot be retired,
+    /// and the final engine is NOT put beside it: the dictation ends as a failed session, reset
+    /// safely, recorded as the runtime's failure. A preview that fails to start or to answer never
+    /// fails a recording; a worker that cannot be killed is not a preview failure but the machine's.
     /// </remarks>
     private async Task FinalizeAsync(
         DictationSessionId sessionId,
@@ -622,9 +651,11 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         Volatile.Write(ref _processing, processing);
         var stopped = await _background.StopAsync().ConfigureAwait(false);
         if (stopped.Preview == StopOutcome.StillRunning &&
+            await _background.AbortPreviewAsync(PreviewAbortDeadline).ConfigureAwait(false) == StopOutcome.StillRunning &&
             await _background.AbortPreviewAsync(PreviewAbortDeadline).ConfigureAwait(false) == StopOutcome.StillRunning)
         {
             _effects.RecordPreviewStillRunning();
+            throw new PreviewNotRetiredException();
         }
 
         if (preserving is { } transition)

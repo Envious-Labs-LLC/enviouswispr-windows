@@ -442,7 +442,9 @@ public sealed class LivePreviewController : IAsyncDisposable
     /// exit waited for up to the deadline, its resource let go of by the engine once the exit is seen.
     /// <see cref="StopOutcome.Completed"/> when nothing of the preview is owned any more;
     /// <see cref="StopOutcome.StillRunning"/> when the loop is still inside the engine (an abort is
-    /// not run under it), the engine cannot be aborted, or the exit was not seen inside the deadline.
+    /// not run under it), the engine cannot be aborted, the exit was not seen inside the deadline, or
+    /// nothing of the deadline was left once the gate was taken - a worker's exit takes time to see,
+    /// and an abort given none is an honest non-completion, not a call the runtime refuses.
     /// </summary>
     /// <remarks>
     /// THE RELEASE'S LAST RESORT, NOT ITS FIRST. A stop asks the worker to go and waits; only a worker
@@ -474,7 +476,7 @@ public sealed class LivePreviewController : IAsyncDisposable
                 return StopOutcome.Completed;
             }
 
-            if (_effects.Engine is not IAbortableLivePreviewEngine engine)
+            if (_effects.Engine is not IAbortableLivePreviewEngine engine || budget.Left <= TimeSpan.Zero)
             {
                 return StopOutcome.StillRunning;
             }

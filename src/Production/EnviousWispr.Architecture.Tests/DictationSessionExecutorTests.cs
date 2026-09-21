@@ -79,8 +79,7 @@ public sealed class DictationSessionExecutorTests
         // PREVIEW RELEASES ITS RESOURCES BEFORE FINAL ASR, AND A REFUSED STOP IS NOT A RELEASE. The
         // stop reports the preview still running - its worker there, its lease held; the executor
         // ends the worker under its own deadline before the finalisation is invoked, and says nothing
-        // when the abort saw it go. When the abort does not see it go, that is recorded and the
-        // transcription goes on regardless: a preview failure must not fail the recording.
+        // when the abort saw it go.
         var (executor, _, effects, _, _) = BuildWithFinalization();
         var background = TracingBackgroundWork.Instance!;
         background.UnboundedStopReport = new BackgroundStopReport(StopOutcome.Completed, StopOutcome.Completed, StopOutcome.StillRunning);
@@ -93,18 +92,52 @@ public sealed class DictationSessionExecutorTests
             ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "Background:AbortPreview:3s", "Finalize:recoveryOnly=False", "RecordDictationEdge"],
             effects.Trace);
 
-        var (stubborn, _, stubbornEffects, _, _) = BuildWithFinalization();
-        var stubbornBackground = TracingBackgroundWork.Instance!;
-        stubbornBackground.UnboundedStopReport = new BackgroundStopReport(StopOutcome.Completed, StopOutcome.Completed, StopOutcome.StillRunning);
-        stubbornBackground.AbortOutcome = StopOutcome.StillRunning;
-        await stubborn.ExecuteAsync(Press(), CancellationToken.None);
-        stubbornEffects.Trace.Clear();
+        // A KILL NOT SEEN THROUGH IS ASKED FOR ONCE MORE - the second attempt kills again and watches
+        // again - and a worker seen gone then is a release like any other.
+        var (slow, _, slowEffects, _, _) = BuildWithFinalization();
+        var slowBackground = TracingBackgroundWork.Instance!;
+        slowBackground.UnboundedStopReport = new BackgroundStopReport(StopOutcome.Completed, StopOutcome.Completed, StopOutcome.StillRunning);
+        slowBackground.AbortOutcomes.Clear();
+        slowBackground.AbortOutcomes.AddRange([StopOutcome.StillRunning, StopOutcome.Completed]);
+        await slow.ExecuteAsync(Press(), CancellationToken.None);
+        slowEffects.Trace.Clear();
 
-        await stubborn.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
+        await slow.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
 
         Assert.Equal(
-            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "Background:AbortPreview:3s", "RecordPreviewStillRunning", "Finalize:recoveryOnly=False", "RecordDictationEdge"],
-            stubbornEffects.Trace);
+            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "Background:AbortPreview:3s", "Background:AbortPreview:3s", "Finalize:recoveryOnly=False", "RecordDictationEdge"],
+            slowEffects.Trace);
+    }
+
+    [Fact]
+    public async Task APreviewWorkerNotSeenGoneAfterTwoKillsEndsTheDictationAsAFailedSessionRatherThanTranscribingBesideIt()
+    {
+        // THE FINAL ENGINE IS NOT PUT BESIDE A WORKER NOBODY HAS SEEN LEAVE. Both kills went unseen;
+        // the preview's failure is recorded, the finalisation is never invoked, and the session is
+        // reset as a failed one with the runtime's own error - the words are not transcribed on a
+        // resource a worker may still be on.
+        var (executor, capture, effects, controller, world) = BuildWithFinalization();
+        var background = TracingBackgroundWork.Instance!;
+        background.UnboundedStopReport = new BackgroundStopReport(StopOutcome.Completed, StopOutcome.Completed, StopOutcome.StillRunning);
+        background.AbortOutcomes.Clear();
+        background.AbortOutcomes.Add(StopOutcome.StillRunning);
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        effects.Trace.Clear();
+
+        var result = await executor.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
+        Assert.Empty(world.Finalization.Finalized);
+        Assert.Null(controller.CurrentSession);
+        Assert.Equal(
+            [
+                "Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop",
+                "Background:AbortPreview:3s", "Background:AbortPreview:3s", "RecordPreviewStillRunning",
+                "Background:StopWatchdog", "Background:Stop",
+                "RecordSessionRecovered:RuntimeResourceBusy", "ShowPendingRecovery", "ShowSessionRecovered:Failed", "RecordDictationEdge",
+            ],
+            effects.Trace);
+        Assert.Equal(1, capture.StopCount);
     }
 
     [Fact]
@@ -1027,8 +1060,10 @@ public sealed class DictationSessionExecutorTests
         /// <summary>What the unbounded stop reports: every owner finished unless a test says the preview's engine refused.</summary>
         public BackgroundStopReport UnboundedStopReport { get; set; } = BackgroundStopReport.AllCompleted;
 
-        /// <summary>What an abort of the preview reports.</summary>
-        public StopOutcome AbortOutcome { get; set; } = StopOutcome.Completed;
+        /// <summary>What each abort of the preview reports, in order; the last answer repeats.</summary>
+        public List<StopOutcome> AbortOutcomes { get; } = [StopOutcome.Completed];
+
+        private int _aborts;
 
         public async Task<BackgroundStopReport> StopAsync()
         {
@@ -1052,7 +1087,9 @@ public sealed class DictationSessionExecutorTests
         public Task<StopOutcome> AbortPreviewAsync(TimeSpan deadline)
         {
             trace.Add($"Background:AbortPreview:{deadline.TotalSeconds}s");
-            return Task.FromResult(AbortOutcome);
+            var outcome = AbortOutcomes[Math.Min(_aborts, AbortOutcomes.Count - 1)];
+            _aborts++;
+            return Task.FromResult(outcome);
         }
 
         public BackgroundStopReport BoundedStopReport { get; set; } = BackgroundStopReport.AllCompleted;
