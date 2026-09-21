@@ -335,8 +335,13 @@ public sealed class LivePreviewController : IAsyncDisposable
         // and a start that publishes its work in the same instant sees the request and cancels its
         // own (see StartAsync). A frame the engine hands back late, or one already queued for the
         // window, finds the closure changed at its render and draws nothing.
-        Interlocked.Increment(ref _closure);
+        // THE REQUEST FIRST, THE CLOSURE SECOND. A start reads the request count before it does
+        // anything and again after it publishes; a stop that bumped the closure first could be caught
+        // between the two writes by a start that then captured the new closure with no request on
+        // record, and its frames would pass every check. With the request written first, a start
+        // that captures the new closure has already seen the request.
         Interlocked.Increment(ref _stopRequests);
+        Interlocked.Increment(ref _closure);
         try
         {
             Volatile.Read(ref _cancellation)?.Cancel();
