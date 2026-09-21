@@ -126,6 +126,7 @@ public sealed class ProductionPathTests
         Assert.Equal(expectedCode, ending.ErrorCode);
         Assert.Equal(AppFailureCategory.TextDelivery, ending.Failure);
         Assert.Null(ending.Fault);
+        Assert.Null(ending.DeliveryStage);
         Assert.Equal(expectedSentence, Assert.Single(world.View.Deliveries).Delivered.Text);
     }
 

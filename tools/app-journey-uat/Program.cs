@@ -867,6 +867,14 @@ try
             $"events={string.Join(',', ReadDiagnosticEvents(diagnosticPath))}.");
     }
 
+    // THE TARGET'S FINAL RECEIPT IS ASKED FOR AND ACKNOWLEDGED. The app's exit says nothing about
+    // what is still queued for the target's window; the target answers a settle request only once
+    // its own queue has drained, with the request's sequence on the receipt it writes then.
+    if (target is { HasExited: false } && failureMode != JourneyFailureMode.TargetUnavailable)
+    {
+        RequireSettledTargetReceipt(target, targetResultPath);
+    }
+
     var diagnosticEvents = ReadDiagnosticEvents(diagnosticPath);
     if (failureMode != JourneyFailureMode.None)
     {
@@ -1776,6 +1784,35 @@ static string RequireDeliveryRoute(string targetMode, string targetResultPath, I
         $"refusedProtected={refusedProtected} failedUnverified={failedUnverified} clipboardRestored={clipboardRestored} target={result}.");
 }
 
+static void RequireSettledTargetReceipt(Process target, string targetResultPath)
+{
+    const uint WmSettle = 0x8000 + 0x0013;
+    const int Sequence = 7;
+    var window = target.MainWindowHandle;
+    if (window == 0)
+    {
+        throw new JourneyExpectationException("The controlled target has no window to ask for a settled receipt.");
+    }
+
+    if (!NativeMethods.PostMessage(window, WmSettle, Sequence, 0))
+    {
+        throw new JourneyExpectationException("The settle request could not be posted to the controlled target.");
+    }
+
+    var timer = Stopwatch.StartNew();
+    while (timer.Elapsed < TimeSpan.FromSeconds(10))
+    {
+        if (ReadTargetResult(targetResultPath) is { Settled: Sequence })
+        {
+            return;
+        }
+
+        Thread.Sleep(50);
+    }
+
+    throw new JourneyExpectationException("The controlled target did not acknowledge the settle request with a final receipt within 10 seconds.");
+}
+
 static TargetResult? ReadTargetResult(string path)
 {
     try
@@ -1795,7 +1832,8 @@ static TargetResult? ReadTargetResult(string path)
             root.TryGetProperty("pasteMessages", out var pastes) ? pastes.GetInt32() : -1,
             root.TryGetProperty("setTextMessages", out var setTexts) ? setTexts.GetInt32() : -1,
             root.TryGetProperty("rewrites", out var rewrites) ? rewrites.GetInt32() : 0,
-            root.TryGetProperty("rewritten", out var rewritten) && rewritten.GetBoolean());
+            root.TryGetProperty("rewritten", out var rewritten) && rewritten.GetBoolean(),
+            root.TryGetProperty("settled", out var settled) ? settled.GetInt32() : 0);
     }
     catch (Exception exception) when (exception is IOException or JsonException)
     {
@@ -2914,6 +2952,10 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern uint SendInput(uint inputCount, Input[] inputs, int inputSize);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool PostMessage(nint window, uint message, nint wParam, nint lParam);
+
     [DllImport("user32.dll")]
     internal static extern nint GetForegroundWindow();
 
@@ -2965,7 +3007,8 @@ internal sealed record TargetResult(
     int PasteMessages,
     int SetTextMessages,
     int Rewrites = 0,
-    bool Rewritten = false);
+    bool Rewritten = false,
+    int Settled = 0);
 
 internal sealed record VirtualCableRoute(
     string RenderName,

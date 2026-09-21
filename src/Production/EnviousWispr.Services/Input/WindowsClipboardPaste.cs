@@ -99,7 +99,7 @@ internal static class WindowsClipboardPaste
     public static Task<string?> TryReadSelectionAsync(CancellationToken cancellationToken) =>
         RunStaAsync<string?>(
             () => ReadSelectionOnSta(cancellationToken),
-            onUnexpectedFailure: null,
+            onUnexpectedFailure: static _ => null,
             cancellationToken);
 
     private static string? ReadSelectionOnSta(CancellationToken cancellationToken)
@@ -222,7 +222,25 @@ internal static class WindowsClipboardPaste
         }
 
         var ourSequence = GetClipboardSequenceNumber();
-        var refusal = preflight();
+        TextDeliveryRefusalReason refusal;
+        try
+        {
+            refusal = preflight();
+        }
+        catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
+        {
+            // A DEFECT IN THE PREFLIGHT IS NOT A CLIPBOARD FAILURE (plan-2 step 13, round three). The
+            // words are already on the clipboard and nothing has been pasted; the clipboard is put
+            // back if it was ours to put back, and the exception goes out to be named - never
+            // answered "clipboard unavailable", which would send somebody to the wrong place.
+            if (snapshot is not null && GetClipboardSequenceNumber() == ourSequence)
+            {
+                _ = TryRestoreClipboard(snapshot);
+            }
+
+            throw;
+        }
+
         if (refusal != TextDeliveryRefusalReason.None)
         {
             var fallbackAvailable = TrySetClipboardText(legacyText);
@@ -405,30 +423,29 @@ internal static class WindowsClipboardPaste
         }
     }
 
+    /// <summary>A delivery on the clipboard thread: what the clipboard refuses is answered inside the operation; what still throws is a defect and comes out to be named.</summary>
+    /// <remarks>
+    /// NOT ANSWERED "CLIPBOARD UNAVAILABLE" ANY MORE (plan-2 step 13, round three). Every clipboard
+    /// call a delivery makes catches the clipboard's own failures and answers them; an exception
+    /// that reaches here is ours - a defect in the preflight, a null - and the delivery names it as
+    /// one, with the words kept.
+    /// </remarks>
     private static Task<TextCommitResult> RunStaAsync(
         Func<TextCommitResult> operation,
         CancellationToken cancellationToken) =>
-        RunStaAsync(
-            operation,
-            new TextCommitResult(
-                TextDeliveryRoute.None,
-                Delivered: false,
-                ClipboardFallback: false,
-                ClipboardRestored: false,
-                TextDeliveryRefusalReason.ClipboardUnavailable),
-            cancellationToken);
+        RunStaAsync<TextCommitResult>(operation, onUnexpectedFailure: null, cancellationToken);
 
     /// <summary>
     /// Runs one clipboard operation on a thread that can talk to the clipboard at all.
     /// </summary>
     /// <param name="onUnexpectedFailure">
-    /// What to return when the operation throws something we did not anticipate. Passed in rather
-    /// than defaulted, so each caller states its OWN safe answer: for a delivery that is a refusal
-    /// the caller reports, and for a selection read it is simply nothing.
+    /// What to answer when the operation throws something we did not anticipate, or null to let the
+    /// exception out. Passed in rather than defaulted, so each caller states its OWN answer: a
+    /// selection read answers nothing; a delivery lets the defect out to be named.
     /// </param>
     private static Task<T> RunStaAsync<T>(
         Func<T> operation,
-        T onUnexpectedFailure,
+        Func<Exception, T>? onUnexpectedFailure,
         CancellationToken cancellationToken)
     {
         var completion = new TaskCompletionSource<T>(
@@ -446,7 +463,14 @@ internal static class WindowsClipboardPaste
             catch (Exception exception) when (
                 exception is not (StackOverflowException or OutOfMemoryException))
             {
-                completion.TrySetResult(onUnexpectedFailure);
+                if (onUnexpectedFailure is null)
+                {
+                    completion.TrySetException(exception);
+                }
+                else
+                {
+                    completion.TrySetResult(onUnexpectedFailure(exception));
+                }
             }
         })
         {

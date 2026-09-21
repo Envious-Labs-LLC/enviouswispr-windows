@@ -100,14 +100,9 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             current.Context is null ||
             !CaretUnchanged(request.ExpectedContext, current.Context))
         {
-            var refusal = current.Status == TargetContextStatus.Elevated
-                ? TextDeliveryRefusalReason.ElevatedTarget
-                : current.Status == TargetContextStatus.Protected
-                    ? TextDeliveryRefusalReason.ProtectedField
-                    : TextDeliveryRefusalReason.TargetChanged;
             return await WindowsClipboardPaste.CopyOnlyAsync(
                 request.LegacyText.Text,
-                refusal,
+                RevalidationRefusal(current),
                 cancellationToken).ConfigureAwait(false);
         }
 
@@ -141,11 +136,45 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             request.Text.Text,
             request.LegacyText.Text,
             request.Options.RestoreClipboardAfterPaste,
-            () => PreflightInput(
+            () => GuardedPreflight(() => PreflightInput(
                 request.Target,
                 request.ExpectedContext,
-                request.Options),
+                request.Options)),
             cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>What the commit refuses with when the target, read again just before the write, is not the one the context was captured from - or cannot be read.</summary>
+    /// <remarks>
+    /// THE SECOND READ KEEPS ITS OWN NAME (plan-2 step 13, round three). An elevated or protected
+    /// target says so; accessibility that did not answer the second time says that, with the reason
+    /// the capture gave; a target that is gone, or whose caret moved, is a changed target.
+    /// </remarks>
+    internal static TextDeliveryRefusalReason RevalidationRefusal(TargetContextResult current)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        return current.Status switch
+        {
+            TargetContextStatus.Elevated => TextDeliveryRefusalReason.ElevatedTarget,
+            TargetContextStatus.Protected => TextDeliveryRefusalReason.ProtectedField,
+            TargetContextStatus.AccessibilityUnavailable => current.RefusalReason != TextDeliveryRefusalReason.None
+                ? current.RefusalReason
+                : TextDeliveryRefusalReason.AccessibilityUnavailable,
+            _ => TextDeliveryRefusalReason.TargetChanged,
+        };
+    }
+
+    /// <summary>The preflight the paste runs on its own thread, with what accessibility refused translated here, inside the adapter; anything else it throws is a defect and comes out.</summary>
+    internal static TextDeliveryRefusalReason GuardedPreflight(Func<TextDeliveryRefusalReason> preflight)
+    {
+        ArgumentNullException.ThrowIfNull(preflight);
+        try
+        {
+            return preflight();
+        }
+        catch (AutomationRefusalException)
+        {
+            return TextDeliveryRefusalReason.AccessibilityUnavailable;
+        }
     }
 
     internal static bool CaretUnchanged(CaretContext expected, CaretContext actual) =>

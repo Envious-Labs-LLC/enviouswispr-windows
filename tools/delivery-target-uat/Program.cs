@@ -41,9 +41,16 @@ internal static class Program
             expectedSubstring,
             forbiddenSubstring);
         Application.Run(form);
+        if (form.SelfTestVerdict is { } verdict)
+        {
+            Console.WriteLine(verdict == 0
+                ? "settle-self-test: the settled receipt counted the paste queued ahead of the settle request."
+                : "settle-self-test: the settled receipt did NOT count the paste queued ahead of the settle request.");
+            Environment.ExitCode = verdict;
+        }
     }
 
-    private static Form BuildForm(
+    private static TargetForm BuildForm(
         string mode,
         int refocusDelay,
         int holdFocus,
@@ -51,7 +58,8 @@ internal static class Program
         string? expectedSubstring,
         string? forbiddenSubstring)
     {
-        var form = new Form
+        var caretAtStart = mode == "caret-start";
+        var form = new TargetForm
         {
             Name = "Phase13DeliveryTarget",
             Text = $"EnviousWispr delivery target - {mode} - {Environment.ProcessId}",
@@ -87,6 +95,7 @@ internal static class Program
         else
         {
             var manualMicrophone = mode == "manual-microphone";
+            var settleSelfTest = mode == "settle-self-test";
             var label = new Label
             {
                 AutoSize = true,
@@ -133,23 +142,90 @@ internal static class Program
             form.Controls.Add(label);
             form.Controls.Add(edit);
             focusTarget = edit;
-            if (resultPath is not null)
+            var settled = 0;
+            void Publish()
             {
-                // PUBLISHED ON EVERY TEXT CHANGE AND ON EVERY COUNTED MESSAGE. A paste that changes
-                // nothing - empty, or refused by the control - raises no TextChanged, and a receipt
-                // written only from there would still say "no WM_PASTE"; the counters publish
-                // themselves, so the journey's final read is a settled snapshot of every message.
-                void Publish() => WriteResult(
-                    resultPath,
-                    edit.Text,
-                    expectedSubstring,
-                    forbiddenSubstring,
-                    edit.PasteMessages,
-                    edit.SetTextMessages,
-                    edit.Rewrites);
-                edit.TextChanged += (_, _) => Publish();
-                edit.MessageCounted += (_, _) => Publish();
-                Publish();
+                if (resultPath is not null)
+                {
+                    WriteResult(
+                        resultPath,
+                        edit.Text,
+                        expectedSubstring,
+                        forbiddenSubstring,
+                        edit.PasteMessages,
+                        edit.SetTextMessages,
+                        edit.Rewrites,
+                        settled);
+                }
+            }
+
+            // PUBLISHED ON EVERY TEXT CHANGE AND ON EVERY COUNTED MESSAGE. A paste that changes
+            // nothing - empty, or refused by the control - raises no TextChanged, and a receipt
+            // written only from there would still say "no WM_PASTE"; the counters publish
+            // themselves.
+            edit.TextChanged += (_, _) => Publish();
+            edit.MessageCounted += (_, _) => Publish();
+            Publish();
+
+            // THE FINAL RECEIPT IS ACKNOWLEDGED, NOT ASSUMED. The sender's exit says nothing about
+            // what is still queued for this window: a keystroke it sent sits in this thread's input
+            // queue below every posted message, so a settle request posted after it would be handled
+            // first. The request therefore starts a watch that answers only once this thread's queue
+            // has held no input, no posted and no sent message for two consecutive looks; the receipt
+            // written then carries the request's sequence, and that is the one the journey reads.
+            form.SettleRequested += (_, sequence) =>
+            {
+                var quietLooks = 0;
+                var watch = new System.Windows.Forms.Timer { Interval = 50 };
+                watch.Tick += (_, _) =>
+                {
+                    quietLooks = NativeQueue.HasPendingInputOrMessages() ? 0 : quietLooks + 1;
+                    if (quietLooks < 2)
+                    {
+                        return;
+                    }
+
+                    watch.Stop();
+                    watch.Dispose();
+                    settled = sequence;
+                    Publish();
+                    if (settleSelfTest)
+                    {
+                        form.SelfTestVerdict = edit.PasteMessages >= 1 ? 0 : 2;
+                        form.Close();
+                    }
+                };
+                watch.Start();
+            };
+
+            if (settleSelfTest)
+            {
+                // THE PROOF THAT A SETTLE CANNOT OVERTAKE A PASTE: a Ctrl+V sent to this window through
+                // the input queue, with the clipboard emptied so the paste changes nothing, and a
+                // settle request posted right behind it. The settled receipt must already count the
+                // paste; a target that answered on the posted message alone would report none.
+                form.Shown += (_, _) =>
+                {
+                    var arm = new System.Windows.Forms.Timer { Interval = 750 };
+                    arm.Tick += (_, _) =>
+                    {
+                        arm.Stop();
+                        arm.Dispose();
+                        var kept = Clipboard.ContainsText() ? Clipboard.GetText() : null;
+                        Clipboard.Clear();
+                        form.FormClosed += (_, _) =>
+                        {
+                            if (kept is not null)
+                            {
+                                Clipboard.SetText(kept);
+                            }
+                        };
+                        Focus(form, focusTarget);
+                        SendKeys.Send("^v");
+                        _ = NativeQueue.PostMessage(form.Handle, TargetForm.WmSettle, 1, 0);
+                    };
+                    arm.Start();
+                };
             }
         }
 
@@ -157,7 +233,6 @@ internal static class Program
         // value write applies (it appends); at the start, it does not, and the adapter pastes at the
         // caret instead. `caret-start` is the same field with the caret held at the start, so a journey
         // can make the production adapter take its paste route on purpose.
-        var caretAtStart = mode == "caret-start";
         void Focus(Form form, Control focusTarget)
         {
             NativeFocus.BringToForeground(form.Handle);
@@ -243,10 +318,14 @@ internal static class Program
         string? forbiddenSubstring,
         int pasteMessages = 0,
         int setTextMessages = 0,
-        int rewrites = 0)
+        int rewrites = 0,
+        int settled = 0)
     {
         var result = JsonSerializer.Serialize(new
         {
+            // THE SETTLE REQUEST THIS RECEIPT ANSWERS, or 0 for a receipt written on the way: a
+            // journey reads a receipt whose settled sequence is its own request's.
+            settled,
             // HOW THE WORDS ARRIVED, counted at the window: a paste reaches a Win32 edit as WM_PASTE,
             // a UI Automation value write as WM_SETTEXT. The journey reads the route off these.
             pasteMessages,
@@ -267,6 +346,54 @@ internal static class Program
             characterCount = text.Length,
         });
         File.WriteAllText(path, result);
+    }
+
+    /// <summary>The target window: a form that answers a settle request from the journey harness.</summary>
+    private sealed class TargetForm : Form
+    {
+        /// <summary>The message a journey posts to ask for an acknowledged final receipt; wParam is the request's sequence.</summary>
+        public const int WmSettle = 0x8000 + 0x0013;
+
+        /// <summary>Raised on the UI thread with the request's sequence.</summary>
+        public event EventHandler<int>? SettleRequested;
+
+        /// <summary>The settle self-test's exit code, once it has run.</summary>
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public int? SelfTestVerdict { get; set; }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WmSettle)
+            {
+                SettleRequested?.Invoke(this, (int)m.WParam);
+                return;
+            }
+
+            base.WndProc(ref m);
+        }
+    }
+
+    /// <summary>What this thread's message queue still holds, asked of Windows.</summary>
+    private static class NativeQueue
+    {
+        private const uint QsKey = 0x0001;
+        private const uint QsMouseMove = 0x0002;
+        private const uint QsMouseButton = 0x0004;
+        private const uint QsPostMessage = 0x0008;
+        private const uint QsSendMessage = 0x0040;
+        private const uint QsHotkey = 0x0080;
+        private const uint QsRawInput = 0x0400;
+        private const uint Watched = QsKey | QsMouseMove | QsMouseButton | QsPostMessage | QsSendMessage | QsHotkey | QsRawInput;
+
+        /// <summary>True while a keystroke, a mouse event, a posted or a sent message is still waiting for this thread.</summary>
+        public static bool HasPendingInputOrMessages() => (GetQueueStatus(Watched) >> 16) != 0;
+
+        [DllImport("user32.dll")]
+        private static extern uint GetQueueStatus(uint flags);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool PostMessage(nint window, uint message, nint wParam, nint lParam);
     }
 
     /// <summary>A text box that counts how its text arrived: WM_PASTE for a paste, WM_SETTEXT for a UI Automation value write.</summary>
