@@ -698,6 +698,43 @@ public sealed class DictationSessionCoordinatorTests
     }
 
     [Fact]
+    public async Task AnInterruptionCancelsOnlyTheFinalisationThatWasInFlightBeforeItWasAdmitted()
+    {
+        // THE CANCEL NAMES A GENERATION. The generation in flight is read before the interruption is
+        // admitted and handed to the executor with the cancel; an executor whose finalisation has moved
+        // on by then - a consumer that was idle took the interruption at once and began its own
+        // preservation of the take - refuses the stale cancel, and the interruption's own transcription
+        // is never cut by the interruption that asked for it. With nothing in flight, nothing is
+        // cancelled at all.
+        var executor = new BarrierExecutor();
+        await using var coordinator = new DictationSessionCoordinator(executor);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        var before = executor.ProcessingGeneration!;
+        // THE CONSUMER ADVANCES THE INSTANT THE COORDINATOR HAS READ THE GENERATION: what is in
+        // flight when the cancel arrives is a newer finalisation than the one the interruption saw.
+        executor.AfterGenerationRead = () => executor.ProcessingGeneration = new object();
+
+        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+
+        Assert.Equal([before], executor.CancelledGenerations);
+        Assert.Equal(0, executor.CancelProcessingCalls);
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        await executor.StartedKind(SessionCommandKind.Interruption).WaitAsync(Patience);
+        executor.FinishKind(SessionCommandKind.Interruption);
+        Assert.Equal(SessionCommandDisposition.Applied, (await interruption.WaitAsync(Patience)).Disposition);
+
+        var idle = new BarrierExecutor { ProcessingGeneration = null };
+        await using var nothingInFlight = new DictationSessionCoordinator(idle);
+        var lockWhileIdle = nothingInFlight.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        await idle.StartedKind(SessionCommandKind.Interruption).WaitAsync(Patience);
+        idle.FinishKind(SessionCommandKind.Interruption);
+        await lockWhileIdle.WaitAsync(Patience);
+        Assert.Empty(idle.CancelledGenerations);
+    }
+
+    [Fact]
     public async Task AnInterruptionRefusedByTheClosureCancelsNothingAndOneAdmittedBeforeItStillRuns()
     {
         // THE CANCEL AND THE ADMISSION CANNOT DISAGREE. Admission closed first: the interruption is
@@ -1361,6 +1398,35 @@ public sealed class DictationSessionCoordinatorTests
         public int CancelProcessingCalls { get; private set; }
 
         public void CancelProcessing() => CancelProcessingCalls++;
+
+        private object? _generation = new();
+
+        /// <summary>The generation this executor advertises as in flight; a test moves it to stand for a consumer that started a new finalisation meanwhile.</summary>
+        public object? ProcessingGeneration
+        {
+            get
+            {
+                var generation = _generation;
+                AfterGenerationRead?.Invoke();
+                return generation;
+            }
+            set => _generation = value;
+        }
+
+        /// <summary>Runs the instant after the generation was read: the consumer advancing between the coordinator's read and its cancel.</summary>
+        public Action? AfterGenerationRead { get; set; }
+
+        /// <summary>The generations the coordinator asked to cancel, honoured only when they are the current one - as the production executor does.</summary>
+        public List<object> CancelledGenerations { get; } = [];
+
+        public void CancelProcessing(object generation)
+        {
+            CancelledGenerations.Add(generation);
+            if (ReferenceEquals(generation, _generation))
+            {
+                CancelProcessingCalls++;
+            }
+        }
 
         /// <summary>Whether the teardown ran while the coordinator held the session (no command running beside it).</summary>
         public bool ShutdownRanUnderTheSession { get; private set; }

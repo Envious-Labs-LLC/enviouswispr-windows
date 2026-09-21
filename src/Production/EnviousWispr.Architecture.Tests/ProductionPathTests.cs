@@ -86,6 +86,29 @@ public sealed class ProductionPathTests
     }
 
     [Fact]
+    public async Task ALockWhileRecordingLeavesItsOwnPreservationTranscriptionUncancelled()
+    {
+        // NOTHING IS IN FLIGHT WHEN THE LOCK ARRIVES: the recording is open and the queue idle, so the
+        // interruption runs at once and preserves the take by transcribing it. The interruption's
+        // cancel is for the finalisation it was queued behind - there was none - and the transcription
+        // it starts itself runs on an uncancelled token to the end: the words are kept for recovery.
+        var world = ComposedSessionWorld.Create("hello world");
+        await world.PressAsync();
+        world.Engine.Hold = true;
+
+        var locked = world.Coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        await world.Engine.Entered.Task.WaitAsync(Patience);
+
+        Assert.False(world.Engine.Token!.Value.IsCancellationRequested, "the interruption cancelled its own preservation transcription");
+        Assert.Contains(world.View.Statuses, status => status.Text.Contains("Windows locked", StringComparison.Ordinal));
+        world.Engine.Release();
+        Assert.Equal(SessionCommandDisposition.Applied, (await locked.WaitAsync(Patience)).Disposition);
+        Assert.Equal(1, world.Engine.Calls);
+        Assert.Equal(["hello world"], world.RecoveryStore.Saved);
+        Assert.Null(world.Controller.CurrentSession);
+    }
+
+    [Fact]
     public async Task ShutdownDuringRecoveryDoesNotTouchDisposedStores()
     {
         // AN ESCAPE RECOVERY IS TRANSCRIBING WHEN THE SHUTDOWN COMES. The recovery store is the

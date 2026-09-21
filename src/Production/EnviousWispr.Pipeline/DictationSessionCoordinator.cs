@@ -115,6 +115,15 @@ public interface ISessionCommandExecutor
     {
     }
 
+    /// <summary>The finalisation in flight right now, as an opaque generation, or null when none is; what an interruption captures before it is admitted.</summary>
+    object? ProcessingGeneration => null;
+
+    /// <summary>
+    /// Cancels the finalisation in flight only if it is still the one captured as
+    /// <paramref name="generation"/>: a later one - the interrupting command's own, say - is left alone.
+    /// </summary>
+    void CancelProcessing(object generation) => CancelProcessing();
+
     /// <summary>Admission has closed for good: a delivery not yet issued is not issued from now on.</summary>
     void Close()
     {
@@ -270,15 +279,19 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         // THE DEADLINE IS CANCELLED HERE, NOW, not when the interruption reaches the front of the queue:
         // a finalisation in flight is what the queue is waiting behind, and cancelling it is how the
         // interruption gets its turn inside the five seconds it allows itself. ADMITTED FIRST, THEN
-        // CANCELLED: an interruption admission refuses (the shutdown has closed it) cancels nothing,
-        // so the finalisation the shutdown is waiting for is cut short by nobody but the shell's own
-        // exit policy; one admission takes is run whatever closes after it - it has already cut the
-        // finalisation on the promise of preserving the take, and the shutdown waits for it like any
-        // other command - so the cancel and the admission can never disagree.
+        // CANCELLED, AND ONLY THE FINALISATION THAT WAS THERE BEFORE: the generation in flight is
+        // captured before admission; an interruption admission refuses (the shutdown has closed it)
+        // cancels nothing, so the finalisation the shutdown is waiting for is cut short by nobody but
+        // the shell's own exit policy; and the cancel names the captured generation, so a finalisation
+        // that began after the interruption was published - the interruption's own preservation of the
+        // take, run by a consumer that was idle - is never the one cut. One admission takes is run
+        // whatever closes after it: it has cut the finalisation on the promise of preserving the take,
+        // and the shutdown waits for it like any other command.
+        var inFlight = _executor.ProcessingGeneration;
         var interruption = Submit(new SessionCommand(SessionCommandKind.Interruption, PushToTalkSignal.Cancelled, Transition: transition));
-        if (!interruption.IsCompleted)
+        if (!interruption.IsCompleted && inFlight is not null)
         {
-            _executor.CancelProcessing();
+            _executor.CancelProcessing(inFlight);
         }
 
         return interruption;
