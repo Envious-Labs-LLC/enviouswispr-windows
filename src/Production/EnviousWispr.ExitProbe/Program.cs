@@ -1,18 +1,22 @@
 // THE EXIT PROBE: a host process that leaves through the production ApplicationLifetime.
 //
 // What the shell cannot prove in-process - that a step which will not finish ends in the host being
-// told to end, inside the budget, with the step's late effects never landing - a child process can.
-// The test runs this with a budget and a step to hang, and watches the process: its exit code is the
-// terminator's, its stdout is the report, and the marker file the hung step would write is absent.
+// told to end, inside the budget, with the step's late effects never landing; and that a step which
+// blocks its thread is ended by the watchdog from another - a child process can. The test runs this
+// with a budget and a step to hang or block, and watches the process: its exit code is the
+// terminator's, its stdout is the report, and the marker file the hung step writes on finishing is
+// present or absent.
 //
-// `--budget-ms N` the exit budget; `--hang <step>` one of drain, quiesce, dispose, none; `--marker
-// <path>` the file the hung step writes if it ever finishes; `--hang-ms N` how long the hung step
-// takes (default: forever).
+// `--budget-ms N` the exit budget; `--hang <step>` one of drain, quiesce, dispose, none - the step
+// returns a task that finishes after `--hang-ms N` (default: never) and then writes `--marker <path>`;
+// `--block <step>` one of closing, dispose, none - the step blocks the thread it was called on, for
+// ever, before returning anything.
 using EnviousWispr.App.Composition;
 using EnviousWispr.Core.Diagnostics;
 
 var budgetMilliseconds = ReadIntegerArgument(args, "--budget-ms", defaultValue: 1_000);
 var hang = ReadArgument(args, "--hang") ?? "none";
+var block = ReadArgument(args, "--block") ?? "none";
 var marker = ReadArgument(args, "--marker");
 var hangMilliseconds = ReadIntegerArgument(args, "--hang-ms", defaultValue: -1);
 
@@ -28,20 +32,40 @@ Func<Task> Hanging(string name) => async () =>
     Console.WriteLine($"step {name}: finished");
 };
 
+Func<Task> Blocking(string name) => () =>
+{
+    Console.WriteLine($"step {name}: blocking its thread");
+    Console.Out.Flush();
+    Thread.Sleep(Timeout.Infinite);
+    return Task.CompletedTask;
+};
+
 Task Finished() => Task.CompletedTask;
 
 var parts = new LifetimeParts(
     CloseAdmission: () => Console.WriteLine("admission closed"),
     DrainSettings: hang == "drain" ? Hanging("drain") : Finished,
-    ShellClosing: () => Console.WriteLine("shell closing"),
+    ShellClosing: () =>
+    {
+        Console.WriteLine("shell closing");
+        if (block == "closing")
+        {
+            Console.Out.Flush();
+            Thread.Sleep(Timeout.Infinite);
+        }
+    },
     CancelProcessing: () => { },
     ReleaseInputs: [new LifetimeStep("inputs", Finished)],
     ShutDownSession: null,
     Quiesce: [new LifetimeStep("quiesce", hang == "quiesce" ? Hanging("quiesce") : Finished)],
-    DisposeSessionDependencies: [new LifetimeStep("dispose", hang == "dispose" ? Hanging("dispose") : Finished)],
+    DisposeSessionDependencies:
+    [
+        new LifetimeStep("dispose", hang == "dispose" ? Hanging("dispose") : block == "dispose" ? Blocking("dispose") : Finished),
+    ],
     DisposeShell: [new LifetimeStep("shell", Finished)],
-    CompleteRun: () => Task.FromResult(true),
     DisposeLast: [new LifetimeStep("last", Finished)],
+    CompleteRun: _ => Task.FromResult(true),
+    CloseRunState: () => { },
     DisposeLogger: Finished);
 
 var lifetime = new ApplicationLifetime(

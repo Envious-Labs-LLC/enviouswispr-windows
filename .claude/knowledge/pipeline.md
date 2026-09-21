@@ -71,16 +71,21 @@ remain wordless designs.
   shutdown under what is left, the polish warm-up and heartbeat joins, the disposals, the run's
   completion and the log; every step joined under the remainder and named in the `ExitReport` if it
   did not finish or threw. The session's dependencies (engines, polish provider, arbiter, owners,
-  stores) and the last disposals run only behind a quiescent session with nothing outstanding, in
-  dependency order, and the first disposal that does not finish stops the rest; the run is completed -
-  and `ApplicationCleanShutdown` written - only by an exit with nothing outstanding, nothing failed and
-  a clean session. Anything retained means the host is told to end (`IHostTerminator`, exit code 70,
-  `ApplicationExitEscalated` logged first): arbitrary in-process work cannot be joined by force, so the
-  process ends with it still owned and the next launch reads an interrupted run; a timeout is never
-  called clean. Every path out (tray, window, update, system ending) shares the same two cached tasks,
-  so no step runs twice. The shell keeps only its UI-thread unsubscriptions, the window's destruction
-  and the steps' bodies; a gate reads `LifetimeParts()` to hold the session's dependencies to the two
-  guarded lists. The
+  stores) and the last disposal (the single-instance lock) run only behind a quiescent session with
+  nothing outstanding, in dependency order, and the first disposal that does not finish stops the rest.
+  The run's completion is the last thing that can fail: written - and `ApplicationCleanShutdown` logged -
+  only by an exit with nothing outstanding, nothing failed and a clean session, under the remainder,
+  with a token cancelled when it runs out so a write not begun by the deadline never begins (the
+  production store honours it); after it only the store and the log are closed, both reported. The
+  verdict is taken after the log closes. Anything retained or outstanding means the host is told to end
+  (`IHostTerminator`, exit code 70, `ApplicationExitEscalated` logged first): arbitrary in-process work
+  cannot be joined by force, so the process ends with it still owned and the next launch reads an
+  interrupted run; a timeout is never called clean. A step that blocks its thread can never be joined,
+  so a watchdog timer on the clock's own thread stands two seconds behind the budget and ends the host
+  from there, naming the step. Every path out (tray, window, update, system ending) shares the same two
+  cached tasks, so no step runs twice. The shell keeps only its UI-thread unsubscriptions, the window's
+  destruction and the steps' bodies; a gate reads `LifetimeParts()` to hold the session's dependencies
+  to the guarded lists. The
   executor owns the order of the background work around a recording (watchdog, preview, auto-stop,
   streaming), the three-minute processing deadline - armed before the background work is stopped so
   it covers the preview's worker being waited for, cancelled by a lock, a suspend or the exit

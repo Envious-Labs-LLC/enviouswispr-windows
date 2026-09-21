@@ -2,8 +2,10 @@ using System.Diagnostics;
 using EnviousWispr.App.Composition;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Sessions;
 using EnviousWispr.Pipeline;
+using EnviousWispr.Services.Reliability;
 
 namespace EnviousWispr.Architecture.Tests;
 
@@ -49,7 +51,7 @@ public sealed class ApplicationLifetimeTests
         Assert.Same(report, world.Terminator.Report);
         // THE HEARTBEAT, GIVEN NOTHING, WAS STILL ISSUED AND OBSERVED: it finished at once, so it is
         // not outstanding. The disposals were not run: what the warm-up uses is kept.
-        Assert.Equal(["inputs", "warm-up", "heartbeat"], world.Ran);
+        Assert.Equal(["inputs", "warm-up", "heartbeat", "run-state store"], world.Ran);
         Assert.Equal(0, world.CompleteRunCalls);
         Assert.Contains(AppEventCode.ApplicationExitEscalated, world.Log.Events);
         Assert.DoesNotContain(AppEventCode.ApplicationCleanShutdown, world.Log.Events);
@@ -82,7 +84,7 @@ public sealed class ApplicationLifetimeTests
         Assert.True(report.Session.CommandOutstanding);
         Assert.True(report.Retained);
         Assert.Empty(report.Outstanding);
-        Assert.Equal(["inputs", "warm-up", "heartbeat"], world.Ran);
+        Assert.Equal(["inputs", "warm-up", "heartbeat", "run-state store"], world.Ran);
         Assert.Equal(0, world.CompleteRunCalls);
         Assert.True(report.Escalated);
         Assert.Contains(AppEventCode.ApplicationShutdownUnclean, world.Log.Events);
@@ -116,7 +118,7 @@ public sealed class ApplicationLifetimeTests
         Assert.True(report.RunCompleted);
         Assert.False(report.Escalated);
         Assert.Null(world.Terminator.Report);
-        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency", "second dependency", "shell", "last"], world.Ran);
+        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency", "second dependency", "shell", "last", "run-state store"], world.Ran);
         Assert.Equal(1, executor.TearDowns);
         Assert.Contains(AppEventCode.ApplicationCleanShutdown, world.Log.Events);
         Assert.True(world.LoggerDisposed);
@@ -129,7 +131,7 @@ public sealed class ApplicationLifetimeTests
         Assert.Equal(0, faulted.CompleteRunCalls);
         Assert.False(faultedReport.RunCompleted);
         Assert.False(faultedReport.Escalated);
-        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency", "second dependency", "shell", "last"], faulted.Ran);
+        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency", "second dependency", "shell", "last", "run-state store"], faulted.Ran);
         Assert.Contains(AppEventCode.UnhandledFailure, faulted.Log.Events);
         Assert.DoesNotContain(AppEventCode.ApplicationCleanShutdown, faulted.Log.Events);
     }
@@ -175,7 +177,7 @@ public sealed class ApplicationLifetimeTests
         Assert.Same(report, again);
         Assert.Equal(1, world.DrainCalls);
         Assert.Equal(1, world.ShellClosingCalls);
-        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency", "second dependency", "shell", "last"], world.Ran);
+        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency", "second dependency", "shell", "last", "run-state store"], world.Ran);
         Assert.Equal(1, world.CompleteRunCalls);
         Assert.Equal(1, world.LoggerDisposals);
         Assert.Equal(1, world.Log.Events.Count(code => code == AppEventCode.ApplicationCleanShutdown));
@@ -197,35 +199,210 @@ public sealed class ApplicationLifetimeTests
 
         var report = await exit.WaitAsync(Patience);
         Assert.Equal(["dependency"], report.Outstanding);
-        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency"], world.Ran);
+        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency", "run-state store"], world.Ran);
         Assert.Equal(0, world.CompleteRunCalls);
         Assert.True(report.Escalated);
         world.Dependency.SetResult();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ARunCompletionThatDoesNotLandInsideTheBudgetLeavesTheRunInterrupted(bool releasedLate)
+    {
+        // THE PUBLICATION IS FENCED. The production run-state store on a file, behind a hold: the
+        // exit reaches the run's completion with its whole budget and the write does not begin inside
+        // it. The report says the completion is outstanding, the exit is unclean and the host is told
+        // to end. Released late, the write finds its token run out and never lands: the next launch
+        // reads an interrupted run, not a clean one. Never released, the same.
+        using var temp = new TemporaryDirectory();
+        var path = Path.Combine(temp.Path, "run-state.json");
+        var store = new JsonApplicationRunStateStore(path);
+        var run = await store.BeginRunAsync(DateTimeOffset.UtcNow);
+        var clock = new Deterministic.ManualClock();
+        var world = World.Create(clock);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<bool>? write = null;
+        world.CompleteRun = async cancellation =>
+        {
+            await release.Task;
+            write = store.CompleteRunAsync(run.RunId, DateTimeOffset.UtcNow, cancellation);
+            return await write;
+        };
+
+        var exit = world.Lifetime.ExitAsync();
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(20));
+
+        var report = await exit.WaitAsync(Patience);
+        Assert.Equal(ExitOutcome.Unclean, report.Outcome);
+        Assert.Equal(["run completion"], report.Outstanding);
+        Assert.False(report.RunCompleted);
+        Assert.True(report.Escalated);
+        Assert.Same(report, world.Terminator.Report);
+        Assert.DoesNotContain(AppEventCode.ApplicationCleanShutdown, world.Log.Events);
+
+        if (releasedLate)
+        {
+            release.SetResult();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            {
+                while (write is null)
+                {
+                    await Task.Yield();
+                }
+
+                await write.WaitAsync(Patience);
+            });
+        }
+
+        store.Dispose();
+        using var nextLaunch = new JsonApplicationRunStateStore(path);
+        var next = await nextLaunch.BeginRunAsync(DateTimeOffset.UtcNow);
+        Assert.Equal(RunStateLoadStatus.PreviousRunInterrupted, next.Status);
+    }
+
+    [Fact]
+    public async Task ARunCompletionInsideTheBudgetIsReadAsCleanByTheNextLaunch()
+    {
+        // THE CONTROL: the same production store, the completion landing inside the budget, the next
+        // launch reads a clean run.
+        using var temp = new TemporaryDirectory();
+        var path = Path.Combine(temp.Path, "run-state.json");
+        var store = new JsonApplicationRunStateStore(path);
+        var run = await store.BeginRunAsync(DateTimeOffset.UtcNow);
+        var world = World.Create(new Deterministic.ManualClock());
+        world.CompleteRun = cancellation => store.CompleteRunAsync(run.RunId, DateTimeOffset.UtcNow, cancellation);
+
+        var report = await world.Lifetime.ExitAsync().WaitAsync(Patience);
+
+        Assert.True(report.Clean);
+        Assert.True(report.RunCompleted);
+        store.Dispose();
+        using var nextLaunch = new JsonApplicationRunStateStore(path);
+        Assert.Equal(RunStateLoadStatus.Started, (await nextLaunch.BeginRunAsync(DateTimeOffset.UtcNow)).Status);
+    }
+
+    [Fact]
+    public async Task AFinalDisposalThatFailsKeepsTheRunFromBeingCompleted()
+    {
+        // THE PUBLICATION IS THE LAST THING THAT CAN FAIL: the single-instance lock is disposed before
+        // it, and its failure means no completion is written and the exit is unclean.
+        var world = World.Create(new Deterministic.ManualClock());
+        world.LastThrows = true;
+
+        var report = await world.Lifetime.ExitAsync().WaitAsync(Patience);
+
+        Assert.Equal(ExitOutcome.Unclean, report.Outcome);
+        Assert.Equal(["last"], report.Failed);
+        Assert.Equal(0, world.CompleteRunCalls);
+        Assert.False(report.RunCompleted);
+        Assert.False(report.Escalated);
+        Assert.DoesNotContain(AppEventCode.ApplicationCleanShutdown, world.Log.Events);
+    }
+
+    [Fact]
+    public async Task ALogThatDoesNotCloseInsideTheBudgetIsOutstandingAndEndsTheHost()
+    {
+        // THE VERDICT IS TAKEN AFTER THE LOG CLOSES. Everything finished and the run was completed;
+        // the log's closing does not finish inside what is left. The report is unclean with the log
+        // outstanding, and the host is told to end - the completion already written stands, because
+        // everything the run had to finish had finished.
+        var clock = new Deterministic.ManualClock();
+        var world = World.Create(clock);
+        world.Logger = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var exit = world.Lifetime.ExitAsync();
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(20));
+
+        var report = await exit.WaitAsync(Patience);
+        Assert.Equal(ExitOutcome.Unclean, report.Outcome);
+        Assert.Equal(["log"], report.Outstanding);
+        Assert.True(report.RunCompleted);
+        Assert.True(report.Escalated);
+        Assert.Same(report, world.Terminator.Report);
+        world.Logger.SetResult();
+    }
+
+    [Fact]
+    public async Task AStepThatBlocksItsThreadIsEndedByTheWatchdog()
+    {
+        // NO JOIN CAN BOUND A STEP THAT NEVER RETURNS A TASK. The shell's closing blocks the thread it
+        // was called on; the exit cannot conclude, so two seconds past the budget the watchdog, on the
+        // clock's own thread, tells the host to end, naming the step it was inside - and nothing was
+        // disposed, since nothing after the block ever ran.
+        var clock = new Deterministic.ManualClock();
+        var world = World.Create(clock);
+        var blocked = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        world.ShellClosingBlocks = () =>
+        {
+            entered.SetResult();
+            blocked.Wait(Patience);
+        };
+
+        var exit = Task.Run(() => world.Lifetime.ExitAsync());
+        await entered.Task.WaitAsync(Patience);
+        clock.Advance(ApplicationLifetime.DefaultBudget);
+        Assert.Null(world.Terminator.Report);
+        clock.Advance(ApplicationLifetime.WatchGrace);
+
+        var report = world.Terminator.Report;
+        Assert.NotNull(report);
+        Assert.Equal(["shell closing"], report.Outstanding);
+        Assert.True(report.Escalated);
+        Assert.True(report.Retained);
+        Assert.Empty(world.Ran);
+        Assert.Equal(0, world.CompleteRunCalls);
+
+        blocked.Set();
+        Assert.Same(report, world.Terminator.Report);
+        await exit.WaitAsync(Patience);
+    }
+
     [Fact]
     public async Task TerminalExitEscalationEndsTheHostProcess()
     {
-        // A CHILD PROCESS LEAVES THROUGH THE PRODUCTION LIFETIME with a disposal that never finishes and
-        // a one-second budget. The process is gone inside a few seconds with the escalation's exit
-        // code, its log said so, the report named the step, and the file the hung step would have
-        // written on finishing was never written: its late effect did not land.
+        // A CHILD PROCESS LEAVES THROUGH THE PRODUCTION LIFETIME with a disposal that finishes three
+        // seconds late and a one-second budget. The process is gone inside a few seconds with the
+        // escalation's exit code, its log said so, the report named the step, and the file the step
+        // writes on finishing was never written: the process ended before its late effect could land.
+        // The control run, the same step finishing inside the budget, leaves the file - so its absence
+        // above is the escalation's doing.
         var probe = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.ExitProbe.exe");
         Assert.True(File.Exists(probe), $"the exit probe was not built beside the tests: {probe}");
         var marker = Path.Combine(Path.GetTempPath(), $"EnviousWispr-exit-probe-{Guid.NewGuid():N}.txt");
 
-        var hung = await RunProbeAsync(probe, $"--budget-ms 1000 --hang dispose --marker \"{marker}\"");
+        var hung = await RunProbeAsync(probe, $"--budget-ms 1000 --hang dispose --hang-ms 3000 --marker \"{marker}\"");
         Assert.Equal(70, hung.ExitCode);
-        Assert.True(hung.Elapsed < TimeSpan.FromSeconds(8), $"the escalation took {hung.Elapsed}");
+        Assert.True(hung.Elapsed < TimeSpan.FromSeconds(2.5), $"the escalation took {hung.Elapsed}");
         Assert.Contains("log: ApplicationExitEscalated", hung.Output, StringComparison.Ordinal);
         Assert.Contains("terminating: outstanding=[dispose]", hung.Output, StringComparison.Ordinal);
         Assert.DoesNotContain("report:", hung.Output, StringComparison.Ordinal);
+        await Task.Delay(TimeSpan.FromSeconds(3.5));
         Assert.False(File.Exists(marker), "the hung step's late effect landed");
 
-        var clean = await RunProbeAsync(probe, "--budget-ms 1000 --hang none");
-        Assert.Equal(0, clean.ExitCode);
-        Assert.Contains("report: outcome=Clean outstanding=[] failed=[] escalated=False runCompleted=True", clean.Output, StringComparison.Ordinal);
-        Assert.Contains("log: ApplicationCleanShutdown", clean.Output, StringComparison.Ordinal);
+        var control = await RunProbeAsync(probe, $"--budget-ms 1000 --hang dispose --hang-ms 200 --marker \"{marker}\"");
+        Assert.Equal(0, control.ExitCode);
+        Assert.True(File.Exists(marker), "the control run's step did not write its file");
+        File.Delete(marker);
+        Assert.Contains("report: outcome=Clean outstanding=[] failed=[] escalated=False runCompleted=True", control.Output, StringComparison.Ordinal);
+        Assert.Contains("log: ApplicationCleanShutdown", control.Output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AStepThatBlocksItsThreadIsEndedByTheWatchdogInTheHostProcess()
+    {
+        // THE WATCHDOG, IN A REAL PROCESS: the shell's closing blocks its thread before any task is
+        // returned; no join is ever reached. Two seconds past the one-second budget the watchdog ends
+        // the process from the clock's thread with the escalation's code, naming the step.
+        var probe = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.ExitProbe.exe");
+        var blocked = await RunProbeAsync(probe, "--budget-ms 1000 --block closing");
+        Assert.Equal(70, blocked.ExitCode);
+        Assert.InRange(blocked.Elapsed, TimeSpan.FromSeconds(2.5), TimeSpan.FromSeconds(8));
+        Assert.Contains("terminating: outstanding=[shell closing]", blocked.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain("report:", blocked.Output, StringComparison.Ordinal);
     }
 
     private static async Task<(int ExitCode, string Output, TimeSpan Elapsed)> RunProbeAsync(string probe, string arguments)
@@ -274,7 +451,14 @@ public sealed class ApplicationLifetimeTests
         public int LoggerDisposals { get; private set; }
         public bool LoggerDisposed => LoggerDisposals > 0;
         public bool CompleteRunAnswer { get; set; } = true;
+        /// <summary>When set, the run's completion: the production store behind a hold, say.</summary>
+        public Func<CancellationToken, Task<bool>>? CompleteRun { get; set; }
         public bool ShellThrows { get; set; }
+        public bool LastThrows { get; set; }
+        /// <summary>When set, the log does not close until it is completed.</summary>
+        public TaskCompletionSource? Logger { get; set; }
+        /// <summary>When set, the shell's closing blocks the thread it is called on for as long as this does.</summary>
+        public Action? ShellClosingBlocks { get; set; }
         /// <summary>When set, the settings drain does not finish until it is completed.</summary>
         public TaskCompletionSource? Drain { get; set; }
         /// <summary>When set, the polish warm-up does not finish until it is completed.</summary>
@@ -298,7 +482,11 @@ public sealed class ApplicationLifetimeTests
                     world!.DrainCalls++;
                     return world.Drain?.Task ?? Task.CompletedTask;
                 },
-                ShellClosing: () => world!.ShellClosingCalls++,
+                ShellClosing: () =>
+                {
+                    world!.ShellClosingCalls++;
+                    world.ShellClosingBlocks?.Invoke();
+                },
                 CancelProcessing: () => coordinator?.CancelProcessing(),
                 ReleaseInputs: [Step("inputs", () => world!)],
                 ShutDownSession: coordinator is null ? null : budget => coordinator.ShutdownAsync(budget),
@@ -328,16 +516,24 @@ public sealed class ApplicationLifetimeTests
                         return world.ShellThrows ? throw new InvalidOperationException("the tray icon refused") : Task.CompletedTask;
                     }),
                 ],
-                CompleteRun: () =>
+                DisposeLast:
+                [
+                    new LifetimeStep("last", () =>
+                    {
+                        world!.Ran.Add("last");
+                        return world.LastThrows ? throw new InvalidOperationException("the lock refused") : Task.CompletedTask;
+                    }),
+                ],
+                CompleteRun: cancellation =>
                 {
                     world!.CompleteRunCalls++;
-                    return Task.FromResult(world.CompleteRunAnswer);
+                    return world.CompleteRun is { } complete ? complete(cancellation) : Task.FromResult(world.CompleteRunAnswer);
                 },
-                DisposeLast: [Step("last", () => world!)],
+                CloseRunState: () => world!.Ran.Add("run-state store"),
                 DisposeLogger: () =>
                 {
                     world!.LoggerDisposals++;
-                    return Task.CompletedTask;
+                    return world.Logger?.Task ?? Task.CompletedTask;
                 });
             world = new World
             {
@@ -385,5 +581,24 @@ public sealed class ApplicationLifetimeTests
         public List<AppEventCode> Events { get; } = [];
 
         public void Write(AppLogEntry entry) => Events.Add(entry.Event);
+    }
+
+    private sealed class TemporaryDirectory : IDisposable
+    {
+        public TemporaryDirectory()
+        {
+            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"EnviousWispr-lifetime-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(Path);
+        }
+
+        public string Path { get; }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(Path))
+            {
+                Directory.Delete(Path, recursive: true);
+            }
+        }
     }
 }

@@ -785,11 +785,12 @@ public sealed partial class DesignSystemTokenTests
     /// says whether anything is still using the session; the engines, the polish provider, the worker
     /// arbiter, the background owners and the stores are what such a user is inside. The lifetime
     /// (ApplicationLifetime, proved in ApplicationLifetimeTests) runs DisposeSessionDependencies and
-    /// DisposeLast only behind a quiescent session with nothing outstanding; what this gate checks is
-    /// the shell's side of that contract: every disposal of one of those on the way out is under one
-    /// of those two named arguments of LifetimeParts(), the shell's DisposeAsync disposes nothing
-    /// itself, and the shell leaves through the lifetime and not around it. The App itself cannot be
-    /// run here, so this is read from its source.
+    /// DisposeLast only behind a quiescent session with nothing outstanding, and CloseRunState after
+    /// the run's completion; what this gate checks is the shell's side of that contract: every
+    /// disposal of one of those on the way out is under one of those named arguments of
+    /// LifetimeParts(), the shell's DisposeAsync disposes nothing itself, and the shell leaves through
+    /// the lifetime and not around it. The App itself cannot be run here, so this is read from its
+    /// source.
     /// </remarks>
     [Fact]
     public void WhatTheSessionUsesIsHandedToTheLifetimeUnderItsGuardedListsOnly()
@@ -805,7 +806,9 @@ public sealed partial class DesignSystemTokenTests
             "_livePreview", "_watchdog", "_autoStop", "_historyStore", "_recoveryTextStore", "_runStateStore",
         ];
         string[] disposals = ["Dispose", "DisposeAsync"];
-        string[] guardedLists = ["DisposeSessionDependencies", "DisposeLast"];
+        // The two lists the lifetime runs only behind a quiescent session, and the run-state store's
+        // closing, which the lifetime runs after the completion that wrote to it.
+        string[] guardedLists = ["DisposeSessionDependencies", "DisposeLast", "CloseRunState"];
 
         // A DISPOSAL OF A SESSION DEPENDENCY: `_field.Dispose(...)`, `_field.DisposeAsync(...)`, the
         // method group `_field.Dispose` handed to a step, or `_field is { } local` - the pattern the
@@ -835,7 +838,7 @@ public sealed partial class DesignSystemTokenTests
             inParts,
             identifier => Assert.True(
                 UnderGuardedList(identifier, guardedLists),
-                $"{identifier.Parent} is handed to the lifetime outside DisposeSessionDependencies/DisposeLast."));
+                $"{identifier.Parent} is handed to the lifetime outside DisposeSessionDependencies/DisposeLast/CloseRunState."));
 
         // EVERY DEPENDENCY IS LISTED: each field's disposal is found inside one of the two lists.
         var listed = inParts

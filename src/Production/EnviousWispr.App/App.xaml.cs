@@ -1005,11 +1005,12 @@ public partial class App : Application, IAsyncDisposable
     /// shell's; the order, the budget and the retention are the lifetime's.
     /// </summary>
     /// <remarks>
-    /// WHAT THE SESSION USES IS LISTED UNDER DisposeSessionDependencies AND DisposeLast, AND NOWHERE
-    /// ELSE. A command or a background loop the session's shutdown reported still running is inside
-    /// the engines, the polish provider, the stores; the lifetime runs those two lists only behind a
-    /// quiescent session with nothing outstanding - a gate reads this method for that. The run-state
-    /// store is last because the heartbeat, joined under Quiesce, writes to it too.
+    /// WHAT THE SESSION USES IS LISTED UNDER DisposeSessionDependencies, AND NOWHERE ELSE BUT THE
+    /// RUN-STATE STORE'S CLOSING. A command or a background loop the session's shutdown reported still
+    /// running is inside the engines, the polish provider, the stores; the lifetime runs that list
+    /// only behind a quiescent session with nothing outstanding - a gate reads this method for that.
+    /// The run-state store is closed by the lifetime after the run's completion, which writes to it,
+    /// and after the heartbeat, joined under Quiesce, which does too.
     /// </remarks>
     private LifetimeParts LifetimeParts() => new(
         CloseAdmission: () => _sessionCoordinator?.Close(),
@@ -1160,9 +1161,6 @@ public partial class App : Application, IAsyncDisposable
                 }
             }),
         ],
-        CompleteRun: () => _runId is { } runId
-            ? _runStateStore.CompleteRunAsync(runId, DateTimeOffset.UtcNow)
-            : Task.FromResult(true),
         DisposeLast:
         [
             LifetimeStep.Of("single-instance lock", () =>
@@ -1171,8 +1169,11 @@ public partial class App : Application, IAsyncDisposable
                 _singleInstanceLock = null;
                 singleInstance?.Dispose();
             }),
-            LifetimeStep.Of("run-state store", _runStateStore.Dispose),
         ],
+        CompleteRun: cancellation => _runId is { } runId
+            ? _runStateStore.CompleteRunAsync(runId, DateTimeOffset.UtcNow, cancellation)
+            : Task.FromResult(true),
+        CloseRunState: _runStateStore.Dispose,
         DisposeLogger: () => _logger.DisposeAsync().AsTask());
 
     /// <summary>

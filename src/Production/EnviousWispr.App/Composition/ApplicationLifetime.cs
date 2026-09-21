@@ -31,8 +31,13 @@ public sealed record LifetimeStep(string Name, Func<Task> Run)
 /// <param name="Quiesce">Work the shell started that must be over before anything it uses is disposed: the polish warm-up, the heartbeat.</param>
 /// <param name="DisposeSessionDependencies">What a session uses: run only behind a quiescent session and finished quiescence steps.</param>
 /// <param name="DisposeShell">The shell's own services, run only when nothing is outstanding.</param>
-/// <param name="CompleteRun">Writes the run's clean ending; asked only when the exit is clean. False when the store refused.</param>
-/// <param name="DisposeLast">The single-instance lock and the run-state store: after the run is completed, and only when nothing is outstanding.</param>
+/// <param name="DisposeLast">What is disposed before the run is completed and after everything else: the single-instance lock.</param>
+/// <param name="CompleteRun">
+/// Writes the run's clean ending: the one publication the next launch trusts. Asked only when everything
+/// before it finished and nothing failed, under what is left of the budget, with a token cancelled when
+/// that runs out - a write not begun by then is never begun. False when the store refused.
+/// </param>
+/// <param name="CloseRunState">Closes the run-state store after the completion that wrote to it. Best effort, reported if it throws.</param>
 /// <param name="DisposeLogger">The log, flushed and closed as the last act whatever the outcome; best effort.</param>
 public sealed record LifetimeParts(
     Action CloseAdmission,
@@ -44,8 +49,9 @@ public sealed record LifetimeParts(
     IReadOnlyList<LifetimeStep> Quiesce,
     IReadOnlyList<LifetimeStep> DisposeSessionDependencies,
     IReadOnlyList<LifetimeStep> DisposeShell,
-    Func<Task<bool>> CompleteRun,
     IReadOnlyList<LifetimeStep> DisposeLast,
+    Func<CancellationToken, Task<bool>> CompleteRun,
+    Action CloseRunState,
     Func<Task> DisposeLogger);
 
 /// <summary>How the exit ended.</summary>
@@ -86,8 +92,10 @@ public interface IHostTerminator
 
 /// <summary>
 /// The application's exit: one budget from the first step to the last, every step joined under what
-/// is left of it, the session's dependencies disposed only once nothing uses them, and the host ended
-/// by force when something would not finish.
+/// is left of it, the session's dependencies disposed only once nothing uses them, the run's clean
+/// ending written only by an exit that earned it, and the host ended by force when something would
+/// not finish - by the exit itself when it can conclude, by a watchdog on its own thread when it
+/// cannot.
 /// </summary>
 /// <remarks>
 /// ARBITRARY IN-PROCESS WORK CANNOT BE JOINED BY FORCE. A step that will not finish is not made to;
@@ -97,9 +105,23 @@ public interface IHostTerminator
 /// run that was interrupted. A timeout is never called clean.
 ///
 /// THE BUDGET BEGINS BEFORE THE FIRST AWAIT, at the exit's preparation, and includes the settings
-/// drain, the session's shutdown, the polish warm-up, the heartbeat, the persistence and the log: the
-/// twenty seconds the shell can promise to be gone in. Each step is given what is left when it begins;
-/// a step given nothing is still issued and observed, and reported outstanding if it did not finish.
+/// drain, the session's shutdown, the polish warm-up, the heartbeat, the disposals, the run's
+/// completion and the log: the twenty seconds the shell can promise to be gone in. Each step is given
+/// what is left when it begins; a step given nothing is still issued and observed, and reported
+/// outstanding if it did not finish.
+///
+/// THE WATCHDOG STANDS BEHIND THE BUDGET ON ITS OWN THREAD. A join can only bound a step that
+/// returned a task; a step that blocks the thread it was called on - a native disposal, a synchronous
+/// write - blocks the exit with it, and its continuations never reach the terminator. So the clock is
+/// asked, at the first step, for a timer two seconds behind the budget: an exit that concludes on its
+/// own never meets it, and one that cannot is ended by it, the step it was inside named. The log is
+/// attempted from beside it and not waited for - the blocked thread may be inside the log.
+///
+/// THE PUBLICATION IS THE LAST THING THAT CAN FAIL. Everything the run had to finish - the session,
+/// the quiescence, every disposal, the lock - runs before the run's clean ending is written, and the
+/// write is under the remainder with a token cancelled when it runs out, so a write not begun by the
+/// deadline is never begun and a late one cannot call an over-budget exit clean. After it only the
+/// two handles that wrote it are closed - the store and the log - and both are reported if they do not.
 ///
 /// PREPARED ONCE, EXITED ONCE. Every path out of the app - the tray, the window, an update, a system
 /// ending - reaches the same two cached tasks; a second caller shares the first's completion and no
@@ -110,6 +132,9 @@ public sealed class ApplicationLifetime
     /// <summary>What the shell can promise to be gone in.</summary>
     public static readonly TimeSpan DefaultBudget = TimeSpan.FromSeconds(20);
 
+    /// <summary>How far behind the budget the watchdog stands: an exit that concludes on its last tick is never pre-empted.</summary>
+    public static readonly TimeSpan WatchGrace = TimeSpan.FromSeconds(2);
+
     private readonly LifetimeParts _parts;
     private readonly IAppLogger _logger;
     private readonly TimeProvider _clock;
@@ -117,10 +142,14 @@ public sealed class ApplicationLifetime
     private readonly TimeSpan _budgetLength;
     private readonly object _lock = new();
     private StopBudget? _budget;
+    private ITimer? _watch;
     private Task? _preparation;
     private Task<ExitReport>? _exit;
     private List<string> _preparationOutstanding = [];
     private List<string> _preparationFailed = [];
+    private string? _current;
+    private int _terminated;
+    private int _concluded;
 
     public ApplicationLifetime(
         LifetimeParts parts,
@@ -177,11 +206,22 @@ public sealed class ApplicationLifetime
         }
     }
 
+    /// <summary>The budget and, with it, the watchdog: both begin at the first call, before anything is awaited.</summary>
     private StopBudget Budget()
     {
         lock (_lock)
         {
-            return _budget ??= new StopBudget(_budgetLength, _clock);
+            if (_budget is null)
+            {
+                _budget = new StopBudget(_budgetLength, _clock);
+                _watch = _clock.CreateTimer(
+                    static state => ((ApplicationLifetime)state!).OnDeadline(),
+                    this,
+                    _budgetLength + WatchGrace,
+                    Timeout.InfiniteTimeSpan);
+            }
+
+            return _budget;
         }
     }
 
@@ -190,9 +230,9 @@ public sealed class ApplicationLifetime
         // CLOSED BEFORE THE FIRST AWAIT, and the budget with it: a key that lands while the settings
         // drain waits is refused, and the drain is the first thing the twenty seconds pay for.
         var budget = Budget();
-        _parts.CloseAdmission();
         var outstanding = new List<string>();
         var failed = new List<string>();
+        Try("admission", _parts.CloseAdmission, failed);
         await RunAsync(new LifetimeStep("settings drain", _parts.DrainSettings), budget, outstanding, failed);
         Try("shell closing", _parts.ShellClosing, failed);
         lock (_lock)
@@ -214,7 +254,7 @@ public sealed class ApplicationLifetime
             failed = [.. _preparationFailed];
         }
 
-        _parts.CancelProcessing();
+        Try("exit policy", _parts.CancelProcessing, failed);
         foreach (var step in _parts.ReleaseInputs)
         {
             await RunAsync(step, budget, outstanding, failed);
@@ -225,6 +265,7 @@ public sealed class ApplicationLifetime
         ShutdownReport? session = null;
         if (_parts.ShutDownSession is { } shutDown)
         {
+            Volatile.Write(ref _current, "session shutdown");
             try
             {
                 session = await shutDown(budget.Left);
@@ -254,34 +295,30 @@ public sealed class ApplicationLifetime
                 AppFailureCategory.SystemLifecycle));
         }
 
-        var runCompleted = false;
         if (!retained)
         {
             // A DISPOSAL THAT DOES NOT FINISH STOPS THE DISPOSALS: what it holds is kept, and so is
             // everything after it in the order, since the order is the dependency order.
             await DisposeAsync(_parts.DisposeSessionDependencies, budget, outstanding, failed);
             await DisposeAsync(_parts.DisposeShell, budget, outstanding, failed);
+            await DisposeAsync(_parts.DisposeLast, budget, outstanding, failed);
         }
 
-        // ONLY A QUIESCENT, FINISHED, FAULTLESS EXIT IS WRITTEN AS CLEAN: the run's ending is what the
-        // next launch trusts, and a timeout or a fault on the way out is an interrupted run.
-        var clean = !retained && outstanding.Count == 0 && failed.Count == 0 && session is not { Clean: false };
-        if (clean)
+        // ONLY A QUIESCENT, FINISHED, FAULTLESS EXIT PUBLISHES A CLEAN RUN, and only inside the budget:
+        // the run's ending is what the next launch trusts, and a timeout or a fault on the way out is
+        // an interrupted run.
+        var runCompleted = false;
+        if (!retained && outstanding.Count == 0 && failed.Count == 0 && session is not { Clean: false })
         {
-            try
-            {
-                runCompleted = await _parts.CompleteRun();
-                clean &= runCompleted;
-            }
-            catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
-            {
-                failed.Add("run completion");
-                RecordFailure();
-                clean = false;
-            }
+            runCompleted = await CompleteRunAsync(budget, outstanding, failed);
         }
 
-        if (clean)
+        Try("run-state store", _parts.CloseRunState, failed);
+
+        // WHAT IS SAID BEFORE THE LOG CLOSES: the exit's verdict so far, and the escalation if it is
+        // already known. The log's own closing is the one step that can still go wrong after this,
+        // and it is reported through the terminator and the returned report rather than the log.
+        if (runCompleted)
         {
             _logger.Write(new AppLogEntry(_clock.GetUtcNow(), AppEventCode.ApplicationCleanShutdown));
         }
@@ -290,17 +327,7 @@ public sealed class ApplicationLifetime
             _logger.Write(new AppLogEntry(_clock.GetUtcNow(), AppEventCode.UnhandledFailure, AppFailureCategory.Recovery));
         }
 
-        if (!retained && outstanding.Count == 0)
-        {
-            await DisposeAsync(_parts.DisposeLast, budget, outstanding, failed);
-        }
-
-        // THE HOST IS ENDED BY FORCE ONLY WHEN SOMETHING WOULD NOT FINISH - a step of the shell's, or
-        // the session's own work, which is still running and may be holding a thread or a worker the
-        // process would otherwise wait on. The log says so before it is closed, and the terminator is
-        // the last thing called.
-        var escalated = retained || outstanding.Count > 0;
-        if (escalated)
+        if (retained || outstanding.Count > 0)
         {
             _logger.Write(new AppLogEntry(
                 _clock.GetUtcNow(),
@@ -310,6 +337,11 @@ public sealed class ApplicationLifetime
 
         await RunAsync(new LifetimeStep("log", _parts.DisposeLogger), budget, outstanding, failed, record: false);
 
+        // THE VERDICT IS TAKEN LAST, after every step including the log's closing: a log that did not
+        // close is outstanding like any other step, ends the host, and unmakes a clean report - the
+        // run's ending already written stands, because everything the run had to finish had finished.
+        var escalated = retained || outstanding.Count > 0;
+        var clean = runCompleted && outstanding.Count == 0 && failed.Count == 0;
         var report = new ExitReport(
             clean ? ExitOutcome.Clean : ExitOutcome.Unclean,
             outstanding,
@@ -318,12 +350,44 @@ public sealed class ApplicationLifetime
             retained,
             runCompleted,
             escalated);
+        Conclude();
         if (escalated)
         {
-            _terminator.Terminate(report);
+            TerminateOnce(report);
         }
 
         return report;
+    }
+
+    /// <summary>The run's completion, joined under the remainder and fenced by a token that runs out with it.</summary>
+    private async Task<bool> CompleteRunAsync(StopBudget budget, List<string> outstanding, List<string> failed)
+    {
+        Volatile.Write(ref _current, "run completion");
+        var remaining = budget.Left;
+        using var patience = new CancellationTokenSource(remaining, _clock);
+        try
+        {
+            return await _parts.CompleteRun(patience.Token).WaitAsync(remaining, _clock);
+        }
+        catch (TimeoutException)
+        {
+            // Not finished inside the budget: the token has run out with it, so a write not yet
+            // begun never begins; one already inside the store settles, and the report says the
+            // exit did not wait for it.
+            outstanding.Add("run completion");
+        }
+        catch (OperationCanceledException)
+        {
+            // The budget ran out before the write began, and the store honoured the fence.
+            outstanding.Add("run completion");
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            failed.Add("run completion");
+            RecordFailure();
+        }
+
+        return false;
     }
 
     /// <summary>Disposals in dependency order: the first that does not finish ends the run of them.</summary>
@@ -343,6 +407,7 @@ public sealed class ApplicationLifetime
     /// <summary>Runs one step under what is left of the budget; outstanding or failed, it is named and the exit carries on.</summary>
     private async Task RunAsync(LifetimeStep step, StopBudget budget, List<string> outstanding, List<string> failed, bool record = true)
     {
+        Volatile.Write(ref _current, step.Name);
         try
         {
             var work = step.Run();
@@ -370,6 +435,7 @@ public sealed class ApplicationLifetime
 
     private void Try(string name, Action action, List<string> failed)
     {
+        Volatile.Write(ref _current, name);
         try
         {
             action();
@@ -378,6 +444,53 @@ public sealed class ApplicationLifetime
         {
             failed.Add(name);
             RecordFailure();
+        }
+    }
+
+    /// <summary>The watchdog's turn: the exit has not concluded two seconds past its budget, so it cannot; the host is ended from here.</summary>
+    private void OnDeadline()
+    {
+        if (Volatile.Read(ref _concluded) != 0)
+        {
+            return;
+        }
+
+        var inside = Volatile.Read(ref _current) ?? "exit";
+        var report = new ExitReport(
+            ExitOutcome.Unclean,
+            [inside],
+            [],
+            Session: null,
+            Retained: true,
+            RunCompleted: false,
+            Escalated: true);
+        // THE LOG IS ATTEMPTED, NOT WAITED FOR: the thread that blocked may be inside the log itself,
+        // and a wait on it here would be the very hang this exists to end.
+        _ = Task.Run(() => _logger.Write(new AppLogEntry(
+            _clock.GetUtcNow(),
+            AppEventCode.ApplicationExitEscalated,
+            AppFailureCategory.SystemLifecycle)));
+        TerminateOnce(report);
+    }
+
+    private void Conclude()
+    {
+        Volatile.Write(ref _concluded, 1);
+        ITimer? watch;
+        lock (_lock)
+        {
+            watch = _watch;
+            _watch = null;
+        }
+
+        watch?.Dispose();
+    }
+
+    private void TerminateOnce(ExitReport report)
+    {
+        if (Interlocked.Exchange(ref _terminated, 1) == 0)
+        {
+            _terminator.Terminate(report);
         }
     }
 
