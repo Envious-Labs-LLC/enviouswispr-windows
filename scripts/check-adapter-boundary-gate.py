@@ -36,6 +36,8 @@ RUNTIME_ID_HELPER = "    private static string RuntimeId(AutomationElement eleme
 
 # Each mutation: a name, and the (anchor, replacement) edits that plant one escape.
 MUTATIONS: dict[str, list[tuple[str, str]]] = {
+    "handle-in-inherited-record": [(FOCUS_READ, "        var cached = Automation(() => new Held { Element = element });" + NL + "        _ = cached.GetHashCode();" + NL + FOCUS_READ), (RUNTIME_ID_HELPER, "    private record HeldBase" + NL + "    {" + NL + "        public AutomationElement? Element { get; init; }" + NL + "    }" + NL + NL + "    private sealed record Held : HeldBase;" + NL + NL + RUNTIME_ID_HELPER)],
+    "handle-in-generic-base": [(FOCUS_READ, "        var cached = Automation(() => new HeldElement { Value = element });" + NL + "        _ = cached.GetHashCode();" + NL + FOCUS_READ), (RUNTIME_ID_HELPER, "    private record HeldOf<T>" + NL + "    {" + NL + "        public T? Value { get; init; }" + NL + "    }" + NL + NL + "    private sealed record HeldElement : HeldOf<AutomationElement>;" + NL + NL + RUNTIME_ID_HELPER)],
     "handle-in-tuple": [(FOCUS_READ, "        var cached = Automation(() => (element, target.Value));" + NL + "        _ = cached.GetHashCode();" + NL + FOCUS_READ)],
     "handle-in-array": [(FOCUS_READ, "        var cached = Automation(() => new[] { element });" + NL + "        _ = cached[0].GetHashCode();" + NL + FOCUS_READ)],
     "handle-in-record": [(FOCUS_READ, "        var cached = Automation(() => new Held(element));" + NL + "        _ = cached.GetHashCode();" + NL + FOCUS_READ), (RUNTIME_ID_HELPER, "    private sealed record Held(AutomationElement Element);" + NL + NL + RUNTIME_ID_HELPER)],

@@ -263,15 +263,22 @@ public sealed class WindowsTextDeliverySafetyTests
                     return true;
                 }
 
-                // THE ADAPTER'S OWN RECORDS AND CLASSES ARE OPENED: a source-declared type with a
-                // handle-typed field or property carries it. A library type's fields are its own.
-                return named.Locations.Any(location => location.IsInSource) &&
+                // THE ADAPTER'S OWN RECORDS AND CLASSES ARE OPENED, BASES INCLUDED: a source-declared
+                // type with a handle-typed field or property carries it, and so does one that
+                // inherits such a member - a record's generated hash takes in its base's state. A
+                // library type's fields are its own.
+                if (named.Locations.Any(location => location.IsInSource) &&
                     named.GetMembers().Any(member => member switch
                     {
                         IFieldSymbol { IsStatic: false } field => CarriesHandle(field.Type, visited),
                         IPropertySymbol { IsStatic: false } property => CarriesHandle(property.Type, visited),
                         _ => false,
-                    });
+                    }))
+                {
+                    return true;
+                }
+
+                return CarriesHandle(named.BaseType, visited);
             default:
                 return false;
         }
@@ -285,7 +292,7 @@ public sealed class WindowsTextDeliverySafetyTests
             return false;
         }
 
-        for (var ancestor = named.BaseType; ancestor is not null; ancestor = ancestor.BaseType)
+        for (var ancestor = named; ancestor is not null; ancestor = ancestor.BaseType)
         {
             if (ancestor.Name is "Exception" or "AutomationIdentifier")
             {
