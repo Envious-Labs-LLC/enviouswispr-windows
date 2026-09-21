@@ -89,9 +89,9 @@ public sealed class SessionCompositionTests
     public async Task ComposedEdgeAfterTheTeardownSaysNoDictationIsInFlight()
     {
         // THE TRANSCRIPTION OUTLIVES BOTH OF THE SHUTDOWN'S WAITS. The teardown disposes the
-        // controller beside it - which keeps the session it was disposed under - and the command's
-        // finally then writes the run-state edge. The shell used to read its own controller field,
-        // nulled by the teardown; the composition must say the same: nothing is in flight.
+        // controller beside it - which keeps the session it was disposed under - and lets go of it;
+        // the command's finally then writes the run-state edge. The shell reads its own reference,
+        // gone by then; the composition must say the same: nothing is in flight.
         var clock = new Deterministic.ManualClock();
         var world = World.Create("hello world", clock);
         world.Engine.HoldIgnoringCancel = true;
@@ -105,15 +105,47 @@ public sealed class SessionCompositionTests
         clock.Advance(drain);
         await clock.WhenRegistered(2).WaitAsync(TimeSpan.FromSeconds(10));
         clock.Advance(drain);
-        await world.TornDown.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await shutdown.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(1, world.TearDowns);
         Assert.NotNull(world.Controller.CurrentSession);
         world.Engine.AllowExit.SetResult();
 
         var released = await release.WaitAsync(TimeSpan.FromSeconds(10));
-        await shutdown.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Equal(SessionCommandDisposition.Failed, released.Disposition);
         Assert.Equal([true, false], world.RunState.Edges);
+    }
+
+    [Fact]
+    public async Task ComposedEdgeDuringTheTeardownAfterItLetGoSaysNoDictationIsInFlight()
+    {
+        // THE COMMAND ENDS INSIDE THE TEARDOWN, after it has disposed and let go of the controller
+        // but before it returns - the shell disposes its delivery adapter in that interval. The
+        // shell's reference is already gone there, so the edge written is false.
+        var clock = new Deterministic.ManualClock();
+        var world = World.Create("hello world", clock);
+        world.Engine.HoldIgnoringCancel = true;
+        world.HoldTeardownAfterLettingGo = true;
+        await world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await world.Engine.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var drain = TimeSpan.FromSeconds(10);
+        var shutdown = world.Coordinator.ShutdownAsync(drain);
+        await clock.WhenRegistered(1).WaitAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(drain);
+        await clock.WhenRegistered(2).WaitAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(drain);
+        await world.TeardownLetGo.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(shutdown.IsCompleted, "the teardown is held before it returns");
+        Assert.NotNull(world.Controller.CurrentSession);
+        world.Engine.AllowExit.SetResult();
+        var released = await release.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(SessionCommandDisposition.Failed, released.Disposition);
+        Assert.Equal([true, false], world.RunState.Edges);
+        world.AllowTeardownExit.SetResult();
+        await shutdown.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     [Fact]
@@ -151,7 +183,18 @@ public sealed class SessionCompositionTests
 
         public required List<CustomWordEntry> CustomWords { get; init; }
 
-        public required TaskCompletionSource TornDown { get; init; }
+        /// <summary>How many times the shell's teardown ran.</summary>
+        public int TearDowns { get; private set; }
+
+        /// <summary>Whether the teardown pauses after it has let go of the controller, before returning.</summary>
+        public bool HoldTeardownAfterLettingGo { get; set; }
+
+        public TaskCompletionSource TeardownLetGo { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource AllowTeardownExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>The shell's own reference to its controller: let go of by the teardown, as the shell's field is.</summary>
+        private PushToTalkSessionController? _attached;
 
         public static World Create(string spoken, TimeProvider? clock = null)
         {
@@ -186,7 +229,7 @@ public sealed class SessionCompositionTests
                 new AutoStopMonitor(timers, log, clock),
                 streaming);
             var runId = Guid.NewGuid();
-            var tornDown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            World? world = null;
 
             var coordinator = SessionComposition.Compose(new SessionCompositionParts(
                 controller,
@@ -200,6 +243,7 @@ public sealed class SessionCompositionTests
                 log,
                 new SessionShell(
                     view,
+                    AttachedSession: () => world!._attached?.CurrentSession,
                     Dictation: () => DictationPreferences.Default,
                     Engine: () => engine,
                     Delivery: () => delivery,
@@ -209,15 +253,23 @@ public sealed class SessionCompositionTests
                     RecordingActive: recordingActive.Add,
                     ArchiveAudio: archived.Add,
                     // The shell's teardown disposes the controller beside a command that outlived
-                    // the shutdown's waits; the composed test does the same.
+                    // the shutdown's waits and lets go of its reference before disposing the rest;
+                    // the composed test does the same, and can pause in that interval.
                     TearDownSession: async () =>
                     {
                         await controller.DisposeAsync();
-                        tornDown.SetResult();
+                        world!._attached = null;
+                        world.TeardownLetGo.TrySetResult();
+                        if (world.HoldTeardownAfterLettingGo)
+                        {
+                            await world.AllowTeardownExit.Task;
+                        }
+
+                        world.TearDowns++;
                     }),
                 clock));
 
-            return new World
+            world = new World
             {
                 Coordinator = coordinator,
                 Controller = controller,
@@ -228,8 +280,9 @@ public sealed class SessionCompositionTests
                 RecordingActive = recordingActive,
                 Archived = archived,
                 CustomWords = words,
-                TornDown = tornDown,
             };
+            world._attached = controller;
+            return world;
         }
     }
 

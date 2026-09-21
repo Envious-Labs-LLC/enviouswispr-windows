@@ -3,6 +3,7 @@ using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Runtime;
+using EnviousWispr.Core.Sessions;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Pipeline;
 
@@ -15,9 +16,12 @@ namespace EnviousWispr.App.Composition;
 /// word is taught, a setting is saved), which is why they are reads and not values. The one exception
 /// is <see cref="TearDownSession"/>, the shell's session teardown, which a later step replaces with
 /// owners of its own; it is named here so its presence is a declared debt, not a hidden one.
+/// <see cref="AttachedSession"/> is the shell's own view of the session in flight - null once its
+/// teardown has let go of the controller, which a disposed controller does not say for itself.
 /// </remarks>
 public sealed record SessionShell(
     ISessionView View,
+    Func<DictationSessionSnapshot?> AttachedSession,
     Func<DictationPreferences> Dictation,
     Func<ITranscriptionEngine?> Engine,
     Func<ITextDelivery?> Delivery,

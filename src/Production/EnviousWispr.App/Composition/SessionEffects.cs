@@ -20,8 +20,6 @@ internal sealed class SessionEffects(SessionCompositionParts parts) : IDictation
 
     private readonly ISessionView _view = parts.Shell.View;
 
-    private bool _tornDown;
-
     public bool EscapeRecoveryEnabled => parts.Shell.Dictation().EscapeRecoveryEnabled;
 
     public void RecordResourcePressure(AppError? failure) =>
@@ -151,10 +149,11 @@ internal sealed class SessionEffects(SessionCompositionParts parts) : IDictation
     /// nothing happened is how the banner this replaces lost its meaning.
     ///
     /// READ OFF THE CONTROLLER RATHER THAN INFERRED. Each command reaches here by several routes and
-    /// the controller is the only thing that knows the answer on all of them - until the teardown,
-    /// after which nothing is attached: the shell let go of its controller there, and a controller
-    /// disposed still holds the session it was disposed under, so a command that outlived the
-    /// shutdown's waits must not read it as a dictation still in flight.
+    /// the controller is the only thing that knows the answer on all of them. Read through the
+    /// shell's own reference to it, not the one this composition was handed: the shell's teardown
+    /// lets go of the controller part-way through, and a controller disposed still holds the session
+    /// it was disposed under, so a command that outlived the shutdown's waits must not read it as a
+    /// dictation still in flight.
     ///
     /// IT CANNOT THROW, BECAUSE ITS CALLER IS A FINALLY INSIDE THE COMMAND THAT HOLDS THE SESSION. An
     /// exception escaping here would fault the command, which the coordinator survives, but the
@@ -172,7 +171,7 @@ internal sealed class SessionEffects(SessionCompositionParts parts) : IDictation
         {
             if (!await parts.RunState.SetDictationActiveAsync(
                     runId,
-                    !Volatile.Read(ref _tornDown) && parts.Controller.CurrentSession is not null,
+                    parts.Shell.AttachedSession() is not null,
                     DateTimeOffset.UtcNow).ConfigureAwait(false))
             {
                 _logger.Write(new AppLogEntry(
@@ -201,11 +200,7 @@ internal sealed class SessionEffects(SessionCompositionParts parts) : IDictation
         _view.ShowStatus(DictationStatus.Distress(
             "Windows interrupted the active dictation; recovery is still pending"));
 
-    public async Task TearDownSessionAsync()
-    {
-        await parts.Shell.TearDownSession().ConfigureAwait(false);
-        Volatile.Write(ref _tornDown, true);
-    }
+    public Task TearDownSessionAsync() => parts.Shell.TearDownSession();
 
     public void RecordRecordingTimedOut(AppError failure) =>
         _logger.Write(new AppLogEntry(

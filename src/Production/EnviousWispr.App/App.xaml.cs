@@ -1307,6 +1307,7 @@ public partial class App : Application, IAsyncDisposable
             _logger,
             new SessionShell(
                 new WindowSessionView(this),
+                AttachedSession: () => _sessionController?.CurrentSession,
                 Dictation: () => _settings.Preferences.Dictation,
                 Engine: () => _transcriptionEngine,
                 Delivery: () => _textDelivery,

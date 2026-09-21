@@ -1674,10 +1674,38 @@ public sealed partial class DesignSystemTokenTests
                     app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetSessionStatus(status with { Text = "x" }));
             }
             """;
+        const string tupleReassigned = """
+            private sealed class WindowSessionView(App app) : ISessionView
+            {
+                public void ShowStatus(DictationStatus status) =>
+                    app._window?.DispatcherQueue.TryEnqueue(() =>
+                    {
+                        (status, _) = (status with { Text = "x" }, 0);
+                        app._window?.SetSessionStatus(status);
+                    });
+            }
+            """;
+        const string helperNamedLikeTheWindow = """
+            private sealed class WindowSessionView(App app) : ISessionView
+            {
+                public void ShowStatus(DictationStatus status) =>
+                    app._window?.DispatcherQueue.TryEnqueue(() => app.RewriteAndSetSessionStatus(status));
+            }
+            """;
+        const string notDispatched = """
+            private sealed class WindowSessionView(App app) : ISessionView
+            {
+                public void ShowStatus(DictationStatus status) =>
+                    app._window?.SetSessionStatus(Rewrite(status));
+            }
+            """;
 
         Assert.Null(StatusForwarderComplaint(bare));
         Assert.NotNull(StatusForwarderComplaint(rewritten));
         Assert.NotNull(StatusForwarderComplaint(transformed));
+        Assert.NotNull(StatusForwarderComplaint(tupleReassigned));
+        Assert.NotNull(StatusForwarderComplaint(helperNamedLikeTheWindow));
+        Assert.NotNull(StatusForwarderComplaint(notDispatched));
         Assert.NotNull(StatusForwarderComplaint("private sealed class Elsewhere { }"));
     }
 
@@ -1699,30 +1727,59 @@ public sealed partial class DesignSystemTokenTests
             return "The view has no ShowStatus.";
         }
 
+        // THE WHOLE PERMITTED SHAPE, NOT A LIST OF FORBIDDEN ONES: one expression, which is one
+        // dispatch to the window's queue, whose one argument is a lambda of no parameters whose body
+        // is one expression, which is the window's SetSessionStatus handed the parameter as it
+        // arrived. Anything else - a block anywhere, a helper named like the window's method, a
+        // transformed argument, a second statement - is not that shape.
         if (forwarder.ExpressionBody is null)
         {
             return "The forwarder is a block, so it can do more than forward.";
         }
 
         var parameter = forwarder.ParameterList.Parameters.Single().Identifier.ValueText;
-        var handsOn = forwarder.ExpressionBody.DescendantNodes().OfType<InvocationExpressionSyntax>()
-            .Where(call => call.Expression.ToString().EndsWith("SetSessionStatus", StringComparison.Ordinal))
-            .ToArray();
-        if (handsOn.Length != 1)
+        var (dispatch, dispatcher) = Call(forwarder.ExpressionBody.Expression);
+        if (dispatch is null || dispatcher != "app._window?.DispatcherQueue.TryEnqueue")
         {
-            return $"The forwarder hands the status on {handsOn.Length} times.";
+            return $"The forwarder is not one dispatch to the window's queue ('{dispatcher}').";
         }
 
-        var argument = handsOn[0].ArgumentList.Arguments.Single().Expression;
-        if (argument is not IdentifierNameSyntax name || name.Identifier.ValueText != parameter)
+        if (dispatch.ArgumentList.Arguments.Count != 1 ||
+            dispatch.ArgumentList.Arguments[0].Expression is not ParenthesizedLambdaExpressionSyntax lambda ||
+            lambda.ParameterList.Parameters.Count != 0 ||
+            lambda.ExpressionBody is null)
         {
-            return $"The forwarder hands on '{argument}' rather than its parameter.";
+            return "The dispatched work is not one expression.";
         }
 
-        return forwarder.DescendantNodes().OfType<AssignmentExpressionSyntax>()
-            .Any(assignment => assignment.Left.ToString() == parameter)
-            ? "The forwarder assigns to its parameter."
-            : null;
+        var (handOn, target) = Call(lambda.ExpressionBody);
+        if (handOn is null || target != "app._window?.SetSessionStatus")
+        {
+            return $"The dispatched work calls '{target}' rather than the window's SetSessionStatus.";
+        }
+
+        if (handOn.ArgumentList.Arguments.Count != 1 ||
+            handOn.ArgumentList.Arguments[0].Expression is not IdentifierNameSyntax name ||
+            name.Identifier.ValueText != parameter)
+        {
+            return $"The forwarder hands on '{handOn.ArgumentList.Arguments}' rather than its parameter.";
+        }
+
+        return null;
+
+        // `a?.b.c(d)` parses as a conditional access whose not-null branch is the invocation; the
+        // callee is read across that seam so the whole receiver chain is compared.
+        static (InvocationExpressionSyntax? Invocation, string Callee) Call(ExpressionSyntax expression) =>
+            expression switch
+            {
+                InvocationExpressionSyntax invocation => (invocation, Compact(invocation.Expression)),
+                ConditionalAccessExpressionSyntax { WhenNotNull: InvocationExpressionSyntax invocation } access =>
+                    (invocation, Compact(access.Expression) + "?" + Compact(invocation.Expression)),
+                _ => (null, Compact(expression)),
+            };
+
+        static string Compact(SyntaxNode node) =>
+            string.Concat(node.ToString().Where(character => !char.IsWhiteSpace(character)));
     }
 
     /// <summary>The relaxed match still refuses an argument that names no status at all.</summary>
