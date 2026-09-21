@@ -152,12 +152,14 @@ public sealed class WindowsTextDeliverySafetyTests
             if (IsUiAutomationCall(symbol))
             {
                 accesses++;
-                var owner = expression.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault()?.Identifier.Text;
-                var covered = helpers.Contains(owner, StringComparer.Ordinal) || IsInsideAutomationCall(expression, model);
-                Assert.True(covered, $"A UI Automation call outside the boundary at line {Line(expression)}: {expression.Parent}");
+                // A METHOD IS CALLED, NEVER CAPTURED: a method group taken inside the boundary is
+                // invoked later, outside it, where a refusal would be a fault.
+                Assert.True(symbol is not IMethodSymbol || IsInvoked(expression), $"A UI Automation method captured instead of called at line {Line(expression)}: {expression.Parent}");
+                Assert.True(ExecutesInsideTheBoundary(expression, model, helpers), $"A UI Automation call outside the boundary at line {Line(expression)}: {expression.Parent}");
             }
             else if (symbol is IMethodSymbol { ContainingType.Name: "WindowsTextTargetAdapter" } method && helperReferences.TryGetValue(method.Name, out var uses))
             {
+                Assert.True(IsInvoked(expression), $"{method.Name} captured instead of called at line {Line(expression)}: {expression.Parent}");
                 uses.Add(expression);
             }
         }
@@ -169,7 +171,7 @@ public sealed class WindowsTextDeliverySafetyTests
         foreach (var (helper, helperUses) in helperReferences)
         {
             var reference = Assert.Single(helperUses);
-            Assert.True(IsInsideAutomationCall(reference, model), $"{helper} is referred to outside the boundary at line {Line(reference)}");
+            Assert.True(ExecutesInsideTheBoundary(reference, model, []), $"{helper} is called outside the boundary at line {Line(reference)}");
         }
     }
 
@@ -198,17 +200,35 @@ public sealed class WindowsTextDeliverySafetyTests
         };
     }
 
+    /// <summary>Whether a member expression is the target of an invocation - called, not merely named.</summary>
+    private static bool IsInvoked(ExpressionSyntax expression) =>
+        expression is InvocationExpressionSyntax ||
+        (expression.Parent is InvocationExpressionSyntax invocation && invocation.Expression == expression);
+
     /// <summary>
-    /// Whether the node executes inside the boundary: within the body of a lambda that is the
-    /// argument of an invocation of the adapter's own Automation method. An access in the argument
-    /// expression itself - `Automation(valuePattern.Current.Value.ToString)` - runs before the call
-    /// and is outside.
+    /// Whether the node executes inside the boundary: its nearest enclosing function is either a
+    /// synchronous lambda that is the argument of an invocation of the adapter's own Automation
+    /// method, or the body of an exempt helper itself. Nothing is inherited across a nested lambda
+    /// or a local function - they may run later, outside the boundary's handler - and an async
+    /// lambda resumes outside it. An access in the argument expression itself -
+    /// `Automation(valuePattern.Current.Value.ToString)` - runs before the call and is outside.
     /// </summary>
-    private static bool IsInsideAutomationCall(SyntaxNode node, SemanticModel model) =>
-        node.Ancestors().OfType<AnonymousFunctionExpressionSyntax>().Any(lambda =>
-            lambda.Parent is ArgumentSyntax { Parent: ArgumentListSyntax { Parent: InvocationExpressionSyntax invocation } } &&
-            invocation.Expression is IdentifierNameSyntax { Identifier.Text: "Automation" } &&
-            ResolvesToTheAdapter(model.GetSymbolInfo(invocation)));
+    private static bool ExecutesInsideTheBoundary(SyntaxNode node, SemanticModel model, string[] exemptHelpers)
+    {
+        var enclosing = node.Ancestors().FirstOrDefault(ancestor =>
+            ancestor is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax or MethodDeclarationSyntax);
+        return enclosing switch
+        {
+            MethodDeclarationSyntax method => exemptHelpers.Contains(method.Identifier.Text, StringComparer.Ordinal),
+            AnonymousFunctionExpressionSyntax lambda => lambda.AsyncKeyword.IsKind(SyntaxKind.None) && IsTheBoundaryLambda(lambda, model),
+            _ => false,
+        };
+    }
+
+    private static bool IsTheBoundaryLambda(AnonymousFunctionExpressionSyntax lambda, SemanticModel model) =>
+        lambda.Parent is ArgumentSyntax { Parent: ArgumentListSyntax { Parent: InvocationExpressionSyntax invocation } } &&
+        invocation.Expression is IdentifierNameSyntax { Identifier.Text: "Automation" } &&
+        ResolvesToTheAdapter(model.GetSymbolInfo(invocation));
 
     private static bool ResolvesToTheAdapter(SymbolInfo info)
     {
