@@ -35,6 +35,8 @@ TEXT_USING = "using System.Windows.Automation.Text;" + NL
 
 # Each mutation: a name, and the (anchor, replacement) edits that plant one escape.
 MUTATIONS: dict[str, list[tuple[str, str]]] = {
+    "dynamic-dispatch": [(FOCUS_READ, "        _ = ((dynamic)element).GetRuntimeId();" + NL + FOCUS_READ)],
+    "reflection-call": [(FOCUS_READ, "        _ = typeof(AutomationElement).GetMethod(nameof(AutomationElement.GetRuntimeId))!.Invoke(element, null);" + NL + FOCUS_READ)],
     "query-expression-deferred": [(FOCUS_READ, "        var later = Automation(() => from item in Enumerable.Range(0, 1) select element.GetRuntimeId());" + NL + "        _ = later.ToArray();" + NL + FOCUS_READ)],
     "captured-method-group": [(FOCUS_READ, "        var getId = Automation(() => (Func<int[]>)element.GetRuntimeId);" + NL + "        _ = getId();" + NL + FOCUS_READ)],
     "nested-lambda-inherits": [(FOCUS_READ, "        var later = Automation(() => new Func<AutomationElement?>(() => AutomationElement.FocusedElement));" + NL + "        _ = later();" + NL + FOCUS_READ)],
@@ -54,7 +56,7 @@ MUTATIONS: dict[str, list[tuple[str, str]]] = {
 }
 
 # What the gate says when it catches an escape; any other failure is the wrong reason.
-CAUGHT_MARKERS = ("outside the boundary", "captured instead of called", "Assert.Single() Failure")
+CAUGHT_MARKERS = ("outside the boundary", "captured instead of called", "Assert.Single() Failure", "dynamically dispatched call", "reflective call")
 
 
 def run_gate() -> str:

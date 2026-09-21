@@ -135,6 +135,8 @@ public sealed class WindowsTextDeliverySafetyTests
         var adapter = Assert.Single(root.DescendantNodes().OfType<ClassDeclarationSyntax>(), type => type.Identifier.Text == "WindowsTextTargetAdapter");
         var helpers = new[] { "ReadCaret", "RuntimeId" };
         Assert.Single(adapter.Members.OfType<MethodDeclarationSyntax>(), method => method.Identifier.Text == "Automation");
+        var dynamicToken = adapter.DescendantTokens().FirstOrDefault(token => token.IsKind(SyntaxKind.IdentifierToken) && token.Text == "dynamic");
+        Assert.True(dynamicToken == default, $"A dynamically dispatched call in the adapter at line {dynamicToken.GetLocation().GetLineSpan().StartLinePosition.Line + 1}: {dynamicToken.Parent?.Parent}");
         // EVERY EXPRESSION THE COMPILER RESOLVES TO A MEMBER, WHATEVER ITS SPELLING: `x.Member`,
         // the conditional `x?.Member`, a bare identifier under a `using static`, a qualified or
         // unqualified helper call, a helper taken as a delegate. The outermost expression for each
@@ -143,7 +145,18 @@ public sealed class WindowsTextDeliverySafetyTests
         var helperReferences = helpers.ToDictionary(helper => helper, _ => new List<ExpressionSyntax>(), StringComparer.Ordinal);
         foreach (var expression in adapter.DescendantNodes().OfType<ExpressionSyntax>())
         {
+            // NOTHING IN THE ADAPTER IS RESOLVED AT RUNTIME. A `dynamic` receiver defers the member
+            // lookup to the runtime binder and a reflection call names the member as a string; the
+            // compiler resolves neither, so the scan would have no symbol to judge and would skip
+            // the call. Both are refused outright, before the null-symbol skip.
+            var typeInfo = model.GetTypeInfo(expression);
+            Assert.True(
+                typeInfo.Type is not IDynamicTypeSymbol && typeInfo.ConvertedType is not IDynamicTypeSymbol,
+                $"A dynamically dispatched call in the adapter at line {Line(expression)}: {expression.Parent}");
             var symbol = Resolve(model, expression);
+            Assert.True(
+                symbol is null || !(symbol.ContainingNamespace?.ToDisplayString() ?? string.Empty).StartsWith("System.Reflection", StringComparison.Ordinal),
+                $"A reflective call in the adapter at line {Line(expression)}: {expression.Parent}");
             if (symbol is null || (expression.Parent is ExpressionSyntax parent && SymbolEqualityComparer.Default.Equals(Resolve(model, parent), symbol)))
             {
                 continue;
