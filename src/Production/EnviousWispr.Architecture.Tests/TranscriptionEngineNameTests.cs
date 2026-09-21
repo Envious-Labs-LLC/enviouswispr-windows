@@ -892,14 +892,15 @@ public sealed partial class DesignSystemTokenTests
         Assert.Contains("new LifetimeStep(\"startup\", () => Join(Interlocked.Exchange(ref _startup, null)))", quiesce, StringComparison.Ordinal);
         Assert.Contains("new LifetimeStep(\"model delivery\", () => Join(Interlocked.Exchange(ref _modelDelivery, null)))", quiesce, StringComparison.Ordinal);
 
-        // NOTHING BUILT AFTER THE EXIT HAS BEGUN: in the launch's tail, every await is followed by
-        // the Leaving check, except the last; the recovery read carries the launch's own token.
+        // NOTHING BUILT AFTER THE EXIT HAS BEGUN: in the launch's tail, every await - the last
+        // included, since the session is built after it - is followed by the Leaving check; the
+        // recovery read carries the launch's own token.
         static void EveryAwaitIsFollowedByTheLeavingCheck(MethodDeclarationSyntax method, int expectedAwaits)
         {
             var statements = method.Body!.Statements;
             var awaits = statements.Where(statement => statement.DescendantNodes().OfType<AwaitExpressionSyntax>().Any()).ToArray();
             Assert.Equal(expectedAwaits, awaits.Length);
-            foreach (var awaited in awaits.Take(awaits.Length - 1))
+            foreach (var awaited in awaits)
             {
                 var next = statements[statements.IndexOf(awaited) + 1];
                 var check = Assert.IsType<IfStatementSyntax>(next);
