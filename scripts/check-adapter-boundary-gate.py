@@ -36,6 +36,8 @@ RUNTIME_ID_HELPER = "    private static string RuntimeId(AutomationElement eleme
 
 # Each mutation: a name, and the (anchor, replacement) edits that plant one escape.
 MUTATIONS: dict[str, list[tuple[str, str]]] = {
+    "tuple-conversion-erases": [(FOCUS_READ, "        var identity = Automation(() => { var captured = (element, element.Current); (object Key, AutomationElement.AutomationElementInformation Facts) widened = captured; return widened.Facts.HasKeyboardFocus ? widened.Key : null; });" + NL + "        _ = identity?.GetHashCode();" + NL + FOCUS_READ)],
+    "tuple-cast-erases": [(FOCUS_READ, "        var identity = Automation(() => { var captured = (element, element.Current); var widened = ((object, AutomationElement.AutomationElementInformation))captured; return widened.Item2.HasKeyboardFocus ? widened.Item1 : null; });" + NL + "        _ = identity?.GetHashCode();" + NL + FOCUS_READ)],
     "deconstruction-erases-returned": [(FOCUS_READ, "        var identity = Automation(() => { var captured = (element, element.Current); (object key, var facts) = captured; return facts.HasKeyboardFocus ? key : null; });" + NL + "        _ = identity?.GetHashCode();" + NL + FOCUS_READ)],
     "deconstruction-erases-external": [(FOCUS_READ, "        object? identity = null;" + NL + "        _ = Automation(() => { var captured = (element, element.Current); (identity, var facts) = captured; return facts.HasKeyboardFocus ? 1 : 0; });" + NL + "        _ = identity?.GetHashCode();" + NL + FOCUS_READ)],
     "pattern-erases-returned": [(FOCUS_READ, "        var identity = Automation(() => element is object snapshot ? snapshot : null);" + NL + "        _ = identity?.GetHashCode();" + NL + FOCUS_READ)],
@@ -92,7 +94,7 @@ MUTATIONS: dict[str, list[tuple[str, str]]] = {
 }
 
 # What the gate says when it catches an escape; any other failure is the wrong reason.
-CAUGHT_MARKERS = ("outside the boundary", "captured instead of called", "Assert.Single() Failure", "dynamically dispatched call", "reflective call", "handle used outside the boundary", "handle erased", "untyped UI Automation result", "enumerated outside the boundary", "collection spread", "untyped buffer handed", "UI Automation collection taken", "handle deconstructed")
+CAUGHT_MARKERS = ("outside the boundary", "captured instead of called", "Assert.Single() Failure", "dynamically dispatched call", "reflective call", "handle used outside the boundary", "handle erased", "untyped UI Automation result", "enumerated outside the boundary", "collection spread", "untyped buffer handed", "UI Automation collection taken", "handle deconstructed", "handle in a tuple")
 
 
 def run_gate() -> str:

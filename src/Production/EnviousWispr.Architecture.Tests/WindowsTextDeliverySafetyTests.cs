@@ -165,6 +165,14 @@ public sealed class WindowsTextDeliverySafetyTests
             // of an Automation call, tested against null, or passed to one of the adapter's own
             // methods - whose bodies this same scan reads. A cast, an alias, a member access, an
             // argument to anything else: refused.
+            // NO HANDLE RIDES IN A TUPLE: a tuple converts component by component, so one element
+            // can be erased while the tuple as a whole still carries a handle and passes every
+            // aggregate check. A tuple type that carries a handle, as a value's type or as what it
+            // converts to, is refused; the adapter's own records carry what needs carrying.
+            Assert.True(
+                !CarriesHandleInTuple(typeInfo.Type) && !CarriesHandleInTuple(typeInfo.ConvertedType),
+                $"A UI Automation handle in a tuple at line {Line(expression)} ({expression.Kind()} {expression}): {expression.Parent}");
+
             // A HANDLE IS NEVER ERASED, INSIDE THE BOUNDARY OR OUT: a handle converted to object, to
             // an interface or to a type parameter - by a cast, an `as`, or the context it stands in -
             // leaves as something the scan cannot see and reaches UI Automation through virtual
@@ -466,6 +474,15 @@ public sealed class WindowsTextDeliverySafetyTests
                 return false;
         }
     }
+
+    /// <summary>Whether a type is a tuple that carries a handle, directly or in a nested tuple, array or type argument.</summary>
+    private static bool CarriesHandleInTuple(ITypeSymbol? type) => type switch
+    {
+        INamedTypeSymbol { IsTupleType: true } tuple => IsHandleType(tuple),
+        INamedTypeSymbol named => named.TypeArguments.Any(CarriesHandleInTuple),
+        IArrayTypeSymbol array => CarriesHandleInTuple(array.ElementType),
+        _ => false,
+    };
 
     /// <summary>Whether a member access or binding is made on a receiver that is, or carries, a handle.</summary>
     private static bool IsCallOnHandle(ExpressionSyntax expression, SemanticModel model)
