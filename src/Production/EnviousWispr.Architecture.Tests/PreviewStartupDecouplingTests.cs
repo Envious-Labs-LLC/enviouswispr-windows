@@ -489,7 +489,7 @@ public sealed class PreviewStartupDecouplingTests
     {
         public IAudioSnapshotSource? Audio => null;
 
-        public void Post(PushToTalkSignal signal)
+        public void Post(PushToTalkSignal signal, DictationSessionId forSession)
         {
         }
 

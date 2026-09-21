@@ -54,12 +54,18 @@ public enum SessionCommandKind
 /// <param name="StartContext">For a press: what it was about, captured at admission. Null otherwise.</param>
 /// <param name="Transition">For an interruption: which one.</param>
 /// <param name="TimedOutSession">For a timeout: the recording that was armed.</param>
+/// <param name="ForSession">
+/// For a terminal that a loop posted on a recording's behalf - the auto-stop's release - the recording
+/// it was for. Validated when the command runs, not when it was queued: a release a retired loop
+/// posts late is for a recording that has ended, and must not end the one after it.
+/// </param>
 public sealed record SessionCommand(
     SessionCommandKind Kind,
     PushToTalkSignal Signal,
     RecordingStartContext? StartContext = null,
     SystemLifecycleTransition? Transition = null,
-    DictationSessionId? TimedOutSession = null)
+    DictationSessionId? TimedOutSession = null,
+    DictationSessionId? ForSession = null)
 {
     public SessionCommand(PushToTalkSignal signal, RecordingStartContext? startContext = null)
         : this(SessionCommandKind.PushToTalk, signal, startContext)
@@ -343,7 +349,13 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     /// <summary>
     /// Admits the signal synchronously and returns a task that completes once it has run or been refused.
     /// </summary>
-    public Task<SessionCommandResult> SubmitAsync(PushToTalkSignal signal)
+    public Task<SessionCommandResult> SubmitAsync(PushToTalkSignal signal) => SubmitAsync(signal, forSession: null);
+
+    /// <summary>
+    /// Admits the signal on a recording's behalf: a terminal posted by a loop that was watching that
+    /// recording, ignored when it runs if that recording is no longer the one in flight.
+    /// </summary>
+    public Task<SessionCommandResult> SubmitAsync(PushToTalkSignal signal, DictationSessionId? forSession)
     {
         if (signal == PushToTalkSignal.QuickAdd)
         {
@@ -353,7 +365,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
                 "Quick add is not a dictation session command.");
         }
 
-        return Submit(new SessionCommand(signal));
+        return Submit(new SessionCommand(signal) with { ForSession = forSession });
     }
 
     private Task<SessionCommandResult> Submit(SessionCommand command)

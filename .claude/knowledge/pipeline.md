@@ -77,8 +77,14 @@ remain wordless designs.
   closes its screen before the join and hands the window frames that carry their own validity
   (`LivePreviewFrame.IsCurrent`), asked at the draw, so a frame answered late or already queued for
   the window draws nothing after the closure. A start while the last loop is still owned is refused
-  (no preview, no head start, no auto-stop for that recording) rather than run beside it. The
-  timers' stops join the loop that posted, never the command it queued.
+  (no preview, no head start, no auto-stop for that recording) rather than run beside it; the
+  watchdog retires a watch it replaces and joins it with the next stop. The stop is published before
+  the gate is waited for, so a stop that runs out of budget waiting still closed the screen and
+  cancelled the loop; a stop's outcome is carried by the unbounded overload too, and a disposal
+  whose stop the engine refused leaves the owner in place for the next attempt. The timers' stops
+  join the loop that posted, never the command it queued; the auto-stop's release carries the
+  recording it was for (`SessionCommand.ForSession`, `SubmitAsync(signal, forSession)`), and the
+  executor ignores it when it runs if that recording has ended.
   `SessionBackgroundWork.StopAsync(deadline)` gives each owner the deadline and returns a
   `BackgroundStopReport`; the unbounded `StopAsync()` the executor uses today is unchanged, and
   step 8's shutdown is what supplies the deadline.

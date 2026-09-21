@@ -413,7 +413,7 @@ public sealed class RecordingTimersTests
 
         public Task WhenTimedOut(int count) => _timedOutMilestone.WhenAtLeast(count);
 
-        public void Post(PushToTalkSignal signal)
+        public void Post(PushToTalkSignal signal, DictationSessionId forSession)
         {
             lock (_lock)
             {

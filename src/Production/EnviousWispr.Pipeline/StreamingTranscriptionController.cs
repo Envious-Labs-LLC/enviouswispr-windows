@@ -202,7 +202,7 @@ public sealed class StreamingTranscriptionController
     }
 
     /// <summary>Ends the loop and waits for it, however long that takes; what it committed stays usable.</summary>
-    public Task StopAsync() => StopAsync(deadline: null);
+    public Task<StopOutcome> StopAsync() => StopAsync(deadline: null);
 
     /// <summary>Ends the loop and waits up to the deadline; a loop still running past it stays owned.</summary>
     public async Task<StopOutcome> StopAsync(TimeSpan? deadline)

@@ -399,6 +399,14 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         var interrupted = _controller.CurrentSession?.Id.Value;
         try
         {
+            // A TERMINAL POSTED FOR A RECORDING THAT HAS ENDED IS IGNORED HERE, at the run, not at the
+            // queue: the loop that posted it was watching a take that is over, and the recording in
+            // flight now is somebody else's.
+            if (command.ForSession is { } forSession && _controller.CurrentSession?.Id != forSession)
+            {
+                return new SessionCommandResult(SessionCommandDisposition.Ignored);
+            }
+
             if (signal == PushToTalkSignal.Pressed)
             {
                 if (_persistence.HasPendingRecovery)

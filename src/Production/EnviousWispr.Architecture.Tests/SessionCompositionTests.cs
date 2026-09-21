@@ -223,6 +223,37 @@ public sealed class SessionCompositionTests
     }
 
     [Fact]
+    public async Task AReleaseALoopPostedForAnEarlierRecordingDoesNotEndTheNextOne()
+    {
+        // THE AUTO-STOP'S RELEASE NAMES ITS RECORDING, and the executor checks the name when the
+        // command runs, not when it was queued. A release posted for a take that has ended - by a
+        // loop a bounded stop left behind, resuming late - reaches the composed queue while the
+        // next recording is live, and is ignored.
+        var world = World.Create("hello world");
+        await world.SubmitAsync(PushToTalkSignal.Pressed);
+        var earlier = world.Controller.CurrentSession!.Id;
+        await world.SubmitAsync(PushToTalkSignal.Released);
+        Assert.Single(world.Delivery.Requests);
+
+        await world.SubmitAsync(PushToTalkSignal.Pressed);
+        var current = world.Controller.CurrentSession!.Id;
+        Assert.NotEqual(earlier, current);
+
+        // The composed route the auto-stop's effects take, with the earlier recording's name on it.
+        await world.Runtime.Queue.HandAsync(PushToTalkSignal.Released, earlier);
+
+        Assert.Equal(DictationSessionState.Recording, world.Controller.CurrentSession?.State);
+        Assert.Equal(current, world.Controller.CurrentSession?.Id);
+        Assert.Single(world.Delivery.Requests);
+        // The ignored command still wrote the edge, as every command the executor runs does - and
+        // wrote it true: the recording it left alone is still in flight.
+        Assert.Equal([true, false, true, true], world.RunState.Edges);
+
+        await world.SubmitAsync(PushToTalkSignal.Released);
+        Assert.Equal(2, world.Delivery.Requests.Count);
+    }
+
+    [Fact]
     public async Task PreviewTextNeverReachesFinalizationHistoryOrDelivery()
     {
         // THE PREVIEW IS A SCREEN, NOT A SOURCE. Its engine answers every pass with words the final

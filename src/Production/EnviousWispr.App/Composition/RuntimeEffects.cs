@@ -15,7 +15,7 @@ internal sealed class RecordingTimerEffects(RuntimeShell shell, SessionQueue que
 {
     public IAudioSnapshotSource? Audio => shell.Audio();
 
-    public void Post(PushToTalkSignal signal) => _ = queue.HandAsync(signal);
+    public void Post(PushToTalkSignal signal, DictationSessionId forSession) => _ = queue.HandAsync(signal, forSession);
 
     public void RecordingTimedOut(DictationSessionId sessionId) => queue.TimeOut(sessionId);
 }

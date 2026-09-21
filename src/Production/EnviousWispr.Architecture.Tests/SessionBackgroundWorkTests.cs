@@ -283,7 +283,7 @@ public sealed class SessionBackgroundWorkTests
             }
         }
 
-        public void Post(PushToTalkSignal signal)
+        public void Post(PushToTalkSignal signal, DictationSessionId forSession)
         {
         }
 

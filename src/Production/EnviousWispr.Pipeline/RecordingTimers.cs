@@ -24,7 +24,8 @@ public interface IRecordingTimerEffects
     IAudioSnapshotSource? Audio { get; }
 
     /// <summary>Posts a push-to-talk signal and returns; the caller does not wait for it to run.</summary>
-    void Post(PushToTalkSignal signal);
+    /// <summary>A signal on the recording's behalf; the queue ignores it if that recording has ended by the time it runs.</summary>
+    void Post(PushToTalkSignal signal, DictationSessionId forSession);
 
     /// <summary>Posts that the recording armed as <paramref name="sessionId"/> has run for as long as it is allowed, and returns.</summary>
     void RecordingTimedOut(DictationSessionId sessionId);
@@ -46,6 +47,8 @@ public sealed class RecordingWatchdog : IAsyncDisposable
     private CancellationTokenSource? _cancellation;
     private Task? _watch;
     private TaskCompletionSource? _done;
+    /// <summary>Watches a start replaced before they had finished: cancelled, still owned, joined and disposed by the next stop.</summary>
+    private readonly List<(CancellationTokenSource Cancellation, TaskCompletionSource Done)> _retired = [];
 
     public RecordingWatchdog(IRecordingTimerEffects effects, TimeProvider clock)
     {
@@ -62,11 +65,19 @@ public sealed class RecordingWatchdog : IAsyncDisposable
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(duration, TimeSpan.Zero);
         _cancellation?.Cancel();
-        // A source whose watch is still running - one a bounded stop left behind - is not disposed
-        // under it; the watch ends on its own cancel and the source goes with the next stop.
-        if (_done?.Task.IsCompleted != false)
+        // A WATCH REPLACED BEFORE IT FINISHED IS RETIRED, NOT DROPPED. Its callback may still be
+        // running; its source is not disposed under it, and the next stop joins it - so a stop that
+        // reports completion has seen every watch this owner ever armed finish, not only the last.
+        if (_cancellation is { } previous && _done is { } previousDone)
         {
-            _cancellation?.Dispose();
+            if (previousDone.Task.IsCompleted)
+            {
+                previous.Dispose();
+            }
+            else
+            {
+                _retired.Add((previous, previousDone));
+            }
         }
 
         _cancellation = new CancellationTokenSource();
@@ -109,16 +120,17 @@ public sealed class RecordingWatchdog : IAsyncDisposable
     }
 
     /// <summary>Disarms the watch and waits for it, however long that takes.</summary>
-    public Task StopAsync() => StopAsync(deadline: null);
+    public Task<StopOutcome> StopAsync() => StopAsync(deadline: null);
 
     /// <summary>Disarms the watch and waits up to the deadline; a watch still running past it stays owned.</summary>
     public async Task<StopOutcome> StopAsync(TimeSpan? deadline)
     {
+        var budget = new StopBudget(deadline, _clock);
         var cancellation = _cancellation;
         var done = _done;
         cancellation?.Cancel();
         if (done is not null &&
-            await BoundedJoin.JoinAsync(done.Task, deadline, _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
+            await BoundedJoin.JoinAsync(done.Task, budget.Remaining, _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
         {
             return StopOutcome.StillRunning;
         }
@@ -129,6 +141,20 @@ public sealed class RecordingWatchdog : IAsyncDisposable
         _watch = null;
         _done = null;
         cancellation?.Dispose();
+
+        // THE RETIRED WATCHES ARE JOINED TOO, inside the same budget; the ones that finished are
+        // disposed and let go of, the rest stay owned and the stop says so.
+        foreach (var retired in _retired.ToArray())
+        {
+            if (await BoundedJoin.JoinAsync(retired.Done.Task, budget.Remaining, _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
+            {
+                return StopOutcome.StillRunning;
+            }
+
+            retired.Cancellation.Dispose();
+            _retired.Remove(retired);
+        }
+
         return StopOutcome.Completed;
     }
 
@@ -282,7 +308,7 @@ public sealed class AutoStopMonitor : IAsyncDisposable
                 // Post and return. Awaiting the post would hold this loop open across the whole
                 // transcription; the release it posts is a command on the session's queue, submitted
                 // and not awaited, so the stop that command makes joins a loop that has returned.
-                _effects.Post(PushToTalkSignal.Released);
+                _effects.Post(PushToTalkSignal.Released, sessionId);
                 return;
             }
         }
@@ -297,7 +323,7 @@ public sealed class AutoStopMonitor : IAsyncDisposable
     }
 
     /// <summary>Ends the watch and waits for it, however long that takes.</summary>
-    public Task StopAsync() => StopAsync(deadline: null);
+    public Task<StopOutcome> StopAsync() => StopAsync(deadline: null);
 
     /// <summary>Ends the watch and waits up to the deadline; a loop still running past it stays owned.</summary>
     public async Task<StopOutcome> StopAsync(TimeSpan? deadline)

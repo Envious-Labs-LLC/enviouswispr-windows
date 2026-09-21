@@ -89,6 +89,7 @@ public sealed class LivePreviewController : IAsyncDisposable
     private bool _engineRefusedStop;
     private long _sequence;
     private int _closure;
+    private int _stopRequests;
     private bool _started;
     private bool _disposed;
 
@@ -165,8 +166,16 @@ public sealed class LivePreviewController : IAsyncDisposable
 
             _sequence = 0;
             _started = false;
-            _cancellation = new CancellationTokenSource();
-            _work = RunAsync(sessionId, engine, audio, Volatile.Read(ref _closure), _cancellation.Token);
+            var requestsBefore = Volatile.Read(ref _stopRequests);
+            var cancellation = new CancellationTokenSource();
+            Volatile.Write(ref _cancellation, cancellation);
+            _work = RunAsync(sessionId, engine, audio, Volatile.Read(ref _closure), cancellation.Token);
+            // A STOP THAT RACED THIS PUBLICATION found no source to cancel; this start is the one that
+            // sees the request, and cancels its own work so the stop that made it can join it.
+            if (Volatile.Read(ref _stopRequests) != requestsBefore)
+            {
+                cancellation.Cancel();
+            }
         }
         finally
         {
@@ -283,8 +292,8 @@ public sealed class LivePreviewController : IAsyncDisposable
         }
     }
 
-    /// <summary>Stops the preview and waits for its loop and its engine to finish, however long that takes.</summary>
-    public Task StopAsync() => StopAsync(deadline: null);
+    /// <summary>Stops the preview and waits for its loop and its engine to finish, however long that takes; says whether the engine agreed.</summary>
+    public Task<StopOutcome> StopAsync() => StopAsync(deadline: null);
 
     /// <summary>
     /// Stops the preview and waits up to the deadline - for the gate, the loop and the engine's own stop
@@ -303,20 +312,26 @@ public sealed class LivePreviewController : IAsyncDisposable
             ? DictationScope.Begin(recording.Value)
             : NoScope.Instance;
         var budget = new StopBudget(deadline, _clock);
+        // THE STOP IS PUBLISHED BEFORE THE GATE IS WAITED FOR. The screen closes and the loop in
+        // flight is asked to stop now, so a stop that runs out of budget waiting for the gate - held
+        // by another stop inside a held engine - has still closed the screen and cancelled the loop;
+        // and a start that publishes its work in the same instant sees the request and cancels its
+        // own (see StartAsync). A frame the engine hands back late, or one already queued for the
+        // window, finds the closure changed at its render and draws nothing.
+        Interlocked.Increment(ref _closure);
+        Interlocked.Increment(ref _stopRequests);
+        Volatile.Read(ref _cancellation)?.Cancel();
         // THE GATE IS ON THE BUDGET TOO. A stop queued behind another that is itself waiting on a held
         // engine would otherwise wait without limit, and a deadline that does not cover the wait for
         // the gate is not a deadline.
         if (!await budget.TryEnterAsync(_gate).ConfigureAwait(false))
         {
+            _effects.ClearPreview();
             return StopOutcome.StillRunning;
         }
 
         try
         {
-            // THE SCREEN IS CLOSED BEFORE THE LOOP IS ASKED TO STOP, so a frame the engine hands back
-            // late, or one already queued for the window, finds the closure changed at its render
-            // and draws nothing, whichever way the join below ends.
-            Interlocked.Increment(ref _closure);
             var cancellation = _cancellation;
             var work = _work;
             cancellation?.Cancel();
@@ -411,7 +426,14 @@ public sealed class LivePreviewController : IAsyncDisposable
             return;
         }
 
-        await StopAsync().ConfigureAwait(false);
+        // DISPOSED ONLY ONCE THE STOP IS COMPLETE. A stop the engine refused, or one still inside
+        // it, leaves the preview owned and the gate in place; the next stop or disposal tries again,
+        // and only a stop that saw everything finish lets the gate go.
+        if (await StopAsync().ConfigureAwait(false) != StopOutcome.Completed)
+        {
+            return;
+        }
+
         _gate.Dispose();
         _disposed = true;
     }

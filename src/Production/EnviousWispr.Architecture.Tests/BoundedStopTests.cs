@@ -214,6 +214,105 @@ public sealed class BoundedStopTests
     }
 
     [Fact]
+    public async Task ARefusedEngineStopIsNotADisposalEither()
+    {
+        // THE DISPOSAL IS THE UNBOUNDED STOP, AND IT SAYS WHAT IT SAW. An engine that refuses its stop
+        // leaves the preview owned; the disposal that ran it does not close the gate or remember
+        // itself as done, and the next disposal - the engine agreeing by then - completes and does.
+        // The background owner's own stop carries the outcome too.
+        var world = World.Create();
+        world.PreviewEngine.RefuseStop = true;
+        var session = DictationSessionId.Create();
+        world.Session = session;
+        await world.Runtime.Preview.StartAsync(session);
+        await world.PreviewEngine.PreviewEntered.Task.WaitAsync(Patience);
+
+        var background = await world.Runtime.Background().StopAsync(Patience);
+        Assert.Equal(StopOutcome.StillRunning, background.Preview);
+        Assert.False(background.Completed);
+        await world.Runtime.Preview.DisposeAsync();
+        Assert.True(world.Runtime.Preview.IsRunning, "a disposal whose stop the engine refused leaves the preview owned");
+
+        Assert.Equal(2, world.PreviewEngine.Stops);
+        world.PreviewEngine.RefuseStop = false;
+        Assert.Equal(StopOutcome.Completed, await world.Runtime.Preview.StopAsync());
+        Assert.False(world.Runtime.Preview.IsRunning);
+        // The disposal is a stop too, and a stop always asks the engine; four asked, two refused.
+        await world.Runtime.Preview.DisposeAsync();
+        Assert.Equal(4, world.PreviewEngine.Stops);
+    }
+
+    [Fact]
+    public async Task AStopThatRanOutOfBudgetWaitingForTheGateStillClosedThePreview()
+    {
+        // THE STOP IS PUBLISHED BEFORE THE GATE. The gate is held by a stop inside a held engine stop;
+        // a second stop with its own short deadline never gets the gate - but the screen is closed
+        // and the loop cancelled all the same, and a start racing the publication cancels its own.
+        var clock = new Deterministic.ManualClock();
+        var world = World.Create(clock);
+        world.PreviewEngine.HoldStop = true;
+        var session = DictationSessionId.Create();
+        world.Session = session;
+        await world.Runtime.Preview.StartAsync(session);
+        await world.PreviewEngine.PreviewEntered.Task.WaitAsync(Patience);
+        var first = world.Runtime.Preview.StopAsync(Patience);
+        await world.PreviewEngine.StopEntered.Task.WaitAsync(Patience);
+
+        var registered = clock.Registered;
+        var second = world.Runtime.Preview.StopAsync(TimeSpan.FromSeconds(1));
+        await clock.WhenRegistered(registered + 1).WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(StopOutcome.StillRunning, await second.WaitAsync(Patience));
+        Assert.Null(world.View.Previews[^1]);
+
+        world.PreviewEngine.AllowStopExit.SetResult();
+        Assert.Equal(StopOutcome.Completed, await first.WaitAsync(Patience));
+
+        // A START THAT PUBLISHES ITS WORK BESIDE A STOP: the stop found no source to cancel; the start
+        // sees the request and cancels its own, so the loop it made never runs a pass.
+        var next = DictationSessionId.Create();
+        world.Session = next;
+        world.PreviewEngine.HoldPreviews = true;
+        var start = world.Runtime.Preview.StartAsync(next);
+        var stop = world.Runtime.Preview.StopAsync(Patience);
+        await start;
+        world.PreviewEngine.ReleasePreviews();
+        Assert.Equal(StopOutcome.Completed, await stop.WaitAsync(Patience));
+        Assert.False(world.Runtime.Preview.IsRunning);
+        var drawnAfter = world.View.Previews.Skip(world.View.Previews.LastIndexOf(null) + 1).ToArray();
+        Assert.Empty(drawnAfter);
+    }
+
+    [Fact]
+    public async Task AWatchReplacedBeforeItsCallbackFinishedIsJoinedByTheNextStop()
+    {
+        // THE CALLBACK IS STILL RUNNING WHEN THE NEXT RECORDING ARMS THE WATCHDOG. The old watch is
+        // retired, not dropped: the next stop reports still running until the old callback returns,
+        // and completion only once every watch this owner armed has finished.
+        var clock = new Deterministic.ManualClock();
+        var effects = new HoldingTimerEffects();
+        var watchdog = new RecordingWatchdog(effects, clock);
+        var first = DictationSessionId.Create();
+        watchdog.Start(first, TimeSpan.FromSeconds(5));
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await effects.TimedOutEntered.Task.WaitAsync(Patience);
+
+        var second = DictationSessionId.Create();
+        watchdog.Start(second, TimeSpan.FromSeconds(5));
+        Assert.True(watchdog.IsArmed);
+        var registered = clock.Registered;
+        var stop = watchdog.StopAsync(TimeSpan.FromSeconds(1));
+        await clock.WhenRegistered(registered + 1).WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(StopOutcome.StillRunning, await stop.WaitAsync(Patience));
+        effects.AllowTimedOutExit.SetResult();
+        Assert.Equal(StopOutcome.Completed, await watchdog.StopAsync(Patience).WaitAsync(Patience));
+        Assert.Equal([first], effects.TimedOutSessions);
+    }
+
+    [Fact]
     public async Task AStopQueuedBehindAHeldStopIsBoundedToo()
     {
         // TWO STOPS, ONE GATE. The first is inside a held engine stop; the second waits for the gate
@@ -343,6 +442,29 @@ public sealed class BoundedStopTests
         }
     }
 
+    /// <summary>Timer effects whose timeout callback is held until the test lets it go.</summary>
+    private sealed class HoldingTimerEffects : IRecordingTimerEffects
+    {
+        public IAudioSnapshotSource? Audio => null;
+
+        public List<DictationSessionId> TimedOutSessions { get; } = [];
+
+        public TaskCompletionSource TimedOutEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource AllowTimedOutExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Post(PushToTalkSignal signal, DictationSessionId forSession)
+        {
+        }
+
+        public void RecordingTimedOut(DictationSessionId sessionId)
+        {
+            TimedOutSessions.Add(sessionId);
+            TimedOutEntered.TrySetResult();
+            AllowTimedOutExit.Task.Wait(Patience);
+        }
+    }
+
     /// <summary>Timer effects that queue what they are handed, as the composed queue does, and never run it.</summary>
     private sealed class QueueingTimerEffects : IRecordingTimerEffects
     {
@@ -359,7 +481,7 @@ public sealed class BoundedStopTests
 
         public TaskCompletionSource TimedOut { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public void Post(PushToTalkSignal signal)
+        public void Post(PushToTalkSignal signal, DictationSessionId forSession)
         {
             Queued.Add(signal);
             _ = Command.Task;
