@@ -43,9 +43,12 @@ internal static class Program
         Application.Run(form);
         if (form.SelfTestVerdict is { } verdict)
         {
-            Console.WriteLine(verdict == 0
-                ? "settle-self-test: the settled receipt counted the paste queued ahead of the settle request."
-                : "settle-self-test: the settled receipt did NOT count the paste queued ahead of the settle request.");
+            Console.WriteLine(verdict switch
+            {
+                0 => "settle-self-test: the settled receipt counted the paste queued ahead of the settle request.",
+                3 => "settle-self-test: not run - the desk's clipboard could not be snapshotted whole, so it was not touched.",
+                _ => "settle-self-test: the settled receipt did NOT count the paste queued ahead of the settle request.",
+            });
             Environment.ExitCode = verdict;
         }
     }
@@ -211,15 +214,19 @@ internal static class Program
                     {
                         arm.Stop();
                         arm.Dispose();
-                        var kept = Clipboard.ContainsText() ? Clipboard.GetText() : null;
-                        Clipboard.Clear();
-                        form.FormClosed += (_, _) =>
+                        // THE DESK'S CLIPBOARD IS KEPT WHOLE: every format is snapshotted before it
+                        // is emptied, the self-test refuses to run when any format cannot be copied,
+                        // and the snapshot goes back when the window closes, whatever the verdict.
+                        var kept = ClipboardKeeper.Capture();
+                        if (kept is null)
                         {
-                            if (kept is not null)
-                            {
-                                Clipboard.SetText(kept);
-                            }
-                        };
+                            form.SelfTestVerdict = 3;
+                            form.Close();
+                            return;
+                        }
+
+                        form.FormClosed += (_, _) => kept.Restore();
+                        Clipboard.Clear();
                         Focus(form, focusTarget);
                         SendKeys.Send("^v");
                         _ = NativeQueue.PostMessage(form.Handle, TargetForm.WmSettle, 1, 0);
@@ -370,6 +377,103 @@ internal static class Program
             }
 
             base.WndProc(ref m);
+        }
+    }
+
+    /// <summary>The desk's clipboard, every format copied, so a self-test that empties it can put it back whole.</summary>
+    private sealed class ClipboardKeeper
+    {
+        private readonly DataObject? _data;
+
+        private ClipboardKeeper(DataObject? data)
+        {
+            _data = data;
+        }
+
+        /// <summary>A copy of every format on the clipboard, or null when any format cannot be copied - in which case nothing is touched.</summary>
+        public static ClipboardKeeper? Capture()
+        {
+            try
+            {
+                var source = Clipboard.GetDataObject();
+                if (source is null)
+                {
+                    return new ClipboardKeeper(null);
+                }
+
+                var copy = new DataObject();
+                foreach (var format in source.GetFormats(autoConvert: false))
+                {
+                    var value = source.GetData(format, autoConvert: false);
+                    var cloned = value is null ? null : Clone(value);
+                    if (cloned is null)
+                    {
+                        return null;
+                    }
+
+                    copy.SetData(format, autoConvert: false, cloned);
+                }
+
+                return new ClipboardKeeper(copy);
+            }
+            catch (Exception exception) when (exception is ExternalException or ThreadStateException or InvalidOperationException or ArgumentException)
+            {
+                return null;
+            }
+        }
+
+        public void Restore()
+        {
+            try
+            {
+                if (_data is null)
+                {
+                    Clipboard.Clear();
+                }
+                else
+                {
+                    Clipboard.SetDataObject(_data, copy: true, retryTimes: 10, retryDelay: 50);
+                }
+            }
+            catch (Exception exception) when (exception is ExternalException or ThreadStateException or ArgumentException)
+            {
+                Console.Error.WriteLine("settle-self-test: the desk's clipboard could not be put back.");
+            }
+        }
+
+        private static object? Clone(object value) => value switch
+        {
+            byte[] bytes => bytes.ToArray(),
+            MemoryStream memory => new MemoryStream(memory.ToArray(), writable: false),
+            Bitmap bitmap => bitmap.Clone(),
+            System.Collections.Specialized.StringCollection strings => CloneStrings(strings),
+            ICloneable cloneable => cloneable.Clone(),
+            string or char or bool or byte or sbyte or short or ushort or int or uint or
+                long or ulong or float or double or decimal or DateTime or DateTimeOffset or
+                TimeSpan or Guid => value,
+            Stream stream => CloneStream(stream),
+            _ => null,
+        };
+
+        private static System.Collections.Specialized.StringCollection CloneStrings(System.Collections.Specialized.StringCollection strings)
+        {
+            var clone = new System.Collections.Specialized.StringCollection();
+            clone.AddRange(strings.Cast<string>().ToArray());
+            return clone;
+        }
+
+        private static MemoryStream CloneStream(Stream stream)
+        {
+            var originalPosition = stream.CanSeek ? stream.Position : 0;
+            var copy = new MemoryStream();
+            stream.CopyTo(copy);
+            if (stream.CanSeek)
+            {
+                stream.Position = originalPosition;
+            }
+
+            copy.Position = 0;
+            return copy;
         }
     }
 

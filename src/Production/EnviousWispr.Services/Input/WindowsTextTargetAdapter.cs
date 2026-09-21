@@ -607,10 +607,25 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             return TextDeliveryRefusalReason.InputStateUnsafe;
         }
 
-        var current = CaptureContext(target, options);
+        return PreflightRefusal(CaptureContext(target, options), expected);
+    }
+
+    /// <summary>What the paste's last look at the target, a moment before the keystroke, refuses with.</summary>
+    /// <remarks>
+    /// THE CAPTURE'S OWN REFUSAL COMES FIRST (plan-2 step 13, round four). A selection that became
+    /// unsupported between the commit's read and this one is UnsupportedTarget, which the capture
+    /// says; mapping its status alone read it as "accessibility unavailable". The status is the
+    /// answer only when the capture gave no reason of its own.
+    /// </remarks>
+    internal static TextDeliveryRefusalReason PreflightRefusal(TargetContextResult current, CaretContext expected)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        ArgumentNullException.ThrowIfNull(expected);
         if (current.Status != TargetContextStatus.Available || current.Context is null)
         {
-            return RefusalFor(current.Status);
+            return current.RefusalReason != TextDeliveryRefusalReason.None
+                ? current.RefusalReason
+                : RefusalFor(current.Status);
         }
 
         return CaretUnchanged(expected, current.Context)

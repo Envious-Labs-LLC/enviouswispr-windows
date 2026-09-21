@@ -319,7 +319,8 @@ internal static class WindowsClipboardPaste
         }
     }
 
-    private static ClipboardSnapshot? TrySnapshotClipboard()
+    /// <summary>Every format on the clipboard, copied; null when any format cannot be copied, in which case nothing that borrows the clipboard may proceed.</summary>
+    internal static ClipboardSnapshot? TrySnapshotClipboard()
     {
         try
         {
@@ -397,7 +398,7 @@ internal static class WindowsClipboardPaste
         }
     }
 
-    private static bool TryRestoreClipboard(ClipboardSnapshot snapshot)
+    internal static bool TryRestoreClipboard(ClipboardSnapshot snapshot)
     {
         try
         {
@@ -482,7 +483,7 @@ internal static class WindowsClipboardPaste
         return completion.Task;
     }
 
-    private sealed record ClipboardSnapshot(bool IsEmpty, DataObject? Data);
+    internal sealed record ClipboardSnapshot(bool IsEmpty, DataObject? Data);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeInput

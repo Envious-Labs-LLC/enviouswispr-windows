@@ -139,19 +139,15 @@ public sealed class WindowsTextDeliverySafetyTests
 
     private static bool IsInsideAutomationCall(string source, int at)
     {
-        // The call opens earlier ("Automation(() =>" or "Automation(static () =>") and has not
-        // closed by this offset: count the parentheses between, from the nearest opening backwards
-        // until one is found still open.
+        // THE SPAN OF A CALL ENDS WHERE ITS OWN PARENTHESIS CLOSES, not where the running depth
+        // next reaches zero: an access after a wrapped call, inside some other call's parentheses,
+        // is outside the boundary. Every earlier opening is tried, so a call that encloses this
+        // offset is found whatever sits between.
         var open = source.LastIndexOf("Automation(", at, StringComparison.Ordinal);
         while (open >= 0)
         {
-            var depth = 0;
-            for (var index = open + "Automation".Length; index < at; index++)
-            {
-                depth += source[index] switch { '(' => 1, ')' => -1, _ => 0 };
-            }
-
-            if (depth > 0)
+            var close = ClosingParenthesis(source, open + "Automation".Length);
+            if (close > at)
             {
                 return true;
             }
@@ -160,6 +156,22 @@ public sealed class WindowsTextDeliverySafetyTests
         }
 
         return false;
+    }
+
+    /// <summary>The offset of the parenthesis that closes the one at <paramref name="openParenthesis"/>, or -1.</summary>
+    private static int ClosingParenthesis(string source, int openParenthesis)
+    {
+        var depth = 0;
+        for (var index = openParenthesis; index < source.Length; index++)
+        {
+            depth += source[index] switch { '(' => 1, ')' => -1, _ => 0 };
+            if (depth == 0)
+            {
+                return index;
+            }
+        }
+
+        return -1;
     }
 
     private static IEnumerable<int> Occurrences(string text, string needle)
@@ -187,6 +199,55 @@ public sealed class WindowsTextDeliverySafetyTests
         var current = new TargetContextResult(status, RefusalReason: carried);
 
         Assert.Equal(expected, WindowsTextTargetAdapter.RevalidationRefusal(current));
+    }
+
+    [Theory]
+    [InlineData(TargetContextStatus.AccessibilityUnavailable, TextDeliveryRefusalReason.UnsupportedTarget, TextDeliveryRefusalReason.UnsupportedTarget)]
+    [InlineData(TargetContextStatus.AccessibilityUnavailable, TextDeliveryRefusalReason.AccessibilityUnavailable, TextDeliveryRefusalReason.AccessibilityUnavailable)]
+    [InlineData(TargetContextStatus.AccessibilityUnavailable, TextDeliveryRefusalReason.None, TextDeliveryRefusalReason.AccessibilityUnavailable)]
+    [InlineData(TargetContextStatus.Protected, TextDeliveryRefusalReason.ProtectedField, TextDeliveryRefusalReason.ProtectedField)]
+    [InlineData(TargetContextStatus.Elevated, TextDeliveryRefusalReason.None, TextDeliveryRefusalReason.ElevatedTarget)]
+    [InlineData(TargetContextStatus.TargetChanged, TextDeliveryRefusalReason.TargetChanged, TextDeliveryRefusalReason.TargetChanged)]
+    public void ThePastesLastLookKeepsTheCapturesOwnRefusal(TargetContextStatus status, TextDeliveryRefusalReason carried, TextDeliveryRefusalReason expected)
+    {
+        // THE PREFLIGHT'S CAPTURE NAMES ITS OWN REFUSAL: a selection that became unsupported
+        // between the commit's read and the keystroke is UnsupportedTarget, not "accessibility
+        // unavailable"; the status is the answer only when the capture gave no reason.
+        var expectedContext = Context(new TargetWindowId(42, 7, "1.2.3"), "before", string.Empty, "after");
+
+        Assert.Equal(expected, WindowsTextTargetAdapter.PreflightRefusal(new TargetContextResult(status, RefusalReason: carried), expectedContext));
+        Assert.Equal(
+            TextDeliveryRefusalReason.None,
+            WindowsTextTargetAdapter.PreflightRefusal(new TargetContextResult(TargetContextStatus.Available, expectedContext), expectedContext));
+        Assert.Equal(
+            TextDeliveryRefusalReason.TargetChanged,
+            WindowsTextTargetAdapter.PreflightRefusal(new TargetContextResult(TargetContextStatus.Available, expectedContext with { Left = "moved" }), expectedContext));
+    }
+
+    [ClipboardFact]
+    public async Task ASelectionThatBecameUnsupportedAtTheLastLookReachesTheDeliveryUnderItsOwnName()
+    {
+        // THROUGH THE PRODUCTION PASTE AND THE DELIVERY: the preflight's capture answers
+        // AccessibilityUnavailable / UnsupportedTarget, and what comes back is UnsupportedTarget with
+        // the fallback words on the clipboard - the code, the sentence and the words agree.
+        using var guard = ClipboardGuard.Capture();
+        var expectedContext = Context(new TargetWindowId(42, 7, "1.2.3"), "before", string.Empty, "after");
+        var delivery = new ContextAwareTextDelivery(new ProductionPastingAdapter(() => WindowsTextTargetAdapter.PreflightRefusal(
+            new TargetContextResult(TargetContextStatus.AccessibilityUnavailable, RefusalReason: TextDeliveryRefusalReason.UnsupportedTarget),
+            expectedContext)));
+
+        var result = await delivery.DeliverAsync(new TextDeliveryRequest(
+            new ProcessedText(new DictationSessionId(Guid.NewGuid()), "kept"),
+            new TargetWindowId(42, 7, "1.2.3"),
+            "en",
+            TextDeliveryOptions.Default));
+
+        Assert.Equal(TextDeliveryRefusalReason.UnsupportedTarget, result.RefusalReason);
+        Assert.True(result.ClipboardFallback);
+        Assert.Equal(TextDeliveryRoute.ClipboardOnly, result.Route);
+        Assert.Null(result.Fault);
+        Assert.Equal("Automatic paste is unsafe here, so the text was copied only", EnviousWispr.Core.Presentation.DeliveryStatusReport.For(result).Text);
+        Assert.Equal("kept ", ClipboardGuard.GetText());
     }
 
     [Fact]
@@ -290,17 +351,27 @@ public sealed class WindowsTextDeliverySafetyTests
                 cancellationToken);
     }
 
-    /// <summary>The desk's clipboard, captured for the test and put back after it; every operation on a thread that can talk to the clipboard.</summary>
+    /// <summary>
+    /// The desk's clipboard, every format copied through the production snapshot before a test
+    /// touches it, and put back whole when the test ends - by the using, so on a failed assertion
+    /// too. A capture that cannot copy every format refuses, and the test does not run against a
+    /// clipboard it could not restore.
+    /// </summary>
     private sealed class ClipboardGuard : IDisposable
     {
-        private readonly string? _text;
+        private readonly WindowsClipboardPaste.ClipboardSnapshot _snapshot;
 
-        private ClipboardGuard(string? text)
+        private ClipboardGuard(WindowsClipboardPaste.ClipboardSnapshot snapshot)
         {
-            _text = text;
+            _snapshot = snapshot;
         }
 
-        public static ClipboardGuard Capture() => new(GetText());
+        public static ClipboardGuard Capture()
+        {
+            var snapshot = OnSta(WindowsClipboardPaste.TrySnapshotClipboard);
+            Assert.True(snapshot is not null, "the desk's clipboard could not be copied whole, so it was not touched");
+            return new ClipboardGuard(snapshot!);
+        }
 
         public static string? GetText() => OnSta(static () => System.Windows.Forms.Clipboard.ContainsText() ? System.Windows.Forms.Clipboard.GetText() : null);
 
@@ -310,13 +381,12 @@ public sealed class WindowsTextDeliverySafetyTests
             return true;
         });
 
-        /// <summary>Whether the clipboard can be reached at all from this session; a test that needs it is skipped otherwise.</summary>
+        /// <summary>Whether the clipboard can be reached and copied whole from this session; a test that needs it is skipped otherwise.</summary>
         public static bool Available()
         {
             try
             {
-                _ = OnSta(static () => System.Windows.Forms.Clipboard.GetDataObject() is not null || true);
-                return true;
+                return OnSta(WindowsClipboardPaste.TrySnapshotClipboard) is not null;
             }
             catch (Exception exception) when (exception is ExternalException or InvalidOperationException or ThreadStateException)
             {
@@ -324,19 +394,13 @@ public sealed class WindowsTextDeliverySafetyTests
             }
         }
 
-        public void Dispose() => OnSta(() =>
+        public void Dispose()
         {
-            if (_text is null)
+            if (!OnSta(() => WindowsClipboardPaste.TryRestoreClipboard(_snapshot)))
             {
-                System.Windows.Forms.Clipboard.Clear();
+                throw new InvalidOperationException("The desk's clipboard could not be put back after the test.");
             }
-            else
-            {
-                System.Windows.Forms.Clipboard.SetText(_text);
-            }
-
-            return true;
-        });
+        }
 
         private static T OnSta<T>(Func<T> operation)
         {
