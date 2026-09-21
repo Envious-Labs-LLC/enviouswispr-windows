@@ -151,7 +151,10 @@ public partial class App
 
     private void OnModelDownloadRequested()
     {
-        if (_modelDownload is not null || _modelDelivery is not null || Leaving)
+        // ONE AT A TIME, READ OFF THE TASK ITSELF: a delivery still running refuses a second request;
+        // one that has ended - including one that refused synchronously because a dictation was in
+        // flight - does not, so "finish the current dictation, then download" can be followed.
+        if (_modelDelivery is { IsCompleted: false } || Leaving)
         {
             return;
         }
@@ -163,18 +166,6 @@ public partial class App
     }
 
     private async Task DeliverModelsAsync()
-    {
-        try
-        {
-            await DeliverModelsCoreAsync().ConfigureAwait(true);
-        }
-        finally
-        {
-            _modelDelivery = null;
-        }
-    }
-
-    private async Task DeliverModelsCoreAsync()
     {
 
         if (_sessionController?.CurrentSession is not null)

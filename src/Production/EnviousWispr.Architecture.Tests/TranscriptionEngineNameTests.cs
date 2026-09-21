@@ -875,7 +875,13 @@ public sealed partial class DesignSystemTokenTests
         // TRACKED: the launch's tail is the _startup task, awaited by OnLaunched; the delivery is the
         // _modelDelivery task, started by the request and cleared when it ends.
         Assert.Contains("_startup = CompleteStartupAsync(", DeclarationTextOf(shell, "OnLaunched"), StringComparison.Ordinal);
-        Assert.Contains("_modelDelivery = DeliverModelsAsync();", DeclarationTextOf(delivery, "OnModelDownloadRequested"), StringComparison.Ordinal);
+        var request = DeclarationTextOf(delivery, "OnModelDownloadRequested");
+        Assert.Contains("_modelDelivery = DeliverModelsAsync();", request, StringComparison.Ordinal);
+        // A SECOND REQUEST IS REFUSED BY A RUNNING TASK, NOT A STORED ONE: the guard reads the task's
+        // completion, so a delivery that refused synchronously does not block the retry it asked for,
+        // and nothing clears the field behind the assignment.
+        Assert.Contains("_modelDelivery is { IsCompleted: false }", request, StringComparison.Ordinal);
+        Assert.DoesNotContain("_modelDelivery = null", delivery, StringComparison.Ordinal);
 
         // CANCELLED AND JOINED: the exit policy cancels both; Quiesce joins both, taking each once.
         var parts = methods.Single(method => method.Identifier.ValueText == "LifetimeParts");
@@ -902,7 +908,15 @@ public sealed partial class DesignSystemTokenTests
             }
         }
 
-        var startup = methods.Single(method => method.Identifier.ValueText == "CompleteStartupAsync");
+        // THE EXIT'S CANCELLATION OF THE LAUNCH IS CAUGHT INSIDE THE TRACKED TASK, filtered to the
+        // launch's own token, so the launch entry point - an async void - never sees it.
+        var wrapper = methods.Single(method => method.Identifier.ValueText == "CompleteStartupAsync");
+        var handler = Assert.Single(wrapper.DescendantNodes().OfType<CatchClauseSyntax>());
+        Assert.Equal("OperationCanceledException", handler.Declaration?.Type.ToString());
+        Assert.Equal("_startupCancellation.IsCancellationRequested", handler.Filter?.FilterExpression.ToString());
+        Assert.Contains("await CompleteStartupCoreAsync(settings, runStart, window)", wrapper.ToString(), StringComparison.Ordinal);
+
+        var startup = methods.Single(method => method.Identifier.ValueText == "CompleteStartupCoreAsync");
         EveryAwaitIsFollowedByTheLeavingCheck(startup, expectedAwaits: 4);
         Assert.Contains("LoadStartupRecoveryAsync(_startupCancellation.Token)", startup.ToString(), StringComparison.Ordinal);
         Assert.Contains("_recoveryTextStore.LoadAsync(cancellationToken)", DeclarationTextOf(shell, "LoadStartupRecoveryAsync"), StringComparison.Ordinal);
@@ -910,7 +924,7 @@ public sealed partial class DesignSystemTokenTests
         // The delivery's tail - after its own download loop - checks Leaving before it tears an
         // engine down and after every await that builds one.
         var deliveryTree = CSharpSyntaxTree.ParseText(delivery).GetRoot();
-        var core = deliveryTree.DescendantNodes().OfType<MethodDeclarationSyntax>().Single(method => method.Identifier.ValueText == "DeliverModelsCoreAsync");
+        var core = deliveryTree.DescendantNodes().OfType<MethodDeclarationSyntax>().Single(method => method.Identifier.ValueText == "DeliverModelsAsync");
         var tail = core.Body!.Statements.SkipWhile(statement => statement is not TryStatementSyntax).Skip(1).ToArray();
         var afterTry = string.Join("\n", tail.Select(statement => statement.ToString().Split('\n')[0].Trim()));
         Assert.Equal(

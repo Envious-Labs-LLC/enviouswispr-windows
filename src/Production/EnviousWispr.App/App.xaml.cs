@@ -367,6 +367,21 @@ public partial class App : Application, IAsyncDisposable
 
     private async Task CompleteStartupAsync(AppSettings settings, ApplicationRunStartResult runStart, MainWindow window)
     {
+        try
+        {
+            await CompleteStartupCoreAsync(settings, runStart, window).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException) when (_startupCancellation.IsCancellationRequested)
+        {
+            // THE EXIT'S OWN CANCELLATION IS AN ENDING, NOT A FAULT. The exit policy cancelled the
+            // launch's token while the recovery read was out; the read ends cancelled, the launch is
+            // over, and nothing of it escapes to the launch entry point - the lifetime finishes its
+            // teardown and reports.
+        }
+    }
+
+    private async Task CompleteStartupCoreAsync(AppSettings settings, ApplicationRunStartResult runStart, MainWindow window)
+    {
         await window.InitializeProductDataAsync().ConfigureAwait(true);
         if (Leaving)
         {
