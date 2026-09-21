@@ -101,9 +101,13 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private static int SelectedIndexOf(SelectableChoiceOption[] choices)
     {
-        var index = Array.FindIndex(choices, choice => choice.IsSelected);
+        var index = RawSelectedIndexOf(choices);
         return index >= 0 ? index : 0;
     }
+
+    /// <summary>The selected index as it is, -1 for nothing selected: what the General save hands the presenter, which decides what a missing choice means.</summary>
+    private static int RawSelectedIndexOf(SelectableChoiceOption[] choices) =>
+        Array.FindIndex(choices, choice => choice.IsSelected);
 
     private static void SelectChoice(SelectableChoiceOption[] choices, int index)
     {
@@ -1125,101 +1129,76 @@ public sealed partial class MainWindow : Window, IDisposable
         HotkeyTextBox.Focus(FocusState.Programmatic);
     }
 
+    /// <summary>The Save button: the controls read into values, the presenter asked, the outcome drawn.</summary>
+    /// <remarks>
+    /// VALUES IN, AN OUTCOME OUT (plan-2 step 11). What the shortcuts must parse to, which fields may
+    /// not share a gesture, what an empty number means, how an index becomes an engine, how much is
+    /// replaced by a save - all of that is SettingsPresenter.SaveGeneralAsync and its tests. What stays
+    /// here is reading the controls on the UI thread before any wait, putting the focus in the field
+    /// the presenter names, showing its message, and applying the theme it returns.
+    /// </remarks>
     private async void SaveSettingsButton_Click(object sender, RoutedEventArgs e)
     {
-        var parsedHotkey = HotkeyGestureParser.Parse(HotkeyTextBox.Text);
-        var parsedCancelHotkey = HotkeyGestureParser.Parse(CancelHotkeyTextBox.Text);
-        var parsedQuickAddHotkey = HotkeyGestureParser.Parse(QuickAddHotkeyTextBox.Text);
-        if (!parsedHotkey.Succeeded || !parsedCancelHotkey.Succeeded || !parsedQuickAddHotkey.Succeeded)
-        {
-            ShowMessage("Shortcut needs attention", "Use supported keys such as F8, Escape, or Ctrl+Alt+W.", InfoBarSeverity.Error);
-            (parsedHotkey.Succeeded
-                ? parsedCancelHotkey.Succeeded ? QuickAddHotkeyTextBox : CancelHotkeyTextBox
-                : HotkeyTextBox).Focus(FocusState.Programmatic);
-            return;
-        }
-
-        var clashes = HotkeyConflictDetector.Find(KeybindFields()
-            .Select(field => (field.Role, field.Box.Text))
-            .ToArray());
-        if (clashes.Count > 0)
-        {
-            ShowMessage("Shortcuts overlap", HotkeyConflictDetector.Describe(clashes), InfoBarSeverity.Error);
-            RefreshKeybindConflicts();
-            return;
-        }
-
-        // An empty field means the default rather than zero. A zero here would be clamped up by
-        // the policy anyway, but storing it would show the user a threshold they never chose.
-        var autoStopSeconds = double.IsNaN(AutoStopSecondsBox.Value)
-            ? DictationPreferences.Default.AutoStopSilenceSeconds
-            : AutoStopSecondsBox.Value;
-        var dictation = new DictationPreferences(
-            (FinalAsrEngine)Math.Clamp(SelectedIndexOf(FinalEngineChoices), 0, 2),
-            parsedHotkey.Gesture!.Value.ToString(),
+        // RAW, INCLUDING "NOTHING SELECTED": the indices go across as -1 when no choice is selected
+        // and the sound pairing as null when none is, so what a missing choice means is the
+        // presenter's decision too, not this handler's.
+        var input = new GeneralSettingsInput(
+            HotkeyTextBox.Text,
+            CancelHotkeyTextBox.Text,
+            QuickAddHotkeyTextBox.Text,
+            RawSelectedIndexOf(FinalEngineChoices),
             WordCorrectionToggle.IsOn,
             FillerRemovalToggle.IsOn,
             EmojiFormatterToggle.IsOn,
             SpokenPunctuationToggle.IsOn,
-            (WhisperLanguagePreference)Math.Clamp(WhisperLanguageComboBox.SelectedIndex, 0, 4),
-            (DictationRecordingMode)Math.Clamp(RecordingModeComboBox.SelectedIndex, 0, 1),
-            parsedCancelHotkey.Gesture!.Value.ToString(),
+            WhisperLanguageComboBox.SelectedIndex,
+            RecordingModeComboBox.SelectedIndex,
             EscapeRecoveryToggle.IsOn,
-            parsedQuickAddHotkey.Gesture!.Value.ToString(),
             AutoStopToggle.IsOn,
-            autoStopSeconds);
-        var polish = new PolishPreferences(
-            PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)),
-            NullIfBlank(PolishModelTextBox.Text),
-            NullIfBlank(OllamaEndpointTextBox.Text));
-        var history = new HistoryPreferences(
+            AutoStopSecondsBox.Value,
+            RawSelectedIndexOf(PolishProviderChoices),
+            PolishModelTextBox.Text,
+            OllamaEndpointTextBox.Text,
             HistoryEnabledToggle.IsOn,
-            RetentionDays.FromField(
-                RetentionDaysBox.Value,
-                fallback: 30,
-                RetentionDays.HistoryMinimum,
-                RetentionDays.HistoryMaximum));
-        var theme = ThemeFromIndex(SelectedIndexOf(ThemeChoices));
-        var observability = new ObservabilityPreferences(
-            LocalDiagnosticsToggle.IsOn,
-            RetentionDays.FromField(
-                DiagnosticRetentionDaysBox.Value,
-                ObservabilityPreferences.Default.DiagnosticRetentionDays,
-                RetentionDays.DiagnosticMinimum,
-                RetentionDays.DiagnosticMaximum),
-            _telemetryAvailable && ShareTelemetryToggle.IsOn);
-        var microphoneId = (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id;
-
-        // THE CONTROL VALUES ARE READ HERE, ON THE UI THREAD, AND APPLIED INSIDE THE GATE. Reading
-        // them is what has to happen now; building the whole record now is what made a save that
-        // waited on another writer overwrite it. The fields above are already captured, so the
-        // transform below touches nothing that can have moved.
-        var preferences = new UserPreferences(
-            dictation,
-            polish,
-            history,
-            theme,
+            RetentionDaysBox.Value,
+            RawSelectedIndexOf(ThemeChoices),
             LivePreviewToggle.IsOn,
-            OverlayPositionFromIndex(SelectedIndexOf(OverlayPositionChoices)),
-            PillDesignWithoutWordsFromControls(),
-            RecordingPillDesign.ReadingWell,
+            RawSelectedIndexOf(OverlayPositionChoices),
+            LevelRailPillButton.IsChecked == true,
             PlayRecordingSoundsToggle.IsOn,
-            SelectedRecordingSoundPairing(),
-            CopyInsteadOfPasteToggle.IsOn);
+            (RecordingSoundComboBox.SelectedItem as RecordingSoundChoice)?.Pairing,
+            CopyInsteadOfPasteToggle.IsOn,
+            LocalDiagnosticsToggle.IsOn,
+            DiagnosticRetentionDaysBox.Value,
+            ShareTelemetryToggle.IsOn,
+            _telemetryAvailable,
+            (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id);
 
-        if (await TrySaveAsync(
-                current => current with
-                {
-                    PreferredMicrophoneId = microphoneId,
-                    Preferences = preferences,
-                    Observability = observability,
-                },
-                "Settings saved",
-                "Theme, Live Preview, pill design, pill position, recording sounds, and local data choices apply now. Engine, microphone, shortcut, and polish changes apply safely on the next launch.")
-            .ConfigureAwait(true))
+        var outcome = await _settingsPresenter.SaveGeneralAsync(input).ConfigureAwait(true);
+        switch (outcome.Status)
         {
-            ApplyTheme(theme);
+            case GeneralSaveStatus.InvalidShortcut:
+                ShowMessage(GeneralSaveOutcome.InvalidShortcutTitle, GeneralSaveOutcome.InvalidShortcutMessage, InfoBarSeverity.Error);
+                (outcome.InvalidField switch
+                {
+                    GeneralShortcutField.Cancel => CancelHotkeyTextBox,
+                    GeneralShortcutField.QuickAdd => QuickAddHotkeyTextBox,
+                    _ => HotkeyTextBox,
+                }).Focus(FocusState.Programmatic);
+                return;
+            case GeneralSaveStatus.OverlappingShortcuts:
+                ShowMessage(GeneralSaveOutcome.OverlappingShortcutsTitle, outcome.Overlap ?? string.Empty, InfoBarSeverity.Error);
+                RefreshKeybindConflicts();
+                return;
+            case GeneralSaveStatus.NotSaved:
+                ShowSettingsRefusal(outcome.Save!.Value.Refusal!.Value);
+                return;
         }
+
+        PublishSettings();
+        ApplySettingsToControls();
+        ShowMessage(GeneralSaveOutcome.SavedTitle, GeneralSaveOutcome.SavedMessage, InfoBarSeverity.Success);
+        ApplyTheme(outcome.Theme!.Value);
     }
 
     /// <summary>Applies a theme the moment it is chosen, and keeps it.</summary>
@@ -2905,12 +2884,17 @@ public sealed partial class MainWindow : Window, IDisposable
         AutoStopSecondsBox.IsEnabled = AutoStopToggle.IsOn;
 
     /// <summary>The three keybind fields, each with the name a person would call it.</summary>
-    private (TextBox Box, string Role)[] KeybindFields() =>
-    [
-        (HotkeyTextBox, "Recording"),
-        (CancelHotkeyTextBox, "Cancel"),
-        (QuickAddHotkeyTextBox, "Add-a-word"),
-    ];
+    /// <summary>The three shortcut fields with the roles the presenter's Save checks them under: the live warning and the refusal share one detector and one set of names.</summary>
+    private (TextBox Box, string Role)[] KeybindFields()
+    {
+        var roles = SettingsPresenter.ShortcutRoles(HotkeyTextBox.Text, CancelHotkeyTextBox.Text, QuickAddHotkeyTextBox.Text);
+        return
+        [
+            (HotkeyTextBox, roles[0].Role),
+            (CancelHotkeyTextBox, roles[1].Role),
+            (QuickAddHotkeyTextBox, roles[2].Role),
+        ];
+    }
 
     private void HotkeyBoxTextChanged(object sender, TextChangedEventArgs e) => RefreshKeybindConflicts();
 
@@ -4584,25 +4568,16 @@ public sealed partial class MainWindow : Window, IDisposable
         _overlayWindow.ApplyTheme(requested);
     }
 
-    private static AppTheme ThemeFromIndex(int index) => index switch
-    {
-        1 => AppTheme.Light,
-        2 => AppTheme.Dark,
-        _ => AppTheme.System,
-    };
+    // THE MAPS BETWEEN A CHOICE'S INDEX AND WHAT IT MEANS ARE THE PRESENTER'S (plan-2 step 11): the
+    // Save reads them there, and the window asks the same ones when it fills its controls or applies
+    // a theme the moment it is chosen, so the two directions cannot drift apart.
+    private static AppTheme ThemeFromIndex(int index) => SettingsPresenter.ThemeFromIndex(index);
 
-    private static int ThemeIndex(AppTheme theme) => theme switch
-    {
-        AppTheme.Light => 1,
-        AppTheme.Dark => 2,
-        _ => 0,
-    };
+    private static int ThemeIndex(AppTheme theme) => SettingsPresenter.ThemeIndex(theme);
 
-    private static OverlayPillPosition OverlayPositionFromIndex(int index) =>
-        index == 1 ? OverlayPillPosition.Bottom : OverlayPillPosition.Top;
+    private static OverlayPillPosition OverlayPositionFromIndex(int index) => SettingsPresenter.OverlayPositionFromIndex(index);
 
-    private static int OverlayPositionIndex(OverlayPillPosition position) =>
-        position == OverlayPillPosition.Bottom ? 1 : 0;
+    private static int OverlayPositionIndex(OverlayPillPosition position) => SettingsPresenter.OverlayPositionIndex(position);
 
     private RecordingPillDesign PillDesignWithoutWordsFromControls() =>
         LevelRailPillButton.IsChecked == true
@@ -4632,15 +4607,7 @@ public sealed partial class MainWindow : Window, IDisposable
             : "Live Preview on · turn Live Preview on to use this";
     }
 
-    private static PolishProvider PolishProviderFromIndex(int index) => index switch
-    {
-        1 => PolishProvider.EgOne,
-        2 => PolishProvider.Ollama,
-        3 => PolishProvider.OpenAI,
-        4 => PolishProvider.Anthropic,
-        5 => PolishProvider.Gemini,
-        _ => PolishProvider.None,
-    };
+    private static PolishProvider PolishProviderFromIndex(int index) => SettingsPresenter.PolishProviderFromIndex(index);
 
     private static bool IsCloudProvider(PolishProvider provider) => ProviderSettingsPresenter.IsCloudProvider(provider);
 
@@ -4657,15 +4624,7 @@ public sealed partial class MainWindow : Window, IDisposable
             ? "An"
             : "A";
 
-    private static int PolishProviderIndex(PolishProvider provider) => provider switch
-    {
-        PolishProvider.EgOne => 1,
-        PolishProvider.Ollama => 2,
-        PolishProvider.OpenAI => 3,
-        PolishProvider.Anthropic => 4,
-        PolishProvider.Gemini => 5,
-        _ => 0,
-    };
+    private static int PolishProviderIndex(PolishProvider provider) => SettingsPresenter.PolishProviderIndex(provider);
 
     private static string? NullIfBlank(string text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
 

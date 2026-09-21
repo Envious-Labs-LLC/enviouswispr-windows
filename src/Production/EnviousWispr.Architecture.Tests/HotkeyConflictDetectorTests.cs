@@ -125,10 +125,21 @@ public sealed class HotkeyConflictDetectorTests
         Assert.Contains("x:Name=\"KeybindConflictText\"", markup, StringComparison.Ordinal);
         Assert.Contains("x:Name=\"KeybindErrorProbe\"", markup, StringComparison.Ordinal);
 
+        // THE SAVE IS THE PRESENTER'S (plan-2 step 11): the window's handler hands the three fields to
+        // SettingsPresenter.SaveGeneralAsync, which asks the detector before anything is stored; the
+        // live warning asks the same detector with the same roles (SettingsPresenter.ShortcutRoles).
         var save = code[code.IndexOf("private async void SaveSettingsButton_Click", StringComparison.Ordinal)..];
-        save = save[..save.IndexOf("AutoStopSecondsBox", StringComparison.Ordinal)];
-        Assert.Contains("HotkeyConflictDetector.Find(", save, StringComparison.Ordinal);
+        save = save[..save.IndexOf("PublishSettings();", StringComparison.Ordinal)];
+        Assert.Contains("_settingsPresenter.SaveGeneralAsync(", save, StringComparison.Ordinal);
+        Assert.DoesNotContain("HotkeyGestureParser.Parse(", save, StringComparison.Ordinal);
         Assert.DoesNotContain("parsedHotkey.Gesture == parsedCancelHotkey.Gesture", save, StringComparison.Ordinal);
+        Assert.Contains("SettingsPresenter.ShortcutRoles(", code[code.IndexOf("KeybindFields()", StringComparison.Ordinal)..], StringComparison.Ordinal);
+
+        var presenter = File.ReadAllText(Path.Combine(Path.GetDirectoryName(AppSourcePath("MainWindow.xaml"))!, "..", "EnviousWispr.Presentation", "SettingsPresenter.cs"));
+        var general = presenter[presenter.IndexOf("SaveGeneralAsync(GeneralSettingsInput input)", StringComparison.Ordinal)..];
+        general = general[..general.IndexOf("var dictation = ", StringComparison.Ordinal)];
+        Assert.Contains("HotkeyConflictDetector.Find(ShortcutRoles(input))", general, StringComparison.Ordinal);
+        Assert.Contains("HotkeyGestureParser.Parse(", general, StringComparison.Ordinal);
     }
 
     private static string AppSourcePath(string fileName)
