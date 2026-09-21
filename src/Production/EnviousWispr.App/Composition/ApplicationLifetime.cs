@@ -26,6 +26,14 @@ public sealed record LifetimeStep(string Name, Func<Task> Run)
 /// <param name="CloseAdmission">Closes the session's admission; synchronous, run before the first await.</param>
 /// <param name="DrainPresentation">Closes the presentation's gate, stops and joins the work inside it, and finishes the settings write in flight, so a choice just made is not lost and nothing of the window's is still inside what the exit disposes.</param>
 /// <param name="ShellClosing">What the shell does once the settings are safe and before anything is torn down: its windows, its own log line.</param>
+/// <param name="AbortPolishRuntime">
+/// The shell's exit policy for the local polish runtime, run right after the shell closes and before
+/// the finalisation is cancelled or the session asked to shut down: the runtime's process is ended by
+/// force, synchronously - killed with its tree and its handles disposed before this returns - so a
+/// polish in flight fails at once and the finalisation goes on with the unpolished words rather than
+/// holding the budget for an answer that is not coming. The provider's own disposal, later, finds
+/// nothing to stop. Nothing when no local runtime was started.
+/// </param>
 /// <param name="CancelProcessing">The shell's exit policy for a transcription in flight, made before the session is asked to shut down.</param>
 /// <param name="ReleaseInputs">The input sources, unsubscribed and disposed first so nothing new arrives.</param>
 /// <param name="ShutDownSession">The session's own shutdown under the budget it is handed (step 8); null when the shell owns no session.</param>
@@ -45,6 +53,7 @@ public sealed record LifetimeParts(
     Action CloseAdmission,
     Func<Task> DrainPresentation,
     Action ShellClosing,
+    Action AbortPolishRuntime,
     Action CancelProcessing,
     IReadOnlyList<LifetimeStep> ReleaseInputs,
     Func<TimeSpan, Task<ShutdownReport>>? ShutDownSession,
@@ -242,6 +251,7 @@ public sealed class ApplicationLifetime
         Try("admission", _parts.CloseAdmission, failed);
         await RunAsync(new LifetimeStep("presentation drain", _parts.DrainPresentation), budget, outstanding, failed);
         Try("shell closing", _parts.ShellClosing, failed);
+        Try("polish runtime abort", _parts.AbortPolishRuntime, failed);
         lock (_lock)
         {
             _preparationOutstanding = outstanding;

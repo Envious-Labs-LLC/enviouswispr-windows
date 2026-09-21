@@ -23,7 +23,10 @@ build so customers do not need to install developer tooling.
   stores plus a `RuntimeShell` of leaf reads (settings, engines, the capture, the coordinator) and an
   `IRuntimeView` of the preview, recovery and history sinks; its `SessionQueue` is the one route a
   key, the auto-stop and the watchdog take to the coordinator. `App.xaml.cs` keeps the concrete
-  selection, the two dispatcher-bound view forwarders and the session teardown.
+  selection, the two dispatcher-bound view forwarders and its three parts of the session's disposal
+  (observers off the capture, references let go, the delivery route disposed), each one operation,
+  called in the executor's order; the inventory of every callback it supplies is the "Session
+  ownership inventory" in `pipeline.md`.
 - `Core`: shared value types, settings contracts, errors, and session state.
 - `Audio`: WASAPI capture, device selection, resampling, and level monitoring.
 - `ASR`: engine-neutral transcription contracts and adapters.

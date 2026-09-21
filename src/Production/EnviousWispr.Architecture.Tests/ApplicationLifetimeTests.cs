@@ -157,6 +157,28 @@ public sealed class ApplicationLifetimeTests
     }
 
     [Fact]
+    public async Task ThePolishRuntimeIsAbortedAfterTheShellClosesAndBeforeTheExitPolicy()
+    {
+        // THE ABORT IS THE LIFETIME'S STEP, IN ITS ORDER: admission closed, the presentation drained,
+        // the shell closed, then the local polish runtime ended by force - before the finalisation is
+        // cancelled and before the session is asked to shut down, so a polish in flight fails at
+        // once rather than holding the budget. One that throws is a failed step, named; the exit
+        // goes on.
+        var clock = new Deterministic.ManualClock();
+        var world = World.Create(clock);
+        world.PolishAbortThrows = true;
+
+        var report = await world.Lifetime.ExitAsync().WaitAsync(Patience);
+
+        Assert.Equal(["admission", "presentation drain", "shell closing", "polish runtime abort", "exit policy"], world.Prepared);
+        Assert.Equal(1, world.PolishAborts);
+        Assert.Equal(["polish runtime abort"], report.Failed);
+        Assert.Equal(ExitOutcome.Unclean, report.Outcome);
+        Assert.False(report.Retained);
+        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency", "second dependency", "shell", "run-state store"], world.Ran);
+    }
+
+    [Fact]
     public async Task RepeatedDisposeDoesNotRepeatEffects()
     {
         // EVERY PATH OUT REACHES THE SAME TWO TASKS. Prepared twice and exited three times, from three
@@ -565,6 +587,11 @@ public sealed class ApplicationLifetimeTests
         public int AdmissionClosedCount { get; private set; }
         public int DrainCalls { get; private set; }
         public int ShellClosingCalls { get; private set; }
+        public int PolishAborts { get; private set; }
+        /// <summary>When set, the polish runtime's abort throws.</summary>
+        public bool PolishAbortThrows { get; set; }
+        /// <summary>The preparation's steps and the exit policy, in the order they were called.</summary>
+        public List<string> Prepared { get; } = [];
         public int CompleteRunCalls { get; private set; }
         public int LoggerDisposals { get; private set; }
         public bool LoggerDisposed => LoggerDisposals > 0;
@@ -622,20 +649,36 @@ public sealed class ApplicationLifetimeTests
                 CloseAdmission: () =>
                 {
                     world!.AdmissionClosedCount++;
+                    world.Prepared.Add("admission");
                     coordinator?.Close();
                 },
                 DrainPresentation: () =>
                 {
                     world!.DrainCalls++;
+                    world.Prepared.Add("presentation drain");
                     world.Entered("presentation drain");
                     return world.Drain?.Task ?? Task.CompletedTask;
                 },
                 ShellClosing: () =>
                 {
                     world!.ShellClosingCalls++;
+                    world.Prepared.Add("shell closing");
                     world.ShellClosingBlocks?.Invoke();
                 },
-                CancelProcessing: () => coordinator?.CancelProcessing(),
+                AbortPolishRuntime: () =>
+                {
+                    world!.PolishAborts++;
+                    world.Prepared.Add("polish runtime abort");
+                    if (world.PolishAbortThrows)
+                    {
+                        throw new InvalidOperationException("the runtime's process could not be ended");
+                    }
+                },
+                CancelProcessing: () =>
+                {
+                    world!.Prepared.Add("exit policy");
+                    coordinator?.CancelProcessing();
+                },
                 ReleaseInputs: [Step("inputs", () => world!)],
                 ShutDownSession: coordinator is null ? null : budget => coordinator.ShutdownAsync(budget),
                 Quiesce:

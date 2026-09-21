@@ -11,16 +11,17 @@ namespace EnviousWispr.App.Composition;
 
 /// <summary>The shell's leaf reads and notifications the session's wiring needs; nothing here sequences anything.</summary>
 /// <remarks>
-/// EVERY MEMBER IS A VALUE READ AT THE CALL, ONE NOTIFICATION, OR ONE DISPOSAL LIST. The reads change
+/// EVERY MEMBER IS A VALUE READ AT THE CALL, ONE NOTIFICATION, OR ONE OPERATION. The reads change
 /// under the session (an engine loads, a word is taught, a setting is saved), which is why they are
-/// reads and not values. <see cref="TearDownSession"/> is the shell's own disposals - the capture's
-/// event, the controller, the delivery route - and nothing about when: the executor's teardown runs
-/// it only once the session is quiescent and the background work has stopped under the shutdown's
-/// budget (<c>DictationSessionExecutor.TearDownAsync</c>), and a budget that runs out first runs
-/// nothing. <see cref="AttachedSession"/> is the shell's own view of the session in flight - null
-/// once its teardown has let go of the controller, which a disposed controller does not say for
-/// itself. The inventory of every member's body, and of every other callback the shell supplies, is
-/// the "Session ownership inventory" in <c>.claude/knowledge/pipeline.md</c>.
+/// reads and not values. The three teardown members are the shell's parts of the session's disposal,
+/// one operation each, called in the executor's order (<c>DictationSessionExecutor.DisposeSessionAsync</c>:
+/// observers off the capture, the controller disposed by the executor itself, the references let go,
+/// the route disposed) once the session is quiescent and the background work has stopped under the
+/// shutdown's budget; the shell decides nothing about when. <see cref="AttachedSession"/> is the
+/// shell's own view of the session in flight - null once <see cref="ReleaseSession"/> has let go of
+/// the controller, which a disposed controller does not say for itself. The inventory of every
+/// member's body, and of every other callback the shell supplies, is the "Session ownership
+/// inventory" in <c>.claude/knowledge/pipeline.md</c>.
 /// </remarks>
 public sealed record SessionShell(
     ISessionView View,
@@ -33,7 +34,9 @@ public sealed record SessionShell(
     Func<Guid?> RunId,
     Action<bool> RecordingActive,
     Action<CapturedAudio> ArchiveAudio,
-    Func<Task> TearDownSession);
+    Action DetachCaptureObservers,
+    Action ReleaseSession,
+    Action DisposeDeliveryRoute);
 
 /// <summary>Everything the session's production wiring is built from.</summary>
 /// <remarks>

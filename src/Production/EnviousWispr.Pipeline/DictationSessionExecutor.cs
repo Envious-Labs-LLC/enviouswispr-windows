@@ -75,13 +75,26 @@ public interface IDictationSessionEffects
     void ShowInterruptionPending();
 
     /// <summary>
-    /// Shutdown: the session-specific disposal - the timers, streaming and the preview stopped, the
-    /// capture let go of, the session controller and the delivery route disposed. Run only once the
-    /// session is quiescent - no command running, no expiry outstanding, no hold out; when the
-    /// shutdown's budget runs out first, nothing is disposed and the report says what is still
-    /// outstanding.
+    /// Teardown, first: the shell's own observers come off the capture - the level meter - so the
+    /// controller's disposal below is not reported to a window that is closing. One unsubscription.
     /// </summary>
-    Task TearDownSessionAsync();
+    void DetachCaptureObservers();
+
+    /// <summary>
+    /// Teardown, after the executor has disposed the controller (and with it the capture the
+    /// controller owns): the shell lets go of its references to both, so its view of the attached
+    /// session answers null from here. Called whether or not the disposal threw.
+    /// </summary>
+    void ReleaseSession();
+
+    /// <summary>
+    /// Teardown, last: the delivery route the shell built - the target adapter and the delivery over
+    /// it - disposed and let go of. One disposal.
+    /// </summary>
+    void DisposeDeliveryRoute();
+
+    /// <summary>A teardown step threw: the log line. The teardown goes on to the next step.</summary>
+    void RecordTeardownFailure();
 
     /// <summary>The recording ran to its limit and was aborted: the log line.</summary>
     void RecordRecordingTimedOut(AppError failure);
@@ -217,15 +230,22 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     /// <summary>
     /// The session's teardown, run by the coordinator's shutdown only once nothing is using the session:
     /// the watchdog and the background work stopped under the deadline, each saying whether it finished,
-    /// then - only behind owners that all finished - the shell's own disposal of the controller and the
-    /// delivery route through the port, joined under what is left of the same deadline.
+    /// then - only behind owners that all finished - the session's disposal in this executor's order,
+    /// joined under what is left of the same deadline.
     /// </summary>
     /// <remarks>
     /// ONE DEADLINE, HANDED ON AS WHAT IS LEFT OF IT. The watchdog, the three background owners and
-    /// the shell's disposal are stopped one after another, and each is given the remainder - not the
-    /// whole again - so the teardown as a whole ends inside the deadline it was given. A shell disposal
-    /// still running past it is reported, not waited for; the shell reads the report before it
-    /// disposes anything else the session uses.
+    /// the disposal are stopped one after another, and each is given the remainder - not the whole
+    /// again - so the teardown as a whole ends inside the deadline it was given. Given nothing left,
+    /// each is still issued and observed, and a disposal still running past the remainder is reported,
+    /// not waited for; the shell reads the report before it disposes anything else the session uses.
+    ///
+    /// THE DISPOSAL'S ORDER IS THIS CLASS'S (<see cref="DisposeSessionAsync"/>): the shell's observers
+    /// off the capture first, so a closing window is not told about the stop; the controller, which
+    /// cancels a recording still open and disposes the capture it owns; the shell's references let go;
+    /// the delivery route last, since nothing delivers once the controller is gone. Each of the
+    /// shell's parts is one operation behind the port; a step that throws is recorded and the next
+    /// still runs, and the report says the disposal faulted.
     /// </remarks>
     public async Task<SessionTeardownReport> TearDownAsync(TimeSpan deadline)
     {
@@ -235,13 +255,49 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         var background = await _background.StopAsync(budget.Left).ConfigureAwait(false);
         if (watchdog != StopOutcome.Completed || !background.Completed)
         {
-            // AN OWNER STILL RUNNING STILL USES THE CAPTURE AND THE CONTROLLER: the shell's disposal of
-            // them is not run beside it. The report says which owner, and that the shell did not run.
-            return new SessionTeardownReport(watchdog, background, Shell: null);
+            // AN OWNER STILL RUNNING STILL USES THE CAPTURE AND THE CONTROLLER: the disposal is not run
+            // beside it. The report says which owner, and that the disposal did not run.
+            return new SessionTeardownReport(watchdog, background, Disposal: null);
         }
 
-        var shell = await BoundedJoin.JoinAsync(_effects.TearDownSessionAsync(), budget.Left, _clock).ConfigureAwait(false);
-        return new SessionTeardownReport(watchdog, background, shell);
+        var disposal = DisposeSessionAsync();
+        var outcome = await BoundedJoin.JoinAsync(disposal, budget.Left, _clock).ConfigureAwait(false);
+        var faulted = disposal.IsCompletedSuccessfully && disposal.Result;
+        return new SessionTeardownReport(watchdog, background, outcome, faulted);
+    }
+
+    /// <summary>The session's disposal, in order; true when a step threw.</summary>
+    private async Task<bool> DisposeSessionAsync()
+    {
+        var faulted = !TryStep(_effects.DetachCaptureObservers);
+        try
+        {
+            await _controller.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            _effects.RecordTeardownFailure();
+            faulted = true;
+        }
+
+        faulted |= !TryStep(_effects.ReleaseSession);
+        faulted |= !TryStep(_effects.DisposeDeliveryRoute);
+        return faulted;
+    }
+
+    /// <summary>Runs one of the shell's teardown steps; false, and recorded, when it threw.</summary>
+    private bool TryStep(Action step)
+    {
+        try
+        {
+            step();
+            return true;
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            _effects.RecordTeardownFailure();
+            return false;
+        }
     }
 
     public Task<SessionCommandResult> ExecuteAsync(SessionCommand command, CancellationToken stoppingToken)

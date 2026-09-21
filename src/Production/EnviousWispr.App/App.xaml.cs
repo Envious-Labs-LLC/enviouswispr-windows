@@ -99,7 +99,6 @@ public partial class App : Application, IAsyncDisposable
     private DeterministicTextOptions _deterministicTextOptions =
         DeterministicTextOptions.From(DictationPreferences.Default);
     private bool _disposed;
-    private bool _sessionTornDownCleanly = true;
     private bool _exitRequested;
     private ApplicationLifetime? _lifetime;
     private WindowPresentationSession? _presentation;
@@ -1036,9 +1035,9 @@ public partial class App : Application, IAsyncDisposable
         ShellClosing: () =>
         {
             _window?.ShutdownProductWindows();
-            (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately();
             _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellClosed));
         },
+        AbortPolishRuntime: () => (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately(),
         // THE EXIT POLICY: a transcription in flight is cut short rather than waited for, and so is the
         // polish warm-up; the session's shutdown then waits for the cut to land. Cancellation is not
         // quiescence - the shutdown's report says whether it landed.
@@ -1107,20 +1106,9 @@ public partial class App : Application, IAsyncDisposable
         ],
         DisposeSessionDependencies:
         [
-            // A shell that never composed a session tears its controller down here, in the session's
-            // place; one that did has had the coordinator do it under the session.
-            new LifetimeStep("session teardown", async () =>
-            {
-                if (_sessionCoordinator is null)
-                {
-                    await TearDownSessionAsync().ConfigureAwait(true);
-                }
-
-                if (!_sessionTornDownCleanly)
-                {
-                    throw new InvalidOperationException("The session teardown reported a failure.");
-                }
-            }),
+            // THE SESSION ITSELF IS NOT HERE: the controller, its capture and the delivery route are
+            // disposed by the executor's teardown under the session's shutdown, in its order, and a
+            // shell that never composed a coordinator never built them either.
             new LifetimeStep("preview engine", async () =>
             {
                 if (_previewEngine is { } engine)
@@ -1215,40 +1203,6 @@ public partial class App : Application, IAsyncDisposable
         public void Terminate(ExitReport report) => Environment.Exit(ExitCode);
     }
 
-    private async Task<bool> TryCleanupAsync(Func<Task> cleanup)
-    {
-        try
-        {
-            await cleanup().ConfigureAwait(true);
-            return true;
-        }
-        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
-        {
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.UnhandledFailure,
-                AppFailureCategory.Recovery));
-            return false;
-        }
-    }
-
-    private bool TryCleanup(Action cleanup)
-    {
-        try
-        {
-            cleanup();
-            return true;
-        }
-        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
-        {
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.UnhandledFailure,
-                AppFailureCategory.Recovery));
-            return false;
-        }
-    }
-
     private void ConfigurePushToTalk(DictationPreferences preferences)
     {
         if (!WindowsPushToTalkHook.TryCreate(
@@ -1314,7 +1268,9 @@ public partial class App : Application, IAsyncDisposable
                 RunId: () => _runId,
                 RecordingActive: active => _pushToTalkHook?.SetRecordingActive(active),
                 ArchiveAudio: audio => ArchiveDictationAudio(audio),
-                TearDownSession: TearDownSessionAsync),
+                DetachCaptureObservers: DetachCaptureObservers,
+                ReleaseSession: ReleaseSession,
+                DisposeDeliveryRoute: DisposeDeliveryRoute),
             TimeProvider.System));
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
         // A saved keybind builds a NEW hook, which starts armed and knows nothing about a capture
@@ -2226,39 +2182,34 @@ public partial class App : Application, IAsyncDisposable
                 app._window?.ReportDeliveryAndMaybeOfferLanguage(delivered, detectedLanguage));
     }
 
-    /// <summary>
-    /// The session-specific disposal, run by the coordinator after its last command: the timers,
-    /// streaming and the preview stopped; the capture let go of; the session controller and the
-    /// delivery route disposed. The engines and the rest of the shell follow in the shell.
-    /// </summary>
-    private async Task TearDownSessionAsync()
+    // THE SHELL'S THREE PARTS OF THE SESSION'S DISPOSAL, one operation each. The executor's teardown
+    // calls them in its order, around its own disposal of the controller, once the session is
+    // quiescent and the background work has stopped; a part that throws is recorded by the executor
+    // and the next still runs. Nothing here waits, orders or decides.
+
+    /// <summary>The level meter comes off the capture, so a closing window is not told about the stop.</summary>
+    private void DetachCaptureObservers()
     {
-        // THE BACKGROUND WORK IS THE EXECUTOR'S TO STOP, under the shutdown's deadline, before this is
-        // reached; what is left here is the shell's own: the capture's event, the controller, the
-        // delivery route.
-        var clean = true;
-        if (_audioCapture is not null)
+        if (_audioCapture is { } capture)
         {
-            _audioCapture.LevelChanged -= OnAudioLevelChanged;
+            capture.LevelChanged -= OnAudioLevelChanged;
         }
+    }
 
-        if (_sessionController is not null)
-        {
-            clean &= await TryCleanupAsync(
-                async () => await _sessionController.DisposeAsync().ConfigureAwait(true))
-                .ConfigureAwait(true);
-            _sessionController = null;
-            _audioCapture = null;
-        }
+    /// <summary>The controller and its capture have been disposed by the executor: the references go.</summary>
+    private void ReleaseSession()
+    {
+        _sessionController = null;
+        _audioCapture = null;
+    }
 
-        if (_textTargetAdapter is not null)
-        {
-            clean &= TryCleanup(_textTargetAdapter.Dispose);
-        }
-
+    /// <summary>The delivery route is disposed and let go of.</summary>
+    private void DisposeDeliveryRoute()
+    {
+        var adapter = _textTargetAdapter;
         _textTargetAdapter = null;
         _textDelivery = null;
-        _sessionTornDownCleanly = clean;
+        adapter?.Dispose();
     }
 
     /// <summary>

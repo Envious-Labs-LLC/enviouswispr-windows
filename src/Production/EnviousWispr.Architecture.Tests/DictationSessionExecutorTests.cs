@@ -347,42 +347,96 @@ public sealed class DictationSessionExecutorTests
     }
 
     [Fact]
-    public async Task TheTeardownHandsOneDeadlineDownAsWhatIsLeftOfItAndJoinsTheShellsTeardownUnderTheRest()
+    public async Task TheTeardownHandsOneDeadlineDownAsWhatIsLeftOfItAndJoinsTheDisposalUnderTheRest()
     {
         // ONE DEADLINE, NOT ONE PER OWNER. The watchdog's stop takes a second, the background's stop
-        // takes another; each was handed what was left when it began, and the shell's teardown after
-        // them is joined under the remainder. The report says every owner and the shell finished.
+        // takes another; each was handed what was left when it began, and the disposal after them is
+        // joined under the remainder. THE DISPOSAL'S ORDER IS THE EXECUTOR'S: the shell's observers
+        // off the capture, then the controller (its capture with it), then the shell's references,
+        // then the delivery route. The report says every owner and the disposal finished.
         var clock = new Deterministic.ManualClock();
-        var (executor, _, effects, _, _) = BuildWithFinalization(clock: clock);
+        var (executor, capture, effects, _, _) = BuildWithFinalization(clock: clock);
         var background = TracingBackgroundWork.Instance!;
         background.SpendOnStop = () => clock.Advance(TimeSpan.FromSeconds(1));
+        capture.OnDispose = () => effects.Trace.Add("Capture:Dispose");
 
         var report = await executor.TearDownAsync(TimeSpan.FromSeconds(4)).WaitAsync(Patience);
 
         Assert.Equal(
-            ["Background:StopWatchdog:4s", "Background:StopWatchdog", "Background:Stop:3s", "Background:Stop", "TearDownSession"],
+            [
+                "Background:StopWatchdog:4s", "Background:StopWatchdog", "Background:Stop:3s", "Background:Stop",
+                "DetachCaptureObservers", "Capture:Dispose", "ReleaseSession", "DisposeDeliveryRoute",
+            ],
             effects.Trace);
         Assert.Equal(StopOutcome.Completed, report.Watchdog);
         Assert.True(report.Background.Completed);
-        Assert.Equal(StopOutcome.Completed, report.Shell);
+        Assert.Equal(StopOutcome.Completed, report.Disposal);
+        Assert.False(report.DisposalFaulted);
         Assert.True(report.Completed);
     }
 
     [Fact]
-    public async Task TheShellsTeardownIsNotRunBehindAnOwnerThatHadNotFinished()
+    public async Task TheDisposalCancelsARecordingStillOpenBeforeTheCaptureGoes()
     {
-        // AN OWNER STILL RUNNING STILL USES WHAT THE SHELL WOULD DISPOSE. The preview outlived its
-        // deadline: the capture and the controller are its, the shell's teardown is not run, and the
-        // report says which owner and that the shell did not run - the teardown is not complete.
+        // THE CONTROLLER'S DISPOSAL IS PART OF THE SEQUENCE, NOT AN OPAQUE EFFECT: a recording still
+        // open when the teardown runs is cancelled by the controller before its capture is disposed.
+        var (executor, capture, effects, controller, _) = BuildWithFinalization(clock: new Deterministic.ManualClock());
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        Assert.Equal(DictationSessionState.Recording, controller.CurrentSession?.State);
+        effects.Trace.Clear();
+        capture.OnDispose = () => effects.Trace.Add("Capture:Dispose");
+
+        var report = await executor.TearDownAsync(TimeSpan.FromSeconds(4)).WaitAsync(Patience);
+
+        Assert.Equal(1, capture.CancelCount);
+        Assert.Equal(
+            ["Background:StopWatchdog:4s", "Background:StopWatchdog", "Background:Stop:4s", "Background:Stop", "DetachCaptureObservers", "Capture:Dispose", "ReleaseSession", "DisposeDeliveryRoute"],
+            effects.Trace);
+        Assert.True(report.Completed);
+    }
+
+    [Fact]
+    public async Task AStepOfTheDisposalThatThrowsIsRecordedAndTheStepsAfterItStillRun()
+    {
+        // A FAULT IS OVER, NOT OUTSTANDING. The route's disposal throws: it is recorded, the sequence
+        // has already let the references go, and the report says the disposal finished and faulted -
+        // so the shutdown is quiescent but not clean.
+        var (executor, capture, effects, _, _) = BuildWithFinalization(clock: new Deterministic.ManualClock());
+        capture.OnDispose = () => throw new InvalidOperationException("the device is gone");
+        effects.DisposeDeliveryRouteThrows = true;
+
+        var report = await executor.TearDownAsync(TimeSpan.FromSeconds(4)).WaitAsync(Patience);
+
+        Assert.Equal(
+            [
+                "Background:StopWatchdog:4s", "Background:StopWatchdog", "Background:Stop:4s", "Background:Stop",
+                "DetachCaptureObservers", "RecordTeardownFailure", "ReleaseSession", "DisposeDeliveryRoute", "RecordTeardownFailure",
+            ],
+            effects.Trace);
+        Assert.Equal(StopOutcome.Completed, report.Disposal);
+        Assert.True(report.DisposalFaulted);
+        Assert.True(report.Completed);
+        var shutdown = new ShutdownReport(ShutdownOutcome.Quiescent, false, false, false, 0, report);
+        Assert.True(shutdown.SessionQuiescent);
+        Assert.False(shutdown.Clean);
+    }
+
+    [Fact]
+    public async Task TheDisposalIsNotRunBehindAnOwnerThatHadNotFinished()
+    {
+        // AN OWNER STILL RUNNING STILL USES WHAT THE DISPOSAL WOULD DISPOSE. The preview outlived its
+        // deadline: the capture and the controller are its, the disposal is not run, and the
+        // report says which owner and that the disposal did not run - the teardown is not complete.
         var (executor, _, effects, _) = Build();
         TracingBackgroundWork.Instance!.BoundedStopReport = new BackgroundStopReport(
             StopOutcome.Completed, StopOutcome.Completed, StopOutcome.StillRunning);
 
         var report = await executor.TearDownAsync(TimeSpan.FromSeconds(4)).WaitAsync(Patience);
 
-        Assert.DoesNotContain("TearDownSession", effects.Trace);
+        Assert.DoesNotContain("DetachCaptureObservers", effects.Trace);
+        Assert.DoesNotContain("ReleaseSession", effects.Trace);
         Assert.Equal(StopOutcome.StillRunning, report.Background.Preview);
-        Assert.Null(report.Shell);
+        Assert.Null(report.Disposal);
         Assert.False(report.Completed);
     }
 
@@ -391,33 +445,34 @@ public sealed class DictationSessionExecutorTests
     {
         // ZERO IS A DEADLINE, NOT A REFUSAL. The budget the shutdown had is spent; the teardown is
         // still asked for, so every owner is cancelled and looked at - a finished one reports
-        // finished - and the shell's teardown is issued and observed at once: a held one is reported
-        // still running rather than waited for, on a clock nobody advances.
+        // finished - and the disposal is issued and observed at once: one held inside the capture's
+        // disposal is reported still running rather than waited for, on a clock nobody advances.
         var clock = new Deterministic.ManualClock();
-        var (executor, _, effects, _, _) = BuildWithFinalization(clock: clock);
-        effects.HoldTearDown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (executor, capture, effects, _, _) = BuildWithFinalization(clock: clock);
+        capture.HoldDispose = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var report = await executor.TearDownAsync(TimeSpan.Zero).WaitAsync(Patience);
 
         Assert.Equal(
-            ["Background:StopWatchdog:0s", "Background:StopWatchdog", "Background:Stop:0s", "Background:Stop", "TearDownSession"],
+            ["Background:StopWatchdog:0s", "Background:StopWatchdog", "Background:Stop:0s", "Background:Stop", "DetachCaptureObservers"],
             effects.Trace);
         Assert.Equal(StopOutcome.Completed, report.Watchdog);
         Assert.True(report.Background.Completed);
-        Assert.Equal(StopOutcome.StillRunning, report.Shell);
+        Assert.Equal(StopOutcome.StillRunning, report.Disposal);
+        Assert.False(report.DisposalFaulted);
         Assert.False(report.Completed);
-        effects.HoldTearDown.SetResult();
+        capture.HoldDispose.SetResult();
     }
 
     [Fact]
-    public async Task AShellTeardownThatOutlivesWhatIsLeftIsReportedNotWaitedFor()
+    public async Task ADisposalThatOutlivesWhatIsLeftIsReportedNotWaitedFor()
     {
-        // THE SHELL'S TEARDOWN IS UNDER THE SAME DEADLINE. Two seconds of four are left when it is
-        // issued; it is still held when they pass; the report says so and the teardown returns.
+        // THE DISPOSAL IS UNDER THE SAME DEADLINE. Two seconds of four are left when it is issued; the
+        // capture's disposal is still held when they pass; the report says so and the teardown returns.
         var clock = new Deterministic.ManualClock();
-        var (executor, _, effects, _, _) = BuildWithFinalization(clock: clock);
+        var (executor, capture, effects, _, _) = BuildWithFinalization(clock: clock);
         TracingBackgroundWork.Instance!.SpendOnStop = () => clock.Advance(TimeSpan.FromSeconds(1));
-        effects.HoldTearDown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        capture.HoldDispose = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var teardown = executor.TearDownAsync(TimeSpan.FromSeconds(4));
         await clock.WhenRegistered(1).WaitAsync(Patience);
@@ -425,10 +480,11 @@ public sealed class DictationSessionExecutorTests
         clock.Advance(TimeSpan.FromSeconds(2));
 
         var report = await teardown.WaitAsync(Patience);
-        Assert.Equal(StopOutcome.StillRunning, report.Shell);
+        Assert.Equal(StopOutcome.StillRunning, report.Disposal);
         Assert.False(report.Completed);
-        Assert.Contains("TearDownSession", effects.Trace);
-        effects.HoldTearDown.SetResult();
+        Assert.Contains("DetachCaptureObservers", effects.Trace);
+        Assert.DoesNotContain("ReleaseSession", effects.Trace);
+        capture.HoldDispose.SetResult();
     }
 
     [Fact]
@@ -826,14 +882,23 @@ public sealed class DictationSessionExecutorTests
 
         public void ShowInterruptionPending() => Trace.Add("ShowInterruptionPending");
 
-        /// <summary>When set, the shell's teardown does not return until it is completed.</summary>
-        public TaskCompletionSource? HoldTearDown { get; set; }
+        /// <summary>When set, the route's disposal throws.</summary>
+        public bool DisposeDeliveryRouteThrows { get; set; }
 
-        public Task TearDownSessionAsync()
+        public void DetachCaptureObservers() => Trace.Add("DetachCaptureObservers");
+
+        public void ReleaseSession() => Trace.Add("ReleaseSession");
+
+        public void DisposeDeliveryRoute()
         {
-            Trace.Add("TearDownSession");
-            return HoldTearDown?.Task ?? Task.CompletedTask;
+            Trace.Add("DisposeDeliveryRoute");
+            if (DisposeDeliveryRouteThrows)
+            {
+                throw new InvalidOperationException("the adapter would not close");
+            }
         }
+
+        public void RecordTeardownFailure() => Trace.Add("RecordTeardownFailure");
 
         public void RecordRecordingTimedOut(AppError failure) => Trace.Add($"RecordRecordingTimedOut:{failure.Code}");
 
@@ -1023,6 +1088,19 @@ public sealed class DictationSessionExecutorTests
             return Task.FromResult(new AudioOperationResult(Succeeded: true));
         }
 
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        /// <summary>When set, the disposal does not finish until it is completed.</summary>
+        public TaskCompletionSource? HoldDispose { get; set; }
+
+        /// <summary>When set, run as the disposal begins: a trace, or a throw.</summary>
+        public Action? OnDispose { get; set; }
+
+        public async ValueTask DisposeAsync()
+        {
+            OnDispose?.Invoke();
+            if (HoldDispose is { } hold)
+            {
+                await hold.Task;
+            }
+        }
     }
 }
