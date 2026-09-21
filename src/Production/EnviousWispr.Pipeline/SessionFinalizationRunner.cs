@@ -50,7 +50,6 @@ public interface ISessionFinalizationEffects
     ITextDelivery? Delivery { get; }
 
     /// <summary>The language delivery should be told, or null when the engine's answer is not to be trusted.</summary>
-    string? DeliveryLanguage(Transcript transcript);
 
     /// <summary>
     /// The settings the text decisions run under, read AFTER transcription, at the moment they are
@@ -59,7 +58,6 @@ public interface ISessionFinalizationEffects
     /// </summary>
     FinalizationOptions CurrentOptions();
 
-    void ClearEscapeRecoveryForSession();
 
     void ArchiveAudio(CapturedAudio audio);
 
@@ -175,7 +173,6 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
     {
         ArgumentNullException.ThrowIfNull(audio);
         using var dictation = DictationScope.Begin(sessionId.Value);
-        _effects.ClearEscapeRecoveryForSession();
         var engine = _effects.Engine;
         if (engine is null)
         {
@@ -218,7 +215,7 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                     _effects.ShowDelivering();
                     _effects.RecordDeliveryStarted();
                     var deliveryTimer = Stopwatch.StartNew();
-                    var language = _effects.DeliveryLanguage(transcript);
+                    var language = DeliveryLanguagePolicy.For(transcript);
                     var result = await delivery.DeliverAsync(
                         new TextDeliveryRequest(
                             processed.Output,

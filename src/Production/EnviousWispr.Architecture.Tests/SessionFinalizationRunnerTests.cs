@@ -38,7 +38,7 @@ public sealed class SessionFinalizationRunnerTests
         Assert.Null(world.Controller.CurrentSession);
         Assert.Equal(
             [
-                "ClearEscapeRecovery", "ShowTranscribing", "RecordTranscriptionStarted", "ArchiveAudio",
+                "ShowTranscribing", "RecordTranscriptionStarted", "ArchiveAudio",
                 "RecordTranscriptionFinished", "CurrentOptions", "SaveRecovery:hello world", "ShowDelivering", "RecordDeliveryStarted",
                 "Deliver:hello world", "RecordDelivery:delivered=True", "ClearRecovery", "HistoryChanged", "ReportDelivery", "RecordDictationCompleted",
             ],
@@ -88,7 +88,7 @@ public sealed class SessionFinalizationRunnerTests
         Assert.Equal(FinalizationOutcome.EngineUnavailable, report.Outcome);
         Assert.Null(world.Controller.CurrentSession);
         Assert.Empty(world.Delivery.Requests);
-        Assert.Equal(["ClearEscapeRecovery", "RecordTranscriptionUnavailable", "ShowTranscriptionUnavailable"], world.Trace);
+        Assert.Equal(["RecordTranscriptionUnavailable", "ShowTranscriptionUnavailable"], world.Trace);
     }
 
     [Fact]
@@ -105,7 +105,7 @@ public sealed class SessionFinalizationRunnerTests
         Assert.Empty(world.Delivery.Requests);
         Assert.Empty(world.History.Added);
         Assert.Equal(
-            ["ClearEscapeRecovery", "ShowTranscribing", "RecordTranscriptionStarted", "ArchiveAudio", "RecordTranscriptionFailed:TranscriptionFailed", "ShowTranscriptionFailed", "RecordDictationCompleted"],
+            ["ShowTranscribing", "RecordTranscriptionStarted", "ArchiveAudio", "RecordTranscriptionFailed:TranscriptionFailed", "ShowTranscriptionFailed", "RecordDictationCompleted"],
             world.Trace);
     }
 
@@ -140,7 +140,7 @@ public sealed class SessionFinalizationRunnerTests
     }
 
     [Fact]
-    public async Task AnEscapeRecoveryKeepsTheWordsDeliversNothingAndSaysSo()
+    public async Task EscapeRecoveryNeverDelivers()
     {
         var world = await World.RecordingFinishedAsync("hello world");
 
@@ -154,11 +154,29 @@ public sealed class SessionFinalizationRunnerTests
         Assert.False(entry.WasDelivered);
         Assert.Equal(
             [
-                "ClearEscapeRecovery", "ShowTranscribing", "RecordTranscriptionStarted", "ArchiveAudio",
+                "ShowTranscribing", "RecordTranscriptionStarted", "ArchiveAudio",
                 "RecordTranscriptionFinished", "CurrentOptions", "SaveRecovery:hello world", "HistoryChanged", "ShowPendingRecovery:hello world",
                 "ShowEscapeRecoveryFinished", "ShowHeldStatus:EscapeRecovery", "RecordDictationCompleted",
             ],
             world.Trace);
+    }
+
+    [Fact]
+    public async Task UntrustedDetectedLanguageIsNotUsedForInsertion()
+    {
+        // THE FINAL PARAKEET MODEL REPORTS A LANGUAGE IT DID NOT DETECT. The delivery route is told
+        // nothing for its transcript; a Whisper transcript carries the language Whisper detected.
+        var parakeet = await World.RecordingFinishedAsync("hallo welt");
+        parakeet.Engine.EngineId = ParakeetModelIds.Final;
+        parakeet.Engine.DetectedLanguage = "de";
+        var whisper = await World.RecordingFinishedAsync("hallo welt");
+        whisper.Engine.DetectedLanguage = "de";
+
+        await parakeet.RunAsync();
+        await whisper.RunAsync();
+
+        Assert.Null(parakeet.Delivery.Requests.Single().LanguageCode);
+        Assert.Equal("de", whisper.Delivery.Requests.Single().LanguageCode);
     }
 
     [Fact]
@@ -293,8 +311,6 @@ public sealed class SessionFinalizationRunnerTests
 
         public ITextDelivery? Delivery => DeliveryRoute;
 
-        public string? DeliveryLanguage(Transcript transcript) => transcript.DetectedLanguage;
-
         public Func<FinalizationOptions> Options { get; set; } =
             () => new FinalizationOptions([], new DeterministicTextOptions(true, true, true, true), null);
 
@@ -303,8 +319,6 @@ public sealed class SessionFinalizationRunnerTests
             Trace.Add("CurrentOptions");
             return Options();
         }
-
-        public void ClearEscapeRecoveryForSession() => Trace.Add("ClearEscapeRecovery");
 
         public void ArchiveAudio(CapturedAudio audio) => Trace.Add("ArchiveAudio");
 
@@ -377,7 +391,9 @@ public sealed class SessionFinalizationRunnerTests
 
     private sealed class FakeEngine(string spoken) : ITranscriptionEngine
     {
-        public string EngineId => "whisper";
+        public string EngineId { get; set; } = "whisper";
+
+        public string? DetectedLanguage { get; set; } = "en";
 
         public AppError? Failure { get; set; }
 
@@ -392,7 +408,7 @@ public sealed class SessionFinalizationRunnerTests
 
             BeforeReturning?.Invoke();
 
-            return Task.FromResult(new Transcript(audio.SessionId, spoken, EngineId, DetectedLanguage: "en"));
+            return Task.FromResult(new Transcript(audio.SessionId, spoken, EngineId, DetectedLanguage: DetectedLanguage));
         }
     }
 
