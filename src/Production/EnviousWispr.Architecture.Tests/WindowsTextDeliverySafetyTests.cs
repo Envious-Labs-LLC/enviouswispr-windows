@@ -135,39 +135,51 @@ public sealed class WindowsTextDeliverySafetyTests
         var adapter = Assert.Single(root.DescendantNodes().OfType<ClassDeclarationSyntax>(), type => type.Identifier.Text == "WindowsTextTargetAdapter");
         var helpers = new[] { "ReadCaret", "RuntimeId" };
         Assert.Single(adapter.Members.OfType<MethodDeclarationSyntax>(), method => method.Identifier.Text == "Automation");
+        // EVERY EXPRESSION THE COMPILER RESOLVES TO A MEMBER, WHATEVER ITS SPELLING: `x.Member`,
+        // the conditional `x?.Member`, a bare identifier under a `using static`, a qualified or
+        // unqualified helper call, a helper taken as a delegate. The outermost expression for each
+        // reference is judged (an invocation, not also the name inside it).
         var accesses = 0;
-        // EVERY WAY A MEMBER IS REACHED: `x.Member` and the conditional `x?.Member`, whose member
-        // is a binding expression with no receiver of its own.
-        var reaches = adapter.DescendantNodes()
-            .Where(node => node is MemberAccessExpressionSyntax or MemberBindingExpressionSyntax)
-            .Cast<ExpressionSyntax>();
-        foreach (var access in reaches)
+        var helperReferences = helpers.ToDictionary(helper => helper, _ => new List<ExpressionSyntax>(), StringComparer.Ordinal);
+        foreach (var expression in adapter.DescendantNodes().OfType<ExpressionSyntax>())
         {
-            var info = model.GetSymbolInfo(access);
-            var symbol = info.Symbol ?? info.CandidateSymbols.FirstOrDefault();
-            if (symbol is null || !IsUiAutomationCall(symbol))
+            var symbol = Resolve(model, expression);
+            if (symbol is null || (expression.Parent is ExpressionSyntax parent && SymbolEqualityComparer.Default.Equals(Resolve(model, parent), symbol)))
             {
                 continue;
             }
 
-            accesses++;
-            var owner = access.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault()?.Identifier.Text;
-            var covered = helpers.Contains(owner, StringComparer.Ordinal) || IsInsideAutomationCall(access, model);
-            Assert.True(covered, $"A UI Automation call outside the boundary at line {access.GetLocation().GetLineSpan().StartLinePosition.Line + 1}: {access.Parent}");
+            if (IsUiAutomationCall(symbol))
+            {
+                accesses++;
+                var owner = expression.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault()?.Identifier.Text;
+                var covered = helpers.Contains(owner, StringComparer.Ordinal) || IsInsideAutomationCall(expression, model);
+                Assert.True(covered, $"A UI Automation call outside the boundary at line {Line(expression)}: {expression.Parent}");
+            }
+            else if (symbol is IMethodSymbol { ContainingType.Name: "WindowsTextTargetAdapter" } method && helperReferences.TryGetValue(method.Name, out var uses))
+            {
+                uses.Add(expression);
+            }
         }
 
         Assert.True(accesses >= 20, $"the scan resolved only {accesses} UI Automation calls; the adapter makes more than that, so the resolution is broken");
 
-        // THE HELPERS ARE CALLED FROM INSIDE THE BOUNDARY, AND FROM NOWHERE ELSE.
-        foreach (var helper in helpers)
+        // THE HELPERS ARE REFERRED TO FROM INSIDE THE BOUNDARY, ONCE EACH, AND FROM NOWHERE ELSE -
+        // by symbol, so a qualified call or a delegate reference counts the same as the plain call.
+        foreach (var (helper, helperUses) in helperReferences)
         {
-            var calls = adapter.DescendantNodes().OfType<InvocationExpressionSyntax>()
-                .Where(invocation => invocation.Expression is IdentifierNameSyntax { Identifier.Text: var name } && name == helper)
-                .ToArray();
-            var call = Assert.Single(calls);
-            Assert.True(IsInsideAutomationCall(call, model), $"{helper} is called outside the boundary");
+            var reference = Assert.Single(helperUses);
+            Assert.True(IsInsideAutomationCall(reference, model), $"{helper} is referred to outside the boundary at line {Line(reference)}");
         }
     }
+
+    private static ISymbol? Resolve(SemanticModel model, ExpressionSyntax expression)
+    {
+        var info = model.GetSymbolInfo(expression);
+        return info.Symbol ?? info.CandidateSymbols.FirstOrDefault();
+    }
+
+    private static int Line(SyntaxNode node) => node.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
 
     /// <summary>Whether a resolved member is a live UI Automation call: a property or method of a type in the UI Automation namespaces, not a constant.</summary>
     private static bool IsUiAutomationCall(ISymbol symbol)
