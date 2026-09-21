@@ -24,7 +24,7 @@ public sealed record LifetimeStep(string Name, Func<Task> Run)
 /// the same lifetime runs in a test against fakes and in a probe process against nothing at all.
 /// </remarks>
 /// <param name="CloseAdmission">Closes the session's admission; synchronous, run before the first await.</param>
-/// <param name="DrainSettings">Finishes the settings write in flight, so a choice just made is not lost.</param>
+/// <param name="DrainPresentation">Closes the presentation's gate, stops and joins the work inside it, and finishes the settings write in flight, so a choice just made is not lost and nothing of the window's is still inside what the exit disposes.</param>
 /// <param name="ShellClosing">What the shell does once the settings are safe and before anything is torn down: its windows, its own log line.</param>
 /// <param name="CancelProcessing">The shell's exit policy for a transcription in flight, made before the session is asked to shut down.</param>
 /// <param name="ReleaseInputs">The input sources, unsubscribed and disposed first so nothing new arrives.</param>
@@ -43,7 +43,7 @@ public sealed record LifetimeStep(string Name, Func<Task> Run)
 /// <param name="DisposeLogger">The log, flushed and closed as the last act whatever the outcome; best effort.</param>
 public sealed record LifetimeParts(
     Action CloseAdmission,
-    Func<Task> DrainSettings,
+    Func<Task> DrainPresentation,
     Action ShellClosing,
     Action CancelProcessing,
     IReadOnlyList<LifetimeStep> ReleaseInputs,
@@ -234,13 +234,13 @@ public sealed class ApplicationLifetime
 
     private async Task PrepareCoreAsync()
     {
-        // CLOSED BEFORE THE FIRST AWAIT, and the budget with it: a key that lands while the settings
-        // drain waits is refused, and the drain is the first thing the twenty seconds pay for.
+        // CLOSED BEFORE THE FIRST AWAIT, and the budget with it: a key that lands while the
+        // presentation drains is refused, and the drain is the first thing the twenty seconds pay for.
         var budget = Budget();
         var outstanding = new List<string>();
         var failed = new List<string>();
         Try("admission", _parts.CloseAdmission, failed);
-        await RunAsync(new LifetimeStep("settings drain", _parts.DrainSettings), budget, outstanding, failed);
+        await RunAsync(new LifetimeStep("presentation drain", _parts.DrainPresentation), budget, outstanding, failed);
         Try("shell closing", _parts.ShellClosing, failed);
         lock (_lock)
         {

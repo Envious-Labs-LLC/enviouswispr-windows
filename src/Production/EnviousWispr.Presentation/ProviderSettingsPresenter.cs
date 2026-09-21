@@ -102,19 +102,27 @@ public sealed record PolishModelListing(
 ///
 /// THE FIELD IS READ WHEN THE LISTING IS APPLIED, NOT WHEN IT WAS ASKED FOR. Listing and choosing are
 /// two steps for that reason: a model typed while the listing was out is honoured.
+///
+/// A DISCOVERY RUNS INSIDE THE PRESENTATION'S GATE. The exit disposes the model source once the
+/// presentation has closed; a discovery still out at that moment would lose its client mid-call, so
+/// each takes a lease and runs under the closing token, and one refused or stopped by the close
+/// answers null, as an overtaken one does.
 /// </remarks>
 public sealed class ProviderSettingsPresenter
 {
     private readonly IApiKeyStore _keys;
     private readonly IPolishModelSource _models;
+    private readonly PresentationAdmission _admission;
     private int _discoveryVersion;
 
-    public ProviderSettingsPresenter(IApiKeyStore keys, IPolishModelSource models)
+    /// <param name="admission">The presentation's gate; one of this presenter's own, never closed, when it stands alone.</param>
+    public ProviderSettingsPresenter(IApiKeyStore keys, IPolishModelSource models, PresentationAdmission? admission = null)
     {
         ArgumentNullException.ThrowIfNull(keys);
         ArgumentNullException.ThrowIfNull(models);
         _keys = keys;
         _models = models;
+        _admission = admission ?? new PresentationAdmission();
     }
 
     public static bool IsCloudProvider(PolishProvider provider) =>
@@ -181,11 +189,32 @@ public sealed class ProviderSettingsPresenter
     }
 
     /// <summary>Lists what the provider offers, discovering where the provider allows it.</summary>
-    /// <returns>The listing, or null when a later refresh has overtaken this one by the time it returns.</returns>
+    /// <returns>The listing, or null when a later refresh has overtaken this one by the time it returns, or the presentation is closing.</returns>
     public async Task<PolishModelListing?> ListModelsAsync(
         PolishProvider provider,
         string? ollamaEndpoint,
         CancellationToken cancellationToken = default)
+    {
+        if (!_admission.TryEnter(out var lease))
+        {
+            return null;
+        }
+
+        using (lease)
+        {
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.Closing);
+            try
+            {
+                return await ListInsideAsync(provider, ollamaEndpoint, stop.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
+            {
+                return null;
+            }
+        }
+    }
+
+    private async Task<PolishModelListing?> ListInsideAsync(PolishProvider provider, string? ollamaEndpoint, CancellationToken cancellationToken)
     {
         var ticket = Interlocked.Increment(ref _discoveryVersion);
 

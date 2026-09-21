@@ -161,10 +161,15 @@ public sealed class HistoryPresenterTests
         var end = window.IndexOf("\n    }\n", start, StringComparison.Ordinal);
         var handler = window[start..end];
 
-        var asked = handler.IndexOf("if (await _historyPresenter.DeleteRecoveryAsync()", StringComparison.Ordinal);
+        var asked = handler.IndexOf("var recoveryDeleted = await _session.History.DeleteRecoveryAsync()", StringComparison.Ordinal);
+        var gone = handler.IndexOf("if (recoveryDeleted)", StringComparison.Ordinal);
         var refused = handler.IndexOf("\n        else\n", StringComparison.Ordinal);
         var notified = handler.IndexOf("RecoveryCleared?.Invoke();", StringComparison.Ordinal);
         Assert.True(asked >= 0, "The handler does not ask the presenter to delete the copy.");
+        Assert.True(gone > asked, "The handler has no branch for a copy that is gone.");
+        // A LATE ANSWER IS NOT DRAWN: the exit's refusal comes back false too, and the handler
+        // leaves before it could say the file was left untouched.
+        Assert.Contains("if (_session.Closing)", handler[asked..gone], StringComparison.Ordinal);
         Assert.True(refused > asked, "The handler has no branch for a copy Windows left untouched.");
         Assert.True(notified > asked && notified < refused, "The app is not told inside the branch where the copy is gone.");
         Assert.Equal(notified, handler.LastIndexOf("RecoveryCleared?.Invoke();", StringComparison.Ordinal));
