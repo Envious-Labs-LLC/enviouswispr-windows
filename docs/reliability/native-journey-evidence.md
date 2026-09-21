@@ -32,6 +32,10 @@ composed proofs read the capture's disposal; the native run reads the clean exit
 | 2026-09-21 | 0.19.0+d4417ad (step 17) | live-cable-whisper | yes | yes | 0 |
 | 2026-09-21 | 0.19.0+d4417ad (step 17) | synthetic-quick-tap-preview | yes | yes | 0 |
 | 2026-09-21 | 0.19.0+d4417ad (step 17) | escape-recovery | yes | yes | 0 |
+| 2026-09-21 | 0.19.0+028edc9 (step 18: a refused preview stop ended before the final transcription) | live-cable-parakeet | yes | yes | 0 |
+| 2026-09-21 | 0.19.0+028edc9 (step 18) | live-cable-whisper | yes | yes | 0 |
+| 2026-09-21 | 0.19.0+028edc9 (step 18) | synthetic-quick-tap-preview | yes | yes | 0 |
+| 2026-09-21 | 0.19.0+028edc9 (step 18) | escape-recovery | yes | yes | 0 |
 
 The step-17 rows are the first taken with the disposal's order in the executor
 (`DictationSessionExecutor.DisposeSessionAsync`: observers off the capture, the controller and its
@@ -63,6 +67,9 @@ the message count.
 | 2026-09-21 | 0.19.0+d4417ad (step 17) | edit | UiAutomationValue (`WM_SETTEXT` seen, no `WM_PASTE`, seed first) | yes | yes |
 | 2026-09-21 | 0.19.0+d4417ad (step 17) | caret-start | ClipboardPaste (`WM_PASTE` seen, seed last; the sentinel check the harness requires for a pass) | yes | yes |
 | 2026-09-21 | 0.19.0+d4417ad (step 17) | password | ClipboardOnly (`TextDeliveryRefused` / `DeliveryProtectedField`, field empty) | yes | yes |
+| 2026-09-21 | 0.19.0+028edc9 (step 18) | edit | UiAutomationValue (`WM_SETTEXT` seen, no `WM_PASTE`, seed first) | yes | yes |
+| 2026-09-21 | 0.19.0+028edc9 (step 18) | caret-start | ClipboardPaste (`WM_PASTE` seen, seed last; the sentinel check the harness requires for a pass) | yes | yes |
+| 2026-09-21 | 0.19.0+028edc9 (step 18) | password | ClipboardOnly (`TextDeliveryRefused` / `DeliveryProtectedField`, field empty) | yes | yes |
 
 The caret-start run also observes clipboard restoration (plan-2 step 13): the harness places a sentinel
 line on the clipboard before the paste route runs and requires the same line back after the delivery,
