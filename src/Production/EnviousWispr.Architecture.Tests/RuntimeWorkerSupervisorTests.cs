@@ -1,3 +1,4 @@
+using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Services.Runtime;
@@ -102,6 +103,241 @@ public sealed class RuntimeWorkerSupervisorTests
         {
             await supervisor.DisposeAsync();
         }
+    }
+
+    [Fact]
+    public async Task AbortUnblocksWedgedRequest()
+    {
+        // A TRANSCRIPTION THE WORKER WILL NOT ANSWER holds the request gate for as long as its timeout.
+        // The abort does not wait for that gate: it kills the worker of the generation in flight and
+        // observes its exit, the wedged request ends as a failed one, and the gate is free again.
+        await using var supervisor = new RuntimeWorkerSupervisor(
+            WorkerPath(),
+            ["--test-transcribe-stub", "--transcribe-delay-ms", "60000"],
+            maximumRestarts: 1);
+        Assert.True((await supervisor.StartAsync(RequestTimeout)).Succeeded);
+        var processId = supervisor.WorkerProcessId!.Value;
+        using var worker = Process.GetProcessById(processId);
+        _ = worker.SafeHandle;
+        var wedged = supervisor.TranscribeAsync(TranscriptionRequest(), TimeSpan.FromMinutes(2));
+        await WaitForAsync(() => supervisor.State == RuntimeWorkerState.Ready && !wedged.IsCompleted, TimeSpan.FromSeconds(5));
+        await Task.Delay(300);
+        Assert.False(wedged.IsCompleted, "the request is wedged behind the worker's delay");
+
+        var abort = await supervisor.AbortAsync(TimeSpan.FromSeconds(10)).WaitAsync(TimeSpan.FromSeconds(15));
+
+        Assert.Equal(RuntimeWorkerAbortOutcome.Exited, abort.Outcome);
+        Assert.Equal(processId, abort.WorkerProcessId);
+        Assert.True(worker.HasExited, "the exit the abort reports is the worker's own");
+        Assert.Null(await wedged.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(RuntimeWorkerState.Aborted, supervisor.State);
+        Assert.Null(supervisor.WorkerProcessId);
+        // The gate is free: a further call returns at once rather than waiting on the old request.
+        Assert.Null(await supervisor.TranscribeAsync(TranscriptionRequest(), RequestTimeout).WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public async Task AbortCannotRestartWorker()
+    {
+        // TERMINAL. After the abort no start, health repair or lazy request recovery brings a worker
+        // back - not with budget to spare, not with an explicit start - and the state says so.
+        await using var supervisor = new RuntimeWorkerSupervisor(
+            WorkerPath(),
+            ["--test-transcribe-stub"],
+            maximumRestarts: 3);
+        Assert.True((await supervisor.StartAsync(RequestTimeout)).Succeeded);
+        var processId = supervisor.WorkerProcessId!.Value;
+
+        var abort = await supervisor.AbortAsync(TimeSpan.FromSeconds(10));
+        var explicitStart = await supervisor.StartAsync(RequestTimeout);
+        var repair = await supervisor.EnsureHealthyAsync(RequestTimeout);
+        var request = await supervisor.TranscribeAsync(TranscriptionRequest(), RequestTimeout);
+        var health = await supervisor.CheckHealthAsync(RequestTimeout);
+
+        Assert.Equal(RuntimeWorkerAbortOutcome.Exited, abort.Outcome);
+        AssertProcessIsGone(processId);
+        Assert.False(explicitStart.Succeeded);
+        Assert.Equal(RuntimeWorkerState.Aborted, explicitStart.State);
+        Assert.False(repair.Succeeded);
+        Assert.Equal(RuntimeWorkerState.Aborted, repair.State);
+        Assert.Null(request);
+        Assert.False(health.Succeeded);
+        Assert.Equal(RuntimeWorkerState.Aborted, supervisor.State);
+        Assert.Null(supervisor.WorkerProcessId);
+        Assert.Equal(RuntimeWorkerAbortOutcome.NoWorker, (await supervisor.AbortAsync(TimeSpan.FromSeconds(1))).Outcome);
+    }
+
+    [Fact]
+    public async Task ConcurrentAbortAndDisposeCloseHandlesOnce()
+    {
+        // THE ABORT AND THE DISPOSAL RACE FOR THE SAME WORKER. Whichever takes the process out of
+        // the field owns its handle; the other finds nothing. Both complete, neither throws, the
+        // worker's exit is observed, and the disposal that queued behind the wedged request is let
+        // through by the abort rather than waiting the request's two minutes.
+        var supervisor = new RuntimeWorkerSupervisor(
+            WorkerPath(),
+            ["--test-transcribe-stub", "--transcribe-delay-ms", "60000"],
+            maximumRestarts: 1);
+        Assert.True((await supervisor.StartAsync(RequestTimeout)).Succeeded);
+        var processId = supervisor.WorkerProcessId!.Value;
+        using var worker = Process.GetProcessById(processId);
+        _ = worker.SafeHandle;
+        var wedged = supervisor.TranscribeAsync(TranscriptionRequest(), TimeSpan.FromMinutes(2));
+        await Task.Delay(300);
+        Assert.False(wedged.IsCompleted);
+
+        var dispose = Task.Run(async () => await supervisor.DisposeAsync());
+        var abort = Task.Run(() => supervisor.AbortAsync(TimeSpan.FromSeconds(10)));
+        await Task.WhenAll(dispose, abort).WaitAsync(TimeSpan.FromSeconds(20));
+
+        Assert.Equal(RuntimeWorkerAbortOutcome.Exited, (await abort).Outcome);
+        Assert.True(worker.WaitForExit(TimeSpan.FromSeconds(10)), "the worker's exit was observed");
+        Assert.Null(await wedged.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(RuntimeWorkerState.Disposed, supervisor.State);
+        Assert.Null(supervisor.WorkerProcessId);
+        Assert.Equal(1, supervisor.HandlesClosed);
+        Assert.Equal("abort", supervisor.LastTeardownOwner);
+        // Once more of each, on a supervisor with nothing left: no throw, nothing to abort.
+        await supervisor.DisposeAsync();
+        Assert.Equal(RuntimeWorkerAbortOutcome.NoWorker, (await supervisor.AbortAsync(TimeSpan.FromSeconds(1))).Outcome);
+        Assert.Equal(1, supervisor.HandlesClosed);
+    }
+
+    [Fact]
+    public async Task AnAbortDuringADisposalAlreadyTearingTheWorkerDownWaitsForThatEndAndClosesNothingItself()
+    {
+        // THE OTHER ORDERING: the disposal owns the generation first - its graceful shutdown request
+        // is honoured slowly by this worker - and the abort arrives while it is tearing the worker
+        // down. The abort does not touch the handle; it waits for the disposal's observed end inside
+        // its deadline and reports the exit. One handle closed, by the disposal.
+        var supervisor = new RuntimeWorkerSupervisor(
+            WorkerPath(),
+            ["--shutdown-delay-ms", "3000"],
+            maximumRestarts: 1);
+        Assert.True((await supervisor.StartAsync(RequestTimeout)).Succeeded);
+        var processId = supervisor.WorkerProcessId!.Value;
+        using var worker = Process.GetProcessById(processId);
+        _ = worker.SafeHandle;
+
+        var dispose = Task.Run(async () => await supervisor.DisposeAsync());
+        await Task.Delay(150);
+        var abort = await supervisor.AbortAsync(TimeSpan.FromSeconds(10)).WaitAsync(TimeSpan.FromSeconds(15));
+        await dispose.WaitAsync(TimeSpan.FromSeconds(15));
+
+        Assert.Equal(RuntimeWorkerAbortOutcome.Exited, abort.Outcome);
+        Assert.Equal(processId, abort.WorkerProcessId);
+        Assert.True(worker.HasExited);
+        Assert.Equal(1, supervisor.HandlesClosed);
+        Assert.Equal("stop", supervisor.LastTeardownOwner);
+        Assert.Equal(RuntimeWorkerState.Disposed, supervisor.State);
+    }
+
+    [Fact]
+    public async Task AnAbortOfAWorkerAlreadyGoneObservesTheExitRatherThanAssumingIt()
+    {
+        // THE WORKER DIED ON ITS OWN before the abort. The kill has nothing to ask for; the exit is
+        // still observed on the handle, not inferred from the kill's refusal, and the handle is
+        // closed once.
+        await using var supervisor = new RuntimeWorkerSupervisor(WorkerPath(), maximumRestarts: 1);
+        Assert.True((await supervisor.StartAsync(RequestTimeout)).Succeeded);
+        var processId = supervisor.WorkerProcessId!.Value;
+        using (var worker = Process.GetProcessById(processId))
+        {
+            worker.Kill(entireProcessTree: true);
+            await worker.WaitForExitAsync().WaitAsync(RequestTimeout);
+        }
+
+        var abort = await supervisor.AbortAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(RuntimeWorkerAbortOutcome.Exited, abort.Outcome);
+        Assert.Equal(processId, abort.WorkerProcessId);
+        Assert.Equal(1, supervisor.HandlesClosed);
+        Assert.Equal(RuntimeWorkerState.Aborted, supervisor.State);
+    }
+
+    [Fact]
+    public async Task AnAbortDuringAStartWaitsForThatGenerationToEndAndNoWorkerOutlivesIt()
+    {
+        // THE START IS IN FLIGHT - the worker is up and its health answer is slow - when the abort
+        // lands. The generation exists, the abort waits for its end inside the deadline, the start
+        // ends it by taking its own worker down, and nothing is left running: not that worker, and
+        // no worker started after it.
+        var supervisor = new RuntimeWorkerSupervisor(
+            WorkerPath(),
+            ["--health-delay-ms", "10000"],
+            maximumRestarts: 1);
+        try
+        {
+            var start = supervisor.StartAsync(TimeSpan.FromSeconds(30));
+            await WaitForAsync(() => supervisor.WorkerProcessId is not null, TimeSpan.FromSeconds(10));
+            var processId = supervisor.WorkerProcessId!.Value;
+            using var worker = Process.GetProcessById(processId);
+            _ = worker.SafeHandle;
+
+            var abort = await supervisor.AbortAsync(TimeSpan.FromSeconds(10)).WaitAsync(TimeSpan.FromSeconds(15));
+            var started = await start.WaitAsync(TimeSpan.FromSeconds(15));
+
+            Assert.Equal(RuntimeWorkerAbortOutcome.Exited, abort.Outcome);
+            Assert.Equal(processId, abort.WorkerProcessId);
+            Assert.True(worker.HasExited, "the worker of the generation the abort found is gone");
+            Assert.False(started.Succeeded);
+            Assert.Equal(RuntimeWorkerState.Aborted, started.State);
+            Assert.Null(supervisor.WorkerProcessId);
+            Assert.Equal(1, supervisor.HandlesClosed);
+            Assert.False((await supervisor.StartAsync(RequestTimeout)).Succeeded);
+            Assert.Null(supervisor.WorkerProcessId);
+        }
+        finally
+        {
+            await supervisor.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task TheAbortReachesTheWorkerThroughBothProductionAdapters()
+    {
+        // THE ADAPTERS THE SHELL HOLDS, over the real worker. The transcription engine's abort ends a
+        // wedged transcription; the preview engine's abort ends its worker and lets go of the
+        // resource it held - and only because the exit was observed.
+        var transcriptionSupervisor = new RuntimeWorkerSupervisor(
+            WorkerPath(),
+            ["--test-transcribe-stub", "--transcribe-delay-ms", "60000"],
+            maximumRestarts: 1);
+        await using var engine = new RuntimeWorkerTranscriptionEngine(
+            transcriptionSupervisor,
+            "test:isolated",
+            transcriptionTimeout: TimeSpan.FromMinutes(2));
+        Assert.True((await engine.StartAsync()).Succeeded);
+        var wedged = engine.TranscribeAsync(new CapturedAudio(DictationSessionId.Create(), new float[16_000], 16_000, 1));
+        await Task.Delay(300);
+        Assert.False(wedged.IsCompleted);
+
+        var abort = await engine.AbortAsync(TimeSpan.FromSeconds(10)).WaitAsync(TimeSpan.FromSeconds(15));
+
+        Assert.Equal(RuntimeWorkerAbortOutcome.Exited, abort.Outcome);
+        var failure = await Assert.ThrowsAsync<TranscriptionEngineException>(() => wedged.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(AppErrorCode.RuntimeWorkerFailed, failure.Error.Code);
+        Assert.Null(engine.WorkerProcessId);
+        Assert.Equal(1, transcriptionSupervisor.HandlesClosed);
+
+        using var arbiter = new RuntimeResourceArbiter();
+        var previewSupervisor = new RuntimeWorkerSupervisor(WorkerPath(), ["--test-transcribe-stub"], maximumRestarts: 1);
+        await using var preview = new RuntimeWorkerLivePreviewEngine(
+            new RuntimeWorkerTranscriptionEngine(previewSupervisor, "test:isolated"),
+            arbiter,
+            RuntimeResourceKind.Cpu);
+        Assert.True((await preview.StartAsync()).Succeeded);
+        var previewProcessId = previewSupervisor.WorkerProcessId!.Value;
+        Assert.False((await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero)).Succeeded);
+
+        var previewAbort = await preview.AbortAsync(TimeSpan.FromSeconds(10)).WaitAsync(TimeSpan.FromSeconds(15));
+        var afterAbort = await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero);
+
+        Assert.Equal(RuntimeWorkerAbortOutcome.Exited, previewAbort.Outcome);
+        Assert.Equal(previewProcessId, previewAbort.WorkerProcessId);
+        AssertProcessIsGone(previewProcessId);
+        Assert.True(afterAbort.Succeeded, "the resource the preview held is free once its worker is seen gone");
+        await afterAbort.Lease!.DisposeAsync();
     }
 
     /// <summary>The one poll in this file: the supervisor exposes the process id and nothing else about its start.</summary>

@@ -28,9 +28,15 @@ public sealed record RuntimeWorkerTranscriptionOptions(
 
 internal interface IWorkerTranscriptionRuntime : ITranscriptionEngine, IAsyncDisposable
 {
+    /// <summary>The worker's process id while one is alive, or null: the one fact the preview's resource follows.</summary>
+    int? WorkerProcessId { get; }
+
     Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default);
 
     Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Kills the worker for a shutdown without waiting for a request in flight; terminal.</summary>
+    Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline);
 }
 
 public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRuntime
@@ -58,6 +64,21 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
             options.WorkerPriority);
     }
 
+    /// <summary>The engine over a supervisor a test built: the production adapter, a worker of the test's choosing.</summary>
+    internal RuntimeWorkerTranscriptionEngine(
+        RuntimeWorkerSupervisor supervisor,
+        string engineId,
+        TimeSpan? startupTimeout = null,
+        TimeSpan? transcriptionTimeout = null)
+    {
+        ArgumentNullException.ThrowIfNull(supervisor);
+        ArgumentException.ThrowIfNullOrWhiteSpace(engineId);
+        _supervisor = supervisor;
+        EngineId = engineId;
+        _startupTimeout = startupTimeout ?? TimeSpan.FromSeconds(30);
+        _transcriptionTimeout = transcriptionTimeout ?? TimeSpan.FromMinutes(2);
+    }
+
     public string EngineId { get; }
 
     public int? WorkerProcessId => _supervisor.WorkerProcessId;
@@ -67,6 +88,8 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
 
     public async Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default) =>
         await _supervisor.StopAsync(cancellationToken).ConfigureAwait(false);
+
+    public Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline) => _supervisor.AbortAsync(deadline);
 
     public async Task<Transcript> TranscribeAsync(
         CapturedAudio audio,
