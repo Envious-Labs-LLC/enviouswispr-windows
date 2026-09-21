@@ -137,8 +137,9 @@ reason but ask rather than assert it, and write the answer here when you get it.
   context inserts and what the clipboard gets when the target refuses. `CursorRepairDisposition`
   records the repair's decision, not what the delivery eventually wrote: `ContextApplied` (1) means
   the insertion was adjusted to a context, `FallbackPayload` (0) that no context was applied; a
-  commit that is refused after a `ContextApplied` repair still copies the fallback, and a failed
-  commit writes nothing. The fallback was called "legacy" until step 14, a name that said only that
+  commit that is refused after a `ContextApplied` repair still copies the fallback, and a commit can
+  fail before writing anything or fail after a write whose effect is uncertain (a direct write lands
+  before its read-back) - the disposition establishes neither outcome; the route and the refusal do. The fallback was called "legacy" until step 14, a name that said only that
   it came first. A requested copy uses neither payload: the words as said.
   A delivery failure keeps its name (plan-2 step 13): every UI Automation call the adapter makes goes
   through `WindowsTextTargetAdapter.Automation(...)`, the boundary at which what the control refused

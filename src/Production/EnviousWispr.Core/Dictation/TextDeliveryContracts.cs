@@ -151,8 +151,10 @@ public sealed record DeliveryFault(DeliveryStage Stage, DeliveryFaultKind Kind, 
 /// space appended only where there was none, so a paste can continue a sentence.
 ///
 /// THIS IS WHAT THE REPAIR DECIDED, NOT WHAT THE DELIVERY WROTE. A commit refused after a
-/// context-applied repair still copies the fallback to the clipboard, and a failed commit writes
-/// nothing; the delivery's route and refusal say what happened. The numeric values are unchanged
+/// context-applied repair still copies the fallback to the clipboard; a commit can fail before
+/// writing anything, or fail after a write whose effect is uncertain (a direct write lands before
+/// its read-back is checked). The disposition establishes neither outcome; the delivery's route and
+/// refusal say what happened, and nothing is retried. The numeric values are unchanged
 /// (fallback 0, context 1); no production path serialises this enum by name - only the
 /// <c>tools/delivery-uat</c> diagnostic prints it to a person.
 /// </remarks>
