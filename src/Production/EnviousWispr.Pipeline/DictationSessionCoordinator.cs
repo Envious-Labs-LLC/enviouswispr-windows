@@ -187,6 +187,8 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     /// <summary>The recording in flight as the commands' results reported it: set by a press that started one, cleared by the terminal that ended it.</summary>
     private DictationSessionId? _recording;
     private bool _closed;
+    /// <summary>How many commands the executor is inside right now: one, or none. Read by the shutdown's report.</summary>
+    private int _running;
     private TaskCompletionSource? _noHolds;
     private Task<ShutdownReport>? _shutdown;
 
@@ -352,7 +354,10 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         // together, but a report that said only "the wait ran out" would hide which of them did; a
         // notification that threw is over, not outstanding - it is reported because the shell's
         // status line faulted, but nothing of it is still running, and the teardown may proceed.
-        var commandOutstanding = !_consumer.IsCompleted;
+        // A COMMAND IS OUTSTANDING WHILE THE EXECUTOR IS INSIDE IT, not while the consumer loop is
+        // still on its way out behind a command that has finished: the loop's exit after the last
+        // command is a continuation the budget can end an instant before, and it uses nothing.
+        var commandOutstanding = Volatile.Read(ref _running) > 0;
         var expiriesOutstanding = ExpiriesOutstanding();
         var expiryFaulted = Volatile.Read(ref _expiryFaulted);
         if (!workFinished || !holdsReleased)
@@ -663,10 +668,18 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 
             if (committed)
             {
-                var executed = await _executor
-                    .ExecuteAsync(queued.Command, _stopping.Token)
-                    .ConfigureAwait(false);
-                result = executed with { WasQueued = executed.WasQueued || waited || queued.WaitedInQueue };
+                Interlocked.Increment(ref _running);
+                try
+                {
+                    var executed = await _executor
+                        .ExecuteAsync(queued.Command, _stopping.Token)
+                        .ConfigureAwait(false);
+                    result = executed with { WasQueued = executed.WasQueued || waited || queued.WaitedInQueue };
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _running);
+                }
             }
             else if (queued.Expired)
             {
