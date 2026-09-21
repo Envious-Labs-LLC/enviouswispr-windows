@@ -196,7 +196,10 @@ public sealed class WindowsTextDeliverySafetyTests
                 continue;
             }
 
-            if (IsUiAutomationCall(symbol))
+            // A CALL ON A HANDLE IS A UI AUTOMATION CALL WHATEVER DECLARED THE MEMBER: Array.CopyTo on
+            // an AutomationElement[], Object.GetHashCode on an element, Array.Clone, GetEnumerator -
+            // the receiver is the handle, and the member reaches it. Held to every rule below.
+            if (IsUiAutomationCall(symbol) || IsCallOnHandle(expression, model))
             {
                 accesses++;
                 // A METHOD IS CALLED, NEVER CAPTURED: a method group taken inside the boundary is
@@ -416,6 +419,20 @@ public sealed class WindowsTextDeliverySafetyTests
             default:
                 return false;
         }
+    }
+
+    /// <summary>Whether a member access or binding is made on a receiver that is, or carries, a handle.</summary>
+    private static bool IsCallOnHandle(ExpressionSyntax expression, SemanticModel model)
+    {
+        var receiver = expression switch
+        {
+            InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax access } => access.Expression,
+            MemberAccessExpressionSyntax access => access.Expression,
+            InvocationExpressionSyntax { Expression: MemberBindingExpressionSyntax binding } => binding.Ancestors().OfType<ConditionalAccessExpressionSyntax>().FirstOrDefault()?.Expression,
+            MemberBindingExpressionSyntax binding => binding.Ancestors().OfType<ConditionalAccessExpressionSyntax>().FirstOrDefault()?.Expression,
+            _ => null,
+        };
+        return receiver is not null && model.GetSymbolInfo(receiver).Symbol is not ITypeSymbol && IsHandleType(model.GetTypeInfo(receiver).Type);
     }
 
     /// <summary>A UI Automation type that is itself a collection of handles - AutomationElementCollection and its kind.</summary>
