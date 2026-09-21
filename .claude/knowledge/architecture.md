@@ -41,7 +41,21 @@ build so customers do not need to install developer tooling.
   where the build can, and replaces exactly three stored fields (microphone, preferences, observability)
   so an import or an app-state write that landed meanwhile survives; the window focuses the field the
   outcome names, shows its message and applies the theme it returns. The index maps are the presenter's
-  statics, so filling the controls and saving them cannot drift.
+  statics, so filling the controls and saving them cannot drift. The window takes its presentation as one
+  thing, `WindowPresentationSession` (plan-2 step 12): the one settings writer every presenter shares,
+  the presenters built over it, the microphone test and the device catalogue opened through factories
+  the shell's `WindowComposition` supplies (the WASAPI ones; a test's fakes), the profile and diagnostic
+  services handed through - owned by the session. Every presentation operation that touches a store,
+  a provider or a device (a history load or command, a model discovery, a microphone test) runs inside
+  the session's `PresentationAdmission`: the exit's first step, `DrainAsync`, closes that gate, cancels
+  and joins what is inside, then drains the settings writer, so nothing of the window's is still inside
+  the stores and the model source the shell disposes afterwards; a late call answers its own quiet
+  refusal (`HistorySummary.Closing`, `HistoryCommandResult.Refused`, a null listing, a `Cancelled`
+  test) and the window does not draw it. The lifetime closes the session among its shell services:
+  the drain again if it was not done, then the writer's gate and the catalogue, once, a second drain
+  or close the first's task. The window also takes `WindowLaunch`, the immutable facts of
+  the build and the start, and keeps WinUI: controls, layout, navigation, focus, the overlay. The
+  actual Save button is exercised natively by `scripts/native-settings-save.ps1`.
 - `Services`: storage, credentials, updates, telemetry boundaries, and Windows integration.
 - `ModelDelivery`: manifests, downloads, hashes, versions, storage, and cleanup.
 - `RuntimeWorker`: a **separate executable** that hosts the native speech runtimes, including the CUDA

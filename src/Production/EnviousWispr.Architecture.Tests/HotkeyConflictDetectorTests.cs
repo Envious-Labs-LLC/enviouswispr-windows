@@ -130,7 +130,7 @@ public sealed class HotkeyConflictDetectorTests
         // live warning asks the same detector with the same roles (SettingsPresenter.ShortcutRoles).
         var save = code[code.IndexOf("private async void SaveSettingsButton_Click", StringComparison.Ordinal)..];
         save = save[..save.IndexOf("PublishSettings();", StringComparison.Ordinal)];
-        Assert.Contains("_settingsPresenter.SaveGeneralAsync(", save, StringComparison.Ordinal);
+        Assert.Contains("_session.Settings.SaveGeneralAsync(", save, StringComparison.Ordinal);
         Assert.DoesNotContain("HotkeyGestureParser.Parse(", save, StringComparison.Ordinal);
         Assert.DoesNotContain("parsedHotkey.Gesture == parsedCancelHotkey.Gesture", save, StringComparison.Ordinal);
         Assert.Contains("SettingsPresenter.ShortcutRoles(", code[code.IndexOf("KeybindFields()", StringComparison.Ordinal)..], StringComparison.Ordinal);

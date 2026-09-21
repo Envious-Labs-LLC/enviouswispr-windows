@@ -45,7 +45,7 @@ Task Finished() => Task.CompletedTask;
 
 var parts = new LifetimeParts(
     CloseAdmission: () => Console.WriteLine("admission closed"),
-    DrainSettings: hang == "drain" ? Hanging("drain") : Finished,
+    DrainPresentation: hang == "drain" ? Hanging("drain") : Finished,
     ShellClosing: () =>
     {
         Console.WriteLine("shell closing");

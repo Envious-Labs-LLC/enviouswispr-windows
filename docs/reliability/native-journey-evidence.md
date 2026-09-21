@@ -46,6 +46,22 @@ the message count.
 | 2026-09-21 | 0.19.0+d313251 (step 10 branch) | caret-start | ClipboardPaste (`WM_PASTE` seen, seed last) | yes | yes |
 | 2026-09-21 | 0.19.0+d313251 (step 10 branch) | password | ClipboardOnly (`TextDeliveryRefused` / `DeliveryProtectedField`, field empty) | yes | yes |
 
+## GeneralSavePersistsAndRendersCommittedValues
+
+The actual Save button, pressed in the running app through the accessibility layer
+(`scripts/native-settings-save.ps1`): on a seeded, onboarded temporary profile the Clipboard page's "Copy to
+the clipboard instead of pasting" toggle is flipped through its TogglePattern, "Save settings" is invoked,
+and the script reads back the file a launch would read (`preferences.copyInsteadOfPaste`), the operation
+bar's title, and - only after that title is on the tree - the toggle as the window re-rendered it after
+the save; the app then exits through its UAT switch and must exit cleanly, with `ApplicationCleanShutdown`
+among the log lines the tested launch wrote (the seeding launch's own clean shutdown, earlier in the same
+file, does not count). Toggle states are polled to a bound, never slept for. No coordinates, no mouse.
+The build column names the commit the tested binary was built from, as the app reports its version.
+
+| Recorded | Build | Persisted | Rendered | Message | Passed | Exited cleanly (this launch's log) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-09-21 | 0.19.0+ef01d7b | copyInsteadOfPaste = true | toggle On, read after the message | "Settings saved" | yes | yes (8 lines, `ApplicationCleanShutdown` among them) |
+
 ## Reproducing
 
 ```powershell
@@ -55,3 +71,7 @@ pwsh -NoProfile -File scripts/native-journeys.ps1
 ```
 
 `-SkipVirtualCable` leaves out the two VB-Audio cable journeys on a machine without the cable.
+
+```powershell
+pwsh -NoProfile -File scripts/native-settings-save.ps1
+```

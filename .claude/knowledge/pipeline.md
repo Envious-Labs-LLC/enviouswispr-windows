@@ -67,7 +67,7 @@ remain wordless designs.
   asks for the shutdown. **The exit itself is `ApplicationLifetime`** (plan-2 step 9,
   `App/Composition/ApplicationLifetime.cs`, proved in `ApplicationLifetimeTests` and by a child process,
   `EnviousWispr.ExitProbe`): one twenty-second budget from the first step - admission closed before the
-  first await, then the settings drain - through the shell closing, the input sources, the session's
+  first await, then the presentation drain (the window's gate closed, its microphone test, model discovery and history I/O stopped and joined, the settings write in flight kept; step 12) - through the shell closing, the input sources, the session's
   shutdown under what is left, the polish warm-up and heartbeat joins, the disposals, the run's
   completion and the log; every step joined under the remainder and named in the `ExitReport` if it
   did not finish or threw. The session's dependencies (engines, polish provider, arbiter, owners,

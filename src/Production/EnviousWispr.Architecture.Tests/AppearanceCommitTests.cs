@@ -166,7 +166,7 @@ public sealed class AppearanceCommitTests
         var next = Assert.IsType<LocalDeclarationStatementSyntax>(block.Statements[index + 1]);
         var result = Assert.Single(next.Declaration.Variables);
         Assert.Equal(
-            $"await _settingsPresenter.SaveAppearanceAsync({local}).ConfigureAwait(true)",
+            $"await _session.Settings.SaveAppearanceAsync({local}).ConfigureAwait(true)",
             result.Initializer?.Value.ToString());
 
         // And that is the only hand-over in the method, so no other snapshot reaches the presenter.
