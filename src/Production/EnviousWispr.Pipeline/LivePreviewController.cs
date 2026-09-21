@@ -118,6 +118,11 @@ public sealed class LivePreviewController : IAsyncDisposable
         // unprovable by anything. Opening it here makes it a property of this flow, which a gate
         // can check. One line per flow, and the flows are the methods that take a session id.
         using var scope = DictationScope.Begin(sessionId.Value);
+        // THE START'S PLACE IN LINE IS TAKEN BEFORE ANYTHING ELSE, before the shell is read and before
+        // the gate: a stop that lands anywhere after this - while the shell is being read, while the
+        // gate is waited for, while the work is being published - is counted, and the start sees the
+        // count change once it has published and takes its own work down.
+        var requestsBefore = Volatile.Read(ref _stopRequests);
         if (!_effects.Enabled)
         {
             return;
@@ -166,14 +171,17 @@ public sealed class LivePreviewController : IAsyncDisposable
 
             _sequence = 0;
             _started = false;
-            var requestsBefore = Volatile.Read(ref _stopRequests);
             var cancellation = new CancellationTokenSource();
             Volatile.Write(ref _cancellation, cancellation);
-            _work = RunAsync(sessionId, engine, audio, Volatile.Read(ref _closure), cancellation.Token);
-            // A STOP THAT RACED THIS PUBLICATION found no source to cancel; this start is the one that
-            // sees the request, and cancels its own work so the stop that made it can join it.
+            var closure = Volatile.Read(ref _closure);
+            _work = RunAsync(sessionId, engine, audio, closure, cancellation.Token);
+            // A STOP THAT LANDED SINCE THIS START TOOK ITS PLACE found no source to cancel, or one that
+            // was not this; this start is the one that sees the request. It cancels its own work and
+            // closes the screen its loop was given, so an engine that ignores the cancel still hands
+            // back frames for a screen that is gone.
             if (Volatile.Read(ref _stopRequests) != requestsBefore)
             {
+                Interlocked.Increment(ref _closure);
                 cancellation.Cancel();
             }
         }
@@ -320,7 +328,16 @@ public sealed class LivePreviewController : IAsyncDisposable
         // window, finds the closure changed at its render and draws nothing.
         Interlocked.Increment(ref _closure);
         Interlocked.Increment(ref _stopRequests);
-        Volatile.Read(ref _cancellation)?.Cancel();
+        try
+        {
+            Volatile.Read(ref _cancellation)?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // THE SOURCE WAS RETIRED BETWEEN THE READ AND THE CANCEL by a stop that owned the gate and
+            // saw its loop finish; there is nothing left of it to cancel, and this stop carries on to
+            // the gate to see for itself.
+        }
         // THE GATE IS ON THE BUDGET TOO. A stop queued behind another that is itself waiting on a held
         // engine would otherwise wait without limit, and a deadline that does not cover the wait for
         // the gate is not a deadline.

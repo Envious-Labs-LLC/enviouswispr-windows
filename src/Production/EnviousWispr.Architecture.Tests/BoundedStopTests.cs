@@ -284,6 +284,63 @@ public sealed class BoundedStopTests
     }
 
     [Fact]
+    public async Task AStartHeldBeforeItsPublicationSeesAStopThatExpiredMeanwhile()
+    {
+        // THE START IS HELD BETWEEN TAKING ITS PLACE AND PUBLISHING ITS WORK - inside the shell's read
+        // of the preview switch. A stop lands, finds nothing to cancel, runs out of budget waiting
+        // and returns still running with the screen cleared. The start resumes, publishes, and sees
+        // the stop that landed since it took its place: its loop is cancelled and its screen closed,
+        // so an engine that ignores the cancel hands back frames for a screen that is gone.
+        var clock = new Deterministic.ManualClock();
+        var world = World.Create(clock);
+        world.PreviewEngine.HoldPreviews = true;
+        world.PreviewEngine.IgnoreCancel = true;
+        world.HoldPreviewSwitch = true;
+        var session = DictationSessionId.Create();
+        world.Session = session;
+
+        var start = world.Runtime.Preview.StartAsync(session);
+        await world.PreviewSwitchEntered.Task.WaitAsync(Patience);
+        var registered = clock.Registered;
+        var stop = world.Runtime.Preview.StopAsync(TimeSpan.FromSeconds(1));
+        await clock.WhenRegistered(registered + 1).WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(StopOutcome.StillRunning, await stop.WaitAsync(Patience));
+        Assert.Null(world.View.Previews[^1]);
+
+        world.AllowPreviewSwitchExit.SetResult();
+        await start.WaitAsync(Patience);
+        await world.PreviewEngine.PreviewEntered.Task.WaitAsync(Patience);
+        Assert.True(world.PreviewEngine.Token!.Value.IsCancellationRequested, "the start cancelled the work it published after the stop");
+        world.PreviewEngine.ReleasePreviews();
+        Assert.Equal(StopOutcome.Completed, await world.Runtime.Preview.StopAsync(Patience).WaitAsync(Patience));
+
+        Assert.DoesNotContain("preview words", world.View.Previews);
+    }
+
+    [Fact]
+    public async Task TwoStopsRacingEachOtherBothEndWithoutThrowing()
+    {
+        // ONE STOP MAY RETIRE THE SOURCE THE OTHER IS ABOUT TO CANCEL. Neither throws; both end, and
+        // the preview is stopped once.
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            var world = World.Create();
+            var session = DictationSessionId.Create();
+            world.Session = session;
+            await world.Runtime.Preview.StartAsync(session);
+            await world.PreviewEngine.PreviewEntered.Task.WaitAsync(Patience);
+
+            var first = Task.Run(() => world.Runtime.Preview.StopAsync(Patience));
+            var second = Task.Run(() => world.Runtime.Preview.StopAsync(Patience));
+            var outcomes = await Task.WhenAll(first, second).WaitAsync(Patience);
+
+            Assert.All(outcomes, outcome => Assert.Equal(StopOutcome.Completed, outcome));
+            Assert.False(world.Runtime.Preview.IsRunning);
+        }
+    }
+
+    [Fact]
     public async Task AWatchReplacedBeforeItsCallbackFinishedIsJoinedByTheNextStop()
     {
         // THE CALLBACK IS STILL RUNNING WHEN THE NEXT RECORDING ARMS THE WATCHDOG. The old watch is
@@ -400,6 +457,25 @@ public sealed class BoundedStopTests
         /// <summary>The preview switch as the shell would read it; streaming stands down while it is on.</summary>
         public bool PreviewEnabled { get; set; } = true;
 
+        /// <summary>Whether the shell's read of the preview switch is held - a start paused before it publishes.</summary>
+        public bool HoldPreviewSwitch { get; set; }
+
+        public TaskCompletionSource PreviewSwitchEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource AllowPreviewSwitchExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private bool ReadPreviewSwitch()
+        {
+            if (HoldPreviewSwitch)
+            {
+                PreviewSwitchEntered.TrySetResult();
+                AllowPreviewSwitchExit.Task.Wait(Patience);
+                HoldPreviewSwitch = false;
+            }
+
+            return PreviewEnabled;
+        }
+
         public static World Create(TimeProvider? clock = null)
         {
             clock ??= TimeProvider.System;
@@ -418,7 +494,7 @@ public sealed class BoundedStopTests
                 log,
                 new RuntimeShell(
                     view,
-                    LivePreviewEnabled: () => world?.PreviewEnabled ?? true,
+                    LivePreviewEnabled: () => world?.ReadPreviewSwitch() ?? true,
                     History: () => HistoryPreferences.Default,
                     CustomWords: () => [],
                     Audio: () => capture,

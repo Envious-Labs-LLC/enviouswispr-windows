@@ -83,8 +83,10 @@ remain wordless designs.
   cancelled the loop; a stop's outcome is carried by the unbounded overload too, and a disposal
   whose stop the engine refused leaves the owner in place for the next attempt. The timers' stops
   join the loop that posted, never the command it queued; the auto-stop's release carries the
-  recording it was for (`SessionCommand.ForSession`, `SubmitAsync(signal, forSession)`), and the
-  executor ignores it when it runs if that recording has ended.
+  recording it was for (`SessionCommand.ForSession`, `SubmitAsync(signal, forSession)`), the
+  executor ignores it when it runs if that recording has ended, and the coordinator's terminal
+  coalescing knows the recording in flight (from the commands' own results), so a stale named
+  release waiting in the queue never swallows the key that ends the recording after it.
   `SessionBackgroundWork.StopAsync(deadline)` gives each owner the deadline and returns a
   `BackgroundStopReport`; the unbounded `StopAsync()` the executor uses today is unchanged, and
   step 8's shutdown is what supplies the deadline.

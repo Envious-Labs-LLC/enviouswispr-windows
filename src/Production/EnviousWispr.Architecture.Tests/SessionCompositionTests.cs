@@ -254,6 +254,35 @@ public sealed class SessionCompositionTests
     }
 
     [Fact]
+    public async Task AStaleReleaseWaitingInTheQueueDoesNotSwallowTheKeyThatEndsTheNextRecording()
+    {
+        // THE STALE RELEASE IS PENDING WHEN THE REAL ONE ARRIVES. The next recording's press is still
+        // opening the microphone; a release posted for the earlier recording is admitted behind it;
+        // the key's release for this recording arrives before the stale one has run. A terminal that
+        // names a recording stands in only for that recording, so the key's release is admitted too:
+        // the stale one is ignored when it runs, and the key's ends the take.
+        var world = World.Create("hello world");
+        await world.SubmitAsync(PushToTalkSignal.Pressed);
+        var earlier = world.Controller.CurrentSession!.Id;
+        await world.SubmitAsync(PushToTalkSignal.Released);
+        Assert.Single(world.Delivery.Requests);
+
+        world.Capture.HoldStart = true;
+        var press = world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await world.Capture.StartEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var stale = world.Coordinator.SubmitAsync(PushToTalkSignal.Released, earlier);
+        var real = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        Assert.Equal(3, world.Coordinator.PendingCount);
+        world.Capture.AllowStartExit.SetResult();
+
+        Assert.Equal(SessionCommandDisposition.Applied, (await press.WaitAsync(TimeSpan.FromSeconds(10))).Disposition);
+        Assert.Equal(SessionCommandDisposition.Ignored, (await stale.WaitAsync(TimeSpan.FromSeconds(10))).Disposition);
+        Assert.Equal(SessionCommandDisposition.Applied, (await real.WaitAsync(TimeSpan.FromSeconds(10))).Disposition);
+        Assert.Equal(2, world.Delivery.Requests.Count);
+        Assert.Null(world.Controller.CurrentSession);
+    }
+
+    [Fact]
     public async Task PreviewTextNeverReachesFinalizationHistoryOrDelivery()
     {
         // THE PREVIEW IS A SCREEN, NOT A SOURCE. Its engine answers every pass with words the final
@@ -896,11 +925,23 @@ public sealed class SessionCompositionTests
 
         public bool IsCapturing { get; private set; }
 
-        public Task<AudioOperationResult> StartAsync(AudioCaptureRequest request, CancellationToken cancellationToken = default)
+        public bool HoldStart { get; set; }
+
+        public TaskCompletionSource StartEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource AllowStartExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<AudioOperationResult> StartAsync(AudioCaptureRequest request, CancellationToken cancellationToken = default)
         {
             _sessionId = request.SessionId;
+            StartEntered.TrySetResult();
+            if (HoldStart)
+            {
+                await AllowStartExit.Task;
+            }
+
             IsCapturing = true;
-            return Task.FromResult(new AudioOperationResult(Succeeded: true));
+            return new AudioOperationResult(Succeeded: true);
         }
 
         public Task<CapturedAudio> StopAsync(CancellationToken cancellationToken = default)
