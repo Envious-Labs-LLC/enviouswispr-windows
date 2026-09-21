@@ -372,6 +372,59 @@ public sealed class DictationSessionExecutorTests
     }
 
     [Fact]
+    public async Task TheDeadlineIsHeldThroughARecoveryStillRunningAndReleasedWhenItEnds()
+    {
+        // A FINALISATION THAT FAILED IS BEING RECOVERED, and the recovery is itself waiting on the
+        // background work. A lock arriving now still finds the deadline to cancel; the deadline is
+        // held for the whole of the recovery and let go only when the command ends.
+        var (executor, _, effects, _, finalization) = BuildWithFinalization();
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        effects.Trace.Clear();
+        finalization.Throws = true;
+        effects.HoldRecovery = true;
+        var release = executor.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
+        await effects.RecoveryEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(executor.IsProcessing, "the deadline is still held while the recovery runs");
+        executor.CancelProcessing();
+        Assert.True(finalization.Token!.Value.IsCancellationRequested);
+        Assert.True(executor.IsProcessing, "cancelling does not release; the command's end does");
+
+        effects.AllowRecoveryExit.SetResult();
+        var result = await release.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
+        Assert.False(executor.IsProcessing);
+        Assert.Contains("RecoverFailedSession:InvalidTransition:Failed", effects.Trace);
+    }
+
+    [Fact]
+    public async Task ACancelRacingTheFinalisationsCompletionEndsCleanlyEitherWay()
+    {
+        // THE TWO ENDINGS RACE AND NEITHER MAY THROW OUT: the finalisation is held; it is released
+        // and cancelled in the same breath. Whichever wins, the command ends with the deadline
+        // released and no disposal exception escaping the executor.
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            var (executor, _, effects, _, finalization) = BuildWithFinalization();
+            await executor.ExecuteAsync(Press(), CancellationToken.None);
+            finalization.Hold = true;
+            var release = executor.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
+            await finalization.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            var cancel = Task.Run(executor.CancelProcessing);
+            finalization.AllowExit.SetResult();
+            await cancel;
+            var result = await release.WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Contains(result.Disposition, new[] { SessionCommandDisposition.Applied, SessionCommandDisposition.Failed });
+            Assert.False(executor.IsProcessing);
+            executor.CancelProcessing();
+            Assert.Contains("RecordDictationEdge", effects.Trace);
+        }
+    }
+
+    [Fact]
     public async Task CancellingProcessingWithNothingInFlightDoesNothing()
     {
         var (executor, _, effects, _) = Build();
@@ -536,11 +589,21 @@ public sealed class DictationSessionExecutorTests
         /// <summary>Whether the executor still holds the command's processing deadline; read at recovery time.</summary>
         public Func<bool>? IsProcessing { get; set; }
 
-        public Task RecoverFailedSessionAsync(AppError failure, SessionFailureKind kind)
+        public bool HoldRecovery { get; set; }
+
+        public TaskCompletionSource RecoveryEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource AllowRecoveryExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task RecoverFailedSessionAsync(AppError failure, SessionFailureKind kind)
         {
             Trace.Add($"RecoverFailedSession:{failure.Code}:{kind}");
             DeadlineArmedDuringRecovery = IsProcessing?.Invoke() == true;
-            return Task.CompletedTask;
+            if (HoldRecovery)
+            {
+                RecoveryEntered.TrySetResult();
+                await AllowRecoveryExit.Task;
+            }
         }
 
         public Task RecordDictationEdgeAsync()
@@ -579,6 +642,8 @@ public sealed class DictationSessionExecutorTests
 
         public CancellationToken? Token { get; private set; }
 
+        public TaskCompletionSource Failed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public async Task<FinalizationReport> RunAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly, CancellationToken cancellationToken)
         {
             trace.Add($"Finalize:recoveryOnly={recoveryOnly}");
@@ -586,6 +651,7 @@ public sealed class DictationSessionExecutorTests
             Token = cancellationToken;
             if (Throws)
             {
+                Failed.TrySetResult();
                 throw new InvalidOperationException("synthetic finalisation failure");
             }
 

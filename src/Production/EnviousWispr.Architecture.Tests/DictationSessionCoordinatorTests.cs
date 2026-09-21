@@ -675,6 +675,41 @@ public sealed class DictationSessionCoordinatorTests
         Assert.Equal(1, executor.CancelProcessingCalls);
     }
 
+    /// <summary>The shell's lifecycle callback cancels the finalisation in flight before, and regardless of, the exit guard on the interruption.</summary>
+    /// <remarks>
+    /// A LOCK THAT LANDS WHILE THE EXIT IS DRAINING SETTINGS must still stop a transcription the exit is
+    /// about to tear down under. The interruption is rightly refused once leaving has begun; the cancel
+    /// is not. A WinUI callback cannot run under xunit, so the shape is checked at the source: the
+    /// cancel statement precedes the guarded interruption in the callback's body.
+    /// </remarks>
+    [Fact]
+    public void TheLifecycleCallbackCancelsProcessingBeforeTheExitGuard()
+    {
+        var shell = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+        var start = shell.IndexOf("private void OnSystemLifecycleTransitioned(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "The lifecycle callback is gone.");
+        var body = shell[start..shell.IndexOf("\n    }\n", start, StringComparison.Ordinal)];
+
+        var cancel = body.IndexOf("_sessionCoordinator?.CancelProcessing();", StringComparison.Ordinal);
+        var guard = body.IndexOf("if (!_exitRequested && !_disposed", StringComparison.Ordinal);
+        var interrupt = body.IndexOf("InterruptAsync(transition)", StringComparison.Ordinal);
+        Assert.True(cancel >= 0, "The callback does not cancel the finalisation in flight.");
+        Assert.True(guard > cancel, "The cancel sits under the exit guard, so a lock during the exit's settings drain leaves a transcription running.");
+        Assert.True(interrupt > guard, "The interruption is not guarded by the exit flags.");
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "EnviousWispr.Windows.slnx")))
+        {
+            directory = directory.Parent;
+        }
+
+        Assert.NotNull(directory);
+        return directory.FullName;
+    }
+
     [Fact]
     public async Task TheShellsExitCancelsTheProcessingInFlightThroughTheCoordinator()
     {

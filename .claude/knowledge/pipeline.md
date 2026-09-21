@@ -50,8 +50,12 @@ remain wordless designs.
   With nothing in flight, an interruption does nothing. The update check holds the session through
   the coordinator (`TryHold`), so a press during a download is `Busy`. Shutdown closes admission before its
   first await, gives the running command ten seconds, and runs the shell's session teardown as the last
-  thing under the session (or after a further ten seconds, beside a command that would not finish). The shell keeps Windows' notifications, the processing deadline it
-  cancels on lock, and rendering.
+  thing under the session (or after a further ten seconds, beside a command that would not finish). The
+  executor owns the order of the background work around a recording (watchdog, preview, auto-stop,
+  streaming), the three-minute processing deadline - armed before the background work is stopped so
+  it covers the preview's worker being waited for, cancelled by a lock, a suspend or the exit
+  through the coordinator, released after any recovery - and the finalisation call itself. The shell
+  keeps Windows' notifications and rendering.
 - **How the macOS app owns the same workflow** (read from its source by the Mac session on 2026-09-20;
   its owners are `.claude/knowledge/session-lifecycle.md`, `pipeline-mechanics.md` and `live-preview.md`
   in the macOS repository). One recording-session kernel is the single state machine every dictation

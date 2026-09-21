@@ -706,7 +706,10 @@ public partial class App : Application, IAsyncDisposable
         if (transition is SystemLifecycleTransition.Suspending or
             SystemLifecycleTransition.SessionLocked)
         {
-            // The coordinator cancels the finalisation in flight before it queues the interruption.
+            // THE FINALISATION IN FLIGHT IS CANCELLED WHETHER OR NOT THE INTERRUPTION IS QUEUED. A lock
+            // that lands while the exit is draining settings must still stop a transcription the exit
+            // is about to tear down under; the interruption itself is refused once leaving has begun.
+            _sessionCoordinator?.CancelProcessing();
             if (!_exitRequested && !_disposed && _sessionCoordinator is { } coordinator)
             {
                 _ = coordinator.InterruptAsync(transition);
