@@ -79,7 +79,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         if (request.ForcedRefusalReason != TextDeliveryRefusalReason.None)
         {
             return await WindowsClipboardPaste.CopyOnlyAsync(
-                request.LegacyText.Text,
+                request.FallbackText.Text,
                 request.ForcedRefusalReason,
                 cancellationToken).ConfigureAwait(false);
         }
@@ -87,7 +87,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         if (request.ExpectedContext is null)
         {
             return await WindowsClipboardPaste.CopyOnlyAsync(
-                request.LegacyText.Text,
+                request.FallbackText.Text,
                 TextDeliveryRefusalReason.AccessibilityUnavailable,
                 cancellationToken).ConfigureAwait(false);
         }
@@ -101,7 +101,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             !CaretUnchanged(request.ExpectedContext, current.Context))
         {
             return await WindowsClipboardPaste.CopyOnlyAsync(
-                request.LegacyText.Text,
+                request.FallbackText.Text,
                 RevalidationRefusal(current),
                 cancellationToken).ConfigureAwait(false);
         }
@@ -127,14 +127,14 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         if (policyRefusal != TextDeliveryRefusalReason.None)
         {
             return await WindowsClipboardPaste.CopyOnlyAsync(
-                request.LegacyText.Text,
+                request.FallbackText.Text,
                 policyRefusal,
                 cancellationToken).ConfigureAwait(false);
         }
 
         return await WindowsClipboardPaste.PasteAsync(
             request.Text.Text,
-            request.LegacyText.Text,
+            request.FallbackText.Text,
             request.Options.RestoreClipboardAfterPaste,
             () => GuardedPreflight(() => PreflightInput(
                 request.Target,

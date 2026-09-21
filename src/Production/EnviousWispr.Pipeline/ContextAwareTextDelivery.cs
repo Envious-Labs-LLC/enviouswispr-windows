@@ -118,8 +118,8 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
         {
             commit = await _targetAdapter.CommitAsync(
                 new TextCommitRequest(
-                    repair.Output,
-                    repair.LegacyOutput,
+                    repair.Insertion,
+                    repair.Fallback,
                     request.Target,
                     capture.Status == TargetContextStatus.Available ? capture.Context : null,
                     targetKind,
@@ -170,7 +170,7 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
         DeliveryStage stage,
         Exception exception,
         CancellationToken cancellationToken,
-        CursorRepairDisposition disposition = CursorRepairDisposition.LegacyPayload)
+        CursorRepairDisposition disposition = CursorRepairDisposition.FallbackPayload)
     {
         // THE CALLER'S CANCELLATION IS CANCELLATION; ANY OTHER OperationCanceledException IS A DEFECT,
         // because nothing else was asked to stop. A disposal is the app leaving. Everything else is a

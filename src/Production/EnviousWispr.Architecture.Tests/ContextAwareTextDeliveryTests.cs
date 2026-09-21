@@ -20,7 +20,7 @@ public sealed class ContextAwareTextDeliveryTests
         var result = await delivery.DeliverAsync(Request("world"));
 
         Assert.Equal(" world ", adapter.LastCommit?.Text.Text);
-        Assert.Equal("world ", adapter.LastCommit?.LegacyText.Text);
+        Assert.Equal("world ", adapter.LastCommit?.FallbackText.Text);
         Assert.Equal(CursorRepairDisposition.ContextApplied, result.RepairDisposition);
         Assert.True(result.Delivered);
         Assert.Null(delivery.RecoveryText);
@@ -55,7 +55,7 @@ public sealed class ContextAwareTextDeliveryTests
         var result = await delivery.DeliverAsync(Request("private text"));
 
         Assert.Equal(TextDeliveryRefusalReason.TargetChanged, result.RefusalReason);
-        Assert.Equal(CursorRepairDisposition.LegacyPayload, result.RepairDisposition);
+        Assert.Equal(CursorRepairDisposition.FallbackPayload, result.RepairDisposition);
     }
 
     [Fact]
@@ -210,16 +210,32 @@ public sealed class ContextAwareTextDeliveryTests
     }
 
     [Fact]
-    public async Task WhatIsCopiedIsWhatWasSaid()
+    public async Task RequestedCopyUsesOriginalText()
     {
-        // The repair adds spacing for where the text was going to land. Nothing is landing anywhere,
-        // so "hello" must arrive as "hello" rather than as "hello ".
+        // The repair adds spacing for where the text was going to land - the insertion for the seam,
+        // the fallback's trailing space for a paste. Nothing is landing anywhere, so "hello" must
+        // arrive as "hello": neither payload, the words as said.
         var adapter = new FakeTargetAdapter(AvailableContext("before", "after"));
         var delivery = new ContextAwareTextDelivery(adapter);
 
         await delivery.DeliverAsync(CopyRequest("hello"));
 
         Assert.Equal("hello", adapter.LastCopied?.Text);
+        Assert.Null(adapter.LastCommit);
+    }
+
+    [Fact]
+    public async Task TheCommitCarriesBothPayloadsUnderTheirOwnNames()
+    {
+        // THE ADAPTER IS HANDED THE INSERTION AND THE FALLBACK, AND THEY DIFFER: the insertion
+        // adjusted to the caret's seam, the fallback the words as said with a trailing space.
+        var adapter = new FakeTargetAdapter(AvailableContext(left: "hello,", right: "again"));
+        var delivery = new ContextAwareTextDelivery(adapter);
+
+        await delivery.DeliverAsync(Request("world"));
+
+        Assert.Equal(" world ", adapter.LastCommit?.Text.Text);
+        Assert.Equal("world ", adapter.LastCommit?.FallbackText.Text);
     }
 
     [Fact]
