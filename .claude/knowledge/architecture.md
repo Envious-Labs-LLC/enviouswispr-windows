@@ -33,7 +33,15 @@ build so customers do not need to install developer tooling.
 - `Presentation`: the decisions a window makes, without the window - settings transactions and their
   failure answers, and (as #148 lanes 15-20 land) provider configuration, the microphone test, history
   commands, vocabulary editing and import. Depends on Core only, so every rule that used to sit behind a
-  WinUI control runs under xunit. Windows keep control reads, rendering and WinUI events.
+  WinUI control runs under xunit. Windows keep control reads, rendering and WinUI events. The General
+  page's Save is `SettingsPresenter.SaveGeneralAsync(GeneralSettingsInput)` (plan-2 step 11): the window
+  reads its controls into raw values - text as typed, choices as their index, numbers as the field holds
+  them - and the presenter parses the three shortcuts, refuses a clash with the same detector the live
+  warning asks, normalises every index, turns an empty number into its default, shares telemetry only
+  where the build can, and replaces exactly three stored fields (microphone, preferences, observability)
+  so an import or an app-state write that landed meanwhile survives; the window focuses the field the
+  outcome names, shows its message and applies the theme it returns. The index maps are the presenter's
+  statics, so filling the controls and saving them cannot drift.
 - `Services`: storage, credentials, updates, telemetry boundaries, and Windows integration.
 - `ModelDelivery`: manifests, downloads, hashes, versions, storage, and cleanup.
 - `RuntimeWorker`: a **separate executable** that hosts the native speech runtimes, including the CUDA
