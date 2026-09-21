@@ -203,6 +203,41 @@ public sealed class WindowsTextDeliverySafetyTests
                 // invoked later, outside it, where a refusal would be a fault.
                 Assert.True(symbol is not IMethodSymbol || IsInvoked(expression), $"A UI Automation method captured instead of called at line {Line(expression)}: {expression.Parent}");
                 Assert.True(ExecutesInsideTheBoundary(expression, model, helpers), $"A UI Automation call outside the boundary at line {Line(expression)}: {expression.Parent}");
+
+                // AN UNTYPED RESULT IS NOT TAKEN: a UI Automation member that answers `object`
+                // (a generic property read) hands back what may be an element under a type the
+                // scan cannot see; the adapter reads typed members only. An `out object` - the
+                // pattern lookup - is admitted only as `out var x` narrowed at once by `is T t`,
+                // and never used otherwise.
+                var answers = symbol switch
+                {
+                    IPropertySymbol property => property.Type,
+                    IMethodSymbol called => called.ReturnType,
+                    _ => null,
+                };
+                Assert.True(
+                    answers is null || answers.SpecialType != SpecialType.System_Object,
+                    $"An untyped UI Automation result at line {Line(expression)}: {expression.Parent}");
+                if (symbol is IMethodSymbol withOut && expression is InvocationExpressionSyntax outCall)
+                {
+                    foreach (var parameter in withOut.Parameters.Where(parameter => parameter.RefKind == RefKind.Out && parameter.Type.SpecialType == SpecialType.System_Object))
+                    {
+                        var argument = outCall.ArgumentList.Arguments.ElementAtOrDefault(parameter.Ordinal);
+                        var designation = (argument?.Expression as DeclarationExpressionSyntax)?.Designation as SingleVariableDesignationSyntax;
+                        Assert.True(designation is not null, $"An untyped UI Automation result taken other than as `out var` at line {Line(expression)}: {expression.Parent}");
+                        var local = model.GetDeclaredSymbol(designation!);
+                        var narrowings = adapter.DescendantNodes().OfType<IdentifierNameSyntax>()
+                            .Where(name => name.Identifier.Text == designation!.Identifier.Text && SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(name).Symbol, local))
+                            .ToArray();
+                        Assert.True(narrowings.Length > 0, $"An untyped UI Automation result never narrowed at line {Line(expression)}: {expression.Parent}");
+                        foreach (var reference in narrowings)
+                        {
+                            Assert.True(
+                                reference.Parent is IsPatternExpressionSyntax { Pattern: DeclarationPatternSyntax } && ExecutesInsideTheBoundary(reference, model, helpers),
+                                $"An untyped UI Automation result used before it is narrowed at line {Line(reference)}: {reference.Parent}");
+                        }
+                    }
+                }
             }
             else if (symbol is IMethodSymbol { ContainingType.Name: "WindowsTextTargetAdapter" } method && helperReferences.TryGetValue(method.Name, out var uses))
             {

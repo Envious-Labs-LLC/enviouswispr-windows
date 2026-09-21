@@ -36,6 +36,9 @@ RUNTIME_ID_HELPER = "    private static string RuntimeId(AutomationElement eleme
 
 # Each mutation: a name, and the (anchor, replacement) edits that plant one escape.
 MUTATIONS: dict[str, list[tuple[str, str]]] = {
+    "untyped-property-read": [(FOCUS_READ, "        var label = Automation(() => element.GetCurrentPropertyValue(AutomationElement.LabeledByProperty));" + NL + "        _ = label?.GetHashCode();" + NL + FOCUS_READ)],
+    "untyped-cached-property-read": [(FOCUS_READ, "        var label = Automation(() => element.GetCachedPropertyValue(AutomationElement.LabeledByProperty));" + NL + "        _ = label?.GetHashCode();" + NL + FOCUS_READ)],
+    "untyped-out-result-escapes": [(FOCUS_READ, "        var raw = Automation(() => element.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern) ? pattern : null);" + NL + "        _ = raw?.GetHashCode();" + NL + FOCUS_READ)],
     "handle-in-inherited-record": [(FOCUS_READ, "        var cached = Automation(() => new Held { Element = element });" + NL + "        _ = cached.GetHashCode();" + NL + FOCUS_READ), (RUNTIME_ID_HELPER, "    private record HeldBase" + NL + "    {" + NL + "        public AutomationElement? Element { get; init; }" + NL + "    }" + NL + NL + "    private sealed record Held : HeldBase;" + NL + NL + RUNTIME_ID_HELPER)],
     "handle-in-generic-base": [(FOCUS_READ, "        var cached = Automation(() => new HeldElement { Value = element });" + NL + "        _ = cached.GetHashCode();" + NL + FOCUS_READ), (RUNTIME_ID_HELPER, "    private record HeldOf<T>" + NL + "    {" + NL + "        public T? Value { get; init; }" + NL + "    }" + NL + NL + "    private sealed record HeldElement : HeldOf<AutomationElement>;" + NL + NL + RUNTIME_ID_HELPER)],
     "handle-in-tuple": [(FOCUS_READ, "        var cached = Automation(() => (element, target.Value));" + NL + "        _ = cached.GetHashCode();" + NL + FOCUS_READ)],
@@ -72,7 +75,7 @@ MUTATIONS: dict[str, list[tuple[str, str]]] = {
 }
 
 # What the gate says when it catches an escape; any other failure is the wrong reason.
-CAUGHT_MARKERS = ("outside the boundary", "captured instead of called", "Assert.Single() Failure", "dynamically dispatched call", "reflective call", "handle used outside the boundary", "handle erased")
+CAUGHT_MARKERS = ("outside the boundary", "captured instead of called", "Assert.Single() Failure", "dynamically dispatched call", "reflective call", "handle used outside the boundary", "handle erased", "untyped UI Automation result")
 
 
 def run_gate() -> str:
