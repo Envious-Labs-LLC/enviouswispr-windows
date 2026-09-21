@@ -152,8 +152,12 @@ public sealed class SessionCompositionTests
     public async Task AutoStopAndWatchdogReachSameAdmissionQueue()
     {
         // THE AUTO-STOP'S RELEASE AND THE WATCHDOG'S TIMEOUT ARE COMMANDS ON THE ONE QUEUE the key
-        // uses, through the composed timer effects; neither reaches the executor by a route of its
-        // own. Both timers run on a manual clock.
+        // uses, through the composed timer effects. Each is held mid-command and, while held, is
+        // shown to occupy the coordinator's one terminal slot: the coordinator counts it as pending,
+        // and a competing key release and a competing timeout are both refused as Ignored by that
+        // coordinator. Released, each ends as exactly one terminal outcome, with one run-state edge -
+        // which only a command run by the coordinator's executor writes. Both timers run on a manual
+        // clock.
         var clock = new Deterministic.ManualClock();
         var world = World.Create("hello world", clock);
         world.Dictation = DictationPreferences.Default with
@@ -163,23 +167,52 @@ public sealed class SessionCompositionTests
             AutoStopSilenceSeconds = 2,
         };
 
-        // The auto-stop: a take of speech then enough silence, seen on its first poll.
+        // THE AUTO-STOP. A take of speech then enough silence, seen on its first poll; its release
+        // runs into an engine that is held.
+        world.Engine.Hold = true;
         world.Capture.Take = FakeAudioCapture.SpeechThenSilence(1_000, 3_000);
         await world.SubmitAsync(PushToTalkSignal.Pressed);
         Assert.Equal(DictationSessionState.Recording, world.Controller.CurrentSession?.State);
+        Assert.Equal(0, world.Coordinator.PendingCount);
         await clock.WhenRegistered(1).WaitAsync(TimeSpan.FromSeconds(10));
         clock.Advance(TimeSpan.FromMilliseconds(250));
-        await Eventually(() => world.Delivery.Requests.Count == 1, "the auto-stop's release to reach delivery");
+        await world.Engine.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Contains(world.Log.Events, code => code == AppEventCode.AutoStopTriggered);
+        Assert.Equal(1, world.Coordinator.PendingCount);
+        Assert.True(world.Coordinator.IsProcessing, "the auto-stop's release is the coordinator's running command");
+        var competingRelease = await world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        var competingTimeout = await world.Coordinator.TimeOutAsync(world.Controller.CurrentSession!.Id);
+        Assert.Equal(SessionCommandDisposition.Ignored, competingRelease.Disposition);
+        Assert.Equal(SessionCommandDisposition.Ignored, competingTimeout.Disposition);
+        world.Engine.Release();
+
         await Eventually(() => world.Controller.CurrentSession is null, "the session to reset");
-        Assert.Equal("hello world", world.Delivery.Requests[0].Text.Text);
+        await Eventually(() => world.Coordinator.PendingCount == 0, "the coordinator to drain");
+        Assert.Equal("hello world", Assert.Single(world.Delivery.Requests).Text.Text);
         Assert.Equal([true, false], world.RunState.Edges);
 
-        // The watchdog: a recording nobody ends, timed out at the limit.
+        // THE WATCHDOG. A recording nobody ends, timed out at the limit; its timeout runs into a
+        // preview engine whose stop is held, inside the background stop the recovery makes.
+        world.Engine.Hold = false;
+        world.PreviewEngine.HoldStop = true;
         world.Capture.Take = new float[16_000];
         await world.SubmitAsync(PushToTalkSignal.Pressed);
+        var timedOut = world.Controller.CurrentSession!.Id;
         Assert.Equal(DictationSessionState.Recording, world.Controller.CurrentSession?.State);
         clock.Advance(RecordingLimits.WatchdogDuration());
+        await world.PreviewEngine.StopEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(1, world.Coordinator.PendingCount);
+        Assert.Equal(DictationSessionState.Recording, world.Controller.CurrentSession?.State);
+        competingRelease = await world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        competingTimeout = await world.Coordinator.TimeOutAsync(timedOut);
+        Assert.Equal(SessionCommandDisposition.Ignored, competingRelease.Disposition);
+        Assert.Equal(SessionCommandDisposition.Ignored, competingTimeout.Disposition);
+        world.PreviewEngine.AllowStopExit.SetResult();
+
         await Eventually(() => world.Controller.CurrentSession is null, "the watchdog's timeout to reset the session");
+        await Eventually(() => world.Coordinator.PendingCount == 0, "the coordinator to drain");
         Assert.Contains(world.View.Statuses, status => status.Text == "Recording timed out and was cancelled safely");
         Assert.Single(world.Delivery.Requests);
         Assert.Equal([true, false, true, false], world.RunState.Edges);
@@ -207,17 +240,67 @@ public sealed class SessionCompositionTests
     }
 
     [Fact]
+    public async Task LiveReadsAreTakenBetweenCommandsNotCapturedAtComposition()
+    {
+        // THE RUNTIME IS BUILT ONCE AND OUTLIVES EVERY SETTING AND ENGINE. Between two recordings the
+        // preview is switched on, the capture, the engine and the history preference are replaced and
+        // a word is taught; the second recording must use every replacement - and once the shell has
+        // let go of its coordinator, a key reaches nothing.
+        var world = World.Create("first take");
+        await world.SubmitAsync(PushToTalkSignal.Pressed);
+        await world.SubmitAsync(PushToTalkSignal.Released);
+        Assert.Equal("first take", world.Delivery.Requests.Single().Text.Text);
+        Assert.Single(world.HistoryStore.Added);
+        Assert.DoesNotContain("preview words", world.RuntimeView.Previews);
+
+        var secondEngine = new FakeEngine("envy wisper is here");
+        var secondAudio = new FakeAudioCapture();
+        var polish = new FailingPolish();
+        world.LivePreviewEnabled = true;
+        world.EngineRef = secondEngine;
+        world.Audio = secondAudio;
+        world.History = HistoryPreferences.Default with { IsEnabled = false };
+        world.CustomWords.Add(new CustomWordEntry("envy wisper", "EnviousWispr"));
+        world.Polish = new PolishSetup(polish, UsesLocalRuntime: true, RuntimeResourceKind.Cpu);
+
+        await world.SubmitAsync(PushToTalkSignal.Pressed);
+        // The replaced capture was never started by this controller, so it stamps its snapshots with
+        // the session it is told about, as a started one would.
+        secondAudio.SessionForSnapshots = world.Controller.CurrentSession!.Id;
+        await Eventually(() => world.RuntimeView.Previews.Contains("preview words"), "the preview to reach the window");
+        await world.SubmitAsync(PushToTalkSignal.Released);
+
+        Assert.Equal("EnviousWispr is here", world.Delivery.Requests[^1].Text.Text);
+        Assert.True(secondAudio.Snapshots > 0, "the preview sampled the replaced capture");
+        Assert.Equal(0, world.Capture.Snapshots);
+        Assert.Single(world.HistoryStore.Added);
+        Assert.Contains("EnviousWispr", Assert.Single(polish.Requests).Vocabulary ?? []);
+
+        world.Detached = true;
+        var edges = world.RunState.Edges.Count;
+        await world.SubmitAsync(PushToTalkSignal.Pressed);
+        Assert.Null(world.Controller.CurrentSession);
+        Assert.Equal(edges, world.RunState.Edges.Count);
+    }
+
+    [Fact]
     public async Task PolishFailureRetainsDeterministicRecoveryText()
     {
         // THE POLISH PROVIDER IS OFFLINE. The deterministic pass's words are the recovery copy, written
         // through the composed persistence owner before the polish is tried, and they are what is
         // delivered; a failed polish loses nothing.
         var world = World.Create("um hello world");
-        world.Polish = new PolishSetup(new FailingPolish(), UsesLocalRuntime: true, RuntimeResourceKind.Cpu);
+        var polish = new FailingPolish { Trace = world.Trace };
+        world.Polish = new PolishSetup(polish, UsesLocalRuntime: true, RuntimeResourceKind.Cpu);
 
         await world.SubmitAsync(PushToTalkSignal.Pressed);
         await world.SubmitAsync(PushToTalkSignal.Released);
 
+        // The provider was asked, with the deterministic words, and answered that it was unavailable;
+        // the recovery copy of those words was already written when it was asked.
+        Assert.Equal("hello world", Assert.Single(polish.Requests).Input.Text);
+        Assert.Equal(["SaveRecovery:hello world", "Polish:hello world"], world.Trace);
+        Assert.Contains(world.Log.Events, code => code == AppEventCode.PolishDegraded);
         Assert.Equal(["hello world"], world.RecoveryStore.Saved);
         Assert.Equal("hello world", world.Delivery.Requests.Single().Text.Text);
         var entry = world.HistoryStore.Added.Single();
@@ -293,9 +376,20 @@ public sealed class SessionCompositionTests
 
         public PolishSetup? Polish { get; set; }
 
+        /// <summary>The engine the shell would hand over; replaceable between commands, as a reload is.</summary>
+        public ITranscriptionEngine EngineRef { get; set; } = null!;
+
+        /// <summary>The capture the shell would sample; replaceable between commands, as a hook restart is.</summary>
+        public IAudioSnapshotSource Audio { get; set; } = null!;
+
+        public HistoryPreferences History { get; set; } = HistoryPreferences.Default;
+
+        /// <summary>Whether the shell has let go of its coordinator.</summary>
+        public bool Detached { get; set; }
+
         public static World Create(string spoken, TimeProvider? clock = null)
         {
-            var log = new NullLogger();
+            var log = new RecordingLogger();
             clock ??= TimeProvider.System;
             var capture = new FakeAudioCapture();
             var controller = new PushToTalkSessionController(capture, new FakeTargetProvider(101), minimumHoldDuration: TimeSpan.Zero);
@@ -307,6 +401,7 @@ public sealed class SessionCompositionTests
             var runState = new FakeRunState();
             var recoveryStore = new FakeRecoveryStore();
             var historyStore = new FakeHistoryStore();
+            var trace = new List<string>();
             var recordingActive = new List<bool>();
             var archived = new List<CapturedAudio>();
             var words = new List<CustomWordEntry>();
@@ -324,14 +419,14 @@ public sealed class SessionCompositionTests
                 new RuntimeShell(
                     runtimeView,
                     LivePreviewEnabled: () => world!.LivePreviewEnabled,
-                    History: () => HistoryPreferences.Default,
+                    History: () => world!.History,
                     CustomWords: () => words.ToArray(),
-                    Audio: () => capture,
-                    Engine: () => engine,
+                    Audio: () => world!.Audio,
+                    Engine: () => world!.EngineRef,
                     PreviewEngine: () => previewEngine,
                     PreviewUnavailableReason: () => null,
                     RecordingSessionId: () => controller.CurrentSession?.Id,
-                    Coordinator: () => world?.Coordinator,
+                    Coordinator: () => world is { Detached: false } ? world.Coordinator : null,
                     Leaving: () => false),
                 clock));
 
@@ -346,7 +441,7 @@ public sealed class SessionCompositionTests
                     view,
                     AttachedSession: () => world!._attached?.CurrentSession,
                     Dictation: () => world!.Dictation,
-                    Engine: () => engine,
+                    Engine: () => world!.EngineRef,
                     Delivery: () => delivery,
                     Options: () => new FinalizationOptions(words.ToArray(), new DeterministicTextOptions(true, true, true, true), world!.Polish),
                     CloudPolishProviderName: () => null,
@@ -387,12 +482,21 @@ public sealed class SessionCompositionTests
                 HistoryStore = historyStore,
                 PreviewEngine = previewEngine,
                 Runtime = runtime,
+                Log = log,
             };
             world._attached = controller;
+            world.EngineRef = engine;
+            world.Audio = capture;
+            recoveryStore.Trace = world.Trace;
             return world;
         }
 
         public required SessionRuntime Runtime { get; init; }
+
+        public required RecordingLogger Log { get; init; }
+
+        /// <summary>The order of the leaf operations that matter to a proof, appended by the fakes that share it.</summary>
+        public List<string> Trace { get; } = [];
 
         /// <summary>A key through the runtime's queue, the route the hook and the auto-stop share.</summary>
         public Task SubmitAsync(PushToTalkSignal signal) => Runtime.SubmitAsync(signal);
@@ -450,8 +554,22 @@ public sealed class SessionCompositionTests
             return Task.FromResult(new LivePreviewUpdate(snapshot.SessionId.Value, sequence, true, Words));
         }
 
-        public Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(new RuntimeWorkerResult(true, RuntimeWorkerState.Stopped));
+        public bool HoldStop { get; set; }
+
+        public TaskCompletionSource StopEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource AllowStopExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default)
+        {
+            if (HoldStop)
+            {
+                StopEntered.TrySetResult();
+                await AllowStopExit.Task;
+            }
+
+            return new RuntimeWorkerResult(true, RuntimeWorkerState.Stopped);
+        }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
@@ -461,11 +579,19 @@ public sealed class SessionCompositionTests
     {
         public string ProviderId => "ollama";
 
-        public Task<PolishResult> TryPolishAsync(PolishRequest request, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new PolishResult(
+        public List<PolishRequest> Requests { get; } = [];
+
+        public List<string>? Trace { get; set; }
+
+        public Task<PolishResult> TryPolishAsync(PolishRequest request, CancellationToken cancellationToken = default)
+        {
+            Requests.Add(request);
+            Trace?.Add($"Polish:{request.Input.Text}");
+            return Task.FromResult(new PolishResult(
                 request.Input,
                 PolishAttemptStatus.Unavailable,
                 new AppError(AppErrorCode.PolishProviderUnavailable, AppErrorStage.LocalPolish, CanRetry: true)));
+        }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
@@ -523,6 +649,11 @@ public sealed class SessionCompositionTests
 
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Lets a held call return; a held call cancelled first stays cancelled.</summary>
+        public void Release() => _released.TrySetResult();
+
         public CancellationToken? Token { get; private set; }
 
         public Action? BeforeReturning { get; set; }
@@ -537,7 +668,7 @@ public sealed class SessionCompositionTests
             }
             else if (Hold)
             {
-                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                await _released.Task.WaitAsync(cancellationToken);
             }
 
             BeforeReturning?.Invoke();
@@ -571,6 +702,8 @@ public sealed class SessionCompositionTests
     {
         public List<string> Saved { get; } = [];
 
+        public List<string>? Trace { get; set; }
+
         public int Cleared { get; private set; }
 
         public Task<RecoveryTextLoadResult> LoadAsync(CancellationToken cancellationToken = default) =>
@@ -579,6 +712,7 @@ public sealed class SessionCompositionTests
         public Task<bool> SaveAsync(RecoveryTextRecord record, CancellationToken cancellationToken = default)
         {
             Saved.Add(record.Text);
+            Trace?.Add($"SaveRecovery:{record.Text}");
             return Task.FromResult(true);
         }
 
@@ -617,10 +751,27 @@ public sealed class SessionCompositionTests
             MemoryLoadPercent: 40);
     }
 
-    private sealed class NullLogger : IAppLogger
+    private sealed class RecordingLogger : IAppLogger
     {
+        private readonly List<AppEventCode> _events = [];
+
+        public IReadOnlyList<AppEventCode> Events
+        {
+            get
+            {
+                lock (_events)
+                {
+                    return _events.ToArray();
+                }
+            }
+        }
+
         public void Write(AppLogEntry entry)
         {
+            lock (_events)
+            {
+                _events.Add(entry.Event);
+            }
         }
     }
 
@@ -637,7 +788,16 @@ public sealed class SessionCompositionTests
         /// <summary>What a snapshot returns: silence unless a take is scripted.</summary>
         public float[] Take { get; set; } = new float[16_000];
 
-        public AudioSnapshot? GetSnapshot(TimeSpan maximumDuration) => new(_sessionId, Take, 16_000, 1);
+        public int Snapshots { get; private set; }
+
+        /// <summary>The session a snapshot is stamped with; a capture never started answers for the one asked about.</summary>
+        public DictationSessionId? SessionForSnapshots { get; set; }
+
+        public AudioSnapshot? GetSnapshot(TimeSpan maximumDuration)
+        {
+            Snapshots++;
+            return new(SessionForSnapshots ?? _sessionId, Take, 16_000, 1);
+        }
 
         /// <summary>A take of speech followed by the silence the auto-stop waits for.</summary>
         public static float[] SpeechThenSilence(int speechMilliseconds, int silenceMilliseconds)
