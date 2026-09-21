@@ -216,6 +216,47 @@ public sealed class BoundedStopTests
     }
 
     [Fact]
+    public async Task AnAbortAfterARefusedStopEndsTheWorkerAndReleasesThePreview()
+    {
+        // THE RELEASE'S LAST RESORT. The engine refused its stop; the abort kills the worker, sees
+        // it go, and the preview is no longer owned - a start is admitted again and the line says the
+        // worker was ended by force. An abort that does not see the worker go leaves the preview
+        // owned, and an abort with nothing refused is a no-op. An abort is never run under a loop
+        // still inside the engine.
+        var world = World.Create();
+        world.PreviewEngine.RefuseStop = true;
+        var session = DictationSessionId.Create();
+        world.Session = session;
+        await world.Runtime.Preview.StartAsync(session);
+        await world.PreviewEngine.PreviewEntered.Task.WaitAsync(Patience);
+        Assert.Equal(StopOutcome.StillRunning, await world.Runtime.Preview.StopAsync(Patience));
+        Assert.True(world.Runtime.Preview.IsRunning);
+
+        Assert.Equal(StopOutcome.Completed, await world.Runtime.Preview.AbortAsync(Patience));
+        Assert.Equal(1, world.PreviewEngine.Aborts);
+        Assert.False(world.Runtime.Preview.IsRunning, "a worker seen gone leaves nothing owned");
+        Assert.Contains(AppEventCode.LivePreviewAborted, world.Log.Events);
+        Assert.Equal(StopOutcome.Completed, await world.Runtime.Preview.AbortAsync(Patience));
+        Assert.Equal(1, world.PreviewEngine.Aborts);
+        await world.Runtime.Preview.StartAsync(DictationSessionId.Create());
+        Assert.Equal(2, world.PreviewEngine.Starts);
+        Assert.Equal(StopOutcome.Completed, await world.Runtime.Preview.StopAsync(Patience));
+
+        var stubborn = World.Create();
+        stubborn.PreviewEngine.RefuseStop = true;
+        stubborn.PreviewEngine.AbortOutcome = RuntimeWorkerAbortOutcome.StillRunning;
+        var second = DictationSessionId.Create();
+        stubborn.Session = second;
+        await stubborn.Runtime.Preview.StartAsync(second);
+        await stubborn.PreviewEngine.PreviewEntered.Task.WaitAsync(Patience);
+        Assert.Equal(StopOutcome.StillRunning, await stubborn.Runtime.Preview.StopAsync(Patience));
+
+        Assert.Equal(StopOutcome.StillRunning, await stubborn.Runtime.Preview.AbortAsync(Patience));
+        Assert.True(stubborn.Runtime.Preview.IsRunning, "a worker not seen gone is still owned");
+        Assert.DoesNotContain(AppEventCode.LivePreviewAborted, stubborn.Log.Events);
+    }
+
+    [Fact]
     public async Task AnEngineStopRefusedOrHeldLeavesTheStopIncompleteAndIsJoinedNotRepeated()
     {
         // THE LOOP IS OVER BUT THE ENGINE IS NOT. A stop the engine refuses - its worker still there -
@@ -724,7 +765,7 @@ public sealed class BoundedStopTests
     }
 
     /// <summary>A preview engine whose passes can be held - honouring the cancel, or not - and whose stop can be held.</summary>
-    private sealed class FakePreviewEngine : ILivePreviewEngine
+    private sealed class FakePreviewEngine : IAbortableLivePreviewEngine
     {
         private readonly TaskCompletionSource _releasePreviews = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -740,6 +781,22 @@ public sealed class BoundedStopTests
 
         /// <summary>Whether the stop answers that the worker did not go, as the production adapter does when its exit was not observed.</summary>
         public bool RefuseStop { get; set; }
+
+        /// <summary>What an abort sees: the worker gone, or still there.</summary>
+        public RuntimeWorkerAbortOutcome AbortOutcome { get; set; } = RuntimeWorkerAbortOutcome.Exited;
+
+        public int Aborts { get; private set; }
+
+        public Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline)
+        {
+            Aborts++;
+            if (AbortOutcome == RuntimeWorkerAbortOutcome.Exited)
+            {
+                RefuseStop = false;
+            }
+
+            return Task.FromResult(new RuntimeWorkerAbortResult(AbortOutcome, 4242));
+        }
 
         public int Stops { get; private set; }
 

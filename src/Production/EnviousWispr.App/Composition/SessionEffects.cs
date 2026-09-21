@@ -150,11 +150,12 @@ internal sealed class SessionEffects(SessionCompositionParts parts) : IDictation
     ///
     /// READ OFF THE CONTROLLER RATHER THAN INFERRED. Each command reaches here by several routes and
     /// the controller is the only thing that knows the answer on all of them. Read through the
-    /// shell's own reference to it, not the one this composition was handed: the shell owns the
-    /// controller's lifetime and lets go of that reference as its teardown disposes the controller,
+    /// shell's own reference to it, not the one this composition was handed: the executor's teardown
+    /// disposes the controller and then tells the shell to let go of its reference (ReleaseSession),
     /// and a controller disposed still holds the session it was disposed under. The teardown runs
     /// only once the session is quiescent, so no command reads it beside the disposal; reading the
-    /// reference the owner holds keeps the answer with the owner.
+    /// reference the shell holds gives null once the session is gone, which a disposed controller
+    /// would not.
     ///
     /// IT CANNOT THROW, BECAUSE ITS CALLER IS A FINALLY INSIDE THE COMMAND THAT HOLDS THE SESSION. An
     /// exception escaping here would fault the command, which the coordinator survives, but the
@@ -222,6 +223,13 @@ internal sealed class SessionEffects(SessionCompositionParts parts) : IDictation
 
     public void ShowRecordingTimedOut() =>
         _view.ShowStatus(DictationStatus.Warning("Recording timed out and was cancelled safely"));
+
+    public void RecordPreviewStillRunning() =>
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.LivePreviewFailed,
+            AppFailureCategory.RuntimeWorker,
+            ErrorCode: AppErrorCode.RuntimeResourceBusy));
 
     private static DictationStatus SessionStatus(SessionTransitionResult result) => result.Kind switch
     {

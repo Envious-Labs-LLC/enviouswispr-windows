@@ -74,6 +74,40 @@ public sealed class DictationSessionExecutorTests
     }
 
     [Fact]
+    public async Task APreviewWhoseEngineRefusedItsStopIsEndedByForceBeforeTheFinalTranscription()
+    {
+        // PREVIEW RELEASES ITS RESOURCES BEFORE FINAL ASR, AND A REFUSED STOP IS NOT A RELEASE. The
+        // stop reports the preview still running - its worker there, its lease held; the executor
+        // ends the worker under its own deadline before the finalisation is invoked, and says nothing
+        // when the abort saw it go. When the abort does not see it go, that is recorded and the
+        // transcription goes on regardless: a preview failure must not fail the recording.
+        var (executor, _, effects, _, _) = BuildWithFinalization();
+        var background = TracingBackgroundWork.Instance!;
+        background.UnboundedStopReport = new BackgroundStopReport(StopOutcome.Completed, StopOutcome.Completed, StopOutcome.StillRunning);
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        effects.Trace.Clear();
+
+        await executor.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
+
+        Assert.Equal(
+            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "Background:AbortPreview:3s", "Finalize:recoveryOnly=False", "RecordDictationEdge"],
+            effects.Trace);
+
+        var (stubborn, _, stubbornEffects, _, _) = BuildWithFinalization();
+        var stubbornBackground = TracingBackgroundWork.Instance!;
+        stubbornBackground.UnboundedStopReport = new BackgroundStopReport(StopOutcome.Completed, StopOutcome.Completed, StopOutcome.StillRunning);
+        stubbornBackground.AbortOutcome = StopOutcome.StillRunning;
+        await stubborn.ExecuteAsync(Press(), CancellationToken.None);
+        stubbornEffects.Trace.Clear();
+
+        await stubborn.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
+
+        Assert.Equal(
+            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "Background:AbortPreview:3s", "RecordPreviewStillRunning", "Finalize:recoveryOnly=False", "RecordDictationEdge"],
+            stubbornEffects.Trace);
+    }
+
+    [Fact]
     public async Task AReleaseStopsTheWatchdogFirstAndFinalisesExactlyOnce()
     {
         var (executor, capture, effects, controller, world) = BuildWithFinalization();
@@ -902,6 +936,8 @@ public sealed class DictationSessionExecutorTests
 
         public void RecordRecordingTimedOut(AppError failure) => Trace.Add($"RecordRecordingTimedOut:{failure.Code}");
 
+        public void RecordPreviewStillRunning() => Trace.Add("RecordPreviewStillRunning");
+
         public void ShowRecordingTimedOut() => Trace.Add("ShowRecordingTimedOut");
     }
 
@@ -988,7 +1024,13 @@ public sealed class DictationSessionExecutorTests
             return failure is null ? Task.CompletedTask : Task.FromException(failure);
         }
 
-        public async Task StopAsync()
+        /// <summary>What the unbounded stop reports: every owner finished unless a test says the preview's engine refused.</summary>
+        public BackgroundStopReport UnboundedStopReport { get; set; } = BackgroundStopReport.AllCompleted;
+
+        /// <summary>What an abort of the preview reports.</summary>
+        public StopOutcome AbortOutcome { get; set; } = StopOutcome.Completed;
+
+        public async Task<BackgroundStopReport> StopAsync()
         {
             trace.Add("Background:Stop");
             var failure = StopThrows;
@@ -1003,6 +1045,14 @@ public sealed class DictationSessionExecutorTests
                 StopEntered.TrySetResult();
                 await AllowStopExit.Task;
             }
+
+            return UnboundedStopReport;
+        }
+
+        public Task<StopOutcome> AbortPreviewAsync(TimeSpan deadline)
+        {
+            trace.Add($"Background:AbortPreview:{deadline.TotalSeconds}s");
+            return Task.FromResult(AbortOutcome);
         }
 
         public BackgroundStopReport BoundedStopReport { get; set; } = BackgroundStopReport.AllCompleted;

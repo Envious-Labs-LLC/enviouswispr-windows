@@ -26,8 +26,11 @@ public interface ISessionBackgroundWork
     /// <summary>The recording has started: arm the watchdog, start the preview, the auto-stop and the streaming head start.</summary>
     Task StartAsync(DictationSessionId sessionId, RecordingBackgroundSettings settings);
 
-    /// <summary>The recording is over: stop streaming, the auto-stop and the preview, in that order. The watchdog is stopped separately, first.</summary>
-    Task StopAsync();
+    /// <summary>The recording is over: stop streaming, the auto-stop and the preview, in that order, each waited for without limit. The watchdog is stopped separately, first. A preview whose engine refused its stop is still reported.</summary>
+    Task<BackgroundStopReport> StopAsync();
+
+    /// <summary>The preview's worker ended by force, for a release its stop refused; what was seen inside the deadline is what is reported.</summary>
+    Task<StopOutcome> AbortPreviewAsync(TimeSpan deadline);
 
     /// <summary>Stops the background work and waits up to the deadline for each owner; what did not finish stays owned and is reported.</summary>
     Task<BackgroundStopReport> StopAsync(TimeSpan deadline);
@@ -92,11 +95,18 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
         _streaming.Start(sessionId);
     }
 
-    public async Task StopAsync()
+    public async Task<BackgroundStopReport> StopAsync()
     {
-        await _streaming.StopAsync().ConfigureAwait(false);
-        await _autoStop.StopAsync().ConfigureAwait(false);
-        await _preview.StopAsync().ConfigureAwait(false);
+        var streaming = await _streaming.StopAsync().ConfigureAwait(false);
+        var autoStop = await _autoStop.StopAsync().ConfigureAwait(false);
+        var preview = await _preview.StopAsync().ConfigureAwait(false);
+        return new BackgroundStopReport(streaming, autoStop, preview);
+    }
+
+    public Task<StopOutcome> AbortPreviewAsync(TimeSpan deadline)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(deadline, TimeSpan.Zero);
+        return _preview.AbortAsync(deadline);
     }
 
     /// <remarks>

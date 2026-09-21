@@ -99,6 +99,9 @@ public interface IDictationSessionEffects
     /// <summary>The recording ran to its limit and was aborted: the log line.</summary>
     void RecordRecordingTimedOut(AppError failure);
 
+    /// <summary>The preview's worker refused its stop at the release and could not be ended inside the executor's deadline: the log line. The final transcription goes on regardless.</summary>
+    void RecordPreviewStillRunning();
+
     /// <summary>The recording ran to its limit and was aborted: the status.</summary>
     void ShowRecordingTimedOut();
 }
@@ -123,6 +126,9 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
 {
     /// <summary>The longest a finalisation may take - transcription, text processing and delivery - before it is cancelled and recovered.</summary>
     public static readonly TimeSpan MaximumFinalProcessingDuration = TimeSpan.FromMinutes(3);
+
+    /// <summary>How long a preview worker that refused its stop is given to be seen gone before the final transcription begins without it.</summary>
+    public static readonly TimeSpan PreviewAbortDeadline = TimeSpan.FromSeconds(3);
 
     private readonly PushToTalkSessionController _controller;
     private readonly ISessionBackgroundWork _background;
@@ -598,6 +604,12 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     /// worker is waited for after the microphone is closed, never before. The deadline stays armed
     /// until the command's finally, after any recovery, so a lock or an exit can still cancel a
     /// finalisation that is being recovered.
+    ///
+    /// PREVIEW RELEASES ITS RESOURCES BEFORE THE FINAL TRANSCRIPTION, AND A REFUSED STOP IS NOT A
+    /// RELEASE. The stop's report is read, not dropped: a preview whose engine refused to stop - its
+    /// worker still there, still holding the lease the final engine needs - is ended by force under
+    /// <see cref="PreviewAbortDeadline"/>; one still not seen gone is recorded, and the transcription
+    /// goes on regardless, because a preview failure must not fail the recording.
     /// </remarks>
     private async Task FinalizeAsync(
         DictationSessionId sessionId,
@@ -608,7 +620,13 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         using var dictation = DictationScope.Begin(sessionId.Value);
         var processing = new CancellationTokenSource(_processingDeadline, _clock);
         Volatile.Write(ref _processing, processing);
-        await _background.StopAsync().ConfigureAwait(false);
+        var stopped = await _background.StopAsync().ConfigureAwait(false);
+        if (stopped.Preview == StopOutcome.StillRunning &&
+            await _background.AbortPreviewAsync(PreviewAbortDeadline).ConfigureAwait(false) == StopOutcome.StillRunning)
+        {
+            _effects.RecordPreviewStillRunning();
+        }
+
         if (preserving is { } transition)
         {
             _effects.ShowInterruptionPreserving(transition);

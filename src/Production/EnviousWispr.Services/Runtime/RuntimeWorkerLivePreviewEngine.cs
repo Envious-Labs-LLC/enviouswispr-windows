@@ -7,7 +7,7 @@ using EnviousWispr.Core.Runtime;
 
 namespace EnviousWispr.Services.Runtime;
 
-public sealed class RuntimeWorkerLivePreviewEngine : ILivePreviewEngine
+public sealed class RuntimeWorkerLivePreviewEngine : IAbortableLivePreviewEngine
 {
     private readonly IWorkerTranscriptionRuntime _engine;
     private readonly RuntimeResourceArbiter _resourceArbiter;
@@ -158,7 +158,7 @@ public sealed class RuntimeWorkerLivePreviewEngine : ILivePreviewEngine
         return stopped;
     }
 
-    /// <summary>Kills the preview's worker for a shutdown; terminal. The resource it held is let go of only once the worker is seen gone.</summary>
+    /// <summary>Kills the preview's worker - for a release its stop refused, or a shutdown; terminal. The resource it held is let go of only once the worker is seen gone.</summary>
     /// <remarks>
     /// THE RESOURCE FOLLOWS THE WORKER, NOT THE CALL. A worker whose exit was not observed may still
     /// be on the accelerator or the CPU the lease stands for; handing that to the final engine would

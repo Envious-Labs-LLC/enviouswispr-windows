@@ -257,7 +257,7 @@ internal sealed class FakeRuntimeView : IRuntimeView
 }
 
 /// <summary>A preview engine that answers every snapshot with the same words, and counts them.</summary>
-internal sealed class FakePreviewEngine : ILivePreviewEngine
+internal sealed class FakePreviewEngine : IAbortableLivePreviewEngine
 {
     public string EngineId => "preview";
 
@@ -311,6 +311,14 @@ internal sealed class FakePreviewEngine : ILivePreviewEngine
 
     public TaskCompletionSource AllowStopExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    /// <summary>Whether the stop answers that the worker did not go, as the production adapter does when its exit was not observed.</summary>
+    public bool RefuseStop { get; set; }
+
+    /// <summary>What an abort sees; the production adapter releases the resource only on Exited or NoWorker.</summary>
+    public RuntimeWorkerAbortOutcome AbortOutcome { get; set; } = RuntimeWorkerAbortOutcome.Exited;
+
+    public int Aborts { get; private set; }
+
     public async Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default)
     {
         Stops++;
@@ -320,7 +328,20 @@ internal sealed class FakePreviewEngine : ILivePreviewEngine
             await AllowStopExit.Task;
         }
 
-        return new RuntimeWorkerResult(true, RuntimeWorkerState.Stopped);
+        return RefuseStop
+            ? new RuntimeWorkerResult(false, RuntimeWorkerState.Faulted, new AppError(AppErrorCode.RuntimeWorkerFailed, AppErrorStage.RuntimeWorker, CanRetry: true))
+            : new RuntimeWorkerResult(true, RuntimeWorkerState.Stopped);
+    }
+
+    public Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline)
+    {
+        Aborts++;
+        if (AbortOutcome == RuntimeWorkerAbortOutcome.Exited)
+        {
+            RefuseStop = false;
+        }
+
+        return Task.FromResult(new RuntimeWorkerAbortResult(AbortOutcome, 4242));
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

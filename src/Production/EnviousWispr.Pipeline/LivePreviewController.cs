@@ -437,6 +437,64 @@ public sealed class LivePreviewController : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Ends the preview's worker by force after a stop the engine refused: the worker killed and its
+    /// exit waited for up to the deadline, its resource let go of by the engine once the exit is seen.
+    /// <see cref="StopOutcome.Completed"/> when nothing of the preview is owned any more;
+    /// <see cref="StopOutcome.StillRunning"/> when the loop is still inside the engine (an abort is
+    /// not run under it), the engine cannot be aborted, or the exit was not seen inside the deadline.
+    /// </summary>
+    /// <remarks>
+    /// THE RELEASE'S LAST RESORT, NOT ITS FIRST. A stop asks the worker to go and waits; only a worker
+    /// that answered no - still there, still holding the lease the final engine needs - is killed,
+    /// and only by the session's owner, which knows the final transcription is about to begin. The
+    /// gate is taken like a stop's, under the same deadline.
+    /// </remarks>
+    public async Task<StopOutcome> AbortAsync(TimeSpan deadline)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(deadline, TimeSpan.Zero);
+        using var dictation = _effects.RecordingSessionId is { } recording
+            ? DictationScope.Begin(recording.Value)
+            : NoScope.Instance;
+        var budget = new StopBudget(deadline, _clock);
+        if (!await budget.TryEnterAsync(_gate).ConfigureAwait(false))
+        {
+            return StopOutcome.StillRunning;
+        }
+
+        try
+        {
+            if (_work is not null || _engineStop is not null)
+            {
+                return StopOutcome.StillRunning;
+            }
+
+            if (!_engineRefusedStop)
+            {
+                return StopOutcome.Completed;
+            }
+
+            if (_effects.Engine is not IAbortableLivePreviewEngine engine)
+            {
+                return StopOutcome.StillRunning;
+            }
+
+            var aborted = await engine.AbortAsync(budget.Left).ConfigureAwait(false);
+            if (aborted.Outcome is not (RuntimeWorkerAbortOutcome.Exited or RuntimeWorkerAbortOutcome.NoWorker))
+            {
+                return StopOutcome.StillRunning;
+            }
+
+            _engineRefusedStop = false;
+            _logger.Write(new AppLogEntry(_clock.GetUtcNow(), AppEventCode.LivePreviewAborted));
+            return StopOutcome.Completed;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     /// <summary>Stops whatever is running and releases the gate. The engine is the shell's to dispose.</summary>
     /// <remarks>
     /// THE LAST CALL, BY CONTRACT RATHER THAN BY ENFORCEMENT. The shell disposes this after admission
