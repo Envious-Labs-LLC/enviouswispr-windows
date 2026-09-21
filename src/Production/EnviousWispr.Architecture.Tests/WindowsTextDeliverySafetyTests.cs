@@ -56,7 +56,7 @@ public sealed class WindowsTextDeliverySafetyTests
             TextDeliveryOptions.Default));
 
         Assert.Equal(TextDeliveryRefusalReason.DeliveryDisposed, result.RefusalReason);
-        Assert.Equal(new DeliveryFault(DeliveryStage.ContextCapture, nameof(ObjectDisposedException)), result.Fault);
+        Assert.Equal(new DeliveryFault(DeliveryStage.ContextCapture, DeliveryFaultKind.ObjectDisposed, nameof(ObjectDisposedException)), result.Fault);
         Assert.Equal("kept", delivery.RecoveryText?.Text);
     }
 

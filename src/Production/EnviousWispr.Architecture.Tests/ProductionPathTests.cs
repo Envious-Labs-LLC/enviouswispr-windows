@@ -54,6 +54,40 @@ public sealed class ProductionPathTests
     }
 
     [Fact]
+    public async Task AFaultedDeliveryIsLoggedByItsStageAndKindAndTheWordsAreKept()
+    {
+        // THE DELIVERY NAMES A DEFECT; THE COMPOSED SESSION LOGS IT AS ONE (plan-2 step 13). The
+        // route answers DeliveryFaulted - a null inside the commit - and the production effects write
+        // TextDeliveryFailed with the DeliveryFaulted code, the stage and the fault's family, and
+        // nothing else about it; the pill says the text is held; the recovery copy is not cleared,
+        // so the words are on Home. A build that mapped every failure to "unsupported target" fails
+        // on the code; one that logged the type name would fail the privacy dictionary.
+        var world = ComposedSessionWorld.Create("hello world");
+        world.Delivery.Answer = new DeliveryResult(
+            default,
+            Delivered: false,
+            ClipboardFallback: false,
+            RefusalReason: TextDeliveryRefusalReason.DeliveryFaulted,
+            Fault: new DeliveryFault(DeliveryStage.Commit, DeliveryFaultKind.NullReference, nameof(NullReferenceException)));
+        await world.PressAsync();
+
+        var released = await world.Coordinator.SubmitAsync(PushToTalkSignal.Released).WaitAsync(Patience);
+
+        Assert.Equal(SessionCommandDisposition.Applied, released.Disposition);
+        var failed = Assert.Single(world.Log.Entries, entry => entry.Event == AppEventCode.TextDeliveryFailed);
+        Assert.Equal(AppErrorCode.DeliveryFaulted, failed.ErrorCode);
+        Assert.Equal(AppFailureCategory.TextDelivery, failed.Failure);
+        Assert.Equal(DeliveryStage.Commit, failed.DeliveryStage);
+        Assert.Equal(DeliveryFaultKind.NullReference, failed.Fault);
+        Assert.DoesNotContain(world.Log.Entries, entry => entry.ErrorCode == AppErrorCode.DeliveryUnsupportedTarget);
+        Assert.Contains(world.View.Deliveries, delivery => delivery.Delivered.Text == "Text delivery failed unexpectedly. Text is held safely in memory");
+        Assert.Equal(["hello world"], world.RecoveryStore.Saved);
+        Assert.Equal(0, world.RecoveryStore.Cleared);
+        Assert.True(world.Persistence.HasPendingRecovery, "the words wait on Home");
+        Assert.Equal(1, world.Delivery.Deliveries);
+    }
+
+    [Fact]
     public async Task LockDuringPolishPreservesLastGoodText()
     {
         // THE LOCK ARRIVES WHILE THE POLISH IS RUNNING. The lock's cancel reaches the polish provider

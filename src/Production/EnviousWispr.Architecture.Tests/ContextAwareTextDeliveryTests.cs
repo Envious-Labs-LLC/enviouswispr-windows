@@ -117,7 +117,7 @@ public sealed class ContextAwareTextDeliveryTests
         var result = await delivery.DeliverAsync(stage == DeliveryStage.Copy ? CopyRequest("recover me") : Request("recover me"));
 
         Assert.Equal(TextDeliveryRefusalReason.DeliveryFaulted, result.RefusalReason);
-        Assert.Equal(new DeliveryFault(stage, nameof(InvalidOperationException)), result.Fault);
+        Assert.Equal(new DeliveryFault(stage, DeliveryFaultKind.InvalidOperation, nameof(InvalidOperationException)), result.Fault);
         Assert.DoesNotContain("recover me", result.Fault!.ExceptionType, StringComparison.Ordinal);
         Assert.False(result.Delivered);
         Assert.False(result.ClipboardFallback);
@@ -140,7 +140,7 @@ public sealed class ContextAwareTextDeliveryTests
         var result = await delivery.DeliverAsync(Request("recover me"));
 
         Assert.Equal(TextDeliveryRefusalReason.DeliveryDisposed, result.RefusalReason);
-        Assert.Equal(new DeliveryFault(DeliveryStage.ContextCapture, nameof(ObjectDisposedException)), result.Fault);
+        Assert.Equal(new DeliveryFault(DeliveryStage.ContextCapture, DeliveryFaultKind.ObjectDisposed, nameof(ObjectDisposedException)), result.Fault);
         Assert.NotEqual(TextDeliveryRefusalReason.AccessibilityUnavailable, result.RefusalReason);
         Assert.Equal("recover me", delivery.RecoveryText?.Text);
         Assert.Equal(0, adapter.Commits);
@@ -171,7 +171,7 @@ public sealed class ContextAwareTextDeliveryTests
         var faulted = await new ContextAwareTextDelivery(unasked).DeliverAsync(Request("recover me"));
 
         Assert.Equal(TextDeliveryRefusalReason.DeliveryFaulted, faulted.RefusalReason);
-        Assert.Equal(new DeliveryFault(DeliveryStage.Commit, nameof(TaskCanceledException)), faulted.Fault);
+        Assert.Equal(new DeliveryFault(DeliveryStage.Commit, DeliveryFaultKind.Cancelled, nameof(TaskCanceledException)), faulted.Fault);
     }
 
     [Fact]

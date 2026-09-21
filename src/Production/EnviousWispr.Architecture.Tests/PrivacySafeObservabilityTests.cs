@@ -316,13 +316,15 @@ public sealed class PrivacySafeObservabilityTests
             Stage: DeterministicTextStage.CustomWords,
             StageStatus: DeterministicStageStatus.Completed,
             Changed: true,
-            RuntimeSelection: DiagnosticRuntimeSelectionReason.ProcessorSelectedAfterGpuFailedToStart);
+            RuntimeSelection: DiagnosticRuntimeSelectionReason.ProcessorSelectedAfterGpuFailedToStart,
+            DeliveryStage: DeliveryStage.Commit,
+            Fault: DeliveryFaultKind.ObjectDisposed);
 
         var populated = typeof(PrivacySafeDiagnosticRecord)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(property => property.Name != "EqualityContract")
             .ToArray();
-        Assert.Equal(12, populated.Length);
+        Assert.Equal(14, populated.Length);
 
         var line = LocalDiagnosticLine.From(record, Guid.NewGuid());
         foreach (var property in populated)

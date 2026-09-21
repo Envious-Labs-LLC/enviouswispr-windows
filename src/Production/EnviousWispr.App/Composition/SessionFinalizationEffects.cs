@@ -113,7 +113,11 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts) 
             eventCode,
             delivery.Delivered ? AppFailureCategory.None : AppFailureCategory.TextDelivery,
             elapsedMilliseconds,
-            ErrorCode: errorCode));
+            ErrorCode: errorCode,
+            // A FAULT SAYS WHERE AND WHAT FAMILY, AND NOTHING ELSE: the stage it was thrown in and the
+            // exception's kind, both fixed enums; never its type name or message.
+            DeliveryStage: delivery.Fault?.Stage,
+            Fault: delivery.Fault?.Kind));
     }
 
     public void ReportDelivery(DeliveryResult delivery, string? language) =>

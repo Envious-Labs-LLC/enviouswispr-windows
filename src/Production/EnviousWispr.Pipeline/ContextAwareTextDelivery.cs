@@ -179,8 +179,8 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
         {
             OperationCanceledException when cancellationToken.IsCancellationRequested =>
                 (TextDeliveryRefusalReason.Cancelled, (DeliveryFault?)null),
-            ObjectDisposedException => (TextDeliveryRefusalReason.DeliveryDisposed, new DeliveryFault(stage, exception.GetType().Name)),
-            _ => (TextDeliveryRefusalReason.DeliveryFaulted, new DeliveryFault(stage, exception.GetType().Name)),
+            ObjectDisposedException => (TextDeliveryRefusalReason.DeliveryDisposed, DeliveryFault.Of(stage, exception)),
+            _ => (TextDeliveryRefusalReason.DeliveryFaulted, DeliveryFault.Of(stage, exception)),
         };
         return new DeliveryResult(
             request.Text.SessionId,

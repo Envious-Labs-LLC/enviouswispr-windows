@@ -454,6 +454,9 @@ internal sealed class FakeDelivery : ITextDelivery
     /// <summary>When set, the route answers refused (a protected field, say) with the words on the clipboard only.</summary>
     public bool Refuse { get; set; }
 
+    /// <summary>When set, the route answers exactly this (with the request's session id): a fault, say, as ContextAwareTextDelivery would name one.</summary>
+    public DeliveryResult? Answer { get; set; }
+
     public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public TaskCompletionSource AllowExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -465,6 +468,11 @@ internal sealed class FakeDelivery : ITextDelivery
         if (Hold)
         {
             await AllowExit.Task;
+        }
+
+        if (Answer is { } answer)
+        {
+            return answer with { SessionId = request.Text.SessionId };
         }
 
         return Refuse
@@ -539,24 +547,36 @@ internal sealed class HealthyMachine : ISystemResourceProbe
 
 internal sealed class RecordingLogger : IAppLogger
 {
-    private readonly List<AppEventCode> _events = [];
+    private readonly List<AppLogEntry> _entries = [];
 
     public IReadOnlyList<AppEventCode> Events
     {
         get
         {
-            lock (_events)
+            lock (_entries)
             {
-                return _events.ToArray();
+                return _entries.Select(entry => entry.Event).ToArray();
+            }
+        }
+    }
+
+    /// <summary>Every line as written, for a proof that reads a line's fields and not only its event.</summary>
+    public IReadOnlyList<AppLogEntry> Entries
+    {
+        get
+        {
+            lock (_entries)
+            {
+                return _entries.ToArray();
             }
         }
     }
 
     public void Write(AppLogEntry entry)
     {
-        lock (_events)
+        lock (_entries)
         {
-            _events.Add(entry.Event);
+            _entries.Add(entry);
         }
     }
 }
