@@ -11,13 +11,17 @@ namespace EnviousWispr.App.Composition;
 
 /// <summary>The shell's leaf reads and notifications the session's wiring needs; nothing here sequences anything.</summary>
 /// <remarks>
-/// EVERY MEMBER IS A VALUE READ AT THE CALL OR ONE NOTIFICATION, and the review of this step reads each
-/// body the shell supplies against that rule. The reads change under the session (an engine loads, a
-/// word is taught, a setting is saved), which is why they are reads and not values. The one exception
-/// is <see cref="TearDownSession"/>, the shell's session teardown, which a later step replaces with
-/// owners of its own; it is named here so its presence is a declared debt, not a hidden one.
-/// <see cref="AttachedSession"/> is the shell's own view of the session in flight - null once its
-/// teardown has let go of the controller, which a disposed controller does not say for itself.
+/// EVERY MEMBER IS A VALUE READ AT THE CALL, ONE NOTIFICATION, OR ONE OPERATION. The reads change
+/// under the session (an engine loads, a word is taught, a setting is saved), which is why they are
+/// reads and not values. The three teardown members are the shell's parts of the session's disposal,
+/// one operation each, called in the executor's order (<c>DictationSessionExecutor.DisposeSessionAsync</c>:
+/// observers off the capture, the controller disposed by the executor itself, the references let go,
+/// the route disposed) once the session is quiescent and the background work has stopped under the
+/// shutdown's budget; the shell decides nothing about when. <see cref="AttachedSession"/> is the
+/// shell's own view of the session in flight - null once <see cref="ReleaseSession"/> has let go of
+/// the controller, which a disposed controller does not say for itself. The inventory of every
+/// member's body, and of every other callback the shell supplies, is the "Session ownership
+/// inventory" in <c>.claude/knowledge/pipeline.md</c>.
 /// </remarks>
 public sealed record SessionShell(
     ISessionView View,
@@ -30,7 +34,9 @@ public sealed record SessionShell(
     Func<Guid?> RunId,
     Action<bool> RecordingActive,
     Action<CapturedAudio> ArchiveAudio,
-    Func<Task> TearDownSession);
+    Action DetachCaptureObservers,
+    Action ReleaseSession,
+    Action DisposeDeliveryRoute);
 
 /// <summary>Everything the session's production wiring is built from.</summary>
 /// <remarks>

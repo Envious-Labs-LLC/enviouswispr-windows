@@ -201,7 +201,17 @@ internal sealed class SessionEffects(SessionCompositionParts parts) : IDictation
         _view.ShowStatus(DictationStatus.Distress(
             "Windows interrupted the active dictation; recovery is still pending"));
 
-    public Task TearDownSessionAsync() => parts.Shell.TearDownSession();
+    public void DetachCaptureObservers() => parts.Shell.DetachCaptureObservers();
+
+    public void ReleaseSession() => parts.Shell.ReleaseSession();
+
+    public void DisposeDeliveryRoute() => parts.Shell.DisposeDeliveryRoute();
+
+    public void RecordTeardownFailure() =>
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.UnhandledFailure,
+            AppFailureCategory.Recovery));
 
     public void RecordRecordingTimedOut(AppError failure) =>
         _logger.Write(new AppLogEntry(

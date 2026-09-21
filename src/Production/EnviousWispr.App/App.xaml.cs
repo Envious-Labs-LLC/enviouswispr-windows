@@ -57,6 +57,9 @@ public partial class App : Application, IAsyncDisposable
     private readonly RuntimeResourceArbiter _resourceArbiter = new();
     private readonly LivePreviewController _livePreview;
     private DictationSessionCoordinator? _sessionCoordinator;
+    private Task? _systemEndingNote;
+    private Task? _startup;
+    private readonly CancellationTokenSource _startupCancellation = new();
     private readonly DeterministicTextPipeline _deterministicTextPipeline = new();
     private readonly SessionRuntime _runtime;
     private SingleInstanceLock? _singleInstanceLock;
@@ -99,7 +102,6 @@ public partial class App : Application, IAsyncDisposable
     private DeterministicTextOptions _deterministicTextOptions =
         DeterministicTextOptions.From(DictationPreferences.Default);
     private bool _disposed;
-    private bool _sessionTornDownCleanly = true;
     private bool _exitRequested;
     private ApplicationLifetime? _lifetime;
     private WindowPresentationSession? _presentation;
@@ -355,25 +357,70 @@ public partial class App : Application, IAsyncDisposable
         }
 
         ConfigureTrayIcon();
-        await _window.InitializeProductDataAsync().ConfigureAwait(true);
-        var recovery = await LoadStartupRecoveryAsync().ConfigureAwait(true);
+        // FROM THE TRAY ON, AN EXIT CAN BEGIN. The rest of the launch - the recovery read, the engines,
+        // the session's construction - is one tracked task the lifetime cancels under its exit policy
+        // and joins under Quiesce before it disposes anything the launch borrows; and after each of its
+        // awaits it reads Leaving, so nothing is constructed once the exit has begun.
+        _startup = CompleteStartupAsync(settings, runStart, _window);
+        await _startup.ConfigureAwait(true);
+    }
+
+    private async Task CompleteStartupAsync(AppSettings settings, ApplicationRunStartResult runStart, MainWindow window)
+    {
+        try
+        {
+            await CompleteStartupCoreAsync(settings, runStart, window).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException) when (_startupCancellation.IsCancellationRequested)
+        {
+            // THE EXIT'S OWN CANCELLATION IS AN ENDING, NOT A FAULT. The exit policy cancelled the
+            // launch's token while the recovery read was out; the read ends cancelled, the launch is
+            // over, and nothing of it escapes to the launch entry point - the lifetime finishes its
+            // teardown and reports.
+        }
+    }
+
+    private async Task CompleteStartupCoreAsync(AppSettings settings, ApplicationRunStartResult runStart, MainWindow window)
+    {
+        await window.InitializeProductDataAsync().ConfigureAwait(true);
+        if (Leaving)
+        {
+            return;
+        }
+
+        var recovery = await LoadStartupRecoveryAsync(_startupCancellation.Token).ConfigureAwait(true);
+        if (Leaving)
+        {
+            return;
+        }
+
         _sessionPersistence.AdoptStartupRecovery(recovery);
-        _window.SetRecoveredText(recovery);
+        window.SetRecoveredText(recovery);
         if (StartupNoticeDecision.For(
                 runStart.RecoveredInterruptedRun,
                 runStart.PreviousRunWasDictating,
                 recovery.Status) == StartupNotice.DictationMayBeLost)
         {
-            _window.SetPossiblyLostDictationNotice();
+            window.SetPossiblyLostDictationNotice();
         }
 
         ConfigureSystemLifecycleMonitor();
-        _window.FocusInitialControl();
-        _window.SetCloudPolishNotice(_cloudPolishConsent?.Notice);
-        _window.SetOllamaPolishNotice(_localPolishNotice);
-        _window.SetSessionStatus(DictationStatus.Quiet("Preparing local transcription..."));
+        window.FocusInitialControl();
+        window.SetCloudPolishNotice(_cloudPolishConsent?.Notice);
+        window.SetOllamaPolishNotice(_localPolishNotice);
+        window.SetSessionStatus(DictationStatus.Quiet("Preparing local transcription..."));
         await ConfigureTranscriptionAsync(settings.Preferences.Dictation.FinalEngine).ConfigureAwait(true);
+        if (Leaving)
+        {
+            return;
+        }
+
         await PresentModelDeliveryAsync().ConfigureAwait(true);
+        if (Leaving)
+        {
+            return;
+        }
+
         ConfigurePushToTalk(settings.Preferences.Dictation);
         if (_polishProvider is EgOnePolishProvider polishProvider)
         {
@@ -427,9 +474,9 @@ public partial class App : Application, IAsyncDisposable
         }
     }
 
-    private async Task<RecoveryTextLoadResult> LoadStartupRecoveryAsync()
+    private async Task<RecoveryTextLoadResult> LoadStartupRecoveryAsync(CancellationToken cancellationToken)
     {
-        var recovery = await _recoveryTextStore.LoadAsync().ConfigureAwait(true);
+        var recovery = await _recoveryTextStore.LoadAsync(cancellationToken).ConfigureAwait(true);
         if (recovery.Status != RecoveryTextLoadStatus.Missing ||
             !string.Equals(
                 Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_RECOVERY_STATE"),
@@ -443,7 +490,7 @@ public partial class App : Application, IAsyncDisposable
             DictationSessionId.Create(),
             DateTimeOffset.UtcNow,
             "Synthetic unfinished dictation for Windows recovery UAT.");
-        return await _recoveryTextStore.SaveAsync(record).ConfigureAwait(true)
+        return await _recoveryTextStore.SaveAsync(record, cancellationToken).ConfigureAwait(true)
             ? new RecoveryTextLoadResult(RecoveryTextLoadStatus.Found, record)
             : new RecoveryTextLoadResult(
                 RecoveryTextLoadStatus.Unavailable,
@@ -556,15 +603,31 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        MishearingAdvice advice;
-        try
+        // ADMITTED LIKE A PRESENTER'S OPERATION: the request is inside the polish provider, which the
+        // exit disposes; the lease is what the drain joins before that, its token is what the exit
+        // cancels the request with, and a request refused because the drain has begun is not made.
+        if (_presentation is not { } presentation || !presentation.TryEnter(out var lease))
         {
-            advice = await advisor.SuggestAsync(term, existing).ConfigureAwait(true);
+            return;
         }
-        catch (Exception exception) when (
-            exception is not (StackOverflowException or OutOfMemoryException))
+
+        MishearingAdvice advice;
+        using (lease)
         {
-            advice = MishearingAdvice.None(MishearingAdviceStatus.Failed);
+            try
+            {
+                advice = await advisor.SuggestAsync(term, existing, lease.Closing).ConfigureAwait(true);
+            }
+            catch (Exception exception) when (
+                exception is not (StackOverflowException or OutOfMemoryException))
+            {
+                advice = MishearingAdvice.None(MishearingAdviceStatus.Failed);
+            }
+
+            if (lease.Closing.IsCancellationRequested)
+            {
+                return;
+            }
         }
 
         _window?.SetAliasSuggestions(term, advice);
@@ -713,7 +776,9 @@ public partial class App : Application, IAsyncDisposable
             // a deliberate restart is stored as an interruption, which is the same trace a crash
             // leaves. Fire and forget for the same reason: waiting on a disk write inside a shutdown
             // notification is how an app becomes the thing that delays somebody's shutdown. Ref: #93.
-            _ = _runStateStore.NoteSystemEndingAsync(endingRunId, DateTimeOffset.UtcNow);
+            // KEPT, NOT DROPPED: an exit that does run joins this write under Quiesce before the
+            // run-state store is closed, so the store is never disposed under it.
+            _systemEndingNote = _runStateStore.NoteSystemEndingAsync(endingRunId, DateTimeOffset.UtcNow);
         }
 
         // WINDOWS LOCKING MID-DICTATION IS A FACT ABOUT THAT DICTATION. Written before the recovery
@@ -945,7 +1010,10 @@ public partial class App : Application, IAsyncDisposable
     {
         _window?.DispatcherQueue.TryEnqueue(() =>
         {
-            if (_window is null)
+            // NOT UNDER AN EXIT. The show is queued from several places - a tray click, a recovered
+            // dictation, the Quick Add - and runs later; a window brought forward while the shell is
+            // leaving is the one thing none of them means.
+            if (_window is null || Leaving)
             {
                 return;
             }
@@ -987,7 +1055,9 @@ public partial class App : Application, IAsyncDisposable
     }
 
     /// <summary>
-    /// Leaving, shared by every path out - the tray, the window, an update, a system ending: admission
+    /// Leaving, shared by every path out - the tray, the window, an update, the shell's own disposal
+    /// (a Windows session ending is a notification, not a path out: the run-state note is written
+    /// and the process may be killed before anything here runs): admission
     /// closes before the first await and the exit budget starts; the settings write finishes; the shell
     /// closes its windows; then the exit under the one budget - the session shut down by its owner,
     /// what it used disposed only once nothing uses it, the run completed only when everything
@@ -1036,9 +1106,9 @@ public partial class App : Application, IAsyncDisposable
         ShellClosing: () =>
         {
             _window?.ShutdownProductWindows();
-            (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately();
             _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellClosed));
         },
+        AbortPolishRuntime: () => (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately(),
         // THE EXIT POLICY: a transcription in flight is cut short rather than waited for, and so is the
         // polish warm-up; the session's shutdown then waits for the cut to land. Cancellation is not
         // quiescence - the shutdown's report says whether it landed.
@@ -1046,6 +1116,8 @@ public partial class App : Application, IAsyncDisposable
         {
             _sessionCoordinator?.CancelProcessing();
             _polishLifetime.Cancel();
+            _startupCancellation.Cancel();
+            _modelDownload?.Cancel();
         },
         ReleaseInputs:
         [
@@ -1071,6 +1143,13 @@ public partial class App : Application, IAsyncDisposable
         ShutDownSession: _sessionCoordinator is { } coordinator ? budget => coordinator.ShutdownAsync(budget) : null,
         Quiesce:
         [
+            // THE LAUNCH AND A MODEL DELIVERY BORROW WHAT THE EXIT DISPOSES - the recovery store, the
+            // engines they build or replace - so each is one tracked task, cancelled by the exit
+            // policy above and joined here; one that outlives the budget keeps everything and
+            // escalates like any step. Both read Leaving after every await, so nothing is built once
+            // the exit has begun.
+            new LifetimeStep("startup", () => Join(Interlocked.Exchange(ref _startup, null))),
+            new LifetimeStep("model delivery", () => Join(Interlocked.Exchange(ref _modelDelivery, null))),
             new LifetimeStep("polish warm-up", async () =>
             {
                 if (_polishWarmup is { } warmup)
@@ -1083,6 +1162,25 @@ public partial class App : Application, IAsyncDisposable
                     catch (OperationCanceledException)
                     {
                         // The exit cancels an in-flight readiness probe; a cancelled probe is over.
+                    }
+                }
+            }),
+            // THE SYSTEM-ENDING NOTE WRITES TO THE RUN-STATE STORE, which the exit closes only once
+            // nothing that writes to it is outstanding; a note still writing is joined here, and one
+            // that outlives the budget keeps the store open and escalates like any other step.
+            new LifetimeStep("system ending note", async () =>
+            {
+                if (Interlocked.Exchange(ref _systemEndingNote, null) is { } note)
+                {
+                    try
+                    {
+                        await note.ConfigureAwait(true);
+                    }
+                    catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+                    {
+                        // A NOTE THAT FAILED IS A LOST NOTE, and the record then reads as an
+                        // interruption - the honest fallback for an ending Windows made. The exit
+                        // only needed the write to be over before the store closes.
                     }
                 }
             }),
@@ -1107,20 +1205,9 @@ public partial class App : Application, IAsyncDisposable
         ],
         DisposeSessionDependencies:
         [
-            // A shell that never composed a session tears its controller down here, in the session's
-            // place; one that did has had the coordinator do it under the session.
-            new LifetimeStep("session teardown", async () =>
-            {
-                if (_sessionCoordinator is null)
-                {
-                    await TearDownSessionAsync().ConfigureAwait(true);
-                }
-
-                if (!_sessionTornDownCleanly)
-                {
-                    throw new InvalidOperationException("The session teardown reported a failure.");
-                }
-            }),
+            // THE SESSION ITSELF IS NOT HERE: the controller, its capture and the delivery route are
+            // disposed by the executor's teardown under the session's shutdown, in its order, and a
+            // shell that never composed a coordinator never built them either.
             new LifetimeStep("preview engine", async () =>
             {
                 if (_previewEngine is { } engine)
@@ -1203,6 +1290,25 @@ public partial class App : Application, IAsyncDisposable
         CloseRunState: _runStateStore.Dispose,
         DisposeLogger: () => _logger.DisposeAsync().AsTask());
 
+    /// <summary>A tracked task's join for a lifetime step: taken once, its own ending swallowed - the exit only needs it over.</summary>
+    private static async Task Join(Task? tracked)
+    {
+        if (tracked is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await tracked.ConfigureAwait(true);
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            // A launch or a delivery cut short by the exit policy, or one that failed on its own and
+            // said so on its surface; the step needed it over, not successful.
+        }
+    }
+
     /// <summary>
     /// Ends the process when the exit could not: something would not finish inside the budget and is
     /// still running, holding whatever it holds; the log has said so and been closed; the next launch
@@ -1213,40 +1319,6 @@ public partial class App : Application, IAsyncDisposable
         public const int ExitCode = 70;
 
         public void Terminate(ExitReport report) => Environment.Exit(ExitCode);
-    }
-
-    private async Task<bool> TryCleanupAsync(Func<Task> cleanup)
-    {
-        try
-        {
-            await cleanup().ConfigureAwait(true);
-            return true;
-        }
-        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
-        {
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.UnhandledFailure,
-                AppFailureCategory.Recovery));
-            return false;
-        }
-    }
-
-    private bool TryCleanup(Action cleanup)
-    {
-        try
-        {
-            cleanup();
-            return true;
-        }
-        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
-        {
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.UnhandledFailure,
-                AppFailureCategory.Recovery));
-            return false;
-        }
     }
 
     private void ConfigurePushToTalk(DictationPreferences preferences)
@@ -1314,7 +1386,9 @@ public partial class App : Application, IAsyncDisposable
                 RunId: () => _runId,
                 RecordingActive: active => _pushToTalkHook?.SetRecordingActive(active),
                 ArchiveAudio: audio => ArchiveDictationAudio(audio),
-                TearDownSession: TearDownSessionAsync),
+                DetachCaptureObservers: DetachCaptureObservers,
+                ReleaseSession: ReleaseSession,
+                DisposeDeliveryRoute: DisposeDeliveryRoute),
             TimeProvider.System));
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
         // A saved keybind builds a NEW hook, which starts armed and knows nothing about a capture
@@ -1879,26 +1953,50 @@ public partial class App : Application, IAsyncDisposable
 
     private async Task HandleQuickAddAsync()
     {
+        // ADMITTED LIKE A PRESENTER'S OPERATION. This borrows the delivery adapter - the thing the
+        // session's teardown disposes - and ends on the window; the lease is what the exit's first
+        // step, the presentation drain, joins before the session is asked to shut down, so the
+        // adapter is never disposed under a read still inside it, and an operation admitted after
+        // the drain began is refused here rather than half-run.
         if (_exitRequested || _disposed || _textTargetAdapter is null ||
-            _sessionController?.CurrentSession is not null)
+            _sessionController?.CurrentSession is not null ||
+            _presentation is not { } presentation ||
+            !presentation.TryEnter(out var lease))
         {
             return;
         }
 
+        using (lease)
+        {
+            await QuickAddUnderLeaseAsync(lease).ConfigureAwait(false);
+        }
+    }
+
+    private async Task QuickAddUnderLeaseAsync(PresentationAdmission.Lease lease)
+    {
         var target = new WindowsForegroundTargetProvider().CaptureForegroundTarget();
         if (target is null || !target.Value.IsValid)
         {
-            _window?.DispatcherQueue.TryEnqueue(() =>
-            {
-                ShowMainWindow(openSettings: false);
-                _window?.OpenQuickAdd(null, "Select a word in another app, then press the Add-a-word shortcut again.");
-            });
+            OpenQuickAddUnlessLeaving(null, "Select a word in another app, then press the Add-a-word shortcut again.");
             return;
         }
 
-        var context = await _textTargetAdapter.CaptureContextAsync(
+        var adapter = _textTargetAdapter;
+        if (adapter is null)
+        {
+            return;
+        }
+
+        var context = await adapter.CaptureContextAsync(
             target.Value,
-            TextDeliveryOptions.Default).ConfigureAwait(false);
+            TextDeliveryOptions.Default,
+            lease.Closing).ConfigureAwait(false);
+        // NOTHING LATE. The drain began while the read was out: no clipboard borrow, no window.
+        if (lease.Closing.IsCancellationRequested)
+        {
+            return;
+        }
+
         var published = context.Status == TargetContextStatus.Available
             ? context.Context?.Selection.Trim()
             : null;
@@ -1925,8 +2023,13 @@ public partial class App : Application, IAsyncDisposable
             case SelectionAcquisition.SyntheticCopy:
                 // Static because it holds no state - it borrows the clipboard and gives it back.
                 selection = await WindowsTextTargetAdapter
-                    .TryReadSelectionWithCopyAsync(CancellationToken.None)
+                    .TryReadSelectionWithCopyAsync(lease.Closing)
                     .ConfigureAwait(false);
+                if (lease.Closing.IsCancellationRequested)
+                {
+                    return;
+                }
+
                 selection = selection?.Trim();
                 message = string.IsNullOrWhiteSpace(selection)
                     ? "Nothing was selected in that app. Select a misheard word, then try the shortcut again."
@@ -1950,12 +2053,29 @@ public partial class App : Application, IAsyncDisposable
                 : string.IsNullOrWhiteSpace(selection)
                     ? AppEventCode.QuickAddSelectionEmpty
                     : AppEventCode.QuickAddPrepared));
+        OpenQuickAddUnlessLeaving(selection, message);
+    }
+
+    /// <summary>
+    /// The Quick Add dialog, queued to the window. CHECKED WHEN IT RUNS, NOT WHEN IT IS QUEUED: the
+    /// lease that admitted the capture ends when this method returns, and the queued callback runs
+    /// later; a drain that began in between is read off the presentation's own durable closure, so a
+    /// dialog does not open and the window is not brought forward under an exit.
+    /// </summary>
+    private void OpenQuickAddUnlessLeaving(string? selection, string? message) =>
         _window?.DispatcherQueue.TryEnqueue(() =>
         {
+            if (Leaving)
+            {
+                return;
+            }
+
             ShowMainWindow(openSettings: false);
             _window?.OpenQuickAdd(selection, message);
         });
-    }
+
+    /// <summary>Whether the exit has begun, as a queued callback should read it: the flags, or the presentation's closure.</summary>
+    private bool Leaving => _exitRequested || _disposed || _presentation is { Closing: true };
 
     private static bool TryCreatePublicFixtureAudioCapture(
         out PublicFixtureAudioCapture? capture)
@@ -2226,39 +2346,34 @@ public partial class App : Application, IAsyncDisposable
                 app._window?.ReportDeliveryAndMaybeOfferLanguage(delivered, detectedLanguage));
     }
 
-    /// <summary>
-    /// The session-specific disposal, run by the coordinator after its last command: the timers,
-    /// streaming and the preview stopped; the capture let go of; the session controller and the
-    /// delivery route disposed. The engines and the rest of the shell follow in the shell.
-    /// </summary>
-    private async Task TearDownSessionAsync()
+    // THE SHELL'S THREE PARTS OF THE SESSION'S DISPOSAL, one operation each. The executor's teardown
+    // calls them in its order, around its own disposal of the controller, once the session is
+    // quiescent and the background work has stopped; a part that throws is recorded by the executor
+    // and the next still runs. Nothing here waits, orders or decides.
+
+    /// <summary>The level meter comes off the capture, so a closing window is not told about the stop.</summary>
+    private void DetachCaptureObservers()
     {
-        // THE BACKGROUND WORK IS THE EXECUTOR'S TO STOP, under the shutdown's deadline, before this is
-        // reached; what is left here is the shell's own: the capture's event, the controller, the
-        // delivery route.
-        var clean = true;
-        if (_audioCapture is not null)
+        if (_audioCapture is { } capture)
         {
-            _audioCapture.LevelChanged -= OnAudioLevelChanged;
+            capture.LevelChanged -= OnAudioLevelChanged;
         }
+    }
 
-        if (_sessionController is not null)
-        {
-            clean &= await TryCleanupAsync(
-                async () => await _sessionController.DisposeAsync().ConfigureAwait(true))
-                .ConfigureAwait(true);
-            _sessionController = null;
-            _audioCapture = null;
-        }
+    /// <summary>The controller and its capture have been disposed by the executor: the references go.</summary>
+    private void ReleaseSession()
+    {
+        _sessionController = null;
+        _audioCapture = null;
+    }
 
-        if (_textTargetAdapter is not null)
-        {
-            clean &= TryCleanup(_textTargetAdapter.Dispose);
-        }
-
+    /// <summary>The delivery route is disposed and let go of.</summary>
+    private void DisposeDeliveryRoute()
+    {
+        var adapter = _textTargetAdapter;
         _textTargetAdapter = null;
         _textDelivery = null;
-        _sessionTornDownCleanly = clean;
+        adapter?.Dispose();
     }
 
     /// <summary>
