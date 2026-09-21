@@ -283,39 +283,43 @@ public sealed class BoundedStopTests
         Assert.Empty(drawnAfter);
     }
 
-    [Fact]
-    public async Task AStartHeldBeforeItsPublicationSeesAStopThatExpiredMeanwhile()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AStartHeldBeforeItsPublicationIsSupersededByAStopThatLandedMeanwhile(bool synchronousPasses)
     {
         // THE START IS HELD BETWEEN TAKING ITS PLACE AND PUBLISHING ITS WORK - inside the shell's read
-        // of the preview switch. A stop lands, finds nothing to cancel, runs out of budget waiting
-        // and returns still running with the screen cleared. The start resumes, publishes, and sees
-        // the stop that landed since it took its place: its loop is cancelled and its screen closed,
-        // so an engine that ignores the cancel hands back frames for a screen that is gone.
-        var clock = new Deterministic.ManualClock();
-        var world = World.Create(clock);
-        world.PreviewEngine.HoldPreviews = true;
-        world.PreviewEngine.IgnoreCancel = true;
+        // of the preview switch, on its own thread. A stop lands, finds nothing to cancel and completes
+        // with the screen cleared. The start resumes and finds the stop that landed since it took its
+        // place: it is superseded, publishes nothing and starts no engine - so even an engine whose
+        // start and first pass complete synchronously draws nothing on the closed screen.
+        var world = World.Create();
+        world.PreviewEngine.HoldPreviews = !synchronousPasses;
         world.HoldPreviewSwitch = true;
         var session = DictationSessionId.Create();
         world.Session = session;
 
-        var start = world.Runtime.Preview.StartAsync(session);
+        var start = Task.Run(() => world.Runtime.Preview.StartAsync(session));
         await world.PreviewSwitchEntered.Task.WaitAsync(Patience);
-        var registered = clock.Registered;
-        var stop = world.Runtime.Preview.StopAsync(TimeSpan.FromSeconds(1));
-        await clock.WhenRegistered(registered + 1).WaitAsync(Patience);
-        clock.Advance(TimeSpan.FromSeconds(1));
-        Assert.Equal(StopOutcome.StillRunning, await stop.WaitAsync(Patience));
+        Assert.False(start.IsCompleted, "the start is held inside the shell's read");
+        Assert.Equal(StopOutcome.Completed, await world.Runtime.Preview.StopAsync(Patience).WaitAsync(Patience));
         Assert.Null(world.View.Previews[^1]);
 
         world.AllowPreviewSwitchExit.SetResult();
         await start.WaitAsync(Patience);
-        await world.PreviewEngine.PreviewEntered.Task.WaitAsync(Patience);
-        Assert.True(world.PreviewEngine.Token!.Value.IsCancellationRequested, "the start cancelled the work it published after the stop");
+
+        Assert.Equal(0, world.PreviewEngine.Starts);
+        Assert.False(world.Runtime.Preview.IsRunning);
+        Assert.DoesNotContain("preview words", world.View.Previews);
+        Assert.Null(world.View.Previews[^1]);
+
+        // The next start, with no stop in between, runs.
+        var next = DictationSessionId.Create();
+        world.Session = next;
+        await world.Runtime.Preview.StartAsync(next);
+        Assert.Equal(1, world.PreviewEngine.Starts);
         world.PreviewEngine.ReleasePreviews();
         Assert.Equal(StopOutcome.Completed, await world.Runtime.Preview.StopAsync(Patience).WaitAsync(Patience));
-
-        Assert.DoesNotContain("preview words", world.View.Previews);
     }
 
     [Fact]
@@ -468,9 +472,12 @@ public sealed class BoundedStopTests
         {
             if (HoldPreviewSwitch)
             {
-                PreviewSwitchEntered.TrySetResult();
-                AllowPreviewSwitchExit.Task.Wait(Patience);
                 HoldPreviewSwitch = false;
+                PreviewSwitchEntered.TrySetResult();
+                if (!AllowPreviewSwitchExit.Task.Wait(Patience))
+                {
+                    throw new TimeoutException("the held read of the preview switch was never released");
+                }
             }
 
             return PreviewEnabled;

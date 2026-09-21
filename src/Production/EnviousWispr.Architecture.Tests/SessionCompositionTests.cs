@@ -283,6 +283,33 @@ public sealed class SessionCompositionTests
     }
 
     [Fact]
+    public async Task AStaleTimeoutWaitingInTheQueueDoesNotSwallowTheKeyThatEndsTheNextRecording()
+    {
+        // THE TIMEOUT NAMES ITS RECORDING TOO. A timeout armed for the earlier recording, queued
+        // behind the next recording's press, stands in only for that earlier recording; the key's
+        // release for the next one is admitted, the timeout is ignored when it runs, and the key's
+        // release ends the take.
+        var world = World.Create("hello world");
+        await world.SubmitAsync(PushToTalkSignal.Pressed);
+        var earlier = world.Controller.CurrentSession!.Id;
+        await world.SubmitAsync(PushToTalkSignal.Released);
+
+        world.Capture.HoldStart = true;
+        var press = world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await world.Capture.StartEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var stale = world.Coordinator.TimeOutAsync(earlier);
+        var real = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        Assert.Equal(3, world.Coordinator.PendingCount);
+        world.Capture.AllowStartExit.SetResult();
+
+        Assert.Equal(SessionCommandDisposition.Applied, (await press.WaitAsync(TimeSpan.FromSeconds(10))).Disposition);
+        Assert.Equal(SessionCommandDisposition.Ignored, (await stale.WaitAsync(TimeSpan.FromSeconds(10))).Disposition);
+        Assert.Equal(SessionCommandDisposition.Applied, (await real.WaitAsync(TimeSpan.FromSeconds(10))).Disposition);
+        Assert.Equal(2, world.Delivery.Requests.Count);
+        Assert.Null(world.Controller.CurrentSession);
+    }
+
+    [Fact]
     public async Task PreviewTextNeverReachesFinalizationHistoryOrDelivery()
     {
         // THE PREVIEW IS A SCREEN, NOT A SOURCE. Its engine answers every pass with words the final

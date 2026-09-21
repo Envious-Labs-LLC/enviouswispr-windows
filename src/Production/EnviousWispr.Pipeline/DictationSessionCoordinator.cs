@@ -75,6 +75,9 @@ public sealed record SessionCommand(
     /// <summary>A press takes the gate at admission; nothing else does.</summary>
     public bool IsPress => Kind == SessionCommandKind.PushToTalk && Signal == PushToTalkSignal.Pressed;
 
+    /// <summary>The recording a terminal is for - a loop's release or a timeout names one; a key's terminal is for whatever is in flight.</summary>
+    public DictationSessionId? TerminalIdentity => ForSession ?? TimedOutSession;
+
     /// <summary>
     /// A command that ends the recording in flight. One may wait at a time; a second is ignored,
     /// because the recording it would end is already ending. An interruption is not one: it runs
@@ -413,7 +416,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             }
             else if (command.IsTerminal)
             {
-                _pendingTerminals.Add(command.ForSession);
+                _pendingTerminals.Add(command.TerminalIdentity);
             }
 
             // A terminal admitted while anything is ahead of it has, by definition, waited in the queue.
@@ -653,7 +656,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             _pendingOrRunning--;
             if (command.IsTerminal)
             {
-                _pendingTerminals.Remove(command.ForSession);
+                _pendingTerminals.Remove(command.TerminalIdentity);
             }
         }
     }
@@ -667,7 +670,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     /// </summary>
     private bool IsDuplicateTerminal(SessionCommand command) =>
         _pendingTerminals.Contains(null) ||
-        (command.ForSession is { } named
+        (command.TerminalIdentity is { } named
             ? _pendingTerminals.Contains(named)
             : _recording is { } recording && _pendingTerminals.Contains(recording));
 

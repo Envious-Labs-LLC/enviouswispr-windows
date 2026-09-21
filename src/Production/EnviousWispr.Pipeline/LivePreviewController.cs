@@ -169,21 +169,30 @@ public sealed class LivePreviewController : IAsyncDisposable
                 return;
             }
 
+            // SUPERSEDED BEFORE IT STARTS. A stop that landed since this start took its place is a
+            // stop of this start too: nothing is published and no loop runs a pass - not even a
+            // synchronous one - for a screen that was closed while the start was on its way.
+            if (Volatile.Read(ref _stopRequests) != requestsBefore)
+            {
+                return;
+            }
+
             _sequence = 0;
             _started = false;
             var cancellation = new CancellationTokenSource();
-            Volatile.Write(ref _cancellation, cancellation);
             var closure = Volatile.Read(ref _closure);
-            _work = RunAsync(sessionId, engine, audio, closure, cancellation.Token);
-            // A STOP THAT LANDED SINCE THIS START TOOK ITS PLACE found no source to cancel, or one that
-            // was not this; this start is the one that sees the request. It cancels its own work and
-            // closes the screen its loop was given, so an engine that ignores the cancel still hands
-            // back frames for a screen that is gone.
+            Volatile.Write(ref _cancellation, cancellation);
+            // THE SOURCE IS PUBLISHED BEFORE THE LOOP EXISTS, and the count is read again after: a stop
+            // that lands from here on cancels this very source, and one that landed between the check
+            // above and the publication - which found nothing to cancel - is seen here, before the
+            // loop is created with a token already cancelled and a screen already closed.
             if (Volatile.Read(ref _stopRequests) != requestsBefore)
             {
                 Interlocked.Increment(ref _closure);
                 cancellation.Cancel();
             }
+
+            _work = RunAsync(sessionId, engine, audio, closure, cancellation.Token);
         }
         finally
         {
