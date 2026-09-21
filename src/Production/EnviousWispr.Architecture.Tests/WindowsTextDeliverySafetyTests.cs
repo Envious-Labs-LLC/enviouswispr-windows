@@ -248,6 +248,14 @@ public sealed class WindowsTextDeliverySafetyTests
 
         Assert.True(accesses >= 20, $"the scan resolved only {accesses} UI Automation calls; the adapter makes more than that, so the resolution is broken");
 
+        // A SPREAD IS A LOOP WITHOUT A KEYWORD: `[.. collection]` enumerates a handle-bearing
+        // collection into whatever element type the target names, `object[]` included. It is refused
+        // wherever it stands; the adapter materialises nothing from UI Automation.
+        foreach (var spread in adapter.DescendantNodes().OfType<SpreadElementSyntax>())
+        {
+            Assert.True(!IsHandleType(model.GetTypeInfo(spread.Expression).Type), $"A UI Automation collection spread at line {Line(spread)}: {spread}");
+        }
+
         // A LOOP IS A CALL TOO: `foreach` over a handle-bearing collection asks it for an enumerator
         // and each element - calls the expression scan does not see - so it happens inside the
         // boundary or not at all, and an element it yields as `object` is an untyped result.
