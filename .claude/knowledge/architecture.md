@@ -11,7 +11,14 @@ build so customers do not need to install developer tooling.
 
 ## Module boundaries
 
-- `App`: composition, lifecycle, tray, onboarding, and WinUI views.
+- `App`: composition, lifecycle, tray, onboarding, and WinUI views. The session's composition is
+  WinUI-free, under `App/Composition/` (since plan-2 step 4 on #148): `SessionComposition.Compose`
+  joins the controller, the background owner, the finalisation runner, the executor and the coordinator
+  from the concrete things the shell chooses plus a `SessionShell` of leaf reads and notifications and an
+  `ISessionView` of four window sinks. The architecture tests compile those exact files (a source link,
+  not a copy) and drive the composed coordinator with fakes at the leaves, so the production joins are
+  proved under xunit rather than only by a journey through the built app. `App.xaml.cs` keeps the
+  concrete selection, the dispatcher-bound view forwarder and the session teardown.
 - `Core`: shared value types, settings contracts, errors, and session state.
 - `Audio`: WASAPI capture, device selection, resampling, and level monitoring.
 - `ASR`: engine-neutral transcription contracts and adapters.
