@@ -274,6 +274,27 @@ public sealed class WindowsTextDeliverySafetyTests
 
         Assert.True(accesses >= 20, $"the scan resolved only {accesses} UI Automation calls; the adapter makes more than that, so the resolution is broken");
 
+        // A PATTERN IS A CONVERSION WITHOUT A CAST: `element is object snapshot` binds the handle to
+        // an object-typed local with no expression for the erasure check to see. A pattern whose
+        // input carries a handle may narrow it only to a type that still carries one; a null test
+        // narrows to nothing and is fine.
+        foreach (var pattern in adapter.DescendantNodes().OfType<PatternSyntax>())
+        {
+            var info = model.GetTypeInfo(pattern);
+            if (!IsHandleType(info.Type) || pattern is ConstantPatternSyntax or UnaryPatternSyntax or DiscardPatternSyntax)
+            {
+                continue;
+            }
+
+            var narrowed = pattern switch
+            {
+                DeclarationPatternSyntax declared => model.GetTypeInfo(declared.Type).Type,
+                RecursivePatternSyntax { Type: { } named } => model.GetTypeInfo(named).Type,
+                _ => info.ConvertedType ?? info.Type,
+            };
+            Assert.True(IsHandleType(narrowed), $"A UI Automation handle erased at line {Line(pattern)} (pattern {pattern}): {pattern.Parent}");
+        }
+
         // A SPREAD IS A LOOP WITHOUT A KEYWORD: `[.. collection]` enumerates a handle-bearing
         // collection into whatever element type the target names, `object[]` included. It is refused
         // wherever it stands; the adapter materialises nothing from UI Automation.
