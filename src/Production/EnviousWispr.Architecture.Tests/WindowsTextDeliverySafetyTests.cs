@@ -230,10 +230,56 @@ public sealed class WindowsTextDeliverySafetyTests
 
     private static int Line(SyntaxNode node) => node.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
 
-    /// <summary>Whether a type is a live UI Automation object - an element, a pattern, a text range - as opposed to an identifier, a constant or an exception of the same namespaces.</summary>
-    private static bool IsHandleType(ITypeSymbol? type)
+    /// <summary>
+    /// Whether a type is, or carries, a live UI Automation object: an element, a pattern, a text range
+    /// - or a tuple, an array, a generic instantiation or one of the adapter's own records with one
+    /// inside. A compound value carries the handle out as surely as the handle itself: a tuple's
+    /// GetHashCode hashes its element through AutomationElement.GetHashCode. Identifiers, constants
+    /// and exceptions of the same namespaces are not handles.
+    /// </summary>
+    private static bool IsHandleType(ITypeSymbol? type) => CarriesHandle(type, new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default));
+
+    private static bool CarriesHandle(ITypeSymbol? type, HashSet<ITypeSymbol> visited)
     {
-        if (type is not INamedTypeSymbol { TypeKind: TypeKind.Class or TypeKind.Struct } named ||
+        if (type is null || !visited.Add(type))
+        {
+            return false;
+        }
+
+        switch (type)
+        {
+            case IArrayTypeSymbol array:
+                return CarriesHandle(array.ElementType, visited);
+            case INamedTypeSymbol { IsTupleType: true } tuple:
+                return tuple.TupleElements.Any(element => CarriesHandle(element.Type, visited));
+            case INamedTypeSymbol named:
+                if (IsBareHandleType(named))
+                {
+                    return true;
+                }
+
+                if (named.TypeArguments.Any(argument => CarriesHandle(argument, visited)))
+                {
+                    return true;
+                }
+
+                // THE ADAPTER'S OWN RECORDS AND CLASSES ARE OPENED: a source-declared type with a
+                // handle-typed field or property carries it. A library type's fields are its own.
+                return named.Locations.Any(location => location.IsInSource) &&
+                    named.GetMembers().Any(member => member switch
+                    {
+                        IFieldSymbol { IsStatic: false } field => CarriesHandle(field.Type, visited),
+                        IPropertySymbol { IsStatic: false } property => CarriesHandle(property.Type, visited),
+                        _ => false,
+                    });
+            default:
+                return false;
+        }
+    }
+
+    private static bool IsBareHandleType(INamedTypeSymbol named)
+    {
+        if (named is not { TypeKind: TypeKind.Class or TypeKind.Struct } ||
             !(named.ContainingNamespace?.ToDisplayString() ?? string.Empty).StartsWith("System.Windows.Automation", StringComparison.Ordinal))
         {
             return false;

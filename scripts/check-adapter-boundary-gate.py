@@ -36,6 +36,9 @@ RUNTIME_ID_HELPER = "    private static string RuntimeId(AutomationElement eleme
 
 # Each mutation: a name, and the (anchor, replacement) edits that plant one escape.
 MUTATIONS: dict[str, list[tuple[str, str]]] = {
+    "handle-in-tuple": [(FOCUS_READ, "        var cached = Automation(() => (element, target.Value));" + NL + "        _ = cached.GetHashCode();" + NL + FOCUS_READ)],
+    "handle-in-array": [(FOCUS_READ, "        var cached = Automation(() => new[] { element });" + NL + "        _ = cached[0].GetHashCode();" + NL + FOCUS_READ)],
+    "handle-in-record": [(FOCUS_READ, "        var cached = Automation(() => new Held(element));" + NL + "        _ = cached.GetHashCode();" + NL + FOCUS_READ), (RUNTIME_ID_HELPER, "    private sealed record Held(AutomationElement Element);" + NL + NL + RUNTIME_ID_HELPER)],
     "erased-inside-boundary-cast": [(FOCUS_READ, "        var cached = Automation(() => (object)element);" + NL + "        _ = cached.GetHashCode();" + NL + FOCUS_READ)],
     "erased-inside-boundary-as": [(FOCUS_READ, "        var cached = Automation(() => element as object);" + NL + "        _ = cached?.GetHashCode();" + NL + FOCUS_READ)],
     "erased-inside-boundary-context": [(FOCUS_READ, "        var cached = Automation<object>(() => element);" + NL + "        _ = cached.GetHashCode();" + NL + FOCUS_READ)],
