@@ -257,7 +257,10 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         {
             if (_disposed)
             {
-                return Success(RuntimeWorkerState.Disposed);
+                // DISPOSED IS NOT GONE. A disposal that could not see its worker go left the
+                // generation un-ended; a stop queued behind it says so rather than reporting a
+                // worker stopped on the strength of the disposal having run.
+                return WorkerGone ? Success(RuntimeWorkerState.Disposed) : Failure();
             }
 
             if (!await StopCoreAsync().ConfigureAwait(false))
