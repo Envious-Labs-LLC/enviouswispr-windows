@@ -47,6 +47,7 @@ internal static class Program
             {
                 0 => "settle-self-test: the settled receipt counted the paste queued ahead of the settle request.",
                 3 => "settle-self-test: not run - the desk's clipboard could not be snapshotted whole, so it was not touched.",
+                4 => "settle-self-test: the desk's clipboard could not be put back; the verdict is withdrawn.",
                 _ => "settle-self-test: the settled receipt did NOT count the paste queued ahead of the settle request.",
             });
             Environment.ExitCode = verdict;
@@ -225,7 +226,16 @@ internal static class Program
                             return;
                         }
 
-                        form.FormClosed += (_, _) => kept.Restore();
+                        // RESTORED WHATEVER THE VERDICT, AND THE VERDICT DOES NOT SURVIVE A FAILED
+                        // RESTORE: a self-test that passed and left the desk's clipboard changed has
+                        // failed at the one thing it promised.
+                        form.FormClosed += (_, _) =>
+                        {
+                            if (!kept.Restore())
+                            {
+                                form.SelfTestVerdict = 4;
+                            }
+                        };
                         Clipboard.Clear();
                         Focus(form, focusTarget);
                         SendKeys.Send("^v");
@@ -422,7 +432,8 @@ internal static class Program
             }
         }
 
-        public void Restore()
+        /// <summary>Puts the copy back; false when the clipboard would not take it, which no verdict may survive.</summary>
+        public bool Restore()
         {
             try
             {
@@ -434,10 +445,12 @@ internal static class Program
                 {
                     Clipboard.SetDataObject(_data, copy: true, retryTimes: 10, retryDelay: 50);
                 }
+
+                return true;
             }
             catch (Exception exception) when (exception is ExternalException or ThreadStateException or ArgumentException)
             {
-                Console.Error.WriteLine("settle-self-test: the desk's clipboard could not be put back.");
+                return false;
             }
         }
 
@@ -462,18 +475,38 @@ internal static class Program
             return clone;
         }
 
-        private static MemoryStream CloneStream(Stream stream)
+        /// <summary>The whole of a seekable stream from its start, its position put back; null for one that cannot seek or fails to read - the snapshot is refused then.</summary>
+        private static MemoryStream? CloneStream(Stream stream)
         {
-            var originalPosition = stream.CanSeek ? stream.Position : 0;
-            var copy = new MemoryStream();
-            stream.CopyTo(copy);
-            if (stream.CanSeek)
+            if (!stream.CanSeek)
             {
-                stream.Position = originalPosition;
+                return null;
             }
 
-            copy.Position = 0;
-            return copy;
+            var originalPosition = stream.Position;
+            try
+            {
+                stream.Position = 0;
+                var copy = new MemoryStream();
+                stream.CopyTo(copy);
+                copy.Position = 0;
+                return copy;
+            }
+            catch (Exception exception) when (exception is IOException or NotSupportedException or ObjectDisposedException or UnauthorizedAccessException)
+            {
+                return null;
+            }
+            finally
+            {
+                try
+                {
+                    stream.Position = originalPosition;
+                }
+                catch (Exception exception) when (exception is IOException or NotSupportedException or ObjectDisposedException)
+                {
+                    // The position could not be put back on a stream that already failed; the snapshot is refused above.
+                }
+            }
         }
     }
 

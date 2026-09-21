@@ -5,6 +5,9 @@ using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Pipeline;
 using EnviousWispr.Services.Input;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace EnviousWispr.Architecture.Tests;
 
@@ -84,102 +87,112 @@ public sealed class WindowsTextDeliverySafetyTests
     public void EveryUiAutomationCallInTheAdapterIsMadeThroughTheBoundary()
     {
         // NOTHING ELSE TOUCHES UI AUTOMATION: a call made outside Automation(...) would answer a
-        // refusal as a fault. Read at the source, by offset: every occurrence of an element, pattern
-        // or range access sits inside an Automation(...) call, or inside one of the two helpers that
-        // are only ever called from inside one (ReadCaret, RuntimeId). A second, bare occurrence of
-        // a line that also appears wrapped is caught, because each occurrence is judged where it is.
-        var adapter = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "Production", "EnviousWispr.Services", "Input", "WindowsTextTargetAdapter.cs"));
-        var helpers = new[]
+        // refusal as a fault. Judged by what the compiler resolves, not by what the text looks like:
+        // every member access or invocation in the adapter whose member belongs to a UI Automation
+        // type - a property read, a pattern lookup, a write, a range operation, however it is split
+        // across locals - must sit inside an Automation(...) call, or inside one of the two helpers
+        // (ReadCaret, RuntimeId) whose only callers sit inside one. A UI Automation constant (a
+        // pattern id, a control type, an enum member) is data, not a call, and is not counted.
+        var input = Path.Combine(RepositoryRoot(), "src", "Production", "EnviousWispr.Services", "Input");
+        // THE PROJECT'S IMPLICIT USINGS, SUPPLIED, so every local's type resolves and every access
+        // has a symbol: a scan that could not type `valuePattern` would skip its calls and pass.
+        var implicitUsings = CSharpSyntaxTree.ParseText(
+            "global using System; global using System.Collections.Generic; global using System.IO; global using System.Linq; " +
+            "global using System.Net.Http; global using System.Threading; global using System.Threading.Tasks;",
+            path: "implicit-usings.cs");
+        var trees = Directory
+            .EnumerateFiles(input, "*.cs", SearchOption.TopDirectoryOnly)
+            .Select(file => CSharpSyntaxTree.ParseText(File.ReadAllText(file), path: file))
+            .Append(implicitUsings)
+            .ToArray();
+        var references = ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? string.Empty)
+            .Split(Path.PathSeparator)
+            .Where(path => path.Length > 0 && File.Exists(path))
+            .Append(typeof(AutomationElement).Assembly.Location)
+            .Append(typeof(ElementNotAvailableException).Assembly.Location)
+            .Append(typeof(System.Windows.Forms.Clipboard).Assembly.Location)
+            .Append(typeof(System.Drawing.Bitmap).Assembly.Location)
+            .Append(typeof(TextDeliveryRefusalReason).Assembly.Location)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path))
+            .ToArray();
+        var compilation = CSharpCompilation.Create(
+            "adapter-scan",
+            trees,
+            references,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true));
+        var automationElement = compilation.GetTypeByMetadataName(typeof(AutomationElement).FullName!);
+        Assert.True(automationElement is { TypeKind: not TypeKind.Error }, "UI Automation did not resolve, so this gate would have scanned for nothing.");
+        var adapterErrors = compilation.GetDiagnostics()
+            .Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error && diagnostic.Location.SourceTree?.FilePath.EndsWith("WindowsTextTargetAdapter.cs", StringComparison.Ordinal) == true)
+            .Select(diagnostic => diagnostic.ToString())
+            .ToArray();
+        Assert.True(adapterErrors.Length == 0, "the adapter did not compile in the scan, so its calls would not resolve: " + string.Join("; ", adapterErrors.Take(5)));
+
+        var adapterTree = Assert.Single(trees, tree => tree.FilePath.EndsWith("WindowsTextTargetAdapter.cs", StringComparison.Ordinal));
+        var model = compilation.GetSemanticModel(adapterTree);
+        var root = adapterTree.GetRoot();
+        var adapter = Assert.Single(root.DescendantNodes().OfType<ClassDeclarationSyntax>(), type => type.Identifier.Text == "WindowsTextTargetAdapter");
+        var helpers = new[] { "ReadCaret", "RuntimeId" };
+        Assert.Single(adapter.Members.OfType<MethodDeclarationSyntax>(), method => method.Identifier.Text == "Automation");
+        var accesses = 0;
+        foreach (var access in adapter.DescendantNodes().OfType<MemberAccessExpressionSyntax>())
         {
-            HelperSpan(adapter, "private static CaretText? ReadCaret("),
-            HelperSpan(adapter, "private static string RuntimeId(AutomationElement element) =>"),
+            var info = model.GetSymbolInfo(access);
+            var symbol = info.Symbol ?? info.CandidateSymbols.FirstOrDefault();
+            if (symbol is null || !IsUiAutomationCall(symbol))
+            {
+                continue;
+            }
+
+            accesses++;
+            var owner = access.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault()?.Identifier.Text;
+            var covered = helpers.Contains(owner, StringComparer.Ordinal) || IsInsideAutomationCall(access, model);
+            Assert.True(covered, $"A UI Automation call outside the boundary at line {access.GetLocation().GetLineSpan().StartLinePosition.Line + 1}: {access.Parent}");
+        }
+
+        Assert.True(accesses >= 20, $"the scan resolved only {accesses} UI Automation calls; the adapter makes more than that, so the resolution is broken");
+
+        // THE HELPERS ARE CALLED FROM INSIDE THE BOUNDARY, AND FROM NOWHERE ELSE.
+        foreach (var helper in helpers)
+        {
+            var calls = adapter.DescendantNodes().OfType<InvocationExpressionSyntax>()
+                .Where(invocation => invocation.Expression is IdentifierNameSyntax { Identifier.Text: var name } && name == helper)
+                .ToArray();
+            var call = Assert.Single(calls);
+            Assert.True(IsInsideAutomationCall(call, model), $"{helper} is called outside the boundary");
+        }
+    }
+
+    /// <summary>Whether a resolved member is a live UI Automation call: a property or method of a type in the UI Automation namespaces, not a constant.</summary>
+    private static bool IsUiAutomationCall(ISymbol symbol)
+    {
+        var space = symbol.ContainingType?.ContainingNamespace?.ToDisplayString() ?? string.Empty;
+        if (!space.StartsWith("System.Windows.Automation", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return symbol switch
+        {
+            IPropertySymbol => true,
+            IMethodSymbol => true,
+            _ => false,
         };
-        foreach (var call in new[] { "ReadCaret(", "RuntimeId(" })
-        {
-            var uses = Occurrences(adapter, call).Where(at => !helpers.Any(span => at >= span.Start && at < span.End) && !adapter[..at].EndsWith("static string ", StringComparison.Ordinal) && !adapter[..at].EndsWith("static CaretText? ", StringComparison.Ordinal)).ToArray();
-            var use = Assert.Single(uses);
-            Assert.True(IsInsideAutomationCall(adapter, use), $"{call} is called outside the boundary");
-        }
-
-        var accesses = new[]
-        {
-            "AutomationElement.FocusedElement", ".Current.", "TryGetCurrentPattern(", ".SetValue(", ".GetSelection(",
-            ".DocumentRange", ".Clone()", ".MoveEndpointByRange(", ".MoveEndpointByUnit(", ".CompareEndpoints(", ".GetText(", ".GetRuntimeId(",
-        };
-        var offset = 0;
-        foreach (var line in adapter.Split('\n'))
-        {
-            var trimmed = line.TrimStart();
-            var isComment = trimmed.StartsWith("//", StringComparison.Ordinal);
-            foreach (var access in accesses)
-            {
-                for (var at = line.IndexOf(access, StringComparison.Ordinal); at >= 0 && !isComment; at = line.IndexOf(access, at + access.Length, StringComparison.Ordinal))
-                {
-                    var here = offset + at;
-                    var covered = helpers.Any(span => here >= span.Start && here < span.End) || IsInsideAutomationCall(adapter, here);
-                    Assert.True(covered, $"A UI Automation access outside the boundary at offset {here}: {trimmed.Trim()}");
-                }
-            }
-
-            offset += line.Length + 1;
-        }
     }
 
-    /// <summary>The span of a helper method: from its signature to its closing brace at the method's indentation, or to the end of its expression body.</summary>
-    private static (int Start, int End) HelperSpan(string source, string signature)
+    /// <summary>Whether the node sits inside an invocation of the adapter's own Automation method (the boundary), by name and, where the scan can resolve it, by symbol.</summary>
+    private static bool IsInsideAutomationCall(SyntaxNode node, SemanticModel model) =>
+        node.Ancestors().OfType<InvocationExpressionSyntax>().Any(invocation =>
+            invocation.Expression is IdentifierNameSyntax { Identifier.Text: "Automation" } &&
+            ResolvesToTheAdapter(model.GetSymbolInfo(invocation)));
+
+    private static bool ResolvesToTheAdapter(SymbolInfo info)
     {
-        var start = source.IndexOf(signature, StringComparison.Ordinal);
-        Assert.True(start >= 0, $"the helper is gone: {signature}");
-        var end = signature.EndsWith("=>", StringComparison.Ordinal)
-            ? source.IndexOf(";\n", start, StringComparison.Ordinal)
-            : source.IndexOf("\n    }\n", start, StringComparison.Ordinal);
-        Assert.True(end > start, $"the helper has no end: {signature}");
-        return (start, end);
-    }
-
-    private static bool IsInsideAutomationCall(string source, int at)
-    {
-        // THE SPAN OF A CALL ENDS WHERE ITS OWN PARENTHESIS CLOSES, not where the running depth
-        // next reaches zero: an access after a wrapped call, inside some other call's parentheses,
-        // is outside the boundary. Every earlier opening is tried, so a call that encloses this
-        // offset is found whatever sits between.
-        var open = source.LastIndexOf("Automation(", at, StringComparison.Ordinal);
-        while (open >= 0)
-        {
-            var close = ClosingParenthesis(source, open + "Automation".Length);
-            if (close > at)
-            {
-                return true;
-            }
-
-            open = open == 0 ? -1 : source.LastIndexOf("Automation(", open - 1, StringComparison.Ordinal);
-        }
-
-        return false;
-    }
-
-    /// <summary>The offset of the parenthesis that closes the one at <paramref name="openParenthesis"/>, or -1.</summary>
-    private static int ClosingParenthesis(string source, int openParenthesis)
-    {
-        var depth = 0;
-        for (var index = openParenthesis; index < source.Length; index++)
-        {
-            depth += source[index] switch { '(' => 1, ')' => -1, _ => 0 };
-            if (depth == 0)
-            {
-                return index;
-            }
-        }
-
-        return -1;
-    }
-
-    private static IEnumerable<int> Occurrences(string text, string needle)
-    {
-        for (var at = text.IndexOf(needle, StringComparison.Ordinal); at >= 0; at = text.IndexOf(needle, at + needle.Length, StringComparison.Ordinal))
-        {
-            yield return at;
-        }
+        // A lambda argument the scan cannot fully type leaves the call unresolved with candidates;
+        // the candidates are still the adapter's Automation<T>, and nothing else is named that.
+        var candidates = info.Symbol is { } symbol ? [symbol] : info.CandidateSymbols;
+        return candidates.Length == 0 || candidates.All(candidate => candidate is IMethodSymbol { Name: "Automation", ContainingType.Name: "WindowsTextTargetAdapter" });
     }
 
     [Theory]
@@ -479,6 +492,112 @@ public sealed class WindowsTextDeliverySafetyTests
         Assert.NotSame(bytes, clonedBytes);
         Assert.Equal("immutable", WindowsClipboardPaste.CloneClipboardValue("immutable"));
         Assert.Null(WindowsClipboardPaste.CloneClipboardValue(new object()));
+    }
+
+    [Fact]
+    public void AClipboardStreamIsCopiedWholeOrTheSnapshotIsRefused()
+    {
+        // THE WHOLE VALUE OR NOTHING (plan-2 step 13, round five). A seekable stream standing past
+        // its start is copied from the start and left where it stood; a stream that cannot seek
+        // would be consumed by the copy, so it is refused; a stream that fails to read is refused
+        // with its position put back. A refused value refuses the whole snapshot.
+        using var seekable = new SeekableOnly([1, 2, 3, 4, 5]) { Position = 3 };
+        var copy = Assert.IsType<MemoryStream>(WindowsClipboardPaste.CloneClipboardValue(seekable));
+        Assert.Equal(new byte[] { 1, 2, 3, 4, 5 }, copy.ToArray());
+        Assert.Equal(0, copy.Position);
+        Assert.Equal(3, seekable.Position);
+
+        using var forwardOnly = new ForwardOnly([1, 2, 3]);
+        Assert.Null(WindowsClipboardPaste.CloneClipboardValue(forwardOnly));
+        Assert.Equal(0, forwardOnly.Reads);
+
+        using var failing = new SeekableOnly([1, 2, 3]) { Position = 2, FailReads = true };
+        Assert.Null(WindowsClipboardPaste.CloneClipboardValue(failing));
+        Assert.Equal(2, failing.Position);
+    }
+
+    /// <summary>A stream that is not a MemoryStream: seekable, readable, and able to fail its reads on request.</summary>
+    private sealed class SeekableOnly(byte[] bytes) : Stream
+    {
+        private readonly MemoryStream _inner = new(bytes);
+
+        public bool FailReads { get; init; }
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => true;
+
+        public override bool CanWrite => false;
+
+        public override long Length => _inner.Length;
+
+        public override long Position { get => _inner.Position; set => _inner.Position = value; }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => FailReads ? throw new IOException("the stream would not read") : _inner.Read(buffer, offset, count);
+
+        public override long Seek(long offset, SeekOrigin origin) => _inner.Seek(offset, origin);
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+    }
+
+    /// <summary>A stream that cannot seek: reading it consumes it, and the snapshot must not.</summary>
+    private sealed class ForwardOnly(byte[] bytes) : Stream
+    {
+        private readonly MemoryStream _inner = new(bytes);
+
+        public int Reads { get; private set; }
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            Reads++;
+            return _inner.Read(buffer, offset, count);
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
     }
 
     [Theory]

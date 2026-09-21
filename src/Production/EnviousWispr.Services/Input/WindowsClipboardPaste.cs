@@ -358,6 +358,47 @@ internal static class WindowsClipboardPaste
         }
     }
 
+    /// <summary>The whole of a seekable stream, from its start, with its position put back; null for a stream whose whole contents cannot be read without consuming it, or that fails to read.</summary>
+    /// <remarks>
+    /// A SNAPSHOT IS THE WHOLE VALUE OR NOTHING. A stream copied from where it happened to stand
+    /// lost its prefix, and a stream that cannot seek is consumed by the copy - the clipboard would
+    /// then hold less than it did. Both answer null, and a null refuses the snapshot, so nothing that
+    /// borrows the clipboard proceeds against a clipboard it could not put back whole.
+    /// </remarks>
+    internal static MemoryStream? CloneStream(Stream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        if (!stream.CanSeek)
+        {
+            return null;
+        }
+
+        var originalPosition = stream.Position;
+        try
+        {
+            stream.Position = 0;
+            var copy = new MemoryStream();
+            stream.CopyTo(copy);
+            copy.Position = 0;
+            return copy;
+        }
+        catch (Exception exception) when (exception is IOException or NotSupportedException or ObjectDisposedException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+        finally
+        {
+            try
+            {
+                stream.Position = originalPosition;
+            }
+            catch (Exception exception) when (exception is IOException or NotSupportedException or ObjectDisposedException)
+            {
+                // The position could not be put back on a stream that already failed; the snapshot is refused above.
+            }
+        }
+    }
+
     internal static object? CloneClipboardValue(object value)
     {
         switch (value)
@@ -367,18 +408,7 @@ internal static class WindowsClipboardPaste
             case MemoryStream memory:
                 return new MemoryStream(memory.ToArray(), writable: false);
             case Stream stream:
-            {
-                var originalPosition = stream.CanSeek ? stream.Position : 0;
-                var copy = new MemoryStream();
-                stream.CopyTo(copy);
-                if (stream.CanSeek)
-                {
-                    stream.Position = originalPosition;
-                }
-
-                copy.Position = 0;
-                return copy;
-            }
+                return CloneStream(stream);
             case Bitmap bitmap:
                 return bitmap.Clone();
             case StringCollection strings:
