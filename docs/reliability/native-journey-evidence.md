@@ -28,6 +28,16 @@ composed proofs read the capture's disposal; the native run reads the clean exit
 | 2026-09-21 | 0.19.0+d313251 (step 10 branch) | live-cable-whisper | yes | yes | 0 |
 | 2026-09-21 | 0.19.0+d313251 (step 10 branch) | synthetic-quick-tap-preview | yes | yes | 0 |
 | 2026-09-21 | 0.19.0+d313251 (step 10 branch) | escape-recovery | yes | yes | 0 |
+| 2026-09-21 | 0.19.0+721f911 (step 17: the session's disposal sequenced by the executor, the polish runtime's abort a lifetime step) | live-cable-parakeet | yes | yes | 0 |
+| 2026-09-21 | 0.19.0+721f911 (step 17) | live-cable-whisper | yes | yes | 0 |
+| 2026-09-21 | 0.19.0+721f911 (step 17) | synthetic-quick-tap-preview | yes | yes | 0 |
+| 2026-09-21 | 0.19.0+721f911 (step 17) | escape-recovery | yes | yes | 0 |
+
+The step-17 rows are the first taken with the disposal's order in the executor
+(`DictationSessionExecutor.DisposeSessionAsync`: observers off the capture, the controller and its
+capture, the shell's references, the delivery route) and the local polish runtime ended by the
+lifetime's own "polish runtime abort" step rather than inside the shell's closing; the clean exit and
+the absence of stray workers are what they establish natively.
 
 ## NativeDeliveryExercisesThreeRoutes
 
@@ -48,6 +58,9 @@ the message count.
 | 2026-09-21 | 0.19.0+a9ecdce | edit | UiAutomationValue (`WM_SETTEXT` seen, no `WM_PASTE`, seed first) | yes | yes |
 | 2026-09-21 | 0.19.0+a9ecdce | caret-start | ClipboardPaste (`WM_PASTE` seen, seed last; the clipboard sentinel placed before the delivery read back intact afterwards, `clipboardRestored` true) | yes | yes |
 | 2026-09-21 | 0.19.0+a9ecdce | password | ClipboardOnly (`TextDeliveryRefused` / `DeliveryProtectedField`, field empty) | yes | yes |
+| 2026-09-21 | 0.19.0+721f911 (step 17) | edit | UiAutomationValue (`WM_SETTEXT` seen, no `WM_PASTE`, seed first) | yes | yes |
+| 2026-09-21 | 0.19.0+721f911 (step 17) | caret-start | ClipboardPaste (`WM_PASTE` seen, seed last; the sentinel check the harness requires for a pass) | yes | yes |
+| 2026-09-21 | 0.19.0+721f911 (step 17) | password | ClipboardOnly (`TextDeliveryRefused` / `DeliveryProtectedField`, field empty) | yes | yes |
 
 The caret-start run also observes clipboard restoration (plan-2 step 13): the harness places a sentinel
 line on the clipboard before the paste route runs and requires the same line back after the delivery,
