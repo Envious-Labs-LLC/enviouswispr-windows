@@ -1,4 +1,5 @@
 using EnviousWispr.Core.Diagnostics;
+using EnviousWispr.Core.Reliability;
 using EnviousWispr.Pipeline;
 
 namespace EnviousWispr.App.Composition;
@@ -30,14 +31,15 @@ public sealed record LifetimeStep(string Name, Func<Task> Run)
 /// <param name="ShutDownSession">The session's own shutdown under the budget it is handed (step 8); null when the shell owns no session.</param>
 /// <param name="Quiesce">Work the shell started that must be over before anything it uses is disposed: the polish warm-up, the heartbeat.</param>
 /// <param name="DisposeSessionDependencies">What a session uses: run only behind a quiescent session and finished quiescence steps.</param>
-/// <param name="DisposeShell">The shell's own services, run only when nothing is outstanding.</param>
-/// <param name="DisposeLast">What is disposed before the run is completed and after everything else: the single-instance lock.</param>
+/// <param name="DisposeShell">The shell's own services, run only when nothing is outstanding. The single-instance lock is not among them: it is held to the process's end, so no other launch writes the record before this one has.</param>
 /// <param name="CompleteRun">
 /// Writes the run's clean ending: the one publication the next launch trusts. Asked only when everything
 /// before it finished and nothing failed, under what is left of the budget, with a token cancelled when
-/// that runs out - a write not begun by then is never begun. False when the store refused.
+/// that runs out - a write not begun by then is never begun - and under a fence the write commits
+/// through and the exit abandons through, so the record is never replaced after the exit stopped
+/// waiting. False when the store refused.
 /// </param>
-/// <param name="CloseRunState">Closes the run-state store after the completion that wrote to it. Best effort, reported if it throws.</param>
+/// <param name="CloseRunState">Closes the run-state store: only once nothing that writes to it is outstanding. Best effort, reported if it throws.</param>
 /// <param name="DisposeLogger">The log, flushed and closed as the last act whatever the outcome; best effort.</param>
 public sealed record LifetimeParts(
     Action CloseAdmission,
@@ -49,8 +51,7 @@ public sealed record LifetimeParts(
     IReadOnlyList<LifetimeStep> Quiesce,
     IReadOnlyList<LifetimeStep> DisposeSessionDependencies,
     IReadOnlyList<LifetimeStep> DisposeShell,
-    IReadOnlyList<LifetimeStep> DisposeLast,
-    Func<CancellationToken, Task<bool>> CompleteRun,
+    Func<PublicationFence, CancellationToken, Task<bool>> CompleteRun,
     Action CloseRunState,
     Func<Task> DisposeLogger);
 
@@ -117,11 +118,16 @@ public interface IHostTerminator
 /// own never meets it, and one that cannot is ended by it, the step it was inside named. The log is
 /// attempted from beside it and not waited for - the blocked thread may be inside the log.
 ///
-/// THE PUBLICATION IS THE LAST THING THAT CAN FAIL. Everything the run had to finish - the session,
-/// the quiescence, every disposal, the lock - runs before the run's clean ending is written, and the
+/// THE PUBLICATION IS THE LAST OF THE RUN'S WORK, AND IT IS FENCED. Everything the run had to finish -
+/// the session, the quiescence, every disposal - runs before the run's clean ending is written. The
 /// write is under the remainder with a token cancelled when it runs out, so a write not begun by the
-/// deadline is never begun and a late one cannot call an over-budget exit clean. After it only the
-/// two handles that wrote it are closed - the store and the log - and both are reported if they do not.
+/// deadline never begins; and it commits through a fence the exit abandons through, so a write the
+/// exit stopped waiting for never replaces the record - and if it committed first, the exit learns
+/// that and reports the run completed. After it only the two handles that wrote it are closed: the
+/// store, only once nothing that writes to it is outstanding, and the log, always, both reported if
+/// they do not. Diagnostic closure is not the run's work: a log that will not close unmakes the
+/// report's clean verdict and ends the host, but the completion already committed stands, because
+/// everything the run had to finish had finished.
 ///
 /// PREPARED ONCE, EXITED ONCE. Every path out of the app - the tray, the window, an update, a system
 /// ending - reaches the same two cached tasks; a second caller shares the first's completion and no
@@ -301,7 +307,6 @@ public sealed class ApplicationLifetime
             // everything after it in the order, since the order is the dependency order.
             await DisposeAsync(_parts.DisposeSessionDependencies, budget, outstanding, failed);
             await DisposeAsync(_parts.DisposeShell, budget, outstanding, failed);
-            await DisposeAsync(_parts.DisposeLast, budget, outstanding, failed);
         }
 
         // ONLY A QUIESCENT, FINISHED, FAULTLESS EXIT PUBLISHES A CLEAN RUN, and only inside the budget:
@@ -313,7 +318,13 @@ public sealed class ApplicationLifetime
             runCompleted = await CompleteRunAsync(budget, outstanding, failed);
         }
 
-        Try("run-state store", _parts.CloseRunState, failed);
+        // THE STORE IS CLOSED ONLY ONCE NOTHING THAT WRITES TO IT IS OUTSTANDING: a heartbeat still
+        // joining, a completion still committing, a session command still to write its last edge -
+        // each is inside the store, and a store disposed under it faults the write. Kept otherwise.
+        if (!retained && outstanding.Count == 0)
+        {
+            Try("run-state store", _parts.CloseRunState, failed);
+        }
 
         // WHAT IS SAID BEFORE THE LOG CLOSES: the exit's verdict so far, and the escalation if it is
         // already known. The log's own closing is the one step that can still go wrong after this,
@@ -359,35 +370,37 @@ public sealed class ApplicationLifetime
         return report;
     }
 
-    /// <summary>The run's completion, joined under the remainder and fenced by a token that runs out with it.</summary>
+    /// <summary>The run's completion: joined under the remainder, bounded by a token that runs out with it, and fenced so a commit and an abandonment can never both happen.</summary>
     private async Task<bool> CompleteRunAsync(StopBudget budget, List<string> outstanding, List<string> failed)
     {
         Volatile.Write(ref _current, "run completion");
         var remaining = budget.Left;
+        var fence = new PublicationFence();
         using var patience = new CancellationTokenSource(remaining, _clock);
         try
         {
-            return await _parts.CompleteRun(patience.Token).WaitAsync(remaining, _clock);
+            return await _parts.CompleteRun(fence, patience.Token).WaitAsync(remaining, _clock);
         }
-        catch (TimeoutException)
+        catch (Exception exception) when (exception is TimeoutException or OperationCanceledException)
         {
-            // Not finished inside the budget: the token has run out with it, so a write not yet
-            // begun never begins; one already inside the store settles, and the report says the
-            // exit did not wait for it.
-            outstanding.Add("run completion");
-        }
-        catch (OperationCanceledException)
-        {
-            // The budget ran out before the write began, and the store honoured the fence.
-            outstanding.Add("run completion");
+            // NOT FINISHED INSIDE THE BUDGET. The fence decides what the next launch reads: abandoned
+            // here before the store's commit, the record is never replaced and the completion is
+            // outstanding; committed first, the record already says clean and the exit says so too -
+            // the store's remaining act is to let go of its gate.
+            if (fence.TryAbandon())
+            {
+                outstanding.Add("run completion");
+                return false;
+            }
+
+            return true;
         }
         catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
         {
             failed.Add("run completion");
             RecordFailure();
+            return false;
         }
-
-        return false;
     }
 
     /// <summary>Disposals in dependency order: the first that does not finish ends the run of them.</summary>

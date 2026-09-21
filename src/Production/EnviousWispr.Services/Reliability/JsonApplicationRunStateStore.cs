@@ -167,6 +167,16 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
         CancellationToken cancellationToken = default) =>
         UpdateAsync(runId, timestamp, cleanShutdown: true, dictationActive: false, cancellationToken);
 
+    public Task<bool> CompleteRunAsync(
+        Guid runId,
+        DateTimeOffset timestamp,
+        PublicationFence fence,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(fence);
+        return UpdateAsync(runId, timestamp, cleanShutdown: true, dictationActive: false, cancellationToken, fence: fence);
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -184,13 +194,24 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
         bool cleanShutdown,
         bool? dictationActive,
         CancellationToken cancellationToken,
-        bool? endedBySystem = null)
+        bool? endedBySystem = null,
+        PublicationFence? fence = null)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_current?.RunId != runId || _current.CleanShutdown)
+            {
+                return false;
+            }
+
+            // THE RECORD ON DISK MUST STILL BE THIS RUN'S. The single-instance lock keeps another
+            // launch out while this one lives, but the record is the truth the next launch reads,
+            // and a write that has waited - a completion behind a held exit, a heartbeat behind a
+            // slow disk - must not overwrite a record another launch has since taken over. Ownership
+            // is checked on the file, not on what this store last wrote.
+            if (!await OwnsRecordAsync(runId, cancellationToken).ConfigureAwait(false))
             {
                 return false;
             }
@@ -209,8 +230,15 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
                 // ending.
                 EndedBySystem = endedBySystem ?? _current.EndedBySystem,
             };
-            await JsonSettingsStore.WriteAtomicallyAsync(next, _path, cancellationToken)
-                .ConfigureAwait(false);
+            if (!await JsonSettingsStore.WriteAtomicallyAsync(next, _path, fence, cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                // THE EXIT ABANDONED THE PUBLICATION before the record could be replaced: the
+                // temporary file is gone and the record still says the run is in flight, which is
+                // what an exit that did not wait for this deserves to have read on the next launch.
+                return false;
+            }
+
             _current = next;
             return true;
         }
@@ -229,6 +257,27 @@ public sealed class JsonApplicationRunStateStore : IApplicationRunStateStore, ID
         finally
         {
             _gate.Release();
+        }
+    }
+
+    /// <summary>Whether the record on disk is this run's: absent or unreadable counts as not owned.</summary>
+    private async Task<bool> OwnsRecordAsync(Guid runId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var info = new FileInfo(_path);
+            if (!info.Exists || info.Length is <= 0 or > MaximumStateBytes)
+            {
+                return false;
+            }
+
+            var json = await File.ReadAllTextAsync(_path, cancellationToken).ConfigureAwait(false);
+            var onDisk = JsonSerializer.Deserialize<RunStateFile>(json, JsonSettingsStore.SerializerOptions);
+            return onDisk?.RunId == runId;
+        }
+        catch (JsonException)
+        {
+            return false;
         }
     }
 

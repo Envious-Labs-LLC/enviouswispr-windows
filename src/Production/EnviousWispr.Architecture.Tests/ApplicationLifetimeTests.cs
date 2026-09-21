@@ -33,10 +33,11 @@ public sealed class ApplicationLifetimeTests
 
         var exit = world.Lifetime.ExitAsync();
         Assert.True(world.AdmissionClosed, "admission closed before the first await");
-        await clock.WhenRegistered(1).WaitAsync(Patience);
+        await world.WhenJoined("settings drain").WaitAsync(Patience);
         clock.Advance(TimeSpan.FromSeconds(12));
         world.Drain.SetResult();
-        await clock.WhenRegistered(2).WaitAsync(Patience);
+        await world.WhenJoined("polish warm-up").WaitAsync(Patience);
+        // THE WARM-UP'S OWN JOIN IS DUE IN EIGHT SECONDS: the twelve the drain took are gone from it.
         Assert.Equal(TimeSpan.FromSeconds(8), clock.NextDue);
         clock.Advance(TimeSpan.FromSeconds(8));
 
@@ -51,7 +52,7 @@ public sealed class ApplicationLifetimeTests
         Assert.Same(report, world.Terminator.Report);
         // THE HEARTBEAT, GIVEN NOTHING, WAS STILL ISSUED AND OBSERVED: it finished at once, so it is
         // not outstanding. The disposals were not run: what the warm-up uses is kept.
-        Assert.Equal(["inputs", "warm-up", "heartbeat", "run-state store"], world.Ran);
+        Assert.Equal(["inputs", "warm-up", "heartbeat"], world.Ran);
         Assert.Equal(0, world.CompleteRunCalls);
         Assert.Contains(AppEventCode.ApplicationExitEscalated, world.Log.Events);
         Assert.DoesNotContain(AppEventCode.ApplicationCleanShutdown, world.Log.Events);
@@ -73,8 +74,11 @@ public sealed class ApplicationLifetimeTests
         var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
         await executor.Entered.Task.WaitAsync(Patience);
 
+        var registered = clock.Registered;
         var exit = world.Lifetime.ExitAsync();
-        await clock.WhenRegistered(1).WaitAsync(Patience);
+        // The watchdog's timer is registered at the first step; the coordinator's wait for the
+        // command is the one after it.
+        await clock.WhenRegistered(registered + 2).WaitAsync(Patience);
         clock.Advance(TimeSpan.FromSeconds(20));
 
         var report = await exit.WaitAsync(Patience);
@@ -84,7 +88,7 @@ public sealed class ApplicationLifetimeTests
         Assert.True(report.Session.CommandOutstanding);
         Assert.True(report.Retained);
         Assert.Empty(report.Outstanding);
-        Assert.Equal(["inputs", "warm-up", "heartbeat", "run-state store"], world.Ran);
+        Assert.Equal(["inputs", "warm-up", "heartbeat"], world.Ran);
         Assert.Equal(0, world.CompleteRunCalls);
         Assert.True(report.Escalated);
         Assert.Contains(AppEventCode.ApplicationShutdownUnclean, world.Log.Events);
@@ -118,7 +122,7 @@ public sealed class ApplicationLifetimeTests
         Assert.True(report.RunCompleted);
         Assert.False(report.Escalated);
         Assert.Null(world.Terminator.Report);
-        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency", "second dependency", "shell", "last", "run-state store"], world.Ran);
+        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency", "second dependency", "shell", "run-state store"], world.Ran);
         Assert.Equal(1, executor.TearDowns);
         Assert.Contains(AppEventCode.ApplicationCleanShutdown, world.Log.Events);
         Assert.True(world.LoggerDisposed);
@@ -131,7 +135,7 @@ public sealed class ApplicationLifetimeTests
         Assert.Equal(0, faulted.CompleteRunCalls);
         Assert.False(faultedReport.RunCompleted);
         Assert.False(faultedReport.Escalated);
-        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency", "second dependency", "shell", "last", "run-state store"], faulted.Ran);
+        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency", "second dependency", "shell", "run-state store"], faulted.Ran);
         Assert.Contains(AppEventCode.UnhandledFailure, faulted.Log.Events);
         Assert.DoesNotContain(AppEventCode.ApplicationCleanShutdown, faulted.Log.Events);
     }
@@ -177,7 +181,7 @@ public sealed class ApplicationLifetimeTests
         Assert.Same(report, again);
         Assert.Equal(1, world.DrainCalls);
         Assert.Equal(1, world.ShellClosingCalls);
-        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency", "second dependency", "shell", "last", "run-state store"], world.Ran);
+        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency", "second dependency", "shell", "run-state store"], world.Ran);
         Assert.Equal(1, world.CompleteRunCalls);
         Assert.Equal(1, world.LoggerDisposals);
         Assert.Equal(1, world.Log.Events.Count(code => code == AppEventCode.ApplicationCleanShutdown));
@@ -194,12 +198,12 @@ public sealed class ApplicationLifetimeTests
         world.Dependency = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var exit = world.Lifetime.ExitAsync();
-        await clock.WhenRegistered(1).WaitAsync(Patience);
+        await world.WhenJoined("dependency").WaitAsync(Patience);
         clock.Advance(TimeSpan.FromSeconds(20));
 
         var report = await exit.WaitAsync(Patience);
         Assert.Equal(["dependency"], report.Outstanding);
-        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency", "run-state store"], world.Ran);
+        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency"], world.Ran);
         Assert.Equal(0, world.CompleteRunCalls);
         Assert.True(report.Escalated);
         world.Dependency.SetResult();
@@ -223,15 +227,16 @@ public sealed class ApplicationLifetimeTests
         var world = World.Create(clock);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task<bool>? write = null;
-        world.CompleteRun = async cancellation =>
+        world.CompleteRun = async (fence, cancellation) =>
         {
             await release.Task;
-            write = store.CompleteRunAsync(run.RunId, DateTimeOffset.UtcNow, cancellation);
+            write = store.CompleteRunAsync(run.RunId, DateTimeOffset.UtcNow, fence, cancellation);
             return await write;
         };
 
         var exit = world.Lifetime.ExitAsync();
-        await clock.WhenRegistered(1).WaitAsync(Patience);
+        // The completion's token is registered before the step is entered; its join is the next.
+        await world.WhenJoined("run completion").WaitAsync(Patience);
         clock.Advance(TimeSpan.FromSeconds(20));
 
         var report = await exit.WaitAsync(Patience);
@@ -272,7 +277,7 @@ public sealed class ApplicationLifetimeTests
         var store = new JsonApplicationRunStateStore(path);
         var run = await store.BeginRunAsync(DateTimeOffset.UtcNow);
         var world = World.Create(new Deterministic.ManualClock());
-        world.CompleteRun = cancellation => store.CompleteRunAsync(run.RunId, DateTimeOffset.UtcNow, cancellation);
+        world.CompleteRun = (fence, cancellation) => store.CompleteRunAsync(run.RunId, DateTimeOffset.UtcNow, fence, cancellation);
 
         var report = await world.Lifetime.ExitAsync().WaitAsync(Patience);
 
@@ -284,21 +289,119 @@ public sealed class ApplicationLifetimeTests
     }
 
     [Fact]
-    public async Task AFinalDisposalThatFailsKeepsTheRunFromBeingCompleted()
+    public async Task ARunCompletionSuspendedAtItsCommitWhenTheExitAbandonsItIsNeverPublished()
     {
-        // THE PUBLICATION IS THE LAST THING THAT CAN FAIL: the single-instance lock is disposed before
-        // it, and its failure means no completion is written and the exit is unclean.
-        var world = World.Create(new Deterministic.ManualClock());
-        world.LastThrows = true;
+        // THE FENCE, AT THE INSTANT THAT MATTERS. The production store has written its temporary
+        // file and is about to replace the record when it is held; the exit's budget runs out and
+        // the exit abandons the publication; released, the store finds the fence closed, does not
+        // replace the record, deletes its temporary file and answers false. The next launch reads an
+        // interrupted run - not the clean one a bounded wait alone would have let land.
+        using var temp = new TemporaryDirectory();
+        var path = Path.Combine(temp.Path, "run-state.json");
+        var store = new JsonApplicationRunStateStore(path);
+        var run = await store.BeginRunAsync(DateTimeOffset.UtcNow);
+        var clock = new Deterministic.ManualClock();
+        var world = World.Create(clock);
+        var committing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new ManualResetEventSlim();
+        Task<bool>? write = null;
+        world.CompleteRun = (fence, cancellation) =>
+        {
+            fence.Committing = () =>
+            {
+                committing.SetResult();
+                if (!proceed.Wait(Patience))
+                {
+                    throw new TimeoutException("the commit was never released");
+                }
+            };
+            write = store.CompleteRunAsync(run.RunId, DateTimeOffset.UtcNow, fence, cancellation);
+            return write;
+        };
 
-        var report = await world.Lifetime.ExitAsync().WaitAsync(Patience);
-
-        Assert.Equal(ExitOutcome.Unclean, report.Outcome);
-        Assert.Equal(["last"], report.Failed);
-        Assert.Equal(0, world.CompleteRunCalls);
+        var exit = world.Lifetime.ExitAsync();
+        await committing.Task.WaitAsync(Patience);
+        await world.WhenJoined("run completion").WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(20));
+        var report = await exit.WaitAsync(Patience);
+        Assert.Equal(["run completion"], report.Outstanding);
         Assert.False(report.RunCompleted);
+        Assert.True(report.Escalated);
+
+        proceed.Set();
+        Assert.False(await write!.WaitAsync(Patience), "the store replaced the record after the exit abandoned it");
+        Assert.Empty(Directory.GetFiles(temp.Path, "*.tmp"));
+        store.Dispose();
+        using var nextLaunch = new JsonApplicationRunStateStore(path);
+        Assert.Equal(RunStateLoadStatus.PreviousRunInterrupted, (await nextLaunch.BeginRunAsync(DateTimeOffset.UtcNow)).Status);
+    }
+
+    [Fact]
+    public async Task ARunCompletionCommittedBeforeTheExitStoppedWaitingIsReportedCompleted()
+    {
+        // THE OTHER SIDE OF THE FENCE. The production store committed the record; what the exit was
+        // still waiting for is the store's tail after the commit. The exit's abandonment is refused,
+        // so it knows the record says clean and says so itself: the run is completed, the exit is
+        // clean, nothing is outstanding and the host is not told to end.
+        using var temp = new TemporaryDirectory();
+        var path = Path.Combine(temp.Path, "run-state.json");
+        var store = new JsonApplicationRunStateStore(path);
+        var run = await store.BeginRunAsync(DateTimeOffset.UtcNow);
+        var clock = new Deterministic.ManualClock();
+        var world = World.Create(clock);
+        var tail = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var committed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        world.CompleteRun = async (fence, cancellation) =>
+        {
+            var written = await store.CompleteRunAsync(run.RunId, DateTimeOffset.UtcNow, fence, cancellation);
+            committed.SetResult(written);
+            await tail.Task;
+            return written;
+        };
+
+        var exit = world.Lifetime.ExitAsync();
+        await world.WhenJoined("run completion").WaitAsync(Patience);
+        Assert.True(await committed.Task.WaitAsync(Patience), "the store did not commit");
+        clock.Advance(TimeSpan.FromSeconds(20));
+        var report = await exit.WaitAsync(Patience);
+
+        Assert.True(report.RunCompleted);
+        Assert.True(report.Clean, $"outstanding=[{string.Join(",", report.Outstanding)}] failed=[{string.Join(",", report.Failed)}]");
+        Assert.Empty(report.Outstanding);
         Assert.False(report.Escalated);
-        Assert.DoesNotContain(AppEventCode.ApplicationCleanShutdown, world.Log.Events);
+        Assert.Contains(AppEventCode.ApplicationCleanShutdown, world.Log.Events);
+        tail.SetResult();
+        store.Dispose();
+        using var nextLaunch = new JsonApplicationRunStateStore(path);
+        Assert.Equal(RunStateLoadStatus.Started, (await nextLaunch.BeginRunAsync(DateTimeOffset.UtcNow)).Status);
+    }
+
+    [Fact]
+    public async Task TheRunStateStoreIsKeptWhileAnythingThatWritesToItIsOutstanding()
+    {
+        // THE STORE IS ONE OF THE THINGS A LATE STEP STILL USES. The heartbeat's join does not finish
+        // inside the budget; the production store is not closed - the report names the heartbeat,
+        // and a session's late edge still lands in the store afterwards. Released, the heartbeat
+        // finds its store intact too.
+        using var temp = new TemporaryDirectory();
+        var path = Path.Combine(temp.Path, "run-state.json");
+        using var store = new JsonApplicationRunStateStore(path);
+        var run = await store.BeginRunAsync(DateTimeOffset.UtcNow);
+        var clock = new Deterministic.ManualClock();
+        var world = World.Create(clock);
+        world.Heartbeat = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        world.CloseRunState = store.Dispose;
+
+        var exit = world.Lifetime.ExitAsync();
+        await world.WhenJoined("heartbeat").WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(20));
+        var report = await exit.WaitAsync(Patience);
+
+        Assert.Equal(["heartbeat"], report.Outstanding);
+        Assert.DoesNotContain("run-state store", world.Ran);
+        Assert.True(await store.SetDictationActiveAsync(run.RunId, false, DateTimeOffset.UtcNow), "the late edge could not be written: the store was closed under it");
+        Assert.True(await store.HeartbeatAsync(run.RunId, DateTimeOffset.UtcNow));
+        world.Heartbeat.SetResult();
     }
 
     [Fact]
@@ -313,7 +416,7 @@ public sealed class ApplicationLifetimeTests
         world.Logger = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var exit = world.Lifetime.ExitAsync();
-        await clock.WhenRegistered(1).WaitAsync(Patience);
+        await world.WhenJoined("log").WaitAsync(Patience);
         clock.Advance(TimeSpan.FromSeconds(20));
 
         var report = await exit.WaitAsync(Patience);
@@ -452,9 +555,38 @@ public sealed class ApplicationLifetimeTests
         public bool LoggerDisposed => LoggerDisposals > 0;
         public bool CompleteRunAnswer { get; set; } = true;
         /// <summary>When set, the run's completion: the production store behind a hold, say.</summary>
-        public Func<CancellationToken, Task<bool>>? CompleteRun { get; set; }
+        public Func<PublicationFence, CancellationToken, Task<bool>>? CompleteRun { get; set; }
+        /// <summary>When set, what closing the run-state store does: the production store's disposal, say.</summary>
+        public Action? CloseRunState { get; set; }
         public bool ShellThrows { get; set; }
-        public bool LastThrows { get; set; }
+        /// <summary>When set, the heartbeat's join does not finish until it is completed.</summary>
+        public TaskCompletionSource? Heartbeat { get; set; }
+        /// <summary>How many timers the clock had registered when each holdable step was entered, once it has been.</summary>
+        private readonly Dictionary<string, TaskCompletionSource<int>> _entries = [];
+        public required Deterministic.ManualClock Clock { get; init; }
+
+        /// <summary>Completes once the step has been entered and the clock has registered the next timer after that: the step's own join.</summary>
+        public async Task WhenJoined(string step)
+        {
+            var registeredAtEntry = await Entry(step).Task;
+            await Clock.WhenRegistered(registeredAtEntry + 1);
+        }
+
+        internal void Entered(string step) => Entry(step).TrySetResult(Clock.Registered);
+
+        private TaskCompletionSource<int> Entry(string step)
+        {
+            lock (_entries)
+            {
+                if (!_entries.TryGetValue(step, out var entry))
+                {
+                    entry = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    _entries[step] = entry;
+                }
+
+                return entry;
+            }
+        }
         /// <summary>When set, the log does not close until it is completed.</summary>
         public TaskCompletionSource? Logger { get; set; }
         /// <summary>When set, the shell's closing blocks the thread it is called on for as long as this does.</summary>
@@ -466,7 +598,7 @@ public sealed class ApplicationLifetimeTests
         /// <summary>When set, the first dependency's disposal does not finish until it is completed.</summary>
         public TaskCompletionSource? Dependency { get; set; }
 
-        public static World Create(TimeProvider clock, DictationSessionCoordinator? coordinator = null)
+        public static World Create(Deterministic.ManualClock clock, DictationSessionCoordinator? coordinator = null)
         {
             var log = new RecordingLogger();
             var terminator = new RecordingTerminator();
@@ -480,6 +612,7 @@ public sealed class ApplicationLifetimeTests
                 DrainSettings: () =>
                 {
                     world!.DrainCalls++;
+                    world.Entered("settings drain");
                     return world.Drain?.Task ?? Task.CompletedTask;
                 },
                 ShellClosing: () =>
@@ -495,15 +628,22 @@ public sealed class ApplicationLifetimeTests
                     new LifetimeStep("polish warm-up", () =>
                     {
                         world!.Ran.Add("warm-up");
+                        world.Entered("polish warm-up");
                         return world.Warmup?.Task ?? Task.CompletedTask;
                     }),
-                    Step("heartbeat", () => world!),
+                    new LifetimeStep("heartbeat", () =>
+                    {
+                        world!.Ran.Add("heartbeat");
+                        world.Entered("heartbeat");
+                        return world.Heartbeat?.Task ?? Task.CompletedTask;
+                    }),
                 ],
                 DisposeSessionDependencies:
                 [
                     new LifetimeStep("dependency", () =>
                     {
                         world!.Ran.Add("dependency");
+                        world.Entered("dependency");
                         return world.Dependency?.Task ?? Task.CompletedTask;
                     }),
                     Step("second dependency", () => world!),
@@ -516,28 +656,29 @@ public sealed class ApplicationLifetimeTests
                         return world.ShellThrows ? throw new InvalidOperationException("the tray icon refused") : Task.CompletedTask;
                     }),
                 ],
-                DisposeLast:
-                [
-                    new LifetimeStep("last", () =>
-                    {
-                        world!.Ran.Add("last");
-                        return world.LastThrows ? throw new InvalidOperationException("the lock refused") : Task.CompletedTask;
-                    }),
-                ],
-                CompleteRun: cancellation =>
+                CompleteRun: (fence, cancellation) =>
                 {
                     world!.CompleteRunCalls++;
-                    return world.CompleteRun is { } complete ? complete(cancellation) : Task.FromResult(world.CompleteRunAnswer);
+                    world.Entered("run completion");
+                    return world.CompleteRun is { } complete
+                        ? complete(fence, cancellation)
+                        : Task.FromResult(fence.TryCommit(() => { }) && world.CompleteRunAnswer);
                 },
-                CloseRunState: () => world!.Ran.Add("run-state store"),
+                CloseRunState: () =>
+                {
+                    world!.Ran.Add("run-state store");
+                    world.CloseRunState?.Invoke();
+                },
                 DisposeLogger: () =>
                 {
                     world!.LoggerDisposals++;
+                    world.Entered("log");
                     return world.Logger?.Task ?? Task.CompletedTask;
                 });
             world = new World
             {
                 Lifetime = new ApplicationLifetime(parts, log, clock, terminator),
+                Clock = clock,
                 Log = log,
                 Terminator = terminator,
             };

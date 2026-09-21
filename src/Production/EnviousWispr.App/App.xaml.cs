@@ -1161,17 +1161,12 @@ public partial class App : Application, IAsyncDisposable
                 }
             }),
         ],
-        DisposeLast:
-        [
-            LifetimeStep.Of("single-instance lock", () =>
-            {
-                var singleInstance = _singleInstanceLock;
-                _singleInstanceLock = null;
-                singleInstance?.Dispose();
-            }),
-        ],
-        CompleteRun: cancellation => _runId is { } runId
-            ? _runStateStore.CompleteRunAsync(runId, DateTimeOffset.UtcNow, cancellation)
+        // THE SINGLE-INSTANCE LOCK IS NOT RELEASED HERE, OR ANYWHERE: it is held to the process's end,
+        // which the operating system makes for free, so no other launch can begin a run - and write
+        // the record - before this run's own completion has landed. An update's restart waits for
+        // this process to exit before it launches the next.
+        CompleteRun: (fence, cancellation) => _runId is { } runId
+            ? _runStateStore.CompleteRunAsync(runId, DateTimeOffset.UtcNow, fence, cancellation)
             : Task.FromResult(true),
         CloseRunState: _runStateStore.Dispose,
         DisposeLogger: () => _logger.DisposeAsync().AsTask());

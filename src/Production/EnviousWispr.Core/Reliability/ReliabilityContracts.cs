@@ -99,6 +99,21 @@ public interface IApplicationRunStateStore
         Guid runId,
         DateTimeOffset timestamp,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Records the run's clean ending under a fence: the record is replaced only if the exit has not
+    /// abandoned the publication by then, and the exit learns from the fence whether it was.
+    /// </summary>
+    /// <remarks>
+    /// THE ONE WRITE THE NEXT LAUNCH TRUSTS ABOVE ALL OTHERS, so it is the one that must not land
+    /// after the exit stopped waiting for it. The token bounds the wait for the store; the fence
+    /// bounds the commit itself. Ref: plan-2 step 9.
+    /// </remarks>
+    Task<bool> CompleteRunAsync(
+        Guid runId,
+        DateTimeOffset timestamp,
+        PublicationFence fence,
+        CancellationToken cancellationToken = default);
 }
 
 public enum RecoveryTextLoadStatus

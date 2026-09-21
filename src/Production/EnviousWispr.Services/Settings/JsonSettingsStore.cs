@@ -2,6 +2,7 @@ using System.Security;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Services.Settings;
@@ -147,9 +148,21 @@ public sealed class JsonSettingsStore : ISettingsStore
         return new SettingsResetResult(preservedPreviousData);
     }
 
-    internal static async Task WriteAtomicallyAsync<T>(
+    internal static Task WriteAtomicallyAsync<T>(
         T value,
         string destinationPath,
+        CancellationToken cancellationToken) =>
+        WriteAtomicallyAsync(value, destinationPath, fence: null, cancellationToken);
+
+    /// <summary>
+    /// Writes the value to a temporary file and makes it the record in one move - under the fence
+    /// when one is given, so a record the exit has abandoned is never replaced. False when the fence
+    /// refused; the temporary file is deleted either way.
+    /// </summary>
+    internal static async Task<bool> WriteAtomicallyAsync<T>(
+        T value,
+        string destinationPath,
+        PublicationFence? fence,
         CancellationToken cancellationToken)
     {
         var directory = GetParentDirectory(destinationPath);
@@ -162,7 +175,13 @@ public sealed class JsonSettingsStore : ISettingsStore
         {
             var json = JsonSerializer.Serialize(value, SerializerOptions);
             await File.WriteAllTextAsync(temporaryPath, json, cancellationToken).ConfigureAwait(false);
-            File.Move(temporaryPath, destinationPath, overwrite: true);
+            if (fence is null)
+            {
+                File.Move(temporaryPath, destinationPath, overwrite: true);
+                return true;
+            }
+
+            return fence.TryCommit(() => File.Move(temporaryPath, destinationPath, overwrite: true));
         }
         finally
         {

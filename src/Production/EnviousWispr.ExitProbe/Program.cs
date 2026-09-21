@@ -13,6 +13,7 @@
 // ever, before returning anything.
 using EnviousWispr.App.Composition;
 using EnviousWispr.Core.Diagnostics;
+using EnviousWispr.Core.Reliability;
 
 var budgetMilliseconds = ReadIntegerArgument(args, "--budget-ms", defaultValue: 1_000);
 var hang = ReadArgument(args, "--hang") ?? "none";
@@ -63,8 +64,7 @@ var parts = new LifetimeParts(
         new LifetimeStep("dispose", hang == "dispose" ? Hanging("dispose") : block == "dispose" ? Blocking("dispose") : Finished),
     ],
     DisposeShell: [new LifetimeStep("shell", Finished)],
-    DisposeLast: [new LifetimeStep("last", Finished)],
-    CompleteRun: _ => Task.FromResult(true),
+    CompleteRun: (fence, _) => Task.FromResult(fence.TryCommit(() => { })),
     CloseRunState: () => { },
     DisposeLogger: Finished);
 
