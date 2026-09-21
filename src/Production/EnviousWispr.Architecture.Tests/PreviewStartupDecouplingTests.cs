@@ -151,28 +151,34 @@ public sealed class PreviewStartupDecouplingTests
     }
 
     [Fact]
-    public async Task ShutdownDuringPreviewStartupRefusesNewCommandsAndLetsTheRecordingFinishItsOwnStop()
+    public async Task ShutdownDuringPreviewStartupRefusesNewCommandsAndTearsDownUnderTheSessionOnceTheWorkerAnswers()
     {
-        // THE COORDINATOR'S STOP IS THE SHELL'S GATE. A release that arrives after the stop is refused;
-        // the release that was queued before it is refused too - the shell's disposal then tears the
-        // session down itself. Nothing runs after the stop reports.
+        // THE SHUTDOWN, THROUGH THE PRODUCTION PROTOCOL, WITH THE PREVIEW'S WORKER STILL STARTING. The
+        // press has finished, so nothing is running; admission closes and a release, a lock and a
+        // suspend are refused. The executor's teardown runs under the session: the preview's stop
+        // cancels the worker's start and waits for it to answer; only then are the microphone and the
+        // controller disposed, and the shutdown reports clean - nothing was torn down under the
+        // worker, and nothing was transcribed.
         var world = await ComposedSessionWorld.StartRecordingWithPreviewStartupHeldAsync();
 
-        var stop = world.Coordinator.StopAsync(Patience);
-        var afterStop = await world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
-
-        Assert.Equal(SessionCommandDisposition.Stopping, afterStop.Disposition);
-        Assert.True(await stop.WaitAsync(Patience), "the press had finished; the consumer was idle and stops at once");
+        var shutdown = world.Coordinator.ShutdownAsync(Patience);
+        Assert.Equal(SessionCommandDisposition.Stopping, (await world.Coordinator.SubmitAsync(PushToTalkSignal.Released)).Disposition);
         Assert.Equal(SessionCommandDisposition.Stopping, (await world.Coordinator.InterruptAsync(SystemLifecycleTransition.Suspending)).Disposition);
-        Assert.True(world.Capture.IsCapturing, "the stop does not itself end the recording; the shell's disposal does");
-        Assert.Equal(0, world.Engine.Calls);
-
-        // The shell's disposal after the stop: the preview, then the session, in the order it always had.
-        var previewStop = world.Runtime.Preview.StopAsync();
         await world.PreviewEngine.StartCancellationObserved.Task.WaitAsync(Patience);
+        Assert.False(shutdown.IsCompleted, "the teardown waits for the worker to answer its cancelled start");
+        Assert.False(world.Capture.Disposed, "nothing is disposed while the worker is still inside its start");
+        Assert.Equal(0, world.TearDowns);
+
         world.PreviewEngine.AllowStartExit.SetResult();
-        await previewStop.WaitAsync(Patience);
+        var report = await shutdown.WaitAsync(Patience);
+
+        Assert.True(report.Clean);
+        Assert.True(report.Teardown!.Completed);
+        Assert.Equal(1, world.TearDowns);
+        Assert.True(world.Capture.Disposed, "the teardown disposed the controller, which disposed the capture, after the worker answered");
+        Assert.False(world.Runtime.Preview.IsRunning);
         Assert.Equal(1, world.PreviewEngine.Stops);
+        Assert.Equal(0, world.Engine.Calls);
         Assert.Contains(AppEventCode.LivePreviewStartupCancelled, world.Log.Events);
     }
 
