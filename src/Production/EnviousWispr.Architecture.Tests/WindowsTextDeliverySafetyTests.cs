@@ -218,6 +218,29 @@ public sealed class WindowsTextDeliverySafetyTests
                 Assert.True(
                     answers is null || !IsUntyped(answers),
                     $"An untyped UI Automation result at line {Line(expression)}: {expression.Parent}");
+
+                // NO UNTYPED BUFFER IS HANDED IN EITHER: a call that fills an Array, an object or a
+                // non-generic collection the caller allocated (CopyTo) moves handles into it inside
+                // the library, with no conversion for the erasure check to see.
+                if (symbol is IMethodSymbol filling && expression is InvocationExpressionSyntax fillingCall)
+                {
+                    // An `out` argument is the answer, not a buffer: it is held to the narrowing rule below.
+                    foreach (var argument in fillingCall.ArgumentList.Arguments.Where(argument => !argument.RefKindKeyword.IsKind(SyntaxKind.OutKeyword)))
+                    {
+                        var handed = model.GetTypeInfo(argument.Expression).ConvertedType;
+                        Assert.True(
+                            !IsUntyped(handed) && handed?.SpecialType != SpecialType.System_Array && handed is not IArrayTypeSymbol { ElementType.SpecialType: SpecialType.System_Object },
+                            $"An untyped buffer handed to UI Automation at line {Line(expression)} ({filling.Name}): {expression.Parent}");
+                    }
+                }
+
+                // THE ADAPTER DOES NOT ENUMERATE UI AUTOMATION: it works on the focused element and
+                // its patterns. A collection of elements is refused outright, wherever it appears -
+                // every way of emptying one (a loop, a spread, a copy, an enumerator) is a call the
+                // boundary cannot follow.
+                Assert.True(
+                    !IsHandleCollection(answers),
+                    $"A UI Automation collection taken at line {Line(expression)}: {expression.Parent}");
                 if (symbol is IMethodSymbol withOut && expression is InvocationExpressionSyntax outCall)
                 {
                     foreach (var parameter in withOut.Parameters.Where(parameter => parameter.RefKind == RefKind.Out && parameter.Type.SpecialType == SpecialType.System_Object))
@@ -394,6 +417,11 @@ public sealed class WindowsTextDeliverySafetyTests
                 return false;
         }
     }
+
+    /// <summary>A UI Automation type that is itself a collection of handles - AutomationElementCollection and its kind.</summary>
+    private static bool IsHandleCollection(ITypeSymbol? type) =>
+        type is INamedTypeSymbol named && IsBareHandleType(named) &&
+        named.AllInterfaces.Any(contract => contract.ToDisplayString() is "System.Collections.IEnumerable" or "System.Collections.ICollection");
 
     /// <summary>A type that says nothing about what it holds: object, or a non-generic collection interface whose elements come out as object.</summary>
     private static bool IsUntyped(ITypeSymbol? type) =>

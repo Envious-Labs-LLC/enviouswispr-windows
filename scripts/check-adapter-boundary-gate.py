@@ -36,6 +36,8 @@ RUNTIME_ID_HELPER = "    private static string RuntimeId(AutomationElement eleme
 
 # Each mutation: a name, and the (anchor, replacement) edits that plant one escape.
 MUTATIONS: dict[str, list[tuple[str, str]]] = {
+    "copyto-returned-buffer": [(FOCUS_READ, "        var children = Automation(() => { var found = element.FindAll(TreeScope.Children, Condition.TrueCondition); var copied = new object[found.Count]; found.CopyTo(copied, 0); return copied; });" + NL + "        foreach (var child in children)" + NL + "        {" + NL + "            _ = child.GetHashCode();" + NL + "        }" + NL + NL + FOCUS_READ)],
+    "copyto-external-buffer": [(FOCUS_READ, "        var copied = new object[8];" + NL + "        _ = Automation(() => { element.FindAll(TreeScope.Children, Condition.TrueCondition).CopyTo(copied, 0); return 0; });" + NL + "        _ = copied[0]?.GetHashCode();" + NL + FOCUS_READ)],
     "spread-outside-boundary": [(FOCUS_READ, "        object[] children = [.. Automation(() => element.FindAll(TreeScope.Children, Condition.TrueCondition))];" + NL + "        foreach (var child in children)" + NL + "        {" + NL + "            _ = child.GetHashCode();" + NL + "        }" + NL + NL + FOCUS_READ)],
     "spread-inside-boundary": [(FOCUS_READ, "        var children = Automation(() => { object[] all = [.. element.FindAll(TreeScope.Children, Condition.TrueCondition)]; return all; });" + NL + "        _ = children.Length > 0 ? children[0].GetHashCode() : 0;" + NL + FOCUS_READ)],
     "foreach-outside-boundary": [(FOCUS_READ, "        foreach (var child in Automation(() => element.FindAll(TreeScope.Children, Condition.TrueCondition)))" + NL + "        {" + NL + "            _ = child.GetHashCode();" + NL + "        }" + NL + NL + FOCUS_READ)],
@@ -80,7 +82,7 @@ MUTATIONS: dict[str, list[tuple[str, str]]] = {
 }
 
 # What the gate says when it catches an escape; any other failure is the wrong reason.
-CAUGHT_MARKERS = ("outside the boundary", "captured instead of called", "Assert.Single() Failure", "dynamically dispatched call", "reflective call", "handle used outside the boundary", "handle erased", "untyped UI Automation result", "enumerated outside the boundary", "collection spread")
+CAUGHT_MARKERS = ("outside the boundary", "captured instead of called", "Assert.Single() Failure", "dynamically dispatched call", "reflective call", "handle used outside the boundary", "handle erased", "untyped UI Automation result", "enumerated outside the boundary", "collection spread", "untyped buffer handed", "UI Automation collection taken")
 
 
 def run_gate() -> str:
