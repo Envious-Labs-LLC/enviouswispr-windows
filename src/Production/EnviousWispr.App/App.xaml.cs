@@ -58,6 +58,8 @@ public partial class App : Application, IAsyncDisposable
     private readonly LivePreviewController _livePreview;
     private DictationSessionCoordinator? _sessionCoordinator;
     private Task? _systemEndingNote;
+    private Task? _startup;
+    private readonly CancellationTokenSource _startupCancellation = new();
     private readonly DeterministicTextPipeline _deterministicTextPipeline = new();
     private readonly SessionRuntime _runtime;
     private SingleInstanceLock? _singleInstanceLock;
@@ -355,25 +357,55 @@ public partial class App : Application, IAsyncDisposable
         }
 
         ConfigureTrayIcon();
-        await _window.InitializeProductDataAsync().ConfigureAwait(true);
-        var recovery = await LoadStartupRecoveryAsync().ConfigureAwait(true);
+        // FROM THE TRAY ON, AN EXIT CAN BEGIN. The rest of the launch - the recovery read, the engines,
+        // the session's construction - is one tracked task the lifetime cancels under its exit policy
+        // and joins under Quiesce before it disposes anything the launch borrows; and after each of its
+        // awaits it reads Leaving, so nothing is constructed once the exit has begun.
+        _startup = CompleteStartupAsync(settings, runStart, _window);
+        await _startup.ConfigureAwait(true);
+    }
+
+    private async Task CompleteStartupAsync(AppSettings settings, ApplicationRunStartResult runStart, MainWindow window)
+    {
+        await window.InitializeProductDataAsync().ConfigureAwait(true);
+        if (Leaving)
+        {
+            return;
+        }
+
+        var recovery = await LoadStartupRecoveryAsync(_startupCancellation.Token).ConfigureAwait(true);
+        if (Leaving)
+        {
+            return;
+        }
+
         _sessionPersistence.AdoptStartupRecovery(recovery);
-        _window.SetRecoveredText(recovery);
+        window.SetRecoveredText(recovery);
         if (StartupNoticeDecision.For(
                 runStart.RecoveredInterruptedRun,
                 runStart.PreviousRunWasDictating,
                 recovery.Status) == StartupNotice.DictationMayBeLost)
         {
-            _window.SetPossiblyLostDictationNotice();
+            window.SetPossiblyLostDictationNotice();
         }
 
         ConfigureSystemLifecycleMonitor();
-        _window.FocusInitialControl();
-        _window.SetCloudPolishNotice(_cloudPolishConsent?.Notice);
-        _window.SetOllamaPolishNotice(_localPolishNotice);
-        _window.SetSessionStatus(DictationStatus.Quiet("Preparing local transcription..."));
+        window.FocusInitialControl();
+        window.SetCloudPolishNotice(_cloudPolishConsent?.Notice);
+        window.SetOllamaPolishNotice(_localPolishNotice);
+        window.SetSessionStatus(DictationStatus.Quiet("Preparing local transcription..."));
         await ConfigureTranscriptionAsync(settings.Preferences.Dictation.FinalEngine).ConfigureAwait(true);
+        if (Leaving)
+        {
+            return;
+        }
+
         await PresentModelDeliveryAsync().ConfigureAwait(true);
+        if (Leaving)
+        {
+            return;
+        }
+
         ConfigurePushToTalk(settings.Preferences.Dictation);
         if (_polishProvider is EgOnePolishProvider polishProvider)
         {
@@ -427,9 +459,9 @@ public partial class App : Application, IAsyncDisposable
         }
     }
 
-    private async Task<RecoveryTextLoadResult> LoadStartupRecoveryAsync()
+    private async Task<RecoveryTextLoadResult> LoadStartupRecoveryAsync(CancellationToken cancellationToken)
     {
-        var recovery = await _recoveryTextStore.LoadAsync().ConfigureAwait(true);
+        var recovery = await _recoveryTextStore.LoadAsync(cancellationToken).ConfigureAwait(true);
         if (recovery.Status != RecoveryTextLoadStatus.Missing ||
             !string.Equals(
                 Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_RECOVERY_STATE"),
@@ -443,7 +475,7 @@ public partial class App : Application, IAsyncDisposable
             DictationSessionId.Create(),
             DateTimeOffset.UtcNow,
             "Synthetic unfinished dictation for Windows recovery UAT.");
-        return await _recoveryTextStore.SaveAsync(record).ConfigureAwait(true)
+        return await _recoveryTextStore.SaveAsync(record, cancellationToken).ConfigureAwait(true)
             ? new RecoveryTextLoadResult(RecoveryTextLoadStatus.Found, record)
             : new RecoveryTextLoadResult(
                 RecoveryTextLoadStatus.Unavailable,
@@ -1069,6 +1101,8 @@ public partial class App : Application, IAsyncDisposable
         {
             _sessionCoordinator?.CancelProcessing();
             _polishLifetime.Cancel();
+            _startupCancellation.Cancel();
+            _modelDownload?.Cancel();
         },
         ReleaseInputs:
         [
@@ -1094,6 +1128,13 @@ public partial class App : Application, IAsyncDisposable
         ShutDownSession: _sessionCoordinator is { } coordinator ? budget => coordinator.ShutdownAsync(budget) : null,
         Quiesce:
         [
+            // THE LAUNCH AND A MODEL DELIVERY BORROW WHAT THE EXIT DISPOSES - the recovery store, the
+            // engines they build or replace - so each is one tracked task, cancelled by the exit
+            // policy above and joined here; one that outlives the budget keeps everything and
+            // escalates like any step. Both read Leaving after every await, so nothing is built once
+            // the exit has begun.
+            new LifetimeStep("startup", () => Join(Interlocked.Exchange(ref _startup, null))),
+            new LifetimeStep("model delivery", () => Join(Interlocked.Exchange(ref _modelDelivery, null))),
             new LifetimeStep("polish warm-up", async () =>
             {
                 if (_polishWarmup is { } warmup)
@@ -1233,6 +1274,25 @@ public partial class App : Application, IAsyncDisposable
             : Task.FromResult(true),
         CloseRunState: _runStateStore.Dispose,
         DisposeLogger: () => _logger.DisposeAsync().AsTask());
+
+    /// <summary>A tracked task's join for a lifetime step: taken once, its own ending swallowed - the exit only needs it over.</summary>
+    private static async Task Join(Task? tracked)
+    {
+        if (tracked is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await tracked.ConfigureAwait(true);
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            // A launch or a delivery cut short by the exit policy, or one that failed on its own and
+            // said so on its surface; the step needed it over, not successful.
+        }
+    }
 
     /// <summary>
     /// Ends the process when the exit could not: something would not finish inside the budget and is

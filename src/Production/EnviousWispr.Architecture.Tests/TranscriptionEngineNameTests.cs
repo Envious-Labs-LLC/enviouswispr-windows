@@ -857,6 +857,67 @@ public sealed partial class DesignSystemTokenTests
         Assert.NotNull(suggest.Ancestors().OfType<UsingStatementSyntax>().SingleOrDefault(statement => statement.Expression?.ToString() == "lease"));
     }
 
+    /// <summary>
+    /// The launch after the tray and a model delivery borrow what the exit disposes - the recovery
+    /// store, the engines they build or replace. Each is one tracked task the exit policy cancels
+    /// and Quiesce joins, and each reads Leaving after every await outside its own cancellation, so
+    /// nothing is built once the exit has begun. Read from the App's source.
+    /// </summary>
+    [Fact]
+    public void TheLaunchAndAModelDeliveryAreTrackedCancelledAndJoinedByTheLifetime()
+    {
+        var root = FindRepositoryRoot();
+        var shell = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+        var delivery = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.ModelDelivery.cs"));
+        var tree = CSharpSyntaxTree.ParseText(shell).GetRoot();
+        var methods = tree.DescendantNodes().OfType<MethodDeclarationSyntax>().ToArray();
+
+        // TRACKED: the launch's tail is the _startup task, awaited by OnLaunched; the delivery is the
+        // _modelDelivery task, started by the request and cleared when it ends.
+        Assert.Contains("_startup = CompleteStartupAsync(", DeclarationTextOf(shell, "OnLaunched"), StringComparison.Ordinal);
+        Assert.Contains("_modelDelivery = DeliverModelsAsync();", DeclarationTextOf(delivery, "OnModelDownloadRequested"), StringComparison.Ordinal);
+
+        // CANCELLED AND JOINED: the exit policy cancels both; Quiesce joins both, taking each once.
+        var parts = methods.Single(method => method.Identifier.ValueText == "LifetimeParts");
+        var policy = parts.DescendantNodes().OfType<ArgumentSyntax>().Single(argument => argument.NameColon?.Name.Identifier.ValueText == "CancelProcessing").ToString();
+        Assert.Contains("_startupCancellation.Cancel();", policy, StringComparison.Ordinal);
+        Assert.Contains("_modelDownload?.Cancel();", policy, StringComparison.Ordinal);
+        var quiesce = parts.DescendantNodes().OfType<ArgumentSyntax>().Single(argument => argument.NameColon?.Name.Identifier.ValueText == "Quiesce").ToString();
+        Assert.Contains("new LifetimeStep(\"startup\", () => Join(Interlocked.Exchange(ref _startup, null)))", quiesce, StringComparison.Ordinal);
+        Assert.Contains("new LifetimeStep(\"model delivery\", () => Join(Interlocked.Exchange(ref _modelDelivery, null)))", quiesce, StringComparison.Ordinal);
+
+        // NOTHING BUILT AFTER THE EXIT HAS BEGUN: in the launch's tail, every await is followed by
+        // the Leaving check, except the last; the recovery read carries the launch's own token.
+        static void EveryAwaitIsFollowedByTheLeavingCheck(MethodDeclarationSyntax method, int expectedAwaits)
+        {
+            var statements = method.Body!.Statements;
+            var awaits = statements.Where(statement => statement.DescendantNodes().OfType<AwaitExpressionSyntax>().Any()).ToArray();
+            Assert.Equal(expectedAwaits, awaits.Length);
+            foreach (var awaited in awaits.Take(awaits.Length - 1))
+            {
+                var next = statements[statements.IndexOf(awaited) + 1];
+                var check = Assert.IsType<IfStatementSyntax>(next);
+                Assert.Equal("Leaving", check.Condition.ToString());
+                Assert.IsType<ReturnStatementSyntax>(((BlockSyntax)check.Statement).Statements.Single());
+            }
+        }
+
+        var startup = methods.Single(method => method.Identifier.ValueText == "CompleteStartupAsync");
+        EveryAwaitIsFollowedByTheLeavingCheck(startup, expectedAwaits: 4);
+        Assert.Contains("LoadStartupRecoveryAsync(_startupCancellation.Token)", startup.ToString(), StringComparison.Ordinal);
+        Assert.Contains("_recoveryTextStore.LoadAsync(cancellationToken)", DeclarationTextOf(shell, "LoadStartupRecoveryAsync"), StringComparison.Ordinal);
+
+        // The delivery's tail - after its own download loop - checks Leaving before it tears an
+        // engine down and after every await that builds one.
+        var deliveryTree = CSharpSyntaxTree.ParseText(delivery).GetRoot();
+        var core = deliveryTree.DescendantNodes().OfType<MethodDeclarationSyntax>().Single(method => method.Identifier.ValueText == "DeliverModelsCoreAsync");
+        var tail = core.Body!.Statements.SkipWhile(statement => statement is not TryStatementSyntax).Skip(1).ToArray();
+        var afterTry = string.Join("\n", tail.Select(statement => statement.ToString().Split('\n')[0].Trim()));
+        Assert.Equal(
+            "if (Leaving)\n_window?.SetModelDelivery(new(\"Download verified. Starting local transcription…\"));\nawait TeardownTranscriptionAsync().ConfigureAwait(true);\nif (Leaving)\nawait ConfigureTranscriptionAsync(_settings.Preferences.Dictation.FinalEngine).ConfigureAwait(true);\nif (Leaving)\nawait PresentModelDeliveryAsync().ConfigureAwait(true);",
+            afterTry);
+    }
+
     [Fact]
     public void WhatTheSessionUsesIsHandedToTheLifetimeUnderItsGuardedListsOnly()
     {
