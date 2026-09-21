@@ -1,1 +1,6 @@
-<Project Sdk="Microsoft.NET.Sdk" />
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <!-- The tests stand in at the seams the PublicationFence keeps internal; nothing in production sets them. -->
+    <InternalsVisibleTo Include="EnviousWispr.Architecture.Tests" />
+  </ItemGroup>
+</Project>

@@ -777,65 +777,81 @@ public sealed partial class DesignSystemTokenTests
     }
 
     /// <summary>
-    /// The shell disposes what a session uses only behind a shutdown that established the session
-    /// quiescent - and disposes it nowhere else.
+    /// The shell hands what a session uses to the lifetime under the lists it runs only behind a
+    /// quiescent session - and disposes it nowhere else on the way out.
     /// </summary>
     /// <remarks>
-    /// TEARDOWN NEVER RUNS BESIDE A RESOURCE USER (plan-2 step 8). The coordinator's report says
-    /// whether anything is still using the session; the engines, the polish provider, the worker
-    /// arbiter, the background owners and the stores are what such a user is inside, and the shell
-    /// keeps them when the report says so. Two things are checked: every disposal of one of those on
-    /// the way out sits under the guard - in the one method the guard covers, or, for the run-state
-    /// store that the heartbeat also writes to and that is therefore disposed after the heartbeat is
-    /// joined, under an `if (sessionQuiescent)` of its own - and the guarded method's one call sits
-    /// under it too. The App itself cannot be run here, so this is read from its source.
+    /// TEARDOWN NEVER RUNS BESIDE A RESOURCE USER (plan-2 steps 8 and 9). The coordinator's report
+    /// says whether anything is still using the session; the engines, the polish provider, the worker
+    /// arbiter, the background owners and the stores are what such a user is inside. The lifetime
+    /// (ApplicationLifetime, proved in ApplicationLifetimeTests) runs DisposeSessionDependencies only
+    /// behind a quiescent session with nothing outstanding, and CloseRunState only once nothing that
+    /// writes to the store is outstanding; what this gate checks is the shell's side of that contract: every
+    /// disposal of one of those on the way out is under one of those named arguments of
+    /// LifetimeParts(), the shell's DisposeAsync disposes nothing itself, and the shell leaves through
+    /// the lifetime and not around it. The App itself cannot be run here, so this is read from its
+    /// source.
     /// </remarks>
     [Fact]
-    public void WhatTheSessionUsesIsDisposedOnlyBehindAQuiescentShutdown()
+    public void WhatTheSessionUsesIsHandedToTheLifetimeUnderItsGuardedListsOnly()
     {
         var root = FindRepositoryRoot();
         var shell = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
         var tree = CSharpSyntaxTree.ParseText(shell).GetRoot();
-        var guarded = tree.DescendantNodes().OfType<MethodDeclarationSyntax>()
-            .Single(method => method.Identifier.ValueText == "DisposeSessionDependenciesAsync");
+        var parts = tree.DescendantNodes().OfType<MethodDeclarationSyntax>()
+            .Single(method => method.Identifier.ValueText == "LifetimeParts");
         string[] dependencies =
         [
-            "_previewEngine.DisposeAsync", "_transcriptionEngine.DisposeAsync", "_polishProvider.DisposeAsync",
-            "_resourceArbiter.Dispose", "_polishLifetime.Dispose", "_livePreview.DisposeAsync",
-            "_watchdog.DisposeAsync", "_autoStop.DisposeAsync", "_historyStore.Dispose", "_recoveryTextStore.Dispose",
-            "_runStateStore.Dispose",
+            "_previewEngine", "_transcriptionEngine", "_polishProvider", "_resourceArbiter", "_polishLifetime",
+            "_livePreview", "_watchdog", "_autoStop", "_historyStore", "_recoveryTextStore", "_runStateStore",
         ];
+        string[] disposals = ["Dispose", "DisposeAsync"];
+        // The list the lifetime runs only behind a quiescent session, and the run-state store's
+        // closing, which the lifetime runs only once nothing that writes to it is outstanding.
+        string[] guardedLists = ["DisposeSessionDependencies", "CloseRunState"];
 
-        // ON THE WAY OUT, EVERY DISPOSAL OF A SESSION DEPENDENCY IS UNDER THE GUARD: inside the
-        // guarded method, or inside DisposeAsync under an `if (sessionQuiescent)` of its own. (An
-        // engine that failed to start is disposed where it failed, before any session exists; that
-        // path is not the shutdown's.)
-        var shutdown = tree.DescendantNodes().OfType<MethodDeclarationSyntax>()
+        // A DISPOSAL OF A SESSION DEPENDENCY: `_field.Dispose(...)`, `_field.DisposeAsync(...)`, the
+        // method group `_field.Dispose` handed to a step, or `_field is { } local` - the pattern the
+        // steps use to take the field and dispose the local.
+        static bool IsDisposal(IdentifierNameSyntax identifier, string[] fields, string[] names) =>
+            fields.Contains(identifier.Identifier.ValueText) &&
+            identifier.Parent switch
+            {
+                MemberAccessExpressionSyntax access => names.Contains(access.Name.Identifier.ValueText),
+                IsPatternExpressionSyntax => true,
+                _ => false,
+            };
+        static bool UnderGuardedList(SyntaxNode node, string[] lists) =>
+            node.Ancestors().OfType<ArgumentSyntax>().Any(argument => argument.NameColon is { } name && lists.Contains(name.Name.Identifier.ValueText));
+
+        // ON THE WAY OUT, EVERY ONE OF THEM IS UNDER A GUARDED LIST: the shell's DisposeAsync disposes
+        // none itself, and inside LifetimeParts a disposal sits under DisposeSessionDependencies or
+        // DisposeLast and nowhere else. (An engine that failed to start is disposed where it failed,
+        // before any session exists; that path is outside both.)
+        var exit = tree.DescendantNodes().OfType<MethodDeclarationSyntax>()
             .Single(method => method.Identifier.ValueText == "DisposeAsync" && method.Body is not null);
-        var disposedInShutdown = shutdown.DescendantNodes().OfType<MemberAccessExpressionSyntax>()
-            .Where(access => dependencies.Contains(access.ToString()))
+        Assert.DoesNotContain(exit.DescendantNodes().OfType<IdentifierNameSyntax>(), identifier => IsDisposal(identifier, dependencies, disposals));
+        var inParts = parts.DescendantNodes().OfType<IdentifierNameSyntax>()
+            .Where(identifier => IsDisposal(identifier, dependencies, disposals))
             .ToArray();
         Assert.All(
-            disposedInShutdown,
-            access => Assert.True(
-                access.Ancestors().OfType<IfStatementSyntax>().Any(guard => guard.Condition.ToString() == "sessionQuiescent"),
-                $"{access} is disposed in DisposeAsync outside `if (sessionQuiescent)`."));
-        var disposedUnderGuard = guarded.DescendantNodes().OfType<MemberAccessExpressionSyntax>()
-            .Concat(disposedInShutdown)
-            .Select(access => access.ToString())
-            .Where(dependencies.Contains)
+            inParts,
+            identifier => Assert.True(
+                UnderGuardedList(identifier, guardedLists),
+                $"{identifier.Parent} is handed to the lifetime outside DisposeSessionDependencies/CloseRunState."));
+
+        // EVERY DEPENDENCY IS LISTED: each field's disposal is found inside one of the two lists.
+        var listed = inParts
+            .Select(identifier => identifier.Identifier.ValueText)
             .Distinct()
             .ToArray();
-        Assert.Equal(dependencies.Order(StringComparer.Ordinal), disposedUnderGuard.Order(StringComparer.Ordinal));
+        Assert.Equal(dependencies.Order(StringComparer.Ordinal), listed.Order(StringComparer.Ordinal));
 
-        // THE GUARDED METHOD IS CALLED ONCE, UNDER THE REPORT'S ANSWER.
-        var calls = tree.DescendantNodes().OfType<InvocationExpressionSyntax>()
-            .Where(call => call.Expression.ToString() == "DisposeSessionDependenciesAsync")
-            .ToArray();
-        var call = Assert.Single(calls);
-        var guard = call.Ancestors().OfType<IfStatementSyntax>().FirstOrDefault();
-        Assert.True(guard is not null && guard.Condition.ToString() == "sessionQuiescent", "the call is not under `if (sessionQuiescent)`");
-        Assert.Contains("sessionQuiescent = shutdown.SessionQuiescent;", DeclarationTextOf(shell, "DisposeAsync"), StringComparison.Ordinal);
+        // THE SHELL LEAVES THROUGH THE LIFETIME: every path out reaches PrepareForExitAsync, which
+        // returns the lifetime's one exit task; DisposeAsync awaits the same; nothing else calls it.
+        Assert.Contains("return Lifetime().ExitAsync();", DeclarationTextOf(shell, "PrepareForExitAsync"), StringComparison.Ordinal);
+        Assert.Contains("await PrepareForExitAsync()", exit.ToString(), StringComparison.Ordinal);
+        Assert.Single(tree.DescendantNodes().OfType<InvocationExpressionSyntax>(), call => call.Expression.ToString() == "Lifetime().ExitAsync");
     }
 
     /// <summary>
