@@ -457,6 +457,12 @@ public sealed class PreviewStartupDecouplingTests
             trace.Add(preview.IsRunning ? "Preview still running" : "Preview stopped");
         }
 
+        public async Task<BackgroundStopReport> StopAsync(TimeSpan deadline)
+        {
+            await StopAsync();
+            return BackgroundStopReport.AllCompleted;
+        }
+
         public Task StopWatchdogAsync() => inner.StopWatchdogAsync();
     }
 

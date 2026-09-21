@@ -80,6 +80,7 @@ public sealed class LivePreviewController : IAsyncDisposable
     private CancellationTokenSource? _cancellation;
     private Task? _work;
     private long _sequence;
+    private int _closure;
     private bool _started;
     private bool _disposed;
 
@@ -154,7 +155,7 @@ public sealed class LivePreviewController : IAsyncDisposable
             _sequence = 0;
             _started = false;
             _cancellation = new CancellationTokenSource();
-            _work = RunAsync(sessionId, engine, audio, _cancellation.Token);
+            _work = RunAsync(sessionId, engine, audio, Volatile.Read(ref _closure), _cancellation.Token);
         }
         finally
         {
@@ -166,6 +167,7 @@ public sealed class LivePreviewController : IAsyncDisposable
         DictationSessionId sessionId,
         ILivePreviewEngine engine,
         IAudioSnapshotSource audio,
+        int closure,
         CancellationToken cancellationToken)
     {
         // The work inherits the start's scope as a child flow and would stay joined without this;
@@ -232,7 +234,10 @@ public sealed class LivePreviewController : IAsyncDisposable
                     _clock.GetUtcNow(),
                     AppEventCode.LivePreviewUpdated,
                     ElapsedMilliseconds: (long)passCost.TotalMilliseconds));
-                if (update.SessionId == sessionId.Value)
+                // THE CLOSURE IS CHECKED AGAIN AT THE DISPATCH, not only at the start. A stop that
+                // ran out of patience left this loop inside the engine; when the engine answers at
+                // last, the screen this was for has been closed, and its words must not reach it.
+                if (update.SessionId == sessionId.Value && Volatile.Read(ref _closure) == closure)
                 {
                     _effects.ShowPreview(sessionId, update.Text);
                 }
@@ -264,7 +269,11 @@ public sealed class LivePreviewController : IAsyncDisposable
         }
     }
 
-    public async Task StopAsync()
+    /// <summary>Stops the preview and waits for its loop and its engine to finish, however long that takes.</summary>
+    public Task StopAsync() => StopAsync(deadline: null);
+
+    /// <summary>Stops the preview and waits up to the deadline; a loop still running past it stays owned, and its engine is not stopped under it.</summary>
+    public async Task<StopOutcome> StopAsync(TimeSpan? deadline)
     {
         // STOPPING IS REACHED FROM MORE PLACES THAN STARTING, and one of them is quitting the app
         // from the tray mid-recording - a shutdown path that inherits nothing, where the line saying
@@ -277,23 +286,24 @@ public sealed class LivePreviewController : IAsyncDisposable
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
+            // THE SCREEN IS CLOSED BEFORE THE LOOP IS ASKED TO STOP, so a late answer from the engine
+            // finds the closure changed and renders nothing, whichever way the join below ends.
+            Interlocked.Increment(ref _closure);
             var cancellation = _cancellation;
             var work = _work;
-            _cancellation = null;
-            _work = null;
             cancellation?.Cancel();
-            if (work is not null)
+            if (work is not null &&
+                await BoundedJoin.JoinAsync(work, deadline, _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
             {
-                try
-                {
-                    await work.ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    // The preview task observes cancellation as its normal stop path.
-                }
+                // STILL RUNNING, STILL OWNED. The loop is inside the engine; the token source it
+                // holds is not disposed, the engine it is using is not stopped under it, and the
+                // fields keep both so the next stop joins the same work. Only the screen is cleared.
+                _effects.ClearPreview();
+                return StopOutcome.StillRunning;
             }
 
+            _cancellation = null;
+            _work = null;
             cancellation?.Dispose();
             // STOPPED EVEN WHEN THE START WAS CANCELLED HALF-WAY. The engine's own start releases
             // what it acquired when it is cancelled or refused; its stop is still called so a worker
@@ -311,6 +321,7 @@ public sealed class LivePreviewController : IAsyncDisposable
             }
 
             _started = false;
+            return StopOutcome.Completed;
         }
         finally
         {

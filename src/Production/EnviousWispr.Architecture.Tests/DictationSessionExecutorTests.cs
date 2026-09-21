@@ -848,6 +848,12 @@ public sealed class DictationSessionExecutorTests
             }
         }
 
+        public async Task<BackgroundStopReport> StopAsync(TimeSpan deadline)
+        {
+            await StopAsync();
+            return BackgroundStopReport.AllCompleted;
+        }
+
         public Task StopWatchdogAsync()
         {
             trace.Add("Background:StopWatchdog");

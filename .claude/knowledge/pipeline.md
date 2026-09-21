@@ -67,7 +67,16 @@ remain wordless designs.
   SessionComposition.cs` (plan-2 step 4), and the long-lived owners around them (persistence,
   finaliser, preview, streaming, watchdog, auto-stop, and the one queue a key, the auto-stop and the
   watchdog all submit through) by `RuntimeComposition.cs` (step 5); the architecture tests compile
-  and drive both.
+  and drive both. Since step 7 each background owner's stop can be given a deadline
+  (`StopAsync(TimeSpan)` → `StopOutcome`): the loop is cancelled and joined for that long, and a loop
+  still running past it is reported `StillRunning` and **stays owned** - its token source undisposed,
+  the engine under it not stopped, the fields kept - so the next stop joins the same work; a timeout
+  is never treated as a termination. The preview closes its screen before the join and checks that
+  closure again at every dispatch, so an engine answering late renders nothing. The timers finish
+  their join before they post, so the command a timer posts can stop the timer without joining the
+  flow it was called from. `SessionBackgroundWork.StopAsync(deadline)` gives each owner the deadline
+  and returns a `BackgroundStopReport`; the unbounded `StopAsync()` the executor uses today is
+  unchanged, and step 8's shutdown is what supplies the deadline.
 - **How the macOS app owns the same workflow** (read from its source by the Mac session on 2026-09-20;
   its owners are `.claude/knowledge/session-lifecycle.md`, `pipeline-mechanics.md` and `live-preview.md`
   in the macOS repository). One recording-session kernel is the single state machine every dictation

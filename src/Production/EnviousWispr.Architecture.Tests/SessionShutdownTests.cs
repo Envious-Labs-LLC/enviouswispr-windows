@@ -339,6 +339,12 @@ public sealed class SessionShutdownTests
             }
         }
 
+        public async Task<BackgroundStopReport> StopAsync(TimeSpan deadline)
+        {
+            await StopAsync();
+            return BackgroundStopReport.AllCompleted;
+        }
+
         public Task StopWatchdogAsync() => Task.CompletedTask;
     }
 
