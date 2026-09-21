@@ -53,7 +53,7 @@ public partial class App : Application, IAsyncDisposable
     private readonly LivePreviewController _livePreview;
     private DictationSessionCoordinator? _sessionCoordinator;
     private readonly DeterministicTextPipeline _deterministicTextPipeline = new();
-    private readonly TranscriptFinalizer _transcriptFinalizer;
+    private readonly SessionRuntime _runtime;
     private SingleInstanceLock? _singleInstanceLock;
     private SingleInstanceActivationChannel? _activationChannel;
     private WindowsSystemLifecycleMonitor? _lifecycleMonitor;
@@ -107,15 +107,6 @@ public partial class App : Application, IAsyncDisposable
     {
         InitializeComponent();
 
-        _transcriptFinalizer = new TranscriptFinalizer(
-            _deterministicTextPipeline,
-            new PolishExecutor(
-                _resourceArbiter,
-                new TranscriptFinalizationEffects(this),
-                // Read at the call, as before: a word taught mid-dictation reaches this polish.
-                () => _settings.UserData.CustomWords),
-            new TranscriptFinalizationEffects(this));
-
         _releaseIdentity = ResolveReleaseIdentity();
 
         var uatCredentialSuffix = Environment.GetEnvironmentVariable(
@@ -157,18 +148,34 @@ public partial class App : Application, IAsyncDisposable
         _historyStore = new JsonHistoryStore(Path.Combine(_dataDirectory, "history.json"));
         _runStateStore = new JsonApplicationRunStateStore(Path.Combine(_dataDirectory, "run-state.json"));
         _recoveryTextStore = new WindowsRecoveryTextStore(Path.Combine(_dataDirectory, "recovery.json"));
-        _sessionPersistence = new SessionPersistence(
+        // THE LONG-LIVED SESSION OWNERS ARE ONE COMPOSITION'S, SHARED WITH THE TESTS. The shell chooses
+        // the stores and the pipeline and supplies leaf reads of its own state; RuntimeComposition
+        // builds the persistence owner, the finaliser and the four background owners the same way
+        // for the app and for a test. The shell keeps the references it stops and disposes.
+        _runtime = RuntimeComposition.Compose(new RuntimeCompositionParts(
             _recoveryTextStore,
             _historyStore,
+            _deterministicTextPipeline,
+            _resourceArbiter,
             _logger,
-            TimeProvider.System,
-            () => _settings.Preferences.History,
-            new SessionPersistenceEffects(this));
-        _livePreview = new LivePreviewController(new LivePreviewEffects(this), _logger, TimeProvider.System);
-        _streaming = new StreamingTranscriptionController(new StreamingTranscriptionEffects(this), _logger, TimeProvider.System);
-        var timerEffects = new RecordingTimerEffects(this);
-        _watchdog = new RecordingWatchdog(timerEffects, TimeProvider.System);
-        _autoStop = new AutoStopMonitor(timerEffects, _logger, TimeProvider.System);
+            new RuntimeShell(
+                new WindowRuntimeView(this),
+                LivePreviewEnabled: () => _settings.Preferences.LivePreviewEnabled,
+                History: () => _settings.Preferences.History,
+                CustomWords: () => _settings.UserData.CustomWords,
+                Audio: () => _audioCapture as IAudioSnapshotSource,
+                Engine: () => _transcriptionEngine,
+                PreviewEngine: () => _previewEngine,
+                PreviewUnavailableReason: () => _previewUnavailableReason,
+                RecordingSessionId: () => _sessionController?.CurrentSession?.Id,
+                Coordinator: () => _sessionCoordinator,
+                Leaving: () => _exitRequested || _disposed),
+            TimeProvider.System));
+        _sessionPersistence = _runtime.Persistence;
+        _livePreview = _runtime.Preview;
+        _streaming = _runtime.Streaming;
+        _watchdog = _runtime.Watchdog;
+        _autoStop = _runtime.AutoStop;
         _resourceProbe = new WindowsSystemResourceProbe(_dataDirectory);
 
         var allowLoopbackUpdates = string.Equals(
@@ -944,44 +951,6 @@ public partial class App : Application, IAsyncDisposable
         });
     }
 
-    /// <summary>Writes one line per deterministic stage, so a skipped step is visible.</summary>
-    /// <remarks>
-    /// SPLIT IN TWO CALLS AROUND THE OPTIONAL POLISH. The summary line says only that the pass
-    /// finished and what it cost, so a pass that skipped all five stages and one that did five jobs
-    /// quickly are the same record - and "do custom words work" is exactly the question that
-    /// difference answers. An empty custom-word list makes correction vanish with no trace.
-    ///
-    /// EmojiRestoration is the one stage that runs on the far side of polish, where
-    /// <c>ApplyPolishedTextAsync</c> replaces its receipt. Reporting it early recorded Skipped and
-    /// hid a later failure; reporting everything late put older lines after newer ones in a file
-    /// that is appended to and read oldest-first. Each half is written when it is true.
-    /// </remarks>
-    private void EmitStageReceipts(
-        IReadOnlyList<DeterministicStageReceipt> receipts,
-        bool emojiRestorationOnly)
-    {
-        foreach (var receipt in receipts)
-        {
-            if ((receipt.Stage == DeterministicTextStage.EmojiRestoration) != emojiRestorationOnly)
-            {
-                continue;
-            }
-
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.DeterministicStageObserved,
-                receipt.Status is DeterministicStageStatus.Failed
-                    or DeterministicStageStatus.TimedOut
-                    or DeterministicStageStatus.Busy
-                    ? AppFailureCategory.PostProcessing
-                    : AppFailureCategory.None,
-                receipt.ElapsedMilliseconds,
-                Stage: receipt.Stage,
-                StageStatus: receipt.Status,
-                Changed: receipt.Changed));
-        }
-    }
-
     private void ExitFromTray()
     {
         _window?.DispatcherQueue.TryEnqueue(() => _ = ExitFromTrayAsync());
@@ -1298,10 +1267,7 @@ public partial class App : Application, IAsyncDisposable
         _sessionCoordinator = SessionComposition.Compose(new SessionCompositionParts(
             _sessionController,
             audioCapture,
-            new SessionBackgroundWork(_watchdog, _livePreview, _autoStop, _streaming),
-            _transcriptFinalizer,
-            _sessionPersistence,
-            _streaming,
+            _runtime,
             _resourceProbe,
             _runStateStore,
             _logger,
@@ -1876,7 +1842,7 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        _ = HandlePushToTalkAsync(args.Signal);
+        _ = _runtime.SubmitAsync(args.Signal);
     }
 
     private async Task HandleQuickAddAsync()
@@ -2034,7 +2000,7 @@ public partial class App : Application, IAsyncDisposable
                 }
             }
 
-            await HandlePushToTalkAsync(PushToTalkSignal.Pressed).ConfigureAwait(false);
+            await _runtime.SubmitAsync(PushToTalkSignal.Pressed).ConfigureAwait(false);
             if (_sessionController.CurrentSession?.State !=
                 EnviousWispr.Core.Sessions.DictationSessionState.Recording)
             {
@@ -2049,7 +2015,7 @@ public partial class App : Application, IAsyncDisposable
                     StringComparison.Ordinal)
                 ? PushToTalkSignal.Cancelled
                 : PushToTalkSignal.Released;
-            await HandlePushToTalkAsync(stopSignal).ConfigureAwait(false);
+            await _runtime.SubmitAsync(stopSignal).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
         {
@@ -2180,47 +2146,28 @@ public partial class App : Application, IAsyncDisposable
         }
     }
 
-    /// <summary>Submits a push-to-talk signal and returns once it has run or been refused.</summary>
-    /// <remarks>
-    /// A RELEASE THAT ARRIVES WHILE THE PRESS IS STILL STARTING IS KEPT, NOT DROPPED. This used to probe
-    /// the session gate with a zero timeout and return silently when it was held - and it is held for
-    /// the whole of starting a recording, microphone and live preview included, so a quick tap on a
-    /// busy machine lost its key-up and the recording ran on until the next press (#86). The
-    /// coordinator queues the terminal signal behind the press and runs it exactly once when the press
-    /// is done. A press during another command is still refused, now explicitly (Busy), because a
-    /// press that ran later would open a microphone nobody asked for.
-    /// </remarks>
-    private async Task HandlePushToTalkAsync(PushToTalkSignal signal)
+    /// <summary>The window as the long-lived session owners see it: each sink one dispatch to the window, and nothing decided here.</summary>
+    private sealed class WindowRuntimeView(App app) : IRuntimeView
     {
-        if (_exitRequested || _disposed)
-        {
-            return;
-        }
+        public void ShowPreview(string? text) =>
+            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetLivePreview(text));
 
-        var coordinator = _sessionCoordinator;
-        if (coordinator is null)
-        {
-            return;
-        }
+        public void ShowRecoveredText(RecoveryTextLoadResult result) =>
+            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetRecoveredText(result));
 
-        try
-        {
-            var result = await coordinator.SubmitAsync(signal).ConfigureAwait(false);
-            if (result.WasQueued)
+        public void ClearRecoveredText() =>
+            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.ClearRecoveredText());
+
+        public void NotifyHistoryChanged() =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
             {
-                _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.DictationSignalQueued));
-            }
-        }
-        catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
-        {
-            // THE HOOK AND THE AUTO-STOP LOOP FIRE AND FORGET THIS TASK. The executor recovers its own
-            // failures; anything that escapes it would otherwise fault a task nobody awaits and vanish.
-            // Content-free, like every line in this log.
-            _logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.UnhandledFailure,
-                AppFailureCategory.Unknown));
-        }
+                if (app._window is not null)
+                {
+                    _ = app._window.NotifyHistoryChangedAsync();
+                }
+            });
+
+        public void ShowMainWindow() => app.ShowMainWindow(openSettings: false);
     }
 
     /// <summary>The window as the session sees it: each sink one dispatch to the window, and nothing decided here.</summary>
@@ -2325,136 +2272,11 @@ public partial class App : Application, IAsyncDisposable
         }
     }
 
-    /// <summary>What the shell shows when persistence changes what the person should see.</summary>
-    /// <summary>The shell's half of the recording timers: the capture, the command entry, and the timeout recovery.</summary>
-    private sealed class RecordingTimerEffects(App app) : IRecordingTimerEffects
-    {
-        public IAudioSnapshotSource? Audio => app._audioCapture as IAudioSnapshotSource;
-
-        public void Post(PushToTalkSignal signal) => _ = app.HandlePushToTalkAsync(signal);
-
-        public void RecordingTimedOut(DictationSessionId sessionId)
-        {
-            if (!app._exitRequested && !app._disposed && app._sessionCoordinator is { } coordinator)
-            {
-                _ = coordinator.TimeOutAsync(sessionId);
-            }
-        }
-    }
-
-    /// <summary>The shell's half of streaming: the final engine, the capture, and the switch it yields to.</summary>
-    private sealed class StreamingTranscriptionEffects(App app) : IStreamingTranscriptionEffects
-    {
-        public bool LivePreviewEnabled => app._settings.Preferences.LivePreviewEnabled;
-
-        public ITranscriptionEngine? Engine => app._transcriptionEngine;
-
-        public IAudioSnapshotSource? Audio => app._audioCapture as IAudioSnapshotSource;
-    }
-
-    /// <summary>The shell's half of live preview: what it built, what it can sample, and the surface.</summary>
-    private sealed class LivePreviewEffects(App app) : ILivePreviewEffects
-    {
-        public bool Enabled => app._settings.Preferences.LivePreviewEnabled;
-
-        public ILivePreviewEngine? Engine => app._previewEngine;
-
-        public AppErrorCode? EngineUnavailableReason => app._previewUnavailableReason;
-
-        public IAudioSnapshotSource? Audio => app._audioCapture as IAudioSnapshotSource;
-
-        public DictationSessionId? RecordingSessionId => app._sessionController?.CurrentSession?.Id;
-
-        public void ShowPreview(DictationSessionId sessionId, string text) =>
-            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetLivePreview(text));
-
-        public void ClearPreview() =>
-            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetLivePreview(text: null));
-    }
-
-    private sealed class SessionPersistenceEffects(App app) : ISessionPersistenceEffects
-    {
-        public void ShowPendingRecovery(RecoveryTextRecord record) =>
-            app._window?.DispatcherQueue.TryEnqueue(() =>
-            {
-                app.ShowMainWindow(openSettings: false);
-                app._window?.SetRecoveredText(new RecoveryTextLoadResult(
-                    RecoveryTextLoadStatus.Found,
-                    record));
-            });
-
-        public void ClearRecoveredText() =>
-            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.ClearRecoveredText());
-
-        public void NotifyHistoryChanged() =>
-            app._window?.DispatcherQueue.TryEnqueue(() =>
-            {
-                if (app._window is not null)
-                {
-                    _ = app._window.NotifyHistoryChangedAsync();
-                }
-            });
-    }
-
     /// <summary>The polish provider in force, and how it is hosted, or null when there is none.</summary>
     private PolishSetup? CurrentPolishSetup() =>
         _polishProvider is { } provider
             ? new PolishSetup(provider, _polishUsesLocalRuntime, _polishResource)
             : null;
-
-    /// <summary>The shell's half of a finalisation: the log lines and the recovery writes, nothing that decides.</summary>
-    private sealed class TranscriptFinalizationEffects(App app) : ITranscriptFinalizationEffects
-    {
-        public void RecordDeterministicProcessingStarted() =>
-            app._logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.DeterministicProcessingStarted));
-
-        public void EmitStageReceipts(IReadOnlyList<DeterministicStageReceipt> receipts, bool emojiRestorationOnly) =>
-            app.EmitStageReceipts(receipts, emojiRestorationOnly);
-
-        public Task SaveRecoveryTextAsync(ProcessedText output, CancellationToken cancellationToken) =>
-            app._sessionPersistence.SaveRecoveryTextAsync(output, cancellationToken);
-
-        public void RecordPolishStarted(string providerId) =>
-            app._logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.PolishStarted,
-                Provider: DiagnosticProviderIds.FromProviderId(providerId)));
-
-        public void RecordPolishFinished(string providerId, PolishResult result, bool usedLocalRuntime, long elapsedMilliseconds) =>
-            app._logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                result.UsedFallback ? AppEventCode.PolishDegraded : AppEventCode.PolishCompleted,
-                result.UsedFallback
-                    ? usedLocalRuntime
-                        ? AppFailureCategory.LocalPolish
-                        : AppFailureCategory.CloudPolish
-                    : AppFailureCategory.None,
-                elapsedMilliseconds,
-                DiagnosticProviderIds.FromProviderId(providerId),
-                result.Error?.Code));
-
-        public void RecordPolishRefused() =>
-            app._logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                AppEventCode.PolishOutputRefused,
-                // InvalidData rather than LocalPolish or CloudPolish: the refusal is about what came
-                // BACK, and either provider can produce it. Attributing it to one would make the log
-                // claim a cause it does not know.
-                AppFailureCategory.InvalidData));
-
-        public void RecordDeterministicProcessingFinished(bool degraded, long elapsedMilliseconds) =>
-            app._logger.Write(new AppLogEntry(
-                DateTimeOffset.UtcNow,
-                degraded
-                    ? AppEventCode.DeterministicProcessingDegraded
-                    : AppEventCode.DeterministicProcessingCompleted,
-                degraded
-                    ? AppFailureCategory.PostProcessing
-                    : AppFailureCategory.None,
-                elapsedMilliseconds));
-    }
 
     private static string HotkeyFailureStatus(AppError? error) => error?.Code switch
     {
