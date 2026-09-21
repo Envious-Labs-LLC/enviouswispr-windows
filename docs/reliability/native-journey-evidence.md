@@ -45,6 +45,33 @@ the message count.
 | 2026-09-21 | 0.19.0+d313251 (step 10 branch) | edit | UiAutomationValue (`WM_SETTEXT` seen, no `WM_PASTE`, seed first) | yes | yes |
 | 2026-09-21 | 0.19.0+d313251 (step 10 branch) | caret-start | ClipboardPaste (`WM_PASTE` seen, seed last) | yes | yes |
 | 2026-09-21 | 0.19.0+d313251 (step 10 branch) | password | ClipboardOnly (`TextDeliveryRefused` / `DeliveryProtectedField`, field empty) | yes | yes |
+| 2026-09-21 | 0.19.0+dedd26f | edit | UiAutomationValue (`WM_SETTEXT` seen, no `WM_PASTE`, seed first) | yes | yes |
+| 2026-09-21 | 0.19.0+dedd26f | caret-start | ClipboardPaste (`WM_PASTE` seen, seed last; the clipboard sentinel placed before the delivery read back intact afterwards, `clipboardRestored` true) | yes | yes |
+| 2026-09-21 | 0.19.0+dedd26f | password | ClipboardOnly (`TextDeliveryRefused` / `DeliveryProtectedField`, field empty) | yes | yes |
+
+The caret-start run also observes clipboard restoration (plan-2 step 13): the harness places a sentinel
+line on the clipboard before the paste route runs and requires the same line back after the delivery,
+before its guard restores the desk's own clipboard.
+
+## UnverifiedDirectWriteNeverPastes
+
+The production adapter against a controlled field that rewrites every value set into it
+(`--target-mode unverified-write`): the field appends a mark on `WM_SETTEXT`, so the adapter's read-back
+after its UI Automation value write never matches what it wrote. The adapter must report the insertion
+unverified and stop there - a paste after a write of unknown effect could insert the words twice. The
+harness requires `WM_SETTEXT` seen, the field rewritten, `TextDeliveryFailed` / `DeliveryUnverified` in
+the log (its own code, not a policy refusal's), no `TextDeliveryCompleted`, and no `WM_PASTE` at all.
+
+| Recorded | Build | Target mode | Observed | Passed | Exited cleanly |
+| --- | --- | --- | --- | --- | --- |
+| 2026-09-21 | 0.19.0+dedd26f | unverified-write | UiAutomationValueUnverified (`WM_SETTEXT` seen, field rewritten, `DeliveryUnverified` logged, no `WM_PASTE`) | yes | yes |
+
+The four exit journeys above also passed on 0.19.0+dedd26f (live-cable-parakeet, live-cable-whisper,
+synthetic-quick-tap-preview, escape-recovery: passed, exited cleanly, no stray workers). In the first
+eight-run sequence on the step-13 branch (build beb0bf9, before the fault fields landed) one
+live-cable-whisper run ended `TextDeliveryFailed` / `DeliveryFaulted` - a fault the previous classification
+would have filed as "accessibility unavailable" - and did not recur in eighteen further runs; the log now
+carries the stage and the family of such a fault, so the next occurrence names itself.
 
 ## GeneralSavePersistsAndRendersCommittedValues
 
