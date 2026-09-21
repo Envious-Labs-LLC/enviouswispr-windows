@@ -1472,6 +1472,12 @@ public sealed partial class MainWindow : Window, IDisposable
         try
         {
             var result = await _session.MicrophoneTest.RunAsync(device, recording).ConfigureAwait(true);
+            if (_session.Closing)
+            {
+                // The exit stopped the test, or began as it finished; the page is not written to.
+                return;
+            }
+
             switch (result.Outcome)
             {
                 case MicrophoneTestOutcome.Completed:
@@ -1490,12 +1496,7 @@ public sealed partial class MainWindow : Window, IDisposable
                             + "or taken by another app.");
                     break;
                 case MicrophoneTestOutcome.Cancelled:
-                    // A recording took the device, or the exit did; only the first is worth a line.
-                    if (!_session.Closing)
-                    {
-                        SetLiveText(MicrophoneTestResultText, "Microphone test stopped.");
-                    }
-
+                    SetLiveText(MicrophoneTestResultText, "Microphone test stopped.");
                     break;
                 default:
                     // Already running: the controller refused, and the page has nothing new to say.
@@ -1988,7 +1989,7 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         var result = await _session.History.DeleteAsync(selected.Id).ConfigureAwait(true);
-        if (result.Closing)
+        if (result.Closing || _session.Closing)
         {
             return;
         }
@@ -2014,7 +2015,7 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         var result = await _session.History.KeepAsync(selected.Id).ConfigureAwait(true);
-        if (result.Closing)
+        if (result.Closing || _session.Closing)
         {
             return;
         }
@@ -2048,7 +2049,7 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         var result = await _session.History.ClearAsync().ConfigureAwait(true);
-        if (result.Closing)
+        if (result.Closing || _session.Closing)
         {
             return;
         }
@@ -2671,9 +2672,11 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>Puts what the presenter loaded on the page: the rows, and the one line about them.</summary>
     private void ShowHistory(HistoryView view)
     {
-        // A LOAD THE EXIT REFUSED OR STOPPED IS NOT DRAWN. The page is on its way out; the loading
-        // card it already shows is the last honest thing on it.
-        if (view.Summary == HistorySummary.Closing)
+        // A LOAD THE EXIT REFUSED OR STOPPED IS NOT DRAWN, AND NEITHER IS ONE THAT FINISHED AS THE
+        // EXIT BEGAN: a load inside a store that ignores its token completes after the drain started
+        // and reaches this thread with an honest answer for a page that is on its way out. The
+        // loading card it already shows is the last thing drawn on it.
+        if (view.Summary == HistorySummary.Closing || _session.Closing)
         {
             return;
         }
@@ -3557,7 +3560,7 @@ public sealed partial class MainWindow : Window, IDisposable
         // latest - a person can change provider between the answer and this thread.
         var listing = await _session.Provider.ListModelsAsync(provider, NullIfBlank(OllamaEndpointTextBox.Text))
             .ConfigureAwait(true);
-        if (listing is null || !_session.Provider.IsCurrent(listing.Ticket))
+        if (listing is null || _session.Closing || !_session.Provider.IsCurrent(listing.Ticket))
         {
             return;
         }

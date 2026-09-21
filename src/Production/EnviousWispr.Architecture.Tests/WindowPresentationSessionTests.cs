@@ -190,6 +190,40 @@ public sealed class WindowPresentationSessionTests
         Assert.Contains("presentation.DisposeAsync()", shell, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void TheWindowDoesNotDrawAnAnswerThatArrivesAfterTheDrainBegan()
+    {
+        // A SUCCESSFUL ANSWER CAN LAND AFTER THE DRAIN BEGAN: a load inside a store that ignores its
+        // token, a discovery that returned as the exit started, a test that completed under the
+        // close. The presenters cannot tell the window not to draw those - they answer honestly -
+        // so every continuation that renders asks the session whether the drain has begun, right
+        // before it draws. Read at the source, because a WinUI handler cannot run under xunit.
+        var window = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        Assert.Contains("if (view.Summary == HistorySummary.Closing || _session.Closing)", window, StringComparison.Ordinal);
+        Assert.Equal(3, Occurrences(window, "if (result.Closing || _session.Closing)"));
+        Assert.Contains("if (listing is null || _session.Closing || !_session.Provider.IsCurrent(listing.Ticket))", window, StringComparison.Ordinal);
+        var testHandler = window[window.IndexOf("private async void MicrophoneTestButton_Click(", StringComparison.Ordinal)..];
+        var ran = testHandler.IndexOf("await _session.MicrophoneTest.RunAsync(", StringComparison.Ordinal);
+        var guarded = testHandler.IndexOf("if (_session.Closing)", StringComparison.Ordinal);
+        var drawn = testHandler.IndexOf("switch (result.Outcome)", StringComparison.Ordinal);
+        Assert.True(ran >= 0 && ran < guarded && guarded < drawn, "the microphone test's outcome is drawn before the session is asked whether the drain began");
+        var recovery = window[window.IndexOf("private async void DeleteRecoveryButton_Click(", StringComparison.Ordinal)..];
+        Assert.True(
+            recovery.IndexOf("if (_session.Closing)", StringComparison.Ordinal) < recovery.IndexOf("if (recoveryDeleted)", StringComparison.Ordinal),
+            "the recovery deletion's outcome is drawn before the session is asked whether the drain began");
+    }
+
+    private static int Occurrences(string text, string needle)
+    {
+        var count = 0;
+        for (var at = text.IndexOf(needle, StringComparison.Ordinal); at >= 0; at = text.IndexOf(needle, at + needle.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
