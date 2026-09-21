@@ -1288,6 +1288,22 @@ static bool WaitForExpectedTargetResult(string path, TimeSpan timeout)
     return false;
 }
 
+/// <summary>
+/// The log's lines, read without locking the app out of its own file. `File.ReadLines` shares the
+/// file for reading only, so an append the app makes while this reader holds it fails with a sharing
+/// violation and that line is lost - the app's diagnostics are best-effort and swallow the failure.
+/// One required stage went missing from a passing journey that way, once in about four runs.
+/// </summary>
+static IEnumerable<string> ReadSharedLines(string path)
+{
+    using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+    using var reader = new StreamReader(stream);
+    while (reader.ReadLine() is { } line)
+    {
+        yield return line;
+    }
+}
+
 static IReadOnlyList<string> ReadDiagnosticEvents(string path)
 {
     if (!File.Exists(path))
@@ -1296,7 +1312,7 @@ static IReadOnlyList<string> ReadDiagnosticEvents(string path)
     }
 
     var events = new List<string>();
-    foreach (var line in File.ReadLines(path))
+    foreach (var line in ReadSharedLines(path))
     {
         using var document = JsonDocument.Parse(line);
         var root = document.RootElement;
@@ -1361,7 +1377,7 @@ static PolishJourneyEvidence ReadPolishJourneyEvidence(
     long? elapsedMilliseconds = null;
     try
     {
-        foreach (var line in File.ReadLines(path))
+        foreach (var line in ReadSharedLines(path))
         {
             using var document = JsonDocument.Parse(line);
             var root = document.RootElement;
