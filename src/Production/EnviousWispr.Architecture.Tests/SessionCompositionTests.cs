@@ -246,34 +246,58 @@ public sealed class SessionCompositionTests
         // preview is switched on, the capture, the engine and the history preference are replaced and
         // a word is taught; the second recording must use every replacement - and once the shell has
         // let go of its coordinator, a key reaches nothing.
-        var world = World.Create("first take");
+        var clock = new Deterministic.ManualClock();
+        var world = World.Create("first take", clock);
+        var firstEngine = world.Engine;
         await world.SubmitAsync(PushToTalkSignal.Pressed);
         await world.SubmitAsync(PushToTalkSignal.Released);
         Assert.Equal("first take", world.Delivery.Requests.Single().Text.Text);
         Assert.Single(world.HistoryStore.Added);
         Assert.DoesNotContain("preview words", world.RuntimeView.Previews);
+        var firstEngineCalls = firstEngine.Calls;
+        var firstCaptureSnapshots = world.Capture.Snapshots;
 
-        var secondEngine = new FakeEngine("envy wisper is here");
+        // RECORDING TWO, PREVIEW STILL OFF: streaming runs, and it runs on the replaced capture and
+        // the replaced engine. A take of speech, a pause, more speech - the first segment is committed
+        // by the streaming loop before the release, through the replacement engine.
+        var secondEngine = new FakeEngine("second take");
         var secondAudio = new FakeAudioCapture();
-        var polish = new FailingPolish();
-        world.LivePreviewEnabled = true;
         world.EngineRef = secondEngine;
         world.Audio = secondAudio;
+        // The replaced capture was never started by this controller, so it stamps its snapshots with
+        // the session in flight, as a started one would.
+        secondAudio.SessionSource = () => world.Controller.CurrentSession?.Id;
+        secondAudio.Take = FakeAudioCapture.Script((false, 200), (true, 3_000), (false, 1_200), (true, 500));
+        await world.SubmitAsync(PushToTalkSignal.Pressed);
+        await clock.WhenRegistered(1).WaitAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        await Eventually(() => secondEngine.Calls >= 1, "the streaming loop to transcribe a segment through the replacement engine");
+        Assert.True(secondAudio.Snapshots > 0, "the streaming loop sampled the replaced capture");
+        Assert.Equal(firstEngineCalls, firstEngine.Calls);
+        Assert.Equal(firstCaptureSnapshots, world.Capture.Snapshots);
+        await world.SubmitAsync(PushToTalkSignal.Released);
+        Assert.Equal("second take", world.Delivery.Requests[^1].Text.Text[..11]);
+
+        // RECORDING THREE, PREVIEW ON: streaming stands down (no engine call before the release), the
+        // preview samples the replaced capture, history is off, the taught word reaches the polish.
+        var thirdEngine = new FakeEngine("envy wisper is here");
+        var polish = new FailingPolish();
+        world.LivePreviewEnabled = true;
+        world.EngineRef = thirdEngine;
         world.History = HistoryPreferences.Default with { IsEnabled = false };
         world.CustomWords.Add(new CustomWordEntry("envy wisper", "EnviousWispr"));
         world.Polish = new PolishSetup(polish, UsesLocalRuntime: true, RuntimeResourceKind.Cpu);
 
         await world.SubmitAsync(PushToTalkSignal.Pressed);
-        // The replaced capture was never started by this controller, so it stamps its snapshots with
-        // the session it is told about, as a started one would.
-        secondAudio.SessionForSnapshots = world.Controller.CurrentSession!.Id;
         await Eventually(() => world.RuntimeView.Previews.Contains("preview words"), "the preview to reach the window");
+        Assert.Equal(0, thirdEngine.Calls);
         await world.SubmitAsync(PushToTalkSignal.Released);
 
         Assert.Equal("EnviousWispr is here", world.Delivery.Requests[^1].Text.Text);
-        Assert.True(secondAudio.Snapshots > 0, "the preview sampled the replaced capture");
-        Assert.Equal(0, world.Capture.Snapshots);
-        Assert.Single(world.HistoryStore.Added);
+        Assert.Equal(1, thirdEngine.Calls);
+        Assert.Equal(firstCaptureSnapshots, world.Capture.Snapshots);
+        Assert.Equal(2, world.HistoryStore.Added.Count);
+        Assert.DoesNotContain(world.HistoryStore.Added, entry => entry.Text.Contains("EnviousWispr", StringComparison.Ordinal));
         Assert.Contains("EnviousWispr", Assert.Single(polish.Requests).Vocabulary ?? []);
 
         world.Detached = true;
@@ -658,8 +682,11 @@ public sealed class SessionCompositionTests
 
         public Action? BeforeReturning { get; set; }
 
+        public int Calls { get; private set; }
+
         public async Task<Transcript> TranscribeAsync(CapturedAudio audio, CancellationToken cancellationToken = default)
         {
+            Calls++;
             Token = cancellationToken;
             Entered.TrySetResult();
             if (HoldIgnoringCancel)
@@ -790,29 +817,34 @@ public sealed class SessionCompositionTests
 
         public int Snapshots { get; private set; }
 
-        /// <summary>The session a snapshot is stamped with; a capture never started answers for the one asked about.</summary>
-        public DictationSessionId? SessionForSnapshots { get; set; }
+        /// <summary>Where a snapshot's session comes from; a capture never started answers for the session it is told about.</summary>
+        public Func<DictationSessionId?>? SessionSource { get; set; }
 
         public AudioSnapshot? GetSnapshot(TimeSpan maximumDuration)
         {
             Snapshots++;
-            return new(SessionForSnapshots ?? _sessionId, Take, 16_000, 1);
+            return new(SessionSource?.Invoke() ?? _sessionId, Take, 16_000, 1);
         }
 
         /// <summary>A take of speech followed by the silence the auto-stop waits for.</summary>
-        public static float[] SpeechThenSilence(int speechMilliseconds, int silenceMilliseconds)
-        {
-            var speech = 16_000 * speechMilliseconds / 1000;
-            var silence = 16_000 * silenceMilliseconds / 1000;
-            var samples = new float[speech + silence];
-            for (var i = 0; i < speech; i++)
-            {
-                samples[i] = (i % 2 == 0) ? 0.2f : -0.2f;
-            }
+        public static float[] SpeechThenSilence(int speechMilliseconds, int silenceMilliseconds) =>
+            Script((true, speechMilliseconds), (false, silenceMilliseconds));
 
-            for (var i = speech; i < samples.Length; i++)
+        /// <summary>A take built from runs of speech and silence, in order.</summary>
+        public static float[] Script(params (bool IsSpeech, int Milliseconds)[] parts)
+        {
+            var samples = new float[parts.Sum(part => 16_000 * part.Milliseconds / 1000)];
+            var cursor = 0;
+            foreach (var (isSpeech, milliseconds) in parts)
             {
-                samples[i] = (i % 2 == 0) ? 0.001f : -0.001f;
+                var length = 16_000 * milliseconds / 1000;
+                for (var i = 0; i < length; i++)
+                {
+                    var amplitude = isSpeech ? 0.2f : 0.001f;
+                    samples[cursor + i] = (i % 2 == 0) ? amplitude : -amplitude;
+                }
+
+                cursor += length;
             }
 
             return samples;
