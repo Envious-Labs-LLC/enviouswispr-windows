@@ -4,14 +4,12 @@ namespace EnviousWispr.Core.Settings;
 /// How close a heard word has to be to a custom word before it is corrected.
 /// </summary>
 /// <remarks>
-/// ONE SETTING FOR EVERY WORD IS WRONG IN BOTH DIRECTIONS AT ONCE. A short surname is heard several
-/// ways and wants a generous match; a word that looks like an ordinary English word wants a mean
-/// one, or it eats sentences it was never meant to touch. A single number has to be a compromise
-/// between those two, and the compromise is worse for both than either would choose.
+/// PER WORD, BECAUSE ONE SETTING FOR ALL IS WRONG IN BOTH DIRECTIONS: a short surname heard several
+/// ways wants a generous match, and a word that resembles ordinary English wants a strict one or it
+/// corrects sentences it was never meant to touch.
 ///
-/// DEFAULT IS ZERO ON PURPOSE. Settings written before this existed have no strictness in them at
-/// all, so the value they deserialize to is whatever zero means - and the only honest answer for a
-/// word somebody added without being asked this question is the behaviour they already had.
+/// DEFAULT IS ZERO ON PURPOSE. Settings written before this existed carry no strictness, so they
+/// deserialize to zero - which must mean the behaviour those words already had.
 /// </remarks>
 public enum MatchStrictness
 {

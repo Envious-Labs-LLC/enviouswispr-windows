@@ -44,12 +44,9 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
 
         RecoveryText = request.Text;
 
-        // ANSWERED BEFORE ANYTHING IS TOUCHED. Putting this after the target check meant a choice to
-        // copy still validated a window, still read its caret, and still repaired the spacing for a
-        // place the text was never going - so an unavailable target could refuse a copy that needed
-        // no target, the old window could be brought back to the front on the way, and what landed
-        // on the clipboard was the repaired text rather than the words that were said. "hello"
-        // arrived as "hello ".
+        // A REQUESTED COPY NEEDS NO TARGET, so it is answered before the target is validated, its
+        // caret read or the spacing repaired: none of that can refuse it, bring another window to the
+        // front, or change the words - the clipboard gets what was said, "hello" and not "hello ".
         if (request.Options.CopyInsteadOfPaste)
         {
             TextCommitResult copied;

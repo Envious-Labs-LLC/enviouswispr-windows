@@ -69,8 +69,9 @@ any gap a defect**, and note it expires, so its absences are claims that need re
 - **Windows delivers text through THREE routes in a fixed order, not the five macOS uses, and that is
   deliberate.** First a direct value write through UI Automation, taken only for a standard edit field that
   publishes a writable value, with nothing selected and under 16,384 characters; once that write has been
-  issued it is never followed by a paste, verified or not (the source records no reason; the likely one is
-  that a paste after a write of unknown effect could insert twice).
+  issued it is never followed by a paste, verified or not: a paste after a write of unknown effect could
+  insert the words twice (`WindowsTextTargetAdapter.TryDirectValueWrite`; observed natively by the
+  `unverified-write` target in `docs/reliability/native-journey-evidence.md`).
   Then the synthesised paste keystroke. Then clipboard-only when the paste is refused. The catalog records
   this as `deliberately-different`; it is not a parity gap and must not be "fixed" toward the macOS shape.
   (This line said "TWO routes" from 2026-08-26 to 2026-09-19 while the code had three; #148.)
