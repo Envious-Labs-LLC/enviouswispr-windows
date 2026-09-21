@@ -34,7 +34,6 @@ namespace EnviousWispr.App;
 public partial class App : Application, IAsyncDisposable
 {
     private static readonly TimeSpan MaximumRecordingDuration = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan MaximumFinalProcessingDuration = TimeSpan.FromMinutes(3);
 
     private readonly PrivacySafeObservabilityLogger _logger;
     private readonly ReleaseIdentity _releaseIdentity;
@@ -53,7 +52,6 @@ public partial class App : Application, IAsyncDisposable
     private readonly RuntimeResourceArbiter _resourceArbiter = new();
     private readonly LivePreviewController _livePreview;
     private DictationSessionCoordinator? _sessionCoordinator;
-    private SessionFinalizationRunner? _finalizationRunner;
     private readonly DeterministicTextPipeline _deterministicTextPipeline = new();
     private readonly TranscriptFinalizer _transcriptFinalizer;
     private SingleInstanceLock? _singleInstanceLock;
@@ -104,7 +102,6 @@ public partial class App : Application, IAsyncDisposable
     private CancellationTokenSource? _heartbeatCancellation;
     private Task? _heartbeatLoop;
     private int _activationPending;
-    private CancellationTokenSource? _activeProcessingCancellation;
     private bool _escapeRecoveryForSession;
 
     public App()
@@ -709,10 +706,10 @@ public partial class App : Application, IAsyncDisposable
         if (transition is SystemLifecycleTransition.Suspending or
             SystemLifecycleTransition.SessionLocked)
         {
-            // THE DEADLINE IS CANCELLED HERE, NOW, not when the interruption reaches the front of the
-            // queue: a finalisation in flight is what the queue is waiting behind, and cancelling it is
-            // how the interruption gets its turn inside the five seconds it allows itself.
-            _activeProcessingCancellation?.Cancel();
+            // THE FINALISATION IN FLIGHT IS CANCELLED WHETHER OR NOT THE INTERRUPTION IS QUEUED. A lock
+            // that lands while the exit is draining settings must still stop a transcription the exit
+            // is about to tear down under; the interruption itself is refused once leaving has begun.
+            _sessionCoordinator?.CancelProcessing();
             if (!_exitRequested && !_disposed && _sessionCoordinator is { } coordinator)
             {
                 _ = coordinator.InterruptAsync(transition);
@@ -1044,7 +1041,7 @@ public partial class App : Application, IAsyncDisposable
 
         _disposed = true;
         var cleanShutdown = true;
-        _activeProcessingCancellation?.Cancel();
+        _sessionCoordinator?.CancelProcessing();
         // ADMISSION CLOSES BEFORE THE FIRST AWAIT, idempotently: the exit path has usually closed it
         // already, and a disposal reached another way closes it now.
         _sessionCoordinator?.Close();
@@ -1297,7 +1294,7 @@ public partial class App : Application, IAsyncDisposable
         // delivery choice from the same provider the controller would have asked, at the instant of
         // the key, before the queue's first hop.
         var sessionController = _sessionController;
-        _finalizationRunner = new SessionFinalizationRunner(
+        var finalizationRunner = new SessionFinalizationRunner(
             sessionController,
             _transcriptFinalizer,
             _sessionPersistence,
@@ -1305,7 +1302,11 @@ public partial class App : Application, IAsyncDisposable
             new SessionFinalizationEffects(this),
             TimeProvider.System);
         _sessionCoordinator = new DictationSessionCoordinator(
-            new DictationSessionExecutor(sessionController, new SessionEffects(this, sessionController)),
+            new DictationSessionExecutor(
+                sessionController,
+                new SessionBackgroundWork(_watchdog, _livePreview, _autoStop, _streaming),
+                finalizationRunner,
+                new SessionEffects(this, sessionController)),
             sessionController.CaptureStartContext);
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
         // A saved keybind builds a NEW hook, which starts armed and knows nothing about a capture
@@ -1902,7 +1903,7 @@ public partial class App : Application, IAsyncDisposable
             hasValidTarget: true,
             published,
             isDictationRunning: _sessionController?.CurrentSession is not null,
-            isDeliveryInFlight: _activeProcessingCancellation is not null);
+            isDeliveryInFlight: _sessionCoordinator?.IsProcessing == true);
 
         string? selection;
         string? message;
@@ -2221,11 +2222,6 @@ public partial class App : Application, IAsyncDisposable
     /// </summary>
     private sealed class SessionEffects(App app, PushToTalkSessionController controller) : IDictationSessionEffects
     {
-        // THE DEADLINE OUTLIVES THE FINALISATION IT GUARDS. Armed here, cleared and disposed only when the
-        // executor says the command is over - after any recovery - so lock/suspend recovery and shutdown,
-        // which cancel it from their own callbacks, still find it while the recovery is running.
-        private CancellationTokenSource? _commandProcessing;
-
         public bool HasPendingRecovery => app._sessionPersistence.HasPendingRecovery;
 
         public bool EscapeRecoveryEnabled => app._settings.Preferences.Dictation.EscapeRecoveryEnabled;
@@ -2279,74 +2275,17 @@ public partial class App : Application, IAsyncDisposable
                     "Disk space is critically low",
                     "Dictation can continue, but EnviousWispr may be unable to save an encrypted crash-recovery copy."));
 
-        public Task StopRecordingWatchdogAsync() => app._watchdog.StopAsync();
-
         public void RecordTransition(SessionTransitionResult result) => app.WriteSessionEvent(result);
 
-        public async Task OnRecordingStartedAsync(DictationSessionId sessionId)
-        {
-            using var dictation = DictationScope.Begin(sessionId.Value);
-            app._watchdog.Start(sessionId, RecordingWatchdogDuration());
-            await app._livePreview.StartAsync(sessionId).ConfigureAwait(false);
-            app._autoStop.Start(sessionId, app._settings.Preferences.Dictation);
-            app._streaming.Start(sessionId);
-        }
+        public RecordingBackgroundSettings RecordingSettings() =>
+            new(RecordingWatchdogDuration(), () => app._settings.Preferences.Dictation);
 
-        public async Task FinalizeAsync(
-            DictationSessionId sessionId,
-            CapturedAudio audio,
-            bool recoveryOnly,
-            SystemLifecycleTransition? preserving = null)
-        {
-            using var dictation = DictationScope.Begin(sessionId.Value);
-            // THE PROCESSING DEADLINE IS THE SHELL'S, because the lifecycle callback and shutdown cancel it
-            // from their own callbacks, and both still live here.
-            var processingCancellation = new CancellationTokenSource(MaximumFinalProcessingDuration);
-            _commandProcessing = processingCancellation;
-            app._activeProcessingCancellation = processingCancellation;
-            await app._streaming.StopAsync().ConfigureAwait(false);
-            await app._autoStop.StopAsync().ConfigureAwait(false);
-            await app._livePreview.StopAsync().ConfigureAwait(false);
-            if (preserving is { } transition)
-            {
-                app._window?.DispatcherQueue.TryEnqueue(() =>
-                    app._window?.SetSessionStatus(DictationStatus.Quiet(
-                        transition == SystemLifecycleTransition.Suspending
-                            ? "Windows is suspending. Captured audio is being preserved"
-                            : "Windows locked. Captured audio is being preserved")));
-            }
-
-            await app.TranscribeFinalAsync(
-                    sessionId,
-                    audio,
-                    processingCancellation.Token,
-                    recoveryOnly)
-                .ConfigureAwait(false);
-        }
-
-        public void ReleaseProcessingDeadline()
-        {
-            var processingCancellation = _commandProcessing;
-            if (processingCancellation is null)
-            {
-                return;
-            }
-
-            _commandProcessing = null;
-            if (ReferenceEquals(app._activeProcessingCancellation, processingCancellation))
-            {
-                app._activeProcessingCancellation = null;
-            }
-
-            processingCancellation.Dispose();
-        }
-
-        public async Task StopBackgroundWorkAsync()
-        {
-            await app._streaming.StopAsync().ConfigureAwait(false);
-            await app._autoStop.StopAsync().ConfigureAwait(false);
-            await app._livePreview.StopAsync().ConfigureAwait(false);
-        }
+        public void ShowInterruptionPreserving(SystemLifecycleTransition transition) =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
+                app._window?.SetSessionStatus(DictationStatus.Quiet(
+                    transition == SystemLifecycleTransition.Suspending
+                        ? "Windows is suspending. Captured audio is being preserved"
+                        : "Windows locked. Captured audio is being preserved")));
 
         public void ShowTransitionStatus(SessionTransitionResult result) =>
             app._window?.DispatcherQueue.TryEnqueue(() =>
@@ -2516,29 +2455,6 @@ public partial class App : Application, IAsyncDisposable
             ErrorCode: error.Code));
         _sessionPersistence.ShowPendingRecovery();
         _window?.DispatcherQueue.TryEnqueue(() => _window?.SetSessionStatus(status));
-    }
-
-    private async Task TranscribeFinalAsync(
-        DictationSessionId sessionId,
-        CapturedAudio audio,
-        CancellationToken cancellationToken,
-        bool recoveryOnly = false)
-    {
-        // OPENED HERE AS WELL AS IN THE RUNNER. This flow is handed a dictation, and the rule the
-        // scope gate enforces is that every such flow opens its scope before it does anything, because
-        // the next line added to it will be a log line. Begin restores rather than clears, so the
-        // runner opening the same scope inside is safe.
-        using var dictation = DictationScope.Begin(sessionId.Value);
-        // LOUD, NOT SILENT. The runner is built beside the controller, and a finalisation with no
-        // controller cannot be requested; a null here is an invariant broken elsewhere, and the caller's
-        // recovery handling is the right place for it to surface.
-        var runner = _finalizationRunner
-            ?? throw new InvalidOperationException("A finalisation was requested before the session was configured.");
-
-        // THE WHOLE RECORD-TO-DELIVER PATH RUNS IN PIPELINE NOW. The shell keeps what is drawn, what
-        // is logged, its settings read at the moment the text decisions need them, and the two
-        // operations still waiting for their own steps: the head-start transcription and the archive.
-        await runner.RunAsync(sessionId, audio, recoveryOnly, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>The shell's half of a finalisation: rendering, logging, and the two operations still living here.</summary>

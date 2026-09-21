@@ -7,6 +7,7 @@ using EnviousWispr.Core.Preview;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Sessions;
+using EnviousWispr.Core.Settings;
 using EnviousWispr.Pipeline;
 
 namespace EnviousWispr.Architecture.Tests;
@@ -277,7 +278,19 @@ public sealed class PreviewStartupDecouplingTests
             var previewEffects = new PreviewEffects(engine, capture, controller);
             var preview = new LivePreviewController(previewEffects, log, TimeProvider.System);
             var effects = new ShellAdapter(preview, capture) { EscapeRecoveryEnabled = escapeRecovery };
-            var executor = new DictationSessionExecutor(controller, effects);
+            // THE REAL ORDERING OWNER, with the timers and the streaming loop idle (no audio to
+            // watch, preview on), so what is proved is the executor's order around the preview.
+            var timers = new IdleTimerEffects();
+            var background = new SessionBackgroundWork(
+                new RecordingWatchdog(timers, TimeProvider.System),
+                preview,
+                new AutoStopMonitor(timers, log, TimeProvider.System),
+                new StreamingTranscriptionController(new NoStreaming(), log, TimeProvider.System));
+            var executor = new DictationSessionExecutor(
+                controller,
+                new TracedBackgroundWork(background, capture, preview, effects),
+                new HeldFinalization(effects),
+                effects);
             var coordinator = new DictationSessionCoordinator(
                 executor,
                 () => new RecordingStartContext(new TargetWindowId(101), TextDeliveryOptions.Default));
@@ -345,14 +358,6 @@ public sealed class PreviewStartupDecouplingTests
             }
         }
 
-        private void Add(string effect)
-        {
-            lock (_lock)
-            {
-                _trace.Add(effect);
-            }
-        }
-
         public bool HasPendingRecovery => false;
 
         public bool EscapeRecoveryEnabled { get; init; }
@@ -368,36 +373,18 @@ public sealed class PreviewStartupDecouplingTests
 
         public void ShowDiskLow() => Add("ShowDiskLow");
 
-        public Task StopRecordingWatchdogAsync()
-        {
-            Add("StopRecordingWatchdog");
-            return Task.CompletedTask;
-        }
-
         public void RecordTransition(SessionTransitionResult result) => Add($"RecordTransition:{result.Kind}");
 
-        public async Task OnRecordingStartedAsync(DictationSessionId sessionId)
-        {
-            Add("OnRecordingStarted");
-            await preview.StartAsync(sessionId).ConfigureAwait(false);
-            Add("OnRecordingStarted:returned");
-        }
+        public RecordingBackgroundSettings RecordingSettings() =>
+            new(TimeSpan.FromMinutes(5), () => DictationPreferences.Default);
 
-        public async Task FinalizeAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly, SystemLifecycleTransition? preserving = null)
-        {
-            Add(capture.IsCapturing ? "Capture still open" : "Capture stopped");
-            await preview.StopAsync().ConfigureAwait(false);
-            Add("Preview stopped");
-            if (preserving is { } transition)
-            {
-                Add($"ShowInterruptionPreserving:{transition}");
-            }
+        public void ShowInterruptionPreserving(SystemLifecycleTransition transition) => Add($"ShowInterruptionPreserving:{transition}");
 
-            Add($"Transcribe:recoveryOnly={recoveryOnly}");
-            if (HoldTranscription)
+        public void Add(string effect)
+        {
+            lock (_lock)
             {
-                TranscriptionEntered.TrySetResult();
-                await AllowTranscriptionExit.Task.ConfigureAwait(false);
+                _trace.Add(effect);
             }
         }
 
@@ -406,6 +393,10 @@ public sealed class PreviewStartupDecouplingTests
         public TaskCompletionSource TranscriptionEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource AllowTranscriptionExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public FakeAudioCapture Capture => capture;
+
+        public LivePreviewController Preview => preview;
 
         public int TearDowns { get; private set; }
 
@@ -416,18 +407,9 @@ public sealed class PreviewStartupDecouplingTests
             return Task.CompletedTask;
         }
 
-        public async Task StopBackgroundWorkAsync()
-        {
-            Add(capture.IsCapturing ? "Capture still open" : "Capture cancelled");
-            await preview.StopAsync().ConfigureAwait(false);
-            Add("Preview stopped");
-        }
-
         public void ShowTransitionStatus(SessionTransitionResult result) => Add($"ShowTransitionStatus:{result.Kind}");
 
         public void RecordSessionFailure() => Add("RecordSessionFailure");
-
-        public void ReleaseProcessingDeadline() => Add("ReleaseProcessingDeadline");
 
         public Task RecoverFailedSessionAsync(AppError failure, SessionFailureKind kind)
         {
@@ -448,6 +430,61 @@ public sealed class PreviewStartupDecouplingTests
         public void RecordRecordingTimedOut(AppError failure) => Add($"RecordRecordingTimedOut:{failure.Code}");
 
         public void ShowRecordingTimedOut() => Add("ShowRecordingTimedOut");
+    }
+
+    /// <summary>The finalisation, reduced to the order it was asked in: after the capture and the preview have stopped, and held when a test says so.</summary>
+    private sealed class HeldFinalization(ShellAdapter adapter) : ISessionFinalization
+    {
+        public async Task<FinalizationReport> RunAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly, CancellationToken cancellationToken)
+        {
+            Assert.False(adapter.Preview.IsRunning, "the finalisation is asked for only after the preview has stopped");
+            Assert.False(adapter.Capture.IsCapturing, "the finalisation is asked for only after the capture has stopped");
+            adapter.Add($"Transcribe:recoveryOnly={recoveryOnly}");
+            if (adapter.HoldTranscription)
+            {
+                adapter.TranscriptionEntered.TrySetResult();
+                await adapter.AllowTranscriptionExit.Task.ConfigureAwait(false);
+            }
+
+            return new FinalizationReport(FinalizationOutcome.Held);
+        }
+    }
+
+    /// <summary>Forwards to the real ordering owner and writes down what the capture and the preview were doing when it was asked.</summary>
+    private sealed class TracedBackgroundWork(SessionBackgroundWork inner, FakeAudioCapture capture, LivePreviewController preview, ShellAdapter trace) : ISessionBackgroundWork
+    {
+        public Task StartAsync(DictationSessionId sessionId, RecordingBackgroundSettings settings) => inner.StartAsync(sessionId, settings);
+
+        public async Task StopAsync()
+        {
+            trace.Add(capture.IsCapturing ? "Capture still open" : capture.Cancelled.Task.IsCompleted ? "Capture cancelled" : "Capture stopped");
+            await inner.StopAsync();
+            trace.Add(preview.IsRunning ? "Preview still running" : "Preview stopped");
+        }
+
+        public Task StopWatchdogAsync() => inner.StopWatchdogAsync();
+    }
+
+    private sealed class IdleTimerEffects : IRecordingTimerEffects
+    {
+        public IAudioSnapshotSource? Audio => null;
+
+        public void Post(PushToTalkSignal signal)
+        {
+        }
+
+        public void RecordingTimedOut(DictationSessionId sessionId)
+        {
+        }
+    }
+
+    private sealed class NoStreaming : IStreamingTranscriptionEffects
+    {
+        public bool LivePreviewEnabled => true;
+
+        public ITranscriptionEngine? Engine => null;
+
+        public IAudioSnapshotSource? Audio => null;
     }
 
     private sealed class PreviewEffects(FakeEngine engine, FakeAudioCapture capture, PushToTalkSessionController controller) : ILivePreviewEffects
