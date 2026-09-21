@@ -457,6 +457,12 @@ public sealed class PreviewStartupDecouplingTests
             trace.Add(preview.IsRunning ? "Preview still running" : "Preview stopped");
         }
 
+        public async Task<BackgroundStopReport> StopAsync(TimeSpan deadline)
+        {
+            await StopAsync();
+            return BackgroundStopReport.AllCompleted;
+        }
+
         public Task StopWatchdogAsync() => inner.StopWatchdogAsync();
     }
 
@@ -483,7 +489,7 @@ public sealed class PreviewStartupDecouplingTests
     {
         public IAudioSnapshotSource? Audio => null;
 
-        public void Post(PushToTalkSignal signal)
+        public void Post(PushToTalkSignal signal, DictationSessionId forSession)
         {
         }
 
@@ -513,7 +519,7 @@ public sealed class PreviewStartupDecouplingTests
 
         public DictationSessionId? RecordingSessionId => controller.CurrentSession?.Id;
 
-        public void ShowPreview(DictationSessionId sessionId, string text)
+        public void ShowPreview(LivePreviewFrame frame)
         {
         }
 

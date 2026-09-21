@@ -754,19 +754,19 @@ public sealed partial class DesignSystemTokenTests
         // the hook's handler in the shell hands a key to that same queue. Any link alone could be
         // rewired to a parallel finish; all three are checked.
         Assert.Contains(
-            "Post(PushToTalkSignal.Released)",
+            "Post(PushToTalkSignal.Released, sessionId)",
             DeclarationTextOf(timers, "RunAsync"),
             StringComparison.Ordinal);
         Assert.Contains(
-            "queue.HandAsync(signal)",
+            "queue.HandAsync(signal, forSession)",
             DeclarationTextOf(effects, "Post"),
             StringComparison.Ordinal);
         Assert.Contains(
-            "coordinator.SubmitAsync(signal)",
+            "coordinator.SubmitAsync(signal, forSession)",
             DeclarationTextOf(composition, "HandAsync"),
             StringComparison.Ordinal);
         Assert.Contains(
-            "_queue.HandAsync(signal)",
+            "_queue.HandAsync(signal, forSession: null)",
             DeclarationTextOf(composition, "SubmitAsync"),
             StringComparison.Ordinal);
         Assert.Contains(

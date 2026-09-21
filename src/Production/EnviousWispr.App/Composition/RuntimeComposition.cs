@@ -20,7 +20,8 @@ namespace EnviousWispr.App.Composition;
 /// </remarks>
 public interface IRuntimeView
 {
-    void ShowPreview(string? text);
+    /// <summary>A frame for the preview screen, or null to clear it. The frame's <see cref="LivePreviewFrame.IsCurrent"/> is asked at the draw.</summary>
+    void ShowPreview(LivePreviewFrame? frame);
 
     void ShowRecoveredText(RecoveryTextLoadResult result);
 
@@ -79,7 +80,8 @@ internal sealed class SessionQueue(RuntimeShell shell, IAppLogger logger)
     /// Content-free, like every line in this log. Refused once the shell is leaving, as the shell's
     /// handler always refused it.
     /// </remarks>
-    public async Task HandAsync(PushToTalkSignal signal)
+    /// <param name="forSession">For a signal a loop posted on a recording's behalf - the auto-stop's release - that recording; the queue ignores the signal if it has ended by the time it runs. Null for a key.</param>
+    public async Task HandAsync(PushToTalkSignal signal, DictationSessionId? forSession)
     {
         if (shell.Leaving() || shell.Coordinator() is not { } coordinator)
         {
@@ -88,7 +90,7 @@ internal sealed class SessionQueue(RuntimeShell shell, IAppLogger logger)
 
         try
         {
-            var result = await coordinator.SubmitAsync(signal).ConfigureAwait(false);
+            var result = await coordinator.SubmitAsync(signal, forSession).ConfigureAwait(false);
             if (result.WasQueued)
             {
                 logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.DictationSignalQueued));
@@ -152,7 +154,10 @@ public sealed class SessionRuntime
     public SessionBackgroundWork Background() => new(Watchdog, Preview, AutoStop, Streaming);
 
     /// <summary>A key's signal, on the same queue the timers use.</summary>
-    public Task SubmitAsync(PushToTalkSignal signal) => _queue.HandAsync(signal);
+    public Task SubmitAsync(PushToTalkSignal signal) => _queue.HandAsync(signal, forSession: null);
+
+    /// <summary>The queue itself, for a test that drives the timers' route with a recording's name on the signal.</summary>
+    internal SessionQueue Queue => _queue;
 }
 
 /// <summary>Joins the long-lived session owners the way the shell always built them, without the shell.</summary>

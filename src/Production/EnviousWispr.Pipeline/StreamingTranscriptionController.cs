@@ -1,5 +1,6 @@
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Diagnostics;
+using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Dictation;
 
 namespace EnviousWispr.Pipeline;
@@ -82,6 +83,20 @@ public sealed class StreamingTranscriptionController
     /// <summary>Forgets the last take and, unless streaming stands down, starts committing this one.</summary>
     public void Start(DictationSessionId sessionId)
     {
+        // REFUSED WHILE THE LAST LOOP IS STILL OWNED. A loop a bounded stop left inside the engine
+        // still holds the accumulator and would append its late segment to the next recording's;
+        // that recording runs without a head start, and the next stop joins what is left.
+        if (_loop is not null)
+        {
+            _logger.Write(new AppLogEntry(
+                _clock.GetUtcNow(),
+                AppEventCode.StreamingAbandoned,
+                AppFailureCategory.RuntimeWorker,
+                ErrorCode: AppErrorCode.RuntimeResourceBusy));
+            _usable = false;
+            return;
+        }
+
         _streamed.Clear();
         _streamedThroughSample = 0;
         _usable = false;
@@ -186,31 +201,32 @@ public sealed class StreamingTranscriptionController
         }
     }
 
-    /// <summary>Ends the loop and waits for it; what it committed stays usable.</summary>
-    public async Task StopAsync()
+    /// <summary>Ends the loop and waits for it, however long that takes; what it committed stays usable.</summary>
+    public Task<StopOutcome> StopAsync() => StopAsync(deadline: null);
+
+    /// <summary>Ends the loop and waits up to the deadline; a loop still running past it stays owned.</summary>
+    public async Task<StopOutcome> StopAsync(TimeSpan? deadline)
     {
         var cancellation = _cancellation;
         var loop = _loop;
-        _cancellation = null;
-        _loop = null;
         if (cancellation is null)
         {
-            return;
+            return StopOutcome.Completed;
         }
 
         await cancellation.CancelAsync().ConfigureAwait(false);
-        if (loop is not null)
+        if (loop is not null &&
+            await BoundedJoin.JoinAsync(loop, deadline, _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
         {
-            try
-            {
-                await loop.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-            }
+            // STILL RUNNING, STILL OWNED: the loop is inside the engine with a token source it still
+            // reads; both stay in their fields for the next stop to join.
+            return StopOutcome.StillRunning;
         }
 
+        _cancellation = null;
+        _loop = null;
         cancellation.Dispose();
+        return StopOutcome.Completed;
     }
 
     /// <summary>

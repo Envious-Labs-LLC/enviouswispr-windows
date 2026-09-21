@@ -15,7 +15,7 @@ internal sealed class RecordingTimerEffects(RuntimeShell shell, SessionQueue que
 {
     public IAudioSnapshotSource? Audio => shell.Audio();
 
-    public void Post(PushToTalkSignal signal) => _ = queue.HandAsync(signal);
+    public void Post(PushToTalkSignal signal, DictationSessionId forSession) => _ = queue.HandAsync(signal, forSession);
 
     public void RecordingTimedOut(DictationSessionId sessionId) => queue.TimeOut(sessionId);
 }
@@ -43,9 +43,9 @@ internal sealed class LivePreviewEffects(RuntimeShell shell) : ILivePreviewEffec
 
     public DictationSessionId? RecordingSessionId => shell.RecordingSessionId();
 
-    public void ShowPreview(DictationSessionId sessionId, string text) => shell.View.ShowPreview(text);
+    public void ShowPreview(LivePreviewFrame frame) => shell.View.ShowPreview(frame);
 
-    public void ClearPreview() => shell.View.ShowPreview(text: null);
+    public void ClearPreview() => shell.View.ShowPreview(frame: null);
 }
 
 /// <summary>What the shell shows when persistence changes what the person should see.</summary>

@@ -283,7 +283,7 @@ public sealed class SessionBackgroundWorkTests
             }
         }
 
-        public void Post(PushToTalkSignal signal)
+        public void Post(PushToTalkSignal signal, DictationSessionId forSession)
         {
         }
 
@@ -311,7 +311,7 @@ public sealed class SessionBackgroundWorkTests
 
         public DictationSessionId? RecordingSessionId => null;
 
-        public void ShowPreview(DictationSessionId sessionId, string text)
+        public void ShowPreview(LivePreviewFrame frame)
         {
         }
 

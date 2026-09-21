@@ -95,6 +95,9 @@ internal static class Deterministic
         /// <summary>Completes once at least <paramref name="count"/> timers have been registered.</summary>
         public Task WhenRegistered(int count) => _registered.WhenAtLeast(count);
 
+        /// <summary>How many timers have been registered so far, for a wait that means "one more than now".</summary>
+        public int Registered => _registered.Count;
+
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
 
         public override long GetTimestamp()
