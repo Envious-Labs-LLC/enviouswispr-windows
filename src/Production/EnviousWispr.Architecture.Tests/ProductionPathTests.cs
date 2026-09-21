@@ -131,6 +131,79 @@ public sealed class ProductionPathTests
     }
 
     [Fact]
+    public async Task AdmissionUsesInjectedResourceProbe()
+    {
+        // THE MACHINE THE SESSION ASKS IS THE ONE IT WAS COMPOSED WITH (plan-2 step 15). The shell
+        // constructs the Windows probe and hands it in as ISystemResourceProbe; the production
+        // executor asks that probe, and only that probe, at each press. A machine short of memory
+        // refuses the recording - the microphone is never opened, the pressure is logged with its
+        // code, the person is told - and a machine short of disk lets the recording start but
+        // stops the recovery copy. A composition that reached for a probe of its own would answer
+        // the healthy machine here and open the microphone.
+        var starved = new MachineOf(new SystemResourceSnapshot(
+            AvailableDiskBytes: 10L * 1024 * 1024 * 1024,
+            AvailablePhysicalMemoryBytes: SystemResourceAdmissionPolicy.MinimumDictationMemoryBytes - 1,
+            MemoryLoadPercent: 97));
+        var world = ComposedSessionWorld.Create("hello world", clock: null, new FakeRunState(), Guid.NewGuid(), resources: starved);
+
+        var press = await world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed).WaitAsync(Patience);
+
+        Assert.Equal(SessionCommandDisposition.Applied, press.Disposition);
+        Assert.Equal(1, starved.Probes);
+        Assert.Null(world.Controller.CurrentSession);
+        Assert.False(world.Capture.IsCapturing);
+        var pressure = Assert.Single(world.Log.Entries, entry => entry.Event == AppEventCode.ResourcePressureDetected);
+        Assert.Equal(AppErrorCode.LowMemory, pressure.ErrorCode);
+        Assert.Contains(world.View.Notices, notice => notice.Title == "Windows memory is critically low" && notice.IsError);
+
+        var cramped = new MachineOf(new SystemResourceSnapshot(
+            AvailableDiskBytes: SystemResourceAdmissionPolicy.MinimumRecoveryDiskBytes - 1,
+            AvailablePhysicalMemoryBytes: 8UL * 1024 * 1024 * 1024,
+            MemoryLoadPercent: 40));
+        var lowDisk = ComposedSessionWorld.Create("hello world", clock: null, new FakeRunState(), Guid.NewGuid(), resources: cramped);
+
+        await lowDisk.PressAsync();
+
+        Assert.Equal(1, cramped.Probes);
+        Assert.True(lowDisk.Capture.IsCapturing);
+        Assert.False(lowDisk.Persistence.CanPersistRecovery, "a machine short of disk records but does not write the recovery copy");
+        Assert.Contains(lowDisk.View.Notices, notice => notice.Title == "Disk space is critically low");
+        Assert.Equal(AppErrorCode.LowDiskSpace, Assert.Single(lowDisk.Log.Entries, entry => entry.Event == AppEventCode.ResourcePressureDetected).ErrorCode);
+    }
+
+    [Fact]
+    public void TheShellHoldsTheProbeAsTheSeamAndTheDecorativeContractIsGone()
+    {
+        // THE FIELD IS THE CONTRACT, THE CONSTRUCTION IS CONCRETE: App composes WindowsSystemResourceProbe
+        // and keeps it as ISystemResourceProbe, which is all the session takes. And the interface
+        // nobody implemented or consumed - IDeterministicTextProcessor - is gone from the product.
+        var production = Path.Combine(FindRepositoryRoot(), "src", "Production");
+        var app = File.ReadAllText(Path.Combine(production, "EnviousWispr.App", "App.xaml.cs"));
+        Assert.Contains("private readonly ISystemResourceProbe _resourceProbe;", app, StringComparison.Ordinal);
+        Assert.Contains("_resourceProbe = new WindowsSystemResourceProbe(", app, StringComparison.Ordinal);
+        Assert.DoesNotContain("private readonly WindowsSystemResourceProbe", app, StringComparison.Ordinal);
+
+        var mentions = Directory.EnumerateFiles(production, "*.cs", SearchOption.AllDirectories)
+            .Where(file => !file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal) && !file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Where(file => File.ReadAllText(file).Contains("IDeterministicTextProcessor", StringComparison.Ordinal))
+            .Select(file => Path.GetRelativePath(production, file))
+            .ToArray();
+        Assert.Equal([Path.Combine("EnviousWispr.Architecture.Tests", "ProductionPathTests.cs")], mentions);
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "EnviousWispr.Windows.slnx")))
+        {
+            directory = directory.Parent;
+        }
+
+        Assert.NotNull(directory);
+        return directory.FullName;
+    }
+
+    [Fact]
     public async Task LockDuringPolishPreservesLastGoodText()
     {
         // THE LOCK ARRIVES WHILE THE POLISH IS RUNNING. The lock's cancel reaches the polish provider
