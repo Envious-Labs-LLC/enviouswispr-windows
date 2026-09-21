@@ -24,24 +24,27 @@ composed proofs read the capture's disposal; the native run reads the clean exit
 
 | Recorded | Build | Journey | Passed | Exited cleanly | Stray workers |
 | --- | --- | --- | --- | --- | --- |
-| 2026-09-21 | 0.19.0+8823407 (step 10 branch) | live-cable-parakeet | yes | yes | 0 |
-| 2026-09-21 | 0.19.0+8823407 (step 10 branch) | live-cable-whisper | yes | yes | 0 |
-| 2026-09-21 | 0.19.0+8823407 (step 10 branch) | synthetic-quick-tap-preview | yes | yes | 0 |
-| 2026-09-21 | 0.19.0+8823407 (step 10 branch) | escape-recovery | yes | yes | 0 |
+| 2026-09-21 | 0.19.0+d313251 (step 10 branch) | live-cable-parakeet | yes | yes | 0 |
+| 2026-09-21 | 0.19.0+d313251 (step 10 branch) | live-cable-whisper | yes | yes | 0 |
+| 2026-09-21 | 0.19.0+d313251 (step 10 branch) | synthetic-quick-tap-preview | yes | yes | 0 |
+| 2026-09-21 | 0.19.0+d313251 (step 10 branch) | escape-recovery | yes | yes | 0 |
 
 ## NativeDeliveryExercisesThreeRoutes
 
 The synthetic quick tap, delivered by the production adapter into the controlled target in each of its
-three modes. The log carries no route, so the harness reads the route from evidence: where the words
-landed relative to the field's own seed text (appended after it by the direct UI Automation value write;
-before it by a paste at a caret held at the start), or the log's refusal for a protected field with the
-words on the clipboard only.
+three modes. The log carries no route, so the harness reads the route from evidence: the window messages
+the target's field received (a paste reaches a Win32 edit as `WM_PASTE`; a UI Automation value write as
+`WM_SETTEXT`) together with where the words landed relative to the field's own seed text (appended after
+it by the direct write; before it by a paste at a caret held at the start), or the log's refusal for a
+protected field with the words on the clipboard only. The caret-start run is the positive control for
+the paste count and the edit run its negative: a build that pasted everywhere would fail the edit run on
+the message count.
 
 | Recorded | Build | Target mode | Route observed | Passed | Exited cleanly |
 | --- | --- | --- | --- | --- | --- |
-| 2026-09-21 | 0.19.0+8823407 (step 10 branch) | edit | UiAutomationValue | yes | yes |
-| 2026-09-21 | 0.19.0+8823407 (step 10 branch) | caret-start | ClipboardPaste | yes | yes |
-| 2026-09-21 | 0.19.0+8823407 (step 10 branch) | password | ClipboardOnly (`TextDeliveryRefused` / `DeliveryProtectedField`, field empty) | yes | yes |
+| 2026-09-21 | 0.19.0+d313251 (step 10 branch) | edit | UiAutomationValue (`WM_SETTEXT` seen, no `WM_PASTE`, seed first) | yes | yes |
+| 2026-09-21 | 0.19.0+d313251 (step 10 branch) | caret-start | ClipboardPaste (`WM_PASTE` seen, seed last) | yes | yes |
+| 2026-09-21 | 0.19.0+d313251 (step 10 branch) | password | ClipboardOnly (`TextDeliveryRefused` / `DeliveryProtectedField`, field empty) | yes | yes |
 
 ## Reproducing
 
