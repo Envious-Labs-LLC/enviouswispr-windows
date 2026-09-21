@@ -209,14 +209,17 @@ public sealed class WindowsTextDeliverySafetyTests
     /// Whether the node executes inside the boundary: its nearest enclosing function is either a
     /// synchronous lambda that is the argument of an invocation of the adapter's own Automation
     /// method, or the body of an exempt helper itself. Nothing is inherited across a nested lambda
-    /// or a local function - they may run later, outside the boundary's handler - and an async
-    /// lambda resumes outside it. An access in the argument expression itself -
+    /// or a local function - they may run later, outside the boundary's handler - nor across a query
+    /// expression, whose clauses run when it is enumerated, and an async lambda resumes outside it. An access in the argument expression itself -
     /// `Automation(valuePattern.Current.Value.ToString)` - runs before the call and is outside.
     /// </summary>
     private static bool ExecutesInsideTheBoundary(SyntaxNode node, SemanticModel model, string[] exemptHelpers)
     {
+        // A QUERY EXPRESSION IS A DEFERRED CALLBACK WITHOUT A LAMBDA TO SEE: its clauses run when
+        // the query is enumerated, after the boundary has returned, so it stops the search like a
+        // nested lambda does.
         var enclosing = node.Ancestors().FirstOrDefault(ancestor =>
-            ancestor is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax or MethodDeclarationSyntax);
+            ancestor is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax or MethodDeclarationSyntax or QueryExpressionSyntax);
         return enclosing switch
         {
             MethodDeclarationSyntax method => exemptHelpers.Contains(method.Identifier.Text, StringComparer.Ordinal),
