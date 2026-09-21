@@ -826,6 +826,35 @@ public sealed partial class DesignSystemTokenTests
         Assert.DoesNotContain(
             handler.DescendantNodes().OfType<MemberAccessExpressionSyntax>(),
             access => access.Name.Identifier.ValueText is "CaptureContextAsync" or "TryReadSelectionWithCopyAsync");
+
+        // THE DIALOG IS QUEUED THROUGH ONE METHOD, AND THAT METHOD READS THE CLOSURE WHEN IT RUNS:
+        // the borrow never enqueues to the window itself, and the one place that does checks Leaving
+        // - the flags or the presentation's durable closure - first inside the queued callback, as
+        // does the show it calls.
+        Assert.DoesNotContain(
+            underLease.DescendantNodes().OfType<MemberAccessExpressionSyntax>(),
+            access => access.Name.Identifier.ValueText == "TryEnqueue");
+        Assert.Equal(2, underLease.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Count(call => call.Expression.ToString() == "OpenQuickAddUnlessLeaving"));
+        foreach (var name in new[] { "OpenQuickAddUnlessLeaving", "ShowMainWindow" })
+        {
+            var queued = methods.Single(method => method.Identifier.ValueText == name && method.ParameterList.Parameters.Count > 0)
+                .DescendantNodes().OfType<InvocationExpressionSyntax>()
+                .Single(call => call.Expression.ToString().EndsWith("TryEnqueue", StringComparison.Ordinal));
+            var callback = (LambdaExpressionSyntax)queued.ArgumentList.Arguments.Single().Expression;
+            var firstStatement = Assert.IsType<IfStatementSyntax>(((BlockSyntax)callback.Body).Statements.First());
+            Assert.Contains("Leaving", firstStatement.Condition.ToString(), StringComparison.Ordinal);
+            Assert.IsType<ReturnStatementSyntax>(((BlockSyntax)firstStatement.Statement).Statements.Single());
+        }
+
+        // THE OTHER PROVIDER BORROWER - the mishearing suggestion - is admitted the same way and
+        // hands the lease's token to the provider.
+        var suggestion = methods.Single(method => method.Identifier.ValueText == "OnMishearingSuggestionsRequested");
+        Assert.Contains("presentation.TryEnter(out var lease)", suggestion.ToString(), StringComparison.Ordinal);
+        var suggest = suggestion.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Single(call => call.Expression.ToString() == "advisor.SuggestAsync");
+        Assert.Contains("lease.Closing", suggest.ArgumentList.Arguments.Select(argument => argument.ToString()));
+        Assert.NotNull(suggest.Ancestors().OfType<UsingStatementSyntax>().SingleOrDefault(statement => statement.Expression?.ToString() == "lease"));
     }
 
     [Fact]

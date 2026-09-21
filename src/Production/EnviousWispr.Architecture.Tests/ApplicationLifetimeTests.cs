@@ -61,6 +61,38 @@ public sealed class ApplicationLifetimeTests
     }
 
     [Fact]
+    public async Task TheSessionIsNotAskedToShutDownBehindADrainThatDidNotFinish()
+    {
+        // A PRESENTATION OPERATION STILL INSIDE THE GATE MAY HOLD WHAT THE SESSION'S TEARDOWN
+        // DISPOSES - the Quick Add's read through the delivery adapter, which cancellation does not
+        // interrupt once the accessibility call is under way. The drain outlives the whole budget;
+        // the production coordinator is idle and could quiesce at once, and is still not asked to:
+        // no teardown, nothing of the session disposed, the drain named outstanding, the host ended.
+        var clock = new Deterministic.ManualClock();
+        var executor = new HeldExecutor();
+        await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
+        var world = World.Create(clock, coordinator);
+        world.Drain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var exit = world.Lifetime.ExitAsync();
+        await world.WhenJoined("presentation drain").WaitAsync(Patience);
+        clock.Advance(ApplicationLifetime.DefaultBudget);
+
+        var report = await exit.WaitAsync(Patience);
+        Assert.Equal(ExitOutcome.Unclean, report.Outcome);
+        Assert.Equal(["presentation drain"], report.Outstanding);
+        Assert.Null(report.Session);
+        Assert.Equal(0, executor.TearDowns);
+        Assert.True(report.Retained);
+        Assert.True(report.Escalated);
+        Assert.Equal(0, world.CompleteRunCalls);
+        Assert.Equal(["inputs", "warm-up", "heartbeat"], world.Ran);
+        Assert.Contains(AppEventCode.ApplicationShutdownUnclean, world.Log.Events);
+        Assert.Same(report, world.Terminator.Report);
+        world.Drain.SetResult();
+    }
+
+    [Fact]
     public async Task BlockedCleanupDoesNotDisposeActiveDependencies()
     {
         // THE SESSION'S SHUTDOWN IS THE PRODUCTION COORDINATOR'S, with a command that does not finish

@@ -32,14 +32,14 @@ public sealed record LifetimeStep(string Name, Func<Task> Run)
 /// runtime's endpoint is forgotten, the owned process is taken from its owner, a kill of it and its
 /// tree is issued if it has not exited, and its handle and job are disposed - all before this
 /// returns. What it does not do: observe the process's exit, or decide the finalisation's outcome.
-/// A polish in flight loses its connection; the provider retries a failed request once against an
-/// endpoint that is gone and then answers with its fallback, or its cancellation lands first through
-/// the exit policy - which of the two is the finaliser's, not this step's. The provider's own
-/// disposal, later, finds no process to stop. Nothing when no local runtime was started.
+/// A polish in flight loses its connection; what the provider does next - its one retry, which may
+/// find the runtime gone and try to start it again, its fallback answer, or the exit policy's
+/// cancellation landing first - is the finaliser's, not this step's, and the provider's own disposal
+/// later stops whatever it then owns. Nothing when no local runtime was started.
 /// </param>
 /// <param name="CancelProcessing">The shell's exit policy for a transcription in flight, made before the session is asked to shut down.</param>
 /// <param name="ReleaseInputs">The input sources, unsubscribed and disposed first so nothing new arrives.</param>
-/// <param name="ShutDownSession">The session's own shutdown under the budget it is handed (step 8); null when the shell owns no session.</param>
+/// <param name="ShutDownSession">The session's own shutdown under the budget it is handed (step 8); null when the shell owns no session. Asked for only behind a finished drain: a presentation operation still inside the gate may hold what the session's teardown disposes.</param>
 /// <param name="Quiesce">Work the shell started that must be over before anything it uses is disposed: the polish warm-up, the heartbeat.</param>
 /// <param name="DisposeSessionDependencies">What a session uses: run only behind a quiescent session and finished quiescence steps.</param>
 /// <param name="DisposeShell">The shell's own services, run only when nothing is outstanding. The single-instance lock is not among them: it is held to the process's end, so no other launch writes the record before this one has.</param>
@@ -282,9 +282,14 @@ public sealed class ApplicationLifetime
         }
 
         // THE SESSION SHUTS ITSELF DOWN under what is left; its report says whether anything still
-        // uses it. A shell without a session has nothing here.
+        // uses it. A shell without a session has nothing here. ONLY BEHIND A FINISHED DRAIN: a
+        // presentation operation still inside the gate when the drain's wait ran out may be holding
+        // what the session's teardown disposes - the Quick Add's read through the delivery adapter -
+        // and cancellation does not interrupt accessibility work already under way; so the session
+        // is not asked to shut down beside it, nothing of the session is disposed, and the exit
+        // escalates with the drain named outstanding.
         ShutdownReport? session = null;
-        if (_parts.ShutDownSession is { } shutDown)
+        if (_parts.ShutDownSession is { } shutDown && outstanding.Count == 0)
         {
             Volatile.Write(ref _current, "session shutdown");
             try

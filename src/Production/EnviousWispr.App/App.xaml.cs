@@ -57,6 +57,7 @@ public partial class App : Application, IAsyncDisposable
     private readonly RuntimeResourceArbiter _resourceArbiter = new();
     private readonly LivePreviewController _livePreview;
     private DictationSessionCoordinator? _sessionCoordinator;
+    private Task? _systemEndingNote;
     private readonly DeterministicTextPipeline _deterministicTextPipeline = new();
     private readonly SessionRuntime _runtime;
     private SingleInstanceLock? _singleInstanceLock;
@@ -555,15 +556,31 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        MishearingAdvice advice;
-        try
+        // ADMITTED LIKE A PRESENTER'S OPERATION: the request is inside the polish provider, which the
+        // exit disposes; the lease is what the drain joins before that, its token is what the exit
+        // cancels the request with, and a request refused because the drain has begun is not made.
+        if (_presentation is not { } presentation || !presentation.TryEnter(out var lease))
         {
-            advice = await advisor.SuggestAsync(term, existing).ConfigureAwait(true);
+            return;
         }
-        catch (Exception exception) when (
-            exception is not (StackOverflowException or OutOfMemoryException))
+
+        MishearingAdvice advice;
+        using (lease)
         {
-            advice = MishearingAdvice.None(MishearingAdviceStatus.Failed);
+            try
+            {
+                advice = await advisor.SuggestAsync(term, existing, lease.Closing).ConfigureAwait(true);
+            }
+            catch (Exception exception) when (
+                exception is not (StackOverflowException or OutOfMemoryException))
+            {
+                advice = MishearingAdvice.None(MishearingAdviceStatus.Failed);
+            }
+
+            if (lease.Closing.IsCancellationRequested)
+            {
+                return;
+            }
         }
 
         _window?.SetAliasSuggestions(term, advice);
@@ -712,7 +729,9 @@ public partial class App : Application, IAsyncDisposable
             // a deliberate restart is stored as an interruption, which is the same trace a crash
             // leaves. Fire and forget for the same reason: waiting on a disk write inside a shutdown
             // notification is how an app becomes the thing that delays somebody's shutdown. Ref: #93.
-            _ = _runStateStore.NoteSystemEndingAsync(endingRunId, DateTimeOffset.UtcNow);
+            // KEPT, NOT DROPPED: an exit that does run joins this write under Quiesce before the
+            // run-state store is closed, so the store is never disposed under it.
+            _systemEndingNote = _runStateStore.NoteSystemEndingAsync(endingRunId, DateTimeOffset.UtcNow);
         }
 
         // WINDOWS LOCKING MID-DICTATION IS A FACT ABOUT THAT DICTATION. Written before the recovery
@@ -944,7 +963,10 @@ public partial class App : Application, IAsyncDisposable
     {
         _window?.DispatcherQueue.TryEnqueue(() =>
         {
-            if (_window is null)
+            // NOT UNDER AN EXIT. The show is queued from several places - a tray click, a recovered
+            // dictation, the Quick Add - and runs later; a window brought forward while the shell is
+            // leaving is the one thing none of them means.
+            if (_window is null || Leaving)
             {
                 return;
             }
@@ -1084,6 +1106,25 @@ public partial class App : Application, IAsyncDisposable
                     catch (OperationCanceledException)
                     {
                         // The exit cancels an in-flight readiness probe; a cancelled probe is over.
+                    }
+                }
+            }),
+            // THE SYSTEM-ENDING NOTE WRITES TO THE RUN-STATE STORE, which the exit closes only once
+            // nothing that writes to it is outstanding; a note still writing is joined here, and one
+            // that outlives the budget keeps the store open and escalates like any other step.
+            new LifetimeStep("system ending note", async () =>
+            {
+                if (Interlocked.Exchange(ref _systemEndingNote, null) is { } note)
+                {
+                    try
+                    {
+                        await note.ConfigureAwait(true);
+                    }
+                    catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+                    {
+                        // A NOTE THAT FAILED IS A LOST NOTE, and the record then reads as an
+                        // interruption - the honest fallback for an ending Windows made. The exit
+                        // only needed the write to be over before the store closes.
                     }
                 }
             }),
@@ -1861,11 +1902,7 @@ public partial class App : Application, IAsyncDisposable
         var target = new WindowsForegroundTargetProvider().CaptureForegroundTarget();
         if (target is null || !target.Value.IsValid)
         {
-            _window?.DispatcherQueue.TryEnqueue(() =>
-            {
-                ShowMainWindow(openSettings: false);
-                _window?.OpenQuickAdd(null, "Select a word in another app, then press the Add-a-word shortcut again.");
-            });
+            OpenQuickAddUnlessLeaving(null, "Select a word in another app, then press the Add-a-word shortcut again.");
             return;
         }
 
@@ -1941,12 +1978,29 @@ public partial class App : Application, IAsyncDisposable
                 : string.IsNullOrWhiteSpace(selection)
                     ? AppEventCode.QuickAddSelectionEmpty
                     : AppEventCode.QuickAddPrepared));
+        OpenQuickAddUnlessLeaving(selection, message);
+    }
+
+    /// <summary>
+    /// The Quick Add dialog, queued to the window. CHECKED WHEN IT RUNS, NOT WHEN IT IS QUEUED: the
+    /// lease that admitted the capture ends when this method returns, and the queued callback runs
+    /// later; a drain that began in between is read off the presentation's own durable closure, so a
+    /// dialog does not open and the window is not brought forward under an exit.
+    /// </summary>
+    private void OpenQuickAddUnlessLeaving(string? selection, string? message) =>
         _window?.DispatcherQueue.TryEnqueue(() =>
         {
+            if (Leaving)
+            {
+                return;
+            }
+
             ShowMainWindow(openSettings: false);
             _window?.OpenQuickAdd(selection, message);
         });
-    }
+
+    /// <summary>Whether the exit has begun, as a queued callback should read it: the flags, or the presentation's closure.</summary>
+    private bool Leaving => _exitRequested || _disposed || _presentation is { Closing: true };
 
     private static bool TryCreatePublicFixtureAudioCapture(
         out PublicFixtureAudioCapture? capture)
