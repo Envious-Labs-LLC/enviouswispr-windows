@@ -519,7 +519,7 @@ public sealed class PreviewStartupDecouplingTests
 
         public DictationSessionId? RecordingSessionId => controller.CurrentSession?.Id;
 
-        public void ShowPreview(DictationSessionId sessionId, string text)
+        public void ShowPreview(LivePreviewFrame frame)
         {
         }
 

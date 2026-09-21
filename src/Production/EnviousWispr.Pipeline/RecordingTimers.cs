@@ -1,5 +1,6 @@
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Diagnostics;
+using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Settings;
@@ -55,7 +56,7 @@ public sealed class RecordingWatchdog : IAsyncDisposable
     }
 
     /// <summary>Whether a watch has been armed and not yet stopped.</summary>
-    public bool IsArmed => _watch is not null;
+    public bool IsArmed => _watch is { IsCompleted: false };
 
     public void Start(DictationSessionId sessionId, TimeSpan duration)
     {
@@ -94,12 +95,17 @@ public sealed class RecordingWatchdog : IAsyncDisposable
             return;
         }
 
-        // DONE BEFORE THE CALLBACK, NOT AFTER. The timeout is a command on the session's queue, and
-        // that command stops this watchdog; a stop reached from inside the callback would otherwise
-        // be joining the very flow it was called from. There is nothing after the callback to wait
-        // for, so the join is over here.
-        done.TrySetResult();
-        _effects.RecordingTimedOut(sessionId);
+        // THE CALLBACK IS THE LAST THING THE WATCH DOES, and the join covers it: the timeout it
+        // hands over is a command on the session's queue, submitted and not awaited, so the stop that
+        // command makes joins a watch that has already returned.
+        try
+        {
+            _effects.RecordingTimedOut(sessionId);
+        }
+        finally
+        {
+            done.TrySetResult();
+        }
     }
 
     /// <summary>Disarms the watch and waits for it, however long that takes.</summary>
@@ -194,6 +200,18 @@ public sealed class AutoStopMonitor : IAsyncDisposable
             return;
         }
 
+        // REFUSED WHILE THE LAST LOOP IS STILL OWNED: a loop a bounded stop left behind would post
+        // its release into this recording. The next stop joins what is left.
+        if (_loop is not null)
+        {
+            _logger.Write(new AppLogEntry(
+                _clock.GetUtcNow(),
+                AppEventCode.AutoStopTriggered,
+                AppFailureCategory.RuntimeWorker,
+                ErrorCode: AppErrorCode.RuntimeResourceBusy));
+            return;
+        }
+
         _cancellation = new CancellationTokenSource();
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _done = done;
@@ -252,12 +270,18 @@ public sealed class AutoStopMonitor : IAsyncDisposable
                     continue;
                 }
 
+                // NOT POSTED ONCE THE RECORDING IS ENDING. The decision above was made on a take that
+                // is over if a stop has been asked for meanwhile; a release posted now would be for
+                // the next recording.
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
                 _logger.Write(new AppLogEntry(_clock.GetUtcNow(), AppEventCode.AutoStopTriggered));
-                // DONE BEFORE THE POST, AND THEN RETURN. Awaiting the post would hold this loop open
-                // across the whole transcription; and the release it posts is a command that stops
-                // this monitor, so a stop reached from inside the post must not be joining the flow
-                // it was called from. There is nothing after the post to wait for.
-                done.TrySetResult();
+                // Post and return. Awaiting the post would hold this loop open across the whole
+                // transcription; the release it posts is a command on the session's queue, submitted
+                // and not awaited, so the stop that command makes joins a loop that has returned.
                 _effects.Post(PushToTalkSignal.Released);
                 return;
             }

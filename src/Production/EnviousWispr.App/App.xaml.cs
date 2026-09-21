@@ -2149,8 +2149,16 @@ public partial class App : Application, IAsyncDisposable
     /// <summary>The window as the long-lived session owners see it: each sink one dispatch to the window, and nothing decided here.</summary>
     private sealed class WindowRuntimeView(App app) : IRuntimeView
     {
-        public void ShowPreview(string? text) =>
-            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetLivePreview(text));
+        public void ShowPreview(LivePreviewFrame? frame) =>
+            app._window?.DispatcherQueue.TryEnqueue(() =>
+            {
+                // ASKED AT THE DRAW. A frame queued before the preview closed is drawn after; the
+                // frame knows its screen is gone and the clear that closed it is left standing.
+                if (frame is null || frame.IsCurrent())
+                {
+                    app._window?.SetLivePreview(frame?.Text);
+                }
+            });
 
         public void ShowRecoveredText(RecoveryTextLoadResult result) =>
             app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetRecoveredText(result));

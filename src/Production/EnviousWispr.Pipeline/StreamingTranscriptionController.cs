@@ -1,5 +1,6 @@
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Diagnostics;
+using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Dictation;
 
 namespace EnviousWispr.Pipeline;
@@ -82,6 +83,20 @@ public sealed class StreamingTranscriptionController
     /// <summary>Forgets the last take and, unless streaming stands down, starts committing this one.</summary>
     public void Start(DictationSessionId sessionId)
     {
+        // REFUSED WHILE THE LAST LOOP IS STILL OWNED. A loop a bounded stop left inside the engine
+        // still holds the accumulator and would append its late segment to the next recording's;
+        // that recording runs without a head start, and the next stop joins what is left.
+        if (_loop is not null)
+        {
+            _logger.Write(new AppLogEntry(
+                _clock.GetUtcNow(),
+                AppEventCode.StreamingAbandoned,
+                AppFailureCategory.RuntimeWorker,
+                ErrorCode: AppErrorCode.RuntimeResourceBusy));
+            _usable = false;
+            return;
+        }
+
         _streamed.Clear();
         _streamedThroughSample = 0;
         _usable = false;

@@ -1,3 +1,5 @@
+using EnviousWispr.Core.Dictation;
+
 namespace EnviousWispr.Pipeline;
 
 /// <summary>What a stop established: the work is finished, or it is still running past the deadline and stays owned.</summary>
@@ -26,6 +28,52 @@ public sealed record BackgroundStopReport(StopOutcome Streaming, StopOutcome Aut
     /// <summary>Whether every owner finished.</summary>
     public bool Completed =>
         Streaming == StopOutcome.Completed && AutoStop == StopOutcome.Completed && Preview == StopOutcome.Completed;
+}
+
+/// <summary>Words for the preview screen, tagged with the dictation they belong to and whether their screen is still open.</summary>
+/// <param name="IsCurrent">Asked at the draw: false once the preview that produced the frame has been closed.</param>
+public sealed record LivePreviewFrame(DictationSessionId SessionId, string Text, Func<bool> IsCurrent);
+
+/// <summary>What is left of a stop's deadline, phase by phase; null when the stop has no deadline.</summary>
+internal sealed class StopBudget(TimeSpan? deadline, TimeProvider clock)
+{
+    private readonly long _started = clock.GetTimestamp();
+
+    /// <summary>The time left, floored at one millisecond so a join past the deadline still observes rather than skips; null without a deadline.</summary>
+    public TimeSpan? Remaining
+    {
+        get
+        {
+            if (deadline is not { } limit)
+            {
+                return null;
+            }
+
+            var remaining = limit - clock.GetElapsedTime(_started);
+            return remaining > TimeSpan.Zero ? remaining : TimeSpan.FromMilliseconds(1);
+        }
+    }
+
+    /// <summary>Takes the gate inside what is left of the budget; false when the budget ran out first.</summary>
+    public async Task<bool> TryEnterAsync(SemaphoreSlim gate)
+    {
+        if (Remaining is not { } remaining)
+        {
+            await gate.WaitAsync().ConfigureAwait(false);
+            return true;
+        }
+
+        using var patience = new CancellationTokenSource(remaining, clock);
+        try
+        {
+            await gate.WaitAsync(patience.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+    }
 }
 
 /// <summary>Joins a loop that has been asked to stop: without limit, or for as long as a deadline allows.</summary>

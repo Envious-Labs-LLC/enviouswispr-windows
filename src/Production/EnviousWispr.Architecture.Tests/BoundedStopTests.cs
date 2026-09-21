@@ -89,7 +89,22 @@ public sealed class BoundedStopTests
         Assert.Equal(0, world.PreviewEngine.Stops);
         Assert.True(world.PreviewEngine.Token!.Value.IsCancellationRequested, "the loop's token was cancelled");
         Assert.True(world.Engine.Token!.Value.IsCancellationRequested);
+        // A TOKEN WHOSE SOURCE WAS DISPOSED THROWS HERE; these do not, so the sources are still owned.
+        _ = world.PreviewEngine.Token.Value.WaitHandle;
+        _ = world.Engine.Token.Value.WaitHandle;
         Assert.Contains(null, world.View.Previews);
+
+        // A NEW RECORDING WHILE THE OLD LOOPS ARE STILL OWNED gets no preview and no head start: the
+        // starts are refused rather than run beside the loops that still hold the engine and the
+        // accumulator.
+        var next = DictationSessionId.Create();
+        world.Session = next;
+        world.PreviewEnabled = true;
+        await world.Runtime.Preview.StartAsync(next);
+        world.PreviewEnabled = false;
+        world.Runtime.Streaming.Start(next);
+        Assert.Equal(0, world.PreviewEngine.Starts - 1);
+        Assert.Contains(AppEventCode.StreamingAbandoned, world.Log.Events);
 
         world.PreviewEngine.ReleasePreviews();
         world.Engine.Release();
@@ -132,18 +147,109 @@ public sealed class BoundedStopTests
     }
 
     [Fact]
+    public async Task AFrameQueuedForTheWindowBeforeTheClosureIsNotDrawnAfterIt()
+    {
+        // THE WINDOW DRAWS LATER THAN IT IS TOLD. A frame handed over while the preview was open sits
+        // in the window's queue; the preview closes; the frame is drawn after. It knows its screen
+        // is gone and draws nothing, and the clear that closed the screen stands.
+        var world = World.Create();
+        world.View.DeferDraws = true;
+        var session = DictationSessionId.Create();
+        world.Session = session;
+        await world.Runtime.Preview.StartAsync(session);
+        await Eventually(() => world.View.Queued >= 1, "a frame to be queued for the window");
+
+        Assert.Equal(StopOutcome.Completed, await world.Runtime.Preview.StopAsync(Patience));
+        world.View.Flush();
+
+        Assert.DoesNotContain("preview words", world.View.Previews);
+        Assert.Contains(null, world.View.Previews);
+        Assert.Null(world.View.Previews[^1]);
+    }
+
+    [Fact]
+    public async Task AnEngineStopRefusedOrHeldLeavesTheStopIncompleteAndIsJoinedNotRepeated()
+    {
+        // THE LOOP IS OVER BUT THE ENGINE IS NOT. A stop the engine refuses - its worker still there -
+        // is reported still running with the preview still owned; the next stop asks again and
+        // completes once the engine agrees. A stop the engine holds past the deadline is kept as a
+        // task and joined by the next stop, not issued a second time beside itself.
+        var refused = World.Create();
+        refused.PreviewEngine.RefuseStop = true;
+        var session = DictationSessionId.Create();
+        refused.Session = session;
+        await refused.Runtime.Preview.StartAsync(session);
+        await refused.PreviewEngine.PreviewEntered.Task.WaitAsync(Patience);
+
+        Assert.Equal(StopOutcome.StillRunning, await refused.Runtime.Preview.StopAsync(Patience));
+        Assert.True(refused.Runtime.Preview.IsRunning, "an engine whose worker did not go keeps the preview owned");
+        Assert.Equal(1, refused.PreviewEngine.Stops);
+        await refused.Runtime.Preview.StartAsync(DictationSessionId.Create());
+        Assert.Equal(1, refused.PreviewEngine.Starts);
+        refused.PreviewEngine.RefuseStop = false;
+        Assert.Equal(StopOutcome.Completed, await refused.Runtime.Preview.StopAsync(Patience));
+        Assert.Equal(2, refused.PreviewEngine.Stops);
+        Assert.False(refused.Runtime.Preview.IsRunning);
+
+        var clock = new Deterministic.ManualClock();
+        var held = World.Create(clock);
+        held.PreviewEngine.HoldStop = true;
+        held.Session = session;
+        await held.Runtime.Preview.StartAsync(session);
+        await held.PreviewEngine.PreviewEntered.Task.WaitAsync(Patience);
+        var registered = clock.Registered;
+        var first = held.Runtime.Preview.StopAsync(TimeSpan.FromSeconds(1));
+        await held.PreviewEngine.StopEntered.Task.WaitAsync(Patience);
+        await clock.WhenRegistered(registered + 1).WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(StopOutcome.StillRunning, await first.WaitAsync(Patience));
+        Assert.True(held.Runtime.Preview.IsRunning);
+        var second = held.Runtime.Preview.StopAsync(Patience);
+        await Task.Delay(50);
+        Assert.False(second.IsCompleted, "the second stop joins the engine's stop still in flight");
+        held.PreviewEngine.AllowStopExit.SetResult();
+        Assert.Equal(StopOutcome.Completed, await second.WaitAsync(Patience));
+        Assert.Equal(1, held.PreviewEngine.Stops);
+        Assert.False(held.Runtime.Preview.IsRunning);
+    }
+
+    [Fact]
+    public async Task AStopQueuedBehindAHeldStopIsBoundedToo()
+    {
+        // TWO STOPS, ONE GATE. The first is inside a held engine stop; the second waits for the gate
+        // and must not wait past its own deadline to do so.
+        var clock = new Deterministic.ManualClock();
+        var world = World.Create(clock);
+        world.PreviewEngine.HoldStop = true;
+        var session = DictationSessionId.Create();
+        world.Session = session;
+        await world.Runtime.Preview.StartAsync(session);
+        await world.PreviewEngine.PreviewEntered.Task.WaitAsync(Patience);
+        var first = world.Runtime.Preview.StopAsync(Patience);
+        await world.PreviewEngine.StopEntered.Task.WaitAsync(Patience);
+
+        var registered = clock.Registered;
+        var second = world.Runtime.Preview.StopAsync(TimeSpan.FromSeconds(1));
+        await clock.WhenRegistered(registered + 1).WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(StopOutcome.StillRunning, await second.WaitAsync(Patience));
+        Assert.False(first.IsCompleted);
+        world.PreviewEngine.AllowStopExit.SetResult();
+        Assert.Equal(StopOutcome.Completed, await first.WaitAsync(Patience));
+    }
+
+    [Fact]
     public async Task TimerStopDoesNotAwaitItsOwnQueuedCommand()
     {
-        // THE COMMAND A TIMER POSTS IS THE COMMAND THAT STOPS THE TIMER. If that command ran inside
-        // the post, the stop would be joining the flow it was called from; the timers finish their
-        // join before they post, so a stop reached from inside the post completes.
+        // THE COMMAND A TIMER POSTS IS QUEUED, NOT RUN INSIDE THE POST, and it is that command that
+        // stops the timer. The timers' stops join the loop that posted - which returned as soon as
+        // it had - and never the command, which here is never even started; the stops complete.
         var clock = new Deterministic.ManualClock();
         var log = new RecordingLogger();
-        var effects = new StoppingTimerEffects();
+        var effects = new QueueingTimerEffects();
         var autoStop = new AutoStopMonitor(effects, log, clock);
         var watchdog = new RecordingWatchdog(effects, clock);
-        effects.AutoStop = autoStop;
-        effects.Watchdog = watchdog;
         var session = DictationSessionId.Create();
         effects.Audio = new FakeAudioCapture { Take = FakeAudioCapture.SpeechThenSilence(1_000, 3_000), SessionSource = () => session };
         autoStop.Start(session, DictationPreferences.Default with { RecordingMode = DictationRecordingMode.Toggle, AutoStopEnabled = true, AutoStopSilenceSeconds = 2 });
@@ -155,10 +261,25 @@ public sealed class BoundedStopTests
         clock.Advance(TimeSpan.FromSeconds(5));
         await effects.TimedOut.Task.WaitAsync(Patience);
 
-        Assert.True(effects.AutoStopStoppedInsideThePost, "the auto-stop's stop, called from inside its own post, completed");
-        Assert.True(effects.WatchdogStoppedInsideTheTimeout, "the watchdog's stop, called from inside its own timeout, completed");
+        // The queued commands are never run; the stops complete regardless.
+        Assert.Equal(StopOutcome.Completed, await autoStop.StopAsync(Patience).WaitAsync(Patience));
+        Assert.Equal(StopOutcome.Completed, await watchdog.StopAsync(Patience).WaitAsync(Patience));
         Assert.False(autoStop.IsRunning);
         Assert.False(watchdog.IsArmed);
+        Assert.Equal([PushToTalkSignal.Released], effects.Queued);
+        Assert.Equal([session], effects.TimedOutSessions);
+        Assert.False(effects.Command.Task.IsCompleted, "the command the timers queued was never awaited by their stops");
+    }
+
+    /// <summary>Waits, briefly, for something a loop will have done.</summary>
+    private static async Task Eventually(Func<bool> condition, string what)
+    {
+        var deadline = DateTime.UtcNow + Patience;
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, $"Timed out waiting for {what}.");
+            await Task.Delay(10);
+        }
     }
 
     private sealed class World
@@ -222,45 +343,92 @@ public sealed class BoundedStopTests
         }
     }
 
-    /// <summary>Timer effects whose post and timeout stop the timer that made them, from inside the call.</summary>
-    private sealed class StoppingTimerEffects : IRecordingTimerEffects
+    /// <summary>Timer effects that queue what they are handed, as the composed queue does, and never run it.</summary>
+    private sealed class QueueingTimerEffects : IRecordingTimerEffects
     {
-        public AutoStopMonitor? AutoStop { get; set; }
-
-        public RecordingWatchdog? Watchdog { get; set; }
-
         public IAudioSnapshotSource? Audio { get; set; }
+
+        public List<PushToTalkSignal> Queued { get; } = [];
+
+        public List<DictationSessionId> TimedOutSessions { get; } = [];
+
+        /// <summary>The command the queue would run: never completed here.</summary>
+        public TaskCompletionSource Command { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource Posted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource TimedOut { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public bool AutoStopStoppedInsideThePost { get; private set; }
-
-        public bool WatchdogStoppedInsideTheTimeout { get; private set; }
-
         public void Post(PushToTalkSignal signal)
         {
-            AutoStopStoppedInsideThePost = AutoStop!.StopAsync().Wait(Patience);
+            Queued.Add(signal);
+            _ = Command.Task;
             Posted.TrySetResult();
         }
 
         public void RecordingTimedOut(DictationSessionId sessionId)
         {
-            WatchdogStoppedInsideTheTimeout = Watchdog!.StopAsync().Wait(Patience);
+            TimedOutSessions.Add(sessionId);
+            _ = Command.Task;
             TimedOut.TrySetResult();
         }
     }
 
+    /// <summary>The window as the tests see it: a queue of frames drawn later, each asked at its draw whether it is still current - what the shell's dispatcher does.</summary>
     private sealed class FakeRuntimeView : IRuntimeView
     {
+        private readonly List<LivePreviewFrame?> _queued = [];
+
         public List<string?> Previews { get; } = [];
 
-        public void ShowPreview(string? text)
+        /// <summary>Whether draws are held in the queue until <see cref="Flush"/>; off, they are drawn at once.</summary>
+        public bool DeferDraws { get; set; }
+
+        public int Queued
+        {
+            get
+            {
+                lock (Previews)
+                {
+                    return _queued.Count;
+                }
+            }
+        }
+
+        public void ShowPreview(LivePreviewFrame? frame)
         {
             lock (Previews)
             {
-                Previews.Add(text);
+                if (DeferDraws)
+                {
+                    _queued.Add(frame);
+                }
+                else
+                {
+                    Draw(frame);
+                }
+            }
+        }
+
+        /// <summary>Draws what was queued, in order, as the window's dispatcher would when it gets to it.</summary>
+        public void Flush()
+        {
+            lock (Previews)
+            {
+                foreach (var frame in _queued)
+                {
+                    Draw(frame);
+                }
+
+                _queued.Clear();
+            }
+        }
+
+        private void Draw(LivePreviewFrame? frame)
+        {
+            if (frame is null || frame.IsCurrent())
+            {
+                Previews.Add(frame?.Text);
             }
         }
 
@@ -296,6 +464,9 @@ public sealed class BoundedStopTests
 
         public bool HoldStop { get; set; }
 
+        /// <summary>Whether the stop answers that the worker did not go, as the production adapter does when its exit was not observed.</summary>
+        public bool RefuseStop { get; set; }
+
         public int Stops { get; private set; }
 
         public CancellationToken? Token { get; private set; }
@@ -308,8 +479,13 @@ public sealed class BoundedStopTests
 
         public void ReleasePreviews() => _releasePreviews.TrySetResult();
 
-        public Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(new RuntimeWorkerResult(true, RuntimeWorkerState.Ready));
+        public int Starts { get; private set; }
+
+        public Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default)
+        {
+            Starts++;
+            return Task.FromResult(new RuntimeWorkerResult(true, RuntimeWorkerState.Ready));
+        }
 
         public async Task<LivePreviewUpdate> PreviewAsync(AudioSnapshot snapshot, long sequence, CancellationToken cancellationToken = default)
         {
@@ -339,7 +515,9 @@ public sealed class BoundedStopTests
                 await AllowStopExit.Task;
             }
 
-            return new RuntimeWorkerResult(true, RuntimeWorkerState.Stopped);
+            return RefuseStop
+                ? new RuntimeWorkerResult(false, RuntimeWorkerState.Faulted, new AppError(AppErrorCode.RuntimeWorkerFailed, AppErrorStage.RuntimeWorker, CanRetry: true))
+                : new RuntimeWorkerResult(true, RuntimeWorkerState.Stopped);
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;

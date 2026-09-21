@@ -43,9 +43,9 @@ internal sealed class LivePreviewEffects(RuntimeShell shell) : ILivePreviewEffec
 
     public DictationSessionId? RecordingSessionId => shell.RecordingSessionId();
 
-    public void ShowPreview(DictationSessionId sessionId, string text) => shell.View.ShowPreview(text);
+    public void ShowPreview(LivePreviewFrame frame) => shell.View.ShowPreview(frame);
 
-    public void ClearPreview() => shell.View.ShowPreview(text: null);
+    public void ClearPreview() => shell.View.ShowPreview(frame: null);
 }
 
 /// <summary>What the shell shows when persistence changes what the person should see.</summary>

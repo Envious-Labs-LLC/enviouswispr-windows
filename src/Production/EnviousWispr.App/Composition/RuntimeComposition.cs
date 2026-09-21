@@ -20,7 +20,8 @@ namespace EnviousWispr.App.Composition;
 /// </remarks>
 public interface IRuntimeView
 {
-    void ShowPreview(string? text);
+    /// <summary>A frame for the preview screen, or null to clear it. The frame's <see cref="LivePreviewFrame.IsCurrent"/> is asked at the draw.</summary>
+    void ShowPreview(LivePreviewFrame? frame);
 
     void ShowRecoveredText(RecoveryTextLoadResult result);
 

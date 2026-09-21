@@ -4,6 +4,7 @@ using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Preview;
+using EnviousWispr.Core.Runtime;
 
 namespace EnviousWispr.Pipeline;
 
@@ -31,8 +32,13 @@ public interface ILivePreviewEffects
     /// <summary>The dictation being recorded right now, or null; the stop path joins its lines to it.</summary>
     DictationSessionId? RecordingSessionId { get; }
 
-    /// <summary>Words for the screen, tagged with the dictation they belong to.</summary>
-    void ShowPreview(DictationSessionId sessionId, string text);
+    /// <summary>Words for the screen, tagged with the dictation they belong to and with whether their screen is still open.</summary>
+    /// <remarks>
+    /// THE FRAME CARRIES ITS OWN VALIDITY. Rendering happens on another thread, later; a frame that
+    /// was current when it was handed over may be stale by the time it is drawn. The renderer asks
+    /// the frame at the draw, not this controller at the hand-over.
+    /// </remarks>
+    void ShowPreview(LivePreviewFrame frame);
 
     /// <summary>The preview surface goes blank.</summary>
     void ClearPreview();
@@ -79,6 +85,8 @@ public sealed class LivePreviewController : IAsyncDisposable
     private readonly TimeProvider _clock;
     private CancellationTokenSource? _cancellation;
     private Task? _work;
+    private Task<RuntimeWorkerResult>? _engineStop;
+    private bool _engineRefusedStop;
     private long _sequence;
     private int _closure;
     private bool _started;
@@ -95,7 +103,7 @@ public sealed class LivePreviewController : IAsyncDisposable
     }
 
     /// <summary>Whether a preview has been started - its engine may still be starting - and not yet stopped.</summary>
-    public bool IsRunning => _work is not null;
+    public bool IsRunning => _work is not null || _engineStop is not null || _engineRefusedStop;
 
     /// <summary>The owned work, startup and loop, so a test can wait for one that ends on its own rather than poll.</summary>
     internal Task? Work => _work;
@@ -147,7 +155,10 @@ public sealed class LivePreviewController : IAsyncDisposable
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (_work is not null)
+            // REFUSED WHILE THE LAST LOOP IS STILL OWNED, or its engine's stop is still in flight: a
+            // second loop beside the first would share the engine and the screen with it. The next
+            // stop joins what is left; a preview starts again once that has completed.
+            if (_work is not null || _engineStop is not null || _engineRefusedStop)
             {
                 return;
             }
@@ -239,7 +250,10 @@ public sealed class LivePreviewController : IAsyncDisposable
                 // last, the screen this was for has been closed, and its words must not reach it.
                 if (update.SessionId == sessionId.Value && Volatile.Read(ref _closure) == closure)
                 {
-                    _effects.ShowPreview(sessionId, update.Text);
+                    _effects.ShowPreview(new LivePreviewFrame(
+                        sessionId,
+                        update.Text,
+                        () => Volatile.Read(ref _closure) == closure));
                 }
 
                 // A FLOOR, NOT AN ADDITION. A pass slower than the interval waits nothing and the next
@@ -272,7 +286,12 @@ public sealed class LivePreviewController : IAsyncDisposable
     /// <summary>Stops the preview and waits for its loop and its engine to finish, however long that takes.</summary>
     public Task StopAsync() => StopAsync(deadline: null);
 
-    /// <summary>Stops the preview and waits up to the deadline; a loop still running past it stays owned, and its engine is not stopped under it.</summary>
+    /// <summary>
+    /// Stops the preview and waits up to the deadline - for the gate, the loop and the engine's own stop
+    /// together. What did not finish stays owned: a loop still inside the engine, or an engine stop
+    /// still in flight or refused, is reported <see cref="StopOutcome.StillRunning"/> and joined again
+    /// by the next stop; the engine is never stopped under a loop still using it.
+    /// </summary>
     public async Task<StopOutcome> StopAsync(TimeSpan? deadline)
     {
         // STOPPING IS REACHED FROM MORE PLACES THAN STARTING, and one of them is quitting the app
@@ -283,17 +302,26 @@ public sealed class LivePreviewController : IAsyncDisposable
         using var dictation = _effects.RecordingSessionId is { } recording
             ? DictationScope.Begin(recording.Value)
             : NoScope.Instance;
-        await _gate.WaitAsync().ConfigureAwait(false);
+        var budget = new StopBudget(deadline, _clock);
+        // THE GATE IS ON THE BUDGET TOO. A stop queued behind another that is itself waiting on a held
+        // engine would otherwise wait without limit, and a deadline that does not cover the wait for
+        // the gate is not a deadline.
+        if (!await budget.TryEnterAsync(_gate).ConfigureAwait(false))
+        {
+            return StopOutcome.StillRunning;
+        }
+
         try
         {
-            // THE SCREEN IS CLOSED BEFORE THE LOOP IS ASKED TO STOP, so a late answer from the engine
-            // finds the closure changed and renders nothing, whichever way the join below ends.
+            // THE SCREEN IS CLOSED BEFORE THE LOOP IS ASKED TO STOP, so a frame the engine hands back
+            // late, or one already queued for the window, finds the closure changed at its render
+            // and draws nothing, whichever way the join below ends.
             Interlocked.Increment(ref _closure);
             var cancellation = _cancellation;
             var work = _work;
             cancellation?.Cancel();
             if (work is not null &&
-                await BoundedJoin.JoinAsync(work, deadline, _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
+                await BoundedJoin.JoinAsync(work, budget.Remaining, _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
             {
                 // STILL RUNNING, STILL OWNED. The loop is inside the engine; the token source it
                 // holds is not disposed, the engine it is using is not stopped under it, and the
@@ -302,16 +330,50 @@ public sealed class LivePreviewController : IAsyncDisposable
                 return StopOutcome.StillRunning;
             }
 
-            _cancellation = null;
-            _work = null;
-            cancellation?.Dispose();
+            if (work is not null)
+            {
+                _cancellation = null;
+                _work = null;
+                cancellation?.Dispose();
+            }
+
             // STOPPED EVEN WHEN THE START WAS CANCELLED HALF-WAY. The engine's own start releases
             // what it acquired when it is cancelled or refused; its stop is still called so a worker
             // that came up between the cancel and the check is taken down, and so the engine's
-            // answer to "are you stopped" is always its own.
+            // answer to "are you stopped" is always its own. THE STOP IS OWNED AS A TASK: one that
+            // did not finish inside the budget is kept and joined by the next stop rather than
+            // issued again beside itself; one the engine refused - its worker still there - is
+            // reported as such and asked for again next time.
             if (_effects.Engine is { } engine)
             {
-                await engine.StopAsync().ConfigureAwait(false);
+                var engineStop = _engineStop ??= engine.StopAsync();
+                StopOutcome joined;
+                try
+                {
+                    joined = await BoundedJoin.JoinAsync(engineStop, budget.Remaining, _clock).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // A STOP THAT THREW IS NOT JOINED AGAIN: the next stop asks the engine afresh, and
+                    // the fault is the caller's to see, as it always was.
+                    _engineStop = null;
+                    throw;
+                }
+
+                if (joined == StopOutcome.StillRunning)
+                {
+                    _effects.ClearPreview();
+                    return StopOutcome.StillRunning;
+                }
+
+                _engineStop = null;
+                var stopped = await engineStop.ConfigureAwait(false);
+                _engineRefusedStop = !stopped.Succeeded;
+                if (_engineRefusedStop)
+                {
+                    _effects.ClearPreview();
+                    return StopOutcome.StillRunning;
+                }
             }
 
             _effects.ClearPreview();

@@ -191,6 +191,9 @@ public sealed class SessionCompositionTests
         await Eventually(() => world.Coordinator.PendingCount == 0, "the coordinator to drain");
         Assert.Equal("hello world", Assert.Single(world.Delivery.Requests).Text.Text);
         Assert.Equal([true, false], world.RunState.Edges);
+        // THE COMMAND THE TIMER QUEUED STOPPED THE TIMER, and completed: the auto-stop's stop did not
+        // wait on the command that was stopping it.
+        Assert.False(world.Runtime.AutoStop.IsRunning, "the release the auto-stop queued stopped the auto-stop");
 
         // THE WATCHDOG. A recording nobody ends, timed out at the limit; its timeout runs into a
         // preview engine whose stop is held, inside the background stop the recovery makes.
@@ -213,6 +216,7 @@ public sealed class SessionCompositionTests
 
         await Eventually(() => world.Controller.CurrentSession is null, "the watchdog's timeout to reset the session");
         await Eventually(() => world.Coordinator.PendingCount == 0, "the coordinator to drain");
+        Assert.False(world.Runtime.Watchdog.IsArmed, "the timeout the watchdog queued disarmed the watchdog");
         Assert.Contains(world.View.Statuses, status => status.Text == "Recording timed out and was cancelled safely");
         Assert.Single(world.Delivery.Requests);
         Assert.Equal([true, false, true, false], world.RunState.Edges);
@@ -552,7 +556,7 @@ public sealed class SessionCompositionTests
 
         public int MainWindowShown { get; private set; }
 
-        public void ShowPreview(string? text) => Previews.Add(text);
+        public void ShowPreview(LivePreviewFrame? frame) => Previews.Add(frame?.Text);
 
         public void ShowRecoveredText(RecoveryTextLoadResult result) => Recovered.Add(result);
 
