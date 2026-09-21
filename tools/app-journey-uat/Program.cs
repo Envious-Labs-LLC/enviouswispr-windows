@@ -169,6 +169,24 @@ if (manualMicrophone && ArgumentValue(args, "--acoustic-gain") is not null)
     throw new JourneyExpectationException(
         "--acoustic-gain applies only to synthetic fixture playback, not --manual-microphone.");
 }
+// THE THREE DELIVERY ROUTES, EACH BEHIND A CONTROLLED TARGET. `--target-mode` chooses which target
+// the production app delivers into: `edit` (a standard field with its caret at the end, which the
+// adapter writes through UI Automation's value pattern), `caret-start` (the same field with its caret
+// at the start, which the adapter cannot write directly and pastes into instead), or `password` (a
+// protected field, which the adapter refuses and answers with the words on the clipboard only). The
+// route is read from what the target saw and what the app's log says, since the log carries no
+// route of its own: where the words landed relative to the field's own seed text, or that the
+// delivery was refused and why.
+var targetMode = (ArgumentValue(args, "--target-mode") ?? "edit").ToLowerInvariant();
+if (targetMode is not ("edit" or "caret-start" or "password"))
+{
+    throw new JourneyExpectationException("--target-mode must be edit, caret-start, or password.");
+}
+if (targetMode != "edit" && (manualMicrophone || escapeRecovery || ArgumentValue(args, "--failure") is not null))
+{
+    throw new JourneyExpectationException(
+        "--target-mode applies to a delivered journey: not --manual-microphone, --escape-recovery or --failure.");
+}
 var failureArgument = ArgumentValue(args, "--failure");
 var failureMode = failureArgument?.ToLowerInvariant() switch
 {
@@ -466,7 +484,7 @@ try
         UseShellExecute = false,
     };
     targetStart.ArgumentList.Add("--mode");
-    targetStart.ArgumentList.Add(manualMicrophone ? "manual-microphone" : "edit");
+    targetStart.ArgumentList.Add(manualMicrophone ? "manual-microphone" : targetMode);
     targetStart.ArgumentList.Add("--hold-focus-ms");
     targetStart.ArgumentList.Add("30000");
     targetStart.ArgumentList.Add("--result");
@@ -685,8 +703,11 @@ try
         }
         else
         {
-            if (failureMode == JourneyFailureMode.TargetUnavailable)
+            if (failureMode == JourneyFailureMode.TargetUnavailable || targetMode == "password")
             {
+                // THE PROTECTED FIELD'S ROUTE LEAVES THE WORDS ON THE CLIPBOARD by design, so the
+                // user's clipboard is captured before the delivery and put back afterwards, as it is
+                // for the target that closes mid-recording.
                 clipboardGuard = ClipboardGuard.CaptureOrThrow();
             }
 
@@ -697,7 +718,10 @@ try
                     targetResultPath,
                     target.MainWindowHandle,
                     profileDirectory,
-                    quickTap);
+                    quickTap,
+                    targetMode == "password"
+                        ? "TextDeliveryRefused/TextDelivery/DeliveryProtectedField"
+                        : "TextDeliveryCompleted/");
                 exitEvent.Set();
             }
             else
@@ -730,11 +754,18 @@ try
                 throw new JourneyExpectationException("The production journey did not complete within 60 seconds.");
             }
 
-            targetObserved = WaitForExpectedTargetResult(
-                targetResultPath,
-                escapeRecovery || failureMode == JourneyFailureMode.TargetUnavailable
-                    ? TimeSpan.FromMilliseconds(500)
-                    : TimeSpan.FromSeconds(5));
+            targetObserved = targetMode == "password"
+                // A PROTECTED FIELD NEVER SEES THE WORDS: what the journey observes is the app's
+                // refusal, with the reason, and the field still empty afterwards.
+                ? WaitForDiagnosticEvent(
+                    diagnosticPath,
+                    "TextDeliveryRefused/TextDelivery/DeliveryProtectedField",
+                    TimeSpan.FromSeconds(5)) && !WaitForExpectedTargetResult(targetResultPath, TimeSpan.FromMilliseconds(500))
+                : WaitForExpectedTargetResult(
+                    targetResultPath,
+                    escapeRecovery || failureMode == JourneyFailureMode.TargetUnavailable
+                        ? TimeSpan.FromMilliseconds(500)
+                        : TimeSpan.FromSeconds(5));
         }
     }
 
@@ -821,8 +852,11 @@ try
     }
     else
     {
-        RequireProductionJourneyEvents(diagnosticEvents);
+        RequireProductionJourneyEvents(diagnosticEvents, delivered: targetMode != "password");
     }
+    var deliveryRoute = failureMode == JourneyFailureMode.None && !escapeRecovery && !manualMicrophone
+        ? RequireDeliveryRoute(targetMode, targetResultPath, diagnosticEvents)
+        : null;
     if (livePreview && syntheticHotkey && quickTap)
     {
         RequireQuickTapCancelledThePreviewStartup(diagnosticEvents);
@@ -887,6 +921,8 @@ try
         runtimeReady,
         journeyCompleted,
         targetObserved,
+        targetMode,
+        deliveryRoute,
         failureMode = failureMode == JourneyFailureMode.None ? null : FailureModeName(failureMode),
         escapeRecovery,
         recoveryHistoryObserved,
@@ -1505,7 +1541,7 @@ static int? ReadTargetCharacterCount(string path)
     }
 }
 
-static void RequireProductionJourneyEvents(IReadOnlyList<string> events)
+static void RequireProductionJourneyEvents(IReadOnlyList<string> events, bool delivered = true)
 {
     var requiredEvents = new[]
     {
@@ -1515,7 +1551,7 @@ static void RequireProductionJourneyEvents(IReadOnlyList<string> events)
         "DictationTranscriptionStarted",
         "DeterministicProcessingStarted",
         "TextDeliveryStarted",
-        "TextDeliveryCompleted",
+        delivered ? "TextDeliveryCompleted" : "TextDeliveryRefused",
         "ApplicationCleanShutdown",
     };
     var missing = requiredEvents
@@ -1640,6 +1676,81 @@ static void RequireHeadStartJourneyEvents(IReadOnlyList<string> events)
         throw new JourneyExpectationException(
             "The streaming head start was abandoned on a clean fixture run. Giving up is correct on "
                 + "a real failure, so read the abandoned record's error code: it names what failed.");
+    }
+}
+
+/// <summary>
+/// Which of the three delivery routes the production adapter took, read from evidence rather than
+/// declared. The controlled target counts the window messages its field received: the direct UI
+/// Automation value write reaches a Win32 edit as WM_SETTEXT and never as WM_PASTE; a paste reaches
+/// it as WM_PASTE. So the standard field with its caret at the end must have seen a WM_SETTEXT and
+/// no WM_PASTE, with the words after its own seed text (the direct write appends); the field with
+/// its caret at the start must have seen a WM_PASTE (the direct write is refused off the end), with
+/// the words before its seed; the protected field receives nothing and the log says the delivery
+/// was refused for it. The caret-start run is the positive control for the paste count and the
+/// edit run its negative: a build that quietly pasted everywhere would fail the edit run on the
+/// message count, whatever the words' position said. Anything else is the wrong route, and the
+/// journey says so.
+/// </summary>
+static string RequireDeliveryRoute(string targetMode, string targetResultPath, IReadOnlyList<string> events)
+{
+    var result = ReadTargetResult(targetResultPath);
+    var completed = events.Any(value => value.StartsWith("TextDeliveryCompleted/", StringComparison.Ordinal));
+    var refusedProtected = events.Any(value => value.StartsWith(
+        "TextDeliveryRefused/TextDelivery/DeliveryProtectedField",
+        StringComparison.Ordinal));
+    switch (targetMode)
+    {
+        case "edit":
+            if (completed && result is { ContainsExpected: true, SeedAtStart: true, SeedAtEnd: false, PasteMessages: 0, SetTextMessages: > 0 })
+            {
+                return "UiAutomationValue";
+            }
+
+            break;
+        case "caret-start":
+            if (completed && result is { ContainsExpected: true, SeedAtEnd: true, SeedAtStart: false, PasteMessages: > 0 })
+            {
+                return "ClipboardPaste";
+            }
+
+            break;
+        case "password":
+            if (refusedProtected && !completed && result is { ContainsExpected: false, CharacterCount: 0 })
+            {
+                return "ClipboardOnly";
+            }
+
+            break;
+    }
+
+    throw new JourneyExpectationException(
+        $"The delivery did not take the route the {targetMode} target requires: completed={completed} " +
+        $"refusedProtected={refusedProtected} target={result}.");
+}
+
+static TargetResult? ReadTargetResult(string path)
+{
+    try
+    {
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        var root = document.RootElement;
+        return new TargetResult(
+            root.TryGetProperty("containsExpected", out var contains) && contains.GetBoolean(),
+            root.TryGetProperty("seedAtStart", out var seedAtStart) && seedAtStart.GetBoolean(),
+            root.TryGetProperty("seedAtEnd", out var seedAtEnd) && seedAtEnd.GetBoolean(),
+            root.TryGetProperty("characterCount", out var count) ? count.GetInt32() : -1,
+            root.TryGetProperty("pasteMessages", out var pastes) ? pastes.GetInt32() : -1,
+            root.TryGetProperty("setTextMessages", out var setTexts) ? setTexts.GetInt32() : -1);
+    }
+    catch (Exception exception) when (exception is IOException or JsonException)
+    {
+        return null;
     }
 }
 
@@ -2227,7 +2338,8 @@ static SyntheticHotkeyEvidence DriveSyntheticHotkey(
     string targetResultPath,
     nint targetWindow,
     string profileDirectory,
-    bool quickTap)
+    bool quickTap,
+    string deliveryOutcome = "TextDeliveryCompleted/")
 {
     var quietWindow = TimeSpan.FromSeconds(2);
     // The app's own default fixture hold (ResolveJourneyUatHoldDuration), so the two fixture-driven
@@ -2305,7 +2417,9 @@ static SyntheticHotkeyEvidence DriveSyntheticHotkey(
     // verdict is read off what the app wrote, not off the silence. A capture that was never finalised
     // is the lost release; a capture that was finalised and then nothing is a downstream failure, and
     // the two must not share a sentence.
-    if (!WaitForDiagnosticEvent(diagnosticPath, "TextDeliveryCompleted/", TimeSpan.FromSeconds(45)))
+    // THE DELIVERY'S OUTCOME IS THE TARGET'S TO DECIDE: completed into a standard field, refused by
+    // a protected one. The caller says which line ends the take.
+    if (!WaitForDiagnosticEvent(diagnosticPath, deliveryOutcome, TimeSpan.FromSeconds(45)))
     {
         var events = ReadDiagnosticEvents(diagnosticPath);
         var finalised = events.Any(value =>
@@ -2502,7 +2616,7 @@ static void RequireKnownArguments(string[] arguments)
     string[] valuedFlags =
     [
         "--acoustic-gain", "--app-executable", "--deterministic-profile", "--eg1-model", "--eg1-server",
-        "--failure", "--ollama-endpoint", "--ollama-model", "--polish",
+        "--failure", "--ollama-endpoint", "--ollama-model", "--polish", "--target-mode",
     ];
     for (var index = 0; index < arguments.Length; index++)
     {
@@ -2792,6 +2906,9 @@ internal sealed record PolishJourneyEvidence(
     bool Degraded,
     string? ErrorCode,
     long? ElapsedMilliseconds);
+
+/// <summary>What the controlled target wrote down about its field after the delivery.</summary>
+internal sealed record TargetResult(bool ContainsExpected, bool SeedAtStart, bool SeedAtEnd, int CharacterCount, int PasteMessages, int SetTextMessages);
 
 internal sealed record VirtualCableRoute(
     string RenderName,

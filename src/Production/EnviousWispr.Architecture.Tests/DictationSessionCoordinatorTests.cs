@@ -652,11 +652,11 @@ public sealed class DictationSessionCoordinatorTests
     }
 
     [Fact]
-    public async Task WindowsLockingCancelsTheProcessingInFlightBeforeTheInterruptionIsQueued()
+    public async Task WindowsLockingCancelsTheProcessingInFlightAsTheInterruptionIsQueued()
     {
         // THE FINALISATION IN FLIGHT IS WHAT THE QUEUE IS WAITING BEHIND, and cancelling it is how the
-        // interruption gets its turn: the executor is asked to cancel synchronously, before the
-        // interruption is even admitted, while the release is still running.
+        // interruption gets its turn: the executor is asked to cancel synchronously, the instant the
+        // interruption is admitted, while the release is still running.
         var executor = new BarrierExecutor();
         await using var coordinator = new DictationSessionCoordinator(executor);
         var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
@@ -675,27 +675,96 @@ public sealed class DictationSessionCoordinatorTests
         Assert.Equal(1, executor.CancelProcessingCalls);
     }
 
-    /// <summary>The shell's lifecycle callback cancels the finalisation in flight before, and regardless of, the exit guard on the interruption.</summary>
+    /// <summary>The shell's lifecycle callback leaves the cancel to the interruption: it asks the coordinator to interrupt and cancels nothing itself.</summary>
     /// <remarks>
-    /// A LOCK THAT LANDS WHILE THE EXIT IS DRAINING SETTINGS must still stop a transcription the exit is
-    /// about to tear down under. The interruption is rightly refused once leaving has begun; the cancel
-    /// is not. A WinUI callback cannot run under xunit, so the shape is checked at the source: the
-    /// cancel statement precedes the guarded interruption in the callback's body.
+    /// THE INTERRUPTION OWNS ITS CANCEL (plan-2 step 10). The callback used to cancel the finalisation
+    /// in flight before, and regardless of, the exit guard - a lock during the exit's settings drain had
+    /// to stop a transcription the exit was about to tear down under. The exit tears nothing down
+    /// beside a finalisation any more (step 8) and cuts it by its own policy (step 9), so the callback's
+    /// separate cancel would only cut a finalisation the shutdown was waiting for on behalf of an
+    /// interruption the coordinator refuses. A WinUI callback cannot run under xunit, so the shape is
+    /// checked at the source.
     /// </remarks>
     [Fact]
-    public void TheLifecycleCallbackCancelsProcessingBeforeTheExitGuard()
+    public void TheLifecycleCallbackLeavesTheCancelToTheInterruption()
     {
         var shell = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
         var start = shell.IndexOf("private void OnSystemLifecycleTransitioned(", StringComparison.Ordinal);
         Assert.True(start >= 0, "The lifecycle callback is gone.");
         var body = shell[start..shell.IndexOf("\n    }\n", start, StringComparison.Ordinal)];
 
-        var cancel = body.IndexOf("_sessionCoordinator?.CancelProcessing();", StringComparison.Ordinal);
-        var guard = body.IndexOf("if (!_exitRequested && !_disposed", StringComparison.Ordinal);
-        var interrupt = body.IndexOf("InterruptAsync(transition)", StringComparison.Ordinal);
-        Assert.True(cancel >= 0, "The callback does not cancel the finalisation in flight.");
-        Assert.True(guard > cancel, "The cancel sits under the exit guard, so a lock during the exit's settings drain leaves a transcription running.");
-        Assert.True(interrupt > guard, "The interruption is not guarded by the exit flags.");
+        Assert.DoesNotContain("CancelProcessing", body, StringComparison.Ordinal);
+        Assert.Contains("InterruptAsync(transition)", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnInterruptionCancelsOnlyTheFinalisationThatWasInFlightBeforeItWasAdmitted()
+    {
+        // THE CANCEL NAMES A GENERATION. The generation in flight is read before the interruption is
+        // admitted and handed to the executor with the cancel; an executor whose finalisation has moved
+        // on by then - a consumer that was idle took the interruption at once and began its own
+        // preservation of the take - refuses the stale cancel, and the interruption's own transcription
+        // is never cut by the interruption that asked for it. With nothing in flight, nothing is
+        // cancelled at all.
+        var executor = new BarrierExecutor();
+        await using var coordinator = new DictationSessionCoordinator(executor);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        var before = executor.ProcessingGeneration!;
+        // THE CONSUMER ADVANCES THE INSTANT THE COORDINATOR HAS READ THE GENERATION: what is in
+        // flight when the cancel arrives is a newer finalisation than the one the interruption saw.
+        executor.AfterGenerationRead = () => executor.ProcessingGeneration = new object();
+
+        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+
+        Assert.Equal([before], executor.CancelledGenerations);
+        Assert.Equal(0, executor.CancelProcessingCalls);
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        await executor.StartedKind(SessionCommandKind.Interruption).WaitAsync(Patience);
+        executor.FinishKind(SessionCommandKind.Interruption);
+        Assert.Equal(SessionCommandDisposition.Applied, (await interruption.WaitAsync(Patience)).Disposition);
+
+        var idle = new BarrierExecutor { ProcessingGeneration = null };
+        await using var nothingInFlight = new DictationSessionCoordinator(idle);
+        var lockWhileIdle = nothingInFlight.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        await idle.StartedKind(SessionCommandKind.Interruption).WaitAsync(Patience);
+        idle.FinishKind(SessionCommandKind.Interruption);
+        await lockWhileIdle.WaitAsync(Patience);
+        Assert.Empty(idle.CancelledGenerations);
+    }
+
+    [Fact]
+    public async Task AnInterruptionRefusedByTheClosureCancelsNothingAndOneAdmittedBeforeItStillRuns()
+    {
+        // THE CANCEL AND THE ADMISSION CANNOT DISAGREE. Admission closed first: the interruption is
+        // refused and the executor is not asked to cancel - the finalisation the shutdown waits for is
+        // left to finish. Admitted first, behind a running command: the interruption cancels, and the
+        // closure that lands while it is queued does not make it a refusal - it runs at its turn,
+        // because the take it interrupted was cut on its promise.
+        var refused = new BarrierExecutor();
+        await using var closedFirst = new DictationSessionCoordinator(refused);
+        closedFirst.Close();
+        Assert.Equal(SessionCommandDisposition.Stopping, (await closedFirst.InterruptAsync(SystemLifecycleTransition.SessionLocked)).Disposition);
+        Assert.Equal(0, refused.CancelProcessingCalls);
+
+        var executor = new BarrierExecutor();
+        await using var coordinator = new DictationSessionCoordinator(executor);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        Assert.Equal(1, executor.CancelProcessingCalls);
+        coordinator.Close();
+        var afterClosure = await coordinator.InterruptAsync(SystemLifecycleTransition.Suspending);
+        Assert.Equal(SessionCommandDisposition.Stopping, afterClosure.Disposition);
+        Assert.Equal(1, executor.CancelProcessingCalls);
+
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        await executor.StartedKind(SessionCommandKind.Interruption).WaitAsync(Patience);
+        executor.FinishKind(SessionCommandKind.Interruption);
+        Assert.Equal(SessionCommandDisposition.Applied, (await interruption.WaitAsync(Patience)).Disposition);
+        Assert.Equal([SessionCommandKind.PushToTalk, SessionCommandKind.Interruption], executor.SeenKinds);
     }
 
     private static string FindRepositoryRoot()
@@ -918,10 +987,12 @@ public sealed class DictationSessionCoordinatorTests
     }
 
     [Fact]
-    public async Task CloseBeforeFiveSecondsCancelsTheExpiryAndTheStopIsClean()
+    public async Task CloseBeforeFiveSecondsCancelsTheExpiryAndTheAdmittedInterruptionStillRunsAndTheStopIsClean()
     {
-        // Shutdown while an interruption is still waiting: its turn is refused, the timer is cancelled
-        // rather than left to fire into a torn-down shell, and the stop has nothing outstanding.
+        // Shutdown while an interruption is still waiting: its expiry timer is cancelled rather than
+        // left to fire into a torn-down shell; the interruption itself, admitted before the closure
+        // and having already cancelled the finalisation on the promise of preserving the take, runs
+        // at its turn (plan-2 step 10); the stop then has nothing outstanding.
         var executor = new BarrierExecutor();
         var clock = new Deterministic.ManualClock();
         await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
@@ -934,11 +1005,13 @@ public sealed class DictationSessionCoordinatorTests
         clock.Advance(DictationSessionCoordinator.InterruptionPatience);
         executor.Finish(PushToTalkSignal.Pressed);
         await press.WaitAsync(Patience);
-        Assert.Equal(SessionCommandDisposition.Stopping, (await interruption.WaitAsync(Patience)).Disposition);
+        await executor.StartedKind(SessionCommandKind.Interruption).WaitAsync(Patience);
+        executor.FinishKind(SessionCommandKind.Interruption);
+        Assert.Equal(SessionCommandDisposition.Applied, (await interruption.WaitAsync(Patience)).Disposition);
 
         Assert.True(await coordinator.StopAsync(Patience).WaitAsync(Patience));
         Assert.Empty(executor.ExpiredKinds);
-        Assert.Equal([SessionCommandKind.PushToTalk], executor.SeenKinds);
+        Assert.Equal([SessionCommandKind.PushToTalk, SessionCommandKind.Interruption], executor.SeenKinds);
     }
 
     [Fact]
@@ -1325,6 +1398,35 @@ public sealed class DictationSessionCoordinatorTests
         public int CancelProcessingCalls { get; private set; }
 
         public void CancelProcessing() => CancelProcessingCalls++;
+
+        private object? _generation = new();
+
+        /// <summary>The generation this executor advertises as in flight; a test moves it to stand for a consumer that started a new finalisation meanwhile.</summary>
+        public object? ProcessingGeneration
+        {
+            get
+            {
+                var generation = _generation;
+                AfterGenerationRead?.Invoke();
+                return generation;
+            }
+            set => _generation = value;
+        }
+
+        /// <summary>Runs the instant after the generation was read: the consumer advancing between the coordinator's read and its cancel.</summary>
+        public Action? AfterGenerationRead { get; set; }
+
+        /// <summary>The generations the coordinator asked to cancel, honoured only when they are the current one - as the production executor does.</summary>
+        public List<object> CancelledGenerations { get; } = [];
+
+        public void CancelProcessing(object generation)
+        {
+            CancelledGenerations.Add(generation);
+            if (ReferenceEquals(generation, _generation))
+            {
+                CancelProcessingCalls++;
+            }
+        }
 
         /// <summary>Whether the teardown ran while the coordinator held the session (no command running beside it).</summary>
         public bool ShutdownRanUnderTheSession { get; private set; }
