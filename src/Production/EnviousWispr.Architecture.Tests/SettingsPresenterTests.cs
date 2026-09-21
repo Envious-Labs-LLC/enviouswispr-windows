@@ -1,6 +1,7 @@
 using System.Security;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Presentation;
+using EnviousWispr.Services.Settings;
 
 namespace EnviousWispr.Architecture.Tests;
 
@@ -178,6 +179,319 @@ public sealed class SettingsPresenterTests
             .SaveAppearanceAsync(new AppearanceChoices(AppTheme.Light, OverlayPillPosition.Top, RecordingPillDesign.Classic))
             .WaitAsync(Patience);
         Assert.Equal(SettingsSaveRefusal.Closing, lateAppearance.Refusal);
+    }
+
+    /// <summary>A General page as its Save reads it, sound and complete; a test changes one thing at a time.</summary>
+    private static GeneralSettingsInput General() => new(
+        RecordingShortcut: "F8",
+        CancelShortcut: "Escape",
+        QuickAddShortcut: "Ctrl+Alt+W",
+        FinalEngineIndex: 1,
+        WordCorrection: true,
+        FillerRemoval: false,
+        EmojiFormatter: true,
+        SpokenPunctuation: false,
+        WhisperLanguageIndex: 2,
+        RecordingModeIndex: 1,
+        EscapeRecovery: true,
+        AutoStop: true,
+        AutoStopSeconds: 3.5,
+        PolishProviderIndex: 2,
+        PolishModel: "  llama3  ",
+        OllamaEndpoint: "http://localhost:11434",
+        HistoryEnabled: true,
+        HistoryRetentionDays: 45,
+        ThemeIndex: 2,
+        LivePreview: true,
+        OverlayPositionIndex: 1,
+        LevelRailPill: true,
+        PlayRecordingSounds: true,
+        RecordingSoundPairing: RecordingSoundPairing.AirGlint,
+        CopyInsteadOfPaste: true,
+        LocalDiagnostics: true,
+        DiagnosticRetentionDays: 30,
+        ShareTelemetry: true,
+        TelemetryAvailable: true,
+        MicrophoneId: "mic-2");
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GeneralSaveStoresEveryFieldItReplacesAsTheOldHandlerDid(bool inverted)
+    {
+        // THE CHARACTERISATION: every field the Save replaces, from inputs chosen so that no two are
+        // alike and none is what the default would give, against a record built independently the way
+        // the window's handler used to build it - and once more with every toggle inverted, so a save
+        // that hard-coded any toggle either way, ignored the pairing, forgot the microphone, dropped the
+        // endpoint or moved a field differs from one of the two records somewhere. Telemetry consent is
+        // off while the build could share in the inverted case. The production store on a file, read
+        // back as a launch would.
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var store = new JsonSettingsStore(Path.Combine(directory, "settings.json"));
+            var before = AppSettings.Default with { LaunchCount = 4, HasCompletedOnboarding = true, LastSeenReleaseNotes = "0.18.0" };
+            using var presenter = new SettingsPresenter(store, before);
+            var input = General() with
+            {
+                WordCorrection = !inverted,
+                FillerRemoval = inverted,
+                EmojiFormatter = !inverted,
+                SpokenPunctuation = inverted,
+                EscapeRecovery = !inverted,
+                AutoStop = inverted,
+                HistoryEnabled = !inverted,
+                LivePreview = !inverted,
+                LevelRailPill = !inverted,
+                PlayRecordingSounds = !inverted,
+                RecordingSoundPairing = inverted ? RecordingSoundPairing.CloudPop : RecordingSoundPairing.AirGlint,
+                CopyInsteadOfPaste = !inverted,
+                LocalDiagnostics = inverted,
+                ShareTelemetry = !inverted,
+                TelemetryAvailable = true,
+            };
+
+            var outcome = await presenter.SaveGeneralAsync(input);
+
+            Assert.True(outcome.Saved);
+            var expected = before with
+            {
+                PreferredMicrophoneId = "mic-2",
+                Preferences = new UserPreferences(
+                    new DictationPreferences(
+                        FinalAsrEngine.Parakeet,
+                        "F8",
+                        WordCorrectionEnabled: !inverted,
+                        FillerRemovalEnabled: inverted,
+                        EmojiFormatterEnabled: !inverted,
+                        SpokenPunctuationEnabled: inverted,
+                        (WhisperLanguagePreference)2,
+                        (DictationRecordingMode)1,
+                        "Escape",
+                        EscapeRecoveryEnabled: !inverted,
+                        "Ctrl+Alt+W",
+                        AutoStopEnabled: inverted,
+                        AutoStopSilenceSeconds: 3.5),
+                    new PolishPreferences(PolishProvider.Ollama, "llama3", "http://localhost:11434"),
+                    new HistoryPreferences(!inverted, 45),
+                    AppTheme.Dark,
+                    LivePreviewEnabled: !inverted,
+                    OverlayPillPosition.Bottom,
+                    inverted ? RecordingPillDesign.Classic : RecordingPillDesign.LevelRail,
+                    RecordingPillDesign.ReadingWell,
+                    PlayRecordingSounds: !inverted,
+                    inverted ? RecordingSoundPairing.CloudPop : RecordingSoundPairing.AirGlint,
+                    CopyInsteadOfPaste: !inverted),
+                Observability = new ObservabilityPreferences(inverted, 30, !inverted),
+            };
+            Assert.Equal(expected, (await store.LoadAsync()).Settings);
+            Assert.Equal(expected, presenter.Current);
+            Assert.Equal(AppTheme.Dark, outcome.Theme);
+            Assert.Equal(
+                "Theme, Live Preview, pill design, pill position, recording sounds, and local data choices apply now. "
+                + "Engine, microphone, shortcut, and polish changes apply safely on the next launch.",
+                GeneralSaveOutcome.SavedMessage);
+            Assert.Equal("Settings saved", GeneralSaveOutcome.SavedTitle);
+        });
+    }
+
+    [Fact]
+    public async Task GeneralSaveReadsAMissingChoiceAsTheFirstSafeOption()
+    {
+        // NOTHING SELECTED IS -1 (A NULL PAIRING), AND THE PRESENTER DECIDES WHAT THAT MEANS: the
+        // first, safe option of each list - Automatic, the first language, hold-to-talk, no provider,
+        // the system theme, the top position, the whisper tick - as the window's own fallback used to.
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var store = new JsonSettingsStore(Path.Combine(directory, "settings.json"));
+            using var presenter = new SettingsPresenter(store, AppSettings.Default);
+
+            var outcome = await presenter.SaveGeneralAsync(General() with
+            {
+                FinalEngineIndex = -1,
+                WhisperLanguageIndex = -1,
+                RecordingModeIndex = -1,
+                PolishProviderIndex = -1,
+                ThemeIndex = -1,
+                OverlayPositionIndex = -1,
+                RecordingSoundPairing = null,
+                DiagnosticRetentionDays = double.NaN,
+            });
+
+            Assert.True(outcome.Saved);
+            Assert.Equal(AppTheme.System, outcome.Theme);
+            var stored = (await store.LoadAsync()).Settings;
+            Assert.Equal(FinalAsrEngine.Automatic, stored.Preferences.Dictation.FinalEngine);
+            Assert.Equal((WhisperLanguagePreference)0, stored.Preferences.Dictation.WhisperLanguage);
+            Assert.Equal((DictationRecordingMode)0, stored.Preferences.Dictation.RecordingMode);
+            Assert.Equal(PolishProvider.None, stored.Preferences.Polish.Provider);
+            Assert.Equal(AppTheme.System, stored.Preferences.Theme);
+            Assert.Equal(OverlayPillPosition.Top, stored.Preferences.OverlayPosition);
+            Assert.Equal(RecordingSoundPairing.WhisperTick, stored.Preferences.RecordingSoundPairing);
+            Assert.Equal(ObservabilityPreferences.Default.DiagnosticRetentionDays, stored.Observability!.DiagnosticRetentionDays);
+        });
+    }
+
+    [Fact]
+    public async Task GeneralSaveRejectsInvalidOrOverlappingShortcuts()
+    {
+        // NOTHING IS STORED UNTIL THE SHORTCUTS ARE SOUND. A shortcut that does not parse names its
+        // own field - the first of the three that fails - and the store is never asked; two fields
+        // sharing a gesture are described and the store is never asked; the same three sound and
+        // distinct, the store is asked once. The production store on a file: the record is what a
+        // launch would read.
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var store = new JsonSettingsStore(Path.Combine(directory, "settings.json"));
+            using var presenter = new SettingsPresenter(store, AppSettings.Default);
+
+            var recordingBad = await presenter.SaveGeneralAsync(General() with { RecordingShortcut = "Ctrl+" });
+            Assert.Equal(GeneralSaveStatus.InvalidShortcut, recordingBad.Status);
+            Assert.Equal(GeneralShortcutField.Recording, recordingBad.InvalidField);
+            var cancelBad = await presenter.SaveGeneralAsync(General() with { CancelShortcut = "" });
+            Assert.Equal(GeneralShortcutField.Cancel, cancelBad.InvalidField);
+            var quickAddBad = await presenter.SaveGeneralAsync(General() with { QuickAddShortcut = "Ctrl+Ctrl+W" });
+            Assert.Equal(GeneralShortcutField.QuickAdd, quickAddBad.InvalidField);
+            Assert.False(File.Exists(Path.Combine(directory, "settings.json")), "an unreadable shortcut reached the store");
+
+            var overlapping = await presenter.SaveGeneralAsync(General() with { CancelShortcut = "F8" });
+            Assert.Equal(GeneralSaveStatus.OverlappingShortcuts, overlapping.Status);
+            Assert.Contains("Recording", overlapping.Overlap, StringComparison.Ordinal);
+            Assert.Contains("Cancel", overlapping.Overlap, StringComparison.Ordinal);
+            Assert.False(File.Exists(Path.Combine(directory, "settings.json")), "overlapping shortcuts reached the store");
+            Assert.Equal(AppSettings.Default, presenter.Current);
+
+            var sound = await presenter.SaveGeneralAsync(General());
+            Assert.True(sound.Saved);
+            Assert.Equal(AppTheme.Dark, sound.Theme);
+            var loaded = await store.LoadAsync();
+            Assert.Equal(SettingsLoadStatus.Loaded, loaded.Status);
+            var dictation = loaded.Settings.Preferences.Dictation;
+            Assert.Equal("F8", dictation.PushToTalkGesture);
+            Assert.Equal("Escape", dictation.CancelGesture);
+            Assert.Equal("Ctrl+Alt+W", dictation.QuickAddGesture);
+        });
+    }
+
+    [Fact]
+    public async Task GeneralSaveUsesExistingDefaults()
+    {
+        // AN EMPTY NUMBER MEANS THE DEFAULT, AN INDEX OFF THE END MEANS THE NEAREST CHOICE, AND A BUILD
+        // THAT CANNOT SHARE TELEMETRY DOES NOT. Cleared number boxes read NaN; the presenter stores the
+        // auto-stop default, the history fallback and the diagnostic default rather than zero - and
+        // clamps a retention typed beyond its bounds to them. Every choice index is normalised the way
+        // the page's own maps do, and the pill design with words is always Reading Well.
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var store = new JsonSettingsStore(Path.Combine(directory, "settings.json"));
+            using var presenter = new SettingsPresenter(store, AppSettings.Default);
+
+            var outcome = await presenter.SaveGeneralAsync(General() with
+            {
+                AutoStopSeconds = double.NaN,
+                HistoryRetentionDays = double.NaN,
+                DiagnosticRetentionDays = 9_999,
+                FinalEngineIndex = 7,
+                WhisperLanguageIndex = -3,
+                RecordingModeIndex = 9,
+                PolishProviderIndex = 42,
+                ThemeIndex = 5,
+                OverlayPositionIndex = 3,
+                LevelRailPill = false,
+                ShareTelemetry = true,
+                TelemetryAvailable = false,
+                PolishModel = "   ",
+            });
+
+            Assert.True(outcome.Saved);
+            var stored = (await store.LoadAsync()).Settings;
+            var preferences = stored.Preferences;
+            Assert.Equal(DictationPreferences.Default.AutoStopSilenceSeconds, preferences.Dictation.AutoStopSilenceSeconds);
+            Assert.Equal(30, preferences.History.RetentionDays);
+            Assert.Equal(RetentionDays.DiagnosticMaximum, stored.Observability!.DiagnosticRetentionDays);
+            Assert.Equal(FinalAsrEngine.Whisper, preferences.Dictation.FinalEngine);
+            Assert.Equal((WhisperLanguagePreference)0, preferences.Dictation.WhisperLanguage);
+            Assert.Equal((DictationRecordingMode)1, preferences.Dictation.RecordingMode);
+            Assert.Equal(PolishProvider.None, preferences.Polish.Provider);
+            Assert.Null(preferences.Polish.ModelId);
+            Assert.Equal(AppTheme.System, preferences.Theme);
+            Assert.Equal(OverlayPillPosition.Top, preferences.OverlayPosition);
+            Assert.Equal(RecordingPillDesign.Classic, preferences.PillDesignWithoutWords);
+            Assert.Equal(RecordingPillDesign.ReadingWell, preferences.PillDesignWithWords);
+            Assert.False(stored.Observability.ShareAnonymousTelemetry, "telemetry was shared by a build that cannot share it");
+        });
+    }
+
+    [Fact]
+    public async Task GeneralSavePreservesConcurrentVocabularyAndAppState()
+    {
+        // THE SAVE REPLACES THREE FIELDS AND KEEPS THE REST AS THEY ARE WHEN THE GATE OPENS. It waits
+        // behind a vocabulary import and an app-state write that landed first (the store is held open
+        // under the first of them); when its turn comes it stores the microphone, the preferences and
+        // the observability choices it read, and the words, the snippets, the launch count, the
+        // release notes seen and the language offers are the ones written meanwhile - not the ones
+        // the page was opened with.
+        var store = new BlockingStore();
+        using var presenter = new SettingsPresenter(store, AppSettings.Default with { HasCompletedOnboarding = true });
+        var imported = new ReusableUserData([new CustomWordEntry("envy wisper", "EnviousWispr")], [new SnippetEntry("sig", "Regards")]);
+
+        var import = presenter.SaveAsync(current => current with { UserData = imported });
+        await store.SaveStarted.Task.WaitAsync(Patience);
+        var appState = presenter.SaveAsync(current => current with { LaunchCount = 9, LastSeenReleaseNotes = "0.19.0", LanguageOfferHistory = "fr:2" });
+        var general = presenter.SaveGeneralAsync(General());
+
+        store.LetSavesFinish();
+        Assert.True((await import.WaitAsync(Patience)).Saved);
+        Assert.True((await appState.WaitAsync(Patience)).Saved);
+        var outcome = await general.WaitAsync(Patience);
+        Assert.True(outcome.Saved);
+
+        var stored = store.LastSaved!;
+        Assert.Equal(imported, stored.UserData);
+        Assert.True(stored.HasCompletedOnboarding, "the save replaced the onboarding state it was opened with");
+        Assert.Equal(9, stored.LaunchCount);
+        Assert.Equal("0.19.0", stored.LastSeenReleaseNotes);
+        Assert.Equal("fr:2", stored.LanguageOfferHistory);
+        Assert.Equal("mic-2", stored.PreferredMicrophoneId);
+        Assert.Equal("llama3", stored.Preferences.Polish.ModelId);
+        Assert.Equal(45, stored.Preferences.History.RetentionDays);
+        Assert.True(stored.Observability!.ShareAnonymousTelemetry);
+        Assert.Equal(stored, presenter.Current);
+    }
+
+    [Fact]
+    public async Task GeneralSaveFailureLeavesCurrentSettingsUnchanged()
+    {
+        // THE STORE REFUSES: the values were sound, the write failed, and the presenter's current
+        // settings - and the file a launch would read - are what they were. The outcome carries the
+        // store's answer for the window to name.
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "settings.json");
+            var store = new JsonSettingsStore(path);
+            var before = AppSettings.Default with { LaunchCount = 3 };
+            await store.SaveAsync(before);
+            using var presenter = new SettingsPresenter(new FailingStore(store), before);
+
+            var outcome = await presenter.SaveGeneralAsync(General());
+
+            Assert.Equal(GeneralSaveStatus.NotSaved, outcome.Status);
+            Assert.Equal(SettingsSaveRefusal.StorageBlocked, outcome.Save!.Value.Refusal);
+            Assert.Null(outcome.Theme);
+            Assert.Equal(before, presenter.Current);
+            Assert.Equal(before, (await store.LoadAsync()).Settings);
+        });
+    }
+
+    /// <summary>The production store behind a write that Windows refuses.</summary>
+    private sealed class FailingStore(ISettingsStore inner) : ISettingsStore
+    {
+        public Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default) =>
+            throw new UnauthorizedAccessException("the settings file is read-only");
+
+        public Task<SettingsLoadResult> LoadAsync(CancellationToken cancellationToken = default) => inner.LoadAsync(cancellationToken);
+
+        public Task<SettingsResetResult> ResetAsync(AppSettings replacement, CancellationToken cancellationToken = default) =>
+            inner.ResetAsync(replacement, cancellationToken);
     }
 
     private sealed class BlockingStore : ISettingsStore
