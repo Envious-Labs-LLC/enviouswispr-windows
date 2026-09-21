@@ -121,7 +121,7 @@ internal static class Program
                         ? "Controlled protected field"
                         : "Controlled standard edit field",
                 UseSystemPasswordChar = mode == "password",
-                Text = mode == "password" ? string.Empty : "hello",
+                Text = mode == "password" ? string.Empty : SeedText,
                 Font = new Font(SystemFonts.DefaultFont.FontFamily, 18),
                 Location = new Point(40, manualMicrophone ? 180 : 100),
                 Width = 660,
@@ -140,7 +140,12 @@ internal static class Program
             }
         }
 
-        static void Focus(Form form, Control focusTarget)
+        // THE CARET IS PART OF THE TARGET. At the end of the field's own text, the adapter's direct
+        // value write applies (it appends); at the start, it does not, and the adapter pastes at the
+        // caret instead. `caret-start` is the same field with the caret held at the start, so a journey
+        // can make the production adapter take its paste route on purpose.
+        var caretAtStart = mode == "caret-start";
+        void Focus(Form form, Control focusTarget)
         {
             NativeFocus.BringToForeground(form.Handle);
             form.Activate();
@@ -148,7 +153,8 @@ internal static class Program
             focusTarget.Focus();
             if (focusTarget is TextBox textBox)
             {
-                textBox.SelectionStart = textBox.TextLength;
+                textBox.SelectionStart = caretAtStart ? 0 : textBox.TextLength;
+                textBox.SelectionLength = 0;
             }
         }
 
@@ -214,6 +220,9 @@ internal static class Program
         return fullPath;
     }
 
+    /// <summary>The words the standard field starts with, so where a delivery lands relative to them says which route it took.</summary>
+    private const string SeedText = "hello";
+
     private static void WriteResult(
         string path,
         string text,
@@ -224,6 +233,11 @@ internal static class Program
         {
             containsExpected = !string.IsNullOrWhiteSpace(expectedSubstring) &&
                 text.Contains(expectedSubstring, StringComparison.OrdinalIgnoreCase),
+            // WHERE THE WORDS LANDED tells the route apart: appended after the field's own seed text
+            // by the direct value write, which leaves the seed at the start, or pasted at a caret held
+            // at the start, which leaves the seed at the end.
+            seedAtStart = text.StartsWith(SeedText, StringComparison.Ordinal) && text.Length > SeedText.Length,
+            seedAtEnd = text.EndsWith(SeedText, StringComparison.Ordinal) && text.Length > SeedText.Length,
             containsForbidden = !string.IsNullOrWhiteSpace(forbiddenSubstring) &&
                 text.Contains(forbiddenSubstring, StringComparison.OrdinalIgnoreCase),
             characterCount = text.Length,

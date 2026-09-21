@@ -269,8 +269,20 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     {
         // THE DEADLINE IS CANCELLED HERE, NOW, not when the interruption reaches the front of the queue:
         // a finalisation in flight is what the queue is waiting behind, and cancelling it is how the
-        // interruption gets its turn inside the five seconds it allows itself.
-        _executor.CancelProcessing();
+        // interruption gets its turn inside the five seconds it allows itself. NOT ONCE ADMISSION HAS
+        // CLOSED: the interruption will be refused, and the finalisation the shutdown is waiting for
+        // would otherwise be cut short by a lock that then does nothing with the take it interrupted.
+        bool closed;
+        lock (_admission)
+        {
+            closed = _closed;
+        }
+
+        if (!closed)
+        {
+            _executor.CancelProcessing();
+        }
+
         return Submit(new SessionCommand(SessionCommandKind.Interruption, PushToTalkSignal.Cancelled, Transition: transition));
     }
 
