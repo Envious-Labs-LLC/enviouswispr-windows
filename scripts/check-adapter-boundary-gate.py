@@ -35,6 +35,10 @@ TEXT_USING = "using System.Windows.Automation.Text;" + NL
 
 # Each mutation: a name, and the (anchor, replacement) edits that plant one escape.
 MUTATIONS: dict[str, list[tuple[str, str]]] = {
+    "upcast-virtual-dispatch": [(FOCUS_READ, "        _ = ((object)element).GetHashCode();" + NL + FOCUS_READ)],
+    "expression-tree-call": [(FOCUS_READ, "        _ = System.Linq.Expressions.Expression.Lambda<Func<int[]>>(System.Linq.Expressions.Expression.Call(System.Linq.Expressions.Expression.Constant(element), \"GetRuntimeId\", null)).Compile()();" + NL + FOCUS_READ)],
+    "handle-aliased": [(FOCUS_READ, "        var alias = element;" + NL + "        _ = alias;" + NL + FOCUS_READ)],
+    "handle-to-external-api": [(FOCUS_READ, "        _ = string.Join(\",\", element);" + NL + FOCUS_READ)],
     "dynamic-dispatch": [(FOCUS_READ, "        _ = ((dynamic)element).GetRuntimeId();" + NL + FOCUS_READ)],
     "reflection-call": [(FOCUS_READ, "        _ = typeof(AutomationElement).GetMethod(nameof(AutomationElement.GetRuntimeId))!.Invoke(element, null);" + NL + FOCUS_READ)],
     "query-expression-deferred": [(FOCUS_READ, "        var later = Automation(() => from item in Enumerable.Range(0, 1) select element.GetRuntimeId());" + NL + "        _ = later.ToArray();" + NL + FOCUS_READ)],
@@ -56,7 +60,7 @@ MUTATIONS: dict[str, list[tuple[str, str]]] = {
 }
 
 # What the gate says when it catches an escape; any other failure is the wrong reason.
-CAUGHT_MARKERS = ("outside the boundary", "captured instead of called", "Assert.Single() Failure", "dynamically dispatched call", "reflective call")
+CAUGHT_MARKERS = ("outside the boundary", "captured instead of called", "Assert.Single() Failure", "dynamically dispatched call", "reflective call", "handle used outside the boundary")
 
 
 def run_gate() -> str:

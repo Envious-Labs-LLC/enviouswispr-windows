@@ -157,6 +157,22 @@ public sealed class WindowsTextDeliverySafetyTests
             Assert.True(
                 symbol is null || !(symbol.ContainingNamespace?.ToDisplayString() ?? string.Empty).StartsWith("System.Reflection", StringComparison.Ordinal),
                 $"A reflective call in the adapter at line {Line(expression)}: {expression.Parent}");
+
+            // A HANDLE DOES NOT LEAVE THE BOUNDARY. What a member's namespace says is not what a call
+            // does: `((object)element).GetHashCode()` resolves to Object.GetHashCode and dispatches to
+            // UI Automation; `Expression.Constant(element)` hands the element to code that will call
+            // it by name. So outside the boundary a live UI Automation object may only be the result
+            // of an Automation call, tested against null, or passed to one of the adapter's own
+            // methods - whose bodies this same scan reads. A cast, an alias, a member access, an
+            // argument to anything else: refused.
+            // A TYPE NAME IS NOT A VALUE: `var`, a parameter's type and a cast's target only name one.
+            if (IsHandleType(typeInfo.Type) && symbol is not ITypeSymbol && !ExecutesInsideTheBoundary(expression, model, helpers))
+            {
+                Assert.True(
+                    HandleUseIsAllowedOutside(expression, model),
+                    $"A UI Automation handle used outside the boundary at line {Line(expression)} ({expression.Kind()} {expression}): {expression.Parent}");
+            }
+
             if (symbol is null || (expression.Parent is ExpressionSyntax parent && SymbolEqualityComparer.Default.Equals(Resolve(model, parent), symbol)))
             {
                 continue;
@@ -195,6 +211,49 @@ public sealed class WindowsTextDeliverySafetyTests
     }
 
     private static int Line(SyntaxNode node) => node.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+
+    /// <summary>Whether a type is a live UI Automation object - an element, a pattern, a text range - as opposed to an identifier, a constant or an exception of the same namespaces.</summary>
+    private static bool IsHandleType(ITypeSymbol? type)
+    {
+        if (type is not INamedTypeSymbol { TypeKind: TypeKind.Class or TypeKind.Struct } named ||
+            !(named.ContainingNamespace?.ToDisplayString() ?? string.Empty).StartsWith("System.Windows.Automation", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        for (var ancestor = named.BaseType; ancestor is not null; ancestor = ancestor.BaseType)
+        {
+            if (ancestor.Name is "Exception" or "AutomationIdentifier")
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>The only shapes a live UI Automation object may take outside the boundary: the boundary's own result, a null test, an argument to the adapter's own method.</summary>
+    private static bool HandleUseIsAllowedOutside(ExpressionSyntax expression, SemanticModel model)
+    {
+        switch (expression)
+        {
+            case InvocationExpressionSyntax invocation:
+                return invocation.Expression is IdentifierNameSyntax { Identifier.Text: "Automation" } && ResolvesToTheAdapter(model.GetSymbolInfo(invocation));
+            case IdentifierNameSyntax identifier:
+                return identifier.Parent switch
+                {
+                    IsPatternExpressionSyntax { Pattern: ConstantPatternSyntax { Expression: LiteralExpressionSyntax { RawKind: (int)SyntaxKind.NullLiteralExpression } } } => true,
+                    IsPatternExpressionSyntax { Pattern: UnaryPatternSyntax { Pattern: ConstantPatternSyntax { Expression: LiteralExpressionSyntax { RawKind: (int)SyntaxKind.NullLiteralExpression } } } } => true,
+                    BinaryExpressionSyntax { RawKind: (int)SyntaxKind.EqualsExpression or (int)SyntaxKind.NotEqualsExpression } comparison
+                        when comparison.Left is LiteralExpressionSyntax { RawKind: (int)SyntaxKind.NullLiteralExpression } || comparison.Right is LiteralExpressionSyntax { RawKind: (int)SyntaxKind.NullLiteralExpression } => true,
+                    ArgumentSyntax { Parent.Parent: InvocationExpressionSyntax call } =>
+                        model.GetSymbolInfo(call).Symbol is IMethodSymbol { ContainingType.Name: "WindowsTextTargetAdapter" },
+                    _ => false,
+                };
+            default:
+                return false;
+        }
+    }
 
     /// <summary>Whether a resolved member is a live UI Automation call: a property or method of a type in the UI Automation namespaces, not a constant.</summary>
     private static bool IsUiAutomationCall(ISymbol symbol)
