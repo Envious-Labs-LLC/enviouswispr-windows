@@ -76,8 +76,10 @@ public interface IDictationSessionEffects
 
     /// <summary>
     /// Shutdown: the session-specific disposal - the timers, streaming and the preview stopped, the
-    /// capture let go of, the session controller and the delivery route disposed. After the last
-    /// command when the shutdown's waits were enough; beside a command that outlived them when not.
+    /// capture let go of, the session controller and the delivery route disposed. Run only once the
+    /// session is quiescent - no command running, no expiry outstanding, no hold out; when the
+    /// shutdown's budget runs out first, nothing is disposed and the report says what is still
+    /// outstanding.
     /// </summary>
     Task TearDownSessionAsync();
 
