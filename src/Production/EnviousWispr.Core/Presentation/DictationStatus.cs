@@ -136,22 +136,11 @@ public readonly record struct DictationStatus(
 {
     /// <summary>Marks a status as one the Transcription card should show.</summary>
     /// <remarks>
-    /// THE SECOND HALF OF THE SAME LESSON AS THE STATE ABOVE, AND IT WAS STILL BEING READ OUT OF THE
-    /// WORDS. The window decided whether to update the Transcription card by testing the sentence
-    /// for "ready", "model is not installed", "transcription is unavailable" and "worker could not
-    /// start" - so the card was reached by whatever happened to contain those words rather than by
-    /// what the sentence was about.
-    ///
-    /// FOUR UNRELATED MESSAGES REACHED IT, counted rather than assumed: "Windows resumed.
-    /// EnviousWispr is ready" after a lid opens, "Escape Recovery finished. Text is ready to copy"
-    /// after a dictation, and both cleanup-provider health lines - "Ollama is ready" and "Cleaned
-    /// locally; the selected Ollama model is not installed". Each one overwrote the card that is
-    /// supposed to say which speech engine is loaded, with a sentence about something else.
-    ///
-    /// AND IT FAILS IN BOTH DIRECTIONS. A new engine sentence that happens not to contain one of the
-    /// four phrases never reaches the card at all, silently, which is how a copy edit removes a
-    /// surface. Saying it here at the call site is the only version of this that a reword cannot
-    /// break.
+    /// SAID AT THE CALL SITE, NOT READ OUT OF THE WORDS. The card that names the loaded speech engine
+    /// is reached by this flag, not by matching phrases in the sentence: a phrase match let unrelated
+    /// lines that happened to contain "ready" or "not installed" (a resume notice, a recovery notice,
+    /// the cleanup provider's health) overwrite it, and let an engine sentence without one of the
+    /// phrases miss it. A flag on the status is the one form a reword cannot break.
     /// </remarks>
     public DictationStatus AboutTheTranscriptionEngine() =>
         this with { DescribesTranscriptionEngine = true };

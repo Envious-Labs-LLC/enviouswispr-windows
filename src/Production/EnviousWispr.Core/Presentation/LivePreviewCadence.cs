@@ -2,26 +2,15 @@ namespace EnviousWispr.Core.Presentation;
 
 /// <summary>How often Live Preview may put words on screen, and when the next pass is due.</summary>
 /// <remarks>
-/// THE CADENCE WAS AN ADDITION AND IT NEEDED TO BE A FLOOR. The loop waited the full interval and
-/// only then started work, so the real period was the interval PLUS the cost of a pass rather than
-/// the larger of the two. Measured on a 7.9-second dictation: the interval is 2500 ms, a pass cost
-/// 2374 ms, and the first update reached the screen at 5421 ms against a prediction of 5419 - two
-/// milliseconds apart, so the loop was behaving exactly as written and there was nothing
-/// intermittent to chase. The second update was due at 10295 ms. The recording ended at 7873 ms.
-/// It was not slow; it was impossible.
+/// THE INTERVAL IS A FLOOR ON THE GAP BETWEEN UPDATES, NOT A WAIT BEFORE EACH PASS. A pass starts as
+/// soon as there is enough audio, and the next is due an interval after the last update reached the
+/// screen - so the period is the larger of the interval and a pass's cost, not their sum. Waiting the
+/// interval first made the period interval + cost (2500 + 2374 ms on a measured 7.9-second take: one
+/// update at 5.4 s, the next due at 10.3 s, after the recording had ended) and put the first words up
+/// no sooner than that, however fast the engine was.
 ///
-/// THE ARITHMETIC IS THE WHOLE DEFECT. Updates a take can produce is (duration - startup) / (interval
-/// + cost), so eight seconds bought one, ten seconds bought one, and fifteen bought two - for a
-/// feature whose entire promise is keeping up with a speaker.
-///
-/// WAITING AFTER THE WORK RATHER THAN BEFORE IT ALSO ANSWERS THE FIRST UPDATE. Nothing could reach
-/// the screen before interval plus cost however fast the engine became, so a person watched
-/// "Listening..." for four seconds and read it as broken. A pass that starts as soon as there is
-/// enough audio to transcribe puts the first words up in about the cost alone.
-///
-/// A FLOOR RATHER THAN NO LIMIT AT ALL, because the pass is not free and this is a limb. Live
-/// preview is display-only and can never change the final transcript; it must not be allowed to
-/// spend the machine that the final transcript is waiting on.
+/// A FLOOR RATHER THAN NO LIMIT, because a pass is not free: preview is display-only, never changes
+/// the final transcript, and must not spend the machine the final transcript is waiting on.
 /// </remarks>
 public static class LivePreviewCadence
 {

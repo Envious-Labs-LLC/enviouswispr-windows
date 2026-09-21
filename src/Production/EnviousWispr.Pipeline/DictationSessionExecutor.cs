@@ -76,8 +76,10 @@ public interface IDictationSessionEffects
 
     /// <summary>
     /// Shutdown: the session-specific disposal - the timers, streaming and the preview stopped, the
-    /// capture let go of, the session controller and the delivery route disposed. After the last
-    /// command when the shutdown's waits were enough; beside a command that outlived them when not.
+    /// capture let go of, the session controller and the delivery route disposed. Run only once the
+    /// session is quiescent - no command running, no expiry outstanding, no hold out; when the
+    /// shutdown's budget runs out first, nothing is disposed and the report says what is still
+    /// outstanding.
     /// </summary>
     Task TearDownSessionAsync();
 
@@ -90,15 +92,14 @@ public interface IDictationSessionEffects
 
 /// <summary>
 /// Decides what one push-to-talk signal means for the session and drives the state machine
-/// accordingly. The shell used to hold this body; the coordinator runs it, one command at a time.
+/// accordingly; the coordinator runs it, one command at a time.
 /// </summary>
 /// <remarks>
-/// EVERY DECISION THE OLD HANDLER MADE IS HERE, IN THE SAME ORDER, AND EVERY EFFECT IT HAD IS BEHIND
-/// THE PORT. That is the whole of step 3 on #148: the shell keeps rendering, logging, the timers and
-/// final processing; this class keeps the branching that used to be tangled up with them. A press
-/// first asks whether recovered text is still waiting and whether the machine can afford a recording;
-/// a release or a cancel first stops the watchdog; Escape with recovery on releases rather than
-/// cancels, so the words are kept without being delivered.
+/// THE DECISIONS ARE HERE AND EVERY EFFECT IS BEHIND THE PORT. The shell renders, logs and translates
+/// native events; this class owns the branching. A press first asks whether recovered text is still
+/// waiting and whether the machine can afford a recording; a release or a cancel first stops the
+/// watchdog; Escape with recovery on releases rather than cancels, so the words are kept without
+/// being delivered.
 ///
 /// FAILURE AND RECOVERY ARE THE LINES SOMEBODY READS FIRST WHEN A DICTATION WENT WRONG, so the session
 /// id is carried into the catches in a variable rather than inherited from a scope that has already
@@ -150,9 +151,8 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
 
     /// <summary>Whether the recording under way was started with Escape Recovery on.</summary>
     /// <remarks>
-    /// THE EXECUTOR'S OWN STATE NOW. It is set when a recording starts, decides whether Escape
-    /// releases or cancels, and is cleared where the shell and the runner used to clear it: on a
-    /// cancel or a failure, and as a finalisation begins.
+    /// THE EXECUTOR'S OWN STATE. It is set when a recording starts, decides whether Escape releases
+    /// or cancels, and is cleared on a cancel or a failure and as a finalisation begins.
     /// </remarks>
     public bool EscapeRecoveryForSession => _escapeRecoveryForSession;
 
@@ -258,8 +258,8 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     /// <summary>
     /// Windows is locking or suspending. A recording is released and finalised exactly as a key release
     /// would finalise it - transcribed, delivered where it can be, held for recovery where it cannot -
-    /// and anything else in flight is reset; with nothing in flight, nothing is done. The body the
-    /// shell's lifecycle callback used to run under the session gate, in its order.
+    /// and anything else in flight is reset; with nothing in flight, nothing is done. Runs under the
+    /// session gate as a command of its own.
     /// </summary>
     private async Task<SessionCommandResult> InterruptAsync(SessionCommand command)
     {
@@ -363,7 +363,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     /// <summary>
     /// The recording armed as the command's session has run for as long as it is allowed. If it is
     /// still the one recording, every loop is stopped and it is aborted and reset; if the recording
-    /// has moved on, nothing. The body the watchdog used to run under the session gate.
+    /// has moved on, nothing. Runs under the session gate as a command of its own.
     /// </summary>
     private async Task<SessionCommandResult> TimeOutAsync(SessionCommand command)
     {
@@ -558,9 +558,8 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             _effects.ShowInterruptionPreserving(transition);
         }
 
-        // THE ESCAPE SETTING IS SPENT AS THE FINALISATION BEGINS, where the runner used to clear it:
-        // whether this take was a recovery has been decided (recoveryOnly), and the next recording
-        // reads the setting afresh.
+        // THE ESCAPE SETTING IS SPENT AS THE FINALISATION BEGINS: whether this take was a recovery
+        // has been decided (recoveryOnly), and the next recording reads the setting afresh.
         _escapeRecoveryForSession = false;
         // A FINALISATION THAT STARTS AFTER ADMISSION CLOSED KEEPS ITS WORDS: the app is leaving, and
         // a paste into whatever is in front is not the place for them. The recovery copy is.
