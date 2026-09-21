@@ -1132,7 +1132,15 @@ public partial class App : Application, IAsyncDisposable
         }
 
         _singleInstanceLock = null;
-        cleanShutdown &= TryCleanup(_runStateStore.Dispose);
+        // THE RUN-STATE STORE IS A SESSION DEPENDENCY TOO: a command that outlived the shutdown writes
+        // its last edge - "the dictation is over" - into it when it ends, and a store disposed under
+        // that write leaves the next launch warning of words that were in fact kept. Kept with the rest
+        // behind an unclean report; disposed here, after the heartbeat that also writes to it has
+        // been joined, behind a quiescent one.
+        if (sessionQuiescent)
+        {
+            cleanShutdown &= TryCleanup(_runStateStore.Dispose);
+        }
 
         if (!cleanShutdown)
         {

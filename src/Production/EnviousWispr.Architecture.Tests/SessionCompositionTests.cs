@@ -13,6 +13,7 @@ using EnviousWispr.Core.Sessions;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Pipeline;
 using EnviousWispr.PostProcessing;
+using EnviousWispr.Services.Reliability;
 
 namespace EnviousWispr.Architecture.Tests;
 
@@ -122,6 +123,53 @@ public sealed class SessionCompositionTests
         Assert.Null(world.Controller.CurrentSession);
         Assert.Equal([true, false], world.RunState.Edges);
         Assert.Equal(0, world.TearDowns);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ACommandThatOutlivesAnUncleanShutdownWritesItsFinalEdgeOnlyIfTheStoreWasKept(bool storeDisposedBesideTheCommand)
+    {
+        // THE RUN-STATE STORE IS ONE OF THE THINGS AN OUTSTANDING COMMAND STILL USES. The production
+        // store, on a file; a transcription outlives the shutdown's budget; when the engine answers,
+        // the command's last act is the edge that says the dictation is over. With the store kept -
+        // as the shell keeps it behind an unclean report - the next launch reads a run that was
+        // interrupted but NOT dictating. With the store disposed beside the command, as the shell
+        // used to, the edge is lost and the next launch warns of words that were in fact recovered.
+        using var temp = new TemporaryDirectory();
+        var path = Path.Combine(temp.Path, "run-state.json");
+        var store = new JsonApplicationRunStateStore(path);
+        var run = await store.BeginRunAsync(DateTimeOffset.UtcNow);
+        var clock = new Deterministic.ManualClock();
+        var world = World.Create("hello world", clock, store, run.RunId);
+        world.Engine.HoldIgnoringCancel = true;
+        await world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await world.Engine.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var budget = TimeSpan.FromSeconds(10);
+        var shutdown = world.Coordinator.ShutdownAsync(budget);
+        await clock.WhenRegistered(1).WaitAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(budget);
+        var report = await shutdown.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(ShutdownOutcome.Unclean, report.Outcome);
+        Assert.False(report.SessionQuiescent);
+
+        if (storeDisposedBesideTheCommand)
+        {
+            store.Dispose();
+        }
+
+        world.Engine.AllowExit.SetResult();
+        Assert.Equal(SessionCommandDisposition.Applied, (await release.WaitAsync(TimeSpan.FromSeconds(10))).Disposition);
+        Assert.Equal(["hello world"], world.RecoveryStore.Saved);
+        Assert.Equal(!storeDisposedBesideTheCommand, world.Log.Events.All(code => code != AppEventCode.ApplicationRunStateEdgeFailed));
+        store.Dispose();
+
+        using var nextLaunch = new JsonApplicationRunStateStore(path);
+        var next = await nextLaunch.BeginRunAsync(DateTimeOffset.UtcNow);
+        Assert.Equal(RunStateLoadStatus.PreviousRunInterrupted, next.Status);
+        Assert.Equal(storeDisposedBesideTheCommand, next.PreviousRunWasDictating);
     }
 
     [Fact]
@@ -501,7 +549,11 @@ public sealed class SessionCompositionTests
         /// <summary>Whether the shell has let go of its coordinator.</summary>
         public bool Detached { get; set; }
 
-        public static World Create(string spoken, TimeProvider? clock = null)
+        public static World Create(string spoken, TimeProvider? clock = null) => Create(spoken, clock, new FakeRunState(), Guid.NewGuid());
+
+        /// <param name="runState">The run-state store the edges go to: the fake that lists them, or the production store on a file.</param>
+        /// <param name="runId">The run the shell would name, as it does through its RunId read.</param>
+        public static World Create(string spoken, TimeProvider? clock, IApplicationRunStateStore runState, Guid runId)
         {
             var log = new RecordingLogger();
             clock ??= TimeProvider.System;
@@ -512,14 +564,12 @@ public sealed class SessionCompositionTests
             var delivery = new FakeDelivery();
             var view = new FakeView();
             var runtimeView = new FakeRuntimeView();
-            var runState = new FakeRunState();
             var recoveryStore = new FakeRecoveryStore();
             var historyStore = new FakeHistoryStore();
             var trace = new List<string>();
             var recordingActive = new List<bool>();
             var archived = new List<CapturedAudio>();
             var words = new List<CustomWordEntry>();
-            var runId = Guid.NewGuid();
             World? world = null;
 
             // THE LONG-LIVED OWNERS FIRST, AS THE SHELL BUILDS THEM: the reads reach the world the way
@@ -579,7 +629,7 @@ public sealed class SessionCompositionTests
                 Engine = engine,
                 Delivery = delivery,
                 View = view,
-                RunState = runState,
+                RunState = runState as FakeRunState ?? new FakeRunState(),
                 RecordingActive = recordingActive,
                 Archived = archived,
                 CustomWords = words,
@@ -973,5 +1023,24 @@ public sealed class SessionCompositionTests
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class TemporaryDirectory : IDisposable
+    {
+        public TemporaryDirectory()
+        {
+            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"EnviousWispr-composition-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(Path);
+        }
+
+        public string Path { get; }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(Path))
+            {
+                Directory.Delete(Path, recursive: true);
+            }
+        }
     }
 }

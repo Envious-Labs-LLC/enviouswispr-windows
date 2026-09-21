@@ -59,7 +59,7 @@ remain wordless designs.
   given zero still cancels and observes). What did not finish is named in the report
   (`CommandOutstanding`, `ExpiriesOutstanding`, `ExpiryFaulted`, `HoldsOutstanding`) and **nothing is
   torn down beside it**; the command ends on its own terms later, and the shell disposes the engines,
-  the polish provider, the arbiter, the owners and the stores only when `SessionQuiescent` says nothing
+  the polish provider, the arbiter, the owners, the stores and the run-state store only when `SessionQuiescent` says nothing
   uses them (a gate reads that guard from `App.xaml.cs`). Delivery's closure and its admission are one
   decision under one lock in the runner: a delivery admitted is issued at once and settles inside the
   command; one not yet admitted when the closure lands is never issued. A second call shares the
