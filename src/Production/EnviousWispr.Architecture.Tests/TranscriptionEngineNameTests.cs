@@ -657,9 +657,10 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void TheAutoStopWatcherIsTornDownWhereverTheLivePreviewIs()
     {
-        // TWO OWNERS SINCE THE REGRADE OF #148: the order around a recording is Pipeline's
-        // (SessionBackgroundWork), the recovery's and the teardown's stops are still the shell's.
-        // Both files are read, and the field names differ between them.
+        // ONE OWNER SINCE PLAN-2 STEP 8: the order around a recording, the recovery's stops and the
+        // teardown's are all the background owner's (SessionBackgroundWork), whose unbounded and
+        // bounded stops are the two methods counted; the shell stops nothing itself any more. Both
+        // files are still read so a stop that reappeared in the shell would be checked too.
         var root = FindRepositoryRoot();
         var methods = new[]
             {
@@ -773,6 +774,68 @@ public sealed partial class DesignSystemTokenTests
             "_runtime.SubmitAsync(args.Signal)",
             DeclarationTextOf(shell, "OnPushToTalkSignalled"),
             StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The shell disposes what a session uses only behind a shutdown that established the session
+    /// quiescent - and disposes it nowhere else.
+    /// </summary>
+    /// <remarks>
+    /// TEARDOWN NEVER RUNS BESIDE A RESOURCE USER (plan-2 step 8). The coordinator's report says
+    /// whether anything is still using the session; the engines, the polish provider, the worker
+    /// arbiter, the background owners and the stores are what such a user is inside, and the shell
+    /// keeps them when the report says so. Two things are checked: every disposal of one of those on
+    /// the way out sits under the guard - in the one method the guard covers, or, for the run-state
+    /// store that the heartbeat also writes to and that is therefore disposed after the heartbeat is
+    /// joined, under an `if (sessionQuiescent)` of its own - and the guarded method's one call sits
+    /// under it too. The App itself cannot be run here, so this is read from its source.
+    /// </remarks>
+    [Fact]
+    public void WhatTheSessionUsesIsDisposedOnlyBehindAQuiescentShutdown()
+    {
+        var root = FindRepositoryRoot();
+        var shell = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+        var tree = CSharpSyntaxTree.ParseText(shell).GetRoot();
+        var guarded = tree.DescendantNodes().OfType<MethodDeclarationSyntax>()
+            .Single(method => method.Identifier.ValueText == "DisposeSessionDependenciesAsync");
+        string[] dependencies =
+        [
+            "_previewEngine.DisposeAsync", "_transcriptionEngine.DisposeAsync", "_polishProvider.DisposeAsync",
+            "_resourceArbiter.Dispose", "_polishLifetime.Dispose", "_livePreview.DisposeAsync",
+            "_watchdog.DisposeAsync", "_autoStop.DisposeAsync", "_historyStore.Dispose", "_recoveryTextStore.Dispose",
+            "_runStateStore.Dispose",
+        ];
+
+        // ON THE WAY OUT, EVERY DISPOSAL OF A SESSION DEPENDENCY IS UNDER THE GUARD: inside the
+        // guarded method, or inside DisposeAsync under an `if (sessionQuiescent)` of its own. (An
+        // engine that failed to start is disposed where it failed, before any session exists; that
+        // path is not the shutdown's.)
+        var shutdown = tree.DescendantNodes().OfType<MethodDeclarationSyntax>()
+            .Single(method => method.Identifier.ValueText == "DisposeAsync" && method.Body is not null);
+        var disposedInShutdown = shutdown.DescendantNodes().OfType<MemberAccessExpressionSyntax>()
+            .Where(access => dependencies.Contains(access.ToString()))
+            .ToArray();
+        Assert.All(
+            disposedInShutdown,
+            access => Assert.True(
+                access.Ancestors().OfType<IfStatementSyntax>().Any(guard => guard.Condition.ToString() == "sessionQuiescent"),
+                $"{access} is disposed in DisposeAsync outside `if (sessionQuiescent)`."));
+        var disposedUnderGuard = guarded.DescendantNodes().OfType<MemberAccessExpressionSyntax>()
+            .Concat(disposedInShutdown)
+            .Select(access => access.ToString())
+            .Where(dependencies.Contains)
+            .Distinct()
+            .ToArray();
+        Assert.Equal(dependencies.Order(StringComparer.Ordinal), disposedUnderGuard.Order(StringComparer.Ordinal));
+
+        // THE GUARDED METHOD IS CALLED ONCE, UNDER THE REPORT'S ANSWER.
+        var calls = tree.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Where(call => call.Expression.ToString() == "DisposeSessionDependenciesAsync")
+            .ToArray();
+        var call = Assert.Single(calls);
+        var guard = call.Ancestors().OfType<IfStatementSyntax>().FirstOrDefault();
+        Assert.True(guard is not null && guard.Condition.ToString() == "sessionQuiescent", "the call is not under `if (sessionQuiescent)`");
+        Assert.Contains("sessionQuiescent = shutdown.SessionQuiescent;", DeclarationTextOf(shell, "DisposeAsync"), StringComparison.Ordinal);
     }
 
     /// <summary>

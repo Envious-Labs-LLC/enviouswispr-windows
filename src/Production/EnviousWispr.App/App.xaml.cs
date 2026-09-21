@@ -1030,12 +1030,24 @@ public partial class App : Application, IAsyncDisposable
             _pushToTalkHook = null;
         }
 
-        // THE SESSION IS TORN DOWN BY ITS OWNER, after the last command: the coordinator gives the
-        // command running now ten seconds, then runs the shell's session teardown under the session,
-        // or after a further ten seconds without it - the two waits the shell used to make itself.
+        // THE SESSION IS TORN DOWN BY ITS OWNER, AND ONLY ONCE NOTHING IS USING IT. The coordinator
+        // closes admission, gives the command running now, the expiry notifications and the holds
+        // ten seconds between them, and runs the session's teardown under the session with what is
+        // left of that; what did not finish is named in its report, and nothing is torn down beside
+        // it. An unclean end is an unclean shutdown - and what it left running is left running.
+        var sessionQuiescent = true;
         if (_sessionCoordinator is { } coordinator)
         {
-            cleanShutdown &= await coordinator.ShutdownAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(true);
+            var shutdown = await coordinator.ShutdownAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(true);
+            cleanShutdown &= shutdown.Clean;
+            sessionQuiescent = shutdown.SessionQuiescent;
+            if (!sessionQuiescent)
+            {
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.ApplicationShutdownUnclean,
+                    AppFailureCategory.SystemLifecycle));
+            }
         }
         else
         {
@@ -1044,46 +1056,18 @@ public partial class App : Application, IAsyncDisposable
 
         cleanShutdown &= _sessionTornDownCleanly;
 
-        if (_previewEngine is not null)
+        // WHAT THE SESSION USES IS DISPOSED ONLY ONCE NOTHING USES IT. A command or a background loop
+        // the shutdown reported still running is inside the engines, the polish provider, the stores;
+        // disposing those under it would be the teardown-beside-work the protocol exists to end. They
+        // are kept, the shutdown is unclean, and the process ends with them still owned.
+        _polishLifetime.Cancel();
+        if (sessionQuiescent)
         {
-            cleanShutdown &= await TryCleanupAsync(
-                async () => await _previewEngine.DisposeAsync().ConfigureAwait(true))
-                .ConfigureAwait(true);
-            _previewEngine = null;
+            cleanShutdown &= await DisposeSessionDependenciesAsync().ConfigureAwait(true);
         }
-
-        if (_transcriptionEngine is not null)
+        else
         {
-            cleanShutdown &= await TryCleanupAsync(
-                async () => await _transcriptionEngine.DisposeAsync().ConfigureAwait(true))
-                .ConfigureAwait(true);
-            _transcriptionEngine = null;
-        }
-
-        if (_polishProvider is not null)
-        {
-            _polishLifetime.Cancel();
-            if (_polishWarmup is not null)
-            {
-                cleanShutdown &= await TryCleanupAsync(async () =>
-                {
-                    try
-                    {
-                        await _polishWarmup.ConfigureAwait(true);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        // App shutdown cancels an in-flight fixed semantic readiness probe.
-                    }
-                }).ConfigureAwait(true);
-
-                _polishWarmup = null;
-            }
-
-            cleanShutdown &= await TryCleanupAsync(
-                async () => await _polishProvider.DisposeAsync().ConfigureAwait(true))
-                .ConfigureAwait(true);
-            _polishProvider = null;
+            cleanShutdown = false;
         }
 
         if (_activationChannel is not null)
@@ -1114,25 +1098,12 @@ public partial class App : Application, IAsyncDisposable
 
         heartbeatCancellation?.Dispose();
 
-        cleanShutdown &= TryCleanup(_resourceArbiter.Dispose);
-        cleanShutdown &= TryCleanup(_polishLifetime.Dispose);
-        cleanShutdown &= await TryCleanupAsync(
-            async () => await _livePreview.DisposeAsync().ConfigureAwait(true))
-            .ConfigureAwait(true);
-        cleanShutdown &= await TryCleanupAsync(
-            async () => await _watchdog.DisposeAsync().ConfigureAwait(true))
-            .ConfigureAwait(true);
-        cleanShutdown &= await TryCleanupAsync(
-            async () => await _autoStop.DisposeAsync().ConfigureAwait(true))
-            .ConfigureAwait(true);
         if (_trayIcon is not null)
         {
             cleanShutdown &= TryCleanup(_trayIcon.Dispose);
         }
 
         _trayIcon = null;
-        cleanShutdown &= TryCleanup(_historyStore.Dispose);
-        cleanShutdown &= TryCleanup(_recoveryTextStore.Dispose);
         if (_sessionCoordinator is { } stoppedCoordinator)
         {
             cleanShutdown &= await TryCleanupAsync(
@@ -1161,7 +1132,15 @@ public partial class App : Application, IAsyncDisposable
         }
 
         _singleInstanceLock = null;
-        cleanShutdown &= TryCleanup(_runStateStore.Dispose);
+        // THE RUN-STATE STORE IS A SESSION DEPENDENCY TOO: a command that outlived the shutdown writes
+        // its last edge - "the dictation is over" - into it when it ends, and a store disposed under
+        // that write leaves the next launch warning of words that were in fact kept. Kept with the rest
+        // behind an unclean report; disposed here, after the heartbeat that also writes to it has
+        // been joined, behind a quiescent one.
+        if (sessionQuiescent)
+        {
+            cleanShutdown &= TryCleanup(_runStateStore.Dispose);
+        }
 
         if (!cleanShutdown)
         {
@@ -1181,6 +1160,71 @@ public partial class App : Application, IAsyncDisposable
         }
 
         GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Disposes what a session uses: the engines, the polish provider and its warm-up, the worker
+    /// arbiter, the background owners (already stopped; their disposal is the stop again, a no-op),
+    /// the history and recovery stores. Called only behind a quiescent shutdown.
+    /// </summary>
+    private async Task<bool> DisposeSessionDependenciesAsync()
+    {
+        var cleanShutdown = true;
+        if (_previewEngine is not null)
+        {
+            cleanShutdown &= await TryCleanupAsync(
+                async () => await _previewEngine.DisposeAsync().ConfigureAwait(true))
+                .ConfigureAwait(true);
+            _previewEngine = null;
+        }
+
+        if (_transcriptionEngine is not null)
+        {
+            cleanShutdown &= await TryCleanupAsync(
+                async () => await _transcriptionEngine.DisposeAsync().ConfigureAwait(true))
+                .ConfigureAwait(true);
+            _transcriptionEngine = null;
+        }
+
+        if (_polishProvider is not null)
+        {
+            if (_polishWarmup is not null)
+            {
+                cleanShutdown &= await TryCleanupAsync(async () =>
+                {
+                    try
+                    {
+                        await _polishWarmup.ConfigureAwait(true);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // App shutdown cancels an in-flight fixed semantic readiness probe.
+                    }
+                }).ConfigureAwait(true);
+
+                _polishWarmup = null;
+            }
+
+            cleanShutdown &= await TryCleanupAsync(
+                async () => await _polishProvider.DisposeAsync().ConfigureAwait(true))
+                .ConfigureAwait(true);
+            _polishProvider = null;
+        }
+
+        cleanShutdown &= TryCleanup(_resourceArbiter.Dispose);
+        cleanShutdown &= TryCleanup(_polishLifetime.Dispose);
+        cleanShutdown &= await TryCleanupAsync(
+            async () => await _livePreview.DisposeAsync().ConfigureAwait(true))
+            .ConfigureAwait(true);
+        cleanShutdown &= await TryCleanupAsync(
+            async () => await _watchdog.DisposeAsync().ConfigureAwait(true))
+            .ConfigureAwait(true);
+        cleanShutdown &= await TryCleanupAsync(
+            async () => await _autoStop.DisposeAsync().ConfigureAwait(true))
+            .ConfigureAwait(true);
+        cleanShutdown &= TryCleanup(_historyStore.Dispose);
+        cleanShutdown &= TryCleanup(_recoveryTextStore.Dispose);
+        return cleanShutdown;
     }
 
     private async Task<bool> TryCleanupAsync(Func<Task> cleanup)
@@ -2201,12 +2245,10 @@ public partial class App : Application, IAsyncDisposable
     /// </summary>
     private async Task TearDownSessionAsync()
     {
+        // THE BACKGROUND WORK IS THE EXECUTOR'S TO STOP, under the shutdown's deadline, before this is
+        // reached; what is left here is the shell's own: the capture's event, the controller, the
+        // delivery route.
         var clean = true;
-        clean &= await TryCleanupAsync(_watchdog.StopAsync).ConfigureAwait(true);
-        clean &= await TryCleanupAsync(_streaming.StopAsync).ConfigureAwait(true);
-        clean &= await TryCleanupAsync(_autoStop.StopAsync).ConfigureAwait(true);
-        clean &= await TryCleanupAsync(_livePreview.StopAsync).ConfigureAwait(true);
-
         if (_audioCapture is not null)
         {
             _audioCapture.LevelChanged -= OnAudioLevelChanged;

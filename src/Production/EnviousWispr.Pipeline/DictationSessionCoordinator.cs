@@ -115,11 +115,17 @@ public interface ISessionCommandExecutor
     {
     }
 
+    /// <summary>Admission has closed for good: a delivery not yet issued is not issued from now on.</summary>
+    void Close()
+    {
+    }
+
     /// <summary>
-    /// The session is being torn down for shutdown: after the last command has finished when the
-    /// shutdown's waits were enough, beside a command that outlived them when they were not.
+    /// The session's teardown, run only once nothing is using the session: the background work stopped
+    /// under the deadline, each owner saying whether it finished, then whatever the executor's port
+    /// disposes.
     /// </summary>
-    Task ShutdownAsync() => Task.CompletedTask;
+    Task<SessionTeardownReport> TearDownAsync(TimeSpan deadline) => Task.FromResult(SessionTeardownReport.Nothing);
 }
 
 /// <summary>
@@ -181,6 +187,10 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     /// <summary>The recording in flight as the commands' results reported it: set by a press that started one, cleared by the terminal that ended it.</summary>
     private DictationSessionId? _recording;
     private bool _closed;
+    /// <summary>How many commands the executor is inside right now: one, or none. Read by the shutdown's report.</summary>
+    private int _running;
+    private TaskCompletionSource? _noHolds;
+    private Task<ShutdownReport>? _shutdown;
 
     /// <param name="executor">Runs one command at a time.</param>
     /// <param name="captureStartContext">
@@ -241,6 +251,11 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             {
                 _sessionGate.Release();
             }
+
+            if (_holds == 0)
+            {
+                _noHolds?.TrySetResult();
+            }
         }
     }
 
@@ -286,63 +301,115 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             _queue.Writer.TryComplete();
         }
 
+        _executor.Close();
         _stopping.Cancel();
     }
 
     /// <summary>
-    /// Shutdown: admission closes, the command running now is given <paramref name="drainTimeout"/> to
-    /// finish, and the executor's teardown then runs under the session - or, if the command outlived
-    /// the wait, after a further <paramref name="drainTimeout"/> for the session, without it. The two
-    /// waits are the ones the shell had (one for its queue, one for its gate); the teardown is the
-    /// session-specific disposal the shell used to do between them.
+    /// Shutdown: admission closes at once and the finalisation in flight is cancelled; the command
+    /// running now, every expiry notification and every hold are then given <paramref name="budget"/>
+    /// to finish; and only once nothing is using the session does the executor's teardown run under it,
+    /// with what is left of the budget. What did not finish is named in the report, and nothing is torn
+    /// down beside it. A second call shares the first's completion.
     /// </summary>
-    /// <returns>
-    /// True when the teardown ran under the session with nothing outstanding: the last command and
-    /// every expiry notification finished, none of them threw.
-    /// </returns>
-    public async Task<bool> ShutdownAsync(TimeSpan drainTimeout)
+    /// <remarks>
+    /// CANCELLATION IS NOT QUIESCENCE. A command asked to stop is still running until it says it has
+    /// stopped; a hold is still held until it is given back. The old protocol ran the teardown beside a
+    /// command that outlived its waits and made every command answer for a session gone from under it;
+    /// this one waits, and if the wait is not enough, says so and leaves the command what it holds.
+    /// </remarks>
+    public Task<ShutdownReport> ShutdownAsync(TimeSpan budget)
     {
-        var drained = await StopAsync(drainTimeout).ConfigureAwait(false);
-        // THE SECOND WAIT IS MADE WHETHER OR NOT THE FIRST WAS ENOUGH: a command that outlived the
-        // drain may still finish inside the gate's wait, and the old shell gave it exactly that.
-        var secondWait = _clock.GetTimestamp();
-        var held = await WaitForSessionAsync(drainTimeout).ConfigureAwait(false);
-        // COMPLETION IS REASSESSED INSIDE THE SECOND WAIT. The command giving the gate back proves its
-        // own finish, not the queue's tail nor a notification still in flight - and a notification
-        // runs outside the session, so the gate says nothing about it. Work that outlived the first
-        // wait is asked again for what is left of the second - the two waits are the whole budget,
-        // as they were the shell's - before the shutdown calls itself clean.
-        var remaining = drainTimeout - _clock.GetElapsedTime(secondWait);
-        var settled = drained ||
-            (held && await OutstandingWorkFinishedAsync(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero).ConfigureAwait(false));
+        ArgumentOutOfRangeException.ThrowIfLessThan(budget, TimeSpan.Zero);
+        lock (_admission)
+        {
+            return _shutdown ??= ShutdownCoreAsync(budget);
+        }
+    }
+
+    private async Task<ShutdownReport> ShutdownCoreAsync(TimeSpan budget)
+    {
+        var started = _clock.GetTimestamp();
+        TimeSpan Remaining()
+        {
+            var remaining = budget - _clock.GetElapsedTime(started);
+            return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+        }
+
+        // CLOSED SYNCHRONOUSLY, before the first await: a press that lands after this call was made
+        // is refused, whatever the caller does next. The finalisation in flight is NOT cancelled
+        // here: whether to wait for a transcription or cut it short is the shell's exit policy, and
+        // the shell cancels before it asks for the shutdown when it means to.
+        Close();
+
+        var workFinished = await OutstandingWorkFinishedAsync(Remaining()).ConfigureAwait(false);
+        var holdsReleased = await HoldsReleasedAsync(Remaining()).ConfigureAwait(false);
+        int holds;
+        lock (_admission)
+        {
+            holds = _holds;
+        }
+
+        // EACH KIND OF WORK IS READ FOR ITSELF. The command and the notifications are waited for
+        // together, but a report that said only "the wait ran out" would hide which of them did; a
+        // notification that threw is over, not outstanding - it is reported because the shell's
+        // status line faulted, but nothing of it is still running, and the teardown may proceed.
+        // A COMMAND IS OUTSTANDING WHILE THE EXECUTOR IS INSIDE IT, not while the consumer loop is
+        // still on its way out behind a command that has finished: the loop's exit after the last
+        // command is a continuation the budget can end an instant before, and it uses nothing.
+        var commandOutstanding = Volatile.Read(ref _running) > 0;
+        var expiriesOutstanding = ExpiriesOutstanding();
+        var expiryFaulted = Volatile.Read(ref _expiryFaulted);
+        if (!workFinished || !holdsReleased)
+        {
+            return new ShutdownReport(ShutdownOutcome.Unclean, commandOutstanding, expiriesOutstanding, expiryFaulted, holds, Teardown: null);
+        }
+
+        // THE SESSION IS TAKEN FOR THE TEARDOWN. With no command and no hold left it is free; if it is
+        // not, something this accounting did not see is using it, and the teardown does not run.
+        if (!_sessionGate.Wait(0))
+        {
+            return new ShutdownReport(ShutdownOutcome.Unclean, CommandOutstanding: true, expiriesOutstanding, expiryFaulted, holds, Teardown: null);
+        }
+
         try
         {
-            await _executor.ShutdownAsync().ConfigureAwait(false);
+            // WHAT IS LEFT, EVEN WHEN THAT IS NOTHING. The teardown given zero still stops and observes
+            // its owners - a finished one is reported finished - and waits for none of them.
+            var teardown = await _executor.TearDownAsync(Remaining()).ConfigureAwait(false);
+            return new ShutdownReport(ShutdownOutcome.Quiescent, CommandOutstanding: false, expiriesOutstanding, expiryFaulted, holds, teardown);
         }
         finally
         {
-            if (held)
-            {
-                _sessionGate.Release();
-            }
+            _sessionGate.Release();
         }
-
-        return held && settled;
     }
 
-    /// <summary>The gate, waited for on this coordinator's clock so a test can cross the wait rather than sit through it.</summary>
-    private async Task<bool> WaitForSessionAsync(TimeSpan timeout)
+    /// <summary>Whether an expiry notification is still in flight, read for itself rather than inferred from the wait.</summary>
+    private bool ExpiriesOutstanding()
     {
-        using var patience = new CancellationTokenSource(timeout, _clock);
-        try
+        lock (_admission)
         {
-            await _sessionGate.WaitAsync(patience.Token).ConfigureAwait(false);
-            return true;
+            return _expiries.Any(expiry => !expiry.IsCompleted);
         }
-        catch (OperationCanceledException)
+    }
+
+    /// <summary>Waits up to the timeout for every hold to be given back; true when none is out.</summary>
+    private async Task<bool> HoldsReleasedAsync(TimeSpan timeout)
+    {
+        TaskCompletionSource waiter;
+        lock (_admission)
         {
-            return false;
+            if (_holds == 0)
+            {
+                return true;
+            }
+
+            waiter = _noHolds ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         }
+
+        var finished = await Task.WhenAny(waiter.Task, Task.Delay(timeout, _clock)).ConfigureAwait(false);
+        return ReferenceEquals(finished, waiter.Task);
     }
 
     /// <summary>
@@ -508,7 +575,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         // flight owns a microphone or a transcription and finishes on its own terms; what must not
         // happen is a consumer parked on the shared gate forever after the shell has moved on.
         await _stopping.CancelAsync().ConfigureAwait(false);
-        return await OutstandingWorkFinishedAsync(timeout).ConfigureAwait(false);
+        return await OutstandingWorkFinishedAsync(timeout).ConfigureAwait(false) && !Volatile.Read(ref _expiryFaulted);
     }
 
     /// <summary>
@@ -528,7 +595,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 
         var work = Task.WhenAll([_consumer, .. expiries]);
         var finished = await Task.WhenAny(work, Task.Delay(timeout, _clock)).ConfigureAwait(false);
-        return ReferenceEquals(finished, work) && !Volatile.Read(ref _expiryFaulted);
+        return ReferenceEquals(finished, work);
     }
 
     public async ValueTask DisposeAsync()
@@ -538,7 +605,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         // or gate release into an ObjectDisposedException inside the loop, and disposing the gate under
         // an update check still downloading would throw when that check gave its hold back. A stranded
         // pair is a few bytes, and an unclean stop has already been reported by StopAsync.
-        if (await StopAsync(TimeSpan.Zero).ConfigureAwait(false))
+        if (await StopAsync(TimeSpan.Zero).ConfigureAwait(false) && !Volatile.Read(ref _expiryFaulted))
         {
             _stopping.Dispose();
             lock (_admission)
@@ -601,10 +668,18 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 
             if (committed)
             {
-                var executed = await _executor
-                    .ExecuteAsync(queued.Command, _stopping.Token)
-                    .ConfigureAwait(false);
-                result = executed with { WasQueued = executed.WasQueued || waited || queued.WaitedInQueue };
+                Interlocked.Increment(ref _running);
+                try
+                {
+                    var executed = await _executor
+                        .ExecuteAsync(queued.Command, _stopping.Token)
+                        .ConfigureAwait(false);
+                    result = executed with { WasQueued = executed.WasQueued || waited || queued.WaitedInQueue };
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _running);
+                }
             }
             else if (queued.Expired)
             {

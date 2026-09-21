@@ -17,6 +17,9 @@ public enum AppEventCode
     /// </remarks>
     ApplicationRunStateEdgeFailed,
     ApplicationCleanShutdown,
+
+    /// <summary>The shutdown ended with something still running - a command, a notification, a hold - and tore nothing down beside it.</summary>
+    ApplicationShutdownUnclean,
     DuplicateInstanceRejected,
     DuplicateInstanceActivated,
     SettingsLoaded,

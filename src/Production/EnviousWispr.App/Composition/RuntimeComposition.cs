@@ -119,6 +119,7 @@ internal sealed class SessionQueue(RuntimeShell shell, IAppLogger logger)
 public sealed class SessionRuntime
 {
     private readonly SessionQueue _queue;
+    private readonly TimeProvider _clock;
 
     internal SessionRuntime(
         SessionQueue queue,
@@ -127,7 +128,8 @@ public sealed class SessionRuntime
         LivePreviewController preview,
         StreamingTranscriptionController streaming,
         RecordingWatchdog watchdog,
-        AutoStopMonitor autoStop)
+        AutoStopMonitor autoStop,
+        TimeProvider clock)
     {
         _queue = queue;
         Persistence = persistence;
@@ -136,6 +138,7 @@ public sealed class SessionRuntime
         Streaming = streaming;
         Watchdog = watchdog;
         AutoStop = autoStop;
+        _clock = clock;
     }
 
     public SessionPersistence Persistence { get; }
@@ -151,7 +154,7 @@ public sealed class SessionRuntime
     public AutoStopMonitor AutoStop { get; }
 
     /// <summary>The order around a recording, for the session the executor is about to own.</summary>
-    public SessionBackgroundWork Background() => new(Watchdog, Preview, AutoStop, Streaming);
+    public SessionBackgroundWork Background() => new(Watchdog, Preview, AutoStop, Streaming, _clock);
 
     /// <summary>A key's signal, on the same queue the timers use.</summary>
     public Task SubmitAsync(PushToTalkSignal signal) => _queue.HandAsync(signal, forSession: null);
@@ -199,6 +202,7 @@ public static class RuntimeComposition
             preview,
             streaming,
             new RecordingWatchdog(timers, parts.Clock),
-            new AutoStopMonitor(timers, parts.Logger, parts.Clock));
+            new AutoStopMonitor(timers, parts.Logger, parts.Clock),
+            parts.Clock);
     }
 }

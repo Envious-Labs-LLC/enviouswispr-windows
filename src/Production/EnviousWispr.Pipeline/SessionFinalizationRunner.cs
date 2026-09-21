@@ -126,6 +126,11 @@ public sealed record FinalizationOptions(
 /// </remarks>
 public interface ISessionFinalization
 {
+    /// <summary>Admission has closed: a finalisation that has not yet issued its delivery delivers nothing from now on, and keeps the words for recovery.</summary>
+    void CloseDelivery()
+    {
+    }
+
     /// <summary>Turns captured audio into delivered (or held, or recovered) text, under a deadline.</summary>
     Task<FinalizationReport> RunAsync(
         DictationSessionId sessionId,
@@ -136,6 +141,40 @@ public interface ISessionFinalization
 
 public sealed class SessionFinalizationRunner : ISessionFinalization
 {
+    /// <summary>Serialises the closure of delivery with its admission: a delivery is admitted or closed out, never both.</summary>
+    private readonly object _deliveryAdmission = new();
+    private bool _deliveryClosed;
+
+    public void CloseDelivery()
+    {
+        lock (_deliveryAdmission)
+        {
+            _deliveryClosed = true;
+        }
+    }
+
+    /// <summary>Whether delivery is still open, read for an early answer before the transition is asked for.</summary>
+    private bool DeliveryOpen()
+    {
+        lock (_deliveryAdmission)
+        {
+            return !_deliveryClosed;
+        }
+    }
+
+    /// <summary>
+    /// Admits a delivery, under the same lock the closure takes: true and the delivery is issued next
+    /// with nothing awaited in between, false and it is never issued. A closure lands on one side or the
+    /// other; an admitted delivery is left to settle, which the command it runs inside is accounted for.
+    /// </summary>
+    private bool TryAdmitDelivery()
+    {
+        lock (_deliveryAdmission)
+        {
+            return !_deliveryClosed;
+        }
+    }
+
     private readonly PushToTalkSessionController _controller;
     private readonly TranscriptFinalizer _finalizer;
     private readonly SessionPersistence _persistence;
@@ -202,7 +241,15 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                 .ConfigureAwait(false);
             var processed = finalized.Processed;
 
+            // NOT DELIVERED ONCE THE APP IS LEAVING. The recovery copy above is already written; a
+            // delivery not yet issued when admission closed is not issued, and the words wait on Home
+            // for the next launch. One already issued below is left to settle - it is never retried.
+            // The early read spares the transition; the admission that counts is taken after it, under
+            // the closure's own lock, with the issue following synchronously - so a closure that lands
+            // between the two either finds the delivery not yet admitted (nothing is issued) or already
+            // admitted (it is issued and settles inside the command the shutdown waits for).
             if (!recoveryOnly &&
+                DeliveryOpen() &&
                 !string.IsNullOrWhiteSpace(processed.Output.Text) &&
                 _effects.Delivery is { } delivery &&
                 _controller.CurrentSession is { } pendingSession)
@@ -210,7 +257,7 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                 var deliveryTransition = await _controller
                     .BeginDeliveryAsync(sessionId, cancellationToken)
                     .ConfigureAwait(false);
-                if (deliveryTransition.Kind == SessionTransitionKind.Delivering)
+                if (deliveryTransition.Kind == SessionTransitionKind.Delivering && TryAdmitDelivery())
                 {
                     _effects.ShowDelivering();
                     _effects.RecordDeliveryStarted();
