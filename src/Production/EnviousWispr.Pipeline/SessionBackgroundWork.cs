@@ -29,6 +29,9 @@ public interface ISessionBackgroundWork
     /// <summary>The recording is over: stop streaming, the auto-stop and the preview, in that order. The watchdog is stopped separately, first.</summary>
     Task StopAsync();
 
+    /// <summary>Stops the background work and waits up to the deadline for each owner; what did not finish stays owned and is reported.</summary>
+    Task<BackgroundStopReport> StopAsync(TimeSpan deadline);
+
     /// <summary>A terminal has arrived: the watchdog must not fire into a recording that is already ending.</summary>
     Task StopWatchdogAsync();
 }
@@ -86,6 +89,20 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
         await _streaming.StopAsync().ConfigureAwait(false);
         await _autoStop.StopAsync().ConfigureAwait(false);
         await _preview.StopAsync().ConfigureAwait(false);
+    }
+
+    /// <remarks>
+    /// THE DEADLINE IS EACH OWNER'S, NOT SHARED. Three owners, three bounded joins, in the order the
+    /// unbounded stop has always used; a shutdown that grants a deadline grants it per limb, and reads
+    /// the report to know what it left running.
+    /// </remarks>
+    public async Task<BackgroundStopReport> StopAsync(TimeSpan deadline)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(deadline, TimeSpan.Zero);
+        var streaming = await _streaming.StopAsync(deadline).ConfigureAwait(false);
+        var autoStop = await _autoStop.StopAsync(deadline).ConfigureAwait(false);
+        var preview = await _preview.StopAsync(deadline).ConfigureAwait(false);
+        return new BackgroundStopReport(streaming, autoStop, preview);
     }
 
     public Task StopWatchdogAsync() => _watchdog.StopAsync();

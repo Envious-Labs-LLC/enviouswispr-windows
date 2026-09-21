@@ -1,5 +1,6 @@
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Diagnostics;
+using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Settings;
@@ -23,7 +24,8 @@ public interface IRecordingTimerEffects
     IAudioSnapshotSource? Audio { get; }
 
     /// <summary>Posts a push-to-talk signal and returns; the caller does not wait for it to run.</summary>
-    void Post(PushToTalkSignal signal);
+    /// <summary>A signal on the recording's behalf; the queue ignores it if that recording has ended by the time it runs.</summary>
+    void Post(PushToTalkSignal signal, DictationSessionId forSession);
 
     /// <summary>Posts that the recording armed as <paramref name="sessionId"/> has run for as long as it is allowed, and returns.</summary>
     void RecordingTimedOut(DictationSessionId sessionId);
@@ -44,6 +46,9 @@ public sealed class RecordingWatchdog : IAsyncDisposable
     private readonly TimeProvider _clock;
     private CancellationTokenSource? _cancellation;
     private Task? _watch;
+    private TaskCompletionSource? _done;
+    /// <summary>Watches a start replaced before they had finished: cancelled, still owned, joined and disposed by the next stop.</summary>
+    private readonly List<(CancellationTokenSource Cancellation, TaskCompletionSource Done)> _retired = [];
 
     public RecordingWatchdog(IRecordingTimerEffects effects, TimeProvider clock)
     {
@@ -54,18 +59,34 @@ public sealed class RecordingWatchdog : IAsyncDisposable
     }
 
     /// <summary>Whether a watch has been armed and not yet stopped.</summary>
-    public bool IsArmed => _watch is not null;
+    public bool IsArmed => _watch is { IsCompleted: false };
 
     public void Start(DictationSessionId sessionId, TimeSpan duration)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(duration, TimeSpan.Zero);
         _cancellation?.Cancel();
-        _cancellation?.Dispose();
+        // A WATCH REPLACED BEFORE IT FINISHED IS RETIRED, NOT DROPPED. Its callback may still be
+        // running; its source is not disposed under it, and the next stop joins it - so a stop that
+        // reports completion has seen every watch this owner ever armed finish, not only the last.
+        if (_cancellation is { } previous && _done is { } previousDone)
+        {
+            if (previousDone.Task.IsCompleted)
+            {
+                previous.Dispose();
+            }
+            else
+            {
+                _retired.Add((previous, previousDone));
+            }
+        }
+
         _cancellation = new CancellationTokenSource();
-        _watch = WatchAsync(sessionId, duration, _cancellation.Token);
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _done = done;
+        _watch = WatchAsync(sessionId, duration, done, _cancellation.Token);
     }
 
-    private async Task WatchAsync(DictationSessionId sessionId, TimeSpan duration, CancellationToken cancellationToken)
+    private async Task WatchAsync(DictationSessionId sessionId, TimeSpan duration, TaskCompletionSource done, CancellationToken cancellationToken)
     {
         // Every flow that serves a dictation opens the scope for itself. Inheriting one would in
         // fact work here - a child async flow keeps the AsyncLocal value it captured even after the
@@ -81,36 +102,60 @@ public sealed class RecordingWatchdog : IAsyncDisposable
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // The recording ended some other way, which is the ordinary case.
+            done.TrySetResult();
             return;
         }
 
-        _effects.RecordingTimedOut(sessionId);
-    }
-
-    public async Task StopAsync()
-    {
-        var cancellation = Interlocked.Exchange(ref _cancellation, null);
-        var watch = Interlocked.Exchange(ref _watch, null);
+        // THE CALLBACK IS THE LAST THING THE WATCH DOES, and the join covers it: the timeout it
+        // hands over is a command on the session's queue, submitted and not awaited, so the stop that
+        // command makes joins a watch that has already returned.
         try
         {
-            cancellation?.Cancel();
-            if (watch is not null)
-            {
-                try
-                {
-                    await watch.ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                }
-            }
+            _effects.RecordingTimedOut(sessionId);
         }
         finally
         {
-            // DISPOSED HOWEVER THE DRAIN ENDS. The field was cleared before the wait, so a recovery
-            // that faulted would otherwise leave a source nobody can reach again.
-            cancellation?.Dispose();
+            done.TrySetResult();
         }
+    }
+
+    /// <summary>Disarms the watch and waits for it, however long that takes.</summary>
+    public Task<StopOutcome> StopAsync() => StopAsync(deadline: null);
+
+    /// <summary>Disarms the watch and waits up to the deadline; a watch still running past it stays owned.</summary>
+    public async Task<StopOutcome> StopAsync(TimeSpan? deadline)
+    {
+        var budget = new StopBudget(deadline, _clock);
+        var cancellation = _cancellation;
+        var done = _done;
+        cancellation?.Cancel();
+        if (done is not null &&
+            await BoundedJoin.JoinAsync(done.Task, budget.Remaining, _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
+        {
+            return StopOutcome.StillRunning;
+        }
+
+        // DISPOSED ONLY ONCE THE WATCH IS OVER. A source disposed under a watch still running is a
+        // fault nobody can reach again; one kept past a deadline is joined by the next stop.
+        _cancellation = null;
+        _watch = null;
+        _done = null;
+        cancellation?.Dispose();
+
+        // THE RETIRED WATCHES ARE JOINED TOO, inside the same budget; the ones that finished are
+        // disposed and let go of, the rest stay owned and the stop says so.
+        foreach (var retired in _retired.ToArray())
+        {
+            if (await BoundedJoin.JoinAsync(retired.Done.Task, budget.Remaining, _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
+            {
+                return StopOutcome.StillRunning;
+            }
+
+            retired.Cancellation.Dispose();
+            _retired.Remove(retired);
+        }
+
+        return StopOutcome.Completed;
     }
 
     /// <summary>The stop, as the last call: the shell's shutdown has already stopped the watch by then.</summary>
@@ -152,6 +197,7 @@ public sealed class AutoStopMonitor : IAsyncDisposable
     private readonly TimeProvider _clock;
     private CancellationTokenSource? _cancellation;
     private Task? _loop;
+    private TaskCompletionSource? _done;
 
     public AutoStopMonitor(IRecordingTimerEffects effects, IAppLogger logger, TimeProvider clock)
     {
@@ -180,14 +226,29 @@ public sealed class AutoStopMonitor : IAsyncDisposable
             return;
         }
 
+        // REFUSED WHILE THE LAST LOOP IS STILL OWNED: a loop a bounded stop left behind would post
+        // its release into this recording. The next stop joins what is left.
+        if (_loop is not null)
+        {
+            _logger.Write(new AppLogEntry(
+                _clock.GetUtcNow(),
+                AppEventCode.AutoStopTriggered,
+                AppFailureCategory.RuntimeWorker,
+                ErrorCode: AppErrorCode.RuntimeResourceBusy));
+            return;
+        }
+
         _cancellation = new CancellationTokenSource();
-        _loop = RunAsync(snapshots, sessionId, dictation, _cancellation.Token);
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _done = done;
+        _loop = RunAsync(snapshots, sessionId, dictation, done, _cancellation.Token);
     }
 
     private async Task RunAsync(
         IAudioSnapshotSource snapshots,
         DictationSessionId sessionId,
         DictationPreferences dictation,
+        TaskCompletionSource done,
         CancellationToken cancellationToken)
     {
         // Every flow that serves a dictation opens the scope for itself. Inheriting one would in
@@ -235,10 +296,19 @@ public sealed class AutoStopMonitor : IAsyncDisposable
                     continue;
                 }
 
+                // NOT POSTED ONCE THE RECORDING IS ENDING. The decision above was made on a take that
+                // is over if a stop has been asked for meanwhile; a release posted now would be for
+                // the next recording.
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
                 _logger.Write(new AppLogEntry(_clock.GetUtcNow(), AppEventCode.AutoStopTriggered));
-                // Post and return. Awaiting here would hold this loop open across the whole
-                // transcription, and the loop is cancelled as part of ending the recording.
-                _effects.Post(PushToTalkSignal.Released);
+                // Post and return. Awaiting the post would hold this loop open across the whole
+                // transcription; the release it posts is a command on the session's queue, submitted
+                // and not awaited, so the stop that command makes joins a loop that has returned.
+                _effects.Post(PushToTalkSignal.Released, sessionId);
                 return;
             }
         }
@@ -246,38 +316,38 @@ public sealed class AutoStopMonitor : IAsyncDisposable
         {
             // The recording ended some other way, which is the ordinary case.
         }
-    }
-
-    public async Task StopAsync()
-    {
-        var cancellation = _cancellation;
-        var loop = _loop;
-        _cancellation = null;
-        _loop = null;
-        if (cancellation is null)
-        {
-            return;
-        }
-
-        try
-        {
-            await cancellation.CancelAsync().ConfigureAwait(false);
-            if (loop is not null)
-            {
-                try
-                {
-                    await loop.ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                }
-            }
-        }
         finally
         {
-            // Disposed however the drain ends; the field was cleared before the wait.
-            cancellation.Dispose();
+            done.TrySetResult();
         }
+    }
+
+    /// <summary>Ends the watch and waits for it, however long that takes.</summary>
+    public Task<StopOutcome> StopAsync() => StopAsync(deadline: null);
+
+    /// <summary>Ends the watch and waits up to the deadline; a loop still running past it stays owned.</summary>
+    public async Task<StopOutcome> StopAsync(TimeSpan? deadline)
+    {
+        var cancellation = _cancellation;
+        var done = _done;
+        if (cancellation is null)
+        {
+            return StopOutcome.Completed;
+        }
+
+        await cancellation.CancelAsync().ConfigureAwait(false);
+        if (done is not null &&
+            await BoundedJoin.JoinAsync(done.Task, deadline, _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
+        {
+            return StopOutcome.StillRunning;
+        }
+
+        // Disposed only once the loop is over; one kept past a deadline is joined by the next stop.
+        _cancellation = null;
+        _loop = null;
+        _done = null;
+        cancellation.Dispose();
+        return StopOutcome.Completed;
     }
 
     /// <summary>The stop, as the last call: the shell's shutdown has already stopped the loop by then.</summary>

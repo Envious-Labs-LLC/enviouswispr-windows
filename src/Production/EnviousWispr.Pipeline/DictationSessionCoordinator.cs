@@ -54,12 +54,18 @@ public enum SessionCommandKind
 /// <param name="StartContext">For a press: what it was about, captured at admission. Null otherwise.</param>
 /// <param name="Transition">For an interruption: which one.</param>
 /// <param name="TimedOutSession">For a timeout: the recording that was armed.</param>
+/// <param name="ForSession">
+/// For a terminal that a loop posted on a recording's behalf - the auto-stop's release - the recording
+/// it was for. Validated when the command runs, not when it was queued: a release a retired loop
+/// posts late is for a recording that has ended, and must not end the one after it.
+/// </param>
 public sealed record SessionCommand(
     SessionCommandKind Kind,
     PushToTalkSignal Signal,
     RecordingStartContext? StartContext = null,
     SystemLifecycleTransition? Transition = null,
-    DictationSessionId? TimedOutSession = null)
+    DictationSessionId? TimedOutSession = null,
+    DictationSessionId? ForSession = null)
 {
     public SessionCommand(PushToTalkSignal signal, RecordingStartContext? startContext = null)
         : this(SessionCommandKind.PushToTalk, signal, startContext)
@@ -68,6 +74,9 @@ public sealed record SessionCommand(
 
     /// <summary>A press takes the gate at admission; nothing else does.</summary>
     public bool IsPress => Kind == SessionCommandKind.PushToTalk && Signal == PushToTalkSignal.Pressed;
+
+    /// <summary>The recording a terminal is for - a loop's release or a timeout names one; a key's terminal is for whatever is in flight.</summary>
+    public DictationSessionId? TerminalIdentity => ForSession ?? TimedOutSession;
 
     /// <summary>
     /// A command that ends the recording in flight. One may wait at a time; a second is ignored,
@@ -167,7 +176,10 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     private readonly Task _consumer;
     private int _pendingOrRunning;
     private int _gateWaitsEntered;
-    private bool _terminalPending;
+    /// <summary>The recordings the pending terminals are for: null for a key's or a timeout's, which is for whatever is in flight.</summary>
+    private readonly List<DictationSessionId?> _pendingTerminals = [];
+    /// <summary>The recording in flight as the commands' results reported it: set by a press that started one, cleared by the terminal that ended it.</summary>
+    private DictationSessionId? _recording;
     private bool _closed;
 
     /// <param name="executor">Runs one command at a time.</param>
@@ -343,7 +355,13 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     /// <summary>
     /// Admits the signal synchronously and returns a task that completes once it has run or been refused.
     /// </summary>
-    public Task<SessionCommandResult> SubmitAsync(PushToTalkSignal signal)
+    public Task<SessionCommandResult> SubmitAsync(PushToTalkSignal signal) => SubmitAsync(signal, forSession: null);
+
+    /// <summary>
+    /// Admits the signal on a recording's behalf: a terminal posted by a loop that was watching that
+    /// recording, ignored when it runs if that recording is no longer the one in flight.
+    /// </summary>
+    public Task<SessionCommandResult> SubmitAsync(PushToTalkSignal signal, DictationSessionId? forSession)
     {
         if (signal == PushToTalkSignal.QuickAdd)
         {
@@ -353,7 +371,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
                 "Quick add is not a dictation session command.");
         }
 
-        return Submit(new SessionCommand(signal));
+        return Submit(new SessionCommand(signal) with { ForSession = forSession });
     }
 
     private Task<SessionCommandResult> Submit(SessionCommand command)
@@ -392,13 +410,13 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
                     throw;
                 }
             }
-            else if (command.IsTerminal && _terminalPending)
+            else if (command.IsTerminal && IsDuplicateTerminal(command))
             {
                 return Task.FromResult(new SessionCommandResult(SessionCommandDisposition.Ignored));
             }
             else if (command.IsTerminal)
             {
-                _terminalPending = true;
+                _pendingTerminals.Add(command.TerminalIdentity);
             }
 
             // A terminal admitted while anything is ahead of it has, by definition, waited in the queue.
@@ -616,6 +634,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         // would otherwise be marked as having waited behind a press whose work and gate ownership had
         // both already ended, and the journey that reads that mark would certify an overlap that never
         // happened. Undercounting in the other direction only makes that journey say "not proven".
+        NoteRecording(queued.Command, result);
         Undo(queued.Command);
         ReleaseGate(ref holdingGate);
         queued.Completion.TrySetResult(result);
@@ -637,7 +656,41 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             _pendingOrRunning--;
             if (command.IsTerminal)
             {
-                _terminalPending = false;
+                _pendingTerminals.Remove(command.TerminalIdentity);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether a terminal is already waiting to end the same recording. A key's or a timeout's terminal
+    /// is for whatever is in flight and stands in for any; one a loop posted for a named recording
+    /// stands in for that recording only - for a key's terminal when that recording is the one in
+    /// flight, never when it has ended. A release posted late for a take that is over must not swallow
+    /// the key that ends the take after it.
+    /// </summary>
+    private bool IsDuplicateTerminal(SessionCommand command) =>
+        _pendingTerminals.Contains(null) ||
+        (command.TerminalIdentity is { } named
+            ? _pendingTerminals.Contains(named)
+            : _recording is { } recording && _pendingTerminals.Contains(recording));
+
+    /// <summary>What a command's result says about the recording in flight, kept for the terminal coalescing above.</summary>
+    private void NoteRecording(SessionCommand command, SessionCommandResult result)
+    {
+        lock (_admission)
+        {
+            if (command.IsPress)
+            {
+                if (result.Disposition == SessionCommandDisposition.Applied && result.Session is { } session)
+                {
+                    _recording = session.Id;
+                }
+            }
+            else if (result.Disposition is SessionCommandDisposition.Applied or SessionCommandDisposition.Failed)
+            {
+                // A terminal or an interruption that ran ended the take, one way or another; one that
+                // was ignored - for a recording that had already ended - says nothing about this one.
+                _recording = null;
             }
         }
     }

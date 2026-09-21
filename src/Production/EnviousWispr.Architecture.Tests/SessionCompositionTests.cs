@@ -191,6 +191,9 @@ public sealed class SessionCompositionTests
         await Eventually(() => world.Coordinator.PendingCount == 0, "the coordinator to drain");
         Assert.Equal("hello world", Assert.Single(world.Delivery.Requests).Text.Text);
         Assert.Equal([true, false], world.RunState.Edges);
+        // THE COMMAND THE TIMER QUEUED STOPPED THE TIMER, and completed: the auto-stop's stop did not
+        // wait on the command that was stopping it.
+        Assert.False(world.Runtime.AutoStop.IsRunning, "the release the auto-stop queued stopped the auto-stop");
 
         // THE WATCHDOG. A recording nobody ends, timed out at the limit; its timeout runs into a
         // preview engine whose stop is held, inside the background stop the recovery makes.
@@ -213,9 +216,97 @@ public sealed class SessionCompositionTests
 
         await Eventually(() => world.Controller.CurrentSession is null, "the watchdog's timeout to reset the session");
         await Eventually(() => world.Coordinator.PendingCount == 0, "the coordinator to drain");
+        Assert.False(world.Runtime.Watchdog.IsArmed, "the timeout the watchdog queued disarmed the watchdog");
         Assert.Contains(world.View.Statuses, status => status.Text == "Recording timed out and was cancelled safely");
         Assert.Single(world.Delivery.Requests);
         Assert.Equal([true, false, true, false], world.RunState.Edges);
+    }
+
+    [Fact]
+    public async Task AReleaseALoopPostedForAnEarlierRecordingDoesNotEndTheNextOne()
+    {
+        // THE AUTO-STOP'S RELEASE NAMES ITS RECORDING, and the executor checks the name when the
+        // command runs, not when it was queued. A release posted for a take that has ended - by a
+        // loop a bounded stop left behind, resuming late - reaches the composed queue while the
+        // next recording is live, and is ignored.
+        var world = World.Create("hello world");
+        await world.SubmitAsync(PushToTalkSignal.Pressed);
+        var earlier = world.Controller.CurrentSession!.Id;
+        await world.SubmitAsync(PushToTalkSignal.Released);
+        Assert.Single(world.Delivery.Requests);
+
+        await world.SubmitAsync(PushToTalkSignal.Pressed);
+        var current = world.Controller.CurrentSession!.Id;
+        Assert.NotEqual(earlier, current);
+
+        // The composed route the auto-stop's effects take, with the earlier recording's name on it.
+        await world.Runtime.Queue.HandAsync(PushToTalkSignal.Released, earlier);
+
+        Assert.Equal(DictationSessionState.Recording, world.Controller.CurrentSession?.State);
+        Assert.Equal(current, world.Controller.CurrentSession?.Id);
+        Assert.Single(world.Delivery.Requests);
+        // The ignored command still wrote the edge, as every command the executor runs does - and
+        // wrote it true: the recording it left alone is still in flight.
+        Assert.Equal([true, false, true, true], world.RunState.Edges);
+
+        await world.SubmitAsync(PushToTalkSignal.Released);
+        Assert.Equal(2, world.Delivery.Requests.Count);
+    }
+
+    [Fact]
+    public async Task AStaleReleaseWaitingInTheQueueDoesNotSwallowTheKeyThatEndsTheNextRecording()
+    {
+        // THE STALE RELEASE IS PENDING WHEN THE REAL ONE ARRIVES. The next recording's press is still
+        // opening the microphone; a release posted for the earlier recording is admitted behind it;
+        // the key's release for this recording arrives before the stale one has run. A terminal that
+        // names a recording stands in only for that recording, so the key's release is admitted too:
+        // the stale one is ignored when it runs, and the key's ends the take.
+        var world = World.Create("hello world");
+        await world.SubmitAsync(PushToTalkSignal.Pressed);
+        var earlier = world.Controller.CurrentSession!.Id;
+        await world.SubmitAsync(PushToTalkSignal.Released);
+        Assert.Single(world.Delivery.Requests);
+
+        world.Capture.HoldStart = true;
+        var press = world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await world.Capture.StartEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var stale = world.Coordinator.SubmitAsync(PushToTalkSignal.Released, earlier);
+        var real = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        Assert.Equal(3, world.Coordinator.PendingCount);
+        world.Capture.AllowStartExit.SetResult();
+
+        Assert.Equal(SessionCommandDisposition.Applied, (await press.WaitAsync(TimeSpan.FromSeconds(10))).Disposition);
+        Assert.Equal(SessionCommandDisposition.Ignored, (await stale.WaitAsync(TimeSpan.FromSeconds(10))).Disposition);
+        Assert.Equal(SessionCommandDisposition.Applied, (await real.WaitAsync(TimeSpan.FromSeconds(10))).Disposition);
+        Assert.Equal(2, world.Delivery.Requests.Count);
+        Assert.Null(world.Controller.CurrentSession);
+    }
+
+    [Fact]
+    public async Task AStaleTimeoutWaitingInTheQueueDoesNotSwallowTheKeyThatEndsTheNextRecording()
+    {
+        // THE TIMEOUT NAMES ITS RECORDING TOO. A timeout armed for the earlier recording, queued
+        // behind the next recording's press, stands in only for that earlier recording; the key's
+        // release for the next one is admitted, the timeout is ignored when it runs, and the key's
+        // release ends the take.
+        var world = World.Create("hello world");
+        await world.SubmitAsync(PushToTalkSignal.Pressed);
+        var earlier = world.Controller.CurrentSession!.Id;
+        await world.SubmitAsync(PushToTalkSignal.Released);
+
+        world.Capture.HoldStart = true;
+        var press = world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await world.Capture.StartEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var stale = world.Coordinator.TimeOutAsync(earlier);
+        var real = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        Assert.Equal(3, world.Coordinator.PendingCount);
+        world.Capture.AllowStartExit.SetResult();
+
+        Assert.Equal(SessionCommandDisposition.Applied, (await press.WaitAsync(TimeSpan.FromSeconds(10))).Disposition);
+        Assert.Equal(SessionCommandDisposition.Ignored, (await stale.WaitAsync(TimeSpan.FromSeconds(10))).Disposition);
+        Assert.Equal(SessionCommandDisposition.Applied, (await real.WaitAsync(TimeSpan.FromSeconds(10))).Disposition);
+        Assert.Equal(2, world.Delivery.Requests.Count);
+        Assert.Null(world.Controller.CurrentSession);
     }
 
     [Fact]
@@ -552,7 +643,7 @@ public sealed class SessionCompositionTests
 
         public int MainWindowShown { get; private set; }
 
-        public void ShowPreview(string? text) => Previews.Add(text);
+        public void ShowPreview(LivePreviewFrame? frame) => Previews.Add(frame?.Text);
 
         public void ShowRecoveredText(RecoveryTextLoadResult result) => Recovered.Add(result);
 
@@ -861,11 +952,23 @@ public sealed class SessionCompositionTests
 
         public bool IsCapturing { get; private set; }
 
-        public Task<AudioOperationResult> StartAsync(AudioCaptureRequest request, CancellationToken cancellationToken = default)
+        public bool HoldStart { get; set; }
+
+        public TaskCompletionSource StartEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource AllowStartExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<AudioOperationResult> StartAsync(AudioCaptureRequest request, CancellationToken cancellationToken = default)
         {
             _sessionId = request.SessionId;
+            StartEntered.TrySetResult();
+            if (HoldStart)
+            {
+                await AllowStartExit.Task;
+            }
+
             IsCapturing = true;
-            return Task.FromResult(new AudioOperationResult(Succeeded: true));
+            return new AudioOperationResult(Succeeded: true);
         }
 
         public Task<CapturedAudio> StopAsync(CancellationToken cancellationToken = default)

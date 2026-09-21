@@ -571,11 +571,11 @@ public sealed class LivePreviewControllerTests
         /// <summary>Completes once at least <paramref name="count"/> previews have been shown.</summary>
         public Task WhenShown(int count) => _shown.WhenAtLeast(count);
 
-        public void ShowPreview(DictationSessionId sessionId, string text)
+        public void ShowPreview(LivePreviewFrame frame)
         {
             lock (_lock)
             {
-                _previews.Add((sessionId, text));
+                _previews.Add((frame.SessionId, frame.Text));
             }
 
             _shown.Increment();
