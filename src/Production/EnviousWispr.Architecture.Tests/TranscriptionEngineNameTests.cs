@@ -706,9 +706,11 @@ public sealed partial class DesignSystemTokenTests
         // THE FLOOR IS TODAY'S COUNT of methods that stop the preview, so a path deleted or renamed
         // out of the pattern is noticed rather than silently narrowing the gate. Six until step 11 of
         // #148 moved the watchdog's and Windows' recoveries behind the executor; four while the
-        // executor reached the shell's stops through its effects; three since the order around a
-        // recording moved into Pipeline (one method there, the recovery and the teardown here).
-        Assert.True(previewStops >= 3, $"Expected the preview teardown call sites, found {previewStops}.");
+        // executor reached the shell's stops through its effects; three while the order around a
+        // recording was Pipeline's but the recovery still the shell's; two since the recovery moved
+        // into the executor too, which stops through the same Pipeline owner (one method there, the
+        // teardown here).
+        Assert.True(previewStops >= 2, $"Expected the preview teardown call sites, found {previewStops}.");
         Assert.True(
             unpaired.Count == 0,
             "These methods stop the live preview without stopping the auto-stop watcher; a watcher that "

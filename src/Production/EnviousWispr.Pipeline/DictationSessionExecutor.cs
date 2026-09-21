@@ -33,20 +33,11 @@ public enum SessionFailureKind
 /// </summary>
 public interface IDictationSessionEffects
 {
-    /// <summary>Recovered text from an earlier run is still waiting on Home.</summary>
-    bool HasPendingRecovery { get; }
-
     /// <summary>The user's Escape Recovery setting, read when a recording starts.</summary>
     bool EscapeRecoveryEnabled { get; }
 
-    /// <summary>
-    /// Whether the recording under way was started with Escape Recovery on. Held by the shell because
-    /// final processing and the shell's own transition-event handling clear it on their paths.
-    /// </summary>
-    bool EscapeRecoveryForSession { get; set; }
-
-    /// <summary>Probes the machine and applies the admission policy, logging pressure as it goes.</summary>
-    DictationAdmissionResult EvaluateAdmission();
+    /// <summary>The machine is under memory or disk pressure at admission: the log line.</summary>
+    void RecordResourcePressure(AppError? failure);
 
     void ShowRecoveredTextWaiting();
 
@@ -71,8 +62,11 @@ public interface IDictationSessionEffects
     /// <summary>The interruption's recovery threw.</summary>
     void RecordInterruptionFailure();
 
-    /// <summary>Stops everything, aborts and resets the session, logs the recovery, shows the status.</summary>
-    Task RecoverFailedSessionAsync(AppError failure, SessionFailureKind kind);
+    /// <summary>The session was recovered after a failure: the log line.</summary>
+    void RecordSessionRecovered(AppError failure);
+
+    /// <summary>The session was recovered after a failure: the status, worded for the kind of failure.</summary>
+    void ShowSessionRecovered(SessionFailureKind kind);
 
     /// <summary>Records whether a dictation is in flight, at every place one can end.</summary>
     Task RecordDictationEdgeAsync();
@@ -119,16 +113,21 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     private readonly PushToTalkSessionController _controller;
     private readonly ISessionBackgroundWork _background;
     private readonly ISessionFinalization _finalization;
+    private readonly ISessionRecoveryState _persistence;
+    private readonly ISystemResourceProbe _resources;
     private readonly IDictationSessionEffects _effects;
     private readonly TimeSpan _processingDeadline;
     private readonly TimeProvider _clock;
     private CancellationTokenSource? _processing;
+    private bool _escapeRecoveryForSession;
     private bool _tornDown;
 
     public DictationSessionExecutor(
         PushToTalkSessionController controller,
         ISessionBackgroundWork background,
         ISessionFinalization finalization,
+        ISessionRecoveryState persistence,
+        ISystemResourceProbe resources,
         IDictationSessionEffects effects,
         TimeSpan? processingDeadline = null,
         TimeProvider? clock = null)
@@ -136,14 +135,26 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         ArgumentNullException.ThrowIfNull(controller);
         ArgumentNullException.ThrowIfNull(background);
         ArgumentNullException.ThrowIfNull(finalization);
+        ArgumentNullException.ThrowIfNull(persistence);
+        ArgumentNullException.ThrowIfNull(resources);
         ArgumentNullException.ThrowIfNull(effects);
         _controller = controller;
         _background = background;
         _finalization = finalization;
+        _persistence = persistence;
+        _resources = resources;
         _effects = effects;
         _processingDeadline = processingDeadline ?? MaximumFinalProcessingDuration;
         _clock = clock ?? TimeProvider.System;
     }
+
+    /// <summary>Whether the recording under way was started with Escape Recovery on.</summary>
+    /// <remarks>
+    /// THE EXECUTOR'S OWN STATE NOW. It is set when a recording starts, decides whether Escape
+    /// releases or cancels, and is cleared where the shell and the runner used to clear it: on a
+    /// cancel or a failure, and as a finalisation begins.
+    /// </remarks>
+    public bool EscapeRecoveryForSession => _escapeRecoveryForSession;
 
     public bool IsProcessing => Volatile.Read(ref _processing) is not null;
 
@@ -299,9 +310,29 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     }
 
     private Task RecoverInterruptedAsync(AppErrorCode code, SessionFailureKind kind) =>
-        _effects.RecoverFailedSessionAsync(
-            new AppError(code, AppErrorStage.SystemLifecycle, CanRetry: true),
-            kind);
+        RecoverFailedSessionAsync(new AppError(code, AppErrorStage.SystemLifecycle, CanRetry: true), kind);
+
+    /// <summary>Stops everything, aborts and resets whatever session is left, says so, and shows it.</summary>
+    /// <remarks>
+    /// THE SHELL'S RECOVERY, LINE FOR LINE, WITHOUT THE SHELL: the four stops (the watchdog first),
+    /// then abort and reset only when a session is still there, then the log line, then the pending
+    /// recovery shown through the persistence owner, then the status - whose words are the shell's
+    /// for the kind of failure this was.
+    /// </remarks>
+    private async Task RecoverFailedSessionAsync(AppError failure, SessionFailureKind kind)
+    {
+        await _background.StopWatchdogAsync().ConfigureAwait(false);
+        await _background.StopAsync().ConfigureAwait(false);
+        if (_controller.CurrentSession is not null)
+        {
+            await _controller.AbortAsync(failure, CancellationToken.None).ConfigureAwait(false);
+            await _controller.ResetAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+
+        _effects.RecordSessionRecovered(failure);
+        _persistence.ShowPendingRecovery();
+        _effects.ShowSessionRecovered(kind);
+    }
 
     /// <summary>
     /// The recording armed as the command's session has run for as long as it is allowed. If it is
@@ -353,13 +384,22 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         {
             if (signal == PushToTalkSignal.Pressed)
             {
-                if (_effects.HasPendingRecovery)
+                if (_persistence.HasPendingRecovery)
                 {
                     _effects.ShowRecoveredTextWaiting();
                     return new SessionCommandResult(SessionCommandDisposition.Applied);
                 }
 
-                var admission = _effects.EvaluateAdmission();
+                // THE MACHINE IS ASKED, AND THE POLICY IS APPLIED, HERE. Memory too low refuses the
+                // recording; disk too low lets it run but stops the recovery copy being written, and
+                // the persistence owner is told so before the recording starts.
+                var admission = SystemResourceAdmissionPolicy.Evaluate(_resources.Probe());
+                _persistence.CanPersistRecovery = admission.CanPersistRecovery;
+                if (admission.Status != DictationAdmissionStatus.Ready)
+                {
+                    _effects.RecordResourcePressure(admission.Error);
+                }
+
                 if (!admission.CanStart)
                 {
                     _effects.ShowMemoryCritical();
@@ -377,7 +417,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             }
 
             var recoverCancelledRecording =
-                signal == PushToTalkSignal.Cancelled && _effects.EscapeRecoveryForSession;
+                signal == PushToTalkSignal.Cancelled && _escapeRecoveryForSession;
             var result = signal switch
             {
                 // THE PRESS BRINGS ITS OWN TARGET. Captured at admission, inside the key callback; the
@@ -404,7 +444,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             _effects.RecordTransition(result);
             if (result.Kind == SessionTransitionKind.Started && result.Session is not null)
             {
-                _effects.EscapeRecoveryForSession = _effects.EscapeRecoveryEnabled;
+                _escapeRecoveryForSession = _effects.EscapeRecoveryEnabled;
                 // THE SETTINGS ARE READ ONCE, HERE, and the background work is told them: a recording
                 // that started under one auto-stop preference finishes under it.
                 await _background.StartAsync(result.Session.Id, _effects.RecordingSettings()).ConfigureAwait(false);
@@ -419,7 +459,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             }
             else if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
             {
-                _effects.EscapeRecoveryForSession = false;
+                _escapeRecoveryForSession = false;
                 await _background.StopAsync().ConfigureAwait(false);
                 await _controller.ResetAsync(none).ConfigureAwait(false);
             }
@@ -447,7 +487,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             using var failed = interrupted is { } timedOut
                 ? DictationScope.Begin(timedOut)
                 : NoScope.Instance;
-            await _effects.RecoverFailedSessionAsync(
+            await RecoverFailedSessionAsync(
                     new AppError(AppErrorCode.SessionTimedOut, AppErrorStage.Session, CanRetry: true),
                     SessionFailureKind.TimedOut)
                 .ConfigureAwait(false);
@@ -459,7 +499,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                 ? DictationScope.Begin(broken)
                 : NoScope.Instance;
             _effects.RecordSessionFailure();
-            await _effects.RecoverFailedSessionAsync(
+            await RecoverFailedSessionAsync(
                     new AppError(AppErrorCode.InvalidTransition, AppErrorStage.Session, CanRetry: true),
                     SessionFailureKind.Failed)
                 .ConfigureAwait(false);
@@ -497,6 +537,10 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             _effects.ShowInterruptionPreserving(transition);
         }
 
+        // THE ESCAPE SETTING IS SPENT AS THE FINALISATION BEGINS, where the runner used to clear it:
+        // whether this take was a recovery has been decided (recoveryOnly), and the next recording
+        // reads the setting afresh.
+        _escapeRecoveryForSession = false;
         await _finalization.RunAsync(sessionId, audio, recoveryOnly, processing.Token).ConfigureAwait(false);
     }
 

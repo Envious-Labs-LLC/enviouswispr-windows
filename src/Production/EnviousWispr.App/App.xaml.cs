@@ -102,7 +102,6 @@ public partial class App : Application, IAsyncDisposable
     private CancellationTokenSource? _heartbeatCancellation;
     private Task? _heartbeatLoop;
     private int _activationPending;
-    private bool _escapeRecoveryForSession;
 
     public App()
     {
@@ -1306,7 +1305,9 @@ public partial class App : Application, IAsyncDisposable
                 sessionController,
                 new SessionBackgroundWork(_watchdog, _livePreview, _autoStop, _streaming),
                 finalizationRunner,
-                new SessionEffects(this, sessionController)),
+                _sessionPersistence,
+                _resourceProbe,
+                new SessionEffects(this)),
             sessionController.CaptureStartContext);
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
         // A saved keybind builds a NEW hook, which starts armed and knows nothing about a capture
@@ -2220,33 +2221,16 @@ public partial class App : Application, IAsyncDisposable
     /// the order they are started and stopped in around a recording, and the processing deadline -
     /// the sequencing the regrade of #148 named as the shell's last piece of the workflow.
     /// </summary>
-    private sealed class SessionEffects(App app, PushToTalkSessionController controller) : IDictationSessionEffects
+    private sealed class SessionEffects(App app) : IDictationSessionEffects
     {
-        public bool HasPendingRecovery => app._sessionPersistence.HasPendingRecovery;
-
         public bool EscapeRecoveryEnabled => app._settings.Preferences.Dictation.EscapeRecoveryEnabled;
 
-        public bool EscapeRecoveryForSession
-        {
-            get => app._escapeRecoveryForSession;
-            set => app._escapeRecoveryForSession = value;
-        }
-
-        public DictationAdmissionResult EvaluateAdmission()
-        {
-            var admission = SystemResourceAdmissionPolicy.Evaluate(app._resourceProbe.Probe());
-            app._sessionPersistence.CanPersistRecovery = admission.CanPersistRecovery;
-            if (admission.Status != DictationAdmissionStatus.Ready)
-            {
-                app._logger.Write(new AppLogEntry(
-                    DateTimeOffset.UtcNow,
-                    AppEventCode.ResourcePressureDetected,
-                    AppFailureCategory.ResourcePressure,
-                    ErrorCode: admission.Error?.Code));
-            }
-
-            return admission;
-        }
+        public void RecordResourcePressure(AppError? failure) =>
+            app._logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.ResourcePressureDetected,
+                AppFailureCategory.ResourcePressure,
+                ErrorCode: failure?.Code));
 
         public void ShowRecoveredTextWaiting() =>
             app._window?.DispatcherQueue.TryEnqueue(() =>
@@ -2297,19 +2281,26 @@ public partial class App : Application, IAsyncDisposable
                 AppEventCode.DictationSessionFailed,
                 AppFailureCategory.Unknown));
 
-        public Task RecoverFailedSessionAsync(AppError failure, SessionFailureKind kind) =>
-            app.RecoverFailedSessionAsync(
-                controller,
-                failure,
-                kind switch
-                {
-                    SessionFailureKind.TimedOut => DictationStatus.Quiet("The dictation timed out and was recovered safely"),
-                    SessionFailureKind.Interrupted or SessionFailureKind.InterruptionFailed =>
-                        DictationStatus.Quiet("Windows interrupted the session; it was reset safely"),
-                    SessionFailureKind.InterruptionTimedOut =>
-                        DictationStatus.Quiet("Windows interrupted the session; recovery timed out safely"),
-                    _ => DictationStatus.Error("Session failed and was reset safely"),
-                });
+        public void RecordSessionRecovered(AppError failure) =>
+            app._logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.DictationSessionRecovered,
+                AppFailureCategory.Recovery,
+                ErrorCode: failure.Code));
+
+        public void ShowSessionRecovered(SessionFailureKind kind)
+        {
+            var status = kind switch
+            {
+                SessionFailureKind.TimedOut => DictationStatus.Quiet("The dictation timed out and was recovered safely"),
+                SessionFailureKind.Interrupted or SessionFailureKind.InterruptionFailed =>
+                    DictationStatus.Quiet("Windows interrupted the session; it was reset safely"),
+                SessionFailureKind.InterruptionTimedOut =>
+                    DictationStatus.Quiet("Windows interrupted the session; recovery timed out safely"),
+                _ => DictationStatus.Error("Session failed and was reset safely"),
+            };
+            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetSessionStatus(status));
+        }
 
         public Task RecordDictationEdgeAsync() => app.RecordDictationEdgeAsync();
 
@@ -2433,30 +2424,6 @@ public partial class App : Application, IAsyncDisposable
                 : MaximumRecordingDuration;
     }
 
-    private async Task RecoverFailedSessionAsync(
-        PushToTalkSessionController controller,
-        AppError error,
-        DictationStatus status)
-    {
-        await _watchdog.StopAsync().ConfigureAwait(false);
-        await _streaming.StopAsync().ConfigureAwait(false);
-        await _autoStop.StopAsync().ConfigureAwait(false);
-        await _livePreview.StopAsync().ConfigureAwait(false);
-        if (controller.CurrentSession is not null)
-        {
-            await controller.AbortAsync(error).ConfigureAwait(false);
-            await controller.ResetAsync().ConfigureAwait(false);
-        }
-
-        _logger.Write(new AppLogEntry(
-            DateTimeOffset.UtcNow,
-            AppEventCode.DictationSessionRecovered,
-            AppFailureCategory.Recovery,
-            ErrorCode: error.Code));
-        _sessionPersistence.ShowPendingRecovery();
-        _window?.DispatcherQueue.TryEnqueue(() => _window?.SetSessionStatus(status));
-    }
-
     /// <summary>The shell's half of a finalisation: rendering, logging, and the two operations still living here.</summary>
     private sealed class SessionFinalizationEffects(App app) : ISessionFinalizationEffects
     {
@@ -2464,12 +2431,8 @@ public partial class App : Application, IAsyncDisposable
 
         public ITextDelivery? Delivery => app._textDelivery;
 
-        public string? DeliveryLanguage(Transcript transcript) => App.DeliveryLanguage(transcript);
-
         public FinalizationOptions CurrentOptions() =>
             new(app._customWords, app._deterministicTextOptions, app.CurrentPolishSetup());
-
-        public void ClearEscapeRecoveryForSession() => app._escapeRecoveryForSession = false;
 
         public void ArchiveAudio(CapturedAudio audio) => app.ArchiveDictationAudio(audio);
 
@@ -2764,10 +2727,6 @@ public partial class App : Application, IAsyncDisposable
                  SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
         {
             _pushToTalkHook?.SetRecordingActive(active: false);
-            if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
-            {
-                _escapeRecoveryForSession = false;
-            }
         }
 
         var eventCode = result.Kind switch
@@ -2835,13 +2794,6 @@ public partial class App : Application, IAsyncDisposable
             elapsedMilliseconds,
             ErrorCode: errorCode));
     }
-
-    private static string? DeliveryLanguage(Transcript transcript) =>
-        transcript.EngineId.StartsWith(
-            ParakeetTranscriptionEngine.ModelId,
-            StringComparison.OrdinalIgnoreCase)
-            ? null
-            : transcript.DetectedLanguage;
 
     private static DictationStatus SessionStatus(SessionTransitionResult result) => result.Kind switch
     {

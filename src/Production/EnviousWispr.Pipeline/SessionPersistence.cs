@@ -59,7 +59,20 @@ public interface ISessionPersistenceEffects
 /// ordinary dictation; an Escape Recovery is forced through with a day's expiry because the person
 /// asked for those words to be kept and history is the only place they can go.
 /// </remarks>
-public sealed class SessionPersistence
+/// <summary>What the executor asks of the persistence owner: whether recovered text is waiting, whether a copy may be written, and to show what is pending.</summary>
+public interface ISessionRecoveryState
+{
+    /// <summary>Recovered text from an earlier run is still waiting on Home.</summary>
+    bool HasPendingRecovery { get; }
+
+    /// <summary>Whether a recovery copy may be written; false when the disk is too low, decided at admission.</summary>
+    bool CanPersistRecovery { get; set; }
+
+    /// <summary>Shows whatever recovery text is pending, if any.</summary>
+    void ShowPendingRecovery();
+}
+
+public sealed class SessionPersistence : ISessionRecoveryState
 {
     private readonly IRecoveryTextStore _recovery;
     private readonly IHistoryStore _history;
