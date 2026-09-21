@@ -39,7 +39,12 @@ build so customers do not need to install developer tooling.
 - `RuntimeWorker`: a **separate executable** that hosts the native speech runtimes, including the CUDA
   build. `Services` drives it through `RuntimeWorkerSupervisor` over a versioned protocol with an explicit
   process priority; automatic restarts are bounded per crash loop, with the budget replenished by a
-  successful transcription request and reset by an explicit start.
+  successful transcription request and reset by an explicit start. For a shutdown the supervisor
+  has a terminal `AbortAsync(deadline)` (plan-2 step 6): it does not wait behind the request gate, kills
+  the worker of the generation in flight, observes its exit inside the deadline and reports whether it
+  saw it (`Exited` / `StillRunning` / `NoWorker`); a wedged request then ends as a failed one, and no
+  start of any kind brings a worker back (`RuntimeWorkerState.Aborted`). The transcription and preview
+  adapters expose the same call; the preview's also lets go of the resource it held.
 
 Dependencies point inward toward contracts. UI, storage, network, and model runtimes do not leak into the
 deterministic core.

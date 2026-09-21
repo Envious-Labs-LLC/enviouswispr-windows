@@ -31,6 +31,9 @@ internal interface IWorkerTranscriptionRuntime : ITranscriptionEngine, IAsyncDis
     Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default);
 
     Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Kills the worker for a shutdown without waiting for a request in flight; terminal.</summary>
+    Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline);
 }
 
 public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRuntime
@@ -67,6 +70,8 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
 
     public async Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default) =>
         await _supervisor.StopAsync(cancellationToken).ConfigureAwait(false);
+
+    public Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline) => _supervisor.AbortAsync(deadline);
 
     public async Task<Transcript> TranscribeAsync(
         CapturedAudio audio,

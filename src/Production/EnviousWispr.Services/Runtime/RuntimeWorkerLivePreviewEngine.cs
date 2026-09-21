@@ -146,6 +146,19 @@ public sealed class RuntimeWorkerLivePreviewEngine : ILivePreviewEngine
         }
     }
 
+    /// <summary>Kills the preview's worker for a shutdown and lets go of the resource it held; terminal.</summary>
+    public async Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline)
+    {
+        try
+        {
+            return await _engine.AbortAsync(deadline).ConfigureAwait(false);
+        }
+        finally
+        {
+            await ReleaseResourceAsync().ConfigureAwait(false);
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_disposed)

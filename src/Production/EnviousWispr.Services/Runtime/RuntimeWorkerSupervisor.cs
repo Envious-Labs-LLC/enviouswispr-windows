@@ -19,6 +19,8 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
     private Task<string>? _stderrDrain;
     private int _restartCount;
     private bool _disposed;
+    private bool _aborted;
+    private RuntimeWorkerState _state = RuntimeWorkerState.Stopped;
 
     public RuntimeWorkerSupervisor(
         string workerExecutable,
@@ -34,7 +36,14 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         _processPriority = processPriority;
     }
 
-    public RuntimeWorkerState State { get; private set; } = RuntimeWorkerState.Stopped;
+    /// <summary>The worker's state; Aborted once an abort has run, whatever a request in flight writes after it.</summary>
+    public RuntimeWorkerState State
+    {
+        get => _disposed
+            ? RuntimeWorkerState.Disposed
+            : Volatile.Read(ref _aborted) ? RuntimeWorkerState.Aborted : _state;
+        private set => _state = value;
+    }
 
     public int? WorkerProcessId => _process is { HasExited: false } process ? process.Id : null;
 
@@ -115,6 +124,11 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            if (Volatile.Read(ref _aborted))
+            {
+                return null;
+            }
+
             if (_process is null || _process.HasExited || State is not RuntimeWorkerState.Ready)
             {
                 var start = await RestartCoreAsync(timeout, cancellationToken).ConfigureAwait(false);
@@ -154,6 +168,59 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         {
             _gate.Release();
         }
+    }
+
+    public async Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline)
+    {
+        ValidateTimeout(deadline);
+        // TERMINAL FIRST, THEN THE KILL. Written before the process is taken so that a start racing
+        // this - one that passed its own check already - finds the flag when it assigns its process
+        // and takes that worker down itself; and so that no start after this can create another.
+        Volatile.Write(ref _aborted, true);
+        // BOUND TO THE GENERATION IN FLIGHT. The exchange is the one point of ownership: whichever
+        // of an abort, a stop and a disposal takes the process out of the field owns its handle, and
+        // the others find nothing - so the handle is closed exactly once, and a worker started later
+        // (there is none, after the flag) could not be mistaken for this one.
+        var process = Interlocked.Exchange(ref _process, null);
+        if (process is null)
+        {
+            return new RuntimeWorkerAbortResult(RuntimeWorkerAbortOutcome.NoWorker, null);
+        }
+
+        int? processId = null;
+        var exited = false;
+        try
+        {
+            processId = process.Id;
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+
+            // THE EXIT IS OBSERVED, NOT ASSUMED. A kill that was issued is not a worker that is gone;
+            // the deadline is how long the shutdown will wait to see it go.
+            await process.WaitForExitAsync(CancellationToken.None)
+                .WaitAsync(deadline, CancellationToken.None)
+                .ConfigureAwait(false);
+            exited = true;
+        }
+        catch (TimeoutException)
+        {
+            exited = process.HasExited;
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
+        {
+            // Already gone, or gone before the kill could be asked: an exit either way.
+            exited = true;
+        }
+        finally
+        {
+            process.Dispose();
+        }
+
+        return new RuntimeWorkerAbortResult(
+            exited ? RuntimeWorkerAbortOutcome.Exited : RuntimeWorkerAbortOutcome.StillRunning,
+            processId);
     }
 
     public async Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default)
@@ -233,6 +300,11 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
+        if (Volatile.Read(ref _aborted))
+        {
+            return Failure();
+        }
+
         await StopCoreAsync().ConfigureAwait(false);
         State = RuntimeWorkerState.Starting;
         if (!File.Exists(_workerExecutable))
@@ -269,6 +341,14 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             }
 
             _process = process;
+            // AN ABORT THAT LANDED BETWEEN THE CHECK ABOVE AND THIS ASSIGNMENT found no process to
+            // kill; this start is the one that sees it, and takes its own worker down.
+            if (Volatile.Read(ref _aborted))
+            {
+                await StopCoreAsync().ConfigureAwait(false);
+                return Failure();
+            }
+
             if (_processPriority is { } priority)
             {
                 try
@@ -471,9 +551,9 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
 
     private static RuntimeWorkerResult Success(RuntimeWorkerState state) => new(true, state);
 
-    private static RuntimeWorkerResult Failure() => new(
+    private RuntimeWorkerResult Failure() => new(
         Succeeded: false,
-        RuntimeWorkerState.Faulted,
+        Volatile.Read(ref _aborted) ? RuntimeWorkerState.Aborted : RuntimeWorkerState.Faulted,
         new AppError(
             AppErrorCode.RuntimeWorkerFailed,
             AppErrorStage.RuntimeWorker,

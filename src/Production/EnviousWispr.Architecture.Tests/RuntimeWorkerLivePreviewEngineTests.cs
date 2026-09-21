@@ -47,6 +47,27 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
     }
 
     [Fact]
+    public async Task AbortReachesTheRuntimeAndLetsGoOfTheResource()
+    {
+        // THE PREVIEW'S ABORT IS THE WORKER'S ABORT, and the resource the preview held for its worker
+        // is let go of with it, so the final engine can have it during the shutdown too.
+        using var arbiter = new RuntimeResourceArbiter();
+        var runtime = new FakePreviewRuntime();
+        await using var preview = new RuntimeWorkerLivePreviewEngine(runtime, arbiter, RuntimeResourceKind.Cpu);
+        Assert.True((await preview.StartAsync()).Succeeded);
+        var heldByPreview = await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero);
+
+        var abort = await preview.AbortAsync(TimeSpan.FromSeconds(1));
+        var afterAbort = await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero);
+
+        Assert.False(heldByPreview.Succeeded);
+        Assert.Equal(TimeSpan.FromSeconds(1), runtime.AbortDeadline);
+        Assert.Equal(RuntimeWorkerAbortOutcome.Exited, abort.Outcome);
+        Assert.True(afterAbort.Succeeded);
+        await afterAbort.Lease!.DisposeAsync();
+    }
+
+    [Fact]
     public async Task FailedPreviewStartDoesNotHoldResource()
     {
         using var arbiter = new RuntimeResourceArbiter();
@@ -211,6 +232,14 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
         {
             Stopped = true;
             return Task.FromResult(new RuntimeWorkerResult(true, RuntimeWorkerState.Stopped));
+        }
+
+        public TimeSpan? AbortDeadline { get; private set; }
+
+        public Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline)
+        {
+            AbortDeadline = deadline;
+            return Task.FromResult(new RuntimeWorkerAbortResult(RuntimeWorkerAbortOutcome.Exited, 4242));
         }
 
         public Task<Transcript> TranscribeAsync(
