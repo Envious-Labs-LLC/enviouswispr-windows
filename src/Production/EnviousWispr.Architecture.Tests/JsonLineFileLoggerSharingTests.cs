@@ -9,9 +9,9 @@ namespace EnviousWispr.Architecture.Tests;
 /// writes it; a reader that shares the file for reading only makes the app's append fail with a
 /// sharing violation, and since diagnostics are best-effort the line is dropped without a word.
 /// Once in about four runs it was a stage the journey requires, and a passing take was reported as
-/// having skipped it. Windows decides sharing by what the FIRST opener allowed, so the reader is
-/// the one that has to share writes - the harness now does - and the writer shares reads and writes
-/// so a reader arriving while a line is being written is not refused either.
+/// having skipped it. Windows checks every open against every handle already there, both ways, so
+/// the reader is the one that has to share writes - the harness now does - and the writer shares
+/// reads and writes so a reader arriving while a line is being written is not refused either.
 /// </remarks>
 public sealed class JsonLineFileLoggerSharingTests
 {
@@ -34,6 +34,45 @@ public sealed class JsonLineFileLoggerSharingTests
             var lines = reader.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries);
             Assert.Equal(2, lines.Length);
             Assert.Contains("DeterministicProcessingStarted", lines[1]);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public async Task AReaderSharingReadsOnlyIsWhatLosesTheLine()
+    {
+        // THE NEGATIVE CONTROL: the reader the harness used to be. With it holding the file the
+        // append is refused and the line is gone - which is the OS, and why the reader had to change.
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(directory =>
+        {
+            var path = Path.Combine(directory, "app.jsonl");
+            var logger = new JsonLineFileLogger(path, enabled: true);
+            logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ApplicationStarting));
+
+            using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.DeterministicProcessingStarted));
+            }
+
+            Assert.Single(File.ReadAllLines(path));
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public async Task AReaderArrivingWhileALineIsBeingWrittenIsNotRefused()
+    {
+        // THE OTHER DIRECTION: the writer's handle shares reads and writes, so a reader that opens
+        // the file mid-append the way the harness does is admitted rather than refused.
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(directory =>
+        {
+            var path = Path.Combine(directory, "app.jsonl");
+            using (new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+            {
+                using var reader = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                Assert.True(reader.CanRead);
+            }
+
             return Task.CompletedTask;
         });
     }
