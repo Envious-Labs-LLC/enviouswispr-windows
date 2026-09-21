@@ -47,6 +47,57 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
     }
 
     [Fact]
+    public async Task AbortReachesTheRuntimeAndLetsGoOfTheResource()
+    {
+        // THE PREVIEW'S ABORT IS THE WORKER'S ABORT, and the resource the preview held for its worker
+        // is let go of with it, so the final engine can have it during the shutdown too.
+        using var arbiter = new RuntimeResourceArbiter();
+        var runtime = new FakePreviewRuntime();
+        await using var preview = new RuntimeWorkerLivePreviewEngine(runtime, arbiter, RuntimeResourceKind.Cpu);
+        Assert.True((await preview.StartAsync()).Succeeded);
+        var heldByPreview = await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero);
+
+        var abort = await preview.AbortAsync(TimeSpan.FromSeconds(1));
+        var afterAbort = await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero);
+
+        Assert.False(heldByPreview.Succeeded);
+        Assert.Equal(TimeSpan.FromSeconds(1), runtime.AbortDeadline);
+        Assert.Equal(RuntimeWorkerAbortOutcome.Exited, abort.Outcome);
+        Assert.True(afterAbort.Succeeded);
+        await afterAbort.Lease!.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task AnAbortWhoseExitWasNotSeenKeepsTheResource()
+    {
+        // THE WORKER MAY STILL BE ON THE RESOURCE. A StillRunning outcome leaves the lease with the
+        // preview - the final engine must not be put beside a worker nobody has seen leave - and an
+        // abort that threw leaves it too.
+        using var arbiter = new RuntimeResourceArbiter();
+        var runtime = new FakePreviewRuntime { AbortOutcome = RuntimeWorkerAbortOutcome.StillRunning };
+        await using var preview = new RuntimeWorkerLivePreviewEngine(runtime, arbiter, RuntimeResourceKind.Cpu);
+        Assert.True((await preview.StartAsync()).Succeeded);
+
+        var abort = await preview.AbortAsync(TimeSpan.FromSeconds(1));
+        var stillHeld = await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero);
+
+        Assert.Equal(RuntimeWorkerAbortOutcome.StillRunning, abort.Outcome);
+        Assert.False(stillHeld.Succeeded, "the resource stays with the preview while its worker may still be on it");
+
+        runtime.AbortThrows = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => preview.AbortAsync(TimeSpan.FromSeconds(1)));
+        Assert.False((await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero)).Succeeded);
+
+        // Seen gone at last: the lease follows.
+        runtime.AbortThrows = false;
+        runtime.AbortOutcome = RuntimeWorkerAbortOutcome.Exited;
+        Assert.Equal(RuntimeWorkerAbortOutcome.Exited, (await preview.AbortAsync(TimeSpan.FromSeconds(1))).Outcome);
+        var freed = await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero);
+        Assert.True(freed.Succeeded);
+        await freed.Lease!.DisposeAsync();
+    }
+
+    [Fact]
     public async Task FailedPreviewStartDoesNotHoldResource()
     {
         using var arbiter = new RuntimeResourceArbiter();
@@ -90,10 +141,10 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
     [Fact]
     public async Task AStartCancelledWhileTheRuntimeIsStartingReleasesTheResourceAndStopStillStopsTheRuntime()
     {
-        // Step 8 cancels a preview start that is already inside the worker's own start. The lease
-        // was taken before that; it must be released by the cancellation, and the stop that the
-        // controller issues afterwards must still reach the runtime so a half-started worker is
-        // taken down.
+        // Step 8 cancels a preview start that is already inside the worker's own start. The worker
+        // it launched is alive on the resource, so the lease stays with the preview through the
+        // cancellation; the stop that the controller issues afterwards reaches the runtime, takes
+        // the half-started worker down, and that is when the lease goes.
         using var arbiter = new RuntimeResourceArbiter();
         var runtime = new FakePreviewRuntime(holdStart: true);
         await using var preview = new RuntimeWorkerLivePreviewEngine(
@@ -111,13 +162,15 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => start.WaitAsync(TimeSpan.FromSeconds(10)));
 
         var afterCancel = await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero);
-        Assert.True(afterCancel.Succeeded, "the cancelled start released its lease");
-        await afterCancel.Lease!.DisposeAsync();
+        Assert.False(afterCancel.Succeeded, "the lease stays with the preview while the half-started worker is alive");
 
         var stopped = await preview.StopAsync();
+        var afterStop = await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero);
 
         Assert.True(stopped.Succeeded);
         Assert.True(runtime.Stopped, "the runtime is still told to stop after a cancelled start");
+        Assert.True(afterStop.Succeeded, "the stop that took the worker down let the lease go");
+        await afterStop.Lease!.DisposeAsync();
     }
 
     [Fact]
@@ -173,6 +226,11 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
     {
         public string EngineId => "whisper-small:cpu:isolated";
 
+        /// <summary>A worker is alive from the moment the start has launched it - before its health answer - until a stop.</summary>
+        public int? WorkerProcessId => Launched && !Stopped ? 4242 : null;
+
+        public bool Launched { get; private set; }
+
         public bool Stopped { get; private set; }
 
         public int Starts { get; private set; }
@@ -190,12 +248,15 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
                 throw new OperationCanceledException();
             }
 
+            Launched = true;
             if (holdStart)
             {
                 // The real supervisor's health wait: a cancellable read that throws the caller's cancel.
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             }
 
+            // A start that fails takes its own worker down before it answers, as the supervisor does.
+            Launched = startSucceeds;
             return startSucceeds
                 ? new RuntimeWorkerResult(true, RuntimeWorkerState.Ready)
                 : new RuntimeWorkerResult(
@@ -211,6 +272,23 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
         {
             Stopped = true;
             return Task.FromResult(new RuntimeWorkerResult(true, RuntimeWorkerState.Stopped));
+        }
+
+        public TimeSpan? AbortDeadline { get; private set; }
+
+        public RuntimeWorkerAbortOutcome AbortOutcome { get; set; } = RuntimeWorkerAbortOutcome.Exited;
+
+        public bool AbortThrows { get; set; }
+
+        public Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline)
+        {
+            AbortDeadline = deadline;
+            if (AbortThrows)
+            {
+                throw new InvalidOperationException("synthetic abort failure");
+            }
+
+            return Task.FromResult(new RuntimeWorkerAbortResult(AbortOutcome, 4242));
         }
 
         public Task<Transcript> TranscribeAsync(

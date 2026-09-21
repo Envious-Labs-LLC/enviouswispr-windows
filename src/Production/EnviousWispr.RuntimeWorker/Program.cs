@@ -14,7 +14,11 @@ var parentProcessId = ReadIntegerArgument(args, "--parent-pid");
 var healthDelayMilliseconds = ReadIntegerArgument(args, "--health-delay-ms", defaultValue: 0);
 // Test-only opt-in: exercise successful worker responses without loading a speech model.
 var testTranscribeStub = args.Contains("--test-transcribe-stub", StringComparer.Ordinal);
-if (parentProcessId <= 0 || healthDelayMilliseconds < 0)
+// Test-only: a stubbed transcription that takes this long, so a wedged worker can be staged.
+var transcribeDelayMilliseconds = ReadIntegerArgument(args, "--transcribe-delay-ms", defaultValue: 0);
+// Test-only: a shutdown request that takes this long to honour, so a slow teardown can be staged.
+var shutdownDelayMilliseconds = ReadIntegerArgument(args, "--shutdown-delay-ms", defaultValue: 0);
+if (parentProcessId <= 0 || healthDelayMilliseconds < 0 || transcribeDelayMilliseconds < 0 || shutdownDelayMilliseconds < 0)
 {
     return 2;
 }
@@ -88,6 +92,11 @@ using (engineCreation?.Engine as IDisposable)
 
         if (string.Equals(request.Command, "transcribe", StringComparison.Ordinal))
         {
+            if (testTranscribeStub && transcribeDelayMilliseconds > 0)
+            {
+                await Task.Delay(transcribeDelayMilliseconds);
+            }
+
             var response = testTranscribeStub && request.Transcription is { } transcription
                 ? new RuntimeWorkerResponse(
                     protocolVersion,
@@ -106,6 +115,11 @@ using (engineCreation?.Engine as IDisposable)
 
         if (string.Equals(request.Command, "shutdown", StringComparison.Ordinal))
         {
+            if (shutdownDelayMilliseconds > 0)
+            {
+                await Task.Delay(shutdownDelayMilliseconds);
+            }
+
             await WriteResponseAsync(new RuntimeWorkerResponse(
                 protocolVersion,
                 request.RequestId,
