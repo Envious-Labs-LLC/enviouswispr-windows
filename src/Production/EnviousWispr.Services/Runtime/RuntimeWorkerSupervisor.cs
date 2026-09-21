@@ -15,6 +15,8 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
     private readonly int _maximumRestarts;
     private readonly ProcessPriorityClass? _processPriority;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    /// <summary>The handshake between closing admission and publishing a generation or its process; never held across an await.</summary>
+    private readonly object _lifecycle = new();
     private WorkerGeneration? _generation;
     private int _restartCount;
     private bool _disposed;
@@ -46,10 +48,13 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
     }
 
     public int? WorkerProcessId =>
-        Volatile.Read(ref _generation)?.Process is { } process && IsAlive(process) ? process.Id : null;
+        Volatile.Read(ref _generation)?.Process is { } process && IsAlive(process) ? TryReadId(process) : null;
 
     /// <summary>How many worker handles this supervisor has closed; a test's way of seeing that a race closed one exactly once.</summary>
     internal int HandlesClosed => Volatile.Read(ref _handlesClosed);
+
+    /// <summary>Who last took the current generation's teardown - "stop" or "abort"; a test's way of seeing which owner did the work.</summary>
+    internal string? LastTeardownOwner => Volatile.Read(ref _generation)?.Owner;
 
     public async Task<RuntimeWorkerResult> StartAsync(
         TimeSpan timeout,
@@ -182,8 +187,19 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         // published its process and takes that worker down itself, and no start after this can
         // create another. This never waits for the request gate: a wedged request holds that for
         // as long as its timeout, and the shutdown cannot.
-        Volatile.Write(ref _aborted, true);
-        var generation = Volatile.Read(ref _generation);
+        // ONE LOCK FOR THE HANDSHAKE. The flag is written and the generation and its process read
+        // under the same lock the start publishes them under, so either this abort sees what the
+        // start published and takes it down, or the start sees the flag and takes its own down; two
+        // volatile operations in each direction could each read the older value, and did.
+        WorkerGeneration? generation;
+        Process? process;
+        lock (_lifecycle)
+        {
+            _aborted = true;
+            generation = _generation;
+            process = generation?.Process;
+        }
+
         if (generation is null || generation.Ended.Task.IsCompleted)
         {
             return new RuntimeWorkerAbortResult(RuntimeWorkerAbortOutcome.NoWorker, null);
@@ -192,7 +208,7 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         // THE GENERATION IS THE UNIT, NOT A PROCESS FIELD. A start that has not yet published its
         // process, or a stop already tearing the process down, is a generation that is not over; the
         // abort waits for its end inside the deadline rather than reporting nothing to abort.
-        if (generation.Process is not { } process)
+        if (process is null)
         {
             return await AwaitEndAsync(generation, deadline).ConfigureAwait(false);
         }
@@ -213,6 +229,7 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
                 return new RuntimeWorkerAbortResult(RuntimeWorkerAbortOutcome.Exited, processId);
             }
 
+            generation.Owner = "abort";
             // ONE DEADLINE FOR THE WHOLE ABORT: what the wait for ownership used comes off the kill's.
             var remaining = deadline - Stopwatch.GetElapsedTime(started);
             var exited = await KillAndObserveAsync(
@@ -243,7 +260,14 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
                 return Success(RuntimeWorkerState.Disposed);
             }
 
-            await StopCoreAsync().ConfigureAwait(false);
+            if (!await StopCoreAsync().ConfigureAwait(false))
+            {
+                // THE WORKER DID NOT GO. Said so, rather than reported stopped: the generation stays,
+                // with its handle, for an abort or a later stop to try again.
+                State = RuntimeWorkerState.Faulted;
+                return Failure();
+            }
+
             State = RuntimeWorkerState.Stopped;
             return Success(State);
         }
@@ -252,6 +276,10 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             _gate.Release();
         }
     }
+
+    /// <summary>Whether the current generation is over: no worker, or one whose exit was observed.</summary>
+    /// <remarks>A disposal that could not see its worker go leaves the generation reachable here, for an abort.</remarks>
+    internal bool WorkerGone => Volatile.Read(ref _generation) is not { } generation || generation.Ended.Task.IsCompleted;
 
     public async ValueTask DisposeAsync()
     {
@@ -315,19 +343,29 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             return Failure();
         }
 
-        await StopCoreAsync().ConfigureAwait(false);
+        if (!await StopCoreAsync().ConfigureAwait(false))
+        {
+            // THE LAST WORKER HAS NOT BEEN SEEN TO GO. Its generation is not replaced - a replaced
+            // generation would take its handle out of reach - so nothing starts until it has.
+            State = RuntimeWorkerState.Faulted;
+            return Failure();
+        }
+
         // THE GENERATION EXISTS FROM HERE, before the process does, so an abort that lands during
         // the start has something to wait for: the generation ends either with the observed exit of
-        // the process it publishes or, if it never publishes one, with the start. And the flag is
-        // read again once the generation is published: an abort that read the generation before
-        // this one found the last, ended one and reported no worker - which stays true, because
-        // this start now ends without starting anything.
+        // the process it publishes or, if it never publishes one, with the start. Published under
+        // the lifecycle lock with the flag read in the same breath: an abort that closed admission
+        // before this saw the last, ended generation and reported no worker, and this start now
+        // ends without starting anything; one that closes it after this sees this generation.
         var generation = new WorkerGeneration();
-        Volatile.Write(ref _generation, generation);
-        if (Volatile.Read(ref _aborted))
+        lock (_lifecycle)
         {
-            generation.Ended.TrySetResult(true);
-            return Failure();
+            _generation = generation;
+            if (_aborted)
+            {
+                generation.Ended.TrySetResult(true);
+                return Failure();
+            }
         }
 
         State = RuntimeWorkerState.Starting;
@@ -366,11 +404,18 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
                 return Failure();
             }
 
-            generation.Process = process;
-            // AN ABORT THAT LANDED BETWEEN THE CHECK ABOVE AND THIS PUBLICATION found a generation
-            // with no process and is waiting for its end; this start is the one that sees the flag,
-            // and takes its own worker down, which ends the generation the abort is waiting on.
-            if (Volatile.Read(ref _aborted))
+            // PUBLISHED UNDER THE SAME LOCK, WITH THE SAME READ. An abort that closed admission
+            // before this found a generation with no process and is waiting for its end; this start
+            // sees the flag and takes its own worker down, which ends that generation. One that
+            // closes admission after this sees the process and takes it down itself.
+            bool abortedMeanwhile;
+            lock (_lifecycle)
+            {
+                generation.Process = process;
+                abortedMeanwhile = _aborted;
+            }
+
+            if (abortedMeanwhile)
             {
                 await StopCoreAsync().ConfigureAwait(false);
                 return Failure();
@@ -520,14 +565,18 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
     /// was not observed is not disposed: its handle stays with the generation so a later abort or
     /// stop can try again, and nothing reads a closed handle as a gone worker.
     /// </remarks>
-    private async Task StopCoreAsync()
+    private async Task<bool> StopCoreAsync()
     {
         var generation = Volatile.Read(ref _generation);
-        if (generation is null || generation.Ended.Task.IsCompleted || generation.Process is not { } process)
+        if (generation is null || generation.Ended.Task.IsCompleted)
         {
-            // Nothing, or over already, or a start that has not published a process yet - that
-            // start ends its own generation.
-            return;
+            return true;
+        }
+
+        if (generation.Process is not { } process)
+        {
+            // A start that has not published a process yet ends its own generation.
+            return true;
         }
 
         await generation.Ownership.WaitAsync().ConfigureAwait(false);
@@ -535,9 +584,10 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         {
             if (generation.Ended.Task.IsCompleted)
             {
-                return;
+                return true;
             }
 
+            generation.Owner = "stop";
             if (IsAlive(process))
             {
                 await TryRequestShutdownAsync(process).ConfigureAwait(false);
@@ -550,6 +600,8 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
                 End(generation, process);
                 await DrainStderrAsync(generation).ConfigureAwait(false);
             }
+
+            return exited;
         }
         finally
         {
@@ -711,6 +763,9 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         }
 
         public Task<string>? StderrDrain { get; set; }
+
+        /// <summary>Who took the teardown - for the tests, which need to know which owner did the work.</summary>
+        public string? Owner { get; set; }
 
         public SemaphoreSlim Ownership { get; } = new(1, 1);
 

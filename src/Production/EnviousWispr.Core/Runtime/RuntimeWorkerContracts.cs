@@ -11,7 +11,7 @@ public enum RuntimeWorkerState
     Faulted,
     Disposed,
 
-    /// <summary>Aborted for the shutdown: the worker was killed and nothing will start another.</summary>
+    /// <summary>Aborted for the shutdown: admission is closed for good, the worker was asked to go, and nothing will start another.</summary>
     Aborted,
 }
 
@@ -24,7 +24,7 @@ public enum RuntimeWorkerAbortOutcome
     /// <summary>The worker was killed and its exit observed inside the deadline.</summary>
     Exited,
 
-    /// <summary>The worker was killed but its exit was not observed inside the deadline.</summary>
+    /// <summary>The worker was asked to go - or the asking was refused - and its exit was not observed inside the deadline; it is still owned.</summary>
     StillRunning,
 }
 
@@ -56,12 +56,13 @@ public interface IRuntimeWorkerSupervisor : IAsyncDisposable
 
     Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Kills the worker now, for a shutdown, without waiting for a request in flight; terminal.</summary>
+    /// <summary>Ends the worker now, for a shutdown, without waiting for a request in flight; terminal.</summary>
     /// <remarks>
     /// NOT BEHIND THE REQUEST GATE. A wedged transcription holds the gate for as long as its timeout,
     /// and a shutdown cannot wait that long; the abort takes the worker of the current generation
     /// out from under the request, which then ends as a failed one, and refuses every start after.
-    /// The deadline bounds how long the exit is waited for; the outcome says whether it was seen.
+    /// The deadline bounds how long the exit is waited for; the outcome says only what was seen - a
+    /// worker not seen to go is still owned, whatever was asked of it.
     /// </remarks>
     Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline);
 }

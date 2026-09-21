@@ -74,15 +74,26 @@ public sealed class RuntimeWorkerLivePreviewEngine : ILivePreviewEngine
             var started = await _engine.StartAsync(cancellationToken).ConfigureAwait(false);
             if (!started.Succeeded)
             {
-                await ReleaseResourceAsync().ConfigureAwait(false);
+                await ReleaseResourceIfWorkerGoneAsync().ConfigureAwait(false);
             }
 
             return started;
         }
         catch
         {
-            await ReleaseResourceAsync().ConfigureAwait(false);
+            // A START CANCELLED HALF-WAY MAY HAVE LEFT A WORKER RUNNING, on the resource this lease
+            // stands for; the stop the preview controller issues next takes it down and lets go.
+            await ReleaseResourceIfWorkerGoneAsync().ConfigureAwait(false);
             throw;
+        }
+    }
+
+    /// <summary>Lets go of the resource only when no worker of this engine is alive to be on it.</summary>
+    private async Task ReleaseResourceIfWorkerGoneAsync()
+    {
+        if (_engine.WorkerProcessId is null)
+        {
+            await ReleaseResourceAsync().ConfigureAwait(false);
         }
     }
 
@@ -136,14 +147,15 @@ public sealed class RuntimeWorkerLivePreviewEngine : ILivePreviewEngine
             return new RuntimeWorkerResult(true, RuntimeWorkerState.Disposed);
         }
 
-        try
-        {
-            return await _engine.StopAsync(cancellationToken).ConfigureAwait(false);
-        }
-        finally
+        // THE RESOURCE FOLLOWS THE WORKER. A stop that could not see the worker go reports so, and
+        // the lease stays with the preview until one that does - or an abort - sees it.
+        var stopped = await _engine.StopAsync(cancellationToken).ConfigureAwait(false);
+        if (stopped.Succeeded || _engine.WorkerProcessId is null)
         {
             await ReleaseResourceAsync().ConfigureAwait(false);
         }
+
+        return stopped;
     }
 
     /// <summary>Kills the preview's worker for a shutdown; terminal. The resource it held is let go of only once the worker is seen gone.</summary>
@@ -173,11 +185,17 @@ public sealed class RuntimeWorkerLivePreviewEngine : ILivePreviewEngine
 
         try
         {
+            // STOPPED BEFORE DISPOSED, so the disposal has a word on whether the worker went; the
+            // lease is let go of only on that word.
+            var stopped = await _engine.StopAsync().ConfigureAwait(false);
             await _engine.DisposeAsync().ConfigureAwait(false);
+            if (stopped.Succeeded || _engine.WorkerProcessId is null)
+            {
+                await ReleaseResourceAsync().ConfigureAwait(false);
+            }
         }
         finally
         {
-            await ReleaseResourceAsync().ConfigureAwait(false);
             _disposed = true;
             GC.SuppressFinalize(this);
         }

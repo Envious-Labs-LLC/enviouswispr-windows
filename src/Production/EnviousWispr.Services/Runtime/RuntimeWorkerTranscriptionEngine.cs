@@ -28,6 +28,9 @@ public sealed record RuntimeWorkerTranscriptionOptions(
 
 internal interface IWorkerTranscriptionRuntime : ITranscriptionEngine, IAsyncDisposable
 {
+    /// <summary>The worker's process id while one is alive, or null: the one fact the preview's resource follows.</summary>
+    int? WorkerProcessId { get; }
+
     Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default);
 
     Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default);

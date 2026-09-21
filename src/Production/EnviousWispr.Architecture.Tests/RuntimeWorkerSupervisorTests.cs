@@ -196,6 +196,7 @@ public sealed class RuntimeWorkerSupervisorTests
         Assert.Equal(RuntimeWorkerState.Disposed, supervisor.State);
         Assert.Null(supervisor.WorkerProcessId);
         Assert.Equal(1, supervisor.HandlesClosed);
+        Assert.Equal("abort", supervisor.LastTeardownOwner);
         // Once more of each, on a supervisor with nothing left: no throw, nothing to abort.
         await supervisor.DisposeAsync();
         Assert.Equal(RuntimeWorkerAbortOutcome.NoWorker, (await supervisor.AbortAsync(TimeSpan.FromSeconds(1))).Outcome);
@@ -227,6 +228,7 @@ public sealed class RuntimeWorkerSupervisorTests
         Assert.Equal(processId, abort.WorkerProcessId);
         Assert.True(worker.HasExited);
         Assert.Equal(1, supervisor.HandlesClosed);
+        Assert.Equal("stop", supervisor.LastTeardownOwner);
         Assert.Equal(RuntimeWorkerState.Disposed, supervisor.State);
     }
 
@@ -313,7 +315,8 @@ public sealed class RuntimeWorkerSupervisorTests
         var abort = await engine.AbortAsync(TimeSpan.FromSeconds(10)).WaitAsync(TimeSpan.FromSeconds(15));
 
         Assert.Equal(RuntimeWorkerAbortOutcome.Exited, abort.Outcome);
-        await Assert.ThrowsAnyAsync<Exception>(() => wedged.WaitAsync(TimeSpan.FromSeconds(10)));
+        var failure = await Assert.ThrowsAsync<TranscriptionEngineException>(() => wedged.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(AppErrorCode.RuntimeWorkerFailed, failure.Error.Code);
         Assert.Null(engine.WorkerProcessId);
         Assert.Equal(1, transcriptionSupervisor.HandlesClosed);
 
