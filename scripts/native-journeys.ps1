@@ -48,6 +48,7 @@ $runs += @{ case = 'NativeExitClosesMicrophoneAndWorkers'; name = 'escape-recove
 $runs += @{ case = 'NativeDeliveryExercisesThreeRoutes'; name = 'route-edit'; args = @('--synthetic-hotkey', '--quick-tap', '--english-parakeet', '--target-mode', 'edit') }
 $runs += @{ case = 'NativeDeliveryExercisesThreeRoutes'; name = 'route-caret-start'; args = @('--synthetic-hotkey', '--quick-tap', '--english-parakeet', '--target-mode', 'caret-start') }
 $runs += @{ case = 'NativeDeliveryExercisesThreeRoutes'; name = 'route-password'; args = @('--synthetic-hotkey', '--quick-tap', '--english-parakeet', '--target-mode', 'password') }
+$runs += @{ case = 'UnverifiedDirectWriteNeverPastes'; name = 'route-unverified-write'; args = @('--synthetic-hotkey', '--quick-tap', '--english-parakeet', '--target-mode', 'unverified-write') }
 
 # NEVER FORCE-STOPPED. A running EnviousWispr.App may be the user's, mid-dictation or mid-write; the
 # journeys under test are exactly the protocol that ends one properly, and killing one from here would

@@ -120,15 +120,24 @@ reason but ask rather than assert it, and write the answer here when you get it.
   1. `UiAutomationValue`: a direct value write through UI Automation. Taken only when the caret context is a
      standard edit field that supports the value pattern, nothing is selected, and the text is within
      `MaximumDirectValueCharacters` (16,384). Once the write has been issued the adapter returns whether or
-     not it verified (`DirectWriteUnverified`) and never falls through to a paste. The source records no
-     reason for that; the likely one is that a paste after a write of unknown effect could insert the text
-     twice. Confirm before relying on it.
+     not it verified (`DirectWriteUnverified`) and never falls through to a paste: a paste after a write
+     of unknown effect could insert the text twice. The native `unverified-write` target (a field that
+     rewrites every value set into it) observes exactly that - the write lands, `DeliveryUnverified` is
+     logged, no `WM_PASTE` follows (`docs/reliability/native-journey-evidence.md`).
   2. `ClipboardPaste`: clipboard-backed paste through narrowly scoped `SendInput`.
   3. `ClipboardOnly`: the text is left on the clipboard when the paste is refused, or when the target is
      elevated, protected, changed since recording began, or unsupported.
   Three routes, not the macOS cascade of five, and that is deliberate. This entry said "two routes" from
   2026-08-26 to 2026-09-19 while the code had three (#148); a contract that omits a mutation path hides
   the path that most needs validating.
+  A delivery failure keeps its name (plan-2 step 13): the adapter answers the accessibility failures it
+  expects as results (`AccessibilityUnavailable`; its filter, `IsExpectedAutomationFailure`, takes UI
+  Automation's own `InvalidOperationException` and not ours, and never an `ObjectDisposedException`);
+  what still throws out of it is named by `ContextAwareTextDelivery` as the caller's `Cancelled`, a
+  `DeliveryDisposed` (the app leaving) or a `DeliveryFaulted` (a defect, with the stage and the exception
+  type in `DeliveryResult.Fault`, never the words). Each reaches the log as its own `AppErrorCode`
+  (`DeliveryAccessibilityUnavailable`, `DeliveryUnverified`, `DeliveryCancelled`, `DeliveryDisposed`,
+  `DeliveryFaulted`); the words are kept for recovery and nothing is retried against the target.
 - Secrets: Windows Credential Manager.
 - Storage: versioned user data outside the install directory with atomic writes and migrations.
 

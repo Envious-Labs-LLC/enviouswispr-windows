@@ -95,7 +95,18 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts) 
             TextDeliveryRefusalReason.ClipboardUnavailable => AppErrorCode.DeliveryClipboardUnavailable,
             TextDeliveryRefusalReason.InputStateUnsafe or
                 TextDeliveryRefusalReason.InputBlocked => AppErrorCode.DeliveryInputBlocked,
-            _ => AppErrorCode.DeliveryUnsupportedTarget,
+            TextDeliveryRefusalReason.UnsupportedTarget or
+                TextDeliveryRefusalReason.UnsafeMultilineTarget => AppErrorCode.DeliveryUnsupportedTarget,
+            // EACH WAY THE WORDS DID NOT LAND KEEPS ITS NAME IN THE LOG (plan-2 step 13): an
+            // accessibility failure Windows reported, a direct write that could not be verified, the
+            // caller's cancellation, a disposal under the delivery, a defect. They used to share
+            // "unsupported target", which is a policy refusal and none of them.
+            TextDeliveryRefusalReason.AccessibilityUnavailable => AppErrorCode.DeliveryAccessibilityUnavailable,
+            TextDeliveryRefusalReason.DirectWriteUnverified => AppErrorCode.DeliveryUnverified,
+            TextDeliveryRefusalReason.Cancelled => AppErrorCode.DeliveryCancelled,
+            TextDeliveryRefusalReason.DeliveryDisposed => AppErrorCode.DeliveryDisposed,
+            TextDeliveryRefusalReason.DeliveryFaulted => AppErrorCode.DeliveryFaulted,
+            _ => AppErrorCode.DeliveryFaulted,
         };
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,

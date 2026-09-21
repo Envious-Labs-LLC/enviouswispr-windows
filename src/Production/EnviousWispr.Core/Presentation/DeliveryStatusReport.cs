@@ -46,6 +46,8 @@ public static class DeliveryStatusReport
             DictationStatus.Warning("Clipboard unavailable. Text is held safely in memory"),
         { RefusalReason: TextDeliveryRefusalReason.DirectWriteUnverified } =>
             DictationStatus.Warning("Insertion could not be verified. Text is held safely in memory"),
+        { RefusalReason: TextDeliveryRefusalReason.DeliveryFaulted } =>
+            DictationStatus.Error("Text delivery failed unexpectedly. Text is held safely in memory"),
         _ => DictationStatus.Error("Text delivery stopped safely"),
     };
 }

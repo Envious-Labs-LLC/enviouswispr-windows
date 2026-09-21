@@ -114,6 +114,10 @@ internal static class Program
             }
             var edit = new InstrumentedTextBox
             {
+                // A FIELD THAT REWRITES WHAT IS SET INTO IT, for the route the adapter must refuse
+                // to finish: its value write lands, the read-back differs, and the adapter must
+                // report the insertion unverified and paste nothing after it.
+                RewriteOnSetText = mode == "unverified-write",
                 Name = mode == "password" ? "ProtectedField" : "StandardEditField",
                 AccessibleName = manualMicrophone
                     ? "Physical microphone delivery target"
@@ -137,8 +141,9 @@ internal static class Program
                     expectedSubstring,
                     forbiddenSubstring,
                     edit.PasteMessages,
-                    edit.SetTextMessages);
-                WriteResult(resultPath, edit.Text, expectedSubstring, forbiddenSubstring, edit.PasteMessages, edit.SetTextMessages);
+                    edit.SetTextMessages,
+                    edit.Rewrites);
+                WriteResult(resultPath, edit.Text, expectedSubstring, forbiddenSubstring, edit.PasteMessages, edit.SetTextMessages, edit.Rewrites);
             }
         }
 
@@ -231,7 +236,8 @@ internal static class Program
         string? expectedSubstring,
         string? forbiddenSubstring,
         int pasteMessages = 0,
-        int setTextMessages = 0)
+        int setTextMessages = 0,
+        int rewrites = 0)
     {
         var result = JsonSerializer.Serialize(new
         {
@@ -239,6 +245,10 @@ internal static class Program
             // a UI Automation value write as WM_SETTEXT. The journey reads the route off these.
             pasteMessages,
             setTextMessages,
+            // HOW OFTEN THE FIELD REWROTE A VALUE SET INTO IT (the unverified-write mode), and whether
+            // its text now ends with the mark it appends - the read-back the adapter must have seen.
+            rewrites,
+            rewritten = text.EndsWith(InstrumentedTextBox.RewriteMark, StringComparison.Ordinal),
             containsExpected = !string.IsNullOrWhiteSpace(expectedSubstring) &&
                 text.Contains(expectedSubstring, StringComparison.OrdinalIgnoreCase),
             // WHERE THE WORDS LANDED tells the route apart: appended after the field's own seed text
@@ -256,12 +266,22 @@ internal static class Program
     /// <summary>A text box that counts how its text arrived: WM_PASTE for a paste, WM_SETTEXT for a UI Automation value write.</summary>
     private sealed class InstrumentedTextBox : TextBox
     {
+        /// <summary>What the rewriting field appends to every value set into it, so the adapter's read-back never matches its write.</summary>
+        public const string RewriteMark = " [rewritten by the target]";
+
         private const int WmSetText = 0x000C;
         private const int WmPaste = 0x0302;
+        private bool _rewriting;
 
         public int PasteMessages { get; private set; }
 
         public int SetTextMessages { get; private set; }
+
+        /// <summary>Whether a value set into the field is changed the moment it lands - a control that does not keep what it was given.</summary>
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public bool RewriteOnSetText { get; init; }
+
+        public int Rewrites { get; private set; }
 
         protected override void WndProc(ref Message m)
         {
@@ -269,9 +289,28 @@ internal static class Program
             {
                 PasteMessages++;
             }
-            else if (m.Msg == WmSetText && IsHandleCreated && Visible)
+            else if (m.Msg == WmSetText && IsHandleCreated && Visible && !_rewriting)
             {
                 SetTextMessages++;
+                if (RewriteOnSetText)
+                {
+                    // THE VALUE LANDS, THEN CHANGES: the base handles the set, and the field appends
+                    // its mark through a second set of its own that is not counted or rewritten
+                    // again. WM_GETTEXT from here on answers the marked text.
+                    base.WndProc(ref m);
+                    _rewriting = true;
+                    try
+                    {
+                        Text = Text + RewriteMark;
+                        Rewrites++;
+                    }
+                    finally
+                    {
+                        _rewriting = false;
+                    }
+
+                    return;
+                }
             }
 
             base.WndProc(ref m);

@@ -594,9 +594,33 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         _ => TextDeliveryRefusalReason.AccessibilityUnavailable,
     };
 
-    private static bool IsExpectedAutomationFailure(Exception exception) =>
-        exception is COMException or ElementNotAvailableException or InvalidOperationException or
-            UnauthorizedAccessException or Win32Exception;
+    /// <summary>The assemblies whose <see cref="InvalidOperationException"/> means a control refused an automation call, not a defect of ours.</summary>
+    private static readonly HashSet<string> AutomationLibraries = new(StringComparer.Ordinal)
+    {
+        "UIAutomationClient",
+        "UIAutomationTypes",
+        "UIAutomationClientSideProviders",
+        "UIAutomationProvider",
+    };
+
+    /// <summary>Whether an exception is one Windows accessibility is expected to throw, answered as "accessibility unavailable" rather than escaping.</summary>
+    /// <remarks>
+    /// THE FILTER NAMES THE ENVIRONMENT, NOT EVERY InvalidOperationException (plan-2 step 13). UI
+    /// Automation reports an unsupported pattern, a stale element or a refused operation as
+    /// InvalidOperationException from its own assembly, and those are the environment: the control
+    /// would not do what was asked. An InvalidOperationException raised by this adapter's own code is a
+    /// defect, and an ObjectDisposedException - which derives from InvalidOperationException - is the
+    /// adapter's gate gone under the delivery because the app is leaving. Neither is Windows' doing,
+    /// and neither is answered here; the delivery names them.
+    /// </remarks>
+    internal static bool IsExpectedAutomationFailure(Exception exception) => exception switch
+    {
+        ObjectDisposedException => false,
+        ElementNotAvailableException => true,
+        InvalidOperationException => exception.Source is { } source && AutomationLibraries.Contains(source),
+        COMException or UnauthorizedAccessException or Win32Exception => true,
+        _ => false,
+    };
 
     private static bool? TargetHasHigherIntegrity(uint targetProcessId)
     {

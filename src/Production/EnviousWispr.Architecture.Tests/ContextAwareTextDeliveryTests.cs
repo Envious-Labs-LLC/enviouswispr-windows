@@ -95,32 +95,102 @@ public sealed class ContextAwareTextDeliveryTests
         Assert.Equal("recover me", delivery.RecoveryText?.Text);
     }
 
-    [Fact]
-    public async Task UnexpectedContextFailureRetainsTextWithoutEscaping()
+    [Theory]
+    [InlineData(DeliveryStage.Copy)]
+    [InlineData(DeliveryStage.ContextCapture)]
+    [InlineData(DeliveryStage.Commit)]
+    public async Task UnexpectedDeliveryFailureRetainsRecoveryAndCategory(DeliveryStage stage)
     {
+        // A DEFECT IS A DEFECT, WHEREVER IT IS THROWN. An InvalidOperationException out of the adapter
+        // used to come back as "accessibility unavailable" - Windows blamed for a bug. It is named
+        // now: DeliveryFaulted, with the stage and the exception's type and not a word of the text,
+        // the words kept for recovery, nothing on the clipboard, and no second attempt at the target -
+        // a commit that threw may have landed, and a retry could double it.
+        var defect = new InvalidOperationException("synthetic defect - transcript must not travel");
         var adapter = new FakeTargetAdapter(
             AvailableContext(left: "", right: ""),
-            captureException: new InvalidOperationException("synthetic context failure"));
+            captureException: stage == DeliveryStage.ContextCapture ? defect : null,
+            commitException: stage == DeliveryStage.Commit ? defect : null,
+            copyException: stage == DeliveryStage.Copy ? defect : null);
         var delivery = new ContextAwareTextDelivery(adapter);
 
-        var result = await delivery.DeliverAsync(Request("recover context"));
+        var result = await delivery.DeliverAsync(stage == DeliveryStage.Copy ? CopyRequest("recover me") : Request("recover me"));
 
-        Assert.Equal(TextDeliveryRefusalReason.AccessibilityUnavailable, result.RefusalReason);
-        Assert.Equal("recover context", delivery.RecoveryText?.Text);
+        Assert.Equal(TextDeliveryRefusalReason.DeliveryFaulted, result.RefusalReason);
+        Assert.Equal(new DeliveryFault(stage, nameof(InvalidOperationException)), result.Fault);
+        Assert.DoesNotContain("recover me", result.Fault!.ExceptionType, StringComparison.Ordinal);
+        Assert.False(result.Delivered);
+        Assert.False(result.ClipboardFallback);
+        Assert.Equal("recover me", delivery.RecoveryText?.Text);
+        Assert.Equal(stage == DeliveryStage.Commit ? 1 : 0, adapter.Commits);
+        Assert.Equal("Text delivery failed unexpectedly. Text is held safely in memory", DeliveryStatusReport.For(result).Text);
     }
 
     [Fact]
-    public async Task UnexpectedCommitFailureRetainsTextWithoutEscaping()
+    public async Task DisposedAdapterIsNotAccessibilityUnavailable()
     {
+        // THE APP LEAVING IS NOT WINDOWS FAILING. A delivery that finds the adapter's gate disposed
+        // under it is the exit's doing; it is named as such, the words are kept, and the log will not
+        // send anyone to look at accessibility settings.
         var adapter = new FakeTargetAdapter(
             AvailableContext(left: "", right: ""),
-            commitException: new InvalidOperationException("synthetic commit failure"));
+            captureException: new ObjectDisposedException("automation gate"));
         var delivery = new ContextAwareTextDelivery(adapter);
 
-        var result = await delivery.DeliverAsync(Request("recover commit"));
+        var result = await delivery.DeliverAsync(Request("recover me"));
+
+        Assert.Equal(TextDeliveryRefusalReason.DeliveryDisposed, result.RefusalReason);
+        Assert.Equal(new DeliveryFault(DeliveryStage.ContextCapture, nameof(ObjectDisposedException)), result.Fault);
+        Assert.NotEqual(TextDeliveryRefusalReason.AccessibilityUnavailable, result.RefusalReason);
+        Assert.Equal("recover me", delivery.RecoveryText?.Text);
+        Assert.Equal(0, adapter.Commits);
+    }
+
+    [Fact]
+    public async Task CancellationRemainsCancellation()
+    {
+        // THE CALLER'S CANCELLATION IS THE ONE THING THAT IS NOT A FAULT: it was asked for. An
+        // OperationCanceledException nobody asked for is a defect like any other, because the only
+        // token that can cancel a delivery is the caller's.
+        using var cancellation = new CancellationTokenSource();
+        var asked = new FakeTargetAdapter(
+            AvailableContext(left: "", right: ""),
+            commitException: new OperationCanceledException(cancellation.Token));
+        var delivery = new ContextAwareTextDelivery(asked);
+        cancellation.Cancel();
+
+        var cancelled = await delivery.DeliverAsync(Request("recover me"), cancellation.Token);
+
+        Assert.Equal(TextDeliveryRefusalReason.Cancelled, cancelled.RefusalReason);
+        Assert.Null(cancelled.Fault);
+        Assert.Equal("recover me", delivery.RecoveryText?.Text);
+
+        var unasked = new FakeTargetAdapter(
+            AvailableContext(left: "", right: ""),
+            commitException: new TaskCanceledException("nobody asked"));
+        var faulted = await new ContextAwareTextDelivery(unasked).DeliverAsync(Request("recover me"));
+
+        Assert.Equal(TextDeliveryRefusalReason.DeliveryFaulted, faulted.RefusalReason);
+        Assert.Equal(new DeliveryFault(DeliveryStage.Commit, nameof(TaskCanceledException)), faulted.Fault);
+    }
+
+    [Fact]
+    public async Task ExpectedAccessibilityFailuresKeepTheirName()
+    {
+        // WHAT THE ADAPTER NAMES AS THE ENVIRONMENT STAYS NAMED SO. The adapter answers an expected
+        // accessibility failure as a result, not an exception; the delivery carries that name to the
+        // commit as the forced refusal and back to the caller, with no fault attached.
+        var adapter = new FakeTargetAdapter(new TargetContextResult(
+            TargetContextStatus.AccessibilityUnavailable,
+            RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable));
+        var delivery = new ContextAwareTextDelivery(adapter);
+
+        var result = await delivery.DeliverAsync(Request("copied instead"));
 
         Assert.Equal(TextDeliveryRefusalReason.AccessibilityUnavailable, result.RefusalReason);
-        Assert.Equal("recover commit", delivery.RecoveryText?.Text);
+        Assert.Equal(TextDeliveryRefusalReason.AccessibilityUnavailable, adapter.LastCommit?.ForcedRefusalReason);
+        Assert.Null(result.Fault);
+        Assert.True(result.ClipboardFallback);
     }
 
     [Fact]
@@ -245,9 +315,13 @@ public sealed class ContextAwareTextDeliveryTests
         TargetContextResult context,
         TextCommitResult? commitResult = null,
         Exception? captureException = null,
-        Exception? commitException = null) : ITextTargetAdapter
+        Exception? commitException = null,
+        Exception? copyException = null) : ITextTargetAdapter
     {
         public TextCommitRequest? LastCommit { get; private set; }
+
+        /// <summary>How many times the target was written to; a delivery that threw must not try again.</summary>
+        public int Commits { get; private set; }
 
         /// <summary>How many times the target was asked for its caret context.</summary>
         /// <remarks>
@@ -263,6 +337,11 @@ public sealed class ContextAwareTextDeliveryTests
             ProcessedText text,
             CancellationToken cancellationToken = default)
         {
+            if (copyException is not null)
+            {
+                return Task.FromException<TextCommitResult>(copyException);
+            }
+
             LastCopied = text;
             return Task.FromResult(new TextCommitResult(
                 TextDeliveryRoute.ClipboardOnly,
@@ -288,6 +367,7 @@ public sealed class ContextAwareTextDeliveryTests
             CancellationToken cancellationToken = default)
         {
             LastCommit = request;
+            Commits++;
             if (commitException is not null)
             {
                 return Task.FromException<TextCommitResult>(commitException);
