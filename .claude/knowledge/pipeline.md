@@ -54,8 +54,15 @@ remain wordless designs.
   executor owns the order of the background work around a recording (watchdog, preview, auto-stop,
   streaming), the three-minute processing deadline - armed before the background work is stopped so
   it covers the preview's worker being waited for, cancelled by a lock, a suspend or the exit
-  through the coordinator, released after any recovery - and the finalisation call itself. The shell
-  keeps Windows' notifications and rendering.
+  through the coordinator, released after any recovery - and the finalisation call itself. Since plan-2
+  step 3 the executor also admits a press (pending recovery first, then the machine's memory and
+  disk through the injected resource probe and `SystemResourceAdmissionPolicy`: critical memory
+  refuses the take, low disk only tells the persistence owner not to write the recovery copy),
+  carries whether Escape recovers the words for the session it started, and recovers a failed
+  command (stop the background work, abort and reset the controller once, record and show it). The
+  finalisation runner decides the language the delivery route is told (`DeliveryLanguagePolicy`:
+  nothing for the final Parakeet model, which reports a language it did not detect). The shell keeps
+  the probe's construction, Windows' notifications and rendering.
 - **How the macOS app owns the same workflow** (read from its source by the Mac session on 2026-09-20;
   its owners are `.claude/knowledge/session-lifecycle.md`, `pipeline-mechanics.md` and `live-preview.md`
   in the macOS repository). One recording-session kernel is the single state machine every dictation

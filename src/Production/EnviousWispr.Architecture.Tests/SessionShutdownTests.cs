@@ -224,7 +224,7 @@ public sealed class SessionShutdownTests
             var runner = new SessionFinalizationRunner(controller, finalizer, persistence, streaming, runnerEffects, new FrozenClock(Now));
             var effects = new ShellAdapter(controller, runnerEffects);
             var background = new NoBackgroundWork();
-            var executor = new DictationSessionExecutor(controller, background, runner, effects);
+            var executor = new DictationSessionExecutor(controller, background, runner, persistence, new HealthyMachine(), effects);
             var coordinator = new DictationSessionCoordinator(
                 executor,
                 () => new RecordingStartContext(new TargetWindowId(101), TextDeliveryOptions.Default),
@@ -247,14 +247,11 @@ public sealed class SessionShutdownTests
     {
         public int TearDowns { get; private set; }
 
-        public bool HasPendingRecovery => false;
-
         public bool EscapeRecoveryEnabled => false;
 
-        public bool EscapeRecoveryForSession { get; set; }
-
-        public DictationAdmissionResult EvaluateAdmission() =>
-            new(DictationAdmissionStatus.Ready, CanStart: true, CanPersistRecovery: true);
+        public void RecordResourcePressure(AppError? failure)
+        {
+        }
 
         public void ShowRecoveredTextWaiting()
         {
@@ -290,13 +287,12 @@ public sealed class SessionShutdownTests
         {
         }
 
-        public async Task RecoverFailedSessionAsync(AppError failure, SessionFailureKind kind)
+        public void RecordSessionRecovered(AppError failure)
         {
-            if (controller.CurrentSession is not null)
-            {
-                await controller.AbortAsync(failure);
-                await controller.ResetAsync();
-            }
+        }
+
+        public void ShowSessionRecovered(SessionFailureKind kind)
+        {
         }
 
         public Task RecordDictationEdgeAsync() => Task.CompletedTask;
@@ -392,13 +388,7 @@ public sealed class SessionShutdownTests
 
         public ITextDelivery? Delivery => DeliveryRoute;
 
-        public string? DeliveryLanguage(Transcript transcript) => transcript.DetectedLanguage;
-
         public FinalizationOptions CurrentOptions() => new([], new DeterministicTextOptions(true, true, true, true), null);
-
-        public void ClearEscapeRecoveryForSession()
-        {
-        }
 
         public void ArchiveAudio(CapturedAudio audio)
         {
@@ -498,6 +488,14 @@ public sealed class SessionShutdownTests
         public void NotifyHistoryChanged()
         {
         }
+    }
+
+    private sealed class HealthyMachine : ISystemResourceProbe
+    {
+        public SystemResourceSnapshot Probe() => new(
+            AvailableDiskBytes: 10L * 1024 * 1024 * 1024,
+            AvailablePhysicalMemoryBytes: 8UL * 1024 * 1024 * 1024,
+            MemoryLoadPercent: 40);
     }
 
     private sealed class FakeAdmission : IRuntimeResourceAdmission

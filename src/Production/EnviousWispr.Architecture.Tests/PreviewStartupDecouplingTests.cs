@@ -290,6 +290,8 @@ public sealed class PreviewStartupDecouplingTests
                 controller,
                 new TracedBackgroundWork(background, capture, preview, effects),
                 new HeldFinalization(effects),
+                new NoRecoveryState(),
+                new HealthyMachine(),
                 effects);
             var coordinator = new DictationSessionCoordinator(
                 executor,
@@ -358,14 +360,9 @@ public sealed class PreviewStartupDecouplingTests
             }
         }
 
-        public bool HasPendingRecovery => false;
-
         public bool EscapeRecoveryEnabled { get; init; }
 
-        public bool EscapeRecoveryForSession { get; set; }
-
-        public DictationAdmissionResult EvaluateAdmission() =>
-            new(DictationAdmissionStatus.Ready, CanStart: true, CanPersistRecovery: true);
+        public void RecordResourcePressure(AppError? failure) => Add("RecordResourcePressure");
 
         public void ShowRecoveredTextWaiting() => Add("ShowRecoveredTextWaiting");
 
@@ -411,11 +408,9 @@ public sealed class PreviewStartupDecouplingTests
 
         public void RecordSessionFailure() => Add("RecordSessionFailure");
 
-        public Task RecoverFailedSessionAsync(AppError failure, SessionFailureKind kind)
-        {
-            Add($"RecoverFailedSession:{failure.Code}:{kind}");
-            return Task.CompletedTask;
-        }
+        public void RecordSessionRecovered(AppError failure) => Add($"RecordSessionRecovered:{failure.Code}");
+
+        public void ShowSessionRecovered(SessionFailureKind kind) => Add($"ShowSessionRecovered:{kind}");
 
         public Task RecordDictationEdgeAsync()
         {
@@ -463,6 +458,25 @@ public sealed class PreviewStartupDecouplingTests
         }
 
         public Task StopWatchdogAsync() => inner.StopWatchdogAsync();
+    }
+
+    private sealed class NoRecoveryState : ISessionRecoveryState
+    {
+        public bool HasPendingRecovery => false;
+
+        public bool CanPersistRecovery { get; set; } = true;
+
+        public void ShowPendingRecovery()
+        {
+        }
+    }
+
+    private sealed class HealthyMachine : ISystemResourceProbe
+    {
+        public SystemResourceSnapshot Probe() => new(
+            AvailableDiskBytes: 10L * 1024 * 1024 * 1024,
+            AvailablePhysicalMemoryBytes: 8UL * 1024 * 1024 * 1024,
+            MemoryLoadPercent: 40);
     }
 
     private sealed class IdleTimerEffects : IRecordingTimerEffects
