@@ -119,9 +119,9 @@ public sealed class SessionShutdownTests
         // watchdog would have discarded.
         var world = World.Build();
         await world.PressAsync();
-        world.Effects.HoldBackgroundStop = true;
+        world.Background.HoldStop = true;
         var timeout = world.Coordinator.TimeOutAsync(world.SessionId);
-        await world.Effects.BackgroundStopEntered.Task.WaitAsync(Patience);
+        await world.Background.StopEntered.Task.WaitAsync(Patience);
 
         var clean = await world.Coordinator.ShutdownAsync(TimeSpan.FromMilliseconds(100)).WaitAsync(Patience);
 
@@ -130,7 +130,7 @@ public sealed class SessionShutdownTests
         Assert.True(world.Capture.Cancelled);
         Assert.True(world.Capture.Disposed);
 
-        world.Effects.AllowBackgroundStopExit.SetResult();
+        world.Background.AllowStopExit.SetResult();
         Assert.Equal(SessionCommandDisposition.Failed, (await timeout.WaitAsync(Patience)).Disposition);
         Assert.Equal(0, world.Delivery.Deliveries);
         Assert.Equal(0, world.Engine.Transcriptions);
@@ -191,6 +191,7 @@ public sealed class SessionShutdownTests
         public required HeldEngine Engine { get; init; }
         public required CountingDelivery Delivery { get; init; }
         public required ShellAdapter Effects { get; init; }
+        public required NoBackgroundWork Background { get; init; }
         public DictationSessionId SessionId { get; private set; }
 
         public async Task PressAsync()
@@ -221,8 +222,9 @@ public sealed class SessionShutdownTests
                 runnerEffects);
             var streaming = new StreamingTranscriptionController(new NoStreaming(), new NullLogger(), new FrozenClock(Now));
             var runner = new SessionFinalizationRunner(controller, finalizer, persistence, streaming, runnerEffects, new FrozenClock(Now));
-            var effects = new ShellAdapter(runner, controller, runnerEffects);
-            var executor = new DictationSessionExecutor(controller, effects);
+            var effects = new ShellAdapter(controller, runnerEffects);
+            var background = new NoBackgroundWork();
+            var executor = new DictationSessionExecutor(controller, background, runner, effects);
             var coordinator = new DictationSessionCoordinator(
                 executor,
                 () => new RecordingStartContext(new TargetWindowId(101), TextDeliveryOptions.Default),
@@ -235,20 +237,15 @@ public sealed class SessionShutdownTests
                 Engine = engine,
                 Delivery = delivery,
                 Effects = effects,
+                Background = background,
             };
         }
     }
 
     /// <summary>The app's session adapter, reduced to the real runner and the real teardown.</summary>
-    private sealed class ShellAdapter(SessionFinalizationRunner runner, PushToTalkSessionController controller, RunnerEffects runnerEffects) : IDictationSessionEffects
+    private sealed class ShellAdapter(PushToTalkSessionController controller, RunnerEffects runnerEffects) : IDictationSessionEffects
     {
         public int TearDowns { get; private set; }
-
-        public bool HoldBackgroundStop { get; set; }
-
-        public TaskCompletionSource BackgroundStopEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public TaskCompletionSource AllowBackgroundStopExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public bool HasPendingRecovery => false;
 
@@ -271,28 +268,14 @@ public sealed class SessionShutdownTests
         {
         }
 
-        public Task StopRecordingWatchdogAsync() => Task.CompletedTask;
-
         public void RecordTransition(SessionTransitionResult result)
         {
         }
 
-        public Task OnRecordingStartedAsync(DictationSessionId sessionId) => Task.CompletedTask;
+        public RecordingBackgroundSettings RecordingSettings() => new(TimeSpan.FromMinutes(5), () => DictationPreferences.Default);
 
-        public Task FinalizeAsync(DictationSessionId sessionId, CapturedAudio audio, bool recoveryOnly, SystemLifecycleTransition? preserving = null) =>
-            runner.RunAsync(sessionId, audio, recoveryOnly, CancellationToken.None);
-
-        public void ReleaseProcessingDeadline()
+        public void ShowInterruptionPreserving(SystemLifecycleTransition transition)
         {
-        }
-
-        public async Task StopBackgroundWorkAsync()
-        {
-            BackgroundStopEntered.TrySetResult();
-            if (HoldBackgroundStop)
-            {
-                await AllowBackgroundStopExit.Task;
-            }
         }
 
         public void ShowTransitionStatus(SessionTransitionResult result)
@@ -338,6 +321,29 @@ public sealed class SessionShutdownTests
             await controller.DisposeAsync();
             runnerEffects.DeliveryRoute = null;
         }
+    }
+
+    /// <summary>Nothing runs beside these recordings; the timeout test holds the stop to stand in for a slow one.</summary>
+    private sealed class NoBackgroundWork : ISessionBackgroundWork
+    {
+        public bool HoldStop { get; set; }
+
+        public TaskCompletionSource StopEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource AllowStopExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task StartAsync(DictationSessionId sessionId, RecordingBackgroundSettings settings) => Task.CompletedTask;
+
+        public async Task StopAsync()
+        {
+            StopEntered.TrySetResult();
+            if (HoldStop)
+            {
+                await AllowStopExit.Task;
+            }
+        }
+
+        public Task StopWatchdogAsync() => Task.CompletedTask;
     }
 
     private sealed class HeldEngine : ITranscriptionEngine

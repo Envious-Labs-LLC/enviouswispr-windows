@@ -94,6 +94,18 @@ public interface ISessionCommandExecutor
     /// </summary>
     Task ExpireAsync(SessionCommand command) => Task.CompletedTask;
 
+    /// <summary>Whether a finalisation is in flight under its processing deadline.</summary>
+    bool IsProcessing => false;
+
+    /// <summary>
+    /// Cancels the finalisation in flight, if any, now - not when the next command reaches the front
+    /// of the queue. Windows locking and the shell's exit both need the transcription they are waiting
+    /// behind to stop first.
+    /// </summary>
+    void CancelProcessing()
+    {
+    }
+
     /// <summary>
     /// The session is being torn down for shutdown: after the last command has finished when the
     /// shutdown's waits were enough, beside a command that outlived them when they were not.
@@ -226,8 +238,20 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     /// executor is told at that moment that recovery is pending - what the shell's five-second wait
     /// for its gate used to report - and the interruption is skipped when its turn comes.
     /// </summary>
-    public Task<SessionCommandResult> InterruptAsync(SystemLifecycleTransition transition) =>
-        Submit(new SessionCommand(SessionCommandKind.Interruption, PushToTalkSignal.Cancelled, Transition: transition));
+    public Task<SessionCommandResult> InterruptAsync(SystemLifecycleTransition transition)
+    {
+        // THE DEADLINE IS CANCELLED HERE, NOW, not when the interruption reaches the front of the queue:
+        // a finalisation in flight is what the queue is waiting behind, and cancelling it is how the
+        // interruption gets its turn inside the five seconds it allows itself.
+        _executor.CancelProcessing();
+        return Submit(new SessionCommand(SessionCommandKind.Interruption, PushToTalkSignal.Cancelled, Transition: transition));
+    }
+
+    /// <summary>Whether a finalisation is in flight: a transcription or a delivery under its deadline.</summary>
+    public bool IsProcessing => _executor.IsProcessing;
+
+    /// <summary>Cancels the finalisation in flight, if any. The shell's exit calls this before it closes admission.</summary>
+    public void CancelProcessing() => _executor.CancelProcessing();
 
     /// <summary>
     /// The recording armed as <paramref name="sessionId"/> has run for as long as it is allowed. A
