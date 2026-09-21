@@ -289,6 +289,9 @@ public sealed class SessionCompositionTests
         world.Polish = new PolishSetup(polish, UsesLocalRuntime: true, RuntimeResourceKind.Cpu);
 
         await world.SubmitAsync(PushToTalkSignal.Pressed);
+        // Streaming's start ran inside the awaited press and, reading the switch, started no loop -
+        // as distinct from a loop waiting on its first poll, which the clock would never grant here.
+        Assert.False(world.Runtime.Streaming.IsRunning, "streaming stood down under the preview");
         await Eventually(() => world.RuntimeView.Previews.Contains("preview words"), "the preview to reach the window");
         Assert.Equal(0, thirdEngine.Calls);
         await world.SubmitAsync(PushToTalkSignal.Released);
