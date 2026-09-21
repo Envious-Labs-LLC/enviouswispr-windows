@@ -13,23 +13,26 @@ namespace EnviousWispr.Architecture.Tests;
 
 /// <summary>
 /// The window's presentation session, as the shell composes it: one settings writer every presenter
-/// shares, a close that drains before it disposes and can be asked for twice, and a microphone test
-/// that opens whatever capture it was handed - the production WASAPI one in the app, a fake here.
+/// shares, a drain that stops and joins the presentation's own work before the shell disposes what
+/// it runs against, a close that drains before it disposes and can be asked for twice, and a
+/// microphone test that opens whatever capture it was handed - the production WASAPI one in the
+/// app, a fake here.
 /// </summary>
 public sealed class WindowPresentationSessionTests
 {
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(10);
 
     [Fact]
-    public async Task WindowPresentersShareOneSettingsWriter()
+    public async Task ComposedPresentersShareOneSettingsWriter()
     {
-        // ONE WRITER, TWO PAGES. A word added on the Vocabulary page is inside the store when the
-        // General page's Save is asked for; the Save waits behind it and derives from what it wrote,
-        // so the stored record carries the word and the General values, and the history page's
-        // preferences - read off the same writer - are the retention the Save just stored.
+        // ONE WRITER, TWO PAGES, THE SHELL'S OWN COMPOSITION. A word added on the Vocabulary page is
+        // inside the store when the General page's Save is asked for; the Save waits behind it and
+        // derives from what it wrote, so the stored record carries the word and the General values,
+        // and the history page's next load asks the history store for the retention the Save just
+        // stored - read off the same writer, not off a copy the window kept.
         var store = new HeldStore();
-        var world = World.Create(store);
-        var session = world.Session;
+        var history = new RecordingHistoryStore();
+        var session = World.Compose(store, history);
 
         var word = session.Vocabulary.AddWordAsync(new CustomWordEntry("envy wisper", "EnviousWispr"));
         await store.SaveStarted.Task.WaitAsync(Patience);
@@ -43,7 +46,64 @@ public sealed class WindowPresentationSessionTests
         Assert.Equal(45, stored.Preferences.History.RetentionDays);
         Assert.Equal("mic-2", stored.PreferredMicrophoneId);
         Assert.Equal(stored, session.Settings.Current);
-        Assert.Equal(45, session.Settings.Current.Preferences.History.RetentionDays);
+
+        var view = await session.History.LoadAsync().WaitAsync(Patience);
+        Assert.Equal(HistorySummary.Empty, view.Summary);
+        Assert.Equal(45, Assert.Single(history.LoadedWithRetention));
+    }
+
+    [Fact]
+    public async Task DrainingStopsAndJoinsThePresentationsWork()
+    {
+        // THE DRAIN IS THE EXIT'S FIRST STEP, AND IT LEAVES NOTHING OF THE WINDOW'S INSIDE THE SHELL'S
+        // STORES. A microphone test is listening, a model discovery is out, a history load is inside
+        // the store. The drain closes the gate, stops what can be stopped - the test ends Cancelled
+        // with its capture disposed, the discovery answers nothing - and waits for what cannot: the
+        // load inside the store, which the drain does not finish ahead of. After it, every presenter
+        // refuses without touching its store, the writer refuses, and a second drain is the first.
+        var clock = new Deterministic.ManualClock();
+        var history = new RecordingHistoryStore { HoldLoads = true };
+        var models = new FakeModels { HoldDiscovery = true };
+        var world = World.Create(new HeldStore(), clock, history, models);
+        var session = world.Session;
+
+        var test = session.MicrophoneTest.RunAsync(null, recordingInProgress: false);
+        await world.Capture.Started.Task.WaitAsync(Patience);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        var listing = session.Provider.ListModelsAsync(PolishProvider.Ollama, "http://localhost:11434");
+        await models.DiscoveryStarted.Task.WaitAsync(Patience);
+        var load = session.History.LoadAsync();
+        await history.LoadStarted.Task.WaitAsync(Patience);
+        Assert.Equal(3, session.Outstanding);
+        Assert.False(session.Closing);
+
+        var drain = session.DrainAsync();
+        Assert.True(session.Closing);
+        Assert.Equal(MicrophoneTestOutcome.Cancelled, (await test.WaitAsync(Patience)).Outcome);
+        Assert.True(world.Capture.Disposed, "the stopped test did not dispose its capture");
+        Assert.Null(await listing.WaitAsync(Patience));
+        Assert.False(drain.IsCompleted, "the drain finished ahead of the load inside the history store");
+        Assert.Equal(1, session.Outstanding);
+
+        history.LetLoadsFinish();
+        await drain.WaitAsync(Patience);
+        Assert.Equal(HistorySummary.Empty, (await load).Summary);
+        Assert.Equal(0, session.Outstanding);
+        Assert.Same(drain, session.DrainAsync());
+
+        // LATE CALLS ARE REFUSED WITHOUT REACHING THE STORE, THE SOURCE OR THE DEVICE.
+        Assert.Equal(HistorySummary.Closing, (await session.History.LoadAsync()).Summary);
+        Assert.True((await session.History.DeleteAsync(Guid.NewGuid())).Closing);
+        Assert.True((await session.History.ClearAsync()).Closing);
+        Assert.False(await session.History.DeleteRecoveryAsync());
+        Assert.Equal(1, history.Loads);
+        Assert.Equal(0, history.Commands);
+        Assert.Equal(0, world.Recovery.Cleared);
+        Assert.Equal(MicrophoneTestOutcome.Cancelled, (await session.MicrophoneTest.RunAsync(null, recordingInProgress: false)).Outcome);
+        Assert.Equal(1, world.Capture.Opened);
+        Assert.Null(await session.Provider.ListModelsAsync(PolishProvider.Ollama, null));
+        Assert.Equal(1, models.Discoveries);
+        Assert.Equal(SettingsSaveRefusal.Closing, (await session.Settings.SaveAsync(current => current with { LaunchCount = 4 })).Refusal);
     }
 
     [Fact]
@@ -72,19 +132,20 @@ public sealed class WindowPresentationSessionTests
         Assert.Equal(1, world.Catalog.Disposals);
         Assert.Equal(SettingsSaveRefusal.Closing, (await session.Settings.SaveAsync(current => current with { LaunchCount = 4 })).Refusal);
         Assert.Throws<ObjectDisposedException>(() => session.DeviceCatalog());
+        Assert.True(session.Closing);
 
         var again = session.DisposeAsync().AsTask();
         await again.WaitAsync(Patience);
         Assert.Equal(1, world.Catalog.Disposals);
         Assert.False(session.DeviceCatalogOpened);
+        Assert.Equal(HistorySummary.Closing, (await session.History.LoadAsync()).Summary);
     }
 
     [Fact]
-    public async Task MicrophoneTestUsesInjectedProductionFactory()
+    public async Task MicrophoneTestUsesTheInjectedCapture()
     {
         // THE TEST OPENS WHAT THE SESSION WAS HANDED. Here a fake capture: the test starts it, hears
-        // its level, stops it. In the app the factory is WindowComposition's, which names the WASAPI
-        // capture and the WASAPI catalogue - and the window names neither any more.
+        // its level, stops it.
         var clock = new Deterministic.ManualClock();
         var world = World.Create(new HeldStore(), clock);
         var frames = new List<MicrophoneTestFrame>();
@@ -100,8 +161,16 @@ public sealed class WindowPresentationSessionTests
         Assert.Equal(1, world.Capture.Opened);
         Assert.True(world.Capture.Stopped);
         Assert.NotEmpty(frames);
-        Assert.NotEqual(MicrophoneTestOutcome.AlreadyRunning, result.Outcome);
+        Assert.Equal(MicrophoneTestOutcome.Completed, result.Outcome);
+        Assert.Equal(0, world.Session.Outstanding);
+    }
 
+    [Fact]
+    public void ProductionCompositionNamesTheWasapiFactories()
+    {
+        // THE PRODUCTION FACTORIES ARE WINDOWCOMPOSITION'S, which names the WASAPI capture and the
+        // WASAPI catalogue - and the window names neither any more, nor builds a presenter itself;
+        // the shell composes the session there and drains and closes it through the lifetime.
         Assert.IsType<WasapiAudioCapture>(WindowComposition.OpenMicrophoneTestCapture());
         using (var productionCatalog = WindowComposition.OpenDeviceCatalog())
         {
@@ -112,9 +181,12 @@ public sealed class WindowPresentationSessionTests
         Assert.DoesNotContain("new WasapiAudioCapture(", window, StringComparison.Ordinal);
         Assert.DoesNotContain("new WasapiDeviceCatalog(", window, StringComparison.Ordinal);
         Assert.DoesNotContain("new SettingsPresenter(", window, StringComparison.Ordinal);
+        Assert.DoesNotContain("new HistoryPresenter(", window, StringComparison.Ordinal);
+        Assert.DoesNotContain("new ProviderSettingsPresenter(", window, StringComparison.Ordinal);
         Assert.DoesNotContain("new MicrophoneTestController(", window, StringComparison.Ordinal);
         var shell = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
         Assert.Contains("WindowComposition.Compose(", shell, StringComparison.Ordinal);
+        Assert.Contains("DrainPresentation: () => _presentation?.DrainAsync()", shell, StringComparison.Ordinal);
         Assert.Contains("presentation.DisposeAsync()", shell, StringComparison.Ordinal);
     }
 
@@ -139,25 +211,40 @@ public sealed class WindowPresentationSessionTests
         public required WindowPresentationSession Session { get; init; }
         public required FakeCapture Capture { get; init; }
         public required FakeCatalog Catalog { get; init; }
+        public required FakeRecoveryStore Recovery { get; init; }
 
-        public static World Create(ISettingsStore store, TimeProvider? clock = null)
+        /// <summary>The shell's own composition: production factories at the device leaves (never opened here), fakes at the stores.</summary>
+        public static WindowPresentationSession Compose(ISettingsStore store, IHistoryStore history) =>
+            WindowComposition.Compose(
+                store,
+                AppSettings.Default,
+                history,
+                new FakeRecoveryStore(),
+                new FakeKeys(),
+                new FakeModels(),
+                new FakeProfiles(),
+                new FakeDiagnostics());
+
+        /// <summary>The session with fakes at the device leaves too, so a test can be driven.</summary>
+        public static World Create(ISettingsStore store, TimeProvider? clock = null, IHistoryStore? history = null, IPolishModelSource? models = null)
         {
             var capture = new FakeCapture();
             var catalog = new FakeCatalog();
+            var recovery = new FakeRecoveryStore();
             var session = new WindowPresentationSession(
                 new WindowPresentationParts(
                     store,
                     AppSettings.Default,
-                    new FakeHistoryStore(),
-                    new FakeRecoveryStore(),
+                    history ?? new RecordingHistoryStore(),
+                    recovery,
                     new FakeKeys(),
-                    new FakeModels(),
+                    models ?? new FakeModels(),
                     new FakeProfiles(),
                     new FakeDiagnostics(),
                     () => capture,
                     () => catalog),
                 clock);
-            return new World { Session = session, Capture = capture, Catalog = catalog };
+            return new World { Session = session, Capture = capture, Catalog = catalog, Recovery = recovery };
         }
     }
 
@@ -181,6 +268,51 @@ public sealed class WindowPresentationSessionTests
         public Task<SettingsLoadResult> LoadAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
         public Task<SettingsResetResult> ResetAsync(AppSettings replacement, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
+    /// <summary>A history store that records what it was asked and, when told to, holds a load inside itself regardless of the token - a file read part way.</summary>
+    private sealed class RecordingHistoryStore : IHistoryStore
+    {
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool HoldLoads { get; init; }
+
+        public TaskCompletionSource LoadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public List<int> LoadedWithRetention { get; } = [];
+
+        public int Loads => LoadedWithRetention.Count;
+
+        public int Commands { get; private set; }
+
+        public void LetLoadsFinish() => _release.TrySetResult();
+
+        public async Task<HistoryLoadResult> LoadAsync(int retentionDays, DateTimeOffset now, CancellationToken cancellationToken = default)
+        {
+            LoadedWithRetention.Add(retentionDays);
+            LoadStarted.TrySetResult();
+            if (HoldLoads)
+            {
+                await _release.Task.ConfigureAwait(false);
+            }
+
+            return new HistoryLoadResult([], HistoryLoadStatus.Loaded);
+        }
+
+        public Task<HistoryOperationResult> AddAsync(DictationHistoryEntry entry, int retentionDays, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+            Command();
+
+        public Task<HistoryOperationResult> DeleteAsync(Guid id, CancellationToken cancellationToken = default) => Command();
+
+        public Task<HistoryOperationResult> KeepAsync(Guid id, CancellationToken cancellationToken = default) => Command();
+
+        public Task<HistoryOperationResult> ClearAsync(CancellationToken cancellationToken = default) => Command();
+
+        private Task<HistoryOperationResult> Command()
+        {
+            Commands++;
+            return Task.FromResult(new HistoryOperationResult(true));
+        }
     }
 
     private sealed class FakeCatalog : IAudioDeviceCatalog
@@ -211,6 +343,8 @@ public sealed class WindowPresentationSessionTests
         public int Opened { get; private set; }
 
         public bool Stopped { get; private set; }
+
+        public bool Disposed { get; private set; }
 
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -248,7 +382,12 @@ public sealed class WindowPresentationSessionTests
             return Task.FromResult(new AudioOperationResult(Succeeded: true));
         }
 
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public ValueTask DisposeAsync()
+        {
+            IsCapturing = false;
+            Disposed = true;
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class FakeKeys : IApiKeyStore
@@ -264,14 +403,30 @@ public sealed class WindowPresentationSessionTests
         }
     }
 
+    /// <summary>A model source whose discovery, when told to, stays out until its token is cancelled - a provider that does not answer.</summary>
     private sealed class FakeModels : IPolishModelSource
     {
+        public bool HoldDiscovery { get; init; }
+
+        public int Discoveries { get; private set; }
+
+        public TaskCompletionSource DiscoveryStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public string? RecommendedModel(PolishProvider provider) => null;
 
         public bool ModelIdBelongsTo(string? modelId, PolishProvider provider) => true;
 
-        public Task<PolishModelDiscovery> DiscoverAsync(PolishProvider provider, string? ollamaEndpoint, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+        public async Task<PolishModelDiscovery> DiscoverAsync(PolishProvider provider, string? ollamaEndpoint, CancellationToken cancellationToken)
+        {
+            Discoveries++;
+            DiscoveryStarted.TrySetResult();
+            if (HoldDiscovery)
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+            }
+
+            return new PolishModelDiscovery(PolishModelDiscoveryStatus.Ready, ["llama3"]);
+        }
     }
 
     private sealed class FakeProfiles : IPortableProfileService

@@ -51,6 +51,11 @@ public readonly record struct MicrophoneTestFrame(int TestId, float Level);
 /// and no frame was ever drawn. The sampler keeps the loudest of each interval, and the frame carries
 /// the test it belongs to, because a frame already posted outlives the unsubscribe and could relight
 /// the meter after the test had cleared it.
+///
+/// A TEST RUNS INSIDE THE PRESENTATION'S GATE. The exit must not leave a device open behind it: a
+/// test takes a lease, listens under the closing token as well as its own, and a press after the
+/// close, or a test the close stops, ends <see cref="MicrophoneTestOutcome.Cancelled"/> with the
+/// capture disposed - the same outcome a recording's better claim produces.
 /// </remarks>
 public sealed class MicrophoneTestController
 {
@@ -63,17 +68,20 @@ public sealed class MicrophoneTestController
 
     private readonly Func<IMicrophoneTestCapture> _openCapture;
     private readonly TimeProvider _clock;
+    private readonly PresentationAdmission _admission;
     private readonly object _lock = new();
     private CancellationTokenSource? _running;
     private int _testId;
 
     /// <param name="openCapture">Makes a fresh capture for each test; the controller disposes it.</param>
     /// <param name="clock">The clock the listening interval is measured on. A test drives this.</param>
-    public MicrophoneTestController(Func<IMicrophoneTestCapture> openCapture, TimeProvider? clock = null)
+    /// <param name="admission">The presentation's gate; one of this controller's own, never closed, when it stands alone.</param>
+    public MicrophoneTestController(Func<IMicrophoneTestCapture> openCapture, TimeProvider? clock = null, PresentationAdmission? admission = null)
     {
         ArgumentNullException.ThrowIfNull(openCapture);
         _openCapture = openCapture;
         _clock = clock ?? TimeProvider.System;
+        _admission = admission ?? new PresentationAdmission();
     }
 
     /// <summary>Raised on the capture's thread, at most once per meter interval, while a test listens.</summary>
@@ -122,45 +130,53 @@ public sealed class MicrophoneTestController
     /// <param name="recordingInProgress">Whether a dictation holds, or is about to hold, the microphone.</param>
     public async Task<MicrophoneTestResult> RunAsync(AudioDeviceId? device, bool recordingInProgress)
     {
-        var cancellation = new CancellationTokenSource();
-        int testId;
-        lock (_lock)
-        {
-            if (_running is not null)
-            {
-                cancellation.Dispose();
-                return new MicrophoneTestResult(MicrophoneTestOutcome.AlreadyRunning);
-            }
-
-            if (recordingInProgress)
-            {
-                cancellation.Dispose();
-                return new MicrophoneTestResult(MicrophoneTestOutcome.RecordingInProgress);
-            }
-
-            _running = cancellation;
-            testId = ++_testId;
-        }
-
-        try
-        {
-            return await ListenAsync(testId, device, cancellation.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
+        if (!_admission.TryEnter(out var lease))
         {
             return new MicrophoneTestResult(MicrophoneTestOutcome.Cancelled);
         }
-        finally
+
+        using (lease)
         {
+            var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lease.Closing);
+            int testId;
             lock (_lock)
             {
-                // THE ID MOVES ON AS THE TEST ENDS, so a frame posted in its last moments is refused
-                // by IsCurrent whichever side of the unsubscribe it was raised on.
-                _running = null;
-                _testId++;
+                if (_running is not null)
+                {
+                    cancellation.Dispose();
+                    return new MicrophoneTestResult(MicrophoneTestOutcome.AlreadyRunning);
+                }
+
+                if (recordingInProgress)
+                {
+                    cancellation.Dispose();
+                    return new MicrophoneTestResult(MicrophoneTestOutcome.RecordingInProgress);
+                }
+
+                _running = cancellation;
+                testId = ++_testId;
             }
 
-            cancellation.Dispose();
+            try
+            {
+                return await ListenAsync(testId, device, cancellation.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return new MicrophoneTestResult(MicrophoneTestOutcome.Cancelled);
+            }
+            finally
+            {
+                lock (_lock)
+                {
+                    // THE ID MOVES ON AS THE TEST ENDS, so a frame posted in its last moments is
+                    // refused by IsCurrent whichever side of the unsubscribe it was raised on.
+                    _running = null;
+                    _testId++;
+                }
+
+                cancellation.Dispose();
+            }
         }
     }
 

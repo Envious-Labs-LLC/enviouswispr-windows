@@ -57,17 +57,24 @@ public sealed record WindowPresentationParts(
 /// catalogue, the profile and diagnostic services are the shell's and are handed in, never disposed
 /// here. The window keeps WinUI: its controls, its layout, its navigation, its overlay.
 ///
-/// THE DRAIN COMES BEFORE THE DISPOSAL, AND EITHER MAY BE ASKED FOR TWICE. Disposing the writer's gate
-/// under a save in flight made the release throw; so the close waits for the writer to drain - the
-/// save that was inside it finishes and is kept - and only then lets go of the gate and the catalogue.
-/// A second close is a no-op, and a save that arrives after the close is refused as
-/// <see cref="SettingsSaveRefusal.Closing"/>, quietly.
+/// THE DRAIN COMES BEFORE THE DISPOSAL, AND EITHER MAY BE ASKED FOR TWICE. The exit's first step is
+/// the drain: the presentation's gate closes, so nothing new starts; the microphone test, the model
+/// discovery and the history read or command still inside are told to stop and waited for; then the
+/// settings writer drains, so the save that was inside it finishes and is kept. Only a quiescent
+/// exit disposes, and the close - the drain again, if it was not already done - lets go of the
+/// writer's gate and the catalogue, once. The stores and the model source the presentation's work
+/// runs against are the shell's; the shell disposes them after this drain, never under it. A second
+/// drain or close is the first's task, a save after the close is refused as
+/// <see cref="SettingsSaveRefusal.Closing"/>, and every presenter answers a late call with its own
+/// quiet refusal.
 /// </remarks>
 public sealed class WindowPresentationSession : IAsyncDisposable
 {
     private readonly WindowPresentationParts _parts;
+    private readonly PresentationAdmission _admission = new();
     private readonly object _lock = new();
     private IAudioDeviceCatalog? _deviceCatalog;
+    private Task? _draining;
     private Task? _closing;
 
     public WindowPresentationSession(WindowPresentationParts parts, TimeProvider? clock = null)
@@ -79,9 +86,9 @@ public sealed class WindowPresentationSession : IAsyncDisposable
         VocabularyImport = new VocabularyImportController(Vocabulary);
         // THE HISTORY PAGE READS THE PREFERENCES AS LAST WRITTEN, from the shared writer, so a
         // retention saved a moment ago is the retention the next load prunes by.
-        History = new HistoryPresenter(parts.HistoryStore, parts.RecoveryStore, () => Settings.Current.Preferences.History, clock);
-        Provider = new ProviderSettingsPresenter(parts.ApiKeys, parts.PolishModels);
-        MicrophoneTest = new MicrophoneTestController(parts.OpenMicrophoneTestCapture, clock);
+        History = new HistoryPresenter(parts.HistoryStore, parts.RecoveryStore, () => Settings.Current.Preferences.History, clock, _admission);
+        Provider = new ProviderSettingsPresenter(parts.ApiKeys, parts.PolishModels, _admission);
+        MicrophoneTest = new MicrophoneTestController(parts.OpenMicrophoneTestCapture, clock, _admission);
     }
 
     /// <summary>The one settings writer, and the General page's decisions.</summary>
@@ -125,8 +132,24 @@ public sealed class WindowPresentationSession : IAsyncDisposable
         }
     }
 
-    /// <summary>Waits for the settings write in flight, if any, and stops taking new ones. The exit's first step; safe to ask for again.</summary>
-    public Task DrainAsync() => Settings.DrainAsync();
+    /// <summary>Whether the drain has begun: nothing new is admitted, and a page that hears a late answer does not draw it.</summary>
+    public bool Closing => _admission.Closed;
+
+    /// <summary>How many presentation operations are inside the gate right now.</summary>
+    public int Outstanding => _admission.Outstanding;
+
+    /// <summary>
+    /// The exit's first step: the gate closes, the work inside is stopped and waited for, then the
+    /// settings write in flight finishes and the writer takes no more. Shared by every caller; a
+    /// second call is the first's task.
+    /// </summary>
+    public Task DrainAsync()
+    {
+        lock (_lock)
+        {
+            return _draining ??= QuiesceAsync();
+        }
+    }
 
     /// <summary>The close: the drain first, then the writer's gate and the catalogue let go of. Shared by every caller; a second call is the first's task.</summary>
     public ValueTask DisposeAsync()
@@ -137,9 +160,18 @@ public sealed class WindowPresentationSession : IAsyncDisposable
         }
     }
 
+    private async Task QuiesceAsync()
+    {
+        // THE GATE FIRST, THE WRITER SECOND. The gate's close cancels what is inside and waits for it
+        // to leave; the writer's drain is the save in flight, which is never cancelled - it is the
+        // choice just made, and the one thing the exit is here to keep.
+        await _admission.CloseAsync().ConfigureAwait(false);
+        await Settings.DrainAsync().ConfigureAwait(false);
+    }
+
     private async Task CloseAsync()
     {
-        await Settings.DrainAsync().ConfigureAwait(false);
+        await DrainAsync().ConfigureAwait(false);
         Settings.Dispose();
         IAudioDeviceCatalog? catalog;
         lock (_lock)
@@ -149,5 +181,6 @@ public sealed class WindowPresentationSession : IAsyncDisposable
         }
 
         catalog?.Dispose();
+        _admission.Dispose();
     }
 }

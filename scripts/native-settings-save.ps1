@@ -9,9 +9,10 @@
   settings page, flips "Copy to the clipboard instead of pasting" through its TogglePattern, presses "Save
   settings" through its InvokePattern, and then reads two things back: settings.json on disk
   (Preferences.CopyInsteadOfPaste must be true) and the toggle as the window re-rendered it after the
-  save (its TogglePattern state must be On, and the operation bar must say "Settings saved"). The app is
-  then told to exit through its UAT exit switch and must exit cleanly with ApplicationCleanShutdown in
-  its log.
+  save (the operation bar must say "Settings saved", and the toggle read after that message must be On).
+  The app is then told to exit through its UAT exit switch and must exit cleanly, with
+  ApplicationCleanShutdown in the part of the log this launch wrote - the seeding launch before it
+  writes its own clean shutdown to the same file, and that one does not count.
 
   Everything goes through UI Automation - no coordinates, no mouse - so a control that moved or renamed
   fails loudly rather than passing for the wrong reason. Record the verdict line in
@@ -52,10 +53,16 @@ function Start-App {
 # app is run again on it, as a second launch would be.
 $seed = Start-App -ExitAfterMilliseconds '3000'
 if (-not $seed.WaitForExit(30000)) { $seed.Kill($true); throw 'The seeding launch did not exit.' }
+if ($seed.ExitCode -ne 0) { throw "The seeding launch exited with $($seed.ExitCode)." }
 $settingsPath = Join-Path $data 'settings.json'
 $seeded = Get-Content $settingsPath -Raw | ConvertFrom-Json
 $seeded.hasCompletedOnboarding = $true
 $seeded | ConvertTo-Json -Depth 12 | Set-Content $settingsPath -Encoding utf8
+
+# ONLY WHAT THE TESTED LAUNCH WRITES COUNTS. The seeding launch has already logged a clean shutdown to
+# the same file; the verdict reads the log from here on.
+$log = Join-Path $data 'diagnostics\app.jsonl'
+$logLinesBefore = if (Test-Path $log) { @(Get-Content $log).Count } else { 0 }
 
 $process = Start-App -ExitAfterMilliseconds '30000'
 
@@ -89,7 +96,18 @@ function Select-Element {
 function Get-ToggleState {
     param([System.Windows.Automation.AutomationElement] $Element)
     $pattern = $Element.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
-    return $pattern.Current.ToggleState
+    return "$($pattern.Current.ToggleState)"
+}
+
+function Wait-ToggleState {
+    param([System.Windows.Automation.AutomationElement] $Element, [string] $Expected, [int] $TimeoutSeconds = 10)
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $state = Get-ToggleState $Element
+    while ($state -ne $Expected -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 100
+        $state = Get-ToggleState $Element
+    }
+    return $state
 }
 
 $verdict = [ordered]@{ case = 'GeneralSavePersistsAndRendersCommittedValues'; passed = $false }
@@ -99,10 +117,10 @@ try {
     Select-Element (Find-Element -Name 'Clipboard')
     $toggle = Find-Element -Name 'Copy to the clipboard instead of pasting'
     $before = Get-ToggleState $toggle
-    if ("$before" -ne 'Off') { throw "The fresh profile's toggle should start Off; it reads $before." }
+    if ($before -ne 'Off') { throw "The fresh profile's toggle should start Off; it reads $before." }
     ($toggle.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)).Toggle()
-    Start-Sleep -Milliseconds 300
-    if ("$(Get-ToggleState $toggle)" -ne 'On') { throw 'The toggle did not flip to On.' }
+    $flipped = Wait-ToggleState $toggle 'On'
+    if ($flipped -ne 'On') { throw "The toggle did not flip to On within 10 seconds; it reads $flipped." }
 
     Invoke-Element (Find-Element -Name 'Save settings')
 
@@ -118,11 +136,12 @@ try {
     }
     if (-not $persisted) { throw 'settings.json did not record copyInsteadOfPaste = true within 10 seconds of Save.' }
 
-    # RENDERED: the window re-applies the stored settings to its controls after a save; the toggle
-    # must still read On from the tree, and the operation bar must carry the saved title.
-    $rendered = "$(Get-ToggleState (Find-Element -Name 'Copy to the clipboard instead of pasting'))"
-    if ($rendered -ne 'On') { throw "After the save the toggle renders as $rendered, not On." }
+    # RENDERED, IN THIS ORDER: the operation bar says the save is done, and only then is the toggle
+    # read - the window re-applies the stored settings to its controls after a save, and a toggle read
+    # before the message could be the one flipped by hand, not the one the save rendered.
     $null = Find-Element -Name 'Settings saved' -TimeoutSeconds 10
+    $rendered = Wait-ToggleState (Find-Element -Name 'Copy to the clipboard instead of pasting') 'On'
+    if ($rendered -ne 'On') { throw "After the save the toggle renders as $rendered, not On." }
 
     $verdict.persisted = $true
     $verdict.rendered = $rendered
@@ -131,8 +150,9 @@ try {
 finally {
     $exited = $process.WaitForExit(45000)
     $verdict.exitedCleanly = $exited -and $process.ExitCode -eq 0
-    $log = Join-Path $data 'diagnostics\app.jsonl'
-    $verdict.cleanShutdownLogged = (Test-Path $log) -and ((Get-Content $log -Raw) -match 'ApplicationCleanShutdown')
+    $thisLaunch = if (Test-Path $log) { @(Get-Content $log) | Select-Object -Skip $logLinesBefore } else { @() }
+    $verdict.cleanShutdownLogged = [bool]($thisLaunch | Where-Object { $_ -match 'ApplicationCleanShutdown' })
+    $verdict.launchLogLines = @($thisLaunch).Count
     if (-not $exited) { $process.Kill($true) }
     $verdict.passed = $verdict.persisted -and $verdict.exitedCleanly -and $verdict.cleanShutdownLogged
     try { Remove-Item -Recurse -Force $data -ErrorAction Stop } catch { }

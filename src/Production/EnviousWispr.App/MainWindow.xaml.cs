@@ -1490,7 +1490,12 @@ public sealed partial class MainWindow : Window, IDisposable
                             + "or taken by another app.");
                     break;
                 case MicrophoneTestOutcome.Cancelled:
-                    SetLiveText(MicrophoneTestResultText, "Microphone test stopped.");
+                    // A recording took the device, or the exit did; only the first is worth a line.
+                    if (!_session.Closing)
+                    {
+                        SetLiveText(MicrophoneTestResultText, "Microphone test stopped.");
+                    }
+
                     break;
                 default:
                     // Already running: the controller refused, and the page has nothing new to say.
@@ -1946,7 +1951,13 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        if (await _session.History.DeleteRecoveryAsync().ConfigureAwait(true))
+        var recoveryDeleted = await _session.History.DeleteRecoveryAsync().ConfigureAwait(true);
+        if (_session.Closing)
+        {
+            return;
+        }
+
+        if (recoveryDeleted)
         {
             ClearRecoveredText();
             FoundationInfoBar.Title = "No recovered dictation is pending";
@@ -1977,6 +1988,11 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         var result = await _session.History.DeleteAsync(selected.Id).ConfigureAwait(true);
+        if (result.Closing)
+        {
+            return;
+        }
+
         if (result.Succeeded)
         {
             BeginHistoryReload();
@@ -1998,6 +2014,11 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         var result = await _session.History.KeepAsync(selected.Id).ConfigureAwait(true);
+        if (result.Closing)
+        {
+            return;
+        }
+
         if (result.Succeeded)
         {
             BeginHistoryReload();
@@ -2027,6 +2048,11 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         var result = await _session.History.ClearAsync().ConfigureAwait(true);
+        if (result.Closing)
+        {
+            return;
+        }
+
         if (result.Succeeded)
         {
             BeginHistoryReload();
@@ -2645,6 +2671,13 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>Puts what the presenter loaded on the page: the rows, and the one line about them.</summary>
     private void ShowHistory(HistoryView view)
     {
+        // A LOAD THE EXIT REFUSED OR STOPPED IS NOT DRAWN. The page is on its way out; the loading
+        // card it already shows is the last honest thing on it.
+        if (view.Summary == HistorySummary.Closing)
+        {
+            return;
+        }
+
         _historyLoadStatus = view.Status;
         _history.Clear();
         _history.AddRange(view.Entries);
@@ -3346,13 +3379,6 @@ public sealed partial class MainWindow : Window, IDisposable
         _historyAnnounceDebounce.Stop();
         AnnounceHistoryOnPageShown();
     }
-
-    /// <summary>Waits for any settings write to finish, then stops accepting new ones.</summary>
-    /// <remarks>
-    /// AWAITED AT EXIT, BECAUSE ABANDONING THE WRITER LETS THE PROCESS END MID-WRITE. Synchronous
-    /// teardown cannot wait, so it does not try; this is the asynchronous half that can.
-    /// </remarks>
-    public Task DrainSettingsAsync() => _session.DrainAsync();
 
     /// <summary>Says whatever history result is still waiting, if anything can hear it now.</summary>
     public void AnnouncePendingHistoryState() => AnnounceHistoryOnPageShown();

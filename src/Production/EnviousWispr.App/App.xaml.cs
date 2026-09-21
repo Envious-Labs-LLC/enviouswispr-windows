@@ -1028,7 +1028,7 @@ public partial class App : Application, IAsyncDisposable
     /// </remarks>
     private LifetimeParts LifetimeParts() => new(
         CloseAdmission: () => _sessionCoordinator?.Close(),
-        DrainSettings: () => _window?.DrainSettingsAsync() ?? Task.CompletedTask,
+        DrainPresentation: () => _presentation?.DrainAsync() ?? Task.CompletedTask,
         ShellClosing: () =>
         {
             _window?.ShutdownProductWindows();

@@ -21,7 +21,7 @@ public sealed class ApplicationLifetimeTests
     [Fact]
     public async Task ExitBudgetIncludesSettingsAndWarmup()
     {
-        // ONE BUDGET, BEGINNING BEFORE THE FIRST AWAIT. The settings drain takes twelve of the twenty
+        // ONE BUDGET, BEGINNING BEFORE THE FIRST AWAIT. The presentation drain takes twelve of the twenty
         // seconds; the polish warm-up is given the eight that are left and does not finish inside
         // them; nothing after it is disposed, the run is not completed, the exit is unclean and the
         // host is told to end - twenty seconds after the exit was asked for, not twenty plus twenty.
@@ -33,7 +33,7 @@ public sealed class ApplicationLifetimeTests
 
         var exit = world.Lifetime.ExitAsync();
         Assert.True(world.AdmissionClosed, "admission closed before the first await");
-        await world.WhenJoined("settings drain").WaitAsync(Patience);
+        await world.WhenJoined("presentation drain").WaitAsync(Patience);
         clock.Advance(TimeSpan.FromSeconds(12));
         world.Drain.SetResult();
         await world.WhenJoined("polish warm-up").WaitAsync(Patience);
@@ -606,7 +606,7 @@ public sealed class ApplicationLifetimeTests
         public TaskCompletionSource? Logger { get; set; }
         /// <summary>When set, the shell's closing blocks the thread it is called on for as long as this does.</summary>
         public Action? ShellClosingBlocks { get; set; }
-        /// <summary>When set, the settings drain does not finish until it is completed.</summary>
+        /// <summary>When set, the presentation drain does not finish until it is completed.</summary>
         public TaskCompletionSource? Drain { get; set; }
         /// <summary>When set, the polish warm-up does not finish until it is completed.</summary>
         public TaskCompletionSource? Warmup { get; set; }
@@ -624,10 +624,10 @@ public sealed class ApplicationLifetimeTests
                     world!.AdmissionClosedCount++;
                     coordinator?.Close();
                 },
-                DrainSettings: () =>
+                DrainPresentation: () =>
                 {
                     world!.DrainCalls++;
-                    world.Entered("settings drain");
+                    world.Entered("presentation drain");
                     return world.Drain?.Task ?? Task.CompletedTask;
                 },
                 ShellClosing: () =>
