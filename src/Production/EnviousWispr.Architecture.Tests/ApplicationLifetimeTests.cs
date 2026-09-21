@@ -339,13 +339,13 @@ public sealed class ApplicationLifetimeTests
     [Fact]
     public async Task ARunCompletionCommittedBeforeTheExitStoppedWaitingIsReportedCompletedAndItsWriterKept()
     {
-        // COMMITTED IS NOT FINISHED. The production store has replaced the record and the fence has
-        // let go; the writer is held there - its gate still taken, its temporary file still on disk -
-        // when the budget runs out. The exit's abandonment is refused, so it reports the run
+        // COMMITTED IS NOT FINISHED. The production store has replaced the record (the move took the
+        // temporary file with it) and the fence has let go; the writer is held there - its gate still
+        // taken, its cleanup and its answer still to come - when the budget runs out. The exit's abandonment is refused, so it reports the run
         // completed; but the writer is still inside the store, so the completion is outstanding, the
         // store is kept (its production disposal is wired and does not run), the exit is unclean and
-        // the host is told to end. Released, the writer lets go of a gate that still exists, removes
-        // its temporary file and answers true; the next launch reads a clean run.
+        // the host is told to end. Released, the writer lets go of a gate that still exists and
+        // answers true, leaving nothing temporary behind; the next launch reads a clean run.
         using var temp = new TemporaryDirectory();
         var path = Path.Combine(temp.Path, "run-state.json");
         var store = new JsonApplicationRunStateStore(path);
