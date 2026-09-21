@@ -45,11 +45,6 @@ public interface ITranscriptionEngine
     Task<Transcript> TranscribeAsync(CapturedAudio audio, CancellationToken cancellationToken = default);
 }
 
-public interface IDeterministicTextProcessor
-{
-    ProcessedText Process(Transcript transcript);
-}
-
 public enum PolishAttemptStatus
 {
     Polished,

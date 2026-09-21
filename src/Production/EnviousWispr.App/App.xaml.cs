@@ -46,7 +46,11 @@ public partial class App : Application, IAsyncDisposable
     private readonly JsonApplicationRunStateStore _runStateStore;
     private readonly WindowsRecoveryTextStore _recoveryTextStore;
     private readonly SessionPersistence _sessionPersistence;
-    private readonly WindowsSystemResourceProbe _resourceProbe;
+    // THE SEAM THE SESSION IS COMPOSED THROUGH, HELD AS THE SEAM (plan-2 step 15). The executor asks
+    // ISystemResourceProbe whether a recording may start; the shell constructs the Windows probe and
+    // hands it over as the contract, not the class, so nothing here can reach for what the session
+    // does not see.
+    private readonly ISystemResourceProbe _resourceProbe;
     private readonly WindowsCredentialApiKeyStore _credentialStore;
     private readonly string _dataDirectory;
     private readonly string? _cudaRuntimeDirectory;
