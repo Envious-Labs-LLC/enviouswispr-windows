@@ -146,17 +146,22 @@ public sealed class RuntimeWorkerLivePreviewEngine : ILivePreviewEngine
         }
     }
 
-    /// <summary>Kills the preview's worker for a shutdown and lets go of the resource it held; terminal.</summary>
+    /// <summary>Kills the preview's worker for a shutdown; terminal. The resource it held is let go of only once the worker is seen gone.</summary>
+    /// <remarks>
+    /// THE RESOURCE FOLLOWS THE WORKER, NOT THE CALL. A worker whose exit was not observed may still
+    /// be on the accelerator or the CPU the lease stands for; handing that to the final engine would
+    /// put two workers on it. So the lease is released on an observed exit (or when there was no
+    /// worker), and kept - with the generation that still owns the process - otherwise.
+    /// </remarks>
     public async Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline)
     {
-        try
-        {
-            return await _engine.AbortAsync(deadline).ConfigureAwait(false);
-        }
-        finally
+        var result = await _engine.AbortAsync(deadline).ConfigureAwait(false);
+        if (result.Outcome is RuntimeWorkerAbortOutcome.Exited or RuntimeWorkerAbortOutcome.NoWorker)
         {
             await ReleaseResourceAsync().ConfigureAwait(false);
         }
+
+        return result;
     }
 
     public async ValueTask DisposeAsync()

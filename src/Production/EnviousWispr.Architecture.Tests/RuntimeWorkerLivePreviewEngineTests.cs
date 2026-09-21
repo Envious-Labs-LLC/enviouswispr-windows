@@ -68,6 +68,36 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
     }
 
     [Fact]
+    public async Task AnAbortWhoseExitWasNotSeenKeepsTheResource()
+    {
+        // THE WORKER MAY STILL BE ON THE RESOURCE. A StillRunning outcome leaves the lease with the
+        // preview - the final engine must not be put beside a worker nobody has seen leave - and an
+        // abort that threw leaves it too.
+        using var arbiter = new RuntimeResourceArbiter();
+        var runtime = new FakePreviewRuntime { AbortOutcome = RuntimeWorkerAbortOutcome.StillRunning };
+        await using var preview = new RuntimeWorkerLivePreviewEngine(runtime, arbiter, RuntimeResourceKind.Cpu);
+        Assert.True((await preview.StartAsync()).Succeeded);
+
+        var abort = await preview.AbortAsync(TimeSpan.FromSeconds(1));
+        var stillHeld = await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero);
+
+        Assert.Equal(RuntimeWorkerAbortOutcome.StillRunning, abort.Outcome);
+        Assert.False(stillHeld.Succeeded, "the resource stays with the preview while its worker may still be on it");
+
+        runtime.AbortThrows = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => preview.AbortAsync(TimeSpan.FromSeconds(1)));
+        Assert.False((await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero)).Succeeded);
+
+        // Seen gone at last: the lease follows.
+        runtime.AbortThrows = false;
+        runtime.AbortOutcome = RuntimeWorkerAbortOutcome.Exited;
+        Assert.Equal(RuntimeWorkerAbortOutcome.Exited, (await preview.AbortAsync(TimeSpan.FromSeconds(1))).Outcome);
+        var freed = await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero);
+        Assert.True(freed.Succeeded);
+        await freed.Lease!.DisposeAsync();
+    }
+
+    [Fact]
     public async Task FailedPreviewStartDoesNotHoldResource()
     {
         using var arbiter = new RuntimeResourceArbiter();
@@ -236,10 +266,19 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
 
         public TimeSpan? AbortDeadline { get; private set; }
 
+        public RuntimeWorkerAbortOutcome AbortOutcome { get; set; } = RuntimeWorkerAbortOutcome.Exited;
+
+        public bool AbortThrows { get; set; }
+
         public Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline)
         {
             AbortDeadline = deadline;
-            return Task.FromResult(new RuntimeWorkerAbortResult(RuntimeWorkerAbortOutcome.Exited, 4242));
+            if (AbortThrows)
+            {
+                throw new InvalidOperationException("synthetic abort failure");
+            }
+
+            return Task.FromResult(new RuntimeWorkerAbortResult(AbortOutcome, 4242));
         }
 
         public Task<Transcript> TranscribeAsync(

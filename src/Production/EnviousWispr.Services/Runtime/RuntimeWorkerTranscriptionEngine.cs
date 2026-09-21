@@ -61,6 +61,21 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
             options.WorkerPriority);
     }
 
+    /// <summary>The engine over a supervisor a test built: the production adapter, a worker of the test's choosing.</summary>
+    internal RuntimeWorkerTranscriptionEngine(
+        RuntimeWorkerSupervisor supervisor,
+        string engineId,
+        TimeSpan? startupTimeout = null,
+        TimeSpan? transcriptionTimeout = null)
+    {
+        ArgumentNullException.ThrowIfNull(supervisor);
+        ArgumentException.ThrowIfNullOrWhiteSpace(engineId);
+        _supervisor = supervisor;
+        EngineId = engineId;
+        _startupTimeout = startupTimeout ?? TimeSpan.FromSeconds(30);
+        _transcriptionTimeout = transcriptionTimeout ?? TimeSpan.FromMinutes(2);
+    }
+
     public string EngineId { get; }
 
     public int? WorkerProcessId => _supervisor.WorkerProcessId;

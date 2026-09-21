@@ -39,12 +39,16 @@ build so customers do not need to install developer tooling.
 - `RuntimeWorker`: a **separate executable** that hosts the native speech runtimes, including the CUDA
   build. `Services` drives it through `RuntimeWorkerSupervisor` over a versioned protocol with an explicit
   process priority; automatic restarts are bounded per crash loop, with the budget replenished by a
-  successful transcription request and reset by an explicit start. For a shutdown the supervisor
-  has a terminal `AbortAsync(deadline)` (plan-2 step 6): it does not wait behind the request gate, kills
-  the worker of the generation in flight, observes its exit inside the deadline and reports whether it
-  saw it (`Exited` / `StillRunning` / `NoWorker`); a wedged request then ends as a failed one, and no
-  start of any kind brings a worker back (`RuntimeWorkerState.Aborted`). The transcription and preview
-  adapters expose the same call; the preview's also lets go of the resource it held.
+  successful transcription request and reset by an explicit start. Each worker is a **generation**
+  (plan-2 step 6): a record that exists from the start that creates it to the exit that is observed,
+  with ownership as a semaphore (a stop, a disposal and an abort take turns on the one handle) and the
+  end as a promise published only once the exit was seen and the handle closed - so a handle closes
+  exactly once, and a process nobody saw leave keeps its handle for the next attempt. For a shutdown
+  the supervisor has a terminal `AbortAsync(deadline)`: it never waits behind the request gate, takes
+  or waits for the generation in flight, kills, and reports what it saw (`Exited` / `StillRunning` /
+  `NoWorker`); a wedged request then ends as a failed one, and no start of any kind brings a worker
+  back (`RuntimeWorkerState.Aborted`). The transcription and preview adapters expose the same call;
+  the preview's lets go of the resource it held only on an observed exit.
 
 Dependencies point inward toward contracts. UI, storage, network, and model runtimes do not leak into the
 deterministic core.

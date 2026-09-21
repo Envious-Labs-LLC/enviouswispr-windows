@@ -15,11 +15,11 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
     private readonly int _maximumRestarts;
     private readonly ProcessPriorityClass? _processPriority;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private Process? _process;
-    private Task<string>? _stderrDrain;
+    private WorkerGeneration? _generation;
     private int _restartCount;
     private bool _disposed;
     private bool _aborted;
+    private int _handlesClosed;
     private RuntimeWorkerState _state = RuntimeWorkerState.Stopped;
 
     public RuntimeWorkerSupervisor(
@@ -45,7 +45,11 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         private set => _state = value;
     }
 
-    public int? WorkerProcessId => _process is { HasExited: false } process ? process.Id : null;
+    public int? WorkerProcessId =>
+        Volatile.Read(ref _generation)?.Process is { } process && IsAlive(process) ? process.Id : null;
+
+    /// <summary>How many worker handles this supervisor has closed; a test's way of seeing that a race closed one exactly once.</summary>
+    internal int HandlesClosed => Volatile.Read(ref _handlesClosed);
 
     public async Task<RuntimeWorkerResult> StartAsync(
         TimeSpan timeout,
@@ -60,7 +64,7 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             // choosing an engine, or the app relaunching a runtime, is a new lifetime; a replacement
             // worker that happens to be healthy at that moment does not carry the old loop's count.
             _restartCount = 0;
-            if (_process is { HasExited: false } && State == RuntimeWorkerState.Ready)
+            if (LiveProcess() is not null && State == RuntimeWorkerState.Ready)
             {
                 return Success(RuntimeWorkerState.Ready);
             }
@@ -129,7 +133,7 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
                 return null;
             }
 
-            if (_process is null || _process.HasExited || State is not RuntimeWorkerState.Ready)
+            if (LiveProcess() is null || State is not RuntimeWorkerState.Ready)
             {
                 var start = await RestartCoreAsync(timeout, cancellationToken).ConfigureAwait(false);
                 if (!start.Succeeded)
@@ -173,54 +177,60 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
     public async Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline)
     {
         ValidateTimeout(deadline);
-        // TERMINAL FIRST, THEN THE KILL. Written before the process is taken so that a start racing
-        // this - one that passed its own check already - finds the flag when it assigns its process
-        // and takes that worker down itself; and so that no start after this can create another.
+        // TERMINAL FIRST, THEN THE KILL. Written before the generation is read so that a start
+        // racing this - one that passed its own check already - finds the flag once it has
+        // published its process and takes that worker down itself, and no start after this can
+        // create another. This never waits for the request gate: a wedged request holds that for
+        // as long as its timeout, and the shutdown cannot.
         Volatile.Write(ref _aborted, true);
-        // BOUND TO THE GENERATION IN FLIGHT. The exchange is the one point of ownership: whichever
-        // of an abort, a stop and a disposal takes the process out of the field owns its handle, and
-        // the others find nothing - so the handle is closed exactly once, and a worker started later
-        // (there is none, after the flag) could not be mistaken for this one.
-        var process = Interlocked.Exchange(ref _process, null);
-        if (process is null)
+        var generation = Volatile.Read(ref _generation);
+        if (generation is null || generation.Ended.Task.IsCompleted)
         {
             return new RuntimeWorkerAbortResult(RuntimeWorkerAbortOutcome.NoWorker, null);
         }
 
-        int? processId = null;
-        var exited = false;
+        // THE GENERATION IS THE UNIT, NOT A PROCESS FIELD. A start that has not yet published its
+        // process, or a stop already tearing the process down, is a generation that is not over; the
+        // abort waits for its end inside the deadline rather than reporting nothing to abort.
+        if (generation.Process is not { } process)
+        {
+            return await AwaitEndAsync(generation, deadline).ConfigureAwait(false);
+        }
+
+        var processId = TryReadId(process);
+        var started = Stopwatch.GetTimestamp();
+        if (!await generation.Ownership.WaitAsync(deadline).ConfigureAwait(false))
+        {
+            // Another owner - a stop or a disposal - is tearing this generation down and did not
+            // finish inside the deadline; the exit was not seen by this abort.
+            return new RuntimeWorkerAbortResult(RuntimeWorkerAbortOutcome.StillRunning, processId);
+        }
+
         try
         {
-            processId = process.Id;
-            if (!process.HasExited)
+            if (generation.Ended.Task.IsCompleted)
             {
-                process.Kill(entireProcessTree: true);
+                return new RuntimeWorkerAbortResult(RuntimeWorkerAbortOutcome.Exited, processId);
             }
 
-            // THE EXIT IS OBSERVED, NOT ASSUMED. A kill that was issued is not a worker that is gone;
-            // the deadline is how long the shutdown will wait to see it go.
-            await process.WaitForExitAsync(CancellationToken.None)
-                .WaitAsync(deadline, CancellationToken.None)
-                .ConfigureAwait(false);
-            exited = true;
-        }
-        catch (TimeoutException)
-        {
-            exited = process.HasExited;
-        }
-        catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
-        {
-            // Already gone, or gone before the kill could be asked: an exit either way.
-            exited = true;
+            // ONE DEADLINE FOR THE WHOLE ABORT: what the wait for ownership used comes off the kill's.
+            var remaining = deadline - Stopwatch.GetElapsedTime(started);
+            var exited = await KillAndObserveAsync(
+                process,
+                remaining > TimeSpan.Zero ? remaining : TimeSpan.FromMilliseconds(1)).ConfigureAwait(false);
+            if (exited)
+            {
+                End(generation, process);
+            }
+
+            return new RuntimeWorkerAbortResult(
+                exited ? RuntimeWorkerAbortOutcome.Exited : RuntimeWorkerAbortOutcome.StillRunning,
+                processId);
         }
         finally
         {
-            process.Dispose();
+            generation.Ownership.Release();
         }
-
-        return new RuntimeWorkerAbortResult(
-            exited ? RuntimeWorkerAbortOutcome.Exited : RuntimeWorkerAbortOutcome.StillRunning,
-            processId);
     }
 
     public async Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default)
@@ -306,9 +316,24 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         }
 
         await StopCoreAsync().ConfigureAwait(false);
+        // THE GENERATION EXISTS FROM HERE, before the process does, so an abort that lands during
+        // the start has something to wait for: the generation ends either with the observed exit of
+        // the process it publishes or, if it never publishes one, with the start. And the flag is
+        // read again once the generation is published: an abort that read the generation before
+        // this one found the last, ended one and reported no worker - which stays true, because
+        // this start now ends without starting anything.
+        var generation = new WorkerGeneration();
+        Volatile.Write(ref _generation, generation);
+        if (Volatile.Read(ref _aborted))
+        {
+            generation.Ended.TrySetResult(true);
+            return Failure();
+        }
+
         State = RuntimeWorkerState.Starting;
         if (!File.Exists(_workerExecutable))
         {
+            generation.Ended.TrySetResult(true);
             State = RuntimeWorkerState.Faulted;
             return Failure();
         }
@@ -336,13 +361,15 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             if (!process.Start())
             {
                 process.Dispose();
+                generation.Ended.TrySetResult(true);
                 State = RuntimeWorkerState.Faulted;
                 return Failure();
             }
 
-            _process = process;
-            // AN ABORT THAT LANDED BETWEEN THE CHECK ABOVE AND THIS ASSIGNMENT found no process to
-            // kill; this start is the one that sees it, and takes its own worker down.
+            generation.Process = process;
+            // AN ABORT THAT LANDED BETWEEN THE CHECK ABOVE AND THIS PUBLICATION found a generation
+            // with no process and is waiting for its end; this start is the one that sees the flag,
+            // and takes its own worker down, which ends the generation the abort is waiting on.
             if (Volatile.Read(ref _aborted))
             {
                 await StopCoreAsync().ConfigureAwait(false);
@@ -361,7 +388,7 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
                 }
             }
 
-            _stderrDrain = process.StandardError.ReadToEndAsync(CancellationToken.None);
+            generation.StderrDrain = process.StandardError.ReadToEndAsync(CancellationToken.None);
             var health = await SendRequestAsync("health", timeout, cancellationToken)
                 .ConfigureAwait(false);
             if (!health.Succeeded)
@@ -377,6 +404,13 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         catch (Exception exception) when (
             exception is Win32Exception or IOException or InvalidOperationException)
         {
+            if (generation.Process is null)
+            {
+                // The process never started: nothing to observe, the generation ends with the start.
+                process.Dispose();
+                generation.Ended.TrySetResult(true);
+            }
+
             await StopCoreAsync().ConfigureAwait(false);
             State = RuntimeWorkerState.Faulted;
             return Failure();
@@ -387,7 +421,7 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
-        if (_process is null || _process.HasExited || State is not RuntimeWorkerState.Ready)
+        if (LiveProcess() is null || State is not RuntimeWorkerState.Ready)
         {
             // A PROBE DOES NOT TURN A DELIBERATE STOP INTO A FAULT. Stopped means never started or
             // stopped on purpose; a health check finding no process there reports failure and leaves
@@ -435,8 +469,12 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
-        var process = _process;
-        if (process is null || process.HasExited)
+        // ONE STABLE REFERENCE FOR THE WHOLE REQUEST. An abort that ends the generation while the
+        // request is in flight closes the worker's stdout, and the read below ends with nothing -
+        // the failed request the caller already handles - rather than a field read that finds a
+        // different answer from one line to the next.
+        var process = LiveProcess();
+        if (process is null)
         {
             return null;
         }
@@ -469,62 +507,129 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             return null;
         }
         catch (Exception exception) when (
-            exception is IOException or InvalidOperationException or JsonException or TimeoutException)
+            exception is IOException or InvalidOperationException or JsonException or TimeoutException or ObjectDisposedException)
         {
             return null;
         }
     }
 
+    /// <summary>Ends the current generation: asks the worker to leave, kills it if it does not, and observes the exit.</summary>
+    /// <remarks>
+    /// OWNERSHIP IS TAKEN, NOT ASSUMED. The generation's ownership is what an abort takes too; a stop
+    /// that finds it taken waits its turn rather than touching the same handle. A process whose exit
+    /// was not observed is not disposed: its handle stays with the generation so a later abort or
+    /// stop can try again, and nothing reads a closed handle as a gone worker.
+    /// </remarks>
     private async Task StopCoreAsync()
     {
-        var process = Interlocked.Exchange(ref _process, null);
-        if (process is null)
+        var generation = Volatile.Read(ref _generation);
+        if (generation is null || generation.Ended.Task.IsCompleted || generation.Process is not { } process)
+        {
+            // Nothing, or over already, or a start that has not published a process yet - that
+            // start ends its own generation.
+            return;
+        }
+
+        await generation.Ownership.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (generation.Ended.Task.IsCompleted)
+            {
+                return;
+            }
+
+            if (IsAlive(process))
+            {
+                await TryRequestShutdownAsync(process).ConfigureAwait(false);
+            }
+
+            var exited = await KillAndObserveAsync(process, TimeSpan.FromSeconds(2)).ConfigureAwait(false) ||
+                await KillAndObserveAsync(process, TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            if (exited)
+            {
+                End(generation, process);
+                await DrainStderrAsync(generation).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            generation.Ownership.Release();
+        }
+    }
+
+    /// <summary>Kills the process if it is still there and waits, up to the deadline, to see it exit. True only when the exit was observed.</summary>
+    private static async Task<bool> KillAndObserveAsync(Process process, TimeSpan deadline)
+    {
+        try
+        {
+            if (IsAlive(process))
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
+        {
+            // THE KILL COULD NOT BE ASKED FOR - already gone, or refused. Neither is an exit; the
+            // wait below is the only thing that says whether the worker is gone.
+        }
+
+        try
+        {
+            await process.WaitForExitAsync(CancellationToken.None)
+                .WaitAsync(deadline, CancellationToken.None)
+                .ConfigureAwait(false);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return !IsAlive(process);
+        }
+        catch (InvalidOperationException)
+        {
+            // No process is associated: it was never started, so there is nothing left to observe.
+            return true;
+        }
+    }
+
+    /// <summary>The generation's exit was observed: the handle is closed, once, and the end published.</summary>
+    private void End(WorkerGeneration generation, Process process)
+    {
+        process.Dispose();
+        Interlocked.Increment(ref _handlesClosed);
+        generation.Ended.TrySetResult(true);
+    }
+
+    private static async Task<RuntimeWorkerAbortResult> AwaitEndAsync(WorkerGeneration generation, TimeSpan deadline)
+    {
+        try
+        {
+            await generation.Ended.Task.WaitAsync(deadline).ConfigureAwait(false);
+            return new RuntimeWorkerAbortResult(RuntimeWorkerAbortOutcome.Exited, TryReadId(generation.Process));
+        }
+        catch (TimeoutException)
+        {
+            return new RuntimeWorkerAbortResult(RuntimeWorkerAbortOutcome.StillRunning, TryReadId(generation.Process));
+        }
+    }
+
+    private static async Task DrainStderrAsync(WorkerGeneration generation)
+    {
+        if (generation.StderrDrain is not { } drain)
         {
             return;
         }
 
         try
         {
-            if (!process.HasExited)
-            {
-                await TryRequestShutdownAsync(process).ConfigureAwait(false);
-            }
-
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-            }
-
-            await process.WaitForExitAsync(CancellationToken.None)
-                .WaitAsync(TimeSpan.FromSeconds(2), CancellationToken.None)
-                .ConfigureAwait(false);
+            await drain.WaitAsync(TimeSpan.FromMilliseconds(250)).ConfigureAwait(false);
         }
         catch (Exception exception) when (
-            exception is InvalidOperationException or Win32Exception or TimeoutException)
+            exception is IOException or OperationCanceledException or TimeoutException)
         {
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-            }
+            // Stderr is intentionally discarded and cannot block teardown.
         }
-        finally
-        {
-            process.Dispose();
-            if (_stderrDrain is not null)
-            {
-                try
-                {
-                    await _stderrDrain.WaitAsync(TimeSpan.FromMilliseconds(250)).ConfigureAwait(false);
-                }
-                catch (Exception exception) when (
-                    exception is IOException or OperationCanceledException or TimeoutException)
-                {
-                    // Stderr is intentionally discarded and cannot block teardown.
-                }
 
-                _stderrDrain = null;
-            }
-        }
+        generation.StderrDrain = null;
     }
 
     private static async Task TryRequestShutdownAsync(Process process)
@@ -540,9 +645,38 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
                 .ConfigureAwait(false);
         }
         catch (Exception exception) when (
-            exception is IOException or InvalidOperationException or TimeoutException)
+            exception is IOException or InvalidOperationException or TimeoutException or ObjectDisposedException)
         {
             // The worker is already gone or wedged; process-tree kill is the fallback.
+        }
+    }
+
+    /// <summary>The current generation's process, if it has one and it is alive.</summary>
+    private Process? LiveProcess() =>
+        Volatile.Read(ref _generation)?.Process is { } process && IsAlive(process) ? process : null;
+
+    /// <summary>Whether the process is still there, without throwing for one that is gone or closed.</summary>
+    private static bool IsAlive(Process process)
+    {
+        try
+        {
+            return !process.HasExited;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private static int? TryReadId(Process? process)
+    {
+        try
+        {
+            return process?.Id;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
         }
     }
 
@@ -559,4 +693,27 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             AppErrorStage.RuntimeWorker,
             CanRetry: true));
 
+    /// <summary>One worker's lifetime: from the start that creates it to the exit that is observed, whoever observes it.</summary>
+    /// <remarks>
+    /// OWNERSHIP IS A SEMAPHORE, THE END IS A PROMISE. Whoever holds the ownership - a stop, a
+    /// disposal, an abort - is the one touching the process; the others wait. The end is published
+    /// only once the exit has been observed and the handle closed, so a handle is closed exactly
+    /// once and a generation nobody has seen end is never reported as gone.
+    /// </remarks>
+    private sealed class WorkerGeneration
+    {
+        private Process? _process;
+
+        public Process? Process
+        {
+            get => Volatile.Read(ref _process);
+            set => Volatile.Write(ref _process, value);
+        }
+
+        public Task<string>? StderrDrain { get; set; }
+
+        public SemaphoreSlim Ownership { get; } = new(1, 1);
+
+        public TaskCompletionSource<bool> Ended { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
 }
