@@ -87,6 +87,12 @@ the log (its own code, not a policy refusal's), no `TextDeliveryCompleted`, and 
 | Recorded | Build | Target mode | Observed | Passed | Exited cleanly |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-21 | 0.19.0+a9ecdce | unverified-write | UiAutomationValueUnverified (`WM_SETTEXT` seen, field rewritten, `DeliveryUnverified` logged, no `WM_PASTE`) | yes | yes |
+| 2026-09-21 | 0.19.0+9d02350 (step 14: the payloads renamed) | unverified-write | UiAutomationValueUnverified (`WM_SETTEXT` seen, field rewritten, `DeliveryUnverified` logged, no `WM_PASTE`) | yes | yes |
+
+The step-14 rename (the fallback payload named for what it is) re-ran all nine cases on 0.19.0+9d02350:
+the settle self-test, the four exits, and the four target modes (edit UiAutomationValue, caret-start
+ClipboardPaste with the clipboard sentinel back, password ClipboardOnly, unverified-write above) all
+passed, exited cleanly, no stray workers - the routes and the bytes each payload carries unchanged.
 
 The four exit journeys above also passed on 0.19.0+a9ecdce (live-cable-parakeet, live-cable-whisper,
 synthetic-quick-tap-preview, escape-recovery: passed, exited cleanly, no stray workers), all nine cases

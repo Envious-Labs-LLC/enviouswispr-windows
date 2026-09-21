@@ -4,9 +4,12 @@ using System.Text;
 
 namespace EnviousWispr.PostProcessing;
 
+/// <summary>The two payloads a repair produces, and what was done to reach them.</summary>
+/// <param name="Insertion">The insertion adjusted to the caret's context - or the fallback, when no context was applied.</param>
+/// <param name="Fallback">The fallback payload: the words as said, with a trailing space where they had none. Never context-adjusted.</param>
 public sealed record CursorInsertionRepairResult(
-    ProcessedText Output,
-    ProcessedText LegacyOutput,
+    ProcessedText Insertion,
+    ProcessedText Fallback,
     CursorRepairDisposition Disposition,
     bool RemovedDuplicateWord = false,
     bool DroppedDuplicatePeriod = false,
@@ -28,27 +31,27 @@ public static class CursorInsertionRepair
         string? languageCode)
     {
         ArgumentNullException.ThrowIfNull(input);
-        var legacy = input with { Text = LegacyPayload(input.Text) };
+        var fallback = input with { Text = FallbackPayload(input.Text) };
         if (context is null || !context.HasTextContext)
         {
-            return Legacy(legacy);
+            return Fallback(fallback);
         }
 
         var useSpaces = UsesWordSpacing(languageCode, input.Text);
         if (useSpaces && IsInsideWord(context.Left, context.Right))
         {
-            return Legacy(legacy, refusedInsideWord: true);
+            return Fallback(fallback, refusedInsideWord: true);
         }
 
         var leftAnchor = FindLeftAnchor(context.Left);
         if (leftAnchor.Rune is null && context.Right.Length > 0)
         {
-            return Legacy(legacy);
+            return Fallback(fallback);
         }
 
         if (context.IsScreenDerived && input.Text.IndexOfAny(['\r', '\n']) >= 0)
         {
-            return Legacy(legacy);
+            return Fallback(fallback);
         }
 
         var candidate = input.Text;
@@ -103,7 +106,7 @@ public static class CursorInsertionRepair
 
         return new CursorInsertionRepairResult(
             input with { Text = candidate },
-            legacy,
+            fallback,
             CursorRepairDisposition.ContextApplied,
             removedDuplicate,
             droppedPeriod,
@@ -111,15 +114,17 @@ public static class CursorInsertionRepair
             addedTrailing);
     }
 
-    private static CursorInsertionRepairResult Legacy(
-        ProcessedText legacy,
+    /// <summary>The result when no context is applied: the fallback payload is both the insertion and the fallback.</summary>
+    private static CursorInsertionRepairResult Fallback(
+        ProcessedText fallback,
         bool refusedInsideWord = false) => new(
-        legacy,
-        legacy,
-        CursorRepairDisposition.LegacyPayload,
+        fallback,
+        fallback,
+        CursorRepairDisposition.FallbackPayload,
         RefusedInsideWord: refusedInsideWord);
 
-    private static string LegacyPayload(string text) =>
+    /// <summary>The fallback payload: the words as said, with one trailing space so a paste can continue a sentence. Not raw text, and never context-adjusted.</summary>
+    private static string FallbackPayload(string text) =>
         text.EndsWith(' ') ? text : text + " ";
 
     private static bool UsesWordSpacing(string? languageCode, string payload)

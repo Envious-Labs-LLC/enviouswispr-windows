@@ -143,9 +143,27 @@ public sealed record DeliveryFault(DeliveryStage Stage, DeliveryFaultKind Kind, 
     }
 }
 
+/// <summary>The repair's decision: whether the insertion was adjusted to the caret's context, or left as the fallback payload.</summary>
+/// <remarks>
+/// NAMED FOR WHAT IT IS, NOT WHEN IT WAS WRITTEN (plan-2 step 14). The payload used when no context
+/// is available - and the one the clipboard gets when the target refuses - was called "legacy",
+/// which said only that it came first. It is the fallback: the words as said, with one trailing
+/// space appended only where there was none, so a paste can continue a sentence.
+///
+/// THIS IS WHAT THE REPAIR DECIDED, NOT WHAT THE DELIVERY WROTE. A commit refused after a
+/// context-applied repair still copies the fallback to the clipboard; a commit can fail before
+/// writing anything, or fail after a write whose effect is uncertain (a direct write lands before
+/// its read-back is checked). The disposition establishes neither outcome; the delivery's route and
+/// refusal say what happened, and nothing is retried. The numeric values are unchanged
+/// (fallback 0, context 1); no production path serialises this enum by name - only the
+/// <c>tools/delivery-uat</c> diagnostic prints it to a person.
+/// </remarks>
 public enum CursorRepairDisposition
 {
-    LegacyPayload,
+    /// <summary>No caret context was applied: none was available, or the seam is one the repair does not touch. The insertion is the fallback payload.</summary>
+    FallbackPayload,
+
+    /// <summary>The insertion was adjusted to the caret's context.</summary>
     ContextApplied,
 }
 
@@ -188,9 +206,11 @@ public sealed record TargetContextResult(
     CaretContext? Context = null,
     TextDeliveryRefusalReason RefusalReason = TextDeliveryRefusalReason.None);
 
+/// <param name="Text">The insertion adjusted to the caret's context: what a direct write or a paste puts at the caret.</param>
+/// <param name="FallbackText">The fallback payload: what goes to the clipboard when the target refuses, or is pasted where no context could be read - the words as said, with a trailing space.</param>
 public sealed record TextCommitRequest(
     ProcessedText Text,
-    ProcessedText LegacyText,
+    ProcessedText FallbackText,
     TargetWindowId Target,
     CaretContext? ExpectedContext,
     TextTargetKind TargetKind,
@@ -211,7 +231,7 @@ public sealed record DeliveryResult(
     bool ClipboardFallback,
     TextDeliveryRoute Route = TextDeliveryRoute.None,
     TextDeliveryRefusalReason RefusalReason = TextDeliveryRefusalReason.None,
-    CursorRepairDisposition RepairDisposition = CursorRepairDisposition.LegacyPayload,
+    CursorRepairDisposition RepairDisposition = CursorRepairDisposition.FallbackPayload,
     bool ClipboardRestored = false,
     DeliveryFault? Fault = null);
 

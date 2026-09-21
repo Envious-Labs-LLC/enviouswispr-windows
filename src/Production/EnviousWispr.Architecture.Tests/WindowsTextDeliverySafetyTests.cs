@@ -742,7 +742,7 @@ public sealed class WindowsTextDeliverySafetyTests
         public Task<TextCommitResult> CommitAsync(TextCommitRequest request, CancellationToken cancellationToken = default) =>
             WindowsClipboardPaste.PasteAsync(
                 request.Text.Text,
-                request.LegacyText.Text,
+                request.FallbackText.Text,
                 request.Options.RestoreClipboardAfterPaste,
                 () => WindowsTextTargetAdapter.GuardedPreflight(preflight),
                 cancellationToken);

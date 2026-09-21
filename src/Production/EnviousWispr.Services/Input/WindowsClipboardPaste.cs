@@ -172,7 +172,7 @@ internal static class WindowsClipboardPaste
 
     public static Task<TextCommitResult> PasteAsync(
         string text,
-        string legacyText,
+        string fallbackText,
         bool restoreClipboard,
         Func<TextDeliveryRefusalReason> preflight,
         CancellationToken cancellationToken)
@@ -181,7 +181,7 @@ internal static class WindowsClipboardPaste
         return RunStaAsync(
             () => PasteOnSta(
                 text,
-                legacyText,
+                fallbackText,
                 restoreClipboard,
                 preflight,
                 cancellationToken),
@@ -190,7 +190,7 @@ internal static class WindowsClipboardPaste
 
     private static TextCommitResult PasteOnSta(
         string text,
-        string legacyText,
+        string fallbackText,
         bool restoreClipboard,
         Func<TextDeliveryRefusalReason> preflight,
         CancellationToken cancellationToken)
@@ -243,7 +243,7 @@ internal static class WindowsClipboardPaste
 
         if (refusal != TextDeliveryRefusalReason.None)
         {
-            var fallbackAvailable = TrySetClipboardText(legacyText);
+            var fallbackAvailable = TrySetClipboardText(fallbackText);
             return new TextCommitResult(
                 fallbackAvailable
                     ? TextDeliveryRoute.ClipboardOnly
