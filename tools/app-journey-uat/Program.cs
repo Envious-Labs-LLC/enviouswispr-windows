@@ -703,8 +703,11 @@ try
         }
         else
         {
-            if (failureMode == JourneyFailureMode.TargetUnavailable)
+            if (failureMode == JourneyFailureMode.TargetUnavailable || targetMode == "password")
             {
+                // THE PROTECTED FIELD'S ROUTE LEAVES THE WORDS ON THE CLIPBOARD by design, so the
+                // user's clipboard is captured before the delivery and put back afterwards, as it is
+                // for the target that closes mid-recording.
                 clipboardGuard = ClipboardGuard.CaptureOrThrow();
             }
 
@@ -1678,12 +1681,16 @@ static void RequireHeadStartJourneyEvents(IReadOnlyList<string> events)
 
 /// <summary>
 /// Which of the three delivery routes the production adapter took, read from evidence rather than
-/// declared: the standard field with its caret at the end receives the words after its own seed
-/// text (the direct value write, which appends, so the seed stays at the start); the field with its
-/// caret at the start receives them before its seed (a paste at the caret - the direct write is
-/// refused when the caret is not at the end - so the seed ends up at the end); the protected field
-/// receives nothing and the log says the delivery was refused for it. Anything else is the wrong
-/// route, and the journey says so.
+/// declared. The controlled target counts the window messages its field received: the direct UI
+/// Automation value write reaches a Win32 edit as WM_SETTEXT and never as WM_PASTE; a paste reaches
+/// it as WM_PASTE. So the standard field with its caret at the end must have seen a WM_SETTEXT and
+/// no WM_PASTE, with the words after its own seed text (the direct write appends); the field with
+/// its caret at the start must have seen a WM_PASTE (the direct write is refused off the end), with
+/// the words before its seed; the protected field receives nothing and the log says the delivery
+/// was refused for it. The caret-start run is the positive control for the paste count and the
+/// edit run its negative: a build that quietly pasted everywhere would fail the edit run on the
+/// message count, whatever the words' position said. Anything else is the wrong route, and the
+/// journey says so.
 /// </summary>
 static string RequireDeliveryRoute(string targetMode, string targetResultPath, IReadOnlyList<string> events)
 {
@@ -1695,14 +1702,14 @@ static string RequireDeliveryRoute(string targetMode, string targetResultPath, I
     switch (targetMode)
     {
         case "edit":
-            if (completed && result is { ContainsExpected: true, SeedAtStart: true, SeedAtEnd: false })
+            if (completed && result is { ContainsExpected: true, SeedAtStart: true, SeedAtEnd: false, PasteMessages: 0, SetTextMessages: > 0 })
             {
                 return "UiAutomationValue";
             }
 
             break;
         case "caret-start":
-            if (completed && result is { ContainsExpected: true, SeedAtEnd: true, SeedAtStart: false })
+            if (completed && result is { ContainsExpected: true, SeedAtEnd: true, SeedAtStart: false, PasteMessages: > 0 })
             {
                 return "ClipboardPaste";
             }
@@ -1737,7 +1744,9 @@ static TargetResult? ReadTargetResult(string path)
             root.TryGetProperty("containsExpected", out var contains) && contains.GetBoolean(),
             root.TryGetProperty("seedAtStart", out var seedAtStart) && seedAtStart.GetBoolean(),
             root.TryGetProperty("seedAtEnd", out var seedAtEnd) && seedAtEnd.GetBoolean(),
-            root.TryGetProperty("characterCount", out var count) ? count.GetInt32() : -1);
+            root.TryGetProperty("characterCount", out var count) ? count.GetInt32() : -1,
+            root.TryGetProperty("pasteMessages", out var pastes) ? pastes.GetInt32() : -1,
+            root.TryGetProperty("setTextMessages", out var setTexts) ? setTexts.GetInt32() : -1);
     }
     catch (Exception exception) when (exception is IOException or JsonException)
     {
@@ -2899,7 +2908,7 @@ internal sealed record PolishJourneyEvidence(
     long? ElapsedMilliseconds);
 
 /// <summary>What the controlled target wrote down about its field after the delivery.</summary>
-internal sealed record TargetResult(bool ContainsExpected, bool SeedAtStart, bool SeedAtEnd, int CharacterCount);
+internal sealed record TargetResult(bool ContainsExpected, bool SeedAtStart, bool SeedAtEnd, int CharacterCount, int PasteMessages, int SetTextMessages);
 
 internal sealed record VirtualCableRoute(
     string RenderName,

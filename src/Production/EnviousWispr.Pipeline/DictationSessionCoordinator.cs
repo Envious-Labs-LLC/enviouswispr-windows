@@ -269,21 +269,19 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     {
         // THE DEADLINE IS CANCELLED HERE, NOW, not when the interruption reaches the front of the queue:
         // a finalisation in flight is what the queue is waiting behind, and cancelling it is how the
-        // interruption gets its turn inside the five seconds it allows itself. NOT ONCE ADMISSION HAS
-        // CLOSED: the interruption will be refused, and the finalisation the shutdown is waiting for
-        // would otherwise be cut short by a lock that then does nothing with the take it interrupted.
-        bool closed;
-        lock (_admission)
-        {
-            closed = _closed;
-        }
-
-        if (!closed)
+        // interruption gets its turn inside the five seconds it allows itself. ADMITTED FIRST, THEN
+        // CANCELLED: an interruption admission refuses (the shutdown has closed it) cancels nothing,
+        // so the finalisation the shutdown is waiting for is cut short by nobody but the shell's own
+        // exit policy; one admission takes is run whatever closes after it - it has already cut the
+        // finalisation on the promise of preserving the take, and the shutdown waits for it like any
+        // other command - so the cancel and the admission can never disagree.
+        var interruption = Submit(new SessionCommand(SessionCommandKind.Interruption, PushToTalkSignal.Cancelled, Transition: transition));
+        if (!interruption.IsCompleted)
         {
             _executor.CancelProcessing();
         }
 
-        return Submit(new SessionCommand(SessionCommandKind.Interruption, PushToTalkSignal.Cancelled, Transition: transition));
+        return interruption;
     }
 
     /// <summary>Whether a finalisation is in flight: a transcription or a delivery under its deadline.</summary>
@@ -651,7 +649,15 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         try
         {
             var waited = false;
-            if (!holdingGate && !_stopping.IsCancellationRequested)
+            if (!holdingGate && _stopping.IsCancellationRequested && queued.Command.Kind == SessionCommandKind.Interruption)
+            {
+                // AN INTERRUPTION ADMITTED BEFORE THE CLOSURE takes the gate if it is free now - the
+                // finalisation it cancelled has just let go of it - and does not park on it: the
+                // stopping token that would end a parked wait is already cancelled, and a take behind
+                // a hold that outlives the closure is the shutdown's to report, not this command's.
+                holdingGate = _sessionGate.Wait(0);
+            }
+            else if (!holdingGate && !_stopping.IsCancellationRequested)
             {
                 if (!_sessionGate.Wait(0))
                 {
@@ -671,10 +677,14 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             // started. A wait on the gate that ended just before admission closed does not run; an
             // interruption that expired while parked behind a hold does not run; one that starts
             // here can no longer expire.
+            // AN INTERRUPTION ADMITTED BEFORE THE CLOSURE STILL RUNS: it has already cancelled the
+            // finalisation it was admitted against, on the promise of preserving the take, and the
+            // shutdown waits for it as for any command. Everything else admitted before the closure
+            // is refused at its turn, as it always was.
             bool committed;
             lock (_admission)
             {
-                committed = holdingGate && !_closed && !queued.Expired;
+                committed = holdingGate && (!_closed || queued.Command.Kind == SessionCommandKind.Interruption) && !queued.Expired;
                 queued.Started = committed;
             }
 

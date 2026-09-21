@@ -112,7 +112,7 @@ internal static class Program
                     AccessibleName = "Fixed public microphone acceptance phrase",
                 });
             }
-            var edit = new TextBox
+            var edit = new InstrumentedTextBox
             {
                 Name = mode == "password" ? "ProtectedField" : "StandardEditField",
                 AccessibleName = manualMicrophone
@@ -135,8 +135,10 @@ internal static class Program
                     resultPath,
                     edit.Text,
                     expectedSubstring,
-                    forbiddenSubstring);
-                WriteResult(resultPath, edit.Text, expectedSubstring, forbiddenSubstring);
+                    forbiddenSubstring,
+                    edit.PasteMessages,
+                    edit.SetTextMessages);
+                WriteResult(resultPath, edit.Text, expectedSubstring, forbiddenSubstring, edit.PasteMessages, edit.SetTextMessages);
             }
         }
 
@@ -227,10 +229,16 @@ internal static class Program
         string path,
         string text,
         string? expectedSubstring,
-        string? forbiddenSubstring)
+        string? forbiddenSubstring,
+        int pasteMessages = 0,
+        int setTextMessages = 0)
     {
         var result = JsonSerializer.Serialize(new
         {
+            // HOW THE WORDS ARRIVED, counted at the window: a paste reaches a Win32 edit as WM_PASTE,
+            // a UI Automation value write as WM_SETTEXT. The journey reads the route off these.
+            pasteMessages,
+            setTextMessages,
             containsExpected = !string.IsNullOrWhiteSpace(expectedSubstring) &&
                 text.Contains(expectedSubstring, StringComparison.OrdinalIgnoreCase),
             // WHERE THE WORDS LANDED tells the route apart: appended after the field's own seed text
@@ -243,6 +251,31 @@ internal static class Program
             characterCount = text.Length,
         });
         File.WriteAllText(path, result);
+    }
+
+    /// <summary>A text box that counts how its text arrived: WM_PASTE for a paste, WM_SETTEXT for a UI Automation value write.</summary>
+    private sealed class InstrumentedTextBox : TextBox
+    {
+        private const int WmSetText = 0x000C;
+        private const int WmPaste = 0x0302;
+
+        public int PasteMessages { get; private set; }
+
+        public int SetTextMessages { get; private set; }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WmPaste)
+            {
+                PasteMessages++;
+            }
+            else if (m.Msg == WmSetText && IsHandleCreated && Visible)
+            {
+                SetTextMessages++;
+            }
+
+            base.WndProc(ref m);
+        }
     }
 
     private static class NativeFocus

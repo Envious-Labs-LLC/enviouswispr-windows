@@ -19,7 +19,7 @@
   and from the log: edit -> UiAutomationValue, caret-start -> ClipboardPaste, password -> ClipboardOnly.
 
   The verdicts are printed as one line per run; record them in docs/reliability/native-journey-evidence.md
-  with the build they were taken on. Stop the desk app first; this script does.
+  with the build they were taken on. Close the desk app first; this script refuses to run beside one.
 
 .PARAMETER Root
   The checkout whose build to run. Defaults to the parent of this script's folder.
@@ -49,8 +49,12 @@ $runs += @{ case = 'NativeDeliveryExercisesThreeRoutes'; name = 'route-edit'; ar
 $runs += @{ case = 'NativeDeliveryExercisesThreeRoutes'; name = 'route-caret-start'; args = @('--synthetic-hotkey', '--quick-tap', '--english-parakeet', '--target-mode', 'caret-start') }
 $runs += @{ case = 'NativeDeliveryExercisesThreeRoutes'; name = 'route-password'; args = @('--synthetic-hotkey', '--quick-tap', '--english-parakeet', '--target-mode', 'password') }
 
-Get-Process EnviousWispr.App -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Seconds 2
+# NEVER FORCE-STOPPED. A running EnviousWispr.App may be the user's, mid-dictation or mid-write; the
+# journeys under test are exactly the protocol that ends one properly, and killing one from here would
+# bypass it. Close it yourself first (its tray menu), then run this.
+if (Get-Process EnviousWispr.App -ErrorAction SilentlyContinue) {
+    throw 'EnviousWispr.App is running. Close it from its tray menu first; this script does not stop it.'
+}
 $failed = 0
 Set-Location $Root
 foreach ($run in $runs) {
