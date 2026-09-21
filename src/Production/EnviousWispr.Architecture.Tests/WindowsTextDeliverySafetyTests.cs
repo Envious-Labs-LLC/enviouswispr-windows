@@ -232,9 +232,20 @@ public sealed class WindowsTextDeliverySafetyTests
         return true;
     }
 
-    /// <summary>The only shapes a live UI Automation object may take outside the boundary: the boundary's own result, a null test, an argument to the adapter's own method.</summary>
+    /// <summary>
+    /// The only shapes a live UI Automation object may take outside the boundary: the boundary's own
+    /// result, a null test, an argument to the adapter's own method - and in every one of them the
+    /// object keeps its own type. A conversion to object or to a type parameter erases what the scan
+    /// needs to see: `object cached = Automation(() => element)` and `ElementHash(element)` over an
+    /// `object` parameter both reach AutomationElement.GetHashCode, which reads the runtime id.
+    /// </summary>
     private static bool HandleUseIsAllowedOutside(ExpressionSyntax expression, SemanticModel model)
     {
+        if (!IsHandleType(model.GetTypeInfo(expression).ConvertedType))
+        {
+            return false;
+        }
+
         switch (expression)
         {
             case InvocationExpressionSyntax invocation:
@@ -246,13 +257,26 @@ public sealed class WindowsTextDeliverySafetyTests
                     IsPatternExpressionSyntax { Pattern: UnaryPatternSyntax { Pattern: ConstantPatternSyntax { Expression: LiteralExpressionSyntax { RawKind: (int)SyntaxKind.NullLiteralExpression } } } } => true,
                     BinaryExpressionSyntax { RawKind: (int)SyntaxKind.EqualsExpression or (int)SyntaxKind.NotEqualsExpression } comparison
                         when comparison.Left is LiteralExpressionSyntax { RawKind: (int)SyntaxKind.NullLiteralExpression } || comparison.Right is LiteralExpressionSyntax { RawKind: (int)SyntaxKind.NullLiteralExpression } => true,
-                    ArgumentSyntax { Parent.Parent: InvocationExpressionSyntax call } =>
-                        model.GetSymbolInfo(call).Symbol is IMethodSymbol { ContainingType.Name: "WindowsTextTargetAdapter" },
+                    ArgumentSyntax { Parent.Parent: InvocationExpressionSyntax call } argument =>
+                        model.GetSymbolInfo(call).Symbol is IMethodSymbol { ContainingType.Name: "WindowsTextTargetAdapter", IsGenericMethod: false } method &&
+                        IsHandleType(ParameterFor(method, argument)?.Type),
                     _ => false,
                 };
             default:
                 return false;
         }
+    }
+
+    /// <summary>The parameter an argument binds to, by name or by position.</summary>
+    private static IParameterSymbol? ParameterFor(IMethodSymbol method, ArgumentSyntax argument)
+    {
+        if (argument.NameColon is { } name)
+        {
+            return method.Parameters.FirstOrDefault(parameter => parameter.Name == name.Name.Identifier.Text);
+        }
+
+        var index = ((ArgumentListSyntax)argument.Parent!).Arguments.IndexOf(argument);
+        return index >= 0 && index < method.Parameters.Length ? method.Parameters[index] : null;
     }
 
     /// <summary>Whether a resolved member is a live UI Automation call: a property or method of a type in the UI Automation namespaces, not a constant.</summary>

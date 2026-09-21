@@ -32,9 +32,13 @@ VERIFIED = "            var verified = string.Equals(readBack, replacement, Stri
 ELEMENT_READ = "        var element = Automation(static () => AutomationElement.FocusedElement);" + NL
 FOCUS_READ = "        var focus = Automation(() => new FocusedElementFacts(" + NL
 TEXT_USING = "using System.Windows.Automation.Text;" + NL
+RUNTIME_ID_HELPER = "    private static string RuntimeId(AutomationElement element) =>" + NL
 
 # Each mutation: a name, and the (anchor, replacement) edits that plant one escape.
 MUTATIONS: dict[str, list[tuple[str, str]]] = {
+    "handle-into-object-parameter": [(FOCUS_READ, "        _ = ElementHash(element);" + NL + FOCUS_READ), (RUNTIME_ID_HELPER, "    private static int ElementHash(object value) => value.GetHashCode();" + NL + NL + RUNTIME_ID_HELPER)],
+    "handle-into-generic-parameter": [(FOCUS_READ, "        _ = Hash(element);" + NL + FOCUS_READ), (RUNTIME_ID_HELPER, "    private static int Hash<T>(T value) where T : notnull => value.GetHashCode();" + NL + NL + RUNTIME_ID_HELPER)],
+    "boundary-result-as-object": [(FOCUS_READ, "        object cached = Automation(() => element);" + NL + "        _ = cached.GetHashCode();" + NL + FOCUS_READ)],
     "upcast-virtual-dispatch": [(FOCUS_READ, "        _ = ((object)element).GetHashCode();" + NL + FOCUS_READ)],
     "expression-tree-call": [(FOCUS_READ, "        _ = System.Linq.Expressions.Expression.Lambda<Func<int[]>>(System.Linq.Expressions.Expression.Call(System.Linq.Expressions.Expression.Constant(element), \"GetRuntimeId\", null)).Compile()();" + NL + FOCUS_READ)],
     "handle-aliased": [(FOCUS_READ, "        var alias = element;" + NL + "        _ = alias;" + NL + FOCUS_READ)],
