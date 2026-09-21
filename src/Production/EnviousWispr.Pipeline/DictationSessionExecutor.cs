@@ -160,7 +160,28 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
 
     public void CancelProcessing()
     {
+        Cancel(Volatile.Read(ref _processing));
+    }
+
+    /// <summary>The finalisation's own token source, as the opaque generation an interruption captures before it is admitted.</summary>
+    public object? ProcessingGeneration => Volatile.Read(ref _processing);
+
+    public void CancelProcessing(object generation)
+    {
+        ArgumentNullException.ThrowIfNull(generation);
+        // ONLY THE GENERATION NAMED. The finalisation in flight when the interruption was captured may
+        // have ended on its own by now, and the consumer may already be inside the interruption's own
+        // finalisation with a new source: that one is the take's preservation, not what the
+        // interruption was queued behind, and it is left to run.
         var processing = Volatile.Read(ref _processing);
+        if (ReferenceEquals(processing, generation))
+        {
+            Cancel(processing);
+        }
+    }
+
+    private static void Cancel(CancellationTokenSource? processing)
+    {
         try
         {
             processing?.Cancel();

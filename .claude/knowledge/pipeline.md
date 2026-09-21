@@ -159,6 +159,20 @@ remain wordless designs.
   deliberately: the speech runtime out of process (the Mac's is in-process), and the three delivery
   routes.
 
+- **Production-path proofs** (plan-2 step 10): every proof of what the session does under a press, a
+  release, a lock, an exit or a shutdown builds `ComposedSessionWorld` (tests) - `RuntimeComposition` and
+  `SessionComposition` over the real coordinator, executor, controller, runner, finalizer, persistence
+  and background owners, fakes only at the leaves - rather than a hand-built shell adapter or
+  finalisation; `SessionShutdownTests`, `PreviewStartupDecouplingTests` and `ProductionPathTests` are
+  all on it, the last with the production recovery store on a file where the store matters. What
+  portable tests cannot establish is recorded natively: `scripts/native-journeys.ps1` runs
+  NativeExitClosesMicrophoneAndWorkers and NativeDeliveryExercisesThreeRoutes (the journey harness's
+  `--target-mode edit|caret-start|password`, the route read from where the words landed relative to the
+  target's seed text or from the log's refusal), and `docs/reliability/native-journey-evidence.md`
+  records what a run observed on which build. A lock arriving after admission has closed no longer
+  cancels the finalisation the shutdown is waiting for: the interruption's cancel is made only for an
+  interruption that will be admitted.
+
 ## Deterministic parity
 
 The Windows deterministic corpus is ported from macOS behavior as platform-neutral fixtures, including

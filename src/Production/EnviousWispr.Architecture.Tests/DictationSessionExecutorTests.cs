@@ -432,6 +432,30 @@ public sealed class DictationSessionExecutorTests
     }
 
     [Fact]
+    public async Task AStaleGenerationCancelsNothingAndTheCurrentOneCancelsTheFinalisation()
+    {
+        // THE GENERATION IS THE FINALISATION'S OWN SOURCE. A cancel naming a generation that is no
+        // longer in flight does nothing to the one that is; a cancel naming the current one cancels
+        // it - what the coordinator's interruption relies on to cut only what it was queued behind.
+        var (executor, _, _, _, world) = BuildWithFinalization();
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        Assert.Null(executor.ProcessingGeneration);
+        world.Finalization.Hold = true;
+        var release = executor.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
+        await world.Finalization.Entered.Task.WaitAsync(Patience);
+        var current = executor.ProcessingGeneration;
+        Assert.NotNull(current);
+
+        executor.CancelProcessing(new object());
+        Assert.False(world.Finalization.Token!.Value.IsCancellationRequested, "a stale generation cancelled the finalisation in flight");
+
+        executor.CancelProcessing(current);
+        Assert.True(world.Finalization.Token.Value.IsCancellationRequested);
+        world.Finalization.AllowExit.SetResult();
+        await release.WaitAsync(Patience);
+    }
+
+    [Fact]
     public async Task AfterAdmissionClosedAFinalisationKeepsItsWordsAndDeliversNothing()
     {
         // THE APP IS LEAVING. A finalisation that starts after admission closed runs for recovery only -

@@ -112,7 +112,7 @@ internal static class Program
                     AccessibleName = "Fixed public microphone acceptance phrase",
                 });
             }
-            var edit = new TextBox
+            var edit = new InstrumentedTextBox
             {
                 Name = mode == "password" ? "ProtectedField" : "StandardEditField",
                 AccessibleName = manualMicrophone
@@ -121,7 +121,7 @@ internal static class Program
                         ? "Controlled protected field"
                         : "Controlled standard edit field",
                 UseSystemPasswordChar = mode == "password",
-                Text = mode == "password" ? string.Empty : "hello",
+                Text = mode == "password" ? string.Empty : SeedText,
                 Font = new Font(SystemFonts.DefaultFont.FontFamily, 18),
                 Location = new Point(40, manualMicrophone ? 180 : 100),
                 Width = 660,
@@ -135,12 +135,19 @@ internal static class Program
                     resultPath,
                     edit.Text,
                     expectedSubstring,
-                    forbiddenSubstring);
-                WriteResult(resultPath, edit.Text, expectedSubstring, forbiddenSubstring);
+                    forbiddenSubstring,
+                    edit.PasteMessages,
+                    edit.SetTextMessages);
+                WriteResult(resultPath, edit.Text, expectedSubstring, forbiddenSubstring, edit.PasteMessages, edit.SetTextMessages);
             }
         }
 
-        static void Focus(Form form, Control focusTarget)
+        // THE CARET IS PART OF THE TARGET. At the end of the field's own text, the adapter's direct
+        // value write applies (it appends); at the start, it does not, and the adapter pastes at the
+        // caret instead. `caret-start` is the same field with the caret held at the start, so a journey
+        // can make the production adapter take its paste route on purpose.
+        var caretAtStart = mode == "caret-start";
+        void Focus(Form form, Control focusTarget)
         {
             NativeFocus.BringToForeground(form.Handle);
             form.Activate();
@@ -148,7 +155,8 @@ internal static class Program
             focusTarget.Focus();
             if (focusTarget is TextBox textBox)
             {
-                textBox.SelectionStart = textBox.TextLength;
+                textBox.SelectionStart = caretAtStart ? 0 : textBox.TextLength;
+                textBox.SelectionLength = 0;
             }
         }
 
@@ -214,21 +222,60 @@ internal static class Program
         return fullPath;
     }
 
+    /// <summary>The words the standard field starts with, so where a delivery lands relative to them says which route it took.</summary>
+    private const string SeedText = "hello";
+
     private static void WriteResult(
         string path,
         string text,
         string? expectedSubstring,
-        string? forbiddenSubstring)
+        string? forbiddenSubstring,
+        int pasteMessages = 0,
+        int setTextMessages = 0)
     {
         var result = JsonSerializer.Serialize(new
         {
+            // HOW THE WORDS ARRIVED, counted at the window: a paste reaches a Win32 edit as WM_PASTE,
+            // a UI Automation value write as WM_SETTEXT. The journey reads the route off these.
+            pasteMessages,
+            setTextMessages,
             containsExpected = !string.IsNullOrWhiteSpace(expectedSubstring) &&
                 text.Contains(expectedSubstring, StringComparison.OrdinalIgnoreCase),
+            // WHERE THE WORDS LANDED tells the route apart: appended after the field's own seed text
+            // by the direct value write, which leaves the seed at the start, or pasted at a caret held
+            // at the start, which leaves the seed at the end.
+            seedAtStart = text.StartsWith(SeedText, StringComparison.Ordinal) && text.Length > SeedText.Length,
+            seedAtEnd = text.EndsWith(SeedText, StringComparison.Ordinal) && text.Length > SeedText.Length,
             containsForbidden = !string.IsNullOrWhiteSpace(forbiddenSubstring) &&
                 text.Contains(forbiddenSubstring, StringComparison.OrdinalIgnoreCase),
             characterCount = text.Length,
         });
         File.WriteAllText(path, result);
+    }
+
+    /// <summary>A text box that counts how its text arrived: WM_PASTE for a paste, WM_SETTEXT for a UI Automation value write.</summary>
+    private sealed class InstrumentedTextBox : TextBox
+    {
+        private const int WmSetText = 0x000C;
+        private const int WmPaste = 0x0302;
+
+        public int PasteMessages { get; private set; }
+
+        public int SetTextMessages { get; private set; }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WmPaste)
+            {
+                PasteMessages++;
+            }
+            else if (m.Msg == WmSetText && IsHandleCreated && Visible)
+            {
+                SetTextMessages++;
+            }
+
+            base.WndProc(ref m);
+        }
     }
 
     private static class NativeFocus
