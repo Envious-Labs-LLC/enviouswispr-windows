@@ -15,4 +15,6 @@ public sealed record AppLogEntry(
     DeterministicTextStage? Stage = null,
     DeterministicStageStatus? StageStatus = null,
     bool? Changed = null,
-    DiagnosticRuntimeSelectionReason? RuntimeSelection = null);
+    DiagnosticRuntimeSelectionReason? RuntimeSelection = null,
+    DeliveryStage? DeliveryStage = null,
+    DeliveryFaultKind? Fault = null);

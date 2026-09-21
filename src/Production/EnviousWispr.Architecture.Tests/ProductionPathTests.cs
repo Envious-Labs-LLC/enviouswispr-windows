@@ -54,6 +54,83 @@ public sealed class ProductionPathTests
     }
 
     [Fact]
+    public async Task AFaultedDeliveryIsLoggedByItsStageAndKindAndTheWordsAreKept()
+    {
+        // THE DELIVERY NAMES A DEFECT; THE COMPOSED SESSION LOGS IT AS ONE (plan-2 step 13). The
+        // route answers DeliveryFaulted - a null inside the commit - and the production effects write
+        // TextDeliveryFailed with the DeliveryFaulted code, the stage and the fault's family, and
+        // nothing else about it; the pill says the text is held; the recovery copy is not cleared,
+        // so the words are on Home. A build that mapped every failure to "unsupported target" fails
+        // on the code; one that logged the type name would fail the privacy dictionary.
+        var world = ComposedSessionWorld.Create("hello world");
+        world.Delivery.Answer = new DeliveryResult(
+            default,
+            Delivered: false,
+            ClipboardFallback: false,
+            RefusalReason: TextDeliveryRefusalReason.DeliveryFaulted,
+            Fault: new DeliveryFault(DeliveryStage.Commit, DeliveryFaultKind.NullReference, nameof(NullReferenceException)));
+        await world.PressAsync();
+
+        var released = await world.Coordinator.SubmitAsync(PushToTalkSignal.Released).WaitAsync(Patience);
+
+        Assert.Equal(SessionCommandDisposition.Applied, released.Disposition);
+        var failed = Assert.Single(world.Log.Entries, entry => entry.Event == AppEventCode.TextDeliveryFailed);
+        Assert.Equal(AppErrorCode.DeliveryFaulted, failed.ErrorCode);
+        Assert.Equal(AppFailureCategory.TextDelivery, failed.Failure);
+        Assert.Equal(DeliveryStage.Commit, failed.DeliveryStage);
+        Assert.Equal(DeliveryFaultKind.NullReference, failed.Fault);
+        Assert.DoesNotContain(world.Log.Entries, entry => entry.ErrorCode == AppErrorCode.DeliveryUnsupportedTarget);
+        Assert.Contains(world.View.Deliveries, delivery => delivery.Delivered.Text == "Text delivery failed unexpectedly. Text is held safely in memory");
+        Assert.Equal(["hello world"], world.RecoveryStore.Saved);
+        Assert.Equal(0, world.RecoveryStore.Cleared);
+        Assert.True(world.Persistence.HasPendingRecovery, "the words wait on Home");
+        Assert.Equal(1, world.Delivery.Deliveries);
+    }
+
+    [Theory]
+    [InlineData(TextDeliveryRefusalReason.AccessibilityUnavailable, true, AppEventCode.TextDeliveryRefused, AppErrorCode.DeliveryAccessibilityUnavailable, "Windows accessibility did not answer, so the text was copied only. Press Ctrl+V")]
+    [InlineData(TextDeliveryRefusalReason.AccessibilityUnavailable, false, AppEventCode.TextDeliveryFailed, AppErrorCode.DeliveryAccessibilityUnavailable, "Windows accessibility did not answer. Text is held safely in memory")]
+    [InlineData(TextDeliveryRefusalReason.DirectWriteUnverified, false, AppEventCode.TextDeliveryFailed, AppErrorCode.DeliveryUnverified, "Insertion could not be verified. Text is held safely in memory")]
+    [InlineData(TextDeliveryRefusalReason.Cancelled, false, AppEventCode.TextDeliveryFailed, AppErrorCode.DeliveryCancelled, "Text delivery was cancelled. Text is held safely in memory")]
+    [InlineData(TextDeliveryRefusalReason.DeliveryDisposed, false, AppEventCode.TextDeliveryFailed, AppErrorCode.DeliveryDisposed, "Text delivery was no longer available. Text is held safely in memory")]
+    [InlineData(TextDeliveryRefusalReason.DeliveryFaulted, false, AppEventCode.TextDeliveryFailed, AppErrorCode.DeliveryFaulted, "Text delivery failed unexpectedly. Text is held safely in memory")]
+    [InlineData(TextDeliveryRefusalReason.ProtectedField, true, AppEventCode.TextDeliveryRefused, AppErrorCode.DeliveryProtectedField, "Protected field: copied only. Paste manually if intended")]
+    [InlineData(TextDeliveryRefusalReason.UnsupportedTarget, true, AppEventCode.TextDeliveryRefused, AppErrorCode.DeliveryUnsupportedTarget, "Automatic paste is unsafe here, so the text was copied only")]
+    [InlineData(TextDeliveryRefusalReason.ClipboardUnavailable, false, AppEventCode.TextDeliveryFailed, AppErrorCode.DeliveryClipboardUnavailable, "Clipboard unavailable. Text is held safely in memory")]
+    public async Task EveryUndeliveredEndingKeepsItsNameInTheLogAndOnThePill(
+        TextDeliveryRefusalReason reason,
+        bool clipboardFallback,
+        AppEventCode expectedEvent,
+        AppErrorCode expectedCode,
+        string expectedSentence)
+    {
+        // THE SAME NAME IN THREE PLACES (plan-2 step 13): the result's refusal, the log's error code
+        // and the pill's sentence agree on which way the words did not land, through the production
+        // effects. Accessibility that did not answer, an unverified insertion, a cancellation, a
+        // delivery no longer available and a fault each read as themselves; none of them reads as
+        // "unsupported target", and no two share a sentence.
+        var world = ComposedSessionWorld.Create("hello world");
+        world.Delivery.Answer = new DeliveryResult(
+            default,
+            Delivered: false,
+            ClipboardFallback: clipboardFallback,
+            clipboardFallback ? TextDeliveryRoute.ClipboardOnly : TextDeliveryRoute.None,
+            reason);
+        await world.PressAsync();
+
+        var released = await world.Coordinator.SubmitAsync(PushToTalkSignal.Released).WaitAsync(Patience);
+
+        Assert.Equal(SessionCommandDisposition.Applied, released.Disposition);
+        var ending = Assert.Single(world.Log.Entries, entry => entry.Event is AppEventCode.TextDeliveryRefused or AppEventCode.TextDeliveryFailed or AppEventCode.TextDeliveryCompleted or AppEventCode.TextDeliveryClipboardFallback);
+        Assert.Equal(expectedEvent, ending.Event);
+        Assert.Equal(expectedCode, ending.ErrorCode);
+        Assert.Equal(AppFailureCategory.TextDelivery, ending.Failure);
+        Assert.Null(ending.Fault);
+        Assert.Null(ending.DeliveryStage);
+        Assert.Equal(expectedSentence, Assert.Single(world.View.Deliveries).Delivered.Text);
+    }
+
+    [Fact]
     public async Task LockDuringPolishPreservesLastGoodText()
     {
         // THE LOCK ARRIVES WHILE THE POLISH IS RUNNING. The lock's cancel reaches the polish provider

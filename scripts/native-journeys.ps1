@@ -48,6 +48,7 @@ $runs += @{ case = 'NativeExitClosesMicrophoneAndWorkers'; name = 'escape-recove
 $runs += @{ case = 'NativeDeliveryExercisesThreeRoutes'; name = 'route-edit'; args = @('--synthetic-hotkey', '--quick-tap', '--english-parakeet', '--target-mode', 'edit') }
 $runs += @{ case = 'NativeDeliveryExercisesThreeRoutes'; name = 'route-caret-start'; args = @('--synthetic-hotkey', '--quick-tap', '--english-parakeet', '--target-mode', 'caret-start') }
 $runs += @{ case = 'NativeDeliveryExercisesThreeRoutes'; name = 'route-password'; args = @('--synthetic-hotkey', '--quick-tap', '--english-parakeet', '--target-mode', 'password') }
+$runs += @{ case = 'UnverifiedDirectWriteNeverPastes'; name = 'route-unverified-write'; args = @('--synthetic-hotkey', '--quick-tap', '--english-parakeet', '--target-mode', 'unverified-write') }
 
 # NEVER FORCE-STOPPED. A running EnviousWispr.App may be the user's, mid-dictation or mid-write; the
 # journeys under test are exactly the protocol that ends one properly, and killing one from here would
@@ -57,6 +58,21 @@ if (Get-Process EnviousWispr.App -ErrorAction SilentlyContinue) {
 }
 $failed = 0
 Set-Location $Root
+
+# THE TARGET'S RECEIPT INSTRUMENT IS PROVED BEFORE IT IS TRUSTED: the controlled target's own settle
+# self-test sends itself a Ctrl+V with the clipboard emptied (a paste that changes nothing) and posts a
+# settle request right behind it; the settled receipt must already count the paste.
+$target = Join-Path $Root 'tools\delivery-target-uat\bin\Release\net10.0-windows10.0.26100.0\EnviousWispr.Delivery.Target.Uat.exe'
+$selfTestReceipt = Join-Path ([System.IO.Path]::GetTempPath()) "EnviousWispr-settle-self-test-$([guid]::NewGuid().ToString('N')).json"
+$selfTest = Start-Process -FilePath $target -ArgumentList @('--mode', 'settle-self-test', '--result', $selfTestReceipt) -PassThru -Wait
+if ($selfTest.ExitCode -eq 0) {
+    "SettledReceiptCountsAQueuedPaste settle-self-test: passed=True receipt=$((Get-Content $selfTestReceipt -Raw).Trim())"
+} else {
+    $failed++
+    "SettledReceiptCountsAQueuedPaste settle-self-test: FAILED exit=$($selfTest.ExitCode)"
+}
+Remove-Item $selfTestReceipt -ErrorAction SilentlyContinue
+
 foreach ($run in $runs) {
     $lines = & $harness @($run.args) 2>&1
     $code = $LASTEXITCODE

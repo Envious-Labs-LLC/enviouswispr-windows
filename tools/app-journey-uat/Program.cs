@@ -172,16 +172,27 @@ if (manualMicrophone && ArgumentValue(args, "--acoustic-gain") is not null)
 // THE THREE DELIVERY ROUTES, EACH BEHIND A CONTROLLED TARGET. `--target-mode` chooses which target
 // the production app delivers into: `edit` (a standard field with its caret at the end, which the
 // adapter writes through UI Automation's value pattern), `caret-start` (the same field with its caret
-// at the start, which the adapter cannot write directly and pastes into instead), or `password` (a
-// protected field, which the adapter refuses and answers with the words on the clipboard only). The
-// route is read from what the target saw and what the app's log says, since the log carries no
-// route of its own: where the words landed relative to the field's own seed text, or that the
-// delivery was refused and why.
+// at the start, which the adapter cannot write directly and pastes into instead - and, with the
+// clipboard holding a sentinel beforehand, must put the sentinel back afterwards), `password` (a
+// protected field, which the adapter refuses and answers with the words on the clipboard only), or
+// `unverified-write` (a field that rewrites every value set into it, so the adapter's read-back never
+// matches its write: it must report the insertion unverified and paste nothing after it). The route
+// is read from what the target saw and what the app's log says, since the log carries no route of
+// its own: where the words landed relative to the field's own seed text, or that the delivery was
+// refused or failed and why.
 var targetMode = (ArgumentValue(args, "--target-mode") ?? "edit").ToLowerInvariant();
-if (targetMode is not ("edit" or "caret-start" or "password"))
+if (targetMode is not ("edit" or "caret-start" or "password" or "unverified-write"))
 {
-    throw new JourneyExpectationException("--target-mode must be edit, caret-start, or password.");
+    throw new JourneyExpectationException("--target-mode must be edit, caret-start, password, or unverified-write.");
 }
+// THE LOG LINE THAT ENDS EACH TARGET'S TAKE: completed into a standard field, refused by a protected
+// one, failed - with its own name, not a policy refusal's - by a field that would not keep the write.
+var deliveryOutcomeEvent = targetMode switch
+{
+    "password" => "TextDeliveryRefused/TextDelivery/DeliveryProtectedField",
+    "unverified-write" => "TextDeliveryFailed/TextDelivery/DeliveryUnverified",
+    _ => "TextDeliveryCompleted/",
+};
 if (targetMode != "edit" && (manualMicrophone || escapeRecovery || ArgumentValue(args, "--failure") is not null))
 {
     throw new JourneyExpectationException(
@@ -469,6 +480,8 @@ var ownedWorkerCount = 0;
 var ownedPolishWorkerIds = Array.Empty<int>();
 var ownedPolishWorkerCount = 0;
 ClipboardGuard? clipboardGuard = null;
+string? clipboardSentinel = null;
+bool? clipboardRestored = null;
 SyntheticHotkeyEvidence? syntheticHotkeyEvidence = null;
 var usesPublicFixtureJourney = !liveMicrophone &&
     failureMode is JourneyFailureMode.None or JourneyFailureMode.TargetUnavailable;
@@ -703,12 +716,19 @@ try
         }
         else
         {
-            if (failureMode == JourneyFailureMode.TargetUnavailable || targetMode == "password")
+            if (failureMode == JourneyFailureMode.TargetUnavailable || targetMode is "password" or "caret-start")
             {
                 // THE PROTECTED FIELD'S ROUTE LEAVES THE WORDS ON THE CLIPBOARD by design, so the
                 // user's clipboard is captured before the delivery and put back afterwards, as it is
-                // for the target that closes mid-recording.
+                // for the target that closes mid-recording. The paste route goes through the
+                // clipboard too and must restore it itself: that run puts a sentinel there first and
+                // reads it back after the delivery, before the guard restores the user's own.
                 clipboardGuard = ClipboardGuard.CaptureOrThrow();
+                if (targetMode == "caret-start")
+                {
+                    clipboardSentinel = $"EnviousWispr clipboard sentinel {Guid.NewGuid():N}";
+                    ClipboardGuard.PlaceText(clipboardSentinel);
+                }
             }
 
             if (syntheticHotkey)
@@ -719,9 +739,7 @@ try
                     target.MainWindowHandle,
                     profileDirectory,
                     quickTap,
-                    targetMode == "password"
-                        ? "TextDeliveryRefused/TextDelivery/DeliveryProtectedField"
-                        : "TextDeliveryCompleted/");
+                    deliveryOutcomeEvent);
                 exitEvent.Set();
             }
             else
@@ -761,11 +779,23 @@ try
                     diagnosticPath,
                     "TextDeliveryRefused/TextDelivery/DeliveryProtectedField",
                     TimeSpan.FromSeconds(5)) && !WaitForExpectedTargetResult(targetResultPath, TimeSpan.FromMilliseconds(500))
-                : WaitForExpectedTargetResult(
-                    targetResultPath,
-                    escapeRecovery || failureMode == JourneyFailureMode.TargetUnavailable
-                        ? TimeSpan.FromMilliseconds(500)
-                        : TimeSpan.FromSeconds(5));
+                : targetMode == "unverified-write"
+                    // THE REWRITING FIELD SEES THE WORDS AND KEEPS THEM CHANGED: the journey observes
+                    // the app's failure, with its name, and the marked text in the field.
+                    ? WaitForDiagnosticEvent(diagnosticPath, deliveryOutcomeEvent, TimeSpan.FromSeconds(5)) &&
+                        WaitForExpectedTargetResult(targetResultPath, TimeSpan.FromSeconds(5))
+                    : WaitForExpectedTargetResult(
+                        targetResultPath,
+                        escapeRecovery || failureMode == JourneyFailureMode.TargetUnavailable
+                            ? TimeSpan.FromMilliseconds(500)
+                            : TimeSpan.FromSeconds(5));
+        }
+
+        if (clipboardSentinel is not null)
+        {
+            // READ AFTER THE DELIVERY, BEFORE THE GUARD RESTORES THE USER'S OWN: the paste route
+            // borrowed the clipboard for the words and must have given the sentinel back.
+            clipboardRestored = string.Equals(ClipboardGuard.ReadText(), clipboardSentinel, StringComparison.Ordinal);
         }
     }
 
@@ -837,6 +867,14 @@ try
             $"events={string.Join(',', ReadDiagnosticEvents(diagnosticPath))}.");
     }
 
+    // THE TARGET'S FINAL RECEIPT IS ASKED FOR AND ACKNOWLEDGED. The app's exit says nothing about
+    // what is still queued for the target's window; the target answers a settle request only once
+    // its own queue has drained, with the request's sequence on the receipt it writes then.
+    if (target is { HasExited: false } && failureMode != JourneyFailureMode.TargetUnavailable)
+    {
+        RequireSettledTargetReceipt(target, targetResultPath);
+    }
+
     var diagnosticEvents = ReadDiagnosticEvents(diagnosticPath);
     if (failureMode != JourneyFailureMode.None)
     {
@@ -852,10 +890,10 @@ try
     }
     else
     {
-        RequireProductionJourneyEvents(diagnosticEvents, delivered: targetMode != "password");
+        RequireProductionJourneyEvents(diagnosticEvents, deliveryOutcomeEvent);
     }
     var deliveryRoute = failureMode == JourneyFailureMode.None && !escapeRecovery && !manualMicrophone
-        ? RequireDeliveryRoute(targetMode, targetResultPath, diagnosticEvents)
+        ? RequireDeliveryRoute(targetMode, targetResultPath, diagnosticEvents, clipboardRestored)
         : null;
     if (livePreview && syntheticHotkey && quickTap)
     {
@@ -923,6 +961,9 @@ try
         targetObserved,
         targetMode,
         deliveryRoute,
+        // WHETHER THE PASTE ROUTE GAVE THE CLIPBOARD BACK: read against a sentinel placed before the
+        // delivery; null for the routes that do not borrow it.
+        clipboardRestored,
         failureMode = failureMode == JourneyFailureMode.None ? null : FailureModeName(failureMode),
         escapeRecovery,
         recoveryHistoryObserved,
@@ -1541,22 +1582,22 @@ static int? ReadTargetCharacterCount(string path)
     }
 }
 
-static void RequireProductionJourneyEvents(IReadOnlyList<string> events, bool delivered = true)
+static void RequireProductionJourneyEvents(IReadOnlyList<string> events, string deliveryOutcome = "TextDeliveryCompleted/")
 {
     var requiredEvents = new[]
     {
-        "HotkeyReady",
-        "DictationRecordingStarted",
-        "DictationCaptureFinalized",
-        "DictationTranscriptionStarted",
-        "DeterministicProcessingStarted",
-        "TextDeliveryStarted",
-        delivered ? "TextDeliveryCompleted" : "TextDeliveryRefused",
-        "ApplicationCleanShutdown",
+        "HotkeyReady/",
+        "DictationRecordingStarted/",
+        "DictationCaptureFinalized/",
+        "DictationTranscriptionStarted/",
+        "DeterministicProcessingStarted/",
+        "TextDeliveryStarted/",
+        deliveryOutcome,
+        "ApplicationCleanShutdown/",
     };
     var missing = requiredEvents
         .Where(required => !events.Any(value => value.StartsWith(
-            required + '/',
+            required,
             StringComparison.Ordinal)))
         .ToList();
     if (!events.Any(value => value.StartsWith(
@@ -1692,12 +1733,15 @@ static void RequireHeadStartJourneyEvents(IReadOnlyList<string> events)
 /// message count, whatever the words' position said. Anything else is the wrong route, and the
 /// journey says so.
 /// </summary>
-static string RequireDeliveryRoute(string targetMode, string targetResultPath, IReadOnlyList<string> events)
+static string RequireDeliveryRoute(string targetMode, string targetResultPath, IReadOnlyList<string> events, bool? clipboardRestored)
 {
     var result = ReadTargetResult(targetResultPath);
     var completed = events.Any(value => value.StartsWith("TextDeliveryCompleted/", StringComparison.Ordinal));
     var refusedProtected = events.Any(value => value.StartsWith(
         "TextDeliveryRefused/TextDelivery/DeliveryProtectedField",
+        StringComparison.Ordinal));
+    var failedUnverified = events.Any(value => value.StartsWith(
+        "TextDeliveryFailed/TextDelivery/DeliveryUnverified",
         StringComparison.Ordinal));
     switch (targetMode)
     {
@@ -1709,7 +1753,9 @@ static string RequireDeliveryRoute(string targetMode, string targetResultPath, I
 
             break;
         case "caret-start":
-            if (completed && result is { ContainsExpected: true, SeedAtEnd: true, SeedAtStart: false, PasteMessages: > 0 })
+            // THE PASTE ROUTE BORROWS THE CLIPBOARD AND MUST GIVE IT BACK: the sentinel placed before
+            // the delivery is read after it.
+            if (completed && clipboardRestored == true && result is { ContainsExpected: true, SeedAtEnd: true, SeedAtStart: false, PasteMessages: > 0 })
             {
                 return "ClipboardPaste";
             }
@@ -1722,11 +1768,49 @@ static string RequireDeliveryRoute(string targetMode, string targetResultPath, I
             }
 
             break;
+        case "unverified-write":
+            // THE WRITE LANDED AND WAS REWRITTEN; NOTHING WAS PASTED AFTER IT. A build that fell back
+            // to a paste after the unverified write would show WM_PASTE here and double the words.
+            if (failedUnverified && !completed && result is { ContainsExpected: true, Rewritten: true, Rewrites: > 0, PasteMessages: 0, SetTextMessages: > 0 })
+            {
+                return "UiAutomationValueUnverified";
+            }
+
+            break;
     }
 
     throw new JourneyExpectationException(
         $"The delivery did not take the route the {targetMode} target requires: completed={completed} " +
-        $"refusedProtected={refusedProtected} target={result}.");
+        $"refusedProtected={refusedProtected} failedUnverified={failedUnverified} clipboardRestored={clipboardRestored} target={result}.");
+}
+
+static void RequireSettledTargetReceipt(Process target, string targetResultPath)
+{
+    const uint WmSettle = 0x8000 + 0x0013;
+    const int Sequence = 7;
+    var window = target.MainWindowHandle;
+    if (window == 0)
+    {
+        throw new JourneyExpectationException("The controlled target has no window to ask for a settled receipt.");
+    }
+
+    if (!NativeMethods.PostMessage(window, WmSettle, Sequence, 0))
+    {
+        throw new JourneyExpectationException("The settle request could not be posted to the controlled target.");
+    }
+
+    var timer = Stopwatch.StartNew();
+    while (timer.Elapsed < TimeSpan.FromSeconds(10))
+    {
+        if (ReadTargetResult(targetResultPath) is { Settled: Sequence })
+        {
+            return;
+        }
+
+        Thread.Sleep(50);
+    }
+
+    throw new JourneyExpectationException("The controlled target did not acknowledge the settle request with a final receipt within 10 seconds.");
 }
 
 static TargetResult? ReadTargetResult(string path)
@@ -1746,7 +1830,10 @@ static TargetResult? ReadTargetResult(string path)
             root.TryGetProperty("seedAtEnd", out var seedAtEnd) && seedAtEnd.GetBoolean(),
             root.TryGetProperty("characterCount", out var count) ? count.GetInt32() : -1,
             root.TryGetProperty("pasteMessages", out var pastes) ? pastes.GetInt32() : -1,
-            root.TryGetProperty("setTextMessages", out var setTexts) ? setTexts.GetInt32() : -1);
+            root.TryGetProperty("setTextMessages", out var setTexts) ? setTexts.GetInt32() : -1,
+            root.TryGetProperty("rewrites", out var rewrites) ? rewrites.GetInt32() : 0,
+            root.TryGetProperty("rewritten", out var rewritten) && rewritten.GetBoolean(),
+            root.TryGetProperty("settled", out var settled) ? settled.GetInt32() : 0);
     }
     catch (Exception exception) when (exception is IOException or JsonException)
     {
@@ -2865,6 +2952,10 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern uint SendInput(uint inputCount, Input[] inputs, int inputSize);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool PostMessage(nint window, uint message, nint wParam, nint lParam);
+
     [DllImport("user32.dll")]
     internal static extern nint GetForegroundWindow();
 
@@ -2908,7 +2999,16 @@ internal sealed record PolishJourneyEvidence(
     long? ElapsedMilliseconds);
 
 /// <summary>What the controlled target wrote down about its field after the delivery.</summary>
-internal sealed record TargetResult(bool ContainsExpected, bool SeedAtStart, bool SeedAtEnd, int CharacterCount, int PasteMessages, int SetTextMessages);
+internal sealed record TargetResult(
+    bool ContainsExpected,
+    bool SeedAtStart,
+    bool SeedAtEnd,
+    int CharacterCount,
+    int PasteMessages,
+    int SetTextMessages,
+    int Rewrites = 0,
+    bool Rewritten = false,
+    int Settled = 0);
 
 internal sealed record VirtualCableRoute(
     string RenderName,
@@ -2942,6 +3042,16 @@ internal sealed class ClipboardGuard : IDisposable
             "The target-unavailable UAT could not safely snapshot every clipboard format.");
         return new ClipboardGuard(snapshot);
     }
+
+    /// <summary>Puts one line of text on the clipboard: the sentinel a paste route must give back.</summary>
+    internal static void PlaceText(string text) => RunSta(() =>
+    {
+        Clipboard.SetText(text);
+        return true;
+    });
+
+    /// <summary>The clipboard's text right now, or null when it holds none.</summary>
+    internal static string? ReadText() => RunSta(() => Clipboard.ContainsText() ? Clipboard.GetText() : null);
 
     public void Dispose()
     {

@@ -54,6 +54,93 @@ public enum TextDeliveryRefusalReason
     InputBlocked,
     DirectWriteUnverified,
     Cancelled,
+
+    /// <summary>The adapter had been disposed under the delivery: the app was leaving. Not an accessibility failure.</summary>
+    DeliveryDisposed,
+
+    /// <summary>A defect inside the delivery - an exception nobody expected - stopped it; <see cref="DeliveryResult.Fault"/> says which, content-free.</summary>
+    DeliveryFaulted,
+}
+
+/// <summary>Where in a delivery an unexpected exception was thrown.</summary>
+public enum DeliveryStage
+{
+    /// <summary>The requested copy to the clipboard.</summary>
+    Copy,
+
+    /// <summary>Reading the target's caret context.</summary>
+    ContextCapture,
+
+    /// <summary>Committing the text to the target.</summary>
+    Commit,
+}
+
+/// <summary>The family an unexpected exception belongs to: a fixed list, so it can be logged where a type name cannot.</summary>
+/// <remarks>
+/// LOW-CARDINALITY ON PURPOSE. The log's data dictionary allows enums and forbids free-form strings,
+/// and a type name is a string; this is the type name's shape, coarse enough to be a category and
+/// fine enough to say whether the fault was a null, a cast, a disposed object or Windows refusing.
+/// </remarks>
+public enum DeliveryFaultKind
+{
+    Other,
+    InvalidOperation,
+    ObjectDisposed,
+    NullReference,
+    InvalidCast,
+    Argument,
+    IndexOrKey,
+    NotSupported,
+    Com,
+    Win32,
+    UnauthorizedAccess,
+    InputOutput,
+    Timeout,
+    Cancelled,
+}
+
+/// <summary>
+/// A defect inside a delivery, described without the words: the stage it was thrown in, the family
+/// of the exception and its type name. The transcript is never part of it.
+/// </summary>
+/// <remarks>
+/// TYPED, AND CONTENT-FREE (plan-2 step 13). Every exception out of the adapter used to be relabelled
+/// "accessibility unavailable", which named an environment for what was a bug - a disposed gate, a
+/// null the adapter did not expect - so the diagnostics pointed at Windows and the defect went
+/// unfound. The stage and the kind reach the log; the type name stays in the result for a test or a
+/// debugger. None of it carries anything that was said.
+/// </remarks>
+public sealed record DeliveryFault(DeliveryStage Stage, DeliveryFaultKind Kind, string ExceptionType)
+{
+    /// <summary>Describes an exception by its stage and family; the message is never read.</summary>
+    public static DeliveryFault Of(DeliveryStage stage, Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        return new DeliveryFault(stage, KindOf(exception), exception.GetType().Name);
+    }
+
+    /// <summary>The family an exception belongs to. Subtypes are asked before their bases: a disposed object is not "invalid operation".</summary>
+    public static DeliveryFaultKind KindOf(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        return exception switch
+        {
+            ObjectDisposedException => DeliveryFaultKind.ObjectDisposed,
+            OperationCanceledException => DeliveryFaultKind.Cancelled,
+            TimeoutException => DeliveryFaultKind.Timeout,
+            InvalidOperationException => DeliveryFaultKind.InvalidOperation,
+            NullReferenceException => DeliveryFaultKind.NullReference,
+            InvalidCastException => DeliveryFaultKind.InvalidCast,
+            IndexOutOfRangeException or KeyNotFoundException or ArgumentOutOfRangeException => DeliveryFaultKind.IndexOrKey,
+            ArgumentException => DeliveryFaultKind.Argument,
+            NotSupportedException or NotImplementedException => DeliveryFaultKind.NotSupported,
+            UnauthorizedAccessException => DeliveryFaultKind.UnauthorizedAccess,
+            System.ComponentModel.Win32Exception => DeliveryFaultKind.Win32,
+            System.Runtime.InteropServices.COMException => DeliveryFaultKind.Com,
+            IOException => DeliveryFaultKind.InputOutput,
+            _ => DeliveryFaultKind.Other,
+        };
+    }
 }
 
 public enum CursorRepairDisposition
@@ -117,6 +204,7 @@ public sealed record TextCommitResult(
     bool ClipboardRestored,
     TextDeliveryRefusalReason RefusalReason = TextDeliveryRefusalReason.None);
 
+/// <param name="Fault">The defect that stopped the delivery, for <see cref="TextDeliveryRefusalReason.DeliveryFaulted"/> and <see cref="TextDeliveryRefusalReason.DeliveryDisposed"/>; null otherwise.</param>
 public sealed record DeliveryResult(
     DictationSessionId SessionId,
     bool Delivered,
@@ -124,7 +212,8 @@ public sealed record DeliveryResult(
     TextDeliveryRoute Route = TextDeliveryRoute.None,
     TextDeliveryRefusalReason RefusalReason = TextDeliveryRefusalReason.None,
     CursorRepairDisposition RepairDisposition = CursorRepairDisposition.LegacyPayload,
-    bool ClipboardRestored = false);
+    bool ClipboardRestored = false,
+    DeliveryFault? Fault = null);
 
 public interface ITextTargetAdapter
 {

@@ -45,6 +45,56 @@ the message count.
 | 2026-09-21 | 0.19.0+d313251 (step 10 branch) | edit | UiAutomationValue (`WM_SETTEXT` seen, no `WM_PASTE`, seed first) | yes | yes |
 | 2026-09-21 | 0.19.0+d313251 (step 10 branch) | caret-start | ClipboardPaste (`WM_PASTE` seen, seed last) | yes | yes |
 | 2026-09-21 | 0.19.0+d313251 (step 10 branch) | password | ClipboardOnly (`TextDeliveryRefused` / `DeliveryProtectedField`, field empty) | yes | yes |
+| 2026-09-21 | 0.19.0+a9ecdce | edit | UiAutomationValue (`WM_SETTEXT` seen, no `WM_PASTE`, seed first) | yes | yes |
+| 2026-09-21 | 0.19.0+a9ecdce | caret-start | ClipboardPaste (`WM_PASTE` seen, seed last; the clipboard sentinel placed before the delivery read back intact afterwards, `clipboardRestored` true) | yes | yes |
+| 2026-09-21 | 0.19.0+a9ecdce | password | ClipboardOnly (`TextDeliveryRefused` / `DeliveryProtectedField`, field empty) | yes | yes |
+
+The caret-start run also observes clipboard restoration (plan-2 step 13): the harness places a sentinel
+line on the clipboard before the paste route runs and requires the same line back after the delivery,
+before its guard restores the desk's own clipboard.
+
+## SettledReceiptCountsAQueuedPaste
+
+The receipt the journeys read is acknowledged, not assumed. The target publishes it on every text change
+and on every counted message, and after the app has exited the harness posts the target a settle request;
+the target answers only once its own thread's queue has held no keystroke, no posted and no sent message
+for two consecutive looks, writing the request's sequence on the receipt it publishes then, and the harness
+reads that one. The instrument is proved before it is trusted: the target's own settle self-test
+(`--mode settle-self-test`, run first by `scripts/native-journeys.ps1`) sends itself a Ctrl+V with the
+clipboard emptied - a paste that changes nothing - and posts a settle request right behind it; a posted
+message outranks queued input, so a target that answered on the request itself would report no paste. The
+desk's clipboard is copied whole (every format) before it is emptied and put back when the window closes;
+a clipboard that cannot be copied whole (a stream that cannot seek, a value of an unknown kind) is not
+touched and the self-test reports that instead (exit 3); a copy that cannot be put back withdraws the
+verdict (exit 4).
+
+| Recorded | Build | Case | Observed | Passed |
+| --- | --- | --- | --- | --- |
+| 2026-09-21 | tools at a9ecdce | settle-self-test | settled receipt: `pasteMessages` 1, text unchanged (5 characters) | yes |
+
+A target mutated to answer the settle request synchronously fails this case (`pasteMessages` 0, exit 2);
+checked on this desk before the record was taken.
+
+## UnverifiedDirectWriteNeverPastes
+
+The production adapter against a controlled field that rewrites every value set into it
+(`--target-mode unverified-write`): the field appends a mark on `WM_SETTEXT`, so the adapter's read-back
+after its UI Automation value write never matches what it wrote. The adapter must report the insertion
+unverified and stop there - a paste after a write of unknown effect could insert the words twice. The
+harness requires `WM_SETTEXT` seen, the field rewritten, `TextDeliveryFailed` / `DeliveryUnverified` in
+the log (its own code, not a policy refusal's), no `TextDeliveryCompleted`, and no `WM_PASTE` at all.
+
+| Recorded | Build | Target mode | Observed | Passed | Exited cleanly |
+| --- | --- | --- | --- | --- | --- |
+| 2026-09-21 | 0.19.0+a9ecdce | unverified-write | UiAutomationValueUnverified (`WM_SETTEXT` seen, field rewritten, `DeliveryUnverified` logged, no `WM_PASTE`) | yes | yes |
+
+The four exit journeys above also passed on 0.19.0+a9ecdce (live-cable-parakeet, live-cable-whisper,
+synthetic-quick-tap-preview, escape-recovery: passed, exited cleanly, no stray workers), all nine cases
+through `scripts/native-journeys.ps1` in one run. In the first
+eight-run sequence on the step-13 branch (build beb0bf9, before the fault fields landed) one
+live-cable-whisper run ended `TextDeliveryFailed` / `DeliveryFaulted` - a fault the previous classification
+would have filed as "accessibility unavailable" - and did not recur in eighteen further runs; the log now
+carries the stage and the family of such a fault, so the next occurrence names itself.
 
 ## GeneralSavePersistsAndRendersCommittedValues
 

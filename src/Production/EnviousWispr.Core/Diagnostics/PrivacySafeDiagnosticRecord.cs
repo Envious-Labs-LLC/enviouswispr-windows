@@ -91,7 +91,9 @@ public sealed record PrivacySafeDiagnosticRecord(
     DeterministicTextStage? Stage = null,
     DeterministicStageStatus? StageStatus = null,
     bool? Changed = null,
-    DiagnosticRuntimeSelectionReason? RuntimeSelection = null)
+    DiagnosticRuntimeSelectionReason? RuntimeSelection = null,
+    DeliveryStage? DeliveryStage = null,
+    DeliveryFaultKind? Fault = null)
 {
     public const long MaximumElapsedMilliseconds = 86_400_000;
 
@@ -119,6 +121,10 @@ public sealed record PrivacySafeDiagnosticRecord(
             entry.Changed,
             entry.RuntimeSelection is { } runtimeSelection && Enum.IsDefined(runtimeSelection)
                 ? runtimeSelection
-                : null);
+                : null,
+            // WHERE A DELIVERY FAULTED AND WHAT FAMILY THE FAULT WAS: two fixed enums (plan-2 step
+            // 13), never the exception's type name or message.
+            entry.DeliveryStage is { } deliveryStage && Enum.IsDefined(deliveryStage) ? deliveryStage : null,
+            entry.Fault is { } fault && Enum.IsDefined(fault) ? fault : null);
     }
 }
