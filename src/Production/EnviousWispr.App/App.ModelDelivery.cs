@@ -31,6 +31,7 @@ public partial class App
 {
     private static readonly HttpClient ModelDeliveryHttpClient = new() { Timeout = Timeout.InfiniteTimeSpan };
     private CancellationTokenSource? _modelDownload;
+    private Task? _modelDelivery;
     private IReadOnlyList<string> _missingModelIds = [];
 
     private string ModelStoreRoot => Path.Combine(_dataDirectory, "models");
@@ -148,12 +149,24 @@ public partial class App
             CanDownload: true));
     }
 
-    private async void OnModelDownloadRequested()
+    private void OnModelDownloadRequested()
     {
-        if (_modelDownload is not null || _exitRequested || _disposed)
+        // ONE AT A TIME, READ OFF THE TASK ITSELF: a delivery still running refuses a second request;
+        // one that has ended - including one that refused synchronously because a dictation was in
+        // flight - does not, so "finish the current dictation, then download" can be followed.
+        if (_modelDelivery is { IsCompleted: false } || Leaving)
         {
             return;
         }
+
+        // ONE TRACKED TASK, from the request to the replaced engines: the exit policy cancels its
+        // download and the lifetime joins the whole of it under Quiesce, so a delivery is never
+        // tearing engines down or building them beside the exit's own disposals.
+        _modelDelivery = DeliverModelsAsync();
+    }
+
+    private async Task DeliverModelsAsync()
+    {
 
         if (_sessionController?.CurrentSession is not null)
         {
@@ -207,10 +220,26 @@ public partial class App
 
         // THE DOWNLOADED MODEL TAKES THE LAUNCH PATH. Tearing the engines down and re-running the
         // same configuration the app runs at startup means there is exactly one way a model becomes
-        // "ready", and a download cannot drift from it.
+        // "ready", and a download cannot drift from it. NOT UNDER AN EXIT: the engines are the
+        // lifetime's to dispose once leaving has begun, and none are built after it.
+        if (Leaving)
+        {
+            return;
+        }
+
         _window?.SetModelDelivery(new("Download verified. Starting local transcription…"));
         await TeardownTranscriptionAsync().ConfigureAwait(true);
+        if (Leaving)
+        {
+            return;
+        }
+
         await ConfigureTranscriptionAsync(_settings.Preferences.Dictation.FinalEngine).ConfigureAwait(true);
+        if (Leaving)
+        {
+            return;
+        }
+
         await PresentModelDeliveryAsync().ConfigureAwait(true);
     }
 

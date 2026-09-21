@@ -142,6 +142,33 @@ public sealed class WindowPresentationSessionTests
     }
 
     [Fact]
+    public async Task AShellOperationsLeaseIsJoinedByTheDrain()
+    {
+        // THE QUICK ADD'S SHAPE. A shell operation that borrows the delivery adapter - the thing the
+        // session's teardown disposes - takes a lease like a presenter's operation. The drain, the
+        // exit's first step, does not finish while the lease is held, so the session's shutdown (which
+        // the lifetime asks for only after the drain) cannot dispose the adapter under the read; the
+        // lease's token says the drain has begun, so the operation does nothing late; and once the
+        // drain has begun a new lease is refused.
+        var world = World.Create(new HeldStore());
+        var session = world.Session;
+        Assert.True(session.TryEnter(out var lease));
+        Assert.Equal(1, session.Outstanding);
+        Assert.False(lease!.Closing.IsCancellationRequested);
+
+        var drain = session.DrainAsync();
+        Assert.True(session.Closing);
+        Assert.True(lease.Closing.IsCancellationRequested);
+        Assert.False(drain.IsCompleted, "the drain finished ahead of the operation holding a lease");
+        Assert.False(session.TryEnter(out var late));
+        Assert.Null(late);
+
+        lease.Dispose();
+        await drain.WaitAsync(Patience);
+        Assert.Equal(0, session.Outstanding);
+    }
+
+    [Fact]
     public async Task MicrophoneTestUsesTheInjectedCapture()
     {
         // THE TEST OPENS WHAT THE SESSION WAS HANDED. Here a fake capture: the test starts it, hears

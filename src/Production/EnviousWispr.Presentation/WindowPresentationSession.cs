@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Credentials;
 using EnviousWispr.Core.Diagnostics;
@@ -134,6 +135,14 @@ public sealed class WindowPresentationSession : IAsyncDisposable
 
     /// <summary>Whether the drain has begun: nothing new is admitted, and a page that hears a late answer does not draw it.</summary>
     public bool Closing => _admission.Closed;
+
+    /// <summary>
+    /// A lease for a shell operation that ends on the window and borrows what the exit disposes on
+    /// the way - the Quick Add capture reads the foreground selection through the delivery adapter
+    /// the session's teardown disposes - taken like a presenter's, so the drain joins it before the
+    /// session is asked to shut down, and refused once the drain has begun.
+    /// </summary>
+    public bool TryEnter([NotNullWhen(true)] out PresentationAdmission.Lease? lease) => _admission.TryEnter(out lease);
 
     /// <summary>How many presentation operations are inside the gate right now.</summary>
     public int Outstanding => _admission.Outstanding;

@@ -55,6 +55,7 @@ var parts = new LifetimeParts(
             Thread.Sleep(Timeout.Infinite);
         }
     },
+    AbortPolishRuntime: () => { },
     CancelProcessing: () => { },
     ReleaseInputs: [new LifetimeStep("inputs", Finished)],
     ShutDownSession: null,

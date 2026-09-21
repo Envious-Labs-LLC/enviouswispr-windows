@@ -1,24 +1,31 @@
 namespace EnviousWispr.Pipeline;
 
-/// <summary>What the session's teardown established, owner by owner, then the shell's own disposal.</summary>
+/// <summary>What the session's teardown established, owner by owner, then the session's disposal.</summary>
 /// <remarks>
-/// THE SHELL'S DISPOSAL RUNS ONLY BEHIND FINISHED OWNERS. The capture, the controller and the
-/// delivery route are what the background loops and the finalisation use; a loop still running past
-/// its deadline still uses them, so the disposal is not run and <see cref="Shell"/> is null. Run, it
-/// is joined under what is left of the same deadline and reported like the owners are.
+/// THE DISPOSAL RUNS ONLY BEHIND FINISHED OWNERS. The capture, the controller and the delivery route
+/// are what the background loops and the finalisation use; a loop still running past its deadline
+/// still uses them, so the disposal is not run and <see cref="Disposal"/> is null. Run, it is the
+/// executor's sequence - the shell's observers off the capture, the controller and its capture, the
+/// shell's references, the delivery route - joined under what is left of the same deadline and
+/// reported like the owners are; a step that threw is over, not outstanding, and is reported apart.
 /// </remarks>
 /// <param name="Watchdog">The recording watchdog's stop.</param>
 /// <param name="Background">The streaming, auto-stop and preview stops.</param>
-/// <param name="Shell">The shell's disposal through the port; null when it was not run because an owner had not finished.</param>
-public sealed record SessionTeardownReport(StopOutcome Watchdog, BackgroundStopReport Background, StopOutcome? Shell)
+/// <param name="Disposal">The session's disposal; null when it was not run because an owner had not finished.</param>
+/// <param name="DisposalFaulted">A step of the disposal threw; the steps after it still ran.</param>
+public sealed record SessionTeardownReport(
+    StopOutcome Watchdog,
+    BackgroundStopReport Background,
+    StopOutcome? Disposal,
+    bool DisposalFaulted = false)
 {
     /// <summary>A teardown with nothing to tear down: an executor that owns no session.</summary>
     public static SessionTeardownReport Nothing { get; } =
         new(StopOutcome.Completed, BackgroundStopReport.AllCompleted, StopOutcome.Completed);
 
-    /// <summary>Whether every owner finished inside the deadline and the shell's disposal ran and finished inside it too.</summary>
+    /// <summary>Whether every owner finished inside the deadline and the disposal ran and finished inside it too.</summary>
     public bool Completed =>
-        Watchdog == StopOutcome.Completed && Background.Completed && Shell == StopOutcome.Completed;
+        Watchdog == StopOutcome.Completed && Background.Completed && Disposal == StopOutcome.Completed;
 }
 
 /// <summary>How the shutdown ended.</summary>
@@ -55,9 +62,9 @@ public sealed record ShutdownReport(
     int HoldsOutstanding,
     SessionTeardownReport? Teardown)
 {
-    /// <summary>Nothing is using the session any more: quiescent, and every owner and the shell's disposal finished. What the session used may be disposed.</summary>
+    /// <summary>Nothing is using the session any more: quiescent, and every owner and the session's disposal finished. What the session used may be disposed.</summary>
     public bool SessionQuiescent => Outcome == ShutdownOutcome.Quiescent && Teardown is { Completed: true };
 
-    /// <summary>Session quiescent and no notification faulted.</summary>
-    public bool Clean => SessionQuiescent && !ExpiryFaulted;
+    /// <summary>Session quiescent, no notification faulted, and no step of the disposal threw.</summary>
+    public bool Clean => SessionQuiescent && !ExpiryFaulted && Teardown is { DisposalFaulted: false };
 }

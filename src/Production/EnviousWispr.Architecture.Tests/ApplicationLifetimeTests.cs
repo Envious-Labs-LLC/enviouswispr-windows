@@ -61,6 +61,38 @@ public sealed class ApplicationLifetimeTests
     }
 
     [Fact]
+    public async Task TheSessionIsNotAskedToShutDownBehindADrainThatDidNotFinish()
+    {
+        // A PRESENTATION OPERATION STILL INSIDE THE GATE MAY HOLD WHAT THE SESSION'S TEARDOWN
+        // DISPOSES - the Quick Add's read through the delivery adapter, which cancellation does not
+        // interrupt once the accessibility call is under way. The drain outlives the whole budget;
+        // the production coordinator is idle and could quiesce at once, and is still not asked to:
+        // no teardown, nothing of the session disposed, the drain named outstanding, the host ended.
+        var clock = new Deterministic.ManualClock();
+        var executor = new HeldExecutor();
+        await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
+        var world = World.Create(clock, coordinator);
+        world.Drain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var exit = world.Lifetime.ExitAsync();
+        await world.WhenJoined("presentation drain").WaitAsync(Patience);
+        clock.Advance(ApplicationLifetime.DefaultBudget);
+
+        var report = await exit.WaitAsync(Patience);
+        Assert.Equal(ExitOutcome.Unclean, report.Outcome);
+        Assert.Equal(["presentation drain"], report.Outstanding);
+        Assert.Null(report.Session);
+        Assert.Equal(0, executor.TearDowns);
+        Assert.True(report.Retained);
+        Assert.True(report.Escalated);
+        Assert.Equal(0, world.CompleteRunCalls);
+        Assert.Equal(["inputs", "warm-up", "heartbeat"], world.Ran);
+        Assert.Contains(AppEventCode.ApplicationShutdownUnclean, world.Log.Events);
+        Assert.Same(report, world.Terminator.Report);
+        world.Drain.SetResult();
+    }
+
+    [Fact]
     public async Task BlockedCleanupDoesNotDisposeActiveDependencies()
     {
         // THE SESSION'S SHUTDOWN IS THE PRODUCTION COORDINATOR'S, with a command that does not finish
@@ -154,6 +186,28 @@ public sealed class ApplicationLifetimeTests
         Assert.False(report.RunCompleted);
         Assert.False(report.Escalated);
         Assert.DoesNotContain(AppEventCode.ApplicationCleanShutdown, world.Log.Events);
+    }
+
+    [Fact]
+    public async Task ThePolishRuntimeIsAbortedAfterTheShellClosesAndBeforeTheExitPolicy()
+    {
+        // THE ABORT IS THE LIFETIME'S STEP, IN ITS ORDER: admission closed, the presentation drained,
+        // the shell closed, then the local polish runtime ended by force - before the finalisation is
+        // cancelled and before the session is asked to shut down, so a polish in flight fails at
+        // once rather than holding the budget. One that throws is a failed step, named; the exit
+        // goes on.
+        var clock = new Deterministic.ManualClock();
+        var world = World.Create(clock);
+        world.PolishAbortThrows = true;
+
+        var report = await world.Lifetime.ExitAsync().WaitAsync(Patience);
+
+        Assert.Equal(["admission", "presentation drain", "shell closing", "polish runtime abort", "exit policy"], world.Prepared);
+        Assert.Equal(1, world.PolishAborts);
+        Assert.Equal(["polish runtime abort"], report.Failed);
+        Assert.Equal(ExitOutcome.Unclean, report.Outcome);
+        Assert.False(report.Retained);
+        Assert.Equal(["inputs", "warm-up", "heartbeat", "dependency", "second dependency", "shell", "run-state store"], world.Ran);
     }
 
     [Fact]
@@ -565,6 +619,11 @@ public sealed class ApplicationLifetimeTests
         public int AdmissionClosedCount { get; private set; }
         public int DrainCalls { get; private set; }
         public int ShellClosingCalls { get; private set; }
+        public int PolishAborts { get; private set; }
+        /// <summary>When set, the polish runtime's abort throws.</summary>
+        public bool PolishAbortThrows { get; set; }
+        /// <summary>The preparation's steps and the exit policy, in the order they were called.</summary>
+        public List<string> Prepared { get; } = [];
         public int CompleteRunCalls { get; private set; }
         public int LoggerDisposals { get; private set; }
         public bool LoggerDisposed => LoggerDisposals > 0;
@@ -622,20 +681,36 @@ public sealed class ApplicationLifetimeTests
                 CloseAdmission: () =>
                 {
                     world!.AdmissionClosedCount++;
+                    world.Prepared.Add("admission");
                     coordinator?.Close();
                 },
                 DrainPresentation: () =>
                 {
                     world!.DrainCalls++;
+                    world.Prepared.Add("presentation drain");
                     world.Entered("presentation drain");
                     return world.Drain?.Task ?? Task.CompletedTask;
                 },
                 ShellClosing: () =>
                 {
                     world!.ShellClosingCalls++;
+                    world.Prepared.Add("shell closing");
                     world.ShellClosingBlocks?.Invoke();
                 },
-                CancelProcessing: () => coordinator?.CancelProcessing(),
+                AbortPolishRuntime: () =>
+                {
+                    world!.PolishAborts++;
+                    world.Prepared.Add("polish runtime abort");
+                    if (world.PolishAbortThrows)
+                    {
+                        throw new InvalidOperationException("the runtime's process could not be ended");
+                    }
+                },
+                CancelProcessing: () =>
+                {
+                    world!.Prepared.Add("exit policy");
+                    coordinator?.CancelProcessing();
+                },
                 ReleaseInputs: [Step("inputs", () => world!)],
                 ShutDownSession: coordinator is null ? null : budget => coordinator.ShutdownAsync(budget),
                 Quiesce:

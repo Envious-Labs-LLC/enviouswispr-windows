@@ -90,7 +90,7 @@ public sealed class SessionCompositionTests
     public async Task ComposedShutdownNeverTearsDownBesideACommandAndTheCommandEndsOnItsOwnTerms()
     {
         // THE TRANSCRIPTION OUTLIVES THE SHUTDOWN'S BUDGET. Nothing is torn down beside it: the
-        // shell's teardown does not run, the controller is intact, and the report names the command
+        // session's disposal does not run, the controller is intact, and the report names the command
         // as outstanding. When the engine answers at last the command ends on its own terms - the
         // words kept for recovery, since delivery closed with admission - and the run-state edge it
         // writes says the dictation is over, because it is.

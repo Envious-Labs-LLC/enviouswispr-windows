@@ -50,7 +50,7 @@ internal sealed class ComposedSessionWorld
 
     public required List<CustomWordEntry> CustomWords { get; init; }
 
-    /// <summary>How many times the shell's teardown ran.</summary>
+    /// <summary>How many times the session's disposal reached the route: the last of the shell's three parts.</summary>
     public int TearDowns { get; private set; }
 
     /// <summary>The shell's own reference to its controller: let go of by the teardown, as the shell's field is.</summary>
@@ -148,14 +148,11 @@ internal sealed class ComposedSessionWorld
                 RunId: () => runId,
                 RecordingActive: recordingActive.Add,
                 ArchiveAudio: archived.Add,
-                // The shell's teardown disposes the controller and lets go of its reference;
-                // the composed test does the same.
-                TearDownSession: async () =>
-                {
-                    await controller.DisposeAsync();
-                    world!._attached = null;
-                    world.TearDowns++;
-                }),
+                // The shell's three parts of the disposal, as the app supplies them: the executor
+                // disposes the controller itself between the first and the second.
+                DetachCaptureObservers: () => { },
+                ReleaseSession: () => world!._attached = null,
+                DisposeDeliveryRoute: () => world!.TearDowns++),
             clock));
 
         world = new ComposedSessionWorld
@@ -688,7 +685,7 @@ internal sealed class FakeAudioCapture : IAudioCapture, IAudioSnapshotSource
         return Task.FromResult(new AudioOperationResult(Succeeded: true));
     }
 
-    /// <summary>Whether the controller disposed the capture: the shell's teardown reached it.</summary>
+    /// <summary>Whether the controller disposed the capture: the session's disposal reached it.</summary>
     public bool Disposed { get; private set; }
 
     public ValueTask DisposeAsync()

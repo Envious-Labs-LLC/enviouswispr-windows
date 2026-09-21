@@ -49,8 +49,6 @@ public interface ISessionFinalizationEffects
     /// <summary>The delivery route, or null when the shell has none.</summary>
     ITextDelivery? Delivery { get; }
 
-    /// <summary>The language delivery should be told, or null when the engine's answer is not to be trusted.</summary>
-
     /// <summary>
     /// The settings the text decisions run under, read AFTER transcription, at the moment they are
     /// needed. A custom word or a cleanup switch saved while the speech engine was still working
@@ -58,7 +56,7 @@ public interface ISessionFinalizationEffects
     /// </summary>
     FinalizationOptions CurrentOptions();
 
-
+    /// <summary>Keeps the take's audio for replay where the build allows it; a no-op in release builds.</summary>
     void ArchiveAudio(CapturedAudio audio);
 
     void RecordTranscriptionUnavailable();

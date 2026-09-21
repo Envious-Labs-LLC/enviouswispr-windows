@@ -26,9 +26,20 @@ public sealed record LifetimeStep(string Name, Func<Task> Run)
 /// <param name="CloseAdmission">Closes the session's admission; synchronous, run before the first await.</param>
 /// <param name="DrainPresentation">Closes the presentation's gate, stops and joins the work inside it, and finishes the settings write in flight, so a choice just made is not lost and nothing of the window's is still inside what the exit disposes.</param>
 /// <param name="ShellClosing">What the shell does once the settings are safe and before anything is torn down: its windows, its own log line.</param>
+/// <param name="AbortPolishRuntime">
+/// The shell's exit policy for the local polish runtime, run right after the shell closes and before
+/// the finalisation is cancelled or the session asked to shut down. What it does, exactly: the
+/// runtime's endpoint is forgotten, the owned process is taken from its owner, a kill of it and its
+/// tree is issued if it has not exited, and its handle and job are disposed - all before this
+/// returns. What it does not do: observe the process's exit, or decide the finalisation's outcome.
+/// A polish in flight loses its connection; what the provider does next - its one retry, which may
+/// find the runtime gone and try to start it again, its fallback answer, or the exit policy's
+/// cancellation landing first - is the finaliser's, not this step's, and the provider's own disposal
+/// later stops whatever it then owns. Nothing when no local runtime was started.
+/// </param>
 /// <param name="CancelProcessing">The shell's exit policy for a transcription in flight, made before the session is asked to shut down.</param>
 /// <param name="ReleaseInputs">The input sources, unsubscribed and disposed first so nothing new arrives.</param>
-/// <param name="ShutDownSession">The session's own shutdown under the budget it is handed (step 8); null when the shell owns no session.</param>
+/// <param name="ShutDownSession">The session's own shutdown under the budget it is handed (step 8); null when the shell owns no session. Asked for only behind a finished drain: a presentation operation still inside the gate may hold what the session's teardown disposes.</param>
 /// <param name="Quiesce">Work the shell started that must be over before anything it uses is disposed: the polish warm-up, the heartbeat.</param>
 /// <param name="DisposeSessionDependencies">What a session uses: run only behind a quiescent session and finished quiescence steps.</param>
 /// <param name="DisposeShell">The shell's own services, run only when nothing is outstanding. The single-instance lock is not among them: it is held to the process's end, so no other launch writes the record before this one has.</param>
@@ -45,6 +56,7 @@ public sealed record LifetimeParts(
     Action CloseAdmission,
     Func<Task> DrainPresentation,
     Action ShellClosing,
+    Action AbortPolishRuntime,
     Action CancelProcessing,
     IReadOnlyList<LifetimeStep> ReleaseInputs,
     Func<TimeSpan, Task<ShutdownReport>>? ShutDownSession,
@@ -130,9 +142,10 @@ public interface IHostTerminator
 /// report's clean verdict and ends the host, but the completion already committed stands, because
 /// everything the run had to finish had finished.
 ///
-/// PREPARED ONCE, EXITED ONCE. Every path out of the app - the tray, the window, an update, a system
-/// ending - reaches the same two cached tasks; a second caller shares the first's completion and no
-/// step runs twice.
+/// PREPARED ONCE, EXITED ONCE. Every path out of the app - the tray, the window, an update, the
+/// shell's disposal - reaches the same two cached tasks; a second caller shares the first's
+/// completion and no step runs twice. A Windows session ending is not a path out: the shell notes it
+/// in the run state and the process may be killed before any of this runs.
 /// </remarks>
 public sealed class ApplicationLifetime
 {
@@ -242,6 +255,7 @@ public sealed class ApplicationLifetime
         Try("admission", _parts.CloseAdmission, failed);
         await RunAsync(new LifetimeStep("presentation drain", _parts.DrainPresentation), budget, outstanding, failed);
         Try("shell closing", _parts.ShellClosing, failed);
+        Try("polish runtime abort", _parts.AbortPolishRuntime, failed);
         lock (_lock)
         {
             _preparationOutstanding = outstanding;
@@ -268,9 +282,14 @@ public sealed class ApplicationLifetime
         }
 
         // THE SESSION SHUTS ITSELF DOWN under what is left; its report says whether anything still
-        // uses it. A shell without a session has nothing here.
+        // uses it. A shell without a session has nothing here. ONLY BEHIND A FINISHED DRAIN: a
+        // presentation operation still inside the gate when the drain's wait ran out may be holding
+        // what the session's teardown disposes - the Quick Add's read through the delivery adapter -
+        // and cancellation does not interrupt accessibility work already under way; so the session
+        // is not asked to shut down beside it, nothing of the session is disposed, and the exit
+        // escalates with the drain named outstanding.
         ShutdownReport? session = null;
-        if (_parts.ShutDownSession is { } shutDown)
+        if (_parts.ShutDownSession is { } shutDown && outstanding.Count == 0)
         {
             Volatile.Write(ref _current, "session shutdown");
             try
