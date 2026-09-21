@@ -476,12 +476,16 @@ public sealed class LivePreviewController : IAsyncDisposable
                 return StopOutcome.Completed;
             }
 
-            if (_effects.Engine is not IAbortableLivePreviewEngine engine || budget.Left <= TimeSpan.Zero)
+            // READ ONCE, JUDGED ONCE, HANDED ON AS READ. The remainder is recomputed at every read, so a
+            // check on one read and a call on the next could pass a remainder that has since run out to
+            // a runtime that refuses it.
+            var left = budget.Left;
+            if (_effects.Engine is not IAbortableLivePreviewEngine engine || left <= TimeSpan.Zero)
             {
                 return StopOutcome.StillRunning;
             }
 
-            var aborted = await engine.AbortAsync(budget.Left).ConfigureAwait(false);
+            var aborted = await engine.AbortAsync(left).ConfigureAwait(false);
             if (aborted.Outcome is not (RuntimeWorkerAbortOutcome.Exited or RuntimeWorkerAbortOutcome.NoWorker))
             {
                 return StopOutcome.StillRunning;

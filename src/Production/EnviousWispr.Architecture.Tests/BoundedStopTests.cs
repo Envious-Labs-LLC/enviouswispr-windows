@@ -264,6 +264,32 @@ public sealed class BoundedStopTests
     }
 
     [Fact]
+    public async Task AnAbortReadsWhatIsLeftOnceAndHandsThatOn()
+    {
+        // THE REMAINDER IS RECOMPUTED AT EVERY READ. A clock that moves a second on each read makes
+        // the boundary deterministic: three seconds of budget, one read taken by the budget itself,
+        // one by the gate, one by the abort - the abort judges one second and hands on that same
+        // second. An abort that checked on one read and called on the next would pass a remainder
+        // that had run out to a runtime that refuses it (the production adapter throws on zero).
+        var clock = new TickingClock();
+        var world = World.Create(clock);
+        world.PreviewEngine.RefuseStop = true;
+        world.PreviewEngine.RefuseEmptyAbortDeadline = true;
+        var session = DictationSessionId.Create();
+        world.Session = session;
+        await world.Runtime.Preview.StartAsync(session);
+        await world.PreviewEngine.PreviewEntered.Task.WaitAsync(Patience);
+        Assert.Equal(StopOutcome.StillRunning, await world.Runtime.Preview.StopAsync(Patience));
+
+        clock.Tick = TimeSpan.FromSeconds(1);
+        var outcome = await world.Runtime.Preview.AbortAsync(TimeSpan.FromSeconds(3));
+
+        Assert.Equal(StopOutcome.Completed, outcome);
+        Assert.Equal(TimeSpan.FromSeconds(1), world.PreviewEngine.AbortDeadline);
+        Assert.Equal(1, world.PreviewEngine.Aborts);
+    }
+
+    [Fact]
     public async Task AnEngineStopRefusedOrHeldLeavesTheStopIncompleteAndIsJoinedNotRepeated()
     {
         // THE LOOP IS OVER BUT THE ENGINE IS NOT. A stop the engine refuses - its worker still there -
@@ -792,11 +818,22 @@ public sealed class BoundedStopTests
         /// <summary>What an abort sees: the worker gone, or still there.</summary>
         public RuntimeWorkerAbortOutcome AbortOutcome { get; set; } = RuntimeWorkerAbortOutcome.Exited;
 
+        /// <summary>Whether a non-positive deadline is refused, as the production adapter and supervisor refuse it.</summary>
+        public bool RefuseEmptyAbortDeadline { get; set; }
+
+        public TimeSpan? AbortDeadline { get; private set; }
+
         public int Aborts { get; private set; }
 
         public Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline)
         {
+            if (RefuseEmptyAbortDeadline)
+            {
+                ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(deadline, TimeSpan.Zero);
+            }
+
             Aborts++;
+            AbortDeadline = deadline;
             if (AbortOutcome == RuntimeWorkerAbortOutcome.Exited)
             {
                 RefuseStop = false;
@@ -886,6 +923,20 @@ public sealed class BoundedStopTests
             }
 
             return new Transcript(audio.SessionId, spoken, EngineId, DetectedLanguage: "en");
+        }
+    }
+
+    /// <summary>A clock that moves by <see cref="Tick"/> on every timestamp read, so a budget's reads can be counted.</summary>
+    private sealed class TickingClock : TimeProvider
+    {
+        private long _now;
+
+        public TimeSpan Tick { get; set; }
+
+        public override long GetTimestamp()
+        {
+            _now += (long)(Tick.TotalSeconds * TimestampFrequency);
+            return _now;
         }
     }
 
