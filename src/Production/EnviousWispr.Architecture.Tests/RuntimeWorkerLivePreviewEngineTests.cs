@@ -68,6 +68,38 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
     }
 
     [Fact]
+    public async Task TheNextStartAfterAnObservedAbortRunsOnAFreshRuntime()
+    {
+        // AN ABORTED RUNTIME IS TERMINAL, AND THE PREVIEW IS NOT. The supervisor an abort ended refuses
+        // every start after; the next recording's preview is built on a replacement, the retired
+        // runtime disposed, and the resource taken again for the new worker. Without a way to build
+        // one, the start is refused as the supervisor would refuse it.
+        using var arbiter = new RuntimeResourceArbiter();
+        var first = new FakePreviewRuntime();
+        var second = new FakePreviewRuntime();
+        await using var preview = new RuntimeWorkerLivePreviewEngine(first, arbiter, RuntimeResourceKind.Cpu, replacement: () => second);
+        Assert.True((await preview.StartAsync()).Succeeded);
+        Assert.Equal(RuntimeWorkerAbortOutcome.Exited, (await preview.AbortAsync(TimeSpan.FromSeconds(1))).Outcome);
+        Assert.Same(first, preview.Runtime);
+
+        Assert.True((await preview.StartAsync()).Succeeded);
+
+        Assert.Same(second, preview.Runtime);
+        Assert.True(first.Disposed, "the retired runtime was disposed");
+        Assert.Equal(1, second.Starts);
+        Assert.False((await arbiter.AcquireAsync(RuntimeResourceKind.Cpu, RuntimeWorkloadKind.FinalAsr, TimeSpan.Zero)).Succeeded, "the new worker holds the resource");
+
+        var orphan = new FakePreviewRuntime();
+        await using var unreplaceable = new RuntimeWorkerLivePreviewEngine(orphan, arbiter, RuntimeResourceKind.Accelerator);
+        Assert.True((await unreplaceable.StartAsync()).Succeeded);
+        Assert.Equal(RuntimeWorkerAbortOutcome.Exited, (await unreplaceable.AbortAsync(TimeSpan.FromSeconds(1))).Outcome);
+        var refused = await unreplaceable.StartAsync();
+        Assert.False(refused.Succeeded);
+        Assert.Equal(RuntimeWorkerState.Aborted, refused.State);
+        Assert.Equal(1, orphan.Starts);
+    }
+
+    [Fact]
     public async Task AnAbortWhoseExitWasNotSeenKeepsTheResource()
     {
         // THE WORKER MAY STILL BE ON THE RESOURCE. A StillRunning outcome leaves the lease with the
@@ -233,6 +265,8 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
 
         public bool Stopped { get; private set; }
 
+        public bool Disposed { get; private set; }
+
         public int Starts { get; private set; }
 
         public int TranscriptionCount { get; private set; }
@@ -303,6 +337,10 @@ public sealed class RuntimeWorkerLivePreviewEngineTests
                 DetectedLanguage: "en"));
         }
 
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public ValueTask DisposeAsync()
+        {
+            Disposed = true;
+            return ValueTask.CompletedTask;
+        }
     }
 }

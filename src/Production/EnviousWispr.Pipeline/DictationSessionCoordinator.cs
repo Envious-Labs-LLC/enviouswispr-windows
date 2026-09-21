@@ -300,7 +300,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     /// <summary>Whether a finalisation is in flight: a transcription or a delivery under its deadline.</summary>
     public bool IsProcessing => _executor.IsProcessing;
 
-    /// <summary>Cancels the finalisation in flight, if any. The shell's exit calls this before it closes admission.</summary>
+    /// <summary>Cancels the finalisation in flight, if any: the shell's exit policy, made by its lifetime after admission has closed and before the session is asked to shut down.</summary>
     public void CancelProcessing() => _executor.CancelProcessing();
 
     /// <summary>
@@ -329,11 +329,12 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     }
 
     /// <summary>
-    /// Shutdown: admission closes at once and the finalisation in flight is cancelled; the command
-    /// running now, every expiry notification and every hold are then given <paramref name="budget"/>
-    /// to finish; and only once nothing is using the session does the executor's teardown run under it,
-    /// with what is left of the budget. What did not finish is named in the report, and nothing is torn
-    /// down beside it. A second call shares the first's completion.
+    /// Shutdown: admission closes at once (the finalisation in flight is not cancelled here - that is
+    /// the shell's exit policy, made through <see cref="CancelProcessing"/> before this is asked for);
+    /// the command running now, every expiry notification and every hold are then given
+    /// <paramref name="budget"/> to finish; and only once nothing is using the session does the
+    /// executor's teardown run under it, with what is left of the budget. What did not finish is named
+    /// in the report, and nothing is torn down beside it. A second call shares the first's completion.
     /// </summary>
     /// <remarks>
     /// CANCELLATION IS NOT QUIESCENCE. A command asked to stop is still running until it says it has
