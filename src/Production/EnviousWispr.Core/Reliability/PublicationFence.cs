@@ -20,8 +20,11 @@ public sealed class PublicationFence
     private bool _committed;
     private bool _abandoned;
 
-    /// <summary>The instant before the commit is asked for: a seam for a test to stand in with the exit deciding meanwhile.</summary>
-    public Action? Committing { get; set; }
+    /// <summary>The instant before the commit is asked for: a seam for a test to stand in with the exit deciding meanwhile. Nothing in production sets it.</summary>
+    internal Action? BeforeCommit { get; set; }
+
+    /// <summary>The instant after the commit ran and the fence let go: a seam for a test to hold the writer's tail with the exit deciding meanwhile. Nothing in production sets it.</summary>
+    internal Action? AfterCommit { get; set; }
 
     /// <summary>Whether the publication committed.</summary>
     public bool Committed
@@ -39,7 +42,7 @@ public sealed class PublicationFence
     public bool TryCommit(Action commit)
     {
         ArgumentNullException.ThrowIfNull(commit);
-        Committing?.Invoke();
+        BeforeCommit?.Invoke();
         lock (_lock)
         {
             if (_abandoned || _committed)
@@ -49,8 +52,10 @@ public sealed class PublicationFence
 
             commit();
             _committed = true;
-            return true;
         }
+
+        AfterCommit?.Invoke();
+        return true;
     }
 
     /// <summary>Abandons the publication unless it has committed; true when it was abandoned, false when the commit had already happened.</summary>

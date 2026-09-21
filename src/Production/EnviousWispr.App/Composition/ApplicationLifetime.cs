@@ -123,9 +123,10 @@ public interface IHostTerminator
 /// write is under the remainder with a token cancelled when it runs out, so a write not begun by the
 /// deadline never begins; and it commits through a fence the exit abandons through, so a write the
 /// exit stopped waiting for never replaces the record - and if it committed first, the exit learns
-/// that and reports the run completed. After it only the two handles that wrote it are closed: the
-/// store, only once nothing that writes to it is outstanding, and the log, always, both reported if
-/// they do not. Diagnostic closure is not the run's work: a log that will not close unmakes the
+/// that and reports the run completed, while still reporting the writer outstanding: committed is not
+/// finished, and a store closed under a writer's tail faults it. After it only the two handles that
+/// wrote it are closed: the store, only once nothing that writes to it is outstanding, and the log,
+/// always, both reported if they do not. Diagnostic closure is not the run's work: a log that will not close unmakes the
 /// report's clean verdict and ends the host, but the completion already committed stands, because
 /// everything the run had to finish had finished.
 ///
@@ -326,9 +327,11 @@ public sealed class ApplicationLifetime
             Try("run-state store", _parts.CloseRunState, failed);
         }
 
-        // WHAT IS SAID BEFORE THE LOG CLOSES: the exit's verdict so far, and the escalation if it is
-        // already known. The log's own closing is the one step that can still go wrong after this,
-        // and it is reported through the terminator and the returned report rather than the log.
+        // WHAT IS SAID BEFORE THE LOG CLOSES: whether the run's ending was written - the line mirrors
+        // the record, so a run completed by a writer the exit then stopped waiting for is still said
+        // to have completed, with the escalation beside it - and the escalation if it is already
+        // known. The log's own closing is the one step that can still go wrong after this, and it is
+        // reported through the terminator and the returned report rather than the log.
         if (runCompleted)
         {
             _logger.Write(new AppLogEntry(_clock.GetUtcNow(), AppEventCode.ApplicationCleanShutdown));
@@ -377,23 +380,35 @@ public sealed class ApplicationLifetime
         var remaining = budget.Left;
         var fence = new PublicationFence();
         using var patience = new CancellationTokenSource(remaining, _clock);
+        Task<bool> write;
         try
         {
-            return await _parts.CompleteRun(fence, patience.Token).WaitAsync(remaining, _clock);
+            write = _parts.CompleteRun(fence, patience.Token);
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            failed.Add("run completion");
+            RecordFailure();
+            return false;
+        }
+
+        try
+        {
+            return await write.WaitAsync(remaining, _clock);
         }
         catch (Exception exception) when (exception is TimeoutException or OperationCanceledException)
         {
             // NOT FINISHED INSIDE THE BUDGET. The fence decides what the next launch reads: abandoned
-            // here before the store's commit, the record is never replaced and the completion is
-            // outstanding; committed first, the record already says clean and the exit says so too -
-            // the store's remaining act is to let go of its gate.
-            if (fence.TryAbandon())
-            {
-                outstanding.Add("run completion");
-                return false;
-            }
-
-            return true;
+            // here before the store's commit, the record is never replaced; committed first, the
+            // record already says clean and the exit says the run completed. EITHER WAY THE WRITER IS
+            // STILL RUNNING - after a commit it has its gate to let go of and its temporary file to
+            // remove - so the completion is outstanding, the store is kept for it, and the host is
+            // ended: the publication and the writer's finishing are two facts, reported as two.
+            outstanding.Add("run completion");
+            _ = write.ContinueWith(
+                static task => _ = task.Exception,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+            return !fence.TryAbandon();
         }
         catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
         {

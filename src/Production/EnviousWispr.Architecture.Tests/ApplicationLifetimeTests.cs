@@ -307,7 +307,7 @@ public sealed class ApplicationLifetimeTests
         Task<bool>? write = null;
         world.CompleteRun = (fence, cancellation) =>
         {
-            fence.Committing = () =>
+            fence.BeforeCommit = () =>
             {
                 committing.SetResult();
                 if (!proceed.Wait(Patience))
@@ -337,40 +337,55 @@ public sealed class ApplicationLifetimeTests
     }
 
     [Fact]
-    public async Task ARunCompletionCommittedBeforeTheExitStoppedWaitingIsReportedCompleted()
+    public async Task ARunCompletionCommittedBeforeTheExitStoppedWaitingIsReportedCompletedAndItsWriterKept()
     {
-        // THE OTHER SIDE OF THE FENCE. The production store committed the record; what the exit was
-        // still waiting for is the store's tail after the commit. The exit's abandonment is refused,
-        // so it knows the record says clean and says so itself: the run is completed, the exit is
-        // clean, nothing is outstanding and the host is not told to end.
+        // COMMITTED IS NOT FINISHED. The production store has replaced the record and the fence has
+        // let go; the writer is held there - its gate still taken, its temporary file still on disk -
+        // when the budget runs out. The exit's abandonment is refused, so it reports the run
+        // completed; but the writer is still inside the store, so the completion is outstanding, the
+        // store is kept (its production disposal is wired and does not run), the exit is unclean and
+        // the host is told to end. Released, the writer lets go of a gate that still exists, removes
+        // its temporary file and answers true; the next launch reads a clean run.
         using var temp = new TemporaryDirectory();
         var path = Path.Combine(temp.Path, "run-state.json");
         var store = new JsonApplicationRunStateStore(path);
         var run = await store.BeginRunAsync(DateTimeOffset.UtcNow);
         var clock = new Deterministic.ManualClock();
         var world = World.Create(clock);
-        var tail = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var committed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        world.CompleteRun = async (fence, cancellation) =>
+        world.CloseRunState = store.Dispose;
+        var committed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new ManualResetEventSlim();
+        Task<bool>? write = null;
+        world.CompleteRun = (fence, cancellation) =>
         {
-            var written = await store.CompleteRunAsync(run.RunId, DateTimeOffset.UtcNow, fence, cancellation);
-            committed.SetResult(written);
-            await tail.Task;
-            return written;
+            fence.AfterCommit = () =>
+            {
+                committed.SetResult();
+                if (!proceed.Wait(Patience))
+                {
+                    throw new TimeoutException("the writer was never released");
+                }
+            };
+            write = store.CompleteRunAsync(run.RunId, DateTimeOffset.UtcNow, fence, cancellation);
+            return write;
         };
 
         var exit = world.Lifetime.ExitAsync();
         await world.WhenJoined("run completion").WaitAsync(Patience);
-        Assert.True(await committed.Task.WaitAsync(Patience), "the store did not commit");
+        await committed.Task.WaitAsync(Patience);
         clock.Advance(TimeSpan.FromSeconds(20));
         var report = await exit.WaitAsync(Patience);
 
         Assert.True(report.RunCompleted);
-        Assert.True(report.Clean, $"outstanding=[{string.Join(",", report.Outstanding)}] failed=[{string.Join(",", report.Failed)}]");
-        Assert.Empty(report.Outstanding);
-        Assert.False(report.Escalated);
+        Assert.Equal(["run completion"], report.Outstanding);
+        Assert.Equal(ExitOutcome.Unclean, report.Outcome);
+        Assert.True(report.Escalated);
+        Assert.DoesNotContain("run-state store", world.Ran);
         Assert.Contains(AppEventCode.ApplicationCleanShutdown, world.Log.Events);
-        tail.SetResult();
+
+        proceed.Set();
+        Assert.True(await write!.WaitAsync(Patience), "the writer faulted after the commit: its store was closed under it");
+        Assert.Empty(Directory.GetFiles(temp.Path, "*.tmp"));
         store.Dispose();
         using var nextLaunch = new JsonApplicationRunStateStore(path);
         Assert.Equal(RunStateLoadStatus.Started, (await nextLaunch.BeginRunAsync(DateTimeOffset.UtcNow)).Status);
