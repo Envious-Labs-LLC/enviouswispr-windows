@@ -16,6 +16,8 @@ namespace EnviousWispr.Architecture.Tests;
 /// </summary>
 public sealed class DictationSessionExecutorTests
 {
+    private static readonly TimeSpan Patience = TimeSpan.FromSeconds(10);
+
     [Fact]
     public async Task CriticalMemoryNeverOpensCapture()
     {
@@ -345,13 +347,106 @@ public sealed class DictationSessionExecutorTests
     }
 
     [Fact]
-    public async Task ShutdownRunsTheShellsSessionTeardownThroughThePort()
+    public async Task TheTeardownHandsOneDeadlineDownAsWhatIsLeftOfItAndJoinsTheShellsTeardownUnderTheRest()
     {
+        // ONE DEADLINE, NOT ONE PER OWNER. The watchdog's stop takes a second, the background's stop
+        // takes another; each was handed what was left when it began, and the shell's teardown after
+        // them is joined under the remainder. The report says every owner and the shell finished.
+        var clock = new Deterministic.ManualClock();
+        var (executor, _, effects, _, _) = BuildWithFinalization(clock: clock);
+        var background = TracingBackgroundWork.Instance!;
+        background.SpendOnStop = () => clock.Advance(TimeSpan.FromSeconds(1));
+
+        var report = await executor.TearDownAsync(TimeSpan.FromSeconds(4)).WaitAsync(Patience);
+
+        Assert.Equal(
+            ["Background:StopWatchdog:4s", "Background:StopWatchdog", "Background:Stop:3s", "Background:Stop", "TearDownSession"],
+            effects.Trace);
+        Assert.Equal(StopOutcome.Completed, report.Watchdog);
+        Assert.True(report.Background.Completed);
+        Assert.Equal(StopOutcome.Completed, report.Shell);
+        Assert.True(report.Completed);
+    }
+
+    [Fact]
+    public async Task TheShellsTeardownIsNotRunBehindAnOwnerThatHadNotFinished()
+    {
+        // AN OWNER STILL RUNNING STILL USES WHAT THE SHELL WOULD DISPOSE. The preview outlived its
+        // deadline: the capture and the controller are its, the shell's teardown is not run, and the
+        // report says which owner and that the shell did not run - the teardown is not complete.
         var (executor, _, effects, _) = Build();
+        TracingBackgroundWork.Instance!.BoundedStopReport = new BackgroundStopReport(
+            StopOutcome.Completed, StopOutcome.Completed, StopOutcome.StillRunning);
 
-        await executor.ShutdownAsync();
+        var report = await executor.TearDownAsync(TimeSpan.FromSeconds(4)).WaitAsync(Patience);
 
-        Assert.Equal(["TearDownSession"], effects.Trace);
+        Assert.DoesNotContain("TearDownSession", effects.Trace);
+        Assert.Equal(StopOutcome.StillRunning, report.Background.Preview);
+        Assert.Null(report.Shell);
+        Assert.False(report.Completed);
+    }
+
+    [Fact]
+    public async Task ATeardownGivenNothingLeftStillStopsAndObservesEveryOwnerAndWaitsForNone()
+    {
+        // ZERO IS A DEADLINE, NOT A REFUSAL. The budget the shutdown had is spent; the teardown is
+        // still asked for, so every owner is cancelled and looked at - a finished one reports
+        // finished - and the shell's teardown is issued and observed at once: a held one is reported
+        // still running rather than waited for, on a clock nobody advances.
+        var clock = new Deterministic.ManualClock();
+        var (executor, _, effects, _, _) = BuildWithFinalization(clock: clock);
+        effects.HoldTearDown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var report = await executor.TearDownAsync(TimeSpan.Zero).WaitAsync(Patience);
+
+        Assert.Equal(
+            ["Background:StopWatchdog:0s", "Background:StopWatchdog", "Background:Stop:0s", "Background:Stop", "TearDownSession"],
+            effects.Trace);
+        Assert.Equal(StopOutcome.Completed, report.Watchdog);
+        Assert.True(report.Background.Completed);
+        Assert.Equal(StopOutcome.StillRunning, report.Shell);
+        Assert.False(report.Completed);
+        effects.HoldTearDown.SetResult();
+    }
+
+    [Fact]
+    public async Task AShellTeardownThatOutlivesWhatIsLeftIsReportedNotWaitedFor()
+    {
+        // THE SHELL'S TEARDOWN IS UNDER THE SAME DEADLINE. Two seconds of four are left when it is
+        // issued; it is still held when they pass; the report says so and the teardown returns.
+        var clock = new Deterministic.ManualClock();
+        var (executor, _, effects, _, _) = BuildWithFinalization(clock: clock);
+        TracingBackgroundWork.Instance!.SpendOnStop = () => clock.Advance(TimeSpan.FromSeconds(1));
+        effects.HoldTearDown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var teardown = executor.TearDownAsync(TimeSpan.FromSeconds(4));
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        Assert.False(teardown.IsCompleted);
+        clock.Advance(TimeSpan.FromSeconds(2));
+
+        var report = await teardown.WaitAsync(Patience);
+        Assert.Equal(StopOutcome.StillRunning, report.Shell);
+        Assert.False(report.Completed);
+        Assert.Contains("TearDownSession", effects.Trace);
+        effects.HoldTearDown.SetResult();
+    }
+
+    [Fact]
+    public async Task AfterAdmissionClosedAFinalisationKeepsItsWordsAndDeliversNothing()
+    {
+        // THE APP IS LEAVING. A finalisation that starts after admission closed runs for recovery only -
+        // the words are kept, nothing is pasted into whatever is in front - and the runner is told
+        // that a delivery not yet issued is not to be issued.
+        var (executor, _, effects, _, world) = BuildWithFinalization();
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        effects.Trace.Clear();
+
+        executor.Close();
+        var result = await executor.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Applied, result.Disposition);
+        Assert.True(world.Finalization.DeliveryClosed, "the runner was told delivery is closed");
+        Assert.Contains("Finalize:recoveryOnly=True", effects.Trace);
     }
 
     [Fact]
@@ -368,40 +463,6 @@ public sealed class DictationSessionExecutorTests
         Assert.Equal(
             ["RecordTransition:Started", "RecordingSettings", "Background:Start", "RecordSessionFailure", "Background:StopWatchdog", "Background:Stop", "RecordSessionRecovered:InvalidTransition", "ShowPendingRecovery", "ShowSessionRecovered:Failed", "RecordDictationEdge"],
             effects.Trace);
-    }
-
-    [Fact]
-    public async Task AfterTheTeardownACommandThatFailsEndsAsFailedWithoutRecovery()
-    {
-        // The session was torn down beside this command (the shutdown outlived both of its waits).
-        // Whatever it then fails on, there is nothing to recover into: written, answered, no abort.
-        var (executor, capture, effects, _) = Build();
-        await executor.ShutdownAsync();
-        effects.Trace.Clear();
-        capture.StartResultFactory = _ => throw new InvalidOperationException("the capture is gone");
-
-        var result = await executor.ExecuteAsync(Press(), CancellationToken.None);
-
-        Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
-        Assert.Equal(
-            ["RecordSessionFailure", "RecordDictationEdge"],
-            effects.Trace);
-    }
-
-    [Fact]
-    public async Task AfterTheTeardownATimeoutThatFailsEndsAsFailedRatherThanFaultingItsTask()
-    {
-        var (executor, _, effects, controller) = Build();
-        await executor.ExecuteAsync(Press(), CancellationToken.None);
-        var recording = controller.CurrentSession!.Id;
-        await executor.ShutdownAsync();
-        effects.Trace.Clear();
-        TracingBackgroundWork.StopThrows = new ObjectDisposedException("the preview");
-
-        var result = await executor.ExecuteAsync(Timeout(recording), CancellationToken.None);
-
-        Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
-        Assert.Equal(["Background:Stop", "RecordDictationEdge", "RecordSessionFailure"], effects.Trace);
     }
 
     [Fact]
@@ -741,10 +802,13 @@ public sealed class DictationSessionExecutorTests
 
         public void ShowInterruptionPending() => Trace.Add("ShowInterruptionPending");
 
+        /// <summary>When set, the shell's teardown does not return until it is completed.</summary>
+        public TaskCompletionSource? HoldTearDown { get; set; }
+
         public Task TearDownSessionAsync()
         {
             Trace.Add("TearDownSession");
-            return Task.CompletedTask;
+            return HoldTearDown?.Task ?? Task.CompletedTask;
         }
 
         public void RecordRecordingTimedOut(AppError failure) => Trace.Add($"RecordRecordingTimedOut:{failure.Code}");
@@ -756,6 +820,10 @@ public sealed class DictationSessionExecutorTests
     private sealed class FakeFinalization(List<string> trace) : ISessionFinalization
     {
         public List<CapturedAudio> Finalized { get; } = [];
+
+        public bool DeliveryClosed { get; private set; }
+
+        public void CloseDelivery() => DeliveryClosed = true;
 
         public bool Throws { get; set; }
 
@@ -848,16 +916,33 @@ public sealed class DictationSessionExecutorTests
             }
         }
 
+        public BackgroundStopReport BoundedStopReport { get; set; } = BackgroundStopReport.AllCompleted;
+
+        public StopOutcome BoundedWatchdogOutcome { get; set; } = StopOutcome.Completed;
+
+        /// <summary>What each bounded stop does with the clock before it answers: the time it takes.</summary>
+        public Action? SpendOnStop { get; set; }
+
         public async Task<BackgroundStopReport> StopAsync(TimeSpan deadline)
         {
+            trace.Add($"Background:Stop:{deadline.TotalSeconds}s");
             await StopAsync();
-            return BackgroundStopReport.AllCompleted;
+            SpendOnStop?.Invoke();
+            return BoundedStopReport;
         }
 
         public Task StopWatchdogAsync()
         {
             trace.Add("Background:StopWatchdog");
             return Task.CompletedTask;
+        }
+
+        public async Task<StopOutcome> StopWatchdogAsync(TimeSpan deadline)
+        {
+            trace.Add($"Background:StopWatchdog:{deadline.TotalSeconds}s");
+            await StopWatchdogAsync();
+            SpendOnStop?.Invoke();
+            return BoundedWatchdogOutcome;
         }
     }
 

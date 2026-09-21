@@ -117,6 +117,54 @@ public sealed class BoundedStopTests
     }
 
     [Fact]
+    public async Task TheBackgroundStopSpendsOneDeadlineAcrossItsOwnersNotOneEach()
+    {
+        // ONE DEADLINE FOR THE THREE. Streaming is inside an engine that ignores its cancel and eats
+        // the whole four seconds; the auto-stop (idle) and the preview (also held) are then given
+        // what is left - nothing - and a stop given nothing still cancels and observes: the auto-stop
+        // reports finished, the preview still running, and the report is in hand after the one
+        // advance of four seconds, with no second deadline registered for the preview.
+        var clock = new Deterministic.ManualClock();
+        var world = World.Create(clock);
+        world.PreviewEngine.HoldPreviews = true;
+        world.PreviewEngine.IgnoreCancel = true;
+        world.Engine.Hold = true;
+        var session = DictationSessionId.Create();
+        world.Session = session;
+        world.Capture.Take = FakeAudioCapture.Script((false, 200), (true, 3_000), (false, 1_200), (true, 500));
+        await world.Runtime.Preview.StartAsync(session);
+        await world.PreviewEngine.PreviewEntered.Task.WaitAsync(Patience);
+        world.PreviewEnabled = false;
+        world.Runtime.Streaming.Start(session);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        await world.Engine.Entered.Task.WaitAsync(Patience);
+
+        var started = clock.GetTimestamp();
+        var registered = clock.Registered;
+        var stop = world.Runtime.Background().StopAsync(TimeSpan.FromSeconds(4));
+        await clock.WhenRegistered(registered + 1).WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(4));
+
+        var report = await stop.WaitAsync(Patience);
+        Assert.Equal(StopOutcome.StillRunning, report.Streaming);
+        Assert.Equal(StopOutcome.Completed, report.AutoStop);
+        Assert.Equal(StopOutcome.StillRunning, report.Preview);
+        Assert.Equal(TimeSpan.FromSeconds(4), clock.GetElapsedTime(started));
+        Assert.Equal(registered + 1, clock.Registered);
+        Assert.True(world.Runtime.Preview.IsRunning);
+        Assert.True(world.Runtime.Streaming.IsRunning);
+        Assert.Equal(0, world.PreviewEngine.Stops);
+        Assert.True(world.PreviewEngine.Token!.Value.IsCancellationRequested, "given nothing, the preview's stop still cancelled");
+        Assert.Contains(null, world.View.Previews);
+
+        world.PreviewEngine.ReleasePreviews();
+        world.Engine.Release();
+        Assert.True((await world.Runtime.Background().StopAsync(Patience).WaitAsync(Patience)).Completed);
+        Assert.Equal(1, world.PreviewEngine.Stops);
+    }
+
+    [Fact]
     public async Task LatePreviewCallbackCannotRenderAfterClosure()
     {
         // THE ENGINE ANSWERS AFTER THE SCREEN CLOSED. The stop ran out of patience with the loop
@@ -351,17 +399,28 @@ public sealed class BoundedStopTests
         // retired, not dropped: the next stop reports still running until the old callback returns,
         // and completion only once every watch this owner armed has finished.
         var clock = new Deterministic.ManualClock();
-        var effects = new HoldingTimerEffects();
-        var watchdog = new RecordingWatchdog(effects, clock);
         var first = DictationSessionId.Create();
+        var effects = new HoldingTimerEffects(first);
+        var watchdog = new RecordingWatchdog(effects, clock);
         watchdog.Start(first, TimeSpan.FromSeconds(5));
         await clock.WhenRegistered(1).WaitAsync(Patience);
-        clock.Advance(TimeSpan.FromSeconds(5));
+        // ADVANCED OFF THE TEST THREAD. The clock runs the fired watch's continuation - and so the
+        // held callback - on the thread that advanced it; held on this thread, the test would be
+        // waiting on itself.
+        var advance = Task.Run(() => clock.Advance(TimeSpan.FromSeconds(5)));
         await effects.TimedOutEntered.Task.WaitAsync(Patience);
 
+        // THE SECOND WATCH RUNS TO ITS OWN TIMEOUT, whose callback is not held, so by the time the
+        // stop is asked for the only watch still running is the retired one - the stop's own join
+        // of the current watch finds it over and registers nothing, and the one timer the stop
+        // registers is the retired join's.
         var second = DictationSessionId.Create();
         watchdog.Start(second, TimeSpan.FromSeconds(5));
         Assert.True(watchdog.IsArmed);
+        await clock.WhenRegistered(2).WaitAsync(Patience);
+        await Task.Run(() => clock.Advance(TimeSpan.FromSeconds(5))).WaitAsync(Patience);
+        Assert.Equal([first, second], effects.TimedOutSessions);
+
         var registered = clock.Registered;
         var stop = watchdog.StopAsync(TimeSpan.FromSeconds(1));
         await clock.WhenRegistered(registered + 1).WaitAsync(Patience);
@@ -369,8 +428,9 @@ public sealed class BoundedStopTests
 
         Assert.Equal(StopOutcome.StillRunning, await stop.WaitAsync(Patience));
         effects.AllowTimedOutExit.SetResult();
+        await advance.WaitAsync(Patience);
         Assert.Equal(StopOutcome.Completed, await watchdog.StopAsync(Patience).WaitAsync(Patience));
-        Assert.Equal([first], effects.TimedOutSessions);
+        Assert.Equal([first, second], effects.TimedOutSessions);
     }
 
     [Fact]
@@ -526,7 +586,8 @@ public sealed class BoundedStopTests
     }
 
     /// <summary>Timer effects whose timeout callback is held until the test lets it go.</summary>
-    private sealed class HoldingTimerEffects : IRecordingTimerEffects
+    /// <summary>Timer effects whose timeout callback for one recording does not return until released.</summary>
+    private sealed class HoldingTimerEffects(DictationSessionId held) : IRecordingTimerEffects
     {
         public IAudioSnapshotSource? Audio => null;
 
@@ -543,8 +604,16 @@ public sealed class BoundedStopTests
         public void RecordingTimedOut(DictationSessionId sessionId)
         {
             TimedOutSessions.Add(sessionId);
+            if (sessionId != held)
+            {
+                return;
+            }
+
             TimedOutEntered.TrySetResult();
-            AllowTimedOutExit.Task.Wait(Patience);
+            if (!AllowTimedOutExit.Task.Wait(Patience))
+            {
+                throw new TimeoutException("the held timeout callback was never released");
+            }
         }
     }
 

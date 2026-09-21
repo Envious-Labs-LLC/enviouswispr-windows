@@ -197,7 +197,7 @@ public sealed class SessionBackgroundWorkTests
             engine.OnStopStarted = () => (streaming.IsRunning, autoStop.IsRunning);
             return new World
             {
-                Work = new SessionBackgroundWork(watchdog, preview, autoStop, streaming),
+                Work = new SessionBackgroundWork(watchdog, preview, autoStop, streaming, tracingClock),
                 Watchdog = watchdog,
                 Preview = preview,
                 AutoStop = autoStop,

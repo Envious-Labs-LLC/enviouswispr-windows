@@ -770,20 +770,25 @@ public sealed class DictationSessionCoordinatorTests
         await press.WaitAsync(Patience);
         await interruption.WaitAsync(Patience);
 
-        var clean = await coordinator.ShutdownAsync(Patience).WaitAsync(Patience);
+        var shutdown = await coordinator.ShutdownAsync(Patience).WaitAsync(Patience);
 
-        Assert.False(clean);
+        // A NOTIFICATION THAT THREW IS OVER, NOT OUTSTANDING: the teardown runs under the session,
+        // and the report says the shell's status line faulted, so the shutdown is not clean.
+        Assert.False(shutdown.Clean);
+        Assert.True(shutdown.SessionQuiescent);
+        Assert.Equal(ShutdownOutcome.Quiescent, shutdown.Outcome);
+        Assert.True(shutdown.ExpiryFaulted);
+        Assert.False(shutdown.ExpiriesOutstanding);
         Assert.Equal(1, executor.ShutdownCalls);
         Assert.True(executor.ShutdownRanUnderTheSession);
     }
 
     [Fact]
-    public async Task ANotificationStillInFlightAtShutdownIsWaitedForThroughBothWaitsAndThenTornDownBeside()
+    public async Task ANotificationStillInFlightAtShutdownIsWaitedForAndThenReportedNotTornDownBeside()
     {
         // A notification runs outside the session, so the gate says nothing about it. The shutdown
-        // asks for it in its first wait, finds the session free at once, asks again with the same
-        // patience, and only then tears down beside it and says so. Crossed on the manual clock: the
-        // first wait's timer, then the second wait's, then the reassessment's.
+        // waits its budget for it; when the budget is spent it says the notification is outstanding
+        // and tears nothing down beside it. Crossed on the manual clock.
         var executor = new BarrierExecutor { HoldExpiry = true };
         var clock = new Deterministic.ManualClock();
         await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
@@ -797,28 +802,29 @@ public sealed class DictationSessionCoordinatorTests
         await press.WaitAsync(Patience);
         await interruption.WaitAsync(Patience);
 
-        var drain = TimeSpan.FromSeconds(10);
-        var shutdown = coordinator.ShutdownAsync(drain);
+        var budget = TimeSpan.FromSeconds(10);
+        var shutdown = coordinator.ShutdownAsync(budget);
         await clock.WhenRegistered(2).WaitAsync(Patience);
-        Assert.Equal(drain, clock.NextDue);
-        clock.Advance(drain);
-        // The session is free, so the second wait ends at once and the reassessment registers its own.
-        await clock.WhenRegistered(4).WaitAsync(Patience);
+        Assert.Equal(budget, clock.NextDue);
         Assert.False(shutdown.IsCompleted);
         Assert.Equal(0, executor.ShutdownCalls);
-        clock.Advance(drain);
+        clock.Advance(budget);
 
-        Assert.False(await shutdown.WaitAsync(Patience));
-        Assert.Equal(1, executor.ShutdownCalls);
+        var report = await shutdown.WaitAsync(Patience);
+        Assert.Equal(ShutdownOutcome.Unclean, report.Outcome);
+        Assert.True(report.ExpiriesOutstanding);
+        Assert.False(report.CommandOutstanding);
+        Assert.Null(report.Teardown);
+        Assert.Equal(0, executor.ShutdownCalls);
         executor.ReleaseExpiry();
     }
 
     [Fact]
-    public async Task ACommandAndANotificationOutstandingTogetherShareTheSecondWaitNotExtendIt()
+    public async Task ACommandAndANotificationOutstandingTogetherShareOneBudget()
     {
-        // THE TWO WAITS ARE THE WHOLE BUDGET. The command finishes one second before the second wait
-        // ends; the notification is still out; the reassessment gets that one second, not a fresh
-        // ten, and the teardown starts at twenty seconds beside the notification.
+        // ONE BUDGET FOR EVERYTHING OUTSTANDING. The command finishes one second before the budget
+        // ends; the notification is still out when it does; the shutdown reports the notification
+        // outstanding and tears nothing down - not beside the notification, not at all.
         var executor = new BarrierExecutor { HoldExpiry = true };
         var clock = new Deterministic.ManualClock();
         await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
@@ -829,25 +835,59 @@ public sealed class DictationSessionCoordinatorTests
         clock.Advance(DictationSessionCoordinator.InterruptionPatience);
         await executor.Expired(SessionCommandKind.Interruption).WaitAsync(Patience);
 
-        var drain = TimeSpan.FromSeconds(10);
-        var shutdown = coordinator.ShutdownAsync(drain);
+        var budget = TimeSpan.FromSeconds(10);
+        var shutdown = coordinator.ShutdownAsync(budget);
         await clock.WhenRegistered(2).WaitAsync(Patience);
-        clock.Advance(drain);
-        // Inside the second wait now; nine of its ten seconds pass with the command still running.
-        await clock.WhenRegistered(3).WaitAsync(Patience);
-        clock.Advance(drain - TimeSpan.FromSeconds(1));
+        clock.Advance(budget - TimeSpan.FromSeconds(1));
         executor.Finish(PushToTalkSignal.Pressed);
         await press.WaitAsync(Patience);
         await interruption.WaitAsync(Patience);
-        // The session is held; the reassessment asks for the notification with the second that is left.
-        await clock.WhenRegistered(4).WaitAsync(Patience);
-        Assert.Equal(TimeSpan.FromSeconds(1), clock.NextDue);
+        Assert.False(shutdown.IsCompleted);
         Assert.Equal(0, executor.ShutdownCalls);
         clock.Advance(TimeSpan.FromSeconds(1));
 
-        Assert.False(await shutdown.WaitAsync(Patience));
-        Assert.Equal(1, executor.ShutdownCalls);
+        var report = await shutdown.WaitAsync(Patience);
+        Assert.Equal(ShutdownOutcome.Unclean, report.Outcome);
+        Assert.False(report.CommandOutstanding);
+        Assert.True(report.ExpiriesOutstanding);
+        Assert.Equal(0, executor.ShutdownCalls);
         executor.ReleaseExpiry();
+    }
+
+    [Fact]
+    public async Task ACommandAndANotificationBothStillOutWhenTheBudgetEndsAreBothReported()
+    {
+        // EACH KIND OF WORK IS READ FOR ITSELF. Both the command and the notification outlive the
+        // budget; the report names both - a report that inferred the notification from "the command
+        // was not the one" would say nothing about it here - and still nothing is torn down.
+        var executor = new BarrierExecutor { HoldExpiry = true };
+        var clock = new Deterministic.ManualClock();
+        await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        clock.Advance(DictationSessionCoordinator.InterruptionPatience);
+        await executor.Expired(SessionCommandKind.Interruption).WaitAsync(Patience);
+
+        var budget = TimeSpan.FromSeconds(10);
+        var shutdown = coordinator.ShutdownAsync(budget);
+        await clock.WhenRegistered(2).WaitAsync(Patience);
+        clock.Advance(budget);
+
+        var report = await shutdown.WaitAsync(Patience);
+        Assert.Equal(ShutdownOutcome.Unclean, report.Outcome);
+        Assert.True(report.CommandOutstanding);
+        Assert.True(report.ExpiriesOutstanding);
+        Assert.False(report.ExpiryFaulted);
+        Assert.Null(report.Teardown);
+        Assert.Equal(0, executor.ShutdownCalls);
+        Assert.True(executor.Closed);
+
+        executor.Finish(PushToTalkSignal.Pressed);
+        executor.ReleaseExpiry();
+        await press.WaitAsync(Patience);
+        await interruption.WaitAsync(Patience);
     }
 
     [Fact]
@@ -871,7 +911,9 @@ public sealed class DictationSessionCoordinatorTests
         Assert.False(shutdown.IsCompleted);
         executor.ReleaseExpiry();
 
-        Assert.True(await shutdown.WaitAsync(Patience));
+        var report = await shutdown.WaitAsync(Patience);
+        Assert.True(report.Clean);
+        Assert.Equal(ShutdownOutcome.Quiescent, report.Outcome);
         Assert.True(executor.ShutdownRanUnderTheSession);
     }
 
@@ -979,29 +1021,118 @@ public sealed class DictationSessionCoordinatorTests
         executor.Finish(PushToTalkSignal.Pressed);
         await press.WaitAsync(Patience);
 
-        Assert.True(await shutdown.WaitAsync(Patience));
+        var report = await shutdown.WaitAsync(Patience);
+        Assert.True(report.Clean);
         Assert.Equal(1, executor.ShutdownCalls);
         Assert.True(executor.ShutdownRanUnderTheSession);
+        // The teardown gets what is left of the budget: all of it, less the instants the waits took.
+        Assert.InRange(executor.TeardownDeadline!.Value, Patience - TimeSpan.FromSeconds(1), Patience);
     }
 
     [Fact]
-    public async Task ShutdownStillTearsDownWhenTheRunningCommandOutlivesBothWaits()
+    public async Task UncooperativeCommandReturnsUncleanWithoutDisposal()
     {
-        // The two waits the shell had: one for the queue, one for the gate. A command that outlives
-        // both - a three-minute transcription - is not waited for any longer than that; the teardown
-        // runs beside it, as the shell's did, and the answer says so.
+        // A COMMAND THAT DOES NOT FINISH INSIDE THE BUDGET IS LEFT WHAT IT HOLDS. The shutdown says
+        // the command is outstanding and runs no teardown beside it; the command finishes on its own
+        // terms afterwards, and its result is its own.
         var executor = new BarrierExecutor();
         await using var coordinator = new DictationSessionCoordinator(executor);
         var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
         await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
 
-        var clean = await coordinator.ShutdownAsync(TimeSpan.FromMilliseconds(100)).WaitAsync(Patience);
+        var report = await coordinator.ShutdownAsync(TimeSpan.FromMilliseconds(100)).WaitAsync(Patience);
 
-        Assert.False(clean);
-        Assert.Equal(1, executor.ShutdownCalls);
-        Assert.False(executor.ShutdownRanUnderTheSession);
+        Assert.Equal(ShutdownOutcome.Unclean, report.Outcome);
+        Assert.True(report.CommandOutstanding);
+        Assert.Null(report.Teardown);
+        Assert.False(report.Clean);
+        Assert.Equal(0, executor.ShutdownCalls);
         executor.Finish(PushToTalkSignal.Pressed);
         Assert.Equal(SessionCommandDisposition.Applied, (await press.WaitAsync(Patience)).Disposition);
+        Assert.Equal(0, executor.ShutdownCalls);
+    }
+
+    [Fact]
+    public async Task ShutdownClosesAdmissionSynchronously()
+    {
+        // BEFORE THE FIRST AWAIT. A press that lands after the call was made - on the same thread, no
+        // await in between - is refused, whatever the shutdown goes on to wait for.
+        var executor = new BarrierExecutor();
+        await using var coordinator = new DictationSessionCoordinator(executor);
+
+        var shutdown = coordinator.ShutdownAsync(Patience);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+
+        Assert.True(press.IsCompleted, "the press was answered without waiting");
+        Assert.Equal(SessionCommandDisposition.Stopping, (await press).Disposition);
+        Assert.Empty(executor.Seen);
+        Assert.True(executor.Closed, "the executor was told admission had closed");
+        Assert.True((await shutdown.WaitAsync(Patience)).Clean);
+    }
+
+    [Fact]
+    public async Task OutstandingHoldPreventsDisposal()
+    {
+        // AN UPDATE CHECK HOLDS THE SESSION. The shutdown waits its budget for the hold to be given
+        // back; not given back, it reports the hold outstanding and tears nothing down; given back
+        // inside the budget, it tears down under the session.
+        var executor = new BarrierExecutor();
+        var clock = new Deterministic.ManualClock();
+        await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
+        var hold = coordinator.TryHold();
+        Assert.NotNull(hold);
+
+        var budget = TimeSpan.FromSeconds(10);
+        var shutdown = coordinator.ShutdownAsync(budget);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        clock.Advance(budget);
+        var report = await shutdown.WaitAsync(Patience);
+
+        Assert.Equal(ShutdownOutcome.Unclean, report.Outcome);
+        Assert.Equal(1, report.HoldsOutstanding);
+        Assert.Null(report.Teardown);
+        Assert.Equal(0, executor.ShutdownCalls);
+        hold.Dispose();
+
+        // A second coordinator, whose hold is given back inside the budget.
+        var executor2 = new BarrierExecutor();
+        var clock2 = new Deterministic.ManualClock();
+        await using var coordinator2 = new DictationSessionCoordinator(executor2, clock: clock2);
+        var hold2 = coordinator2.TryHold();
+        var shutdown2 = coordinator2.ShutdownAsync(budget);
+        await clock2.WhenRegistered(1).WaitAsync(Patience);
+        Assert.False(shutdown2.IsCompleted);
+        hold2!.Dispose();
+        var report2 = await shutdown2.WaitAsync(Patience);
+
+        Assert.True(report2.Clean);
+        Assert.Equal(0, report2.HoldsOutstanding);
+        Assert.Equal(1, executor2.ShutdownCalls);
+        Assert.True(executor2.ShutdownRanUnderTheSession);
+    }
+
+    [Fact]
+    public async Task RepeatedShutdownSharesCompletion()
+    {
+        // ONE SHUTDOWN, HOWEVER OFTEN IT IS ASKED FOR. A second call while the first is waiting
+        // returns the first's task; a call after it has finished returns the same report; the
+        // teardown ran once.
+        var executor = new BarrierExecutor();
+        await using var coordinator = new DictationSessionCoordinator(executor);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+
+        var first = coordinator.ShutdownAsync(Patience);
+        var second = coordinator.ShutdownAsync(TimeSpan.FromSeconds(1));
+        Assert.Same(first, second);
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        var report = await first.WaitAsync(Patience);
+        var again = await coordinator.ShutdownAsync(Patience);
+
+        Assert.Same(report, again);
+        Assert.True(report.Clean);
+        Assert.Equal(1, executor.ShutdownCalls);
     }
 
     [Fact]
@@ -1219,11 +1350,18 @@ public sealed class DictationSessionCoordinatorTests
             }
         }
 
-        public Task ShutdownAsync()
+        public bool Closed { get; private set; }
+
+        public TimeSpan? TeardownDeadline { get; private set; }
+
+        public void Close() => Closed = true;
+
+        public Task<SessionTeardownReport> TearDownAsync(TimeSpan deadline)
         {
             ShutdownCalls++;
+            TeardownDeadline = deadline;
             ShutdownRanUnderTheSession = Volatile.Read(ref _running) == 0;
-            return Task.CompletedTask;
+            return Task.FromResult(SessionTeardownReport.Nothing);
         }
 
         private TaskCompletionSource KindSource(Dictionary<SessionCommandKind, TaskCompletionSource> sources, SessionCommandKind kind)

@@ -39,7 +39,13 @@ internal sealed class StopBudget(TimeSpan? deadline, TimeProvider clock)
 {
     private readonly long _started = clock.GetTimestamp();
 
-    /// <summary>The time left, floored at one millisecond so a join past the deadline still observes rather than skips; null without a deadline.</summary>
+    /// <summary>The time left; zero once the deadline has passed, null without a deadline.</summary>
+    /// <remarks>
+    /// NEVER INVENTED. A budget that has run out hands on zero, not a millisecond: a join given zero
+    /// still observes - it reports a loop that has finished as finished and one that has not as still
+    /// running - and takes no time doing it, so the phases of a stop together never exceed what the
+    /// stop was given.
+    /// </remarks>
     public TimeSpan? Remaining
     {
         get
@@ -50,9 +56,12 @@ internal sealed class StopBudget(TimeSpan? deadline, TimeProvider clock)
             }
 
             var remaining = limit - clock.GetElapsedTime(_started);
-            return remaining > TimeSpan.Zero ? remaining : TimeSpan.FromMilliseconds(1);
+            return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
         }
     }
+
+    /// <summary>The time left of a budget that has a deadline.</summary>
+    public TimeSpan Left => Remaining ?? throw new InvalidOperationException("The stop has no deadline.");
 
     /// <summary>Takes the gate inside what is left of the budget; false when the budget ran out first.</summary>
     public async Task<bool> TryEnterAsync(SemaphoreSlim gate)
@@ -61,6 +70,18 @@ internal sealed class StopBudget(TimeSpan? deadline, TimeProvider clock)
         {
             await gate.WaitAsync().ConfigureAwait(false);
             return true;
+        }
+
+        // A FREE GATE IS TAKEN WHATEVER IS LEFT: a budget already spent still lets the stop through
+        // to observe; it only refuses to wait.
+        if (gate.Wait(0))
+        {
+            return true;
+        }
+
+        if (remaining == TimeSpan.Zero)
+        {
+            return false;
         }
 
         using var patience = new CancellationTokenSource(remaining, clock);
