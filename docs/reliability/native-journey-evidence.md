@@ -45,9 +45,9 @@ the message count.
 | 2026-09-21 | 0.19.0+d313251 (step 10 branch) | edit | UiAutomationValue (`WM_SETTEXT` seen, no `WM_PASTE`, seed first) | yes | yes |
 | 2026-09-21 | 0.19.0+d313251 (step 10 branch) | caret-start | ClipboardPaste (`WM_PASTE` seen, seed last) | yes | yes |
 | 2026-09-21 | 0.19.0+d313251 (step 10 branch) | password | ClipboardOnly (`TextDeliveryRefused` / `DeliveryProtectedField`, field empty) | yes | yes |
-| 2026-09-21 | 0.19.0+df64faa | edit | UiAutomationValue (`WM_SETTEXT` seen, no `WM_PASTE`, seed first) | yes | yes |
-| 2026-09-21 | 0.19.0+df64faa | caret-start | ClipboardPaste (`WM_PASTE` seen, seed last; the clipboard sentinel placed before the delivery read back intact afterwards, `clipboardRestored` true) | yes | yes |
-| 2026-09-21 | 0.19.0+df64faa | password | ClipboardOnly (`TextDeliveryRefused` / `DeliveryProtectedField`, field empty) | yes | yes |
+| 2026-09-21 | 0.19.0+38df457 | edit | UiAutomationValue (`WM_SETTEXT` seen, no `WM_PASTE`, seed first) | yes | yes |
+| 2026-09-21 | 0.19.0+38df457 | caret-start | ClipboardPaste (`WM_PASTE` seen, seed last; the clipboard sentinel placed before the delivery read back intact afterwards, `clipboardRestored` true) | yes | yes |
+| 2026-09-21 | 0.19.0+38df457 | password | ClipboardOnly (`TextDeliveryRefused` / `DeliveryProtectedField`, field empty) | yes | yes |
 
 The caret-start run also observes clipboard restoration (plan-2 step 13): the harness places a sentinel
 line on the clipboard before the paste route runs and requires the same line back after the delivery,
@@ -64,11 +64,13 @@ reads that one. The instrument is proved before it is trusted: the target's own 
 clipboard emptied - a paste that changes nothing - and posts a settle request right behind it; a posted
 message outranks queued input, so a target that answered on the request itself would report no paste. The
 desk's clipboard is copied whole (every format) before it is emptied and put back when the window closes;
-a clipboard that cannot be copied whole is not touched and the self-test reports that instead (exit 3).
+a clipboard that cannot be copied whole (a stream that cannot seek, a value of an unknown kind) is not
+touched and the self-test reports that instead (exit 3); a copy that cannot be put back withdraws the
+verdict (exit 4).
 
 | Recorded | Build | Case | Observed | Passed |
 | --- | --- | --- | --- | --- |
-| 2026-09-21 | tools at df64faa | settle-self-test | settled receipt: `pasteMessages` 1, text unchanged (5 characters) | yes |
+| 2026-09-21 | tools at 38df457 | settle-self-test | settled receipt: `pasteMessages` 1, text unchanged (5 characters) | yes |
 
 A target mutated to answer the settle request synchronously fails this case (`pasteMessages` 0, exit 2);
 checked on this desk before the record was taken.
@@ -84,9 +86,9 @@ the log (its own code, not a policy refusal's), no `TextDeliveryCompleted`, and 
 
 | Recorded | Build | Target mode | Observed | Passed | Exited cleanly |
 | --- | --- | --- | --- | --- | --- |
-| 2026-09-21 | 0.19.0+df64faa | unverified-write | UiAutomationValueUnverified (`WM_SETTEXT` seen, field rewritten, `DeliveryUnverified` logged, no `WM_PASTE`) | yes | yes |
+| 2026-09-21 | 0.19.0+38df457 | unverified-write | UiAutomationValueUnverified (`WM_SETTEXT` seen, field rewritten, `DeliveryUnverified` logged, no `WM_PASTE`) | yes | yes |
 
-The four exit journeys above also passed on 0.19.0+df64faa (live-cable-parakeet, live-cable-whisper,
+The four exit journeys above also passed on 0.19.0+38df457 (live-cable-parakeet, live-cable-whisper,
 synthetic-quick-tap-preview, escape-recovery: passed, exited cleanly, no stray workers), all nine cases
 through `scripts/native-journeys.ps1` in one run. In the first
 eight-run sequence on the step-13 branch (build beb0bf9, before the fault fields landed) one
