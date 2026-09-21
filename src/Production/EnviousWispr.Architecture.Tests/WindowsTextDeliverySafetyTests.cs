@@ -295,6 +295,25 @@ public sealed class WindowsTextDeliverySafetyTests
             Assert.True(IsHandleType(narrowed), $"A UI Automation handle erased at line {Line(pattern)} (pattern {pattern}): {pattern.Parent}");
         }
 
+        // A DECONSTRUCTION IS A CONVERSION PER COMPONENT: `(object key, var facts) = captured` erases
+        // one element of a handle-bearing tuple while the destination as a whole still carries one.
+        // A handle-bearing value is not deconstructed at all; the string-only tuple the adapter
+        // takes apart carries none.
+        foreach (var assignment in adapter.DescendantNodes().OfType<AssignmentExpressionSyntax>())
+        {
+            var deconstructs = assignment.Left is TupleExpressionSyntax || assignment.Left is DeclarationExpressionSyntax { Designation: ParenthesizedVariableDesignationSyntax };
+            Assert.True(
+                !deconstructs || !IsHandleType(model.GetTypeInfo(assignment.Right).Type),
+                $"A UI Automation handle deconstructed at line {Line(assignment)}: {assignment}");
+        }
+
+        foreach (var loop in adapter.DescendantNodes().OfType<ForEachVariableStatementSyntax>())
+        {
+            Assert.True(
+                !IsHandleType(model.GetForEachStatementInfo(loop).ElementType),
+                $"A UI Automation handle deconstructed at line {Line(loop)}: foreach ({loop.Variable} in {loop.Expression})");
+        }
+
         // A SPREAD IS A LOOP WITHOUT A KEYWORD: `[.. collection]` enumerates a handle-bearing
         // collection into whatever element type the target names, `object[]` included. It is refused
         // wherever it stands; the adapter materialises nothing from UI Automation.
