@@ -216,7 +216,7 @@ public sealed class WindowsTextDeliverySafetyTests
                     _ => null,
                 };
                 Assert.True(
-                    answers is null || answers.SpecialType != SpecialType.System_Object,
+                    answers is null || !IsUntyped(answers),
                     $"An untyped UI Automation result at line {Line(expression)}: {expression.Parent}");
                 if (symbol is IMethodSymbol withOut && expression is InvocationExpressionSyntax outCall)
                 {
@@ -247,6 +247,20 @@ public sealed class WindowsTextDeliverySafetyTests
         }
 
         Assert.True(accesses >= 20, $"the scan resolved only {accesses} UI Automation calls; the adapter makes more than that, so the resolution is broken");
+
+        // A LOOP IS A CALL TOO: `foreach` over a handle-bearing collection asks it for an enumerator
+        // and each element - calls the expression scan does not see - so it happens inside the
+        // boundary or not at all, and an element it yields as `object` is an untyped result.
+        foreach (var loop in adapter.DescendantNodes().OfType<ForEachStatementSyntax>())
+        {
+            if (!IsHandleType(model.GetTypeInfo(loop.Expression).Type))
+            {
+                continue;
+            }
+
+            Assert.True(ExecutesInsideTheBoundary(loop.Expression, model, helpers), $"A UI Automation collection enumerated outside the boundary at line {Line(loop)}: {loop.Expression}");
+            Assert.True(!IsUntyped(model.GetForEachStatementInfo(loop).ElementType), $"An untyped UI Automation result at line {Line(loop)}: foreach over {loop.Expression}");
+        }
 
         // THE HELPERS ARE REFERRED TO FROM INSIDE THE BOUNDARY, ONCE EACH, AND FROM NOWHERE ELSE -
         // by symbol, so a qualified call or a delegate reference counts the same as the plain call.
@@ -372,6 +386,12 @@ public sealed class WindowsTextDeliverySafetyTests
                 return false;
         }
     }
+
+    /// <summary>A type that says nothing about what it holds: object, or a non-generic collection interface whose elements come out as object.</summary>
+    private static bool IsUntyped(ITypeSymbol? type) =>
+        type is not null &&
+        (type.SpecialType == SpecialType.System_Object ||
+         (type is INamedTypeSymbol { TypeKind: TypeKind.Interface, IsGenericType: false } && type.ContainingNamespace?.ToDisplayString() == "System.Collections"));
 
     /// <summary>The parameter an argument binds to, by name or by position.</summary>
     private static IParameterSymbol? ParameterFor(IMethodSymbol method, ArgumentSyntax argument)

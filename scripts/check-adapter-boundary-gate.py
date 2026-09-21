@@ -36,6 +36,9 @@ RUNTIME_ID_HELPER = "    private static string RuntimeId(AutomationElement eleme
 
 # Each mutation: a name, and the (anchor, replacement) edits that plant one escape.
 MUTATIONS: dict[str, list[tuple[str, str]]] = {
+    "foreach-outside-boundary": [(FOCUS_READ, "        foreach (var child in Automation(() => element.FindAll(TreeScope.Children, Condition.TrueCondition)))" + NL + "        {" + NL + "            _ = child.GetHashCode();" + NL + "        }" + NL + NL + FOCUS_READ)],
+    "foreach-untyped-inside-boundary": [(FOCUS_READ, "        _ = Automation(() => { var hashes = 0; foreach (var child in element.FindAll(TreeScope.Children, Condition.TrueCondition)) { hashes ^= child.GetHashCode(); } return hashes; });" + NL + FOCUS_READ)],
+    "enumerator-escapes-boundary": [(FOCUS_READ, "        var walk = Automation(() => element.FindAll(TreeScope.Children, Condition.TrueCondition).GetEnumerator());" + NL + "        _ = walk.MoveNext() ? walk.Current?.GetHashCode() : null;" + NL + FOCUS_READ)],
     "untyped-property-read": [(FOCUS_READ, "        var label = Automation(() => element.GetCurrentPropertyValue(AutomationElement.LabeledByProperty));" + NL + "        _ = label?.GetHashCode();" + NL + FOCUS_READ)],
     "untyped-cached-property-read": [(FOCUS_READ, "        var label = Automation(() => element.GetCachedPropertyValue(AutomationElement.LabeledByProperty));" + NL + "        _ = label?.GetHashCode();" + NL + FOCUS_READ)],
     "untyped-out-result-escapes": [(FOCUS_READ, "        var raw = Automation(() => element.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern) ? pattern : null);" + NL + "        _ = raw?.GetHashCode();" + NL + FOCUS_READ)],
@@ -75,7 +78,7 @@ MUTATIONS: dict[str, list[tuple[str, str]]] = {
 }
 
 # What the gate says when it catches an escape; any other failure is the wrong reason.
-CAUGHT_MARKERS = ("outside the boundary", "captured instead of called", "Assert.Single() Failure", "dynamically dispatched call", "reflective call", "handle used outside the boundary", "handle erased", "untyped UI Automation result")
+CAUGHT_MARKERS = ("outside the boundary", "captured instead of called", "Assert.Single() Failure", "dynamically dispatched call", "reflective call", "handle used outside the boundary", "handle erased", "untyped UI Automation result", "enumerated outside the boundary")
 
 
 def run_gate() -> str:
