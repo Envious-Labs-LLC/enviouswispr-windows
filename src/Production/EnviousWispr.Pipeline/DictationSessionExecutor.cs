@@ -266,7 +266,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             {
                 await _background.StopWatchdogAsync().ConfigureAwait(false);
                 var result = await _controller.ReleaseAsync(CancellationToken.None).ConfigureAwait(false);
-                _effects.RecordTransition(result);
+                RecordTransition(result);
                 if (result.Kind == SessionTransitionKind.FinalizeReady &&
                     result.Session is not null &&
                     result.Audio is not null)
@@ -307,6 +307,23 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             ReleaseProcessingDeadline();
             await _effects.RecordDictationEdgeAsync().ConfigureAwait(false);
         }
+    }
+
+    /// <summary>Records a transition, and lets go of the Escape setting when the transition ends the recording without a finalisation.</summary>
+    /// <remarks>
+    /// EVERY TRANSITION PASSES HERE, whichever command produced it. The shell cleared the flag inside
+    /// the one method that logged a transition, so a release that failed under a lock cleared it as
+    /// surely as a key's cancel did; keeping that one site is what keeps the next recording from
+    /// inheriting a setting the previous one was started with.
+    /// </remarks>
+    private void RecordTransition(SessionTransitionResult result)
+    {
+        if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
+        {
+            _escapeRecoveryForSession = false;
+        }
+
+        _effects.RecordTransition(result);
     }
 
     private Task RecoverInterruptedAsync(AppErrorCode code, SessionFailureKind kind) =>
@@ -441,7 +458,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             using var dictation = interrupted is { } known
                 ? DictationScope.Begin(known)
                 : NoScope.Instance;
-            _effects.RecordTransition(result);
+            RecordTransition(result);
             if (result.Kind == SessionTransitionKind.Started && result.Session is not null)
             {
                 _escapeRecoveryForSession = _effects.EscapeRecoveryEnabled;
@@ -459,7 +476,6 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             }
             else if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
             {
-                _escapeRecoveryForSession = false;
                 await _background.StopAsync().ConfigureAwait(false);
                 await _controller.ResetAsync(none).ConfigureAwait(false);
             }

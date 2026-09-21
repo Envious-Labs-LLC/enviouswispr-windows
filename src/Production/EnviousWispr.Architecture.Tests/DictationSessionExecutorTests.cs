@@ -50,13 +50,20 @@ public sealed class DictationSessionExecutorTests
     {
         var (executor, capture, effects, controller, world) = BuildWithFinalization(resources: LowDisk);
         effects.EscapeRecoveryEnabled = true;
+        bool? persistenceAllowedAsCaptureOpened = null;
+        capture.StartResultFactory = _ =>
+        {
+            persistenceAllowedAsCaptureOpened = world.Persistence.CanPersistRecovery;
+            return new AudioOperationResult(Succeeded: true);
+        };
 
         var result = await executor.ExecuteAsync(Press(), CancellationToken.None);
 
         Assert.Equal(1, capture.StartCount);
         Assert.Equal(DictationSessionState.Recording, controller.CurrentSession?.State);
         Assert.True(executor.EscapeRecoveryForSession, "the recording carries the setting it was started with");
-        Assert.False(world.Persistence.CanPersistRecovery, "the persistence owner is told before the recording starts");
+        Assert.False(persistenceAllowedAsCaptureOpened, "the persistence owner is told before the microphone opens");
+        Assert.False(world.Persistence.CanPersistRecovery);
         Assert.Equal(
             ["RecordResourcePressure:LowDiskSpace", "ShowDiskLow", "RecordTransition:Started", "RecordingSettings", "Background:Start", "ShowTransitionStatus:Started", "RecordDictationEdge"],
             effects.Trace);
@@ -179,13 +186,26 @@ public sealed class DictationSessionExecutorTests
         world.Finalization.Throws = true;
         var states = new List<DictationSessionState>();
         controller.SessionChanged += (_, snapshot) => states.Add(snapshot.State);
+        // The first stop is the finalisation's own; the recovery's is the second, and it is held so
+        // that what the controller looks like while the background work is still stopping is visible.
+        TracingBackgroundWork.Instance!.HoldStop = true;
+        TracingBackgroundWork.Instance.HoldFromCall = 2;
 
-        var result = await executor.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
+        var release = executor.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
+        await TracingBackgroundWork.Instance.StopEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(DictationSessionState.Finalizing, controller.CurrentSession?.State);
+        Assert.Equal([DictationSessionState.Finalizing], states);
+        Assert.DoesNotContain(effects.Trace, entry => entry.StartsWith("RecordSessionRecovered:", StringComparison.Ordinal));
+
+        TracingBackgroundWork.Instance.AllowStopExit.SetResult();
+        var result = await release.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
         Assert.Null(controller.CurrentSession);
         Assert.Equal(recording?.Id, result.Session?.Id);
-        // Finalizing on the release, Failed on the abort, then the reset - one abort, one reset.
+        // Finalizing on the release, Failed on the abort, then the reset - one abort, one reset, both
+        // after the held stop was let go.
         Assert.Equal([DictationSessionState.Finalizing, DictationSessionState.Failed], states);
         Assert.Equal(1, capture.StopCount);
         Assert.Equal(0, capture.CancelCount);
@@ -243,6 +263,37 @@ public sealed class DictationSessionExecutorTests
             ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "ShowInterruptionPreserving:SessionLocked", "Finalize:recoveryOnly=False", "RecordDictationEdge"],
             effects.Trace);
         Assert.Single(finalization.Finalized);
+    }
+
+    [Fact]
+    public async Task AnInterruptionWhoseReleaseFailsLetsGoOfTheEscapeSettingBeforeRecovering()
+    {
+        // ESCAPE RECOVERY WAS ON WHEN THE RECORDING STARTED. Windows locks, the microphone hands back an
+        // error and no audio, so the release fails and nothing is finalised. The shell cleared the
+        // setting at the transition; so must the executor, or the next recording inherits it.
+        var (executor, capture, effects, controller) = Build();
+        effects.EscapeRecoveryEnabled = true;
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        Assert.True(executor.EscapeRecoveryForSession);
+        effects.Trace.Clear();
+        capture.StopAudioFactory = id => new CapturedAudio(
+            id,
+            ReadOnlyMemory<float>.Empty,
+            SampleRate: 16_000,
+            Channels: 1,
+            AudioCaptureOutcome.Interrupted,
+            new AppError(AppErrorCode.AudioDeviceLost, AppErrorStage.AudioCapture, CanRetry: true));
+        bool? escapeAsRecoveryRan = null;
+        effects.OnSessionRecovered = () => escapeAsRecoveryRan = executor.EscapeRecoveryForSession;
+
+        var result = await executor.ExecuteAsync(Interruption(SystemLifecycleTransition.SessionLocked), CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Applied, result.Disposition);
+        Assert.Null(controller.CurrentSession);
+        Assert.False(executor.EscapeRecoveryForSession);
+        Assert.False(escapeAsRecoveryRan, "the setting was still held when the recovery ran");
+        Assert.Equal("RecordTransition:Failed", effects.Trace[1]);
+        Assert.Contains("RecordSessionRecovered:Cancelled", effects.Trace);
     }
 
     [Fact]
@@ -668,10 +719,14 @@ public sealed class DictationSessionExecutorTests
         /// <summary>Whether the executor still holds the command's processing deadline; read at recovery time.</summary>
         public Func<bool>? IsProcessing { get; set; }
 
+        /// <summary>Runs as the recovery is recorded; what the executor holds at that moment is visible to it.</summary>
+        public Action? OnSessionRecovered { get; set; }
+
         public void RecordSessionRecovered(AppError failure)
         {
             Trace.Add($"RecordSessionRecovered:{failure.Code}");
             DeadlineArmedDuringRecovery = IsProcessing?.Invoke() == true;
+            OnSessionRecovered?.Invoke();
         }
 
         public void ShowSessionRecovered(SessionFailureKind kind) => Trace.Add($"ShowSessionRecovered:{kind}");
@@ -835,11 +890,15 @@ public sealed class DictationSessionExecutorTests
             return Task.FromResult(result);
         }
 
+        public Func<DictationSessionId, CapturedAudio>? StopAudioFactory { get; set; }
+
         public Task<CapturedAudio> StopAsync(CancellationToken cancellationToken = default)
         {
             StopCount++;
             IsCapturing = false;
-            return Task.FromResult(new CapturedAudio(_sessionId, OneSample, SampleRate: 16_000, Channels: 1));
+            return Task.FromResult(
+                StopAudioFactory?.Invoke(_sessionId) ??
+                new CapturedAudio(_sessionId, OneSample, SampleRate: 16_000, Channels: 1));
         }
 
         public Task<AudioOperationResult> CancelAsync(CancellationToken cancellationToken = default)
