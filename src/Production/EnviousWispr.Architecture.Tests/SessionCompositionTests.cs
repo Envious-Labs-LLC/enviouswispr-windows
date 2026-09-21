@@ -790,6 +790,9 @@ public sealed class SessionCompositionTests
         public Task<bool> NoteSystemEndingAsync(Guid runId, DateTimeOffset timestamp, CancellationToken cancellationToken = default) => Task.FromResult(true);
 
         public Task<bool> CompleteRunAsync(Guid runId, DateTimeOffset timestamp, CancellationToken cancellationToken = default) => Task.FromResult(true);
+
+        public Task<bool> CompleteRunAsync(Guid runId, DateTimeOffset timestamp, PublicationFence fence, CancellationToken cancellationToken = default) =>
+            Task.FromResult(fence.TryCommit(() => { }));
     }
 
     /// <summary>A speech engine that can be held mid-call and honours the cancel it is handed.</summary>

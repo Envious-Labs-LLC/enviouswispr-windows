@@ -37,11 +37,12 @@ they are the reason the log beats every other source:
 
 | Last seen | What it proves |
 | --- | --- |
-| `ApplicationCleanShutdown` | The whole teardown succeeded and the run was completed in `run-state.json`. |
-| `ShellClosed` but no `ApplicationCleanShutdown` | The app chose to exit and something in teardown failed. |
+| `ApplicationCleanShutdown` alone | The run was completed in `run-state.json` and the exit concluded: everything the run had to finish finished inside the budget. |
+| `ApplicationCleanShutdown` with `ApplicationExitEscalated` after it | The run's completion reached disk, but the exit did not conclude: the writer's tail or the log's closing outlived the budget and the host was ended by force. The next launch reads a clean run; the exit was not clean. |
+| `ShellClosed` but no `ApplicationCleanShutdown` | The app chose to exit and the run was not completed: something failed, something outlived the budget (`ApplicationExitEscalated` says what, when the log could be written), or the session was not quiescent (`ApplicationShutdownUnclean`). |
 | Neither | **The app never chose to exit.** Something outside it ended the process. |
 
-`App.PrepareForExitCoreAsync` writes `ShellClosed`, and it sits on the far side of every exit the app can
+`App.PrepareForExitAsync`, through the lifetime's shell-closing step, writes `ShellClosed`, and it sits on the far side of every exit the app can
 choose: tray Exit, both `ENVIOUSWISPR_UAT_*` exit variables, a window close with `_exitRequested`, and
 update-apply. So the absence of `ShellClosed` eliminates all of them at once rather than leaving them as
 suspicions to test one at a time. Measured 2026-08-30: zero `ShellClosed` across 22 launches on the test

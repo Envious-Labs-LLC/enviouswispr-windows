@@ -20,6 +20,9 @@ public enum AppEventCode
 
     /// <summary>The shutdown ended with something still running - a command, a notification, a hold - and tore nothing down beside it.</summary>
     ApplicationShutdownUnclean,
+
+    /// <summary>The exit budget ran out with work still outstanding; what it used was kept, and the host was told to end.</summary>
+    ApplicationExitEscalated,
     DuplicateInstanceRejected,
     DuplicateInstanceActivated,
     SettingsLoaded,

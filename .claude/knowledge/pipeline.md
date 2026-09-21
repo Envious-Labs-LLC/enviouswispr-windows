@@ -60,11 +60,41 @@ remain wordless designs.
   (`CommandOutstanding`, `ExpiriesOutstanding`, `ExpiryFaulted`, `HoldsOutstanding`) and **nothing is
   torn down beside it**; the command ends on its own terms later, and the shell disposes the engines,
   the polish provider, the arbiter, the owners, the stores and the run-state store only when `SessionQuiescent` says nothing
-  uses them (a gate reads that guard from `App.xaml.cs`). Delivery's closure and its admission are one
+  uses them (the lifetime below). Delivery's closure and its admission are one
   decision under one lock in the runner: a delivery admitted is issued at once and settles inside the
   command; one not yet admitted when the closure lands is never issued. A second call shares the
   first's completion. Cancelling the finalisation in flight is the shell's exit policy, made before it
-  asks for the shutdown (step 9 owns the total budget). The
+  asks for the shutdown. **The exit itself is `ApplicationLifetime`** (plan-2 step 9,
+  `App/Composition/ApplicationLifetime.cs`, proved in `ApplicationLifetimeTests` and by a child process,
+  `EnviousWispr.ExitProbe`): one twenty-second budget from the first step - admission closed before the
+  first await, then the settings drain - through the shell closing, the input sources, the session's
+  shutdown under what is left, the polish warm-up and heartbeat joins, the disposals, the run's
+  completion and the log; every step joined under the remainder and named in the `ExitReport` if it
+  did not finish or threw. The session's dependencies (engines, polish provider, arbiter, owners,
+  stores) run only behind a quiescent session with nothing outstanding, in dependency order, and the
+  first disposal that does not finish stops the rest. The run's completion is the last of the run's
+  work: written only by an exit with nothing outstanding, nothing failed and a clean session, under the remainder, with a token cancelled when it runs out (a
+  write not begun by the deadline never begins) and through a `PublicationFence` the store commits under
+  and the exit abandons under (`Core/Reliability/PublicationFence.cs`): the record is never replaced
+  after the exit stopped waiting, and if it was replaced first the exit reports the run completed. The
+  store also refuses any write once the record on disk belongs to another launch, and the single-instance
+  lock is held to the process's end so no other launch begins one before this completion lands. After
+  the completion only the two handles that wrote it are closed - the store, only once nothing that
+  writes to it is outstanding (a heartbeat, a completion, a session's last edge), and the log, always -
+  both reported. `ApplicationCleanShutdown` mirrors the record - it says the completion reached disk,
+  not that the exit concluded: a writer's tail or the log's closing that outlives the budget leaves
+  `ApplicationExitEscalated` beside it (see `diagnostics.md`). Diagnostic closure is not the run's work:
+  a log that will not close makes the report unclean and ends the host, but a completion already
+  committed stands. The verdict is taken after the log closes. Anything retained or outstanding means the host is told to end (`IHostTerminator`, exit
+  code 70, `ApplicationExitEscalated` logged first): arbitrary in-process work cannot be joined by force,
+  so the process ends with it still owned and the next launch reads an interrupted run; a timeout is
+  never called clean. A step that blocks its thread can never be joined, so a watchdog timer on the
+  clock's own thread stands two seconds behind the budget (`WatchGrace`: twenty seconds to conclude,
+  twenty-two before the host is ended regardless) and ends the host from there, naming the step; its log
+  line is attempted, not waited for. Every path out (tray, window, update, system ending) shares the same
+  two cached tasks, so no step runs twice. The shell keeps only its UI-thread unsubscriptions, the
+  window's destruction and the steps' bodies; a gate reads `LifetimeParts()` to hold the session's
+  dependencies to the guarded lists. The
   executor owns the order of the background work around a recording (watchdog, preview, auto-stop,
   streaming), the three-minute processing deadline - armed before the background work is stopped so
   it covers the preview's worker being waited for, cancelled by a lock, a suspend or the exit

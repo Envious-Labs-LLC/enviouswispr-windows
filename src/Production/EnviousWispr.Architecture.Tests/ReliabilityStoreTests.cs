@@ -146,6 +146,33 @@ public sealed class ReliabilityStoreTests
         Assert.Equal(RecoveryTextLoadStatus.Found, (await store.LoadAsync()).Status);
     }
 
+    [Fact]
+    public async Task ACompletionAfterAnotherLaunchTookTheRecordIsRefused()
+    {
+        // OWNERSHIP IS THE RECORD ON DISK, NOT WHAT THIS STORE LAST WROTE. A second launch has begun a
+        // run on the same file - as one would if the first's lock were gone before its completion
+        // landed - and the first's late completion, heartbeat and edge are all refused: the record
+        // stays the second launch's, in flight.
+        using var temp = new TemporaryDirectory();
+        var path = Path.Combine(temp.Path, "run-state.json");
+        using var first = new JsonApplicationRunStateStore(path);
+        var firstRun = await first.BeginRunAsync(Timestamp(0));
+        using var second = new JsonApplicationRunStateStore(path);
+        var secondRun = await second.BeginRunAsync(Timestamp(1));
+        Assert.Equal(RunStateLoadStatus.PreviousRunInterrupted, secondRun.Status);
+
+        Assert.False(await first.CompleteRunAsync(firstRun.RunId, Timestamp(2)));
+        Assert.False(await first.CompleteRunAsync(firstRun.RunId, Timestamp(2), new PublicationFence()));
+        Assert.False(await first.HeartbeatAsync(firstRun.RunId, Timestamp(2)));
+        Assert.False(await first.SetDictationActiveAsync(firstRun.RunId, true, Timestamp(2)));
+
+        using var third = new JsonApplicationRunStateStore(path);
+        var thirdRun = await third.BeginRunAsync(Timestamp(3));
+        Assert.Equal(RunStateLoadStatus.PreviousRunInterrupted, thirdRun.Status);
+        Assert.NotEqual(firstRun.RunId, thirdRun.RunId);
+        Assert.True(await second.CompleteRunAsync(secondRun.RunId, Timestamp(4)) == false, "the second launch's record was taken by the third");
+    }
+
     private sealed class TemporaryDirectory : IDisposable
     {
         public TemporaryDirectory()
