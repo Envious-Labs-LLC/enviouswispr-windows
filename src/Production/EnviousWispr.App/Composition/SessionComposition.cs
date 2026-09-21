@@ -35,16 +35,14 @@ public sealed record SessionShell(
 /// <summary>Everything the session's production wiring is built from.</summary>
 /// <remarks>
 /// THE SHELL CHOOSES THE CONCRETE THINGS - which capture, which probe, which stores - and hands them
-/// here; this file decides how they are joined. The test project compiles this file as its own, so
+/// here with the long-lived owners <see cref="RuntimeComposition"/> built; this file decides how
+/// they are joined. The test project compiles this file as its own, so
 /// the joins a test drives are the joins the app runs, not a copy of them.
 /// </remarks>
 public sealed record SessionCompositionParts(
     PushToTalkSessionController Controller,
     IAudioCapture Capture,
-    SessionBackgroundWork Background,
-    TranscriptFinalizer Finalizer,
-    SessionPersistence Persistence,
-    StreamingTranscriptionController Streaming,
+    SessionRuntime Runtime,
     ISystemResourceProbe Resources,
     IApplicationRunStateStore RunState,
     IAppLogger Logger,
@@ -64,18 +62,19 @@ public static class SessionComposition
     public static DictationSessionCoordinator Compose(SessionCompositionParts parts)
     {
         ArgumentNullException.ThrowIfNull(parts);
+        var runtime = parts.Runtime;
         var runner = new SessionFinalizationRunner(
             parts.Controller,
-            parts.Finalizer,
-            parts.Persistence,
-            parts.Streaming,
+            runtime.Finalizer,
+            runtime.Persistence,
+            runtime.Streaming,
             new SessionFinalizationEffects(parts),
             parts.Clock);
         var executor = new DictationSessionExecutor(
             parts.Controller,
-            parts.Background,
+            runtime.Background(),
             runner,
-            parts.Persistence,
+            runtime.Persistence,
             parts.Resources,
             new SessionEffects(parts));
         // Built beside the controller so a press captures its target and delivery choice from the
