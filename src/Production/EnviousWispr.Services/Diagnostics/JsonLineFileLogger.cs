@@ -93,7 +93,21 @@ public sealed class JsonLineFileLogger : IAppLogger
 
                 var line = Serialize(LocalDiagnosticLine.From(record, dictationId))
                     + Environment.NewLine;
-                File.AppendAllText(_path, line);
+                // OPENED SHARING READS AND WRITES. Windows checks every open against every handle
+                // already there, both ways: a reader that shares only reads blocks this append (and
+                // is the reader's to fix - the journey harness now shares writes), and a reader that
+                // arrives while this handle is open is refused unless this handle shares reads and
+                // writes. The lost line is the app's, either way, since diagnostics are best-effort.
+                using (var stream = new FileStream(
+                    _path,
+                    FileMode.Append,
+                    FileAccess.Write,
+                    FileShare.ReadWrite | FileShare.Delete))
+                using (var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true)))
+                {
+                    writer.Write(line);
+                }
+
                 if (new FileInfo(_path).Length > MaximumFileBytes)
                 {
                     TrimToCapacityUnsafe();
