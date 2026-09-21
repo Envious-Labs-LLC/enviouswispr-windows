@@ -28,11 +28,14 @@ public sealed record LifetimeStep(string Name, Func<Task> Run)
 /// <param name="ShellClosing">What the shell does once the settings are safe and before anything is torn down: its windows, its own log line.</param>
 /// <param name="AbortPolishRuntime">
 /// The shell's exit policy for the local polish runtime, run right after the shell closes and before
-/// the finalisation is cancelled or the session asked to shut down: the runtime's process is ended by
-/// force, synchronously - killed with its tree and its handles disposed before this returns - so a
-/// polish in flight fails at once and the finalisation goes on with the unpolished words rather than
-/// holding the budget for an answer that is not coming. The provider's own disposal, later, finds
-/// nothing to stop. Nothing when no local runtime was started.
+/// the finalisation is cancelled or the session asked to shut down. What it does, exactly: the
+/// runtime's endpoint is forgotten, the owned process is taken from its owner, a kill of it and its
+/// tree is issued if it has not exited, and its handle and job are disposed - all before this
+/// returns. What it does not do: observe the process's exit, or decide the finalisation's outcome.
+/// A polish in flight loses its connection; the provider retries a failed request once against an
+/// endpoint that is gone and then answers with its fallback, or its cancellation lands first through
+/// the exit policy - which of the two is the finaliser's, not this step's. The provider's own
+/// disposal, later, finds no process to stop. Nothing when no local runtime was started.
 /// </param>
 /// <param name="CancelProcessing">The shell's exit policy for a transcription in flight, made before the session is asked to shut down.</param>
 /// <param name="ReleaseInputs">The input sources, unsubscribed and disposed first so nothing new arrives.</param>
@@ -139,9 +142,10 @@ public interface IHostTerminator
 /// report's clean verdict and ends the host, but the completion already committed stands, because
 /// everything the run had to finish had finished.
 ///
-/// PREPARED ONCE, EXITED ONCE. Every path out of the app - the tray, the window, an update, a system
-/// ending - reaches the same two cached tasks; a second caller shares the first's completion and no
-/// step runs twice.
+/// PREPARED ONCE, EXITED ONCE. Every path out of the app - the tray, the window, an update, the
+/// shell's disposal - reaches the same two cached tasks; a second caller shares the first's
+/// completion and no step runs twice. A Windows session ending is not a path out: the shell notes it
+/// in the run state and the process may be killed before any of this runs.
 /// </remarks>
 public sealed class ApplicationLifetime
 {

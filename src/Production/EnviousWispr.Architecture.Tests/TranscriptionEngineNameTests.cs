@@ -792,6 +792,42 @@ public sealed partial class DesignSystemTokenTests
     /// the lifetime and not around it. The App itself cannot be run here, so this is read from its
     /// source.
     /// </remarks>
+    /// <summary>
+    /// The Quick Add borrows the delivery adapter, which the session's teardown disposes, so it may
+    /// touch the adapter only under a presentation lease - the one thing the exit joins before it asks
+    /// the session to shut down. The App cannot be run here; this is read from its source.
+    /// </summary>
+    [Fact]
+    public void TheQuickAddBorrowsTheAdapterOnlyUnderAPresentationLease()
+    {
+        var root = FindRepositoryRoot();
+        var shell = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+        var tree = CSharpSyntaxTree.ParseText(shell).GetRoot();
+        var methods = tree.DescendantNodes().OfType<MethodDeclarationSyntax>().ToArray();
+
+        // THE HANDLER TAKES THE LEASE BEFORE ANYTHING ELSE and runs the borrow inside `using (lease)`.
+        var handler = methods.Single(method => method.Identifier.ValueText == "HandleQuickAddAsync");
+        Assert.Contains("presentation.TryEnter(out var lease)", handler.ToString(), StringComparison.Ordinal);
+        var usingLease = handler.DescendantNodes().OfType<UsingStatementSyntax>()
+            .Single(statement => statement.Expression?.ToString() == "lease");
+        var borrow = usingLease.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Single(call => call.Expression.ToString().EndsWith("QuickAddUnderLeaseAsync", StringComparison.Ordinal));
+        Assert.Contains("lease", borrow.ArgumentList.Arguments.Select(argument => argument.ToString()));
+
+        // EVERY TOUCH OF THE ADAPTER IN THE BORROW RUNS UNDER THE LEASE'S TOKEN, and nothing of the
+        // handler outside the lease touches it.
+        var underLease = methods.Single(method => method.Identifier.ValueText == "QuickAddUnderLeaseAsync");
+        static string Compact(SyntaxNode node) => string.Concat(node.ToString().Where(character => !char.IsWhiteSpace(character)));
+        var adapterCalls = underLease.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Where(call => Compact(call.Expression) is "adapter.CaptureContextAsync" or "WindowsTextTargetAdapter.TryReadSelectionWithCopyAsync")
+            .ToArray();
+        Assert.Equal(2, adapterCalls.Length);
+        Assert.All(adapterCalls, call => Assert.Contains("lease.Closing", call.ArgumentList.Arguments.Select(argument => argument.ToString())));
+        Assert.DoesNotContain(
+            handler.DescendantNodes().OfType<MemberAccessExpressionSyntax>(),
+            access => access.Name.Identifier.ValueText is "CaptureContextAsync" or "TryReadSelectionWithCopyAsync");
+    }
+
     [Fact]
     public void WhatTheSessionUsesIsHandedToTheLifetimeUnderItsGuardedListsOnly()
     {

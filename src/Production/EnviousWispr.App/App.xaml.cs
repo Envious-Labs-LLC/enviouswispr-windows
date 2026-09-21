@@ -986,7 +986,9 @@ public partial class App : Application, IAsyncDisposable
     }
 
     /// <summary>
-    /// Leaving, shared by every path out - the tray, the window, an update, a system ending: admission
+    /// Leaving, shared by every path out - the tray, the window, an update, the shell's own disposal
+    /// (a Windows session ending is a notification, not a path out: the run-state note is written
+    /// and the process may be killed before anything here runs): admission
     /// closes before the first await and the exit budget starts; the settings write finishes; the shell
     /// closes its windows; then the exit under the one budget - the session shut down by its owner,
     /// what it used disposed only once nothing uses it, the run completed only when everything
@@ -1835,12 +1837,27 @@ public partial class App : Application, IAsyncDisposable
 
     private async Task HandleQuickAddAsync()
     {
+        // ADMITTED LIKE A PRESENTER'S OPERATION. This borrows the delivery adapter - the thing the
+        // session's teardown disposes - and ends on the window; the lease is what the exit's first
+        // step, the presentation drain, joins before the session is asked to shut down, so the
+        // adapter is never disposed under a read still inside it, and an operation admitted after
+        // the drain began is refused here rather than half-run.
         if (_exitRequested || _disposed || _textTargetAdapter is null ||
-            _sessionController?.CurrentSession is not null)
+            _sessionController?.CurrentSession is not null ||
+            _presentation is not { } presentation ||
+            !presentation.TryEnter(out var lease))
         {
             return;
         }
 
+        using (lease)
+        {
+            await QuickAddUnderLeaseAsync(lease).ConfigureAwait(false);
+        }
+    }
+
+    private async Task QuickAddUnderLeaseAsync(PresentationAdmission.Lease lease)
+    {
         var target = new WindowsForegroundTargetProvider().CaptureForegroundTarget();
         if (target is null || !target.Value.IsValid)
         {
@@ -1852,9 +1869,22 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        var context = await _textTargetAdapter.CaptureContextAsync(
+        var adapter = _textTargetAdapter;
+        if (adapter is null)
+        {
+            return;
+        }
+
+        var context = await adapter.CaptureContextAsync(
             target.Value,
-            TextDeliveryOptions.Default).ConfigureAwait(false);
+            TextDeliveryOptions.Default,
+            lease.Closing).ConfigureAwait(false);
+        // NOTHING LATE. The drain began while the read was out: no clipboard borrow, no window.
+        if (lease.Closing.IsCancellationRequested)
+        {
+            return;
+        }
+
         var published = context.Status == TargetContextStatus.Available
             ? context.Context?.Selection.Trim()
             : null;
@@ -1881,8 +1911,13 @@ public partial class App : Application, IAsyncDisposable
             case SelectionAcquisition.SyntheticCopy:
                 // Static because it holds no state - it borrows the clipboard and gives it back.
                 selection = await WindowsTextTargetAdapter
-                    .TryReadSelectionWithCopyAsync(CancellationToken.None)
+                    .TryReadSelectionWithCopyAsync(lease.Closing)
                     .ConfigureAwait(false);
+                if (lease.Closing.IsCancellationRequested)
+                {
+                    return;
+                }
+
                 selection = selection?.Trim();
                 message = string.IsNullOrWhiteSpace(selection)
                     ? "Nothing was selected in that app. Select a misheard word, then try the shortcut again."
