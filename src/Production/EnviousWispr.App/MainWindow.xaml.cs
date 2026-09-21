@@ -101,9 +101,13 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private static int SelectedIndexOf(SelectableChoiceOption[] choices)
     {
-        var index = Array.FindIndex(choices, choice => choice.IsSelected);
+        var index = RawSelectedIndexOf(choices);
         return index >= 0 ? index : 0;
     }
+
+    /// <summary>The selected index as it is, -1 for nothing selected: what the General save hands the presenter, which decides what a missing choice means.</summary>
+    private static int RawSelectedIndexOf(SelectableChoiceOption[] choices) =>
+        Array.FindIndex(choices, choice => choice.IsSelected);
 
     private static void SelectChoice(SelectableChoiceOption[] choices, int index)
     {
@@ -1135,11 +1139,14 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private async void SaveSettingsButton_Click(object sender, RoutedEventArgs e)
     {
+        // RAW, INCLUDING "NOTHING SELECTED": the indices go across as -1 when no choice is selected
+        // and the sound pairing as null when none is, so what a missing choice means is the
+        // presenter's decision too, not this handler's.
         var input = new GeneralSettingsInput(
             HotkeyTextBox.Text,
             CancelHotkeyTextBox.Text,
             QuickAddHotkeyTextBox.Text,
-            SelectedIndexOf(FinalEngineChoices),
+            RawSelectedIndexOf(FinalEngineChoices),
             WordCorrectionToggle.IsOn,
             FillerRemovalToggle.IsOn,
             EmojiFormatterToggle.IsOn,
@@ -1149,17 +1156,17 @@ public sealed partial class MainWindow : Window, IDisposable
             EscapeRecoveryToggle.IsOn,
             AutoStopToggle.IsOn,
             AutoStopSecondsBox.Value,
-            SelectedIndexOf(PolishProviderChoices),
+            RawSelectedIndexOf(PolishProviderChoices),
             PolishModelTextBox.Text,
             OllamaEndpointTextBox.Text,
             HistoryEnabledToggle.IsOn,
             RetentionDaysBox.Value,
-            SelectedIndexOf(ThemeChoices),
+            RawSelectedIndexOf(ThemeChoices),
             LivePreviewToggle.IsOn,
-            SelectedIndexOf(OverlayPositionChoices),
+            RawSelectedIndexOf(OverlayPositionChoices),
             LevelRailPillButton.IsChecked == true,
             PlayRecordingSoundsToggle.IsOn,
-            SelectedRecordingSoundPairing(),
+            (RecordingSoundComboBox.SelectedItem as RecordingSoundChoice)?.Pairing,
             CopyInsteadOfPasteToggle.IsOn,
             LocalDiagnosticsToggle.IsOn,
             DiagnosticRetentionDaysBox.Value,

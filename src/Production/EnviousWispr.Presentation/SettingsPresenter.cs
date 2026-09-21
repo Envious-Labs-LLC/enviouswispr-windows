@@ -67,7 +67,9 @@ public readonly record struct AppearanceChoices(
 /// retention bounds, whether telemetry may be shared at all, and which fields a Save replaces. None
 /// of that needs a window; all of it needed proving, and a WinUI handler cannot be run under a test.
 /// The window reads the controls into this and gets back what to do; the meaning lives with the
-/// presenter, where SettingsPresenterTests can reach it.
+/// presenter, where SettingsPresenterTests can reach it. A choice with nothing selected comes across
+/// as -1 (a null pairing), and what that means - the first, safe option: Automatic, None, System, Top,
+/// the whisper tick - is decided here too.
 /// </remarks>
 public sealed record GeneralSettingsInput(
     string RecordingShortcut,
@@ -93,7 +95,7 @@ public sealed record GeneralSettingsInput(
     int OverlayPositionIndex,
     bool LevelRailPill,
     bool PlayRecordingSounds,
-    RecordingSoundPairing RecordingSoundPairing,
+    RecordingSoundPairing? RecordingSoundPairing,
     bool CopyInsteadOfPaste,
     bool LocalDiagnostics,
     double DiagnosticRetentionDays,
@@ -247,8 +249,11 @@ public sealed class SettingsPresenter : IDisposable
     ///
     /// AN EMPTY NUMBER MEANS THE DEFAULT, NOT ZERO. The auto-stop threshold and the two retentions come
     /// off number boxes that read NaN when cleared; a zero stored there would be clamped up by the
-    /// policy anyway, but would show a threshold nobody chose. Telemetry is shared only when the build
-    /// can share it at all, whatever the toggle says.
+    /// policy anyway, but would show a threshold nobody chose. A CHOICE WITH NOTHING SELECTED MEANS
+    /// THE FIRST, SAFE OPTION: an index of -1 becomes Automatic, None, System or Top, and no sound
+    /// pairing becomes the whisper tick - a -1 fed to a clamp would throw or quietly become a
+    /// different setting. Telemetry is shared only when the build can share it at all, whatever the
+    /// toggle says.
     ///
     /// THE SHORTCUTS ARE CHECKED BEFORE ANYTHING IS STORED: a shortcut that cannot be read names its
     /// field and stores nothing; two that are the same gesture are described and store nothing - the
@@ -278,27 +283,27 @@ public sealed class SettingsPresenter : IDisposable
         }
 
         var dictation = new DictationPreferences(
-            (FinalAsrEngine)Math.Clamp(input.FinalEngineIndex, 0, 2),
+            (FinalAsrEngine)Math.Clamp(Chosen(input.FinalEngineIndex), 0, 2),
             recording.Gesture!.Value.ToString(),
             input.WordCorrection,
             input.FillerRemoval,
             input.EmojiFormatter,
             input.SpokenPunctuation,
-            (WhisperLanguagePreference)Math.Clamp(input.WhisperLanguageIndex, 0, 4),
-            (DictationRecordingMode)Math.Clamp(input.RecordingModeIndex, 0, 1),
+            (WhisperLanguagePreference)Math.Clamp(Chosen(input.WhisperLanguageIndex), 0, 4),
+            (DictationRecordingMode)Math.Clamp(Chosen(input.RecordingModeIndex), 0, 1),
             cancel.Gesture!.Value.ToString(),
             input.EscapeRecovery,
             quickAdd.Gesture!.Value.ToString(),
             input.AutoStop,
             double.IsNaN(input.AutoStopSeconds) ? DictationPreferences.Default.AutoStopSilenceSeconds : input.AutoStopSeconds);
         var polish = new PolishPreferences(
-            PolishProviderFromIndex(input.PolishProviderIndex),
+            PolishProviderFromIndex(Chosen(input.PolishProviderIndex)),
             NullIfBlank(input.PolishModel),
             NullIfBlank(input.OllamaEndpoint));
         var history = new HistoryPreferences(
             input.HistoryEnabled,
             RetentionDays.FromField(input.HistoryRetentionDays, fallback: 30, RetentionDays.HistoryMinimum, RetentionDays.HistoryMaximum));
-        var theme = ThemeFromIndex(input.ThemeIndex);
+        var theme = ThemeFromIndex(Chosen(input.ThemeIndex));
         var observability = new ObservabilityPreferences(
             input.LocalDiagnostics,
             RetentionDays.FromField(
@@ -313,11 +318,11 @@ public sealed class SettingsPresenter : IDisposable
             history,
             theme,
             input.LivePreview,
-            OverlayPositionFromIndex(input.OverlayPositionIndex),
+            OverlayPositionFromIndex(Chosen(input.OverlayPositionIndex)),
             input.LevelRailPill ? RecordingPillDesign.LevelRail : RecordingPillDesign.Classic,
             RecordingPillDesign.ReadingWell,
             input.PlayRecordingSounds,
-            input.RecordingSoundPairing,
+            input.RecordingSoundPairing ?? RecordingSoundPairing.WhisperTick,
             input.CopyInsteadOfPaste);
 
         // THE VALUES WERE READ ON THE UI THREAD AND ARE APPLIED INSIDE THE GATE: the record above is
@@ -390,6 +395,9 @@ public sealed class SettingsPresenter : IDisposable
     };
 
     private static string? NullIfBlank(string text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+
+    /// <summary>A choice's index with nothing selected read as the first option.</summary>
+    private static int Chosen(int index) => index >= 0 ? index : 0;
 
     /// <summary>Waits for any settings write to finish, then stops accepting new ones.</summary>
     /// <remarks>
