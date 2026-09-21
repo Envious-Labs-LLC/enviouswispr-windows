@@ -193,16 +193,19 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 return null;
             }
 
-            var element = AutomationElement.FocusedElement;
-            if (element is null ||
-                !element.TryGetCurrentPattern(ValuePattern.Pattern, out var patternObject) ||
-                patternObject is not ValuePattern valuePattern ||
-                valuePattern.Current.IsReadOnly)
+            var valuePattern = Automation(static () =>
+                AutomationElement.FocusedElement is { } element &&
+                element.TryGetCurrentPattern(ValuePattern.Pattern, out var patternObject) &&
+                patternObject is ValuePattern pattern &&
+                !pattern.Current.IsReadOnly
+                    ? pattern
+                    : null);
+            if (valuePattern is null)
             {
                 return null;
             }
 
-            var existing = valuePattern.Current.Value ?? string.Empty;
+            var existing = Automation(() => valuePattern.Current.Value) ?? string.Empty;
             if (existing.Length > request.Options.MaximumDirectValueCharacters ||
                 !existing.EndsWith(expected.Left, StringComparison.Ordinal))
             {
@@ -216,11 +219,12 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             }
 
             invoked = true;
-            valuePattern.SetValue(replacement);
-            var verified = string.Equals(
-                valuePattern.Current.Value,
-                replacement,
-                StringComparison.Ordinal);
+            var readBack = Automation(() =>
+            {
+                valuePattern.SetValue(replacement);
+                return valuePattern.Current.Value;
+            });
+            var verified = string.Equals(readBack, replacement, StringComparison.Ordinal);
             return new TextCommitResult(
                 TextDeliveryRoute.UiAutomationValue,
                 Delivered: verified,
@@ -262,7 +266,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable);
         }
 
-        var element = AutomationElement.FocusedElement;
+        var element = Automation(static () => AutomationElement.FocusedElement);
         if (element is null)
         {
             return new TargetContextResult(
@@ -270,11 +274,17 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable);
         }
 
-        var processId = checked((uint)element.Current.ProcessId);
-        var focusedId = RuntimeId(element);
-        if (processId != target.ProcessId ||
+        var focus = Automation(() => new FocusedElementFacts(
+            checked((uint)element.Current.ProcessId),
+            RuntimeId(element),
+            element.Current.HasKeyboardFocus,
+            element.Current.IsPassword,
+            element.Current.IsEnabled,
+            element.Current.IsKeyboardFocusable));
+        var focusedId = focus.RuntimeId;
+        if (focus.ProcessId != target.ProcessId ||
             !string.Equals(focusedId, target.FocusedElementId, StringComparison.Ordinal) ||
-            !element.Current.HasKeyboardFocus)
+            !focus.HasKeyboardFocus)
         {
             return new TargetContextResult(
                 TargetContextStatus.TargetChanged,
@@ -282,7 +292,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         }
 
         var targetKind = ClassifyTarget(target, element);
-        if (element.Current.IsPassword)
+        if (focus.IsPassword)
         {
             return new TargetContextResult(
                 TargetContextStatus.Protected,
@@ -290,38 +300,83 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
                 TextDeliveryRefusalReason.ProtectedField);
         }
 
-        if (!element.Current.IsEnabled || !element.Current.IsKeyboardFocusable)
+        if (!focus.IsEnabled || !focus.IsKeyboardFocusable)
         {
             return new TargetContextResult(
                 TargetContextStatus.Available,
                 EmptyContext(target, focusedId, targetKind));
         }
 
-        if (!element.TryGetCurrentPattern(TextPattern.Pattern, out var patternObject) ||
-            patternObject is not TextPattern textPattern)
+        var textPattern = Automation(() =>
+            element.TryGetCurrentPattern(TextPattern.Pattern, out var patternObject) && patternObject is TextPattern pattern
+                ? pattern
+                : null);
+        if (textPattern is null)
         {
             return new TargetContextResult(
                 TargetContextStatus.Available,
                 EmptyContext(target, focusedId, targetKind));
         }
 
-        var selections = textPattern.GetSelection();
-        if (selections.Length != 1)
+        var caret = Automation(() => ReadCaret(textPattern, options));
+        if (caret is null)
         {
             return new TargetContextResult(
                 TargetContextStatus.AccessibilityUnavailable,
                 EmptyContext(target, focusedId, targetKind),
                 TextDeliveryRefusalReason.UnsupportedTarget);
+        }
+
+        var supportsValue = Automation(() =>
+            element.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePatternObject) &&
+            valuePatternObject is ValuePattern valuePattern &&
+            !valuePattern.Current.IsReadOnly);
+        var urlBar = IsUrlBarField(element, targetKind);
+        return new TargetContextResult(
+            TargetContextStatus.Available,
+            new CaretContext(
+                target,
+                focusedId,
+                targetKind,
+                caret.Left,
+                caret.Selected,
+                caret.Right,
+                caret.LeftAtStart,
+                caret.RightAtEnd,
+                HasTextContext: true,
+                SupportsDirectValueWrite: supportsValue,
+                DirectValueWriteAtEnd: caret.RightAtEnd && caret.Right.Length == 0,
+                IsScreenDerived: targetKind == TextTargetKind.Terminal,
+                IsUrlBarField: urlBar));
+    }
+
+    /// <summary>What the focused element says about itself, read in one automation call.</summary>
+    private sealed record FocusedElementFacts(
+        uint ProcessId,
+        string RuntimeId,
+        bool HasKeyboardFocus,
+        bool IsPassword,
+        bool IsEnabled,
+        bool IsKeyboardFocusable);
+
+    /// <summary>The text around the caret, as the text pattern reports it.</summary>
+    private sealed record CaretText(string Selected, string Left, bool LeftAtStart, string Right, bool RightAtEnd);
+
+    /// <summary>Reads the selection and the bounded text on either side of it; null when the control's selection is not one range within the window.</summary>
+    /// <remarks>UI AUTOMATION CALLS ONLY, so the caller can put the whole read behind one boundary.</remarks>
+    private static CaretText? ReadCaret(TextPattern textPattern, TextDeliveryOptions options)
+    {
+        var selections = textPattern.GetSelection();
+        if (selections.Length != 1)
+        {
+            return null;
         }
 
         var selection = selections[0];
         var selected = selection.GetText(options.ContextWindowCharacters + 1);
         if (selected.Length > options.ContextWindowCharacters)
         {
-            return new TargetContextResult(
-                TargetContextStatus.AccessibilityUnavailable,
-                EmptyContext(target, focusedId, targetKind),
-                TextDeliveryRefusalReason.UnsupportedTarget);
+            return null;
         }
 
         var document = textPattern.DocumentRange;
@@ -354,28 +409,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             TextPatternRangeEndpoint.End,
             document,
             TextPatternRangeEndpoint.End) == 0;
-
-        var supportsValue = element.TryGetCurrentPattern(
-            ValuePattern.Pattern,
-            out var valuePatternObject) &&
-            valuePatternObject is ValuePattern valuePattern &&
-            !valuePattern.Current.IsReadOnly;
-        return new TargetContextResult(
-            TargetContextStatus.Available,
-            new CaretContext(
-                target,
-                focusedId,
-                targetKind,
-                left,
-                selected,
-                right,
-                leftAtStart,
-                rightAtEnd,
-                HasTextContext: true,
-                SupportsDirectValueWrite: supportsValue,
-                DirectValueWriteAtEnd: rightAtEnd && right.Length == 0,
-                IsScreenDerived: targetKind == TextTargetKind.Terminal,
-                IsUrlBarField: IsUrlBarField(element, targetKind)));
+        return new CaretText(selected, left, leftAtStart, right, rightAtEnd);
     }
 
     private static CaretContext EmptyContext(
@@ -419,7 +453,7 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             return TextTargetKind.Browser;
         }
 
-        var controlType = element.Current.ControlType;
+        var controlType = Automation(() => element.Current.ControlType);
         if (controlType == ControlType.Edit)
         {
             return TextTargetKind.StandardEdit;
@@ -439,8 +473,9 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
             return false;
         }
 
-        var automationId = element.Current.AutomationId ?? string.Empty;
-        var className = element.Current.ClassName ?? string.Empty;
+        var (automationId, className) = Automation(() => (
+            element.Current.AutomationId ?? string.Empty,
+            element.Current.ClassName ?? string.Empty));
         return automationId.Contains("address", StringComparison.OrdinalIgnoreCase) ||
             automationId.Contains("omnibox", StringComparison.OrdinalIgnoreCase) ||
             automationId.Contains("urlbar", StringComparison.OrdinalIgnoreCase) ||
@@ -594,33 +629,46 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
         _ => TextDeliveryRefusalReason.AccessibilityUnavailable,
     };
 
-    /// <summary>The assemblies whose <see cref="InvalidOperationException"/> means a control refused an automation call, not a defect of ours.</summary>
-    private static readonly HashSet<string> AutomationLibraries = new(StringComparer.Ordinal)
-    {
-        "UIAutomationClient",
-        "UIAutomationTypes",
-        "UIAutomationClientSideProviders",
-        "UIAutomationProvider",
-    };
-
-    /// <summary>Whether an exception is one Windows accessibility is expected to throw, answered as "accessibility unavailable" rather than escaping.</summary>
+    /// <summary>
+    /// The boundary of one UI Automation call: what Windows accessibility refuses inside it is thrown
+    /// on as <see cref="AutomationRefusalException"/>, which the adapter answers "accessibility
+    /// unavailable"; a disposal, and anything not in accessibility's vocabulary, comes out unchanged.
+    /// </summary>
     /// <remarks>
-    /// THE FILTER NAMES THE ENVIRONMENT, NOT EVERY InvalidOperationException (plan-2 step 13). UI
-    /// Automation reports an unsupported pattern, a stale element or a refused operation as
-    /// InvalidOperationException from its own assembly, and those are the environment: the control
-    /// would not do what was asked. An InvalidOperationException raised by this adapter's own code is a
-    /// defect, and an ObjectDisposedException - which derives from InvalidOperationException - is the
-    /// adapter's gate gone under the delivery because the app is leaving. Neither is Windows' doing,
-    /// and neither is answered here; the delivery names them.
+    /// THE ENVIRONMENT IS NAMED AT THE CALL, NOT BY THE EXCEPTION'S TYPE (plan-2 step 13). UI Automation
+    /// answers a refused operation as InvalidOperationException, and so does this adapter's own code
+    /// when it has a bug; the type cannot tell them apart, and neither can the throwing assembly -
+    /// UI Automation hands most failures to Marshal.ThrowExceptionForHR, which raises the exception
+    /// from the runtime itself. What tells them apart is where the exception came out: inside a
+    /// call that is nothing but UI Automation, it is the control refusing; outside one, it is ours.
+    /// So every call into UI Automation is made through here and nothing else is. An
+    /// ObjectDisposedException is never a refusal: it derives from InvalidOperationException, and
+    /// it is the adapter's gate gone under the delivery because the app is leaving.
     /// </remarks>
-    internal static bool IsExpectedAutomationFailure(Exception exception) => exception switch
+    internal static T Automation<T>(Func<T> call)
+    {
+        ArgumentNullException.ThrowIfNull(call);
+        try
+        {
+            return call();
+        }
+        catch (Exception exception) when (IsAutomationRefusal(exception))
+        {
+            throw new AutomationRefusalException(exception);
+        }
+    }
+
+    /// <summary>The families accessibility refuses in, when they come out of a UI Automation call; a disposal is not one.</summary>
+    internal static bool IsAutomationRefusal(Exception exception) => exception switch
     {
         ObjectDisposedException => false,
-        ElementNotAvailableException => true,
-        InvalidOperationException => exception.Source is { } source && AutomationLibraries.Contains(source),
-        COMException or UnauthorizedAccessException or Win32Exception => true,
+        ElementNotAvailableException or ElementNotEnabledException or NoClickablePointException or ProxyAssemblyNotLoadedException => true,
+        InvalidOperationException or COMException or UnauthorizedAccessException or Win32Exception => true,
         _ => false,
     };
+
+    /// <summary>Whether an exception is one a UI Automation call refused, answered as "accessibility unavailable" rather than escaping.</summary>
+    internal static bool IsExpectedAutomationFailure(Exception exception) => exception is AutomationRefusalException;
 
     private static bool? TargetHasHigherIntegrity(uint targetProcessId)
     {
@@ -794,4 +842,27 @@ public sealed class WindowsTextTargetAdapter : ITextTargetAdapter, IDisposable
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);
+}
+
+/// <summary>What Windows accessibility refused inside one UI Automation call, with the refusal it gave; raised only by <see cref="WindowsTextTargetAdapter.Automation{T}"/>.</summary>
+public sealed class AutomationRefusalException : Exception
+{
+    public AutomationRefusalException()
+    {
+    }
+
+    public AutomationRefusalException(string message)
+        : base(message)
+    {
+    }
+
+    public AutomationRefusalException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+    }
+
+    internal AutomationRefusalException(Exception refusal)
+        : base("Windows accessibility refused a UI Automation call.", refusal)
+    {
+    }
 }

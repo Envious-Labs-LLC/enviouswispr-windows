@@ -135,7 +135,11 @@ internal static class Program
             focusTarget = edit;
             if (resultPath is not null)
             {
-                edit.TextChanged += (_, _) => WriteResult(
+                // PUBLISHED ON EVERY TEXT CHANGE AND ON EVERY COUNTED MESSAGE. A paste that changes
+                // nothing - empty, or refused by the control - raises no TextChanged, and a receipt
+                // written only from there would still say "no WM_PASTE"; the counters publish
+                // themselves, so the journey's final read is a settled snapshot of every message.
+                void Publish() => WriteResult(
                     resultPath,
                     edit.Text,
                     expectedSubstring,
@@ -143,7 +147,9 @@ internal static class Program
                     edit.PasteMessages,
                     edit.SetTextMessages,
                     edit.Rewrites);
-                WriteResult(resultPath, edit.Text, expectedSubstring, forbiddenSubstring, edit.PasteMessages, edit.SetTextMessages, edit.Rewrites);
+                edit.TextChanged += (_, _) => Publish();
+                edit.MessageCounted += (_, _) => Publish();
+                Publish();
             }
         }
 
@@ -277,6 +283,9 @@ internal static class Program
 
         public int SetTextMessages { get; private set; }
 
+        /// <summary>Raised after a counted message has been handled, whether or not the text changed.</summary>
+        public event EventHandler? MessageCounted;
+
         /// <summary>Whether a value set into the field is changed the moment it lands - a control that does not keep what it was given.</summary>
         [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
         public bool RewriteOnSetText { get; init; }
@@ -288,16 +297,20 @@ internal static class Program
             if (m.Msg == WmPaste)
             {
                 PasteMessages++;
+                base.WndProc(ref m);
+                MessageCounted?.Invoke(this, EventArgs.Empty);
+                return;
             }
-            else if (m.Msg == WmSetText && IsHandleCreated && Visible && !_rewriting)
+
+            if (m.Msg == WmSetText && IsHandleCreated && Visible && !_rewriting)
             {
                 SetTextMessages++;
+                base.WndProc(ref m);
                 if (RewriteOnSetText)
                 {
-                    // THE VALUE LANDS, THEN CHANGES: the base handles the set, and the field appends
-                    // its mark through a second set of its own that is not counted or rewritten
-                    // again. WM_GETTEXT from here on answers the marked text.
-                    base.WndProc(ref m);
+                    // THE VALUE LANDS, THEN CHANGES: the base has handled the set, and the field
+                    // appends its mark through a second set of its own that is not counted or
+                    // rewritten again. WM_GETTEXT from here on answers the marked text.
                     _rewriting = true;
                     try
                     {
@@ -308,9 +321,10 @@ internal static class Program
                     {
                         _rewriting = false;
                     }
-
-                    return;
                 }
+
+                MessageCounted?.Invoke(this, EventArgs.Empty);
+                return;
             }
 
             base.WndProc(ref m);

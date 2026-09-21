@@ -130,14 +130,18 @@ reason but ask rather than assert it, and write the answer here when you get it.
   Three routes, not the macOS cascade of five, and that is deliberate. This entry said "two routes" from
   2026-08-26 to 2026-09-19 while the code had three (#148); a contract that omits a mutation path hides
   the path that most needs validating.
-  A delivery failure keeps its name (plan-2 step 13): the adapter answers the accessibility failures it
-  expects as results (`AccessibilityUnavailable`; its filter, `IsExpectedAutomationFailure`, takes UI
-  Automation's own `InvalidOperationException` and not ours, and never an `ObjectDisposedException`);
-  what still throws out of it is named by `ContextAwareTextDelivery` as the caller's `Cancelled`, a
-  `DeliveryDisposed` (the app leaving) or a `DeliveryFaulted` (a defect, with the stage and the exception
-  type in `DeliveryResult.Fault`, never the words). Each reaches the log as its own `AppErrorCode`
+  A delivery failure keeps its name (plan-2 step 13): every UI Automation call the adapter makes goes
+  through `WindowsTextTargetAdapter.Automation(...)`, the boundary at which what the control refused
+  (UI Automation's own exceptions, and the `InvalidOperationException`, `COMException`, access and Win32
+  failures it raises through `Marshal.ThrowExceptionForHR`) becomes `AutomationRefusalException` and is
+  answered `AccessibilityUnavailable`; an `ObjectDisposedException` is never a refusal, and an exception
+  raised outside a call is ours. What throws out of the adapter is named by `ContextAwareTextDelivery`
+  as the caller's `Cancelled`, a `DeliveryDisposed` (the app leaving) or a `DeliveryFaulted` (a defect,
+  with the stage and the exception's family in `DeliveryResult.Fault` and in the log's `deliveryStage` /
+  `fault` fields, never the words). Each ending reaches the log as its own `AppErrorCode`
   (`DeliveryAccessibilityUnavailable`, `DeliveryUnverified`, `DeliveryCancelled`, `DeliveryDisposed`,
-  `DeliveryFaulted`); the words are kept for recovery and nothing is retried against the target.
+  `DeliveryFaulted`) and the pill as its own sentence; the words are kept for recovery and nothing is
+  retried against the target.
 - Secrets: Windows Credential Manager.
 - Storage: versioned user data outside the install directory with atomic writes and migrations.
 

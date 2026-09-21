@@ -11,27 +11,135 @@ namespace EnviousWispr.Architecture.Tests;
 public sealed class WindowsTextDeliverySafetyTests
 {
     [Fact]
-    public void TheProductionAdapterNamesOnlyWindowsFailuresAsAccessibilityUnavailable()
+    public void TheProductionAdapterNamesOnlyWhatAUiAutomationCallRefusedAsAccessibilityUnavailable()
     {
-        // THE FILTER IS THE ADAPTER'S BOUNDARY (plan-2 step 13). UI Automation's own
-        // InvalidOperationException - an unsupported pattern, a refused operation - is the
-        // environment; one raised by this adapter's code is a defect; an ObjectDisposedException,
-        // which derives from InvalidOperationException, is the app leaving. Only the first is
-        // answered "accessibility unavailable"; the others escape to the delivery, which names them.
-        var fromAutomation = new InvalidOperationException("Unsupported Pattern.") { Source = "UIAutomationClient" };
-        var fromUs = new InvalidOperationException("a defect of ours");
-        var disposedFromAutomation = new ObjectDisposedException("gate") { Source = "UIAutomationClient" };
+        // THE BOUNDARY IS THE CALL, NOT THE TYPE (plan-2 step 13). UI Automation hands most of its
+        // failures to Marshal.ThrowExceptionForHR, so a refused operation arrives as an
+        // InvalidOperationException raised by the runtime itself - the same type, from the same
+        // place, as a defect of ours. Inside Automation(...) it is the control refusing and is
+        // carried out as AutomationRefusalException; a disposal is never a refusal and comes out
+        // unchanged; a cast failure inside is a defect and comes out unchanged; an
+        // InvalidOperationException outside any call is ours.
+        const int InvalidOperationHResult = unchecked((int)0x80131509);
+        const int ElementNotAvailableHResult = unchecked((int)0x80040201);
 
-        Assert.True(WindowsTextTargetAdapter.IsExpectedAutomationFailure(fromAutomation));
-        Assert.False(WindowsTextTargetAdapter.IsExpectedAutomationFailure(fromUs));
+        var fromHResult = Assert.Throws<AutomationRefusalException>(() =>
+            WindowsTextTargetAdapter.Automation(() =>
+            {
+                Marshal.ThrowExceptionForHR(InvalidOperationHResult);
+                return 0;
+            }));
+        Assert.IsType<InvalidOperationException>(fromHResult.InnerException);
+        // RAISED BY THE RUNTIME, NOT BY UI AUTOMATION: the throwing assembly cannot be the test.
+        Assert.NotEqual("UIAutomationClient", fromHResult.InnerException.Source);
+
+        var fromComHResult = Assert.Throws<AutomationRefusalException>(() =>
+            WindowsTextTargetAdapter.Automation(() =>
+            {
+                Marshal.ThrowExceptionForHR(ElementNotAvailableHResult);
+                return 0;
+            }));
+        Assert.IsAssignableFrom<COMException>(fromComHResult.InnerException);
+
+        var notEnabled = Assert.Throws<AutomationRefusalException>(() =>
+            WindowsTextTargetAdapter.Automation<int>(() => throw new ElementNotEnabledException()));
+        Assert.IsType<ElementNotEnabledException>(notEnabled.InnerException);
+        Assert.IsType<ElementNotAvailableException>(Assert.Throws<AutomationRefusalException>(() =>
+            WindowsTextTargetAdapter.Automation<int>(() => throw new ElementNotAvailableException())).InnerException);
+        Assert.IsType<UnauthorizedAccessException>(Assert.Throws<AutomationRefusalException>(() =>
+            WindowsTextTargetAdapter.Automation<int>(() => throw new UnauthorizedAccessException())).InnerException);
+        Assert.IsType<Win32Exception>(Assert.Throws<AutomationRefusalException>(() =>
+            WindowsTextTargetAdapter.Automation<int>(() => throw new Win32Exception(5))).InnerException);
+
+        Assert.Throws<ObjectDisposedException>(() =>
+            WindowsTextTargetAdapter.Automation<int>(() => throw new ObjectDisposedException("gate")));
+        Assert.Throws<InvalidCastException>(() =>
+            WindowsTextTargetAdapter.Automation<int>(() => throw new InvalidCastException()));
+        Assert.Throws<OperationCanceledException>(() =>
+            WindowsTextTargetAdapter.Automation<int>(() => throw new OperationCanceledException()));
+
+        Assert.True(WindowsTextTargetAdapter.IsExpectedAutomationFailure(fromHResult));
+        Assert.False(WindowsTextTargetAdapter.IsExpectedAutomationFailure(new InvalidOperationException("a defect of ours")));
         Assert.False(WindowsTextTargetAdapter.IsExpectedAutomationFailure(new ObjectDisposedException("gate")));
-        Assert.False(WindowsTextTargetAdapter.IsExpectedAutomationFailure(disposedFromAutomation));
-        Assert.True(WindowsTextTargetAdapter.IsExpectedAutomationFailure(new ElementNotAvailableException()));
-        Assert.True(WindowsTextTargetAdapter.IsExpectedAutomationFailure(Marshal.GetExceptionForHR(unchecked((int)0x80040201))!));
-        Assert.True(WindowsTextTargetAdapter.IsExpectedAutomationFailure(new UnauthorizedAccessException()));
-        Assert.True(WindowsTextTargetAdapter.IsExpectedAutomationFailure(new Win32Exception(5)));
-        Assert.False(WindowsTextTargetAdapter.IsExpectedAutomationFailure(new InvalidCastException()));
-        Assert.False(WindowsTextTargetAdapter.IsExpectedAutomationFailure(new OperationCanceledException()));
+        Assert.False(WindowsTextTargetAdapter.IsExpectedAutomationFailure(fromHResult.InnerException));
+        Assert.Equal(1, WindowsTextTargetAdapter.Automation(() => 1));
+    }
+
+    [Fact]
+    public void EveryUiAutomationCallInTheAdapterIsMadeThroughTheBoundary()
+    {
+        // NOTHING ELSE TOUCHES UI AUTOMATION: a call made outside Automation(...) would answer a
+        // refusal as a fault. Read at the source: every line that reads an element, a pattern or a
+        // range sits inside an Automation(...) call or inside ReadCaret, which is only ever called
+        // through one.
+        var adapter = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "Production", "EnviousWispr.Services", "Input", "WindowsTextTargetAdapter.cs"));
+        var readCaret = adapter.IndexOf("private static CaretText? ReadCaret(", StringComparison.Ordinal);
+        var readCaretEnd = adapter.IndexOf("\n    }\n", readCaret, StringComparison.Ordinal);
+        var outside = adapter[..readCaret] + adapter[readCaretEnd..];
+        Assert.Contains("Automation(() => ReadCaret(textPattern, options))", adapter, StringComparison.Ordinal);
+        Assert.Equal(1, Occurrences(adapter, "ReadCaret(textPattern, options)"));
+        foreach (var line in outside.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith("//", StringComparison.Ordinal) || trimmed.StartsWith("///", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (trimmed.Contains("AutomationElement.FocusedElement", StringComparison.Ordinal) ||
+                trimmed.Contains(".Current.", StringComparison.Ordinal) ||
+                trimmed.Contains("TryGetCurrentPattern(", StringComparison.Ordinal) ||
+                trimmed.Contains(".SetValue(", StringComparison.Ordinal) ||
+                trimmed.Contains(".GetSelection(", StringComparison.Ordinal))
+            {
+                Assert.True(
+                    trimmed.Contains("Automation(", StringComparison.Ordinal) || IsInsideAutomationCall(outside, line),
+                    $"A UI Automation call outside the boundary: {trimmed}");
+            }
+        }
+    }
+
+    private static bool IsInsideAutomationCall(string source, string line)
+    {
+        // The call opens on an earlier line ("Automation(() =>" or "Automation(static () =>") and has
+        // not closed by this one: count the parentheses between.
+        var at = source.IndexOf(line, StringComparison.Ordinal);
+        var open = source.LastIndexOf("Automation(", at, StringComparison.Ordinal);
+        if (open < 0)
+        {
+            return false;
+        }
+
+        var depth = 0;
+        for (var index = open + "Automation".Length; index < at; index++)
+        {
+            depth += source[index] switch { '(' => 1, ')' => -1, _ => 0 };
+        }
+
+        return depth > 0;
+    }
+
+    private static int Occurrences(string text, string needle)
+    {
+        var count = 0;
+        for (var at = text.IndexOf(needle, StringComparison.Ordinal); at >= 0; at = text.IndexOf(needle, at + needle.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    private static string RepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "EnviousWispr.Windows.slnx")))
+        {
+            directory = directory.Parent;
+        }
+
+        Assert.NotNull(directory);
+        return directory.FullName;
     }
 
     [Fact]

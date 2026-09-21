@@ -41,11 +41,23 @@ public static class DeliveryStatusReport
             DictationStatus.Warning("Automatic paste is unsafe here, so the text was copied only"),
         { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.InputStateUnsafe } =>
             DictationStatus.Warning("A key was held, so the text was copied only. Paste manually"),
+        { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable } =>
+            DictationStatus.Warning("Windows accessibility did not answer, so the text was copied only. Press Ctrl+V"),
         { ClipboardFallback: true } => DictationStatus.Warning("Copied. Press Ctrl+V"),
         { RefusalReason: TextDeliveryRefusalReason.ClipboardUnavailable } =>
             DictationStatus.Warning("Clipboard unavailable. Text is held safely in memory"),
         { RefusalReason: TextDeliveryRefusalReason.DirectWriteUnverified } =>
             DictationStatus.Warning("Insertion could not be verified. Text is held safely in memory"),
+        // EACH WAY THE WORDS DID NOT LAND HAS ITS OWN SENTENCE (plan-2 step 13), and every one ends
+        // the same way: the text is held. Accessibility that did not answer, a delivery cancelled, a
+        // delivery whose Windows link was already closed, a fault - the person reads which, and the
+        // log carries the same name.
+        { RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable } =>
+            DictationStatus.Warning("Windows accessibility did not answer. Text is held safely in memory"),
+        { RefusalReason: TextDeliveryRefusalReason.Cancelled } =>
+            DictationStatus.Warning("Text delivery was cancelled. Text is held safely in memory"),
+        { RefusalReason: TextDeliveryRefusalReason.DeliveryDisposed } =>
+            DictationStatus.Warning("Text delivery was no longer available. Text is held safely in memory"),
         { RefusalReason: TextDeliveryRefusalReason.DeliveryFaulted } =>
             DictationStatus.Error("Text delivery failed unexpectedly. Text is held safely in memory"),
         _ => DictationStatus.Error("Text delivery stopped safely"),

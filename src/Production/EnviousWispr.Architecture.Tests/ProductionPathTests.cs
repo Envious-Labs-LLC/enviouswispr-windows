@@ -87,6 +87,48 @@ public sealed class ProductionPathTests
         Assert.Equal(1, world.Delivery.Deliveries);
     }
 
+    [Theory]
+    [InlineData(TextDeliveryRefusalReason.AccessibilityUnavailable, true, AppEventCode.TextDeliveryRefused, AppErrorCode.DeliveryAccessibilityUnavailable, "Windows accessibility did not answer, so the text was copied only. Press Ctrl+V")]
+    [InlineData(TextDeliveryRefusalReason.AccessibilityUnavailable, false, AppEventCode.TextDeliveryFailed, AppErrorCode.DeliveryAccessibilityUnavailable, "Windows accessibility did not answer. Text is held safely in memory")]
+    [InlineData(TextDeliveryRefusalReason.DirectWriteUnverified, false, AppEventCode.TextDeliveryFailed, AppErrorCode.DeliveryUnverified, "Insertion could not be verified. Text is held safely in memory")]
+    [InlineData(TextDeliveryRefusalReason.Cancelled, false, AppEventCode.TextDeliveryFailed, AppErrorCode.DeliveryCancelled, "Text delivery was cancelled. Text is held safely in memory")]
+    [InlineData(TextDeliveryRefusalReason.DeliveryDisposed, false, AppEventCode.TextDeliveryFailed, AppErrorCode.DeliveryDisposed, "Text delivery was no longer available. Text is held safely in memory")]
+    [InlineData(TextDeliveryRefusalReason.DeliveryFaulted, false, AppEventCode.TextDeliveryFailed, AppErrorCode.DeliveryFaulted, "Text delivery failed unexpectedly. Text is held safely in memory")]
+    [InlineData(TextDeliveryRefusalReason.ProtectedField, true, AppEventCode.TextDeliveryRefused, AppErrorCode.DeliveryProtectedField, "Protected field: copied only. Paste manually if intended")]
+    [InlineData(TextDeliveryRefusalReason.UnsupportedTarget, true, AppEventCode.TextDeliveryRefused, AppErrorCode.DeliveryUnsupportedTarget, "Automatic paste is unsafe here, so the text was copied only")]
+    [InlineData(TextDeliveryRefusalReason.ClipboardUnavailable, false, AppEventCode.TextDeliveryFailed, AppErrorCode.DeliveryClipboardUnavailable, "Clipboard unavailable. Text is held safely in memory")]
+    public async Task EveryUndeliveredEndingKeepsItsNameInTheLogAndOnThePill(
+        TextDeliveryRefusalReason reason,
+        bool clipboardFallback,
+        AppEventCode expectedEvent,
+        AppErrorCode expectedCode,
+        string expectedSentence)
+    {
+        // THE SAME NAME IN THREE PLACES (plan-2 step 13): the result's refusal, the log's error code
+        // and the pill's sentence agree on which way the words did not land, through the production
+        // effects. Accessibility that did not answer, an unverified insertion, a cancellation, a
+        // delivery no longer available and a fault each read as themselves; none of them reads as
+        // "unsupported target", and no two share a sentence.
+        var world = ComposedSessionWorld.Create("hello world");
+        world.Delivery.Answer = new DeliveryResult(
+            default,
+            Delivered: false,
+            ClipboardFallback: clipboardFallback,
+            clipboardFallback ? TextDeliveryRoute.ClipboardOnly : TextDeliveryRoute.None,
+            reason);
+        await world.PressAsync();
+
+        var released = await world.Coordinator.SubmitAsync(PushToTalkSignal.Released).WaitAsync(Patience);
+
+        Assert.Equal(SessionCommandDisposition.Applied, released.Disposition);
+        var ending = Assert.Single(world.Log.Entries, entry => entry.Event is AppEventCode.TextDeliveryRefused or AppEventCode.TextDeliveryFailed or AppEventCode.TextDeliveryCompleted or AppEventCode.TextDeliveryClipboardFallback);
+        Assert.Equal(expectedEvent, ending.Event);
+        Assert.Equal(expectedCode, ending.ErrorCode);
+        Assert.Equal(AppFailureCategory.TextDelivery, ending.Failure);
+        Assert.Null(ending.Fault);
+        Assert.Equal(expectedSentence, Assert.Single(world.View.Deliveries).Delivered.Text);
+    }
+
     [Fact]
     public async Task LockDuringPolishPreservesLastGoodText()
     {
