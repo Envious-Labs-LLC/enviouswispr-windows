@@ -143,20 +143,25 @@ public sealed record DeliveryFault(DeliveryStage Stage, DeliveryFaultKind Kind, 
     }
 }
 
-/// <summary>Which of the repair's two outputs a delivery wrote: the insertion adjusted to the caret's context, or the fallback payload.</summary>
+/// <summary>The repair's decision: whether the insertion was adjusted to the caret's context, or left as the fallback payload.</summary>
 /// <remarks>
 /// NAMED FOR WHAT IT IS, NOT WHEN IT WAS WRITTEN (plan-2 step 14). The payload used when no context
-/// is available - or when the target refuses and the words go to the clipboard - was called "legacy",
-/// which said only that it came first. It is the fallback: the words as said, with the one trailing
-/// space that lets a paste continue a sentence. The numeric values are unchanged (fallback 0, context
-/// 1); nothing serialises this enum by name.
+/// is available - and the one the clipboard gets when the target refuses - was called "legacy",
+/// which said only that it came first. It is the fallback: the words as said, with one trailing
+/// space appended only where there was none, so a paste can continue a sentence.
+///
+/// THIS IS WHAT THE REPAIR DECIDED, NOT WHAT THE DELIVERY WROTE. A commit refused after a
+/// context-applied repair still copies the fallback to the clipboard, and a failed commit writes
+/// nothing; the delivery's route and refusal say what happened. The numeric values are unchanged
+/// (fallback 0, context 1); no production path serialises this enum by name - only the
+/// <c>tools/delivery-uat</c> diagnostic prints it to a person.
 /// </remarks>
 public enum CursorRepairDisposition
 {
-    /// <summary>The fallback payload was used: no caret context, a refused target, or a seam the repair does not touch.</summary>
+    /// <summary>No caret context was applied: none was available, or the seam is one the repair does not touch. The insertion is the fallback payload.</summary>
     FallbackPayload,
 
-    /// <summary>The insertion adjusted to the caret's context was used.</summary>
+    /// <summary>The insertion was adjusted to the caret's context.</summary>
     ContextApplied,
 }
 

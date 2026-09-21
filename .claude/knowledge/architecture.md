@@ -132,11 +132,14 @@ reason but ask rather than assert it, and write the answer here when you get it.
   the path that most needs validating.
   The commit carries two payloads under their own names (plan-2 step 14): `TextCommitRequest.Text`,
   the insertion adjusted to the caret's context by `CursorInsertionRepair` (`Insertion`), and
-  `FallbackText` (`Fallback`), the words as said with exactly one trailing space - what a paste with no
-  context inserts and what the clipboard gets when the target refuses; `CursorRepairDisposition`
-  says which was used (`FallbackPayload` = 0, `ContextApplied` = 1; the fallback was called "legacy"
-  until step 14, a name that said only that it came first). A requested copy uses neither: the words
-  as said.
+  `FallbackText` (`Fallback`), the words as said with one ASCII space appended only when the text does
+  not already end in one (a trailing space already there is kept, not doubled) - what a paste with no
+  context inserts and what the clipboard gets when the target refuses. `CursorRepairDisposition`
+  records the repair's decision, not what the delivery eventually wrote: `ContextApplied` (1) means
+  the insertion was adjusted to a context, `FallbackPayload` (0) that no context was applied; a
+  commit that is refused after a `ContextApplied` repair still copies the fallback, and a failed
+  commit writes nothing. The fallback was called "legacy" until step 14, a name that said only that
+  it came first. A requested copy uses neither payload: the words as said.
   A delivery failure keeps its name (plan-2 step 13): every UI Automation call the adapter makes goes
   through `WindowsTextTargetAdapter.Automation(...)`, the boundary at which what the control refused
   (UI Automation's own exceptions, and the `InvalidOperationException`, `COMException`, access and Win32
