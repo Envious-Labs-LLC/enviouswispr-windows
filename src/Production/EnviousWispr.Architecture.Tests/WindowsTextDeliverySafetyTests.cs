@@ -294,6 +294,12 @@ public sealed class WindowsTextDeliverySafetyTests
 
             Assert.True(ExecutesInsideTheBoundary(loop.Expression, model, helpers), $"A UI Automation collection enumerated outside the boundary at line {Line(loop)}: {loop.Expression}");
             Assert.True(!IsUntyped(model.GetForEachStatementInfo(loop).ElementType), $"An untyped UI Automation result at line {Line(loop)}: foreach over {loop.Expression}");
+            // THE LOOP VARIABLE KEEPS THE ELEMENT'S TYPE: `foreach (object child in handles)` erases
+            // each element as it is bound, with no expression for the erasure check to see.
+            var variable = model.GetDeclaredSymbol(loop) as ILocalSymbol;
+            Assert.True(
+                variable is not null && IsHandleType(variable.Type),
+                $"A UI Automation handle erased at line {Line(loop)}: foreach ({loop.Type} {loop.Identifier.Text} in {loop.Expression})");
         }
 
         // THE HELPERS ARE REFERRED TO FROM INSIDE THE BOUNDARY, ONCE EACH, AND FROM NOWHERE ELSE -
