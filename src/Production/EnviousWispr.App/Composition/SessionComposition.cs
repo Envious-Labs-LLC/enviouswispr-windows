@@ -11,13 +11,16 @@ namespace EnviousWispr.App.Composition;
 
 /// <summary>The shell's leaf reads and notifications the session's wiring needs; nothing here sequences anything.</summary>
 /// <remarks>
-/// EVERY MEMBER IS A VALUE READ AT THE CALL OR ONE NOTIFICATION, and the review of this step reads each
-/// body the shell supplies against that rule. The reads change under the session (an engine loads, a
-/// word is taught, a setting is saved), which is why they are reads and not values. The one exception
-/// is <see cref="TearDownSession"/>, the shell's session teardown, which a later step replaces with
-/// owners of its own; it is named here so its presence is a declared debt, not a hidden one.
-/// <see cref="AttachedSession"/> is the shell's own view of the session in flight - null once its
-/// teardown has let go of the controller, which a disposed controller does not say for itself.
+/// EVERY MEMBER IS A VALUE READ AT THE CALL, ONE NOTIFICATION, OR ONE DISPOSAL LIST. The reads change
+/// under the session (an engine loads, a word is taught, a setting is saved), which is why they are
+/// reads and not values. <see cref="TearDownSession"/> is the shell's own disposals - the capture's
+/// event, the controller, the delivery route - and nothing about when: the executor's teardown runs
+/// it only once the session is quiescent and the background work has stopped under the shutdown's
+/// budget (<c>DictationSessionExecutor.TearDownAsync</c>), and a budget that runs out first runs
+/// nothing. <see cref="AttachedSession"/> is the shell's own view of the session in flight - null
+/// once its teardown has let go of the controller, which a disposed controller does not say for
+/// itself. The inventory of every member's body, and of every other callback the shell supplies, is
+/// the "Session ownership inventory" in <c>.claude/knowledge/pipeline.md</c>.
 /// </remarks>
 public sealed record SessionShell(
     ISessionView View,
