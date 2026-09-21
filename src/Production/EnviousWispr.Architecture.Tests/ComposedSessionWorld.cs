@@ -89,7 +89,7 @@ internal sealed class ComposedSessionWorld
     /// <param name="runState">The run-state store the edges go to: the fake that lists them, or the production store on a file.</param>
     /// <param name="runId">The run the shell would name, as it does through its RunId read.</param>
     /// <param name="recoveryStore">The recovery store the words go to: the fake that lists them, or the production store on a file.</param>
-    public static ComposedSessionWorld Create(string spoken, TimeProvider? clock, IApplicationRunStateStore runState, Guid runId, IRecoveryTextStore? recoveryStore = null)
+    public static ComposedSessionWorld Create(string spoken, TimeProvider? clock, IApplicationRunStateStore runState, Guid runId, IRecoveryTextStore? recoveryStore = null, ISystemResourceProbe? resources = null)
     {
         var log = new RecordingLogger();
         clock ??= TimeProvider.System;
@@ -134,7 +134,7 @@ internal sealed class ComposedSessionWorld
             controller,
             capture,
             runtime,
-            new HealthyMachine(),
+            resources ?? new HealthyMachine(),
             runState,
             log,
             new SessionShell(
@@ -543,6 +543,18 @@ internal sealed class HealthyMachine : ISystemResourceProbe
         AvailableDiskBytes: 10L * 1024 * 1024 * 1024,
         AvailablePhysicalMemoryBytes: 8UL * 1024 * 1024 * 1024,
         MemoryLoadPercent: 40);
+}
+
+/// <summary>A machine that answers whatever a test says, and counts how often it was asked.</summary>
+internal sealed class MachineOf(SystemResourceSnapshot snapshot) : ISystemResourceProbe
+{
+    public int Probes { get; private set; }
+
+    public SystemResourceSnapshot Probe()
+    {
+        Probes++;
+        return snapshot;
+    }
 }
 
 internal sealed class RecordingLogger : IAppLogger
