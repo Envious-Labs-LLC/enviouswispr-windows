@@ -36,6 +36,9 @@ RUNTIME_ID_HELPER = "    private static string RuntimeId(AutomationElement eleme
 
 # Each mutation: a name, and the (anchor, replacement) edits that plant one escape.
 MUTATIONS: dict[str, list[tuple[str, str]]] = {
+    "erased-inside-boundary-cast": [(FOCUS_READ, "        var cached = Automation(() => (object)element);" + NL + "        _ = cached.GetHashCode();" + NL + FOCUS_READ)],
+    "erased-inside-boundary-as": [(FOCUS_READ, "        var cached = Automation(() => element as object);" + NL + "        _ = cached?.GetHashCode();" + NL + FOCUS_READ)],
+    "erased-inside-boundary-context": [(FOCUS_READ, "        var cached = Automation<object>(() => element);" + NL + "        _ = cached.GetHashCode();" + NL + FOCUS_READ)],
     "handle-into-object-parameter": [(FOCUS_READ, "        _ = ElementHash(element);" + NL + FOCUS_READ), (RUNTIME_ID_HELPER, "    private static int ElementHash(object value) => value.GetHashCode();" + NL + NL + RUNTIME_ID_HELPER)],
     "handle-into-generic-parameter": [(FOCUS_READ, "        _ = Hash(element);" + NL + FOCUS_READ), (RUNTIME_ID_HELPER, "    private static int Hash<T>(T value) where T : notnull => value.GetHashCode();" + NL + NL + RUNTIME_ID_HELPER)],
     "boundary-result-as-object": [(FOCUS_READ, "        object cached = Automation(() => element);" + NL + "        _ = cached.GetHashCode();" + NL + FOCUS_READ)],
@@ -64,7 +67,7 @@ MUTATIONS: dict[str, list[tuple[str, str]]] = {
 }
 
 # What the gate says when it catches an escape; any other failure is the wrong reason.
-CAUGHT_MARKERS = ("outside the boundary", "captured instead of called", "Assert.Single() Failure", "dynamically dispatched call", "reflective call", "handle used outside the boundary")
+CAUGHT_MARKERS = ("outside the boundary", "captured instead of called", "Assert.Single() Failure", "dynamically dispatched call", "reflective call", "handle used outside the boundary", "handle erased")
 
 
 def run_gate() -> str:

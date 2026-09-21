@@ -165,7 +165,25 @@ public sealed class WindowsTextDeliverySafetyTests
             // of an Automation call, tested against null, or passed to one of the adapter's own
             // methods - whose bodies this same scan reads. A cast, an alias, a member access, an
             // argument to anything else: refused.
-            // A TYPE NAME IS NOT A VALUE: `var`, a parameter's type and a cast's target only name one.
+            // A HANDLE IS NEVER ERASED, INSIDE THE BOUNDARY OR OUT: a handle converted to object, to
+            // an interface or to a type parameter - by a cast, an `as`, or the context it stands in -
+            // leaves as something the scan cannot see and reaches UI Automation through virtual
+            // dispatch later. A type name is not a value: `var`, a parameter's type and a cast's
+            // target only name one.
+            if (symbol is not ITypeSymbol)
+            {
+                Assert.True(
+                    !IsHandleType(typeInfo.Type) || IsHandleType(typeInfo.ConvertedType),
+                    $"A UI Automation handle erased at line {Line(expression)} ({expression.Kind()} {expression}): {expression.Parent}");
+                var erasedByCast = expression switch
+                {
+                    CastExpressionSyntax cast => IsHandleType(model.GetTypeInfo(cast.Expression).Type) && !IsHandleType(model.GetTypeInfo(cast).Type),
+                    BinaryExpressionSyntax { RawKind: (int)SyntaxKind.AsExpression } conversion => IsHandleType(model.GetTypeInfo(conversion.Left).Type) && !IsHandleType(model.GetTypeInfo(conversion).Type),
+                    _ => false,
+                };
+                Assert.False(erasedByCast, $"A UI Automation handle erased at line {Line(expression)} ({expression.Kind()} {expression}): {expression.Parent}");
+            }
+
             if (IsHandleType(typeInfo.Type) && symbol is not ITypeSymbol && !ExecutesInsideTheBoundary(expression, model, helpers))
             {
                 Assert.True(
