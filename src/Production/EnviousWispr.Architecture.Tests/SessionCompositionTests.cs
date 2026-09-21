@@ -86,6 +86,37 @@ public sealed class SessionCompositionTests
     }
 
     [Fact]
+    public async Task ComposedEdgeAfterTheTeardownSaysNoDictationIsInFlight()
+    {
+        // THE TRANSCRIPTION OUTLIVES BOTH OF THE SHUTDOWN'S WAITS. The teardown disposes the
+        // controller beside it - which keeps the session it was disposed under - and the command's
+        // finally then writes the run-state edge. The shell used to read its own controller field,
+        // nulled by the teardown; the composition must say the same: nothing is in flight.
+        var clock = new Deterministic.ManualClock();
+        var world = World.Create("hello world", clock);
+        world.Engine.HoldIgnoringCancel = true;
+        await world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await world.Engine.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var drain = TimeSpan.FromSeconds(10);
+        var shutdown = world.Coordinator.ShutdownAsync(drain);
+        await clock.WhenRegistered(1).WaitAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(drain);
+        await clock.WhenRegistered(2).WaitAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(drain);
+        await world.TornDown.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.NotNull(world.Controller.CurrentSession);
+        world.Engine.AllowExit.SetResult();
+
+        var released = await release.WaitAsync(TimeSpan.FromSeconds(10));
+        await shutdown.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(SessionCommandDisposition.Failed, released.Disposition);
+        Assert.Equal([true, false], world.RunState.Edges);
+    }
+
+    [Fact]
     public async Task ComposedOptionsAreReadAfterTranscription()
     {
         // A WORD TAUGHT WHILE THE ENGINE WAS WORKING REACHES THIS DICTATION. The shell's options are
@@ -120,10 +151,12 @@ public sealed class SessionCompositionTests
 
         public required List<CustomWordEntry> CustomWords { get; init; }
 
-        public static World Create(string spoken)
+        public required TaskCompletionSource TornDown { get; init; }
+
+        public static World Create(string spoken, TimeProvider? clock = null)
         {
             var log = new NullLogger();
-            var clock = TimeProvider.System;
+            clock ??= TimeProvider.System;
             var capture = new FakeAudioCapture();
             var controller = new PushToTalkSessionController(capture, new FakeTargetProvider(101), minimumHoldDuration: TimeSpan.Zero);
             var engine = new FakeEngine(spoken);
@@ -153,6 +186,7 @@ public sealed class SessionCompositionTests
                 new AutoStopMonitor(timers, log, clock),
                 streaming);
             var runId = Guid.NewGuid();
+            var tornDown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
             var coordinator = SessionComposition.Compose(new SessionCompositionParts(
                 controller,
@@ -174,7 +208,13 @@ public sealed class SessionCompositionTests
                     RunId: () => runId,
                     RecordingActive: recordingActive.Add,
                     ArchiveAudio: archived.Add,
-                    TearDownSession: () => Task.CompletedTask),
+                    // The shell's teardown disposes the controller beside a command that outlived
+                    // the shutdown's waits; the composed test does the same.
+                    TearDownSession: async () =>
+                    {
+                        await controller.DisposeAsync();
+                        tornDown.SetResult();
+                    }),
                 clock));
 
             return new World
@@ -188,6 +228,7 @@ public sealed class SessionCompositionTests
                 RecordingActive = recordingActive,
                 Archived = archived,
                 CustomWords = words,
+                TornDown = tornDown,
             };
         }
     }
@@ -238,6 +279,11 @@ public sealed class SessionCompositionTests
 
         public bool Hold { get; set; }
 
+        /// <summary>Held until released, whatever the token says: a worker that does not answer a cancel.</summary>
+        public bool HoldIgnoringCancel { get; set; }
+
+        public TaskCompletionSource AllowExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public CancellationToken? Token { get; private set; }
@@ -248,7 +294,11 @@ public sealed class SessionCompositionTests
         {
             Token = cancellationToken;
             Entered.TrySetResult();
-            if (Hold)
+            if (HoldIgnoringCancel)
+            {
+                await AllowExit.Task;
+            }
+            else if (Hold)
             {
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             }

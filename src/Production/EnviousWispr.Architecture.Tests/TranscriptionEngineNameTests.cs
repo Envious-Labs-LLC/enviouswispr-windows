@@ -1609,10 +1609,12 @@ public sealed partial class DesignSystemTokenTests
             $"{written - arguments.Count} of {written} status calls could not be read, so "
                 + "this gate is silently not checking them.");
 
-        // The shell forwards the view's status to the window untouched: the one SetSessionStatus
-        // call whose argument is a bare parameter is the view's forwarder, and it must be the only
-        // one, or a status could be rewritten between the composition and the window.
+        // The shell forwards the view's status to the window untouched: the view's forwarder is read
+        // as syntax - one expression, the parameter handed on as it arrived, nothing assigned to it -
+        // and it is the only call whose argument is a bare parameter, or a status could be rewritten
+        // between the composition and the window.
         var shell = File.ReadAllText(Path.Combine(app, "App.xaml.cs"));
+        Assert.Null(StatusForwarderComplaint(shell));
         var forwarders = arguments.Count(entry => entry.Source == shell && entry.Argument == "status");
         Assert.True(forwarders == 1, $"Expected exactly one bare forwarder of a status to the window, found {forwarders}.");
 
@@ -1637,6 +1639,90 @@ public sealed partial class DesignSystemTokenTests
             unnamed.Length == 0,
             "These statuses reach the window without naming the pill they want, so the appearance "
                 + "is decided somewhere this suite cannot see: " + string.Join(" | ", unnamed));
+    }
+
+    /// <summary>The forwarder check refuses a forwarder that touches the status on its way to the window.</summary>
+    /// <remarks>
+    /// PROVING THE CHECK CAN FAIL. A forwarder that reassigns its parameter before handing it on
+    /// leaves exactly one bare call site and passes a count; the syntax check is what refuses it,
+    /// and both directions are asserted here because one of them alone is not a control.
+    /// </remarks>
+    [Fact]
+    public void TheStatusForwarderCheckRefusesARewrittenStatusAndAcceptsTheBareOne()
+    {
+        const string bare = """
+            private sealed class WindowSessionView(App app) : ISessionView
+            {
+                public void ShowStatus(DictationStatus status) =>
+                    app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetSessionStatus(status));
+            }
+            """;
+        const string rewritten = """
+            private sealed class WindowSessionView(App app) : ISessionView
+            {
+                public void ShowStatus(DictationStatus status)
+                {
+                    status = DictationStatus.Quiet("replacement");
+                    app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetSessionStatus(status));
+                }
+            }
+            """;
+        const string transformed = """
+            private sealed class WindowSessionView(App app) : ISessionView
+            {
+                public void ShowStatus(DictationStatus status) =>
+                    app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetSessionStatus(status with { Text = "x" }));
+            }
+            """;
+
+        Assert.Null(StatusForwarderComplaint(bare));
+        Assert.NotNull(StatusForwarderComplaint(rewritten));
+        Assert.NotNull(StatusForwarderComplaint(transformed));
+        Assert.NotNull(StatusForwarderComplaint("private sealed class Elsewhere { }"));
+    }
+
+    /// <summary>Why the shell's status forwarder is not a bare forward, or null when it is.</summary>
+    private static string? StatusForwarderComplaint(string shell)
+    {
+        var root = CSharpSyntaxTree.ParseText(shell).GetRoot();
+        var view = root.DescendantNodes().OfType<ClassDeclarationSyntax>()
+            .SingleOrDefault(type => type.Identifier.ValueText == "WindowSessionView");
+        if (view is null)
+        {
+            return "The shell has no WindowSessionView.";
+        }
+
+        var forwarder = view.Members.OfType<MethodDeclarationSyntax>()
+            .SingleOrDefault(method => method.Identifier.ValueText == "ShowStatus");
+        if (forwarder is null)
+        {
+            return "The view has no ShowStatus.";
+        }
+
+        if (forwarder.ExpressionBody is null)
+        {
+            return "The forwarder is a block, so it can do more than forward.";
+        }
+
+        var parameter = forwarder.ParameterList.Parameters.Single().Identifier.ValueText;
+        var handsOn = forwarder.ExpressionBody.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Where(call => call.Expression.ToString().EndsWith("SetSessionStatus", StringComparison.Ordinal))
+            .ToArray();
+        if (handsOn.Length != 1)
+        {
+            return $"The forwarder hands the status on {handsOn.Length} times.";
+        }
+
+        var argument = handsOn[0].ArgumentList.Arguments.Single().Expression;
+        if (argument is not IdentifierNameSyntax name || name.Identifier.ValueText != parameter)
+        {
+            return $"The forwarder hands on '{argument}' rather than its parameter.";
+        }
+
+        return forwarder.DescendantNodes().OfType<AssignmentExpressionSyntax>()
+            .Any(assignment => assignment.Left.ToString() == parameter)
+            ? "The forwarder assigns to its parameter."
+            : null;
     }
 
     /// <summary>The relaxed match still refuses an argument that names no status at all.</summary>
