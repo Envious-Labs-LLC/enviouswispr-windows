@@ -10,6 +10,7 @@
     <Project Path="src/Production/EnviousWispr.ASR/EnviousWispr.ASR.csproj" />
     <Project Path="src/Production/EnviousWispr.Audio/EnviousWispr.Audio.csproj" />
     <Project Path="src/Production/EnviousWispr.Core/EnviousWispr.Core.csproj" />
+    <Project Path="src/Production/EnviousWispr.ExitProbe/EnviousWispr.ExitProbe.csproj" />
     <Project Path="src/Production/EnviousWispr.LLM/EnviousWispr.LLM.csproj" />
     <Project Path="src/Production/EnviousWispr.ModelDelivery/EnviousWispr.ModelDelivery.csproj" />
     <Project Path="src/Production/EnviousWispr.Pipeline/EnviousWispr.Pipeline.csproj" />

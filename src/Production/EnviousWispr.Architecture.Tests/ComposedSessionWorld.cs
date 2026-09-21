@@ -88,7 +88,8 @@ internal sealed class ComposedSessionWorld
 
     /// <param name="runState">The run-state store the edges go to: the fake that lists them, or the production store on a file.</param>
     /// <param name="runId">The run the shell would name, as it does through its RunId read.</param>
-    public static ComposedSessionWorld Create(string spoken, TimeProvider? clock, IApplicationRunStateStore runState, Guid runId)
+    /// <param name="recoveryStore">The recovery store the words go to: the fake that lists them, or the production store on a file.</param>
+    public static ComposedSessionWorld Create(string spoken, TimeProvider? clock, IApplicationRunStateStore runState, Guid runId, IRecoveryTextStore? recoveryStore = null)
     {
         var log = new RecordingLogger();
         clock ??= TimeProvider.System;
@@ -99,7 +100,7 @@ internal sealed class ComposedSessionWorld
         var delivery = new FakeDelivery();
         var view = new FakeView();
         var runtimeView = new FakeRuntimeView();
-        var recoveryStore = new FakeRecoveryStore();
+        recoveryStore ??= new FakeRecoveryStore();
         var historyStore = new FakeHistoryStore();
         var trace = new List<string>();
         var recordingActive = new List<bool>();
@@ -170,7 +171,7 @@ internal sealed class ComposedSessionWorld
             CustomWords = words,
             Capture = capture,
             RuntimeView = runtimeView,
-            RecoveryStore = recoveryStore,
+            RecoveryStore = recoveryStore as FakeRecoveryStore ?? new FakeRecoveryStore(),
             HistoryStore = historyStore,
             PreviewEngine = previewEngine,
             Runtime = runtime,
@@ -179,7 +180,7 @@ internal sealed class ComposedSessionWorld
         world._attached = controller;
         world.EngineRef = engine;
         world.Audio = capture;
-        recoveryStore.Trace = world.Trace;
+        world.RecoveryStore.Trace = world.Trace;
         return world;
     }
 
@@ -192,6 +193,47 @@ internal sealed class ComposedSessionWorld
 
     /// <summary>A key through the runtime's queue, the route the hook and the auto-stop share.</summary>
     public Task SubmitAsync(PushToTalkSignal signal) => Runtime.SubmitAsync(signal);
+
+    /// <summary>The composed persistence owner, for what it knows about recovery.</summary>
+    public SessionPersistence Persistence => Runtime.Persistence;
+
+    /// <summary>The recording started by <see cref="PressAsync"/>.</summary>
+    public DictationSessionId SessionId { get; private set; }
+
+    /// <summary>A press through the coordinator, applied, with the recording it started remembered.</summary>
+    public async Task PressAsync()
+    {
+        var press = await Coordinator.SubmitAsync(PushToTalkSignal.Pressed).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(SessionCommandDisposition.Applied, press.Disposition);
+        SessionId = Controller.CurrentSession!.Id;
+    }
+
+    /// <summary>What the capture and the preview were doing each time the engine was reached: the order proofs read this.</summary>
+    public List<(bool Capturing, bool CaptureCancelled, bool PreviewRunning)> EngineSaw { get; } = [];
+
+    /// <summary>
+    /// A recording in flight with the preview's worker still starting: the press has been applied,
+    /// the microphone is open, the preview loop is owned, and the worker's start is held until a test
+    /// releases it. The engine writes down what it finds when it is reached.
+    /// </summary>
+    public static async Task<ComposedSessionWorld> StartRecordingWithPreviewStartupHeldAsync(string spoken = "hello world", bool escapeRecovery = false)
+    {
+        var world = Create(spoken);
+        world.LivePreviewEnabled = true;
+        world.Dictation = DictationPreferences.Default with { EscapeRecoveryEnabled = escapeRecovery };
+        world.PreviewEngine.HoldStarts = true;
+        world.Engine.OnEntered = () => world.EngineSaw.Add((world.Capture.IsCapturing, world.Capture.Cancelled.Task.IsCompleted, world.Runtime.Preview.IsRunning));
+
+        var press = await world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed).WaitAsync(TimeSpan.FromSeconds(10));
+        await world.PreviewEngine.StartEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(SessionCommandDisposition.Applied, press.Disposition);
+        Assert.True(world.Capture.IsCapturing);
+        Assert.Equal(DictationSessionState.Recording, world.Controller.CurrentSession?.State);
+        Assert.True(world.Runtime.Preview.IsRunning);
+        Assert.Equal(0, world.PreviewEngine.Starts);
+        world.SessionId = world.Controller.CurrentSession!.Id;
+        return world;
+    }
 }
 
 internal sealed class FakeRuntimeView : IRuntimeView
@@ -226,8 +268,37 @@ internal sealed class FakePreviewEngine : ILivePreviewEngine
 
     public int Passes { get; private set; }
 
-    public Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(new RuntimeWorkerResult(true, RuntimeWorkerState.Ready));
+    public int Starts { get; private set; }
+
+    /// <summary>When set, a start does not answer until released: a worker still loading its model.</summary>
+    public bool HoldStarts { get; set; }
+
+    public TaskCompletionSource StartEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public TaskCompletionSource AllowStartExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completed when a held start saw its token cancelled; the start still waits to be released before it answers, as a worker mid-load does.</summary>
+    public TaskCompletionSource StartCancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public async Task<RuntimeWorkerResult> StartAsync(CancellationToken cancellationToken = default)
+    {
+        StartEntered.TrySetResult();
+        if (HoldStarts)
+        {
+            var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var registration = cancellationToken.Register(() => cancelled.TrySetResult());
+            await Task.WhenAny(AllowStartExit.Task, cancelled.Task);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                StartCancellationObserved.TrySetResult();
+                await AllowStartExit.Task;
+                throw new OperationCanceledException(cancellationToken);
+            }
+        }
+
+        Starts++;
+        return new RuntimeWorkerResult(true, RuntimeWorkerState.Ready);
+    }
 
     public Task<LivePreviewUpdate> PreviewAsync(AudioSnapshot snapshot, long sequence, CancellationToken cancellationToken = default)
     {
@@ -237,12 +308,15 @@ internal sealed class FakePreviewEngine : ILivePreviewEngine
 
     public bool HoldStop { get; set; }
 
+    public int Stops { get; private set; }
+
     public TaskCompletionSource StopEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public TaskCompletionSource AllowStopExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public async Task<RuntimeWorkerResult> StopAsync(CancellationToken cancellationToken = default)
     {
+        Stops++;
         if (HoldStop)
         {
             StopEntered.TrySetResult();
@@ -342,12 +416,17 @@ internal sealed class FakeEngine(string spoken) : ITranscriptionEngine
 
     public Action? BeforeReturning { get; set; }
 
+    /// <summary>Asked at the entry of every call, before anything is awaited: what the world looked like when the engine was reached.</summary>
+    public Action? OnEntered { get; set; }
+
+
     public int Calls { get; private set; }
 
     public async Task<Transcript> TranscribeAsync(CapturedAudio audio, CancellationToken cancellationToken = default)
     {
         Calls++;
         Token = cancellationToken;
+        OnEntered?.Invoke();
         Entered.TrySetResult();
         if (HoldIgnoringCancel)
         {
@@ -367,10 +446,30 @@ internal sealed class FakeDelivery : ITextDelivery
 {
     public List<TextDeliveryRequest> Requests { get; } = [];
 
-    public Task<DeliveryResult> DeliverAsync(TextDeliveryRequest request, CancellationToken cancellationToken = default)
+    public int Deliveries => Requests.Count;
+
+    /// <summary>When set, a delivery does not answer until released: a route inside the target's window.</summary>
+    public bool Hold { get; set; }
+
+    /// <summary>When set, the route answers refused (a protected field, say) with the words on the clipboard only.</summary>
+    public bool Refuse { get; set; }
+
+    public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public TaskCompletionSource AllowExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public async Task<DeliveryResult> DeliverAsync(TextDeliveryRequest request, CancellationToken cancellationToken = default)
     {
         Requests.Add(request);
-        return Task.FromResult(new DeliveryResult(request.Text.SessionId, Delivered: true, ClipboardFallback: false, TextDeliveryRoute.ClipboardPaste));
+        Entered.TrySetResult();
+        if (Hold)
+        {
+            await AllowExit.Task;
+        }
+
+        return Refuse
+            ? new DeliveryResult(request.Text.SessionId, Delivered: false, ClipboardFallback: false, TextDeliveryRoute.ClipboardOnly, TextDeliveryRefusalReason.ProtectedField)
+            : new DeliveryResult(request.Text.SessionId, Delivered: true, ClipboardFallback: false, TextDeliveryRoute.ClipboardPaste);
     }
 }
 
@@ -540,16 +639,31 @@ internal sealed class FakeAudioCapture : IAudioCapture, IAudioSnapshotSource
     public Task<CapturedAudio> StopAsync(CancellationToken cancellationToken = default)
     {
         IsCapturing = false;
+        Stopped.TrySetResult();
         return Task.FromResult(new CapturedAudio(_sessionId, OneSample, SampleRate: 16_000, Channels: 1));
     }
+
+    /// <summary>Completed when a recording was stopped: its audio handed on.</summary>
+    public TaskCompletionSource Stopped { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completed when a recording was cancelled rather than stopped: its audio let go of.</summary>
+    public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task<AudioOperationResult> CancelAsync(CancellationToken cancellationToken = default)
     {
         IsCapturing = false;
+        Cancelled.TrySetResult();
         return Task.FromResult(new AudioOperationResult(Succeeded: true));
     }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    /// <summary>Whether the controller disposed the capture: the shell's teardown reached it.</summary>
+    public bool Disposed { get; private set; }
+
+    public ValueTask DisposeAsync()
+    {
+        Disposed = true;
+        return ValueTask.CompletedTask;
+    }
 }
 
 internal sealed class TemporaryDirectory : IDisposable
