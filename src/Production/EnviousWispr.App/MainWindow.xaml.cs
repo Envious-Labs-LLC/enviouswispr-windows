@@ -183,38 +183,21 @@ public sealed partial class MainWindow : Window, IDisposable
     /// one of them is a SettingsPresenterTests case. What stays here is reading the controls,
     /// drawing the outcome and applying the theme.
     /// </remarks>
-    private readonly SettingsPresenter _settingsPresenter;
+    /// <summary>
+    /// The window's presentation for its life: the one settings writer every presenter shares, the
+    /// presenters over it, the microphone test and the device catalogue - built by the shell's
+    /// composition and owned by the session, not by this window (plan-2 step 12).
+    /// </summary>
+    private readonly WindowPresentationSession _session;
 
-    /// <summary>What a word or a snippet does to the list, without the page: VocabularyPresenterTests.</summary>
-    private readonly VocabularyPresenter _vocabulary;
-
-    /// <summary>What a word list does to the dictionary, without the page: VocabularyImportControllerTests.</summary>
-    private readonly VocabularyImportController _vocabularyImport;
-    private readonly IPortableProfileService _profileService;
-    /// <summary>The history page's decisions about its stores, without the page.</summary>
-    /// <remarks>
-    /// THE PAGE KEEPS THE CONFIRMATIONS, THE CLIPBOARD, THE LIST AND THE ANNOUNCEMENTS. A command that
-    /// failed leaves the rows as they were; one that worked shows what the file holds now; the
-    /// retention window is read at each load - HistoryPresenterTests, every one.
-    /// </remarks>
-    private readonly HistoryPresenter _historyPresenter;
-    /// <summary>The Polish page's provider, key and model decisions, without the page.</summary>
-    /// <remarks>
-    /// THE DECISIONS LEFT; THE CONTROLS STAYED. Which providers take a key, what a blank key means, what
-    /// Windows Credential Manager refusing means, which model to put in the field when the provider
-    /// changes, and that a discovery overtaken by a later one is thrown away - all of that is
-    /// ProviderSettingsPresenterTests. The password box, the dialog and the live text are here.
-    /// </remarks>
-    private readonly ProviderSettingsPresenter _providerPresenter;
-    private readonly PolishModelSource _polishModelSource;
-    private readonly IDiagnosticExportService _diagnosticExportService;
     private readonly bool _telemetryAvailable;
     private readonly DictationOverlayWindow _overlayWindow;
     private readonly RecordingSoundCuePlayer _recordingSoundPlayer = new();
     private readonly RecordingSoundCueCoordinator _recordingSoundCoordinator;
     private readonly List<DictationHistoryEntry> _history = [];
     private IReadOnlyList<MicrophoneChoice> _microphones = [];
-    private WasapiDeviceCatalog? _deviceCatalog;
+    /// <summary>The session's catalogue, once the microphone list has asked for it; the window subscribes and unsubscribes, the session owns and disposes.</summary>
+    private IAudioDeviceCatalog? _deviceCatalog;
     private AppSettings _settings;
     private HistoryLoadStatus _historyLoadStatus = HistoryLoadStatus.Missing;
     private bool _isHistoryLoading = true;
@@ -248,37 +231,20 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public MainWindow(
         AppSettings settings,
-        SettingsLoadStatus settingsLoadStatus,
-        ISettingsStore settingsStore,
-        IPortableProfileService profileService,
-        IHistoryStore historyStore,
-        IApiKeyStore apiKeyStore,
-        IRecoveryTextStore recoveryTextStore,
-        IDiagnosticExportService diagnosticExportService,
-        bool telemetryAvailable,
-        ReleaseIdentity releaseIdentity,
-        bool updateConfigured,
-        string currentVersion)
+        WindowPresentationSession session,
+        WindowLaunch launch)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        ArgumentNullException.ThrowIfNull(settingsStore);
-        ArgumentNullException.ThrowIfNull(profileService);
-        ArgumentNullException.ThrowIfNull(historyStore);
-        ArgumentNullException.ThrowIfNull(apiKeyStore);
-        ArgumentNullException.ThrowIfNull(recoveryTextStore);
-        ArgumentNullException.ThrowIfNull(diagnosticExportService);
-        ArgumentNullException.ThrowIfNull(releaseIdentity);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(launch);
 
         _settings = settings;
-        _settingsPresenter = new SettingsPresenter(settingsStore, settings);
-        _vocabulary = new VocabularyPresenter(_settingsPresenter);
-        _vocabularyImport = new VocabularyImportController(_vocabulary);
-        _profileService = profileService;
-        _historyPresenter = new HistoryPresenter(historyStore, recoveryTextStore, () => _settings.Preferences.History);
-        _polishModelSource = new PolishModelSource(apiKeyStore);
-        _providerPresenter = new ProviderSettingsPresenter(apiKeyStore, _polishModelSource);
-        _diagnosticExportService = diagnosticExportService;
-        _telemetryAvailable = telemetryAvailable;
+        _session = session;
+        _telemetryAvailable = launch.TelemetryAvailable;
+        var settingsLoadStatus = launch.SettingsLoadStatus;
+        var releaseIdentity = launch.ReleaseIdentity;
+        var updateConfigured = launch.UpdateConfigured;
+        var currentVersion = launch.CurrentVersion;
 
         InitializeComponent();
 
@@ -974,18 +940,17 @@ public sealed partial class MainWindow : Window, IDisposable
         _historyAnnounceDebounce.Stop();
         _historyAnnounceDebounce.Tick -= OnHistoryAnnounceDue;
         // THE WRITER IS NOT DISPOSED HERE, AND THAT IS DELIBERATE. Shutdown is synchronous and a
-        // save may still be inside it; disposing its gate makes the release throw, and clearing the
-        // field makes the continuation dereference null. A semaphore that outlives the window costs
-        // nothing, and a settings write that completes during shutdown is the outcome we want.
+        // save may still be inside it; disposing its gate makes the release throw. The session that
+        // owns the writer is closed by the shell's lifetime after the drain, once the save is over.
         _soundPreviewCancellation?.Cancel();
         _soundPreviewCancellation?.Dispose();
         _soundPreviewCancellation = null;
         _recordingSoundPlayer.Dispose();
-        _polishModelSource.Dispose();
+        // THE CATALOGUE IS THE SESSION'S TO DISPOSE, with the writer, after the drain; the window
+        // only stops listening to it here.
         if (_deviceCatalog is not null)
         {
             _deviceCatalog.DevicesChanged -= OnAudioDevicesChanged;
-            _deviceCatalog.Dispose();
             _deviceCatalog = null;
         }
 
@@ -1174,7 +1139,7 @@ public sealed partial class MainWindow : Window, IDisposable
             _telemetryAvailable,
             (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id);
 
-        var outcome = await _settingsPresenter.SaveGeneralAsync(input).ConfigureAwait(true);
+        var outcome = await _session.Settings.SaveGeneralAsync(input).ConfigureAwait(true);
         switch (outcome.Status)
         {
             case GeneralSaveStatus.InvalidShortcut:
@@ -1261,7 +1226,7 @@ public sealed partial class MainWindow : Window, IDisposable
             ThemeFromIndex(SelectedIndexOf(ThemeChoices)),
             OverlayPositionFromIndex(SelectedIndexOf(OverlayPositionChoices)),
             PillDesignWithoutWordsFromControls());
-        var result = await _settingsPresenter.SaveAppearanceAsync(choices).ConfigureAwait(true);
+        var result = await _session.Settings.SaveAppearanceAsync(choices).ConfigureAwait(true);
         if (result.Saved)
         {
             PublishSettings();
@@ -1360,7 +1325,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private async void SaveApiKeyButton_Click(object sender, RoutedEventArgs e)
     {
         var provider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
-        switch (_providerPresenter.SaveKey(provider, ApiKeyPasswordBox.Password))
+        switch (_session.Provider.SaveKey(provider, ApiKeyPasswordBox.Password))
         {
             case ApiKeySaveOutcome.NotACloudProvider:
                 ShowMessage(
@@ -1396,7 +1361,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private async void RemoveApiKeyButton_Click(object sender, RoutedEventArgs e)
     {
         var provider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
-        switch (_providerPresenter.CheckKeyRemoval(provider))
+        switch (_session.Provider.CheckKeyRemoval(provider))
         {
             case ApiKeyRemovalCheck.NotACloudProvider:
                 return;
@@ -1425,7 +1390,7 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        if (_providerPresenter.RemoveKey(provider) == ApiKeyRemoveOutcome.Removed)
+        if (_session.Provider.RemoveKey(provider) == ApiKeyRemoveOutcome.Removed)
         {
             ApiKeyPasswordBox.Password = string.Empty;
             RefreshApiKeyStatus();
@@ -1470,7 +1435,6 @@ public sealed partial class MainWindow : Window, IDisposable
     /// test, one test at a time, the token goes all the way into the capture, the stop is never
     /// cancelled, a frame from a finished test is not drawn - are MicrophoneTestControllerTests.
     /// </remarks>
-    private readonly MicrophoneTestController _microphoneTest = new(() => new WasapiAudioCapture());
 
     /// <summary>Opens the microphone for a moment and shows what actually arrives.</summary>
     /// <remarks>
@@ -1482,7 +1446,7 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private async void MicrophoneTestButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_microphoneTest.IsRunning)
+        if (_session.MicrophoneTest.IsRunning)
         {
             return;
         }
@@ -1504,10 +1468,10 @@ public sealed partial class MainWindow : Window, IDisposable
 
         MicrophoneTestButton.IsEnabled = false;
         SetLiveText(MicrophoneTestResultText, "Listening. Say a few words.");
-        _microphoneTest.Frame += OnMicrophoneTestFrame;
+        _session.MicrophoneTest.Frame += OnMicrophoneTestFrame;
         try
         {
-            var result = await _microphoneTest.RunAsync(device, recording).ConfigureAwait(true);
+            var result = await _session.MicrophoneTest.RunAsync(device, recording).ConfigureAwait(true);
             switch (result.Outcome)
             {
                 case MicrophoneTestOutcome.Completed:
@@ -1537,14 +1501,14 @@ public sealed partial class MainWindow : Window, IDisposable
         }
         finally
         {
-            _microphoneTest.Frame -= OnMicrophoneTestFrame;
+            _session.MicrophoneTest.Frame -= OnMicrophoneTestFrame;
             MicrophoneTestButton.IsEnabled = true;
             DrawMicrophoneTestLevel(0f);
         }
     }
 
     /// <summary>Stops a microphone test, because something with a better claim wants the device.</summary>
-    private void CancelMicrophoneTest() => _microphoneTest.Cancel();
+    private void CancelMicrophoneTest() => _session.MicrophoneTest.Cancel();
 
     /// <summary>One meter frame, posted to the UI thread and refused there if its test has ended.</summary>
     /// <remarks>
@@ -1556,7 +1520,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private void OnMicrophoneTestFrame(object? sender, MicrophoneTestFrame frame) =>
         MicrophoneTestBars.DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_microphoneTest.IsCurrent(frame.TestId))
+            if (!_session.MicrophoneTest.IsCurrent(frame.TestId))
             {
                 return;
             }
@@ -1784,7 +1748,7 @@ public sealed partial class MainWindow : Window, IDisposable
             spokenForm,
             replacement,
             WordStrictnessComboBox.SelectedValue as MatchStrictness? ?? MatchStrictness.Default);
-        return CommitVocabularyAsync(_vocabulary.AddWordAsync(word), "Dictionary saved");
+        return CommitVocabularyAsync(_session.Vocabulary.AddWordAsync(word), "Dictionary saved");
     }
 
     /// <summary>Puts the picker back to the ordinary rule after a word is saved.</summary>
@@ -1845,7 +1809,7 @@ public sealed partial class MainWindow : Window, IDisposable
         // so a row that another change replaced while this was waiting is no longer the row that was
         // chosen - it is left alone, correctly, and saying "removed" over the top of that tells
         // somebody a word is gone when it is still there.
-        var removal = await CommitVocabularyAsync(_vocabulary.RemoveWordsAsync(selected)).ConfigureAwait(true);
+        var removal = await CommitVocabularyAsync(_session.Vocabulary.RemoveWordsAsync(selected)).ConfigureAwait(true);
         if (!removal.Saved)
         {
             return;
@@ -1898,7 +1862,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
         // Same reason as the word boxes above: a refused save must not eat the snippet someone
         // just wrote.
-        if (!await CommitVocabularyAsync(_vocabulary.AddSnippetAsync(new SnippetEntry(name, body)), "Snippet saved").ConfigureAwait(true))
+        if (!await CommitVocabularyAsync(_session.Vocabulary.AddSnippetAsync(new SnippetEntry(name, body)), "Snippet saved").ConfigureAwait(true))
         {
             return;
         }
@@ -1915,7 +1879,7 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        await CommitVocabularyAsync(_vocabulary.RemoveSnippetAsync(selected), "Snippet removed").ConfigureAwait(true);
+        await CommitVocabularyAsync(_session.Vocabulary.RemoveSnippetAsync(selected), "Snippet removed").ConfigureAwait(true);
     }
 
     private void HistorySearchBox_TextChanged(object sender, TextChangedEventArgs e) => RefreshHistoryView();
@@ -1982,7 +1946,7 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        if (await _historyPresenter.DeleteRecoveryAsync().ConfigureAwait(true))
+        if (await _session.History.DeleteRecoveryAsync().ConfigureAwait(true))
         {
             ClearRecoveredText();
             FoundationInfoBar.Title = "No recovered dictation is pending";
@@ -2012,7 +1976,7 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var result = await _historyPresenter.DeleteAsync(selected.Id).ConfigureAwait(true);
+        var result = await _session.History.DeleteAsync(selected.Id).ConfigureAwait(true);
         if (result.Succeeded)
         {
             BeginHistoryReload();
@@ -2033,7 +1997,7 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var result = await _historyPresenter.KeepAsync(selected.Id).ConfigureAwait(true);
+        var result = await _session.History.KeepAsync(selected.Id).ConfigureAwait(true);
         if (result.Succeeded)
         {
             BeginHistoryReload();
@@ -2062,7 +2026,7 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var result = await _historyPresenter.ClearAsync().ConfigureAwait(true);
+        var result = await _session.History.ClearAsync().ConfigureAwait(true);
         if (result.Succeeded)
         {
             BeginHistoryReload();
@@ -2134,7 +2098,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
         // THE PLAN IS THE CONTROLLER'S, COMPUTED INSIDE THE GATE; the message is chosen from what
         // came back, so "already set up" is said about the list that was actually there.
-        var outcome = await CommitVocabularyAsync(_vocabularyImport.ApplyPackAsync(pack)).ConfigureAwait(true);
+        var outcome = await CommitVocabularyAsync(_session.VocabularyImport.ApplyPackAsync(pack)).ConfigureAwait(true);
         if (!outcome.Saved)
         {
             return;
@@ -2217,7 +2181,7 @@ public sealed partial class MainWindow : Window, IDisposable
         // generic save message the moment ONE word imported, so a hundred-line file with sixty good
         // rows and forty unreadable ones said "the change was saved locally" and the forty were
         // never mentioned.
-        var outcome = await CommitVocabularyAsync(_vocabularyImport.ImportAsync(text)).ConfigureAwait(true);
+        var outcome = await CommitVocabularyAsync(_session.VocabularyImport.ImportAsync(text)).ConfigureAwait(true);
         if (!outcome.Saved)
         {
             // The save refused and has already said why. Speaking again here would paint over that
@@ -2295,7 +2259,7 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         var word = replacements.Count == 1 ? "correction" : "corrections";
         return CommitVocabularyAsync(
-            _vocabularyImport.ReplaceConflictsAsync(replacements),
+            _session.VocabularyImport.ReplaceConflictsAsync(replacements),
             "Corrections replaced",
             $"{replacements.Count} {word} now match the list you imported.");
     }
@@ -2403,7 +2367,7 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var result = await _profileService.ExportAsync(_settings.ToPortableProfile(), file.Path).ConfigureAwait(true);
+        var result = await _session.Profiles.ExportAsync(_settings.ToPortableProfile(), file.Path).ConfigureAwait(true);
         ShowMessage(
             result.Succeeded ? "Profile exported" : "Profile export failed safely",
             result.Succeeded ? "Settings, dictionary entries, and snippets were written without private machine data." : "No existing destination data was intentionally replaced with an invalid profile.",
@@ -2485,7 +2449,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
         var retentionDays = _settings.Observability?.DiagnosticRetentionDays ??
             ObservabilityPreferences.Default.DiagnosticRetentionDays;
-        var result = await _diagnosticExportService.ExportAsync(
+        var result = await _session.Diagnostics.ExportAsync(
             file.Path,
             retentionDays,
             DateTimeOffset.UtcNow).ConfigureAwait(true);
@@ -2546,7 +2510,7 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var imported = await _profileService.ImportAsync(file.Path).ConfigureAwait(true);
+        var imported = await _session.Profiles.ImportAsync(file.Path).ConfigureAwait(true);
         if (imported.Status != PortableProfileImportStatus.Imported || imported.Profile is null)
         {
             ShowMessage("Profile not imported", ImportFailureMessage(imported.Status), InfoBarSeverity.Error);
@@ -2571,7 +2535,7 @@ public sealed partial class MainWindow : Window, IDisposable
         {
             if (_deviceCatalog is null)
             {
-                _deviceCatalog = new WasapiDeviceCatalog();
+                _deviceCatalog = _session.DeviceCatalog();
                 _deviceCatalog.DevicesChanged += OnAudioDevicesChanged;
             }
 
@@ -2661,7 +2625,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private async Task ReloadHistoryAsync()
     {
         BeginHistoryReload();
-        var view = await _historyPresenter.LoadAsync().ConfigureAwait(true);
+        var view = await _session.History.LoadAsync().ConfigureAwait(true);
         ShowHistory(view);
     }
 
@@ -3271,7 +3235,7 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>Takes the presenter's settings as this window's, and tells the app.</summary>
     private void PublishSettings()
     {
-        _settings = _settingsPresenter.Current;
+        _settings = _session.Settings.Current;
         SettingsChanged?.Invoke(_settings);
     }
 
@@ -3388,7 +3352,7 @@ public sealed partial class MainWindow : Window, IDisposable
     /// AWAITED AT EXIT, BECAUSE ABANDONING THE WRITER LETS THE PROCESS END MID-WRITE. Synchronous
     /// teardown cannot wait, so it does not try; this is the asynchronous half that can.
     /// </remarks>
-    public Task DrainSettingsAsync() => _settingsPresenter.DrainAsync();
+    public Task DrainSettingsAsync() => _session.DrainAsync();
 
     /// <summary>Says whatever history result is still waiting, if anything can hear it now.</summary>
     public void AnnouncePendingHistoryState() => AnnounceHistoryOnPageShown();
@@ -3442,7 +3406,7 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private async Task<bool> UpdateSettingsAsync(Func<AppSettings, AppSettings> change)
     {
-        var result = await _settingsPresenter.SaveAsync(change).ConfigureAwait(true);
+        var result = await _session.Settings.SaveAsync(change).ConfigureAwait(true);
         if (!result.Saved)
         {
             return false;
@@ -3458,7 +3422,7 @@ public sealed partial class MainWindow : Window, IDisposable
         string title,
         string message)
     {
-        var result = await _settingsPresenter.SaveAsync(change).ConfigureAwait(true);
+        var result = await _session.Settings.SaveAsync(change).ConfigureAwait(true);
         if (!result.Saved)
         {
             ShowSettingsRefusal(result.Refusal!.Value);
@@ -3565,14 +3529,14 @@ public sealed partial class MainWindow : Window, IDisposable
         // against. A listing overtaken by a later refresh comes back as nothing, and the one that
         // came back is asked once more, here with no wait in between, whether it is still the
         // latest - a person can change provider between the answer and this thread.
-        var listing = await _providerPresenter.ListModelsAsync(provider, NullIfBlank(OllamaEndpointTextBox.Text))
+        var listing = await _session.Provider.ListModelsAsync(provider, NullIfBlank(OllamaEndpointTextBox.Text))
             .ConfigureAwait(true);
-        if (listing is null || !_providerPresenter.IsCurrent(listing.Ticket))
+        if (listing is null || !_session.Provider.IsCurrent(listing.Ticket))
         {
             return;
         }
 
-        var choices = _providerPresenter.Choose(listing, PolishModelTextBox.Text, chooseDefault);
+        var choices = _session.Provider.Choose(listing, PolishModelTextBox.Text, chooseDefault);
 
         // All three model controls follow the PROVIDER, not just the two that used to. With the
         // provider set to None the picker and the refresh button were correctly disabled while
@@ -3652,7 +3616,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
         SetLiveText(
             ApiKeyStatusText,
-    _providerPresenter.KeyStatus(provider) switch
+    _session.Provider.KeyStatus(provider) switch
             {
                 ApiKeyReadStatus.Found =>
                     $"{CredentialArticle(provider)} {ProviderDisplayName(provider)} key is stored in Windows Credential Manager.",

@@ -161,7 +161,7 @@ public sealed class HistoryPresenterTests
         var end = window.IndexOf("\n    }\n", start, StringComparison.Ordinal);
         var handler = window[start..end];
 
-        var asked = handler.IndexOf("if (await _historyPresenter.DeleteRecoveryAsync()", StringComparison.Ordinal);
+        var asked = handler.IndexOf("if (await _session.History.DeleteRecoveryAsync()", StringComparison.Ordinal);
         var refused = handler.IndexOf("\n        else\n", StringComparison.Ordinal);
         var notified = handler.IndexOf("RecoveryCleared?.Invoke();", StringComparison.Ordinal);
         Assert.True(asked >= 0, "The handler does not ask the presenter to delete the copy.");

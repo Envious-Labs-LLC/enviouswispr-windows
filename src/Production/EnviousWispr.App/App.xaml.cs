@@ -16,6 +16,7 @@ using EnviousWispr.ModelDelivery;
 using EnviousWispr.LLM;
 using EnviousWispr.App.Composition;
 using EnviousWispr.Pipeline;
+using EnviousWispr.Presentation;
 using EnviousWispr.Services.Diagnostics;
 using EnviousWispr.Services.Distribution;
 using EnviousWispr.Services.Credentials;
@@ -97,6 +98,8 @@ public partial class App : Application, IAsyncDisposable
     private bool _sessionTornDownCleanly = true;
     private bool _exitRequested;
     private ApplicationLifetime? _lifetime;
+    private WindowPresentationSession? _presentation;
+    private PolishModelSource? _polishModelSource;
     private bool _backgroundNoticeShown;
     private Guid? _runId;
     private CancellationTokenSource? _heartbeatCancellation;
@@ -304,19 +307,29 @@ public partial class App : Application, IAsyncDisposable
                 AppFailureCategory.AccessDenied));
         }
 
+        // THE WINDOW'S PRESENTATION IS COMPOSED HERE AND OWNED BY THE SHELL (plan-2 step 12): the one
+        // settings writer, the presenters over it, the microphone test and the device catalogue with
+        // their production factories. The window takes the session and the facts of this launch; the
+        // shell's lifetime closes the session - drain, then disposal - among its shell services.
+        _polishModelSource = new PolishModelSource(_credentialStore);
+        _presentation = WindowComposition.Compose(
+            _settingsStore,
+            settings,
+            _historyStore,
+            _recoveryTextStore,
+            _credentialStore,
+            _polishModelSource,
+            _profileService,
+            _diagnosticExportService);
         _window = new MainWindow(
             settings,
-            loadResult.Status,
-            _settingsStore,
-            _profileService,
-            _historyStore,
-            _credentialStore,
-            _recoveryTextStore,
-            _diagnosticExportService,
-            _logger.TelemetryAvailable,
-            _releaseIdentity,
-            _updateService.IsConfigured,
-            _updateService.CurrentVersion);
+            _presentation,
+            new WindowLaunch(
+                loadResult.Status,
+                _logger.TelemetryAvailable,
+                _releaseIdentity,
+                _updateService.IsConfigured,
+                _updateService.CurrentVersion));
         _window.SettingsChanged += OnSettingsChanged;
         _window.SessionStatusChanged += OnSessionStatusChanged;
         _window.AudioDevicesChanged += OnAudioDevicesChanged;
@@ -1138,6 +1151,20 @@ public partial class App : Application, IAsyncDisposable
         ],
         DisposeShell:
         [
+            // THE PRESENTATION SESSION: the drain first (the settings write in flight is kept), then
+            // the writer's gate and the device catalogue - the one owner of what the window used to
+            // build. Closed again by a later call it is a no-op.
+            new LifetimeStep("presentation session", async () =>
+            {
+                if (_presentation is { } presentation)
+                {
+                    await presentation.DisposeAsync().ConfigureAwait(true);
+                }
+
+                var models = _polishModelSource;
+                _polishModelSource = null;
+                models?.Dispose();
+            }),
             new LifetimeStep("activation channel", async () =>
             {
                 if (_activationChannel is { } channel)

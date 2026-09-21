@@ -46,6 +46,19 @@ the message count.
 | 2026-09-21 | 0.19.0+d313251 (step 10 branch) | caret-start | ClipboardPaste (`WM_PASTE` seen, seed last) | yes | yes |
 | 2026-09-21 | 0.19.0+d313251 (step 10 branch) | password | ClipboardOnly (`TextDeliveryRefused` / `DeliveryProtectedField`, field empty) | yes | yes |
 
+## GeneralSavePersistsAndRendersCommittedValues
+
+The actual Save button, pressed in the running app through the accessibility layer
+(`scripts/native-settings-save.ps1`): on a seeded, onboarded temporary profile the Clipboard page's "Copy to
+the clipboard instead of pasting" toggle is flipped through its TogglePattern, "Save settings" is invoked,
+and the script reads back the file a launch would read (`preferences.copyInsteadOfPaste`), the toggle as
+the window re-rendered it after the save, and the operation bar's title; the app then exits through its
+UAT switch and must exit cleanly with `ApplicationCleanShutdown` in its log. No coordinates, no mouse.
+
+| Recorded | Build | Persisted | Rendered | Message | Passed | Exited cleanly |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-09-21 | 0.19.0+d797b9b (step 12 branch) | copyInsteadOfPaste = true | toggle On | "Settings saved" | yes | yes |
+
 ## Reproducing
 
 ```powershell
@@ -55,3 +68,7 @@ pwsh -NoProfile -File scripts/native-journeys.ps1
 ```
 
 `-SkipVirtualCable` leaves out the two VB-Audio cable journeys on a machine without the cable.
+
+```powershell
+pwsh -NoProfile -File scripts/native-settings-save.ps1
+```
