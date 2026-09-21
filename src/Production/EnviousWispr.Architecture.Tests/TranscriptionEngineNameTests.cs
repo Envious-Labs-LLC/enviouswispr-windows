@@ -736,6 +736,10 @@ public sealed partial class DesignSystemTokenTests
         var root = FindRepositoryRoot();
         var timers = File.ReadAllText(
             Path.Combine(root, "src", "Production", "EnviousWispr.Pipeline", "RecordingTimers.cs"));
+        var effects = File.ReadAllText(
+            Path.Combine(root, "src", "Production", "EnviousWispr.App", "Composition", "RuntimeEffects.cs"));
+        var composition = File.ReadAllText(
+            Path.Combine(root, "src", "Production", "EnviousWispr.App", "Composition", "RuntimeComposition.cs"));
         var shell = File.ReadAllText(
             Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
 
@@ -745,16 +749,29 @@ public sealed partial class DesignSystemTokenTests
         // character count stood in for "did you get the whole thing". The parser returns the method
         // or nothing, so there is no fragment to guard against. Ref: #82.
         //
-        // TWO HALVES SINCE STEP 10 (#148): the monitor in the pipeline posts a Released signal through
-        // its port, and the shell's adapter for that port hands the signal to the same entry a key
-        // release uses. Either half alone could be rewired to a parallel finish; both are checked.
+        // THREE LINKS SINCE PLAN-2 STEP 5: the monitor in the pipeline posts a Released signal through
+        // its port; the composed adapter for that port hands the signal to the runtime's queue; and
+        // the hook's handler in the shell hands a key to that same queue. Any link alone could be
+        // rewired to a parallel finish; all three are checked.
         Assert.Contains(
             "Post(PushToTalkSignal.Released)",
             DeclarationTextOf(timers, "RunAsync"),
             StringComparison.Ordinal);
         Assert.Contains(
-            "HandlePushToTalkAsync(signal)",
-            DeclarationTextOf(shell, "Post"),
+            "queue.HandAsync(signal)",
+            DeclarationTextOf(effects, "Post"),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "coordinator.SubmitAsync(signal)",
+            DeclarationTextOf(composition, "HandAsync"),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "_queue.HandAsync(signal)",
+            DeclarationTextOf(composition, "SubmitAsync"),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "_runtime.SubmitAsync(args.Signal)",
+            DeclarationTextOf(shell, "OnPushToTalkSignalled"),
             StringComparison.Ordinal);
     }
 

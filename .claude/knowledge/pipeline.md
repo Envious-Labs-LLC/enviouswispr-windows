@@ -64,7 +64,10 @@ remain wordless designs.
   nothing for the final Parakeet model, which reports a language it did not detect). The shell keeps
   the probe's construction, Windows' notifications and rendering. The joins themselves - runner,
   executor, coordinator and their two effects adapters - are built by `App/Composition/
-  SessionComposition.cs` (plan-2 step 4), which the architecture tests compile and drive.
+  SessionComposition.cs` (plan-2 step 4), and the long-lived owners around them (persistence,
+  finaliser, preview, streaming, watchdog, auto-stop, and the one queue a key, the auto-stop and the
+  watchdog all submit through) by `RuntimeComposition.cs` (step 5); the architecture tests compile
+  and drive both.
 - **How the macOS app owns the same workflow** (read from its source by the Mac session on 2026-09-20;
   its owners are `.claude/knowledge/session-lifecycle.md`, `pipeline-mechanics.md` and `live-preview.md`
   in the macOS repository). One recording-session kernel is the single state machine every dictation

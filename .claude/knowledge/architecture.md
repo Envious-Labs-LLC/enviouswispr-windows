@@ -17,8 +17,13 @@ build so customers do not need to install developer tooling.
   from the concrete things the shell chooses plus a `SessionShell` of leaf reads and notifications and an
   `ISessionView` of four window sinks. The architecture tests compile those exact files (a source link,
   not a copy) and drive the composed coordinator with fakes at the leaves, so the production joins are
-  proved under xunit rather than only by a journey through the built app. `App.xaml.cs` keeps the
-  concrete selection, the dispatcher-bound view forwarder and the session teardown.
+  proved under xunit rather than only by a journey through the built app. `RuntimeComposition.Compose`
+  (plan-2 step 5) builds the long-lived owners the same way - the persistence owner, the finaliser
+  and its polish, the live preview, streaming, the watchdog and the auto-stop - from the concrete
+  stores plus a `RuntimeShell` of leaf reads (settings, engines, the capture, the coordinator) and an
+  `IRuntimeView` of the preview, recovery and history sinks; its `SessionQueue` is the one route a
+  key, the auto-stop and the watchdog take to the coordinator. `App.xaml.cs` keeps the concrete
+  selection, the two dispatcher-bound view forwarders and the session teardown.
 - `Core`: shared value types, settings contracts, errors, and session state.
 - `Audio`: WASAPI capture, device selection, resampling, and level monitoring.
 - `ASR`: engine-neutral transcription contracts and adapters.
