@@ -7,13 +7,15 @@ using EnviousWispr.Core.Runtime;
 
 namespace EnviousWispr.Services.Runtime;
 
-public sealed class RuntimeWorkerLivePreviewEngine : ILivePreviewEngine
+public sealed class RuntimeWorkerLivePreviewEngine : IAbortableLivePreviewEngine
 {
-    private readonly IWorkerTranscriptionRuntime _engine;
+    private readonly Func<IWorkerTranscriptionRuntime>? _replacement;
     private readonly RuntimeResourceArbiter _resourceArbiter;
     private readonly RuntimeResourceKind _resource;
     private readonly TimeSpan _resourceTimeout;
+    private IWorkerTranscriptionRuntime _engine;
     private IAsyncDisposable? _resourceLease;
+    private bool _retired;
     private bool _disposed;
 
     public RuntimeWorkerLivePreviewEngine(
@@ -26,23 +28,30 @@ public sealed class RuntimeWorkerLivePreviewEngine : ILivePreviewEngine
             options.Provider == RuntimeProviderKind.Cpu
                 ? RuntimeResourceKind.Cpu
                 : RuntimeResourceKind.Accelerator,
-            resourceTimeout)
+            resourceTimeout,
+            () => CreateRuntime(options))
     {
     }
 
+    /// <param name="replacement">Builds a fresh runtime after an abort retired the one in use; null leaves the engine unable to start again after an abort.</param>
     internal RuntimeWorkerLivePreviewEngine(
         IWorkerTranscriptionRuntime engine,
         RuntimeResourceArbiter resourceArbiter,
         RuntimeResourceKind resource,
-        TimeSpan? resourceTimeout = null)
+        TimeSpan? resourceTimeout = null,
+        Func<IWorkerTranscriptionRuntime>? replacement = null)
     {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(resourceArbiter);
         _engine = engine;
+        _replacement = replacement;
         _resourceArbiter = resourceArbiter;
         _resource = resource;
         _resourceTimeout = resourceTimeout ?? TimeSpan.Zero;
     }
+
+    /// <summary>The runtime in use; after an observed abort, the replacement the next start built.</summary>
+    internal IWorkerTranscriptionRuntime Runtime => _engine;
 
     public string EngineId => _engine.EngineId;
 
@@ -53,6 +62,27 @@ public sealed class RuntimeWorkerLivePreviewEngine : ILivePreviewEngine
         if (_resourceLease is not null)
         {
             return new RuntimeWorkerResult(true, RuntimeWorkerState.Ready);
+        }
+
+        // AN ABORTED RUNTIME IS TERMINAL, AND THE PREVIEW IS NOT. The supervisor an abort ended
+        // refuses every start after, by design; the next recording's preview needs a runtime of its
+        // own, so the retired one is let go of - disposed, its process already seen gone - and a
+        // fresh one built in its place. Without a way to build one, the start is refused as the
+        // supervisor would refuse it.
+        if (_retired)
+        {
+            if (_replacement is null)
+            {
+                return new RuntimeWorkerResult(
+                    false,
+                    RuntimeWorkerState.Aborted,
+                    new AppError(AppErrorCode.RuntimeWorkerFailed, AppErrorStage.RuntimeWorker, CanRetry: false));
+            }
+
+            var retired = _engine;
+            _engine = _replacement();
+            _retired = false;
+            await retired.DisposeAsync().ConfigureAwait(false);
         }
 
         var acquired = await _resourceArbiter.AcquireAsync(
@@ -158,7 +188,7 @@ public sealed class RuntimeWorkerLivePreviewEngine : ILivePreviewEngine
         return stopped;
     }
 
-    /// <summary>Kills the preview's worker for a shutdown; terminal. The resource it held is let go of only once the worker is seen gone.</summary>
+    /// <summary>Kills the preview's worker - for a release its stop refused, or a shutdown; terminal. The resource it held is let go of only once the worker is seen gone.</summary>
     /// <remarks>
     /// THE RESOURCE FOLLOWS THE WORKER, NOT THE CALL. A worker whose exit was not observed may still
     /// be on the accelerator or the CPU the lease stands for; handing that to the final engine would
@@ -167,7 +197,9 @@ public sealed class RuntimeWorkerLivePreviewEngine : ILivePreviewEngine
     /// </remarks>
     public async Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(deadline, TimeSpan.Zero);
         var result = await _engine.AbortAsync(deadline).ConfigureAwait(false);
+        _retired = true;
         if (result.Outcome is RuntimeWorkerAbortOutcome.Exited or RuntimeWorkerAbortOutcome.NoWorker)
         {
             await ReleaseResourceAsync().ConfigureAwait(false);

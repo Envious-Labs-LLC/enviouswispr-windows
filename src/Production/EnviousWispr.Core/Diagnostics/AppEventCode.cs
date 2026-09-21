@@ -119,6 +119,9 @@ public enum AppEventCode
     LivePreviewFailed,
     /// <summary>The preview worker was still starting when the dictation ended; nothing was shown.</summary>
     LivePreviewStartupCancelled,
+
+    /// <summary>The preview's worker refused its stop at the release and was ended by force, its exit seen, before the final transcription.</summary>
+    LivePreviewAborted,
     RuntimeSelectionObserved,
     DiagnosticsExported,
     DiagnosticsExportFailed,

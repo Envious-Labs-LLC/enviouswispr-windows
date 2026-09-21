@@ -54,6 +54,51 @@ public sealed class ProductionPathTests
     }
 
     [Fact]
+    public async Task APreviewWorkerThatRefusesItsStopIsEndedBeforeTheFinalTranscriptionAndTheWordsStillLand()
+    {
+        // THROUGH THE PRODUCTION PATH: the preview's engine refuses its stop at the release; the
+        // executor ends the worker by force before the final engine is reached, the abort is on the
+        // log, the final engine transcribes, the words are delivered and the preview is not owned
+        // afterwards - so the next recording gets a preview again.
+        var world = ComposedSessionWorld.Create("hello world");
+        world.LivePreviewEnabled = true;
+        world.PreviewEngine.RefuseStop = true;
+        world.Engine.OnEntered = () => world.EngineSaw.Add((world.Capture.IsCapturing, world.Capture.Cancelled.Task.IsCompleted, world.Runtime.Preview.IsRunning));
+
+        await world.SubmitAsync(PushToTalkSignal.Pressed);
+        await Eventually(() => world.RuntimeView.Previews.Contains("preview words"), "the preview to reach the window");
+        await world.SubmitAsync(PushToTalkSignal.Released);
+
+        Assert.Equal(1, world.PreviewEngine.Aborts);
+        Assert.Contains(AppEventCode.LivePreviewAborted, world.Log.Events);
+        Assert.False(world.EngineSaw.Single().PreviewRunning, "the final engine was reached with the preview still owned");
+        Assert.Equal("hello world", world.Delivery.Requests.Single().Text.Text);
+        Assert.False(world.Runtime.Preview.IsRunning);
+
+        // A WORKER NOT SEEN GONE AFTER TWO KILLS ENDS THE DICTATION AS A FAILED SESSION: the final
+        // engine is never reached, nothing is delivered, the preview's failure and the runtime's
+        // error are on the log, the status says the session was reset safely, and the preview stays
+        // owned - the next stop asks again.
+        var stubborn = ComposedSessionWorld.Create("not transcribed");
+        stubborn.LivePreviewEnabled = true;
+        stubborn.PreviewEngine.RefuseStop = true;
+        stubborn.PreviewEngine.AbortOutcome = RuntimeWorkerAbortOutcome.StillRunning;
+        await stubborn.SubmitAsync(PushToTalkSignal.Pressed);
+        await Eventually(() => stubborn.RuntimeView.Previews.Contains("preview words"), "the preview to reach the window");
+        await stubborn.SubmitAsync(PushToTalkSignal.Released);
+
+        Assert.Equal(2, stubborn.PreviewEngine.Aborts);
+        Assert.Equal(0, stubborn.Engine.Calls);
+        Assert.Empty(stubborn.Delivery.Requests);
+        Assert.Contains(AppEventCode.LivePreviewFailed, stubborn.Log.Events);
+        Assert.Contains(AppEventCode.DictationSessionRecovered, stubborn.Log.Events);
+        Assert.DoesNotContain(AppEventCode.LivePreviewAborted, stubborn.Log.Events);
+        Assert.Contains(stubborn.View.Statuses, status => status.Text.Contains("reset safely", StringComparison.Ordinal));
+        Assert.Null(stubborn.Controller.CurrentSession);
+        Assert.True(stubborn.Runtime.Preview.IsRunning, "a worker not seen gone is still owned");
+    }
+
+    [Fact]
     public async Task AFaultedDeliveryIsLoggedByItsStageAndKindAndTheWordsAreKept()
     {
         // THE DELIVERY NAMES A DEFECT; THE COMPOSED SESSION LOGS IT AS ONE (plan-2 step 13). The
@@ -294,6 +339,16 @@ public sealed class ProductionPathTests
         store.Dispose();
         using var reopened = new WindowsRecoveryTextStore(path);
         Assert.Equal("hello world", (await reopened.LoadAsync()).Record?.Text);
+    }
+
+    private static async Task Eventually(Func<bool> condition, string what)
+    {
+        var deadline = DateTime.UtcNow + Patience;
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, $"Timed out waiting for {what}.");
+            await Task.Delay(10);
+        }
     }
 
     /// <summary>A polish provider that holds until released and honours the token it is handed.</summary>
