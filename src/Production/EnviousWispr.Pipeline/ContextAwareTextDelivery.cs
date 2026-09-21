@@ -3,6 +3,20 @@ using EnviousWispr.PostProcessing;
 
 namespace EnviousWispr.Pipeline;
 
+/// <summary>Delivers a dictation to the window it was started in, through the target adapter, and keeps the words if it cannot.</summary>
+/// <remarks>
+/// A FAILURE KEEPS ITS NAME (plan-2 step 13). The adapter names the accessibility failures it
+/// expects - a window that vanished, a pattern the control does not support, a COM call Windows
+/// refused - and answers them as results, never exceptions. What still throws out of it is one of
+/// three things, each answered by its own name: the caller's cancellation
+/// (<see cref="TextDeliveryRefusalReason.Cancelled"/>), a disposal under the delivery because the
+/// app is leaving (<see cref="TextDeliveryRefusalReason.DeliveryDisposed"/>), or a defect
+/// (<see cref="TextDeliveryRefusalReason.DeliveryFaulted"/>, with the stage and the exception's type
+/// in <see cref="DeliveryResult.Fault"/>). None of them is relabelled "accessibility unavailable"
+/// any more; that name pointed a bug at Windows. In every case the words are kept in
+/// <see cref="RecoveryText"/>, nothing is retried, and nothing further is written to the target:
+/// a commit that threw may or may not have landed, and a second attempt could double it.
+/// </remarks>
 public sealed class ContextAwareTextDelivery : ITextDelivery
 {
     private readonly ITextTargetAdapter _targetAdapter;
@@ -38,9 +52,18 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
         // arrived as "hello ".
         if (request.Options.CopyInsteadOfPaste)
         {
-            var copied = await _targetAdapter
-                .CopyOnlyAsync(request.Text, cancellationToken)
-                .ConfigureAwait(false);
+            TextCommitResult copied;
+            try
+            {
+                copied = await _targetAdapter
+                    .CopyOnlyAsync(request.Text, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception) when (IsNamed(exception))
+            {
+                return Stopped(request, DeliveryStage.Copy, exception, cancellationToken);
+            }
+
             if (copied.Delivered || copied.ClipboardFallback)
             {
                 RecoveryText = null;
@@ -75,21 +98,9 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
                 request.Options,
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception exception) when (IsNamed(exception))
         {
-            return new DeliveryResult(
-                request.Text.SessionId,
-                Delivered: false,
-                ClipboardFallback: false,
-                RefusalReason: TextDeliveryRefusalReason.Cancelled);
-        }
-        catch (Exception exception) when (IsRecoverable(exception))
-        {
-            return new DeliveryResult(
-                request.Text.SessionId,
-                Delivered: false,
-                ClipboardFallback: false,
-                RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable);
+            return Stopped(request, DeliveryStage.ContextCapture, exception, cancellationToken);
         }
 
         // THE TARGET'S REFUSAL TRAVELS WITH THE COMMIT. An elevated, protected or changed target is
@@ -116,23 +127,9 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
                     forcedRefusal),
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception exception) when (IsNamed(exception))
         {
-            return new DeliveryResult(
-                request.Text.SessionId,
-                Delivered: false,
-                ClipboardFallback: false,
-                RefusalReason: TextDeliveryRefusalReason.Cancelled,
-                RepairDisposition: repair.Disposition);
-        }
-        catch (Exception exception) when (IsRecoverable(exception))
-        {
-            return new DeliveryResult(
-                request.Text.SessionId,
-                Delivered: false,
-                ClipboardFallback: false,
-                RefusalReason: TextDeliveryRefusalReason.AccessibilityUnavailable,
-                RepairDisposition: repair.Disposition);
+            return Stopped(request, DeliveryStage.Commit, exception, cancellationToken, repair.Disposition);
         }
 
         if (commit.Delivered || commit.ClipboardFallback)
@@ -163,6 +160,34 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
                 _ => TextDeliveryRefusalReason.AccessibilityUnavailable,
             };
 
-    private static bool IsRecoverable(Exception exception) =>
+    /// <summary>Whether an exception out of the adapter is one this delivery answers by name; the process-ending ones are left alone.</summary>
+    private static bool IsNamed(Exception exception) =>
         exception is not (OutOfMemoryException or StackOverflowException);
+
+    /// <summary>The result for a delivery an exception stopped: the words kept, the failure named, nothing retried.</summary>
+    private static DeliveryResult Stopped(
+        TextDeliveryRequest request,
+        DeliveryStage stage,
+        Exception exception,
+        CancellationToken cancellationToken,
+        CursorRepairDisposition disposition = CursorRepairDisposition.LegacyPayload)
+    {
+        // THE CALLER'S CANCELLATION IS CANCELLATION; ANY OTHER OperationCanceledException IS A DEFECT,
+        // because nothing else was asked to stop. A disposal is the app leaving. Everything else is a
+        // bug, named by its stage and type so it can be found without the words.
+        var (reason, fault) = exception switch
+        {
+            OperationCanceledException when cancellationToken.IsCancellationRequested =>
+                (TextDeliveryRefusalReason.Cancelled, (DeliveryFault?)null),
+            ObjectDisposedException => (TextDeliveryRefusalReason.DeliveryDisposed, DeliveryFault.Of(stage, exception)),
+            _ => (TextDeliveryRefusalReason.DeliveryFaulted, DeliveryFault.Of(stage, exception)),
+        };
+        return new DeliveryResult(
+            request.Text.SessionId,
+            Delivered: false,
+            ClipboardFallback: false,
+            RefusalReason: reason,
+            RepairDisposition: disposition,
+            Fault: fault);
+    }
 }

@@ -41,6 +41,8 @@ public sealed record LocalDiagnosticLine(
     DeterministicStageStatus? StageStatus = null,
     bool? Changed = null,
     DiagnosticRuntimeSelectionReason? RuntimeSelection = null,
+    DeliveryStage? DeliveryStage = null,
+    DeliveryFaultKind? Fault = null,
     Guid? DictationId = null)
 {
     /// <summary>Takes a line that is safe to send and adds what only this machine may know.</summary>
@@ -60,6 +62,8 @@ public sealed record LocalDiagnosticLine(
             record.StageStatus,
             record.Changed,
             record.RuntimeSelection,
+            record.DeliveryStage,
+            record.Fault,
             dictationId);
     }
 }

@@ -51,6 +51,14 @@ public enum AppErrorCode
     DeliveryUnsupportedTarget,
     DeliveryClipboardUnavailable,
     DeliveryInputBlocked,
+
+    // EACH WAY A DELIVERY ENDS WITHOUT THE WORDS LANDING KEEPS ITS OWN NAME (plan-2 step 13); these
+    // five used to be logged as DeliveryUnsupportedTarget, which is a policy refusal, not any of them.
+    DeliveryAccessibilityUnavailable,
+    DeliveryUnverified,
+    DeliveryCancelled,
+    DeliveryDisposed,
+    DeliveryFaulted,
 }
 
 public enum AppErrorStage
