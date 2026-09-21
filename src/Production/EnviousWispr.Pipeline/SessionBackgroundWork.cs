@@ -60,21 +60,26 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
     private readonly LivePreviewController _preview;
     private readonly AutoStopMonitor _autoStop;
     private readonly StreamingTranscriptionController _streaming;
+    private readonly TimeProvider _clock;
 
+    /// <param name="clock">The clock the bounded stop measures its one deadline on: the owners' own, so a test can cross it.</param>
     public SessionBackgroundWork(
         RecordingWatchdog watchdog,
         LivePreviewController preview,
         AutoStopMonitor autoStop,
-        StreamingTranscriptionController streaming)
+        StreamingTranscriptionController streaming,
+        TimeProvider clock)
     {
         ArgumentNullException.ThrowIfNull(watchdog);
         ArgumentNullException.ThrowIfNull(preview);
         ArgumentNullException.ThrowIfNull(autoStop);
         ArgumentNullException.ThrowIfNull(streaming);
+        ArgumentNullException.ThrowIfNull(clock);
         _watchdog = watchdog;
         _preview = preview;
         _autoStop = autoStop;
         _streaming = streaming;
+        _clock = clock;
     }
 
     public async Task StartAsync(DictationSessionId sessionId, RecordingBackgroundSettings settings)
@@ -95,16 +100,19 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
     }
 
     /// <remarks>
-    /// THE DEADLINE IS EACH OWNER'S, NOT SHARED. Three owners, three bounded joins, in the order the
-    /// unbounded stop has always used; a shutdown that grants a deadline grants it per limb, and reads
-    /// the report to know what it left running.
+    /// ONE DEADLINE FOR THE THREE, EACH GIVEN WHAT IS LEFT. Three bounded joins in the order the
+    /// unbounded stop has always used; an owner that spends the deadline leaves the next ones zero,
+    /// and a stop given zero still cancels and observes - it reports a loop that has finished as
+    /// finished - so the report is honest about every owner and the three together never take longer
+    /// than the shutdown allowed.
     /// </remarks>
     public async Task<BackgroundStopReport> StopAsync(TimeSpan deadline)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(deadline, TimeSpan.Zero);
-        var streaming = await _streaming.StopAsync(deadline).ConfigureAwait(false);
-        var autoStop = await _autoStop.StopAsync(deadline).ConfigureAwait(false);
-        var preview = await _preview.StopAsync(deadline).ConfigureAwait(false);
+        ArgumentOutOfRangeException.ThrowIfLessThan(deadline, TimeSpan.Zero);
+        var budget = new StopBudget(deadline, _clock);
+        var streaming = await _streaming.StopAsync(budget.Left).ConfigureAwait(false);
+        var autoStop = await _autoStop.StopAsync(budget.Left).ConfigureAwait(false);
+        var preview = await _preview.StopAsync(budget.Left).ConfigureAwait(false);
         return new BackgroundStopReport(streaming, autoStop, preview);
     }
 
@@ -112,7 +120,7 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
 
     public Task<StopOutcome> StopWatchdogAsync(TimeSpan deadline)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(deadline, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfLessThan(deadline, TimeSpan.Zero);
         return _watchdog.StopAsync(deadline);
     }
 }

@@ -196,14 +196,31 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     /// <summary>
     /// The session's teardown, run by the coordinator's shutdown only once nothing is using the session:
     /// the watchdog and the background work stopped under the deadline, each saying whether it finished,
-    /// then the shell's own disposal of the controller and the delivery route through the port.
+    /// then - only behind owners that all finished - the shell's own disposal of the controller and the
+    /// delivery route through the port, joined under what is left of the same deadline.
     /// </summary>
+    /// <remarks>
+    /// ONE DEADLINE, HANDED ON AS WHAT IS LEFT OF IT. The watchdog, the three background owners and
+    /// the shell's disposal are stopped one after another, and each is given the remainder - not the
+    /// whole again - so the teardown as a whole ends inside the deadline it was given. A shell disposal
+    /// still running past it is reported, not waited for; the shell reads the report before it
+    /// disposes anything else the session uses.
+    /// </remarks>
     public async Task<SessionTeardownReport> TearDownAsync(TimeSpan deadline)
     {
-        var watchdog = await _background.StopWatchdogAsync(deadline).ConfigureAwait(false);
-        var background = await _background.StopAsync(deadline).ConfigureAwait(false);
-        await _effects.TearDownSessionAsync().ConfigureAwait(false);
-        return new SessionTeardownReport(watchdog, background);
+        ArgumentOutOfRangeException.ThrowIfLessThan(deadline, TimeSpan.Zero);
+        var budget = new StopBudget(deadline, _clock);
+        var watchdog = await _background.StopWatchdogAsync(budget.Left).ConfigureAwait(false);
+        var background = await _background.StopAsync(budget.Left).ConfigureAwait(false);
+        if (watchdog != StopOutcome.Completed || !background.Completed)
+        {
+            // AN OWNER STILL RUNNING STILL USES THE CAPTURE AND THE CONTROLLER: the shell's disposal of
+            // them is not run beside it. The report says which owner, and that the shell did not run.
+            return new SessionTeardownReport(watchdog, background, Shell: null);
+        }
+
+        var shell = await BoundedJoin.JoinAsync(_effects.TearDownSessionAsync(), budget.Left, _clock).ConfigureAwait(false);
+        return new SessionTeardownReport(watchdog, background, shell);
     }
 
     public Task<SessionCommandResult> ExecuteAsync(SessionCommand command, CancellationToken stoppingToken)

@@ -348,33 +348,44 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             holds = _holds;
         }
 
-        // A NOTIFICATION THAT THREW IS OVER, NOT OUTSTANDING: it is reported, because the shell's
+        // EACH KIND OF WORK IS READ FOR ITSELF. The command and the notifications are waited for
+        // together, but a report that said only "the wait ran out" would hide which of them did; a
+        // notification that threw is over, not outstanding - it is reported because the shell's
         // status line faulted, but nothing of it is still running, and the teardown may proceed.
         var commandOutstanding = !_consumer.IsCompleted;
-        var expiriesOutstanding = (!workFinished && !commandOutstanding) || Volatile.Read(ref _expiryFaulted);
+        var expiriesOutstanding = ExpiriesOutstanding();
+        var expiryFaulted = Volatile.Read(ref _expiryFaulted);
         if (!workFinished || !holdsReleased)
         {
-            return new ShutdownReport(ShutdownOutcome.Unclean, commandOutstanding, expiriesOutstanding, holds, Teardown: null);
+            return new ShutdownReport(ShutdownOutcome.Unclean, commandOutstanding, expiriesOutstanding, expiryFaulted, holds, Teardown: null);
         }
 
         // THE SESSION IS TAKEN FOR THE TEARDOWN. With no command and no hold left it is free; if it is
         // not, something this accounting did not see is using it, and the teardown does not run.
         if (!_sessionGate.Wait(0))
         {
-            return new ShutdownReport(ShutdownOutcome.Unclean, CommandOutstanding: true, expiriesOutstanding, holds, Teardown: null);
+            return new ShutdownReport(ShutdownOutcome.Unclean, CommandOutstanding: true, expiriesOutstanding, expiryFaulted, holds, Teardown: null);
         }
 
         try
         {
-            var deadline = Remaining();
-            var teardown = await _executor
-                .TearDownAsync(deadline > TimeSpan.Zero ? deadline : TimeSpan.FromMilliseconds(1))
-                .ConfigureAwait(false);
-            return new ShutdownReport(ShutdownOutcome.Quiescent, CommandOutstanding: false, expiriesOutstanding, holds, teardown);
+            // WHAT IS LEFT, EVEN WHEN THAT IS NOTHING. The teardown given zero still stops and observes
+            // its owners - a finished one is reported finished - and waits for none of them.
+            var teardown = await _executor.TearDownAsync(Remaining()).ConfigureAwait(false);
+            return new ShutdownReport(ShutdownOutcome.Quiescent, CommandOutstanding: false, expiriesOutstanding, expiryFaulted, holds, teardown);
         }
         finally
         {
             _sessionGate.Release();
+        }
+    }
+
+    /// <summary>Whether an expiry notification is still in flight, read for itself rather than inferred from the wait.</summary>
+    private bool ExpiriesOutstanding()
+    {
+        lock (_admission)
+        {
+            return _expiries.Any(expiry => !expiry.IsCompleted);
         }
     }
 

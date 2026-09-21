@@ -117,6 +117,54 @@ public sealed class BoundedStopTests
     }
 
     [Fact]
+    public async Task TheBackgroundStopSpendsOneDeadlineAcrossItsOwnersNotOneEach()
+    {
+        // ONE DEADLINE FOR THE THREE. Streaming is inside an engine that ignores its cancel and eats
+        // the whole four seconds; the auto-stop (idle) and the preview (also held) are then given
+        // what is left - nothing - and a stop given nothing still cancels and observes: the auto-stop
+        // reports finished, the preview still running, and the report is in hand after the one
+        // advance of four seconds, with no second deadline registered for the preview.
+        var clock = new Deterministic.ManualClock();
+        var world = World.Create(clock);
+        world.PreviewEngine.HoldPreviews = true;
+        world.PreviewEngine.IgnoreCancel = true;
+        world.Engine.Hold = true;
+        var session = DictationSessionId.Create();
+        world.Session = session;
+        world.Capture.Take = FakeAudioCapture.Script((false, 200), (true, 3_000), (false, 1_200), (true, 500));
+        await world.Runtime.Preview.StartAsync(session);
+        await world.PreviewEngine.PreviewEntered.Task.WaitAsync(Patience);
+        world.PreviewEnabled = false;
+        world.Runtime.Streaming.Start(session);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        await world.Engine.Entered.Task.WaitAsync(Patience);
+
+        var started = clock.GetTimestamp();
+        var registered = clock.Registered;
+        var stop = world.Runtime.Background().StopAsync(TimeSpan.FromSeconds(4));
+        await clock.WhenRegistered(registered + 1).WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(4));
+
+        var report = await stop.WaitAsync(Patience);
+        Assert.Equal(StopOutcome.StillRunning, report.Streaming);
+        Assert.Equal(StopOutcome.Completed, report.AutoStop);
+        Assert.Equal(StopOutcome.StillRunning, report.Preview);
+        Assert.Equal(TimeSpan.FromSeconds(4), clock.GetElapsedTime(started));
+        Assert.Equal(registered + 1, clock.Registered);
+        Assert.True(world.Runtime.Preview.IsRunning);
+        Assert.True(world.Runtime.Streaming.IsRunning);
+        Assert.Equal(0, world.PreviewEngine.Stops);
+        Assert.True(world.PreviewEngine.Token!.Value.IsCancellationRequested, "given nothing, the preview's stop still cancelled");
+        Assert.Contains(null, world.View.Previews);
+
+        world.PreviewEngine.ReleasePreviews();
+        world.Engine.Release();
+        Assert.True((await world.Runtime.Background().StopAsync(Patience).WaitAsync(Patience)).Completed);
+        Assert.Equal(1, world.PreviewEngine.Stops);
+    }
+
+    [Fact]
     public async Task LatePreviewCallbackCannotRenderAfterClosure()
     {
         // THE ENGINE ANSWERS AFTER THE SCREEN CLOSED. The stop ran out of patience with the loop

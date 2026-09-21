@@ -53,13 +53,18 @@ remain wordless designs.
   first await and delivery closes with it (a finalisation that has not yet issued its delivery keeps
   the words for recovery); the command running now, every expiry notification and every hold are
   given the one budget; only once nothing is using the session does the executor's teardown run under
-  it, with what is left of the budget - the watchdog and the background work stopped under a deadline,
-  each saying whether it finished (`SessionTeardownReport`), then the shell's disposal of the
-  controller and the delivery route. What did not finish is named in the report (`CommandOutstanding`,
-  `ExpiriesOutstanding`, `HoldsOutstanding`) and **nothing is torn down beside it**; the command ends
-  on its own terms later. A second call shares the first's completion. Cancelling the finalisation in
-  flight is the shell's exit policy, made before it asks for the shutdown (step 9 owns the total
-  budget). The
+  it, with what is left of the budget - **one deadline handed down as its remainder** to the watchdog,
+  then the three background owners, then (only behind owners that all finished) the shell's disposal of
+  the capture, the controller and the delivery route, each reported (`SessionTeardownReport`; a stop
+  given zero still cancels and observes). What did not finish is named in the report
+  (`CommandOutstanding`, `ExpiriesOutstanding`, `ExpiryFaulted`, `HoldsOutstanding`) and **nothing is
+  torn down beside it**; the command ends on its own terms later, and the shell disposes the engines,
+  the polish provider, the arbiter, the owners and the stores only when `SessionQuiescent` says nothing
+  uses them (a gate reads that guard from `App.xaml.cs`). Delivery's closure and its admission are one
+  decision under one lock in the runner: a delivery admitted is issued at once and settles inside the
+  command; one not yet admitted when the closure lands is never issued. A second call shares the
+  first's completion. Cancelling the finalisation in flight is the shell's exit policy, made before it
+  asks for the shutdown (step 9 owns the total budget). The
   executor owns the order of the background work around a recording (watchdog, preview, auto-stop,
   streaming), the three-minute processing deadline - armed before the background work is stopped so
   it covers the preview's worker being waited for, cancelled by a lock, a suspend or the exit

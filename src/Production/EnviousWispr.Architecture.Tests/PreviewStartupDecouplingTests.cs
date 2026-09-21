@@ -285,7 +285,8 @@ public sealed class PreviewStartupDecouplingTests
                 new RecordingWatchdog(timers, TimeProvider.System),
                 preview,
                 new AutoStopMonitor(timers, log, TimeProvider.System),
-                new StreamingTranscriptionController(new NoStreaming(), log, TimeProvider.System));
+                new StreamingTranscriptionController(new NoStreaming(), log, TimeProvider.System),
+                TimeProvider.System);
             var executor = new DictationSessionExecutor(
                 controller,
                 new TracedBackgroundWork(background, capture, preview, effects),

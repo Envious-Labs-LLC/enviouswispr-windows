@@ -775,8 +775,10 @@ public sealed class DictationSessionCoordinatorTests
         // A NOTIFICATION THAT THREW IS OVER, NOT OUTSTANDING: the teardown runs under the session,
         // and the report says the shell's status line faulted, so the shutdown is not clean.
         Assert.False(shutdown.Clean);
+        Assert.True(shutdown.SessionQuiescent);
         Assert.Equal(ShutdownOutcome.Quiescent, shutdown.Outcome);
-        Assert.True(shutdown.ExpiriesOutstanding);
+        Assert.True(shutdown.ExpiryFaulted);
+        Assert.False(shutdown.ExpiriesOutstanding);
         Assert.Equal(1, executor.ShutdownCalls);
         Assert.True(executor.ShutdownRanUnderTheSession);
     }
@@ -850,6 +852,42 @@ public sealed class DictationSessionCoordinatorTests
         Assert.True(report.ExpiriesOutstanding);
         Assert.Equal(0, executor.ShutdownCalls);
         executor.ReleaseExpiry();
+    }
+
+    [Fact]
+    public async Task ACommandAndANotificationBothStillOutWhenTheBudgetEndsAreBothReported()
+    {
+        // EACH KIND OF WORK IS READ FOR ITSELF. Both the command and the notification outlive the
+        // budget; the report names both - a report that inferred the notification from "the command
+        // was not the one" would say nothing about it here - and still nothing is torn down.
+        var executor = new BarrierExecutor { HoldExpiry = true };
+        var clock = new Deterministic.ManualClock();
+        await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        clock.Advance(DictationSessionCoordinator.InterruptionPatience);
+        await executor.Expired(SessionCommandKind.Interruption).WaitAsync(Patience);
+
+        var budget = TimeSpan.FromSeconds(10);
+        var shutdown = coordinator.ShutdownAsync(budget);
+        await clock.WhenRegistered(2).WaitAsync(Patience);
+        clock.Advance(budget);
+
+        var report = await shutdown.WaitAsync(Patience);
+        Assert.Equal(ShutdownOutcome.Unclean, report.Outcome);
+        Assert.True(report.CommandOutstanding);
+        Assert.True(report.ExpiriesOutstanding);
+        Assert.False(report.ExpiryFaulted);
+        Assert.Null(report.Teardown);
+        Assert.Equal(0, executor.ShutdownCalls);
+        Assert.True(executor.Closed);
+
+        executor.Finish(PushToTalkSignal.Pressed);
+        executor.ReleaseExpiry();
+        await press.WaitAsync(Patience);
+        await interruption.WaitAsync(Patience);
     }
 
     [Fact]

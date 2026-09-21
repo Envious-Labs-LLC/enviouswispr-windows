@@ -777,6 +777,60 @@ public sealed partial class DesignSystemTokenTests
     }
 
     /// <summary>
+    /// The shell disposes what a session uses only behind a shutdown that established the session
+    /// quiescent - and disposes it nowhere else.
+    /// </summary>
+    /// <remarks>
+    /// TEARDOWN NEVER RUNS BESIDE A RESOURCE USER (plan-2 step 8). The coordinator's report says
+    /// whether anything is still using the session; the engines, the polish provider, the worker
+    /// arbiter, the background owners and the stores are what such a user is inside, and the shell
+    /// keeps them when the report says so. Two things are checked: every disposal of one of those
+    /// lives in the one method the guard covers, and that method's one call sits under the guard.
+    /// The App itself cannot be run here, so this is read from its source.
+    /// </remarks>
+    [Fact]
+    public void WhatTheSessionUsesIsDisposedOnlyBehindAQuiescentShutdown()
+    {
+        var root = FindRepositoryRoot();
+        var shell = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+        var tree = CSharpSyntaxTree.ParseText(shell).GetRoot();
+        var guarded = tree.DescendantNodes().OfType<MethodDeclarationSyntax>()
+            .Single(method => method.Identifier.ValueText == "DisposeSessionDependenciesAsync");
+        string[] dependencies =
+        [
+            "_previewEngine.DisposeAsync", "_transcriptionEngine.DisposeAsync", "_polishProvider.DisposeAsync",
+            "_resourceArbiter.Dispose", "_polishLifetime.Dispose", "_livePreview.DisposeAsync",
+            "_watchdog.DisposeAsync", "_autoStop.DisposeAsync", "_historyStore.Dispose", "_recoveryTextStore.Dispose",
+        ];
+
+        // ON THE WAY OUT, EVERY DISPOSAL OF A SESSION DEPENDENCY IS INSIDE THE GUARDED METHOD: the
+        // shell's own DisposeAsync disposes none of them itself. (An engine that failed to start is
+        // disposed where it failed, before any session exists; that path is not the shutdown's.)
+        var shutdown = tree.DescendantNodes().OfType<MethodDeclarationSyntax>()
+            .Single(method => method.Identifier.ValueText == "DisposeAsync" && method.Body is not null);
+        var disposedInShutdown = shutdown.DescendantNodes().OfType<MemberAccessExpressionSyntax>()
+            .Select(access => access.ToString())
+            .Where(dependencies.Contains)
+            .ToArray();
+        Assert.Empty(disposedInShutdown);
+        var disposedUnderGuard = guarded.DescendantNodes().OfType<MemberAccessExpressionSyntax>()
+            .Select(access => access.ToString())
+            .Where(dependencies.Contains)
+            .Distinct()
+            .ToArray();
+        Assert.Equal(dependencies.Order(StringComparer.Ordinal), disposedUnderGuard.Order(StringComparer.Ordinal));
+
+        // THE GUARDED METHOD IS CALLED ONCE, UNDER THE REPORT'S ANSWER.
+        var calls = tree.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Where(call => call.Expression.ToString() == "DisposeSessionDependenciesAsync")
+            .ToArray();
+        var call = Assert.Single(calls);
+        var guard = call.Ancestors().OfType<IfStatementSyntax>().FirstOrDefault();
+        Assert.True(guard is not null && guard.Condition.ToString() == "sessionQuiescent", "the call is not under `if (sessionQuiescent)`");
+        Assert.Contains("sessionQuiescent = shutdown.SessionQuiescent;", DeclarationTextOf(shell, "DisposeAsync"), StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Any animation of a LAYOUT property must ask to be allowed to run.
     /// </summary>
     /// <remarks>

@@ -177,6 +177,48 @@ public sealed class SessionShutdownTests
     }
 
     [Fact]
+    public async Task ADeliveryNotYetAdmittedWhenTheShutdownClosesIsNeverIssued()
+    {
+        // THE CLOSURE AND THE ADMISSION ARE ONE DECISION. The finalisation has read delivery as open
+        // and moved the session to Delivering; it is held there, on the transition's own notification,
+        // when the shutdown closes delivery. Resumed, it finds delivery closed at the admission that
+        // counts - the one taken under the closure's lock, with the issue following at once - so
+        // nothing is issued: the words go to the recovery copy and the teardown runs after. A check
+        // made only before the transition would have let this delivery through.
+        var world = World.Build();
+        await world.PressAsync();
+        var delivering = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        world.Controller.SessionChanged += (_, snapshot) =>
+        {
+            if (snapshot.State != DictationSessionState.Delivering)
+            {
+                return;
+            }
+
+            delivering.TrySetResult();
+            if (!resume.Task.Wait(Patience))
+            {
+                throw new TimeoutException("the finalisation held at Delivering was never resumed");
+            }
+        };
+        var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await delivering.Task.WaitAsync(Patience);
+
+        var shutdown = world.Coordinator.ShutdownAsync(Patience);
+        Assert.False(shutdown.IsCompleted);
+        resume.SetResult();
+
+        Assert.Equal(SessionCommandDisposition.Applied, (await release.WaitAsync(Patience)).Disposition);
+        var report = await shutdown.WaitAsync(Patience);
+        Assert.True(report.Clean);
+        Assert.Equal(0, world.Delivery.Deliveries);
+        Assert.True(world.Persistence.HasPendingRecovery, "the words not delivered are kept for recovery");
+        Assert.Null(world.Controller.CurrentSession);
+        Assert.Equal(1, world.Effects.TearDowns);
+    }
+
+    [Fact]
     public async Task IssuedDeliveryIsNeverRetriedDuringShutdown()
     {
         // A DELIVERY ALREADY ISSUED WHEN THE SHUTDOWN BEGINS IS LEFT TO SETTLE, and settles once.
