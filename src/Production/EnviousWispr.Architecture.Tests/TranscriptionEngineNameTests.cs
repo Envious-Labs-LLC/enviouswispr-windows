@@ -591,8 +591,12 @@ public sealed partial class DesignSystemTokenTests
         // disconnected token searches let the write wander anywhere - a reviewer showed the event
         // could be logged from "Transcribing..." with both searches still green.
         var root = FindRepositoryRoot();
-        var shell = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(
-            root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"))).GetRoot();
+        // The shell's session sources: the window's file and the WinUI-free composition beside it,
+        // where the effects adapters live since plan-2 step 4. One tree, so a write that moved
+        // between them is still one write.
+        var shell = CSharpSyntaxTree.ParseText(string.Join(
+            Environment.NewLine,
+            ShellSessionSources(root).Select(File.ReadAllText))).GetRoot();
         var runner = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(
             root, "src", "Production", "EnviousWispr.Pipeline", "SessionFinalizationRunner.cs"))).GetRoot();
 
@@ -1569,32 +1573,50 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void EveryStatusHandedToTheWindowNamesItsPill()
     {
-        var app = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
-        var shell = File.ReadAllText(Path.Combine(app, "App.xaml.cs"));
+        // TWO ROUTES TO THE WINDOW, ONE GATE. The shell's own code calls the window's
+        // SetSessionStatus; the session's effects, WinUI-free under App/Composition since plan-2
+        // step 4, call the session view's ShowStatus, which the shell forwards to the same window
+        // method with the status untouched. Every argument on either route must name its pill.
+        var root = FindRepositoryRoot();
+        var app = Path.Combine(root, "src", "Production", "EnviousWispr.App");
+        var routes = ShellSessionSources(root)
+            .Select(path => (
+                Source: File.ReadAllText(path),
+                Call: path.EndsWith("App.xaml.cs", StringComparison.Ordinal) ? "SetSessionStatus(" : ".ShowStatus("))
+            .ToArray();
 
-        const string call = "SetSessionStatus(";
-        var arguments = new List<string>();
-        for (var index = shell.IndexOf(call, StringComparison.Ordinal);
-             index >= 0;
-             index = shell.IndexOf(call, index + call.Length, StringComparison.Ordinal))
+        var arguments = new List<(string Argument, string Source)>();
+        var written = 0;
+        foreach (var (source, call) in routes)
         {
-            var argument = BalancedArgument(shell, index + call.Length);
-            if (argument is not null)
+            for (var index = source.IndexOf(call, StringComparison.Ordinal);
+                 index >= 0;
+                 index = source.IndexOf(call, index + call.Length, StringComparison.Ordinal))
             {
-                arguments.Add(argument);
+                var argument = BalancedArgument(source, index + call.Length);
+                if (argument is not null)
+                {
+                    arguments.Add((argument, source));
+                }
             }
+
+            written += CountOccurrences(source, call);
         }
 
-        var written = CountOccurrences(shell, call);
         Assert.True(written >= 20, $"Expected the app's status call sites, found {written}.");
         Assert.True(
             arguments.Count == written,
-            $"{written - arguments.Count} of {written} SetSessionStatus calls could not be read, so "
+            $"{written - arguments.Count} of {written} status calls could not be read, so "
                 + "this gate is silently not checking them.");
 
-        // A carrier is a name the compiler already agrees is a DictationStatus: a member declared
-        // to return one, or a parameter or local of that type.
-        var carriers = DictationStatusCarriers(shell);
+        // The shell forwards the view's status to the window untouched: the view's forwarder is read
+        // as syntax - one expression, the parameter handed on as it arrived, nothing assigned to it -
+        // and it is the only call whose argument is a bare parameter, or a status could be rewritten
+        // between the composition and the window.
+        var shell = File.ReadAllText(Path.Combine(app, "App.xaml.cs"));
+        Assert.Null(StatusForwarderComplaint(shell));
+        var forwarders = arguments.Count(entry => entry.Source == shell && entry.Argument == "status");
+        Assert.True(forwarders == 1, $"Expected exactly one bare forwarder of a status to the window, found {forwarders}.");
 
         // WHITESPACE-TOLERANT ON PURPOSE, AND THIS WAS A CORRECTION. The check was a substring test
         // for "DictationStatus." exactly, so a call site that wrapped the line between the type and
@@ -1603,16 +1625,161 @@ public sealed partial class DesignSystemTokenTests
         // it named the type on the line above. The gate was pinning the LINE BREAK rather than the
         // property it exists to hold, and the app was right. It now asserts what it actually means,
         // which is that the call site names the type.
+        // A carrier is a name the compiler already agrees is a DictationStatus: a member declared
+        // to return one, or a parameter or local of that type - in the file the call sits in.
+        var carriersBySource = routes.ToDictionary(route => route.Source, route => DictationStatusCarriers(route.Source));
         var unnamed = arguments
-            .Where(argument => !DictationStatusFactoryCall().IsMatch(argument))
-            .Where(argument => !carriers.Any(carrier =>
-                IdentifierRegexFor(carrier).IsMatch(argument)))
+            .Where(entry => !DictationStatusFactoryCall().IsMatch(entry.Argument))
+            .Where(entry => !carriersBySource[entry.Source].Any(carrier =>
+                IdentifierRegexFor(carrier).IsMatch(entry.Argument)))
+            .Select(entry => entry.Argument)
             .ToArray();
 
         Assert.True(
             unnamed.Length == 0,
             "These statuses reach the window without naming the pill they want, so the appearance "
                 + "is decided somewhere this suite cannot see: " + string.Join(" | ", unnamed));
+    }
+
+    /// <summary>The forwarder check refuses a forwarder that touches the status on its way to the window.</summary>
+    /// <remarks>
+    /// PROVING THE CHECK CAN FAIL. A forwarder that reassigns its parameter before handing it on
+    /// leaves exactly one bare call site and passes a count; the syntax check is what refuses it,
+    /// and both directions are asserted here because one of them alone is not a control.
+    /// </remarks>
+    [Fact]
+    public void TheStatusForwarderCheckRefusesARewrittenStatusAndAcceptsTheBareOne()
+    {
+        const string bare = """
+            private sealed class WindowSessionView(App app) : ISessionView
+            {
+                public void ShowStatus(DictationStatus status) =>
+                    app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetSessionStatus(status));
+            }
+            """;
+        const string rewritten = """
+            private sealed class WindowSessionView(App app) : ISessionView
+            {
+                public void ShowStatus(DictationStatus status)
+                {
+                    status = DictationStatus.Quiet("replacement");
+                    app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetSessionStatus(status));
+                }
+            }
+            """;
+        const string transformed = """
+            private sealed class WindowSessionView(App app) : ISessionView
+            {
+                public void ShowStatus(DictationStatus status) =>
+                    app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetSessionStatus(status with { Text = "x" }));
+            }
+            """;
+        const string tupleReassigned = """
+            private sealed class WindowSessionView(App app) : ISessionView
+            {
+                public void ShowStatus(DictationStatus status) =>
+                    app._window?.DispatcherQueue.TryEnqueue(() =>
+                    {
+                        (status, _) = (status with { Text = "x" }, 0);
+                        app._window?.SetSessionStatus(status);
+                    });
+            }
+            """;
+        const string helperNamedLikeTheWindow = """
+            private sealed class WindowSessionView(App app) : ISessionView
+            {
+                public void ShowStatus(DictationStatus status) =>
+                    app._window?.DispatcherQueue.TryEnqueue(() => app.RewriteAndSetSessionStatus(status));
+            }
+            """;
+        const string notDispatched = """
+            private sealed class WindowSessionView(App app) : ISessionView
+            {
+                public void ShowStatus(DictationStatus status) =>
+                    app._window?.SetSessionStatus(Rewrite(status));
+            }
+            """;
+
+        Assert.Null(StatusForwarderComplaint(bare));
+        Assert.NotNull(StatusForwarderComplaint(rewritten));
+        Assert.NotNull(StatusForwarderComplaint(transformed));
+        Assert.NotNull(StatusForwarderComplaint(tupleReassigned));
+        Assert.NotNull(StatusForwarderComplaint(helperNamedLikeTheWindow));
+        Assert.NotNull(StatusForwarderComplaint(notDispatched));
+        Assert.NotNull(StatusForwarderComplaint("private sealed class Elsewhere { }"));
+    }
+
+    /// <summary>Why the shell's status forwarder is not a bare forward, or null when it is.</summary>
+    private static string? StatusForwarderComplaint(string shell)
+    {
+        var root = CSharpSyntaxTree.ParseText(shell).GetRoot();
+        var view = root.DescendantNodes().OfType<ClassDeclarationSyntax>()
+            .SingleOrDefault(type => type.Identifier.ValueText == "WindowSessionView");
+        if (view is null)
+        {
+            return "The shell has no WindowSessionView.";
+        }
+
+        var forwarder = view.Members.OfType<MethodDeclarationSyntax>()
+            .SingleOrDefault(method => method.Identifier.ValueText == "ShowStatus");
+        if (forwarder is null)
+        {
+            return "The view has no ShowStatus.";
+        }
+
+        // THE WHOLE PERMITTED SHAPE, NOT A LIST OF FORBIDDEN ONES: one expression, which is one
+        // dispatch to the window's queue, whose one argument is a lambda of no parameters whose body
+        // is one expression, which is the window's SetSessionStatus handed the parameter as it
+        // arrived. Anything else - a block anywhere, a helper named like the window's method, a
+        // transformed argument, a second statement - is not that shape.
+        if (forwarder.ExpressionBody is null)
+        {
+            return "The forwarder is a block, so it can do more than forward.";
+        }
+
+        var parameter = forwarder.ParameterList.Parameters.Single().Identifier.ValueText;
+        var (dispatch, dispatcher) = Call(forwarder.ExpressionBody.Expression);
+        if (dispatch is null || dispatcher != "app._window?.DispatcherQueue.TryEnqueue")
+        {
+            return $"The forwarder is not one dispatch to the window's queue ('{dispatcher}').";
+        }
+
+        if (dispatch.ArgumentList.Arguments.Count != 1 ||
+            dispatch.ArgumentList.Arguments[0].Expression is not ParenthesizedLambdaExpressionSyntax lambda ||
+            lambda.ParameterList.Parameters.Count != 0 ||
+            lambda.ExpressionBody is null)
+        {
+            return "The dispatched work is not one expression.";
+        }
+
+        var (handOn, target) = Call(lambda.ExpressionBody);
+        if (handOn is null || target != "app._window?.SetSessionStatus")
+        {
+            return $"The dispatched work calls '{target}' rather than the window's SetSessionStatus.";
+        }
+
+        if (handOn.ArgumentList.Arguments.Count != 1 ||
+            handOn.ArgumentList.Arguments[0].Expression is not IdentifierNameSyntax name ||
+            name.Identifier.ValueText != parameter)
+        {
+            return $"The forwarder hands on '{handOn.ArgumentList.Arguments}' rather than its parameter.";
+        }
+
+        return null;
+
+        // `a?.b.c(d)` parses as a conditional access whose not-null branch is the invocation; the
+        // callee is read across that seam so the whole receiver chain is compared.
+        static (InvocationExpressionSyntax? Invocation, string Callee) Call(ExpressionSyntax expression) =>
+            expression switch
+            {
+                InvocationExpressionSyntax invocation => (invocation, Compact(invocation.Expression)),
+                ConditionalAccessExpressionSyntax { WhenNotNull: InvocationExpressionSyntax invocation } access =>
+                    (invocation, Compact(access.Expression) + "?" + Compact(invocation.Expression)),
+                _ => (null, Compact(expression)),
+            };
+
+        static string Compact(SyntaxNode node) =>
+            string.Concat(node.ToString().Where(character => !char.IsWhiteSpace(character)));
     }
 
     /// <summary>The relaxed match still refuses an argument that names no status at all.</summary>
@@ -1635,6 +1802,15 @@ public sealed partial class DesignSystemTokenTests
         Assert.DoesNotMatch(pattern, "helper.BuildTheStatus(sentence)");
         Assert.DoesNotMatch(pattern, "statusFromSentence(sentence)");
         Assert.DoesNotMatch(pattern, "DictationStatusHelper(sentence)");
+    }
+
+    /// <summary>The shell's session sources: the window's file and the WinUI-free composition beside it.</summary>
+    private static IReadOnlyList<string> ShellSessionSources(string root)
+    {
+        var app = Path.Combine(root, "src", "Production", "EnviousWispr.App");
+        var composition = Directory.EnumerateFiles(Path.Combine(app, "Composition"), "*.cs").Order().ToArray();
+        Assert.True(composition.Length >= 3, $"Expected the composition files under App/Composition, found {composition.Length}.");
+        return [Path.Combine(app, "App.xaml.cs"), .. composition];
     }
 
     private static IEnumerable<string> ProductionSourceFiles(string directory) =>
