@@ -602,11 +602,12 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     }
 
     /// <summary>
-    /// Waits up to <paramref name="timeout"/> for the consumer and every expiry notification it owns.
-    /// THE EXPIRIES ARE JOINED WITH THE CONSUMER: each is either cancelled by the stopping token or
-    /// already notifying, and a notification that finishes inside the wait is reported before anything
-    /// it touches is torn down. False when the work outlived the wait - the caller then proceeds beside
-    /// it and says so - or a notification threw.
+    /// Waits up to <paramref name="timeout"/> for the consumer and every expiry notification it owns
+    /// to complete - faulted or not. THE EXPIRIES ARE JOINED WITH THE CONSUMER: each is either
+    /// cancelled by the stopping token or already notifying, and a notification that finishes inside
+    /// the wait is reported before anything it touches is torn down. False when the work outlived
+    /// the wait; the shutdown then reports what is outstanding and retains everything it would have
+    /// disposed. Whether a notification threw is a separate fact, kept in <c>_expiryFaulted</c>.
     /// </summary>
     private async Task<bool> OutstandingWorkFinishedAsync(TimeSpan timeout)
     {

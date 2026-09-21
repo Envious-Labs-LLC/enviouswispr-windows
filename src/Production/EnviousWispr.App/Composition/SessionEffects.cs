@@ -150,10 +150,11 @@ internal sealed class SessionEffects(SessionCompositionParts parts) : IDictation
     ///
     /// READ OFF THE CONTROLLER RATHER THAN INFERRED. Each command reaches here by several routes and
     /// the controller is the only thing that knows the answer on all of them. Read through the
-    /// shell's own reference to it, not the one this composition was handed: the shell's teardown
-    /// lets go of the controller part-way through, and a controller disposed still holds the session
-    /// it was disposed under, so a command that outlived the shutdown's waits must not read it as a
-    /// dictation still in flight.
+    /// shell's own reference to it, not the one this composition was handed: the shell owns the
+    /// controller's lifetime and lets go of that reference as its teardown disposes the controller,
+    /// and a controller disposed still holds the session it was disposed under. The teardown runs
+    /// only once the session is quiescent, so no command reads it beside the disposal; reading the
+    /// reference the owner holds keeps the answer with the owner.
     ///
     /// IT CANNOT THROW, BECAUSE ITS CALLER IS A FINALLY INSIDE THE COMMAND THAT HOLDS THE SESSION. An
     /// exception escaping here would fault the command, which the coordinator survives, but the
