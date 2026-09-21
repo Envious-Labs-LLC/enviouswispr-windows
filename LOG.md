@@ -21,6 +21,64 @@ No machine paths, no personal data, no credentials. This file is public.
 
 ---
 
+## 2026-09-21: plan 2, from 6.5 to 8.5
+
+### The reviewer's own plan, landed, and its own regrade
+
+The regrade that closed the refactor gave the architecture 6.5 and wrote the route to 8.5: seven
+conditions with weights, sixteen required steps. Every step landed today as one pull request,
+reviewed by the same reviewer in adversarial rounds until approved, then merged - #183 to #202
+- and the reviewer then regraded merged main against its own table: **8.5, every condition at its
+full weight, ARCHITECTURE SOUND.**
+
+**Where the points were.** Session ownership (0.60): the decisions a dictation needs - admission,
+the background order, the deadline, recovery, the finalisation, and now the session's own disposal
+sequence - are the executor's in Pipeline, and every effect and callback the shell supplies is
+inventoried in `pipeline.md` from its construction site to its body. Bounded shutdown (0.50): a
+quiescence protocol with one budget, nothing disposed beside a user of it, the host ended when
+something will not finish. Production wiring tested (0.35): the compositions the app runs are the
+ones the tests drive, and now the exit itself runs as one composition over the production session.
+Presentation (0.25), delivery identity (0.15), contracts (0.10), names (0.05).
+
+**A per-PR approval is not a regrade.** The first formal regrade on merged main came back at 8.3
+after every PR had been approved at a cumulative 8.5. Reading the conditions afresh found three
+things a per-PR review had assumed: the ordinary release discarded the preview's stop result, so a
+worker that refused to stop could still hold its resource when the final transcription began; no
+test executed the whole exit as one composition; three lifecycle comments contradicted their code.
+The reviewer was right on all three. Closing the first took three rounds of its own, each catching
+a real defect in the new abort path - transcribing beside a worker nobody had seen leave, an
+aborted runtime that was terminal by design and so silently ended preview for the rest of the run,
+and a remaining budget read twice between a check and the call that used it. **When a grade is the
+goal, the grade is the regrade on main, and it should be run before claiming the number.**
+
+**The review's alternate-caller audit found what the ownership audit could not.** Once every
+supplied effect was inventoried, the reviewer followed every other caller of what the exit disposes:
+Quick Add reading through the delivery adapter with no lease; mishearing suggestions inside the
+polish provider; the launch's tail and a model delivery building engines after an exit had begun;
+a Windows session-ending write nobody joined; queued window callbacks running after their lease
+had ended. Six rounds, one or two borrowers each, each real. What ended it was not a scope
+statement this time but the accounting closing: everything the exit disposes now has a lease, a
+tracked task or a gate the exit joins first, and the session is asked to shut down only behind a
+finished drain.
+
+**Two defects the reviewer caught in code written that day.** A launch cancelled by the exit policy
+propagated its cancellation into an `async void` entry point; a model delivery that refused
+synchronously cleared its own tracking before the assignment stored it, so every later download
+was refused. Both would have shipped without the second reader.
+
+**Cost.** One long session; roughly forty reviewer rounds across twenty PRs; the native journeys run
+on every build that touched the exit or the delivery path (seven verdicts each time, recorded with
+the build they were taken on). The reviewer did not write and did not merge.
+
+**What the reviewer names beyond 8.5, ranked.** The shell's real `LifetimeParts()` assembly made
+executable through the seam the tests use, with native forced-refusal and escalation journeys
+recorded; the installed-model repository boundary (the plan's optional steps 17-19, not attempted);
+and engine configuration, provisioning and the larger window features moved into owners of their
+own. And what is still the founder's to see: a lock and a sleep during a recording, and a preview
+worker that refuses to stop - neither can be raised by the harness on this machine.
+
+---
+
 ## 2026-09-20 (day): the refactor plan, finished
 
 ### Twenty-two steps, one author, one reviewer, thirty-odd rounds
