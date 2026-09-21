@@ -136,7 +136,12 @@ public sealed class WindowsTextDeliverySafetyTests
         var helpers = new[] { "ReadCaret", "RuntimeId" };
         Assert.Single(adapter.Members.OfType<MethodDeclarationSyntax>(), method => method.Identifier.Text == "Automation");
         var accesses = 0;
-        foreach (var access in adapter.DescendantNodes().OfType<MemberAccessExpressionSyntax>())
+        // EVERY WAY A MEMBER IS REACHED: `x.Member` and the conditional `x?.Member`, whose member
+        // is a binding expression with no receiver of its own.
+        var reaches = adapter.DescendantNodes()
+            .Where(node => node is MemberAccessExpressionSyntax or MemberBindingExpressionSyntax)
+            .Cast<ExpressionSyntax>();
+        foreach (var access in reaches)
         {
             var info = model.GetSymbolInfo(access);
             var symbol = info.Symbol ?? info.CandidateSymbols.FirstOrDefault();
@@ -181,9 +186,15 @@ public sealed class WindowsTextDeliverySafetyTests
         };
     }
 
-    /// <summary>Whether the node sits inside an invocation of the adapter's own Automation method (the boundary), by name and, where the scan can resolve it, by symbol.</summary>
+    /// <summary>
+    /// Whether the node executes inside the boundary: within the body of a lambda that is the
+    /// argument of an invocation of the adapter's own Automation method. An access in the argument
+    /// expression itself - `Automation(valuePattern.Current.Value.ToString)` - runs before the call
+    /// and is outside.
+    /// </summary>
     private static bool IsInsideAutomationCall(SyntaxNode node, SemanticModel model) =>
-        node.Ancestors().OfType<InvocationExpressionSyntax>().Any(invocation =>
+        node.Ancestors().OfType<AnonymousFunctionExpressionSyntax>().Any(lambda =>
+            lambda.Parent is ArgumentSyntax { Parent: ArgumentListSyntax { Parent: InvocationExpressionSyntax invocation } } &&
             invocation.Expression is IdentifierNameSyntax { Identifier.Text: "Automation" } &&
             ResolvesToTheAdapter(model.GetSymbolInfo(invocation)));
 
@@ -514,6 +525,12 @@ public sealed class WindowsTextDeliverySafetyTests
         using var failing = new SeekableOnly([1, 2, 3]) { Position = 2, FailReads = true };
         Assert.Null(WindowsClipboardPaste.CloneClipboardValue(failing));
         Assert.Equal(2, failing.Position);
+
+        // A COPY THAT READ EVERYTHING AND THEN COULD NOT PUT THE STREAM BACK IS REFUSED TOO: the
+        // clipboard's value has changed, and a snapshot taken then would not be the clipboard.
+        using var stuck = new SeekableOnly([1, 2, 3]) { Position = 1, FailPositionRestoreAfterRead = true };
+        Assert.Null(WindowsClipboardPaste.CloneClipboardValue(stuck));
+        Assert.True(stuck.ReadToTheEnd, "the copy should have read the stream before the position failed to go back");
     }
 
     /// <summary>A stream that is not a MemoryStream: seekable, readable, and able to fail its reads on request.</summary>
@@ -523,6 +540,11 @@ public sealed class WindowsTextDeliverySafetyTests
 
         public bool FailReads { get; init; }
 
+        /// <summary>When set, the position can be set to the start for the copy but refuses to go back afterwards.</summary>
+        public bool FailPositionRestoreAfterRead { get; init; }
+
+        public bool ReadToTheEnd { get; private set; }
+
         public override bool CanRead => true;
 
         public override bool CanSeek => true;
@@ -531,13 +553,35 @@ public sealed class WindowsTextDeliverySafetyTests
 
         public override long Length => _inner.Length;
 
-        public override long Position { get => _inner.Position; set => _inner.Position = value; }
+        public override long Position
+        {
+            get => _inner.Position;
+            set
+            {
+                if (FailPositionRestoreAfterRead && ReadToTheEnd)
+                {
+                    throw new IOException("the stream would not go back");
+                }
+
+                _inner.Position = value;
+            }
+        }
 
         public override void Flush()
         {
         }
 
-        public override int Read(byte[] buffer, int offset, int count) => FailReads ? throw new IOException("the stream would not read") : _inner.Read(buffer, offset, count);
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (FailReads)
+            {
+                throw new IOException("the stream would not read");
+            }
+
+            var read = _inner.Read(buffer, offset, count);
+            ReadToTheEnd |= _inner.Position == _inner.Length;
+            return read;
+        }
 
         public override long Seek(long offset, SeekOrigin origin) => _inner.Seek(offset, origin);
 

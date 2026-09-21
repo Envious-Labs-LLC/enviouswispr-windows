@@ -374,29 +374,32 @@ internal static class WindowsClipboardPaste
         }
 
         var originalPosition = stream.Position;
+        MemoryStream? copy = null;
         try
         {
             stream.Position = 0;
-            var copy = new MemoryStream();
+            copy = new MemoryStream();
             stream.CopyTo(copy);
             copy.Position = 0;
-            return copy;
         }
         catch (Exception exception) when (exception is IOException or NotSupportedException or ObjectDisposedException or UnauthorizedAccessException)
         {
-            return null;
+            copy = null;
         }
-        finally
+
+        // THE COPY COUNTS ONLY WITH THE SOURCE PUT BACK. A copy that read everything and then could
+        // not return the stream to where it stood has changed the clipboard's value; that is a
+        // refusal too, not a success with a note.
+        try
         {
-            try
-            {
-                stream.Position = originalPosition;
-            }
-            catch (Exception exception) when (exception is IOException or NotSupportedException or ObjectDisposedException)
-            {
-                // The position could not be put back on a stream that already failed; the snapshot is refused above.
-            }
+            stream.Position = originalPosition;
         }
+        catch (Exception exception) when (exception is IOException or NotSupportedException or ObjectDisposedException)
+        {
+            copy = null;
+        }
+
+        return copy;
     }
 
     internal static object? CloneClipboardValue(object value)
