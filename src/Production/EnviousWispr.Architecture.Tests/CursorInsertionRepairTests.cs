@@ -9,16 +9,51 @@ public sealed class CursorInsertionRepairTests
     private static readonly DictationSessionId SessionId = new(Guid.Parse(
         "2bf4f0ee-400f-451d-92c0-b3e939d158eb"));
 
-    [Fact]
-    public void MissingContextUsesThePinnedLegacyTrailingSpace()
+    [Theory]
+    [InlineData("Hello", "Hello ")]
+    [InlineData("Hello ", "Hello ")]
+    [InlineData("Hello  ", "Hello  ")]
+    [InlineData("", " ")]
+    public void FallbackPayloadRetainsTrailingSpaceRule(string said, string fallback)
     {
-        var input = new ProcessedText(SessionId, "Hello");
+        // THE FALLBACK IS NOT RAW TEXT (plan-2 step 14): it is the words as said with exactly one
+        // trailing space added where there was none, so a paste with no caret context can continue
+        // a sentence; a trailing space already there is kept, not doubled. Without a context the
+        // insertion IS the fallback, and the disposition says so.
+        var input = new ProcessedText(SessionId, said);
 
         var result = CursorInsertionRepair.Apply(input, context: null, "en");
 
-        Assert.Equal(CursorRepairDisposition.LegacyPayload, result.Disposition);
-        Assert.Equal("Hello ", result.Output.Text);
-        Assert.Equal("Hello ", result.LegacyOutput.Text);
+        Assert.Equal(CursorRepairDisposition.FallbackPayload, result.Disposition);
+        Assert.Equal(fallback, result.Fallback.Text);
+        Assert.Equal(fallback, result.Insertion.Text);
+    }
+
+    [Fact]
+    public void ContextAdjustedAndFallbackPayloadsRemainDistinct()
+    {
+        // TWO PAYLOADS, TWO JOBS. With a caret context the insertion is adjusted to the seam - a
+        // leading space after "Hello", a trailing one before nothing - while the fallback stays the
+        // words as said with the one trailing space: what the clipboard gets if the target refuses
+        // at the last moment, where the seam's spacing would be wrong.
+        var result = CursorInsertionRepair.Apply(
+            new ProcessedText(SessionId, "world"),
+            Context(left: "Hello", right: string.Empty),
+            "en-US");
+
+        Assert.Equal(CursorRepairDisposition.ContextApplied, result.Disposition);
+        Assert.Equal(" world ", result.Insertion.Text);
+        Assert.Equal("world ", result.Fallback.Text);
+        Assert.NotEqual(result.Insertion.Text, result.Fallback.Text);
+    }
+
+    [Fact]
+    public void TheDispositionsKeepTheirNumericValues()
+    {
+        // RENAMED, NOT RENUMBERED: the fallback was "legacy" and is still 0; context-applied is still 1.
+        Assert.Equal(0, (int)CursorRepairDisposition.FallbackPayload);
+        Assert.Equal(1, (int)CursorRepairDisposition.ContextApplied);
+        Assert.Equal(2, Enum.GetValues<CursorRepairDisposition>().Length);
     }
 
     [Fact]
@@ -29,7 +64,7 @@ public sealed class CursorInsertionRepairTests
             Context(left: "Hello", right: string.Empty),
             "en-US");
 
-        Assert.Equal(" world ", result.Output.Text);
+        Assert.Equal(" world ", result.Insertion.Text);
         Assert.True(result.AddedLeadingSpace);
         Assert.True(result.AddedTrailingSpace);
     }
@@ -50,7 +85,7 @@ public sealed class CursorInsertionRepairTests
             Context(left, right),
             "en");
 
-        Assert.Equal(expected, result.Output.Text);
+        Assert.Equal(expected, result.Insertion.Text);
     }
 
     [Fact]
@@ -61,7 +96,7 @@ public sealed class CursorInsertionRepairTests
             Context(left: "你好", right: "今天"),
             "zh-CN");
 
-        Assert.Equal("世界", result.Output.Text);
+        Assert.Equal("世界", result.Insertion.Text);
     }
 
     [Fact]
@@ -72,7 +107,7 @@ public sealed class CursorInsertionRepairTests
             Context(left: "hello world", right: string.Empty),
             "en");
 
-        Assert.Equal(" is ready ", result.Output.Text);
+        Assert.Equal(" is ready ", result.Insertion.Text);
         Assert.True(result.RemovedDuplicateWord);
     }
 
@@ -87,7 +122,7 @@ public sealed class CursorInsertionRepairTests
                 leftReachedStart: false),
             "en");
 
-        Assert.Equal(" world is ready ", result.Output.Text);
+        Assert.Equal(" world is ready ", result.Insertion.Text);
         Assert.False(result.RemovedDuplicateWord);
     }
 
@@ -99,7 +134,7 @@ public sealed class CursorInsertionRepairTests
             Context(left: "hello ", right: "again"),
             "en");
 
-        Assert.Equal("🌍 ", result.Output.Text);
+        Assert.Equal("🌍 ", result.Insertion.Text);
     }
 
     [Fact]
@@ -110,9 +145,9 @@ public sealed class CursorInsertionRepairTests
             Context(left: "the sto", right: "re"),
             "en");
 
-        Assert.Equal(CursorRepairDisposition.LegacyPayload, result.Disposition);
+        Assert.Equal(CursorRepairDisposition.FallbackPayload, result.Disposition);
         Assert.True(result.RefusedInsideWord);
-        Assert.Equal("store ", result.Output.Text);
+        Assert.Equal("store ", result.Insertion.Text);
     }
 
     [Fact]
@@ -139,7 +174,7 @@ public sealed class CursorInsertionRepairTests
             Context(left: "We are ", right: ". Next"),
             "en");
 
-        Assert.Equal("Done", result.Output.Text);
+        Assert.Equal("Done", result.Insertion.Text);
         Assert.True(result.DroppedDuplicatePeriod);
     }
 
@@ -155,8 +190,8 @@ public sealed class CursorInsertionRepairTests
             Context(left: "github.com/", right: "") with { IsUrlBarField = true },
             "en");
 
-        Assert.Equal("next ", terminal.Output.Text);
-        Assert.Equal(" issues", urlBar.Output.Text);
+        Assert.Equal("next ", terminal.Insertion.Text);
+        Assert.Equal(" issues", urlBar.Insertion.Text);
     }
 
     private static CaretContext Context(
