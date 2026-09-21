@@ -213,7 +213,7 @@ public sealed class PreviewStartupDecouplingTests
         world.Capture.AllowStartExit.SetResult();
         Assert.Equal(SessionCommandDisposition.Applied, (await press.WaitAsync(Patience)).Disposition);
         Assert.Equal(SessionCommandDisposition.Stopping, (await release.WaitAsync(Patience)).Disposition);
-        Assert.True(await shutdown.WaitAsync(Patience));
+        Assert.True((await shutdown.WaitAsync(Patience)).Clean);
 
         Assert.Equal(1, world.Effects.TearDowns);
         Assert.DoesNotContain(world.Effects.Trace, effect => effect.StartsWith("Transcribe", StringComparison.Ordinal));
@@ -239,7 +239,7 @@ public sealed class PreviewStartupDecouplingTests
 
         world.Effects.AllowTranscriptionExit.SetResult();
         Assert.Equal(SessionCommandDisposition.Applied, (await release.WaitAsync(Patience)).Disposition);
-        Assert.True(await shutdown.WaitAsync(Patience));
+        Assert.True((await shutdown.WaitAsync(Patience)).Clean);
 
         Assert.Single(world.Effects.Trace, effect => effect.StartsWith("Transcribe", StringComparison.Ordinal));
         Assert.Equal(1, world.Effects.TearDowns);
@@ -464,7 +464,13 @@ public sealed class PreviewStartupDecouplingTests
         }
 
         public Task StopWatchdogAsync() => inner.StopWatchdogAsync();
-    }
+
+
+        public async Task<StopOutcome> StopWatchdogAsync(TimeSpan deadline)
+        {
+            await StopWatchdogAsync();
+            return StopOutcome.Completed;
+        }    }
 
     private sealed class NoRecoveryState : ISessionRecoveryState
     {

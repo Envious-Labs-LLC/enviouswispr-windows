@@ -34,6 +34,9 @@ public interface ISessionBackgroundWork
 
     /// <summary>A terminal has arrived: the watchdog must not fire into a recording that is already ending.</summary>
     Task StopWatchdogAsync();
+
+    /// <summary>The watchdog stopped under a deadline, for the teardown; a watch still running past it stays owned and is reported.</summary>
+    Task<StopOutcome> StopWatchdogAsync(TimeSpan deadline);
 }
 
 /// <summary>Owns the order in which the preview, the streaming head start and the two timers start and stop around a recording.</summary>
@@ -106,4 +109,10 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
     }
 
     public Task StopWatchdogAsync() => _watchdog.StopAsync();
+
+    public Task<StopOutcome> StopWatchdogAsync(TimeSpan deadline)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(deadline, TimeSpan.Zero);
+        return _watchdog.StopAsync(deadline);
+    }
 }

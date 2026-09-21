@@ -935,8 +935,9 @@ public sealed partial class DesignSystemTokenTests
 
         // THE FLOOR IS TODAY'S COUNT, so a flow deleted or renamed out of the pattern is noticed.
         // A lower floor lets the set shrink silently, which is how a gate stops covering the thing
-        // it was written for while still reporting green.
-        Assert.True(flows >= 16, $"Expected the dictation flows, found {flows}.");
+        // it was written for while still reporting green. Fifteen since plan-2 step 8 removed the
+        // executor's torn-down-beside catch, which was one of the flows.
+        Assert.True(flows >= 15, $"Expected the dictation flows, found {flows}.");
         Assert.True(
             unscoped.Count == 0,
             "These methods are handed a dictation and never open its scope, so every line they "

@@ -657,9 +657,10 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void TheAutoStopWatcherIsTornDownWhereverTheLivePreviewIs()
     {
-        // TWO OWNERS SINCE THE REGRADE OF #148: the order around a recording is Pipeline's
-        // (SessionBackgroundWork), the recovery's and the teardown's stops are still the shell's.
-        // Both files are read, and the field names differ between them.
+        // ONE OWNER SINCE PLAN-2 STEP 8: the order around a recording, the recovery's stops and the
+        // teardown's are all the background owner's (SessionBackgroundWork), whose unbounded and
+        // bounded stops are the two methods counted; the shell stops nothing itself any more. Both
+        // files are still read so a stop that reappeared in the shell would be checked too.
         var root = FindRepositoryRoot();
         var methods = new[]
             {

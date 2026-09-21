@@ -25,8 +25,12 @@ public sealed class SessionShutdownTests
     private static readonly DateTimeOffset Now = new(2026, 9, 20, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task QuittingDuringATranscriptionWaitsForItDeliversOnceAndThenClosesTheMicrophone()
+    public async Task QuittingDuringATranscriptionWaitsForItKeepsTheWordsAndThenClosesTheMicrophone()
     {
+        // THE APP IS LEAVING, AND A DELIVERY NOT YET ISSUED IS NOT ISSUED. The transcription is
+        // waited for - nothing is torn down under it - and its words go to the recovery copy rather
+        // than into whatever is in front of an app that is shutting down; the teardown runs under
+        // the session once the command is over.
         var world = World.Build();
         await world.PressAsync();
         world.Engine.Hold = true;
@@ -40,10 +44,12 @@ public sealed class SessionShutdownTests
 
         world.Engine.AllowExit.SetResult();
         Assert.Equal(SessionCommandDisposition.Applied, (await release.WaitAsync(Patience)).Disposition);
-        Assert.True(await shutdown.WaitAsync(Patience));
+        var report = await shutdown.WaitAsync(Patience);
 
-        Assert.Equal(1, world.Delivery.Deliveries);
+        Assert.True(report.Clean);
+        Assert.Equal(0, world.Delivery.Deliveries);
         Assert.Equal(1, world.Engine.Transcriptions);
+        Assert.True(world.Persistence.HasPendingRecovery, "the words wait on Home for the next launch");
         Assert.True(world.Capture.Disposed, "the teardown disposed the session controller, which disposed the capture");
         Assert.Equal(1, world.Effects.TearDowns);
 
@@ -51,7 +57,7 @@ public sealed class SessionShutdownTests
         // engine nor the delivery route is asked anything again.
         Assert.Equal(SessionCommandDisposition.Stopping, (await world.Coordinator.TimeOutAsync(world.SessionId)).Disposition);
         Assert.Equal(SessionCommandDisposition.Stopping, (await world.Coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked)).Disposition);
-        Assert.Equal(1, world.Delivery.Deliveries);
+        Assert.Equal(0, world.Delivery.Deliveries);
         Assert.Equal(1, world.Engine.Transcriptions);
     }
 
@@ -69,7 +75,7 @@ public sealed class SessionShutdownTests
         world.Capture.AllowStartExit.SetResult();
         Assert.Equal(SessionCommandDisposition.Applied, (await press.WaitAsync(Patience)).Disposition);
         Assert.Equal(SessionCommandDisposition.Stopping, (await release.WaitAsync(Patience)).Disposition);
-        Assert.True(await shutdown.WaitAsync(Patience));
+        Assert.True((await shutdown.WaitAsync(Patience)).Clean);
 
         Assert.Equal(0, world.Delivery.Deliveries);
         Assert.Equal(0, world.Engine.Transcriptions);
@@ -79,13 +85,12 @@ public sealed class SessionShutdownTests
     }
 
     [Fact]
-    public async Task ATranscriptionThatFinishesInsideTheSecondWaitIsStillDeliveredUnderTheSession()
+    public async Task ATranscriptionThatFinishesInsideTheBudgetIsHeldForRecoveryAndTornDownUnderTheSession()
     {
-        // The two waits the shell had: one for the queue, one for the gate. A transcription that
-        // outlives the first and finishes inside the second is delivered before the teardown, and the
-        // shutdown reports a clean one. Crossed on the manual clock: the first wait's timer is
-        // registered and advanced past; the second wait's registration is the milestone that says the
-        // shutdown is inside it, and only then is the engine let go.
+        // ONE BUDGET. A transcription that finishes inside it ends with its words kept - delivery is
+        // closed from the moment the shutdown began - and the teardown runs under the session once
+        // it is over; the shutdown is clean. Crossed on the manual clock: the budget's timer is
+        // registered, the engine let go before it is advanced.
         var clock = new Deterministic.ManualClock();
         var world = World.Build(clock: clock);
         await world.PressAsync();
@@ -93,94 +98,107 @@ public sealed class SessionShutdownTests
         var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
         await world.Engine.Entered.Task.WaitAsync(Patience);
 
-        var drain = TimeSpan.FromSeconds(10);
-        var shutdown = world.Coordinator.ShutdownAsync(drain);
+        var budget = TimeSpan.FromSeconds(10);
+        var shutdown = world.Coordinator.ShutdownAsync(budget);
         await clock.WhenRegistered(1).WaitAsync(Patience);
-        Assert.Equal(drain, clock.NextDue);
-        clock.Advance(drain);
-        await clock.WhenRegistered(2).WaitAsync(Patience);
+        Assert.Equal(budget, clock.NextDue);
         Assert.False(shutdown.IsCompleted);
         Assert.Equal(0, world.Effects.TearDowns);
         world.Engine.AllowExit.SetResult();
 
         Assert.Equal(SessionCommandDisposition.Applied, (await release.WaitAsync(Patience)).Disposition);
-        Assert.True(await shutdown.WaitAsync(Patience), "the transcription finished inside the second wait");
-        Assert.Equal(1, world.Delivery.Deliveries);
+        var report = await shutdown.WaitAsync(Patience);
+        Assert.True(report.Clean, "the transcription finished inside the budget");
+        Assert.Equal(0, world.Delivery.Deliveries);
+        Assert.True(world.Persistence.HasPendingRecovery);
         Assert.True(world.Capture.Disposed);
         Assert.Equal(1, world.Effects.TearDowns);
     }
 
     [Fact]
-    public async Task ATimeoutStillRunningWhenTheTeardownComesEndsAsFailedWithTheMicrophoneClosed()
+    public async Task ATimeoutStillRunningWhenTheBudgetEndsIsReportedOutstandingAndNothingIsTornDown()
     {
-        // The watchdog's timeout was stopping the loops when the shutdown gave up waiting. The
-        // teardown cancels the open recording and disposes the controller beside it; when the timeout
-        // resumes it finds the session gone and ends as failed - answered, not a faulted task the
-        // watchdog would have discarded.
+        // THE WATCHDOG'S TIMEOUT IS STOPPING THE LOOPS when the budget runs out. Nothing is torn down
+        // beside it: the microphone it is closing is its to close, the shutdown says the command is
+        // outstanding, and when the timeout resumes it finishes on its own terms.
         var world = World.Build();
         await world.PressAsync();
         world.Background.HoldStop = true;
         var timeout = world.Coordinator.TimeOutAsync(world.SessionId);
         await world.Background.StopEntered.Task.WaitAsync(Patience);
 
-        var clean = await world.Coordinator.ShutdownAsync(TimeSpan.FromMilliseconds(100)).WaitAsync(Patience);
+        var report = await world.Coordinator.ShutdownAsync(TimeSpan.FromMilliseconds(100)).WaitAsync(Patience);
 
-        Assert.False(clean);
-        Assert.Equal(1, world.Effects.TearDowns);
-        Assert.True(world.Capture.Cancelled);
-        Assert.True(world.Capture.Disposed);
+        Assert.Equal(ShutdownOutcome.Unclean, report.Outcome);
+        Assert.True(report.CommandOutstanding);
+        Assert.Null(report.Teardown);
+        Assert.Equal(0, world.Effects.TearDowns);
+        Assert.False(world.Capture.Disposed);
 
         world.Background.AllowStopExit.SetResult();
-        Assert.Equal(SessionCommandDisposition.Failed, (await timeout.WaitAsync(Patience)).Disposition);
+        Assert.Equal(SessionCommandDisposition.Applied, (await timeout.WaitAsync(Patience)).Disposition);
+        Assert.True(world.Capture.Cancelled, "the timeout closed the microphone itself");
         Assert.Equal(0, world.Delivery.Deliveries);
         Assert.Equal(0, world.Engine.Transcriptions);
+        Assert.Equal(0, world.Effects.TearDowns);
     }
 
     [Fact]
-    public async Task ATranscriptionThatFailsAfterTheTeardownEndsAsFailedAndDeliversNothing()
+    public async Task ATranscriptionThatOutlivesTheBudgetIsReportedOutstandingAndNotTornDownBeside()
     {
-        // Not a disposed dependency but an ordinary engine failure, after the teardown: the state
-        // decides, and no recovery is attempted into a session that is gone.
-        var world = World.Build();
-        await world.PressAsync();
-        world.Engine.Hold = true;
-        world.Engine.ThrowOnExit = true;
-        var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
-        await world.Engine.Entered.Task.WaitAsync(Patience);
-
-        Assert.False(await world.Coordinator.ShutdownAsync(TimeSpan.FromMilliseconds(100)).WaitAsync(Patience));
-        world.Engine.AllowExit.SetResult();
-
-        Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
-        Assert.Equal(0, world.Delivery.Deliveries);
-        Assert.True(world.Capture.Disposed);
-    }
-
-    [Fact]
-    public async Task ATranscriptionThatOutlivesBothWaitsIsTornDownBesideAndReportedUnclean()
-    {
-        // THE INHERITED FALLBACK, STATED: the shell never waited longer than its two intervals for a
-        // transcription, and the coordinator does not either. The teardown runs beside the work that
-        // would not finish, the shutdown says so, and the work then fails safely against a disposed
-        // session rather than delivering into a torn-down shell.
+        // NEVER BESIDE A RESOURCE USER. A transcription that will not finish inside the budget is left
+        // what it holds: the shutdown says the command is outstanding and runs no teardown. When the
+        // engine answers at last the command ends on its own terms - its words kept, nothing
+        // delivered into an app that is leaving - and nothing was disposed under it.
         var world = World.Build();
         await world.PressAsync();
         world.Engine.Hold = true;
         var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
         await world.Engine.Entered.Task.WaitAsync(Patience);
 
-        var clean = await world.Coordinator.ShutdownAsync(TimeSpan.FromMilliseconds(100)).WaitAsync(Patience);
+        var report = await world.Coordinator.ShutdownAsync(TimeSpan.FromMilliseconds(100)).WaitAsync(Patience);
 
-        Assert.False(clean);
-        Assert.Equal(1, world.Effects.TearDowns);
-        Assert.True(world.Capture.Disposed);
+        Assert.Equal(ShutdownOutcome.Unclean, report.Outcome);
+        Assert.True(report.CommandOutstanding);
+        Assert.False(report.ExpiriesOutstanding);
+        Assert.Equal(0, report.HoldsOutstanding);
+        Assert.Null(report.Teardown);
+        Assert.Equal(0, world.Effects.TearDowns);
+        Assert.False(world.Capture.Disposed);
         Assert.Equal(0, world.Delivery.Deliveries);
 
         world.Engine.AllowExit.SetResult();
         var result = await release.WaitAsync(Patience);
-        Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
+        Assert.Equal(SessionCommandDisposition.Applied, result.Disposition);
         Assert.Equal(0, world.Delivery.Deliveries);
+        Assert.True(world.Persistence.HasPendingRecovery);
         Assert.Equal(1, world.Engine.Transcriptions);
+        Assert.Equal(0, world.Effects.TearDowns);
+    }
+
+    [Fact]
+    public async Task IssuedDeliveryIsNeverRetriedDuringShutdown()
+    {
+        // A DELIVERY ALREADY ISSUED WHEN THE SHUTDOWN BEGINS IS LEFT TO SETTLE, and settles once.
+        // The route is held mid-delivery; the shutdown waits; the route answers refused; nothing asks
+        // it again, the words go to the recovery copy, and the teardown runs after.
+        var world = World.Build();
+        await world.PressAsync();
+        world.Delivery.Hold = true;
+        world.Delivery.Refuse = true;
+        var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await world.Delivery.Entered.Task.WaitAsync(Patience);
+
+        var shutdown = world.Coordinator.ShutdownAsync(Patience);
+        Assert.False(shutdown.IsCompleted);
+        world.Delivery.AllowExit.SetResult();
+
+        Assert.Equal(SessionCommandDisposition.Applied, (await release.WaitAsync(Patience)).Disposition);
+        var report = await shutdown.WaitAsync(Patience);
+        Assert.True(report.Clean);
+        Assert.Equal(1, world.Delivery.Deliveries);
+        Assert.True(world.Persistence.HasPendingRecovery, "the refused delivery left its words for recovery");
+        Assert.Equal(1, world.Effects.TearDowns);
     }
 
     private sealed class World
@@ -192,6 +210,7 @@ public sealed class SessionShutdownTests
         public required CountingDelivery Delivery { get; init; }
         public required ShellAdapter Effects { get; init; }
         public required NoBackgroundWork Background { get; init; }
+        public required SessionPersistence Persistence { get; init; }
         public DictationSessionId SessionId { get; private set; }
 
         public async Task PressAsync()
@@ -238,6 +257,7 @@ public sealed class SessionShutdownTests
                 Delivery = delivery,
                 Effects = effects,
                 Background = background,
+                Persistence = persistence,
             };
         }
     }
@@ -346,7 +366,13 @@ public sealed class SessionShutdownTests
         }
 
         public Task StopWatchdogAsync() => Task.CompletedTask;
-    }
+
+
+        public async Task<StopOutcome> StopWatchdogAsync(TimeSpan deadline)
+        {
+            await StopWatchdogAsync();
+            return StopOutcome.Completed;
+        }    }
 
     private sealed class HeldEngine : ITranscriptionEngine
     {
@@ -379,10 +405,26 @@ public sealed class SessionShutdownTests
     {
         public int Deliveries { get; private set; }
 
-        public Task<DeliveryResult> DeliverAsync(TextDeliveryRequest request, CancellationToken cancellationToken = default)
+        public bool Hold { get; set; }
+
+        public bool Refuse { get; set; }
+
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource AllowExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<DeliveryResult> DeliverAsync(TextDeliveryRequest request, CancellationToken cancellationToken = default)
         {
             Deliveries++;
-            return Task.FromResult(new DeliveryResult(request.Text.SessionId, Delivered: true, ClipboardFallback: false, TextDeliveryRoute.ClipboardPaste));
+            Entered.TrySetResult();
+            if (Hold)
+            {
+                await AllowExit.Task;
+            }
+
+            return Refuse
+                ? new DeliveryResult(request.Text.SessionId, Delivered: false, ClipboardFallback: false, TextDeliveryRoute.None, TextDeliveryRefusalReason.TargetChanged)
+                : new DeliveryResult(request.Text.SessionId, Delivered: true, ClipboardFallback: false, TextDeliveryRoute.ClipboardPaste);
         }
     }
 

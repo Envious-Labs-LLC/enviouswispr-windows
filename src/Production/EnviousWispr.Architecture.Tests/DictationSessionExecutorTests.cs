@@ -345,13 +345,42 @@ public sealed class DictationSessionExecutorTests
     }
 
     [Fact]
-    public async Task ShutdownRunsTheShellsSessionTeardownThroughThePort()
+    public async Task TheTeardownStopsTheWatchdogAndTheBackgroundUnderTheDeadlineThenRunsTheShellsTeardown()
     {
+        // THE TEARDOWN IS THE EXECUTOR'S, IN ORDER AND UNDER THE DEADLINE: the watchdog, the background
+        // work, then the shell's own disposal through the port; and the report carries what each owner
+        // said, so a background owner still running past the deadline is not hidden by a teardown
+        // that ran.
         var (executor, _, effects, _) = Build();
+        TracingBackgroundWork.Instance!.BoundedStopReport = new BackgroundStopReport(
+            StopOutcome.Completed, StopOutcome.Completed, StopOutcome.StillRunning);
 
-        await executor.ShutdownAsync();
+        var report = await executor.TearDownAsync(TimeSpan.FromSeconds(4));
 
-        Assert.Equal(["TearDownSession"], effects.Trace);
+        Assert.Equal(
+            ["Background:StopWatchdog:4s", "Background:StopWatchdog", "Background:Stop:4s", "Background:Stop", "TearDownSession"],
+            effects.Trace);
+        Assert.Equal(StopOutcome.Completed, report.Watchdog);
+        Assert.Equal(StopOutcome.StillRunning, report.Background.Preview);
+        Assert.False(report.Completed);
+    }
+
+    [Fact]
+    public async Task AfterAdmissionClosedAFinalisationKeepsItsWordsAndDeliversNothing()
+    {
+        // THE APP IS LEAVING. A finalisation that starts after admission closed runs for recovery only -
+        // the words are kept, nothing is pasted into whatever is in front - and the runner is told
+        // that a delivery not yet issued is not to be issued.
+        var (executor, _, effects, _, world) = BuildWithFinalization();
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        effects.Trace.Clear();
+
+        executor.Close();
+        var result = await executor.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Applied, result.Disposition);
+        Assert.True(world.Finalization.DeliveryClosed, "the runner was told delivery is closed");
+        Assert.Contains("Finalize:recoveryOnly=True", effects.Trace);
     }
 
     [Fact]
@@ -368,40 +397,6 @@ public sealed class DictationSessionExecutorTests
         Assert.Equal(
             ["RecordTransition:Started", "RecordingSettings", "Background:Start", "RecordSessionFailure", "Background:StopWatchdog", "Background:Stop", "RecordSessionRecovered:InvalidTransition", "ShowPendingRecovery", "ShowSessionRecovered:Failed", "RecordDictationEdge"],
             effects.Trace);
-    }
-
-    [Fact]
-    public async Task AfterTheTeardownACommandThatFailsEndsAsFailedWithoutRecovery()
-    {
-        // The session was torn down beside this command (the shutdown outlived both of its waits).
-        // Whatever it then fails on, there is nothing to recover into: written, answered, no abort.
-        var (executor, capture, effects, _) = Build();
-        await executor.ShutdownAsync();
-        effects.Trace.Clear();
-        capture.StartResultFactory = _ => throw new InvalidOperationException("the capture is gone");
-
-        var result = await executor.ExecuteAsync(Press(), CancellationToken.None);
-
-        Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
-        Assert.Equal(
-            ["RecordSessionFailure", "RecordDictationEdge"],
-            effects.Trace);
-    }
-
-    [Fact]
-    public async Task AfterTheTeardownATimeoutThatFailsEndsAsFailedRatherThanFaultingItsTask()
-    {
-        var (executor, _, effects, controller) = Build();
-        await executor.ExecuteAsync(Press(), CancellationToken.None);
-        var recording = controller.CurrentSession!.Id;
-        await executor.ShutdownAsync();
-        effects.Trace.Clear();
-        TracingBackgroundWork.StopThrows = new ObjectDisposedException("the preview");
-
-        var result = await executor.ExecuteAsync(Timeout(recording), CancellationToken.None);
-
-        Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
-        Assert.Equal(["Background:Stop", "RecordDictationEdge", "RecordSessionFailure"], effects.Trace);
     }
 
     [Fact]
@@ -757,6 +752,10 @@ public sealed class DictationSessionExecutorTests
     {
         public List<CapturedAudio> Finalized { get; } = [];
 
+        public bool DeliveryClosed { get; private set; }
+
+        public void CloseDelivery() => DeliveryClosed = true;
+
         public bool Throws { get; set; }
 
         public bool Hold { get; set; }
@@ -848,16 +847,26 @@ public sealed class DictationSessionExecutorTests
             }
         }
 
+        public BackgroundStopReport BoundedStopReport { get; set; } = BackgroundStopReport.AllCompleted;
+
         public async Task<BackgroundStopReport> StopAsync(TimeSpan deadline)
         {
+            trace.Add($"Background:Stop:{deadline.TotalSeconds}s");
             await StopAsync();
-            return BackgroundStopReport.AllCompleted;
+            return BoundedStopReport;
         }
 
         public Task StopWatchdogAsync()
         {
             trace.Add("Background:StopWatchdog");
             return Task.CompletedTask;
+        }
+
+        public async Task<StopOutcome> StopWatchdogAsync(TimeSpan deadline)
+        {
+            trace.Add($"Background:StopWatchdog:{deadline.TotalSeconds}s");
+            await StopWatchdogAsync();
+            return StopOutcome.Completed;
         }
     }
 

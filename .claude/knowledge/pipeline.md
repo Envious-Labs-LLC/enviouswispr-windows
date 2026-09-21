@@ -48,9 +48,18 @@ remain wordless designs.
   moment, while that command carries on, and the interruption is skipped when its turn comes - the
   shell's old five-second wait for its session gate, kept as a deadline on the coordinator's clock.
   With nothing in flight, an interruption does nothing. The update check holds the session through
-  the coordinator (`TryHold`), so a press during a download is `Busy`. Shutdown closes admission before its
-  first await, gives the running command ten seconds, and runs the shell's session teardown as the last
-  thing under the session (or after a further ten seconds, beside a command that would not finish). The
+  the coordinator (`TryHold`), so a press during a download is `Busy`. **Shutdown is a quiescence
+  protocol** (plan-2 step 8, `ShutdownAsync(budget)` → `ShutdownReport`): admission closes before the
+  first await and delivery closes with it (a finalisation that has not yet issued its delivery keeps
+  the words for recovery); the command running now, every expiry notification and every hold are
+  given the one budget; only once nothing is using the session does the executor's teardown run under
+  it, with what is left of the budget - the watchdog and the background work stopped under a deadline,
+  each saying whether it finished (`SessionTeardownReport`), then the shell's disposal of the
+  controller and the delivery route. What did not finish is named in the report (`CommandOutstanding`,
+  `ExpiriesOutstanding`, `HoldsOutstanding`) and **nothing is torn down beside it**; the command ends
+  on its own terms later. A second call shares the first's completion. Cancelling the finalisation in
+  flight is the shell's exit policy, made before it asks for the shutdown (step 9 owns the total
+  budget). The
   executor owns the order of the background work around a recording (watchdog, preview, auto-stop,
   streaming), the three-minute processing deadline - armed before the background work is stopped so
   it covers the preview's worker being waited for, cancelled by a lock, a suspend or the exit

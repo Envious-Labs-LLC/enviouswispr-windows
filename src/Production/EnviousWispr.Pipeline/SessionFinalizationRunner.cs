@@ -126,6 +126,11 @@ public sealed record FinalizationOptions(
 /// </remarks>
 public interface ISessionFinalization
 {
+    /// <summary>Admission has closed: a finalisation that has not yet issued its delivery delivers nothing from now on, and keeps the words for recovery.</summary>
+    void CloseDelivery()
+    {
+    }
+
     /// <summary>Turns captured audio into delivered (or held, or recovered) text, under a deadline.</summary>
     Task<FinalizationReport> RunAsync(
         DictationSessionId sessionId,
@@ -136,6 +141,10 @@ public interface ISessionFinalization
 
 public sealed class SessionFinalizationRunner : ISessionFinalization
 {
+    private bool _deliveryClosed;
+
+    public void CloseDelivery() => Volatile.Write(ref _deliveryClosed, true);
+
     private readonly PushToTalkSessionController _controller;
     private readonly TranscriptFinalizer _finalizer;
     private readonly SessionPersistence _persistence;
@@ -202,7 +211,11 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                 .ConfigureAwait(false);
             var processed = finalized.Processed;
 
+            // NOT DELIVERED ONCE THE APP IS LEAVING. The recovery copy above is already written; a
+            // delivery not yet issued when admission closed is not issued, and the words wait on Home
+            // for the next launch. One already issued below is left to settle - it is never retried.
             if (!recoveryOnly &&
+                !Volatile.Read(ref _deliveryClosed) &&
                 !string.IsNullOrWhiteSpace(processed.Output.Text) &&
                 _effects.Delivery is { } delivery &&
                 _controller.CurrentSession is { } pendingSession)

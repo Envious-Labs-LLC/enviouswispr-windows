@@ -351,17 +351,28 @@ public sealed class BoundedStopTests
         // retired, not dropped: the next stop reports still running until the old callback returns,
         // and completion only once every watch this owner armed has finished.
         var clock = new Deterministic.ManualClock();
-        var effects = new HoldingTimerEffects();
-        var watchdog = new RecordingWatchdog(effects, clock);
         var first = DictationSessionId.Create();
+        var effects = new HoldingTimerEffects(first);
+        var watchdog = new RecordingWatchdog(effects, clock);
         watchdog.Start(first, TimeSpan.FromSeconds(5));
         await clock.WhenRegistered(1).WaitAsync(Patience);
-        clock.Advance(TimeSpan.FromSeconds(5));
+        // ADVANCED OFF THE TEST THREAD. The clock runs the fired watch's continuation - and so the
+        // held callback - on the thread that advanced it; held on this thread, the test would be
+        // waiting on itself.
+        var advance = Task.Run(() => clock.Advance(TimeSpan.FromSeconds(5)));
         await effects.TimedOutEntered.Task.WaitAsync(Patience);
 
+        // THE SECOND WATCH RUNS TO ITS OWN TIMEOUT, whose callback is not held, so by the time the
+        // stop is asked for the only watch still running is the retired one - the stop's own join
+        // of the current watch finds it over and registers nothing, and the one timer the stop
+        // registers is the retired join's.
         var second = DictationSessionId.Create();
         watchdog.Start(second, TimeSpan.FromSeconds(5));
         Assert.True(watchdog.IsArmed);
+        await clock.WhenRegistered(2).WaitAsync(Patience);
+        await Task.Run(() => clock.Advance(TimeSpan.FromSeconds(5))).WaitAsync(Patience);
+        Assert.Equal([first, second], effects.TimedOutSessions);
+
         var registered = clock.Registered;
         var stop = watchdog.StopAsync(TimeSpan.FromSeconds(1));
         await clock.WhenRegistered(registered + 1).WaitAsync(Patience);
@@ -369,8 +380,9 @@ public sealed class BoundedStopTests
 
         Assert.Equal(StopOutcome.StillRunning, await stop.WaitAsync(Patience));
         effects.AllowTimedOutExit.SetResult();
+        await advance.WaitAsync(Patience);
         Assert.Equal(StopOutcome.Completed, await watchdog.StopAsync(Patience).WaitAsync(Patience));
-        Assert.Equal([first], effects.TimedOutSessions);
+        Assert.Equal([first, second], effects.TimedOutSessions);
     }
 
     [Fact]
@@ -526,7 +538,8 @@ public sealed class BoundedStopTests
     }
 
     /// <summary>Timer effects whose timeout callback is held until the test lets it go.</summary>
-    private sealed class HoldingTimerEffects : IRecordingTimerEffects
+    /// <summary>Timer effects whose timeout callback for one recording does not return until released.</summary>
+    private sealed class HoldingTimerEffects(DictationSessionId held) : IRecordingTimerEffects
     {
         public IAudioSnapshotSource? Audio => null;
 
@@ -543,8 +556,16 @@ public sealed class BoundedStopTests
         public void RecordingTimedOut(DictationSessionId sessionId)
         {
             TimedOutSessions.Add(sessionId);
+            if (sessionId != held)
+            {
+                return;
+            }
+
             TimedOutEntered.TrySetResult();
-            AllowTimedOutExit.Task.Wait(Patience);
+            if (!AllowTimedOutExit.Task.Wait(Patience))
+            {
+                throw new TimeoutException("the held timeout callback was never released");
+            }
         }
     }
 

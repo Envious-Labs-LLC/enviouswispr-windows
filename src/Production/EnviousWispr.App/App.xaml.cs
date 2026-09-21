@@ -1030,12 +1030,22 @@ public partial class App : Application, IAsyncDisposable
             _pushToTalkHook = null;
         }
 
-        // THE SESSION IS TORN DOWN BY ITS OWNER, after the last command: the coordinator gives the
-        // command running now ten seconds, then runs the shell's session teardown under the session,
-        // or after a further ten seconds without it - the two waits the shell used to make itself.
+        // THE SESSION IS TORN DOWN BY ITS OWNER, AND ONLY ONCE NOTHING IS USING IT. The coordinator
+        // closes admission, gives the command running now, the expiry notifications and the holds
+        // ten seconds between them, and runs the session's teardown under the session with what is
+        // left of that; what did not finish is named in its report, and nothing is torn down beside
+        // it. An unclean end is an unclean shutdown - and what it left running is left running.
         if (_sessionCoordinator is { } coordinator)
         {
-            cleanShutdown &= await coordinator.ShutdownAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(true);
+            var shutdown = await coordinator.ShutdownAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(true);
+            cleanShutdown &= shutdown.Clean;
+            if (shutdown.Outcome == ShutdownOutcome.Unclean)
+            {
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.ApplicationShutdownUnclean,
+                    AppFailureCategory.SystemLifecycle));
+            }
         }
         else
         {
@@ -2201,12 +2211,10 @@ public partial class App : Application, IAsyncDisposable
     /// </summary>
     private async Task TearDownSessionAsync()
     {
+        // THE BACKGROUND WORK IS THE EXECUTOR'S TO STOP, under the shutdown's deadline, before this is
+        // reached; what is left here is the shell's own: the capture's event, the controller, the
+        // delivery route.
         var clean = true;
-        clean &= await TryCleanupAsync(_watchdog.StopAsync).ConfigureAwait(true);
-        clean &= await TryCleanupAsync(_streaming.StopAsync).ConfigureAwait(true);
-        clean &= await TryCleanupAsync(_autoStop.StopAsync).ConfigureAwait(true);
-        clean &= await TryCleanupAsync(_livePreview.StopAsync).ConfigureAwait(true);
-
         if (_audioCapture is not null)
         {
             _audioCapture.LevelChanged -= OnAudioLevelChanged;
