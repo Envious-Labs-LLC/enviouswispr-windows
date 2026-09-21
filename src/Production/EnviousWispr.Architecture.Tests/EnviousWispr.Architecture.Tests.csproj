@@ -36,6 +36,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
+      THE PRODUCTION JOINS, COMPILED HERE RATHER THAN COPIED. The shell's session composition and its
+      two effects adapters are WinUI-free files under App/Composition; the app project compiles them
+      behind a window, this project compiles the same files so SessionCompositionTests drives the
+      coordinator the app would have. A copy would drift the moment the shell's file changed; a link
+      cannot.
+    -->
+    <Compile Include="..\EnviousWispr.App\Composition\*.cs" Link="Composition\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="Fixtures\deterministic-parity.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\macos-itn-parity.jsonl" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\macos-itn-parity-holdout.jsonl" CopyToOutputDirectory="PreserveNewest" />

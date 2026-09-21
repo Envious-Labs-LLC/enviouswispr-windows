@@ -591,8 +591,12 @@ public sealed partial class DesignSystemTokenTests
         // disconnected token searches let the write wander anywhere - a reviewer showed the event
         // could be logged from "Transcribing..." with both searches still green.
         var root = FindRepositoryRoot();
-        var shell = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(
-            root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"))).GetRoot();
+        // The shell's session sources: the window's file and the WinUI-free composition beside it,
+        // where the effects adapters live since plan-2 step 4. One tree, so a write that moved
+        // between them is still one write.
+        var shell = CSharpSyntaxTree.ParseText(string.Join(
+            Environment.NewLine,
+            ShellSessionSources(root).Select(File.ReadAllText))).GetRoot();
         var runner = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(
             root, "src", "Production", "EnviousWispr.Pipeline", "SessionFinalizationRunner.cs"))).GetRoot();
 
@@ -1569,32 +1573,48 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void EveryStatusHandedToTheWindowNamesItsPill()
     {
-        var app = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
-        var shell = File.ReadAllText(Path.Combine(app, "App.xaml.cs"));
+        // TWO ROUTES TO THE WINDOW, ONE GATE. The shell's own code calls the window's
+        // SetSessionStatus; the session's effects, WinUI-free under App/Composition since plan-2
+        // step 4, call the session view's ShowStatus, which the shell forwards to the same window
+        // method with the status untouched. Every argument on either route must name its pill.
+        var root = FindRepositoryRoot();
+        var app = Path.Combine(root, "src", "Production", "EnviousWispr.App");
+        var routes = ShellSessionSources(root)
+            .Select(path => (
+                Source: File.ReadAllText(path),
+                Call: path.EndsWith("App.xaml.cs", StringComparison.Ordinal) ? "SetSessionStatus(" : ".ShowStatus("))
+            .ToArray();
 
-        const string call = "SetSessionStatus(";
-        var arguments = new List<string>();
-        for (var index = shell.IndexOf(call, StringComparison.Ordinal);
-             index >= 0;
-             index = shell.IndexOf(call, index + call.Length, StringComparison.Ordinal))
+        var arguments = new List<(string Argument, string Source)>();
+        var written = 0;
+        foreach (var (source, call) in routes)
         {
-            var argument = BalancedArgument(shell, index + call.Length);
-            if (argument is not null)
+            for (var index = source.IndexOf(call, StringComparison.Ordinal);
+                 index >= 0;
+                 index = source.IndexOf(call, index + call.Length, StringComparison.Ordinal))
             {
-                arguments.Add(argument);
+                var argument = BalancedArgument(source, index + call.Length);
+                if (argument is not null)
+                {
+                    arguments.Add((argument, source));
+                }
             }
+
+            written += CountOccurrences(source, call);
         }
 
-        var written = CountOccurrences(shell, call);
         Assert.True(written >= 20, $"Expected the app's status call sites, found {written}.");
         Assert.True(
             arguments.Count == written,
-            $"{written - arguments.Count} of {written} SetSessionStatus calls could not be read, so "
+            $"{written - arguments.Count} of {written} status calls could not be read, so "
                 + "this gate is silently not checking them.");
 
-        // A carrier is a name the compiler already agrees is a DictationStatus: a member declared
-        // to return one, or a parameter or local of that type.
-        var carriers = DictationStatusCarriers(shell);
+        // The shell forwards the view's status to the window untouched: the one SetSessionStatus
+        // call whose argument is a bare parameter is the view's forwarder, and it must be the only
+        // one, or a status could be rewritten between the composition and the window.
+        var shell = File.ReadAllText(Path.Combine(app, "App.xaml.cs"));
+        var forwarders = arguments.Count(entry => entry.Source == shell && entry.Argument == "status");
+        Assert.True(forwarders == 1, $"Expected exactly one bare forwarder of a status to the window, found {forwarders}.");
 
         // WHITESPACE-TOLERANT ON PURPOSE, AND THIS WAS A CORRECTION. The check was a substring test
         // for "DictationStatus." exactly, so a call site that wrapped the line between the type and
@@ -1603,10 +1623,14 @@ public sealed partial class DesignSystemTokenTests
         // it named the type on the line above. The gate was pinning the LINE BREAK rather than the
         // property it exists to hold, and the app was right. It now asserts what it actually means,
         // which is that the call site names the type.
+        // A carrier is a name the compiler already agrees is a DictationStatus: a member declared
+        // to return one, or a parameter or local of that type - in the file the call sits in.
+        var carriersBySource = routes.ToDictionary(route => route.Source, route => DictationStatusCarriers(route.Source));
         var unnamed = arguments
-            .Where(argument => !DictationStatusFactoryCall().IsMatch(argument))
-            .Where(argument => !carriers.Any(carrier =>
-                IdentifierRegexFor(carrier).IsMatch(argument)))
+            .Where(entry => !DictationStatusFactoryCall().IsMatch(entry.Argument))
+            .Where(entry => !carriersBySource[entry.Source].Any(carrier =>
+                IdentifierRegexFor(carrier).IsMatch(entry.Argument)))
+            .Select(entry => entry.Argument)
             .ToArray();
 
         Assert.True(
@@ -1635,6 +1659,15 @@ public sealed partial class DesignSystemTokenTests
         Assert.DoesNotMatch(pattern, "helper.BuildTheStatus(sentence)");
         Assert.DoesNotMatch(pattern, "statusFromSentence(sentence)");
         Assert.DoesNotMatch(pattern, "DictationStatusHelper(sentence)");
+    }
+
+    /// <summary>The shell's session sources: the window's file and the WinUI-free composition beside it.</summary>
+    private static IReadOnlyList<string> ShellSessionSources(string root)
+    {
+        var app = Path.Combine(root, "src", "Production", "EnviousWispr.App");
+        var composition = Directory.EnumerateFiles(Path.Combine(app, "Composition"), "*.cs").Order().ToArray();
+        Assert.True(composition.Length >= 3, $"Expected the composition files under App/Composition, found {composition.Length}.");
+        return [Path.Combine(app, "App.xaml.cs"), .. composition];
     }
 
     private static IEnumerable<string> ProductionSourceFiles(string directory) =>
