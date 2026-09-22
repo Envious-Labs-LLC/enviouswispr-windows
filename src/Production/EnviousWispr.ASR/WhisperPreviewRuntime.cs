@@ -4,23 +4,20 @@ namespace EnviousWispr.ASR;
 
 /// <summary>Which processor Live Preview's engine runs on.</summary>
 /// <remarks>
-/// IT USED TO ASK ABOUT THE WRONG LIBRARY. Live Preview runs whisper.cpp, and the decision required
-/// `IsOnnxRuntimeCudaDependencySetAvailable` - an onnxruntime probe. onnxruntime is what PARAKEET
-/// uses; whisper.cpp ships its own CUDA build and neither knows nor cares whether onnxruntime's
-/// dependency set is present. So a machine whose graphics card works perfectly well for whisper.cpp
-/// was put on the processor because a different library's files were missing.
+/// THE PREVIEW MUST NOT RUN WHERE THE FINAL ENGINE CANNOT. Live Preview runs whisper.cpp on the card,
+/// and running on the card needs three things at once: a driver, a device, and the CUDA runtime files
+/// themselves (the `runtime/cuda` folder). The selector previously checked only the first two, so on a
+/// machine with a working card but no CUDA runtime it chose the card, the worker then failed to start
+/// with the runtime missing, and the preview came up red. Ref: #163.
 ///
-/// THE CONDITION IS NOW THE ONE `WhisperRuntimeSelector` ALREADY USES for the final Whisper engine -
-/// a driver and at least one device - so the preview and the final transcription agree about what
-/// this machine can do. Two answers to one question was the defect; there is now one answer.
+/// THE RUNTIME-FILES CHECK IS THE ONE THE FINAL ENGINE ALREADY USES. `IsOnnxRuntimeCudaDependencySetAvailable`
+/// is populated by `CudaRuntimeDependencyProbe` (the `runtime/cuda` file probe) in the hardware
+/// discovery, so the preview and the final transcription now agree about what this machine can do -
+/// not just "is there a card" but "is there a card with the files to run on it".
 ///
 /// LIFTED OUT OF THE APP SO IT CAN BE TESTED AT ALL. It lived inline in a WinUI startup path that no
-/// test in this repository can reach, which is why a probe for the wrong runtime sat there
-/// unnoticed. Ref: #99.
-///
-/// THIS IS NOT A SPEED CLAIM ON THE DEVELOPMENT MACHINE. Both probes are true there, so the fix
-/// changes nothing locally and could not be measured by running it. What it changes is the machine
-/// where they disagree, and the tests below are that machine.
+/// test in this repository can reach, which is why a check for the wrong thing sat there unnoticed.
+/// Ref: #99, #163.
 /// </remarks>
 public static class WhisperPreviewRuntime
 {
@@ -34,7 +31,8 @@ public static class WhisperPreviewRuntime
         return !forceCpu &&
             hardware.Architecture == ProcessorArchitectureKind.X64 &&
             hardware.Cuda.IsDriverAvailable &&
-            hardware.Cuda.DeviceCount > 0
+            hardware.Cuda.DeviceCount > 0 &&
+            hardware.IsOnnxRuntimeCudaDependencySetAvailable
                 ? RuntimeProviderKind.Cuda
                 : RuntimeProviderKind.Cpu;
     }

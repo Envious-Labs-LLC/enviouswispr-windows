@@ -3,31 +3,39 @@ using EnviousWispr.Core.Runtime;
 
 namespace EnviousWispr.Architecture.Tests;
 
-/// <summary>Live Preview picks its processor by asking about the library it actually runs.</summary>
+/// <summary>Live Preview picks its processor by asking about the files its engine actually runs on.</summary>
 public sealed class WhisperPreviewRuntimeTests
 {
-    /// <summary>The case the old condition got wrong.</summary>
+    /// <summary>The case #163 reported: a working card, but no CUDA runtime files.</summary>
     /// <remarks>
-    /// THIS IS THE WHOLE DEFECT, AND IT IS THE ONLY CASE THAT CHANGES. Live Preview runs whisper.cpp,
-    /// which ships its own CUDA build. The decision used to require onnxruntime's CUDA dependency set
-    /// as well - the library PARAKEET uses - so a machine with a working card and no onnxruntime
-    /// files was put on the processor for a reason that had nothing to do with the engine running
-    /// there. On the development machine both probes are true, so this could never have been found by
-    /// running it; it needed the two to disagree, which is what this test is. Ref: #99.
+    /// A machine can have a working driver and a device and still not have the `runtime/cuda` folder
+    /// (the cuBLAS/cuDNN/cuDART files whisper.cpp loads). Selecting the card there starts a worker
+    /// that cannot load its runtime, so the preview comes up red. The preview must stand down and take
+    /// the processor instead, so it agrees with the final engine about what this machine can run.
+    /// Ref: #163.
     /// </remarks>
     [Fact]
-    public void AWorkingCardIsUsedEvenWhenTheOtherRuntimesDependenciesAreMissing()
+    public void AWorkingCardWithoutTheCudaRuntimeFilesIsNotACard()
     {
-        var hardware = Hardware(cuda: true, onnxRuntimeCudaDependencies: false);
+        var hardware = Hardware(cuda: true, cudaRuntimeFiles: false);
+
+        Assert.Equal(RuntimeProviderKind.Cpu, WhisperPreviewRuntime.Select(hardware));
+    }
+
+    /// <summary>A working card WITH the CUDA runtime files is used.</summary>
+    [Fact]
+    public void AWorkingCardWithTheCudaRuntimeFilesIsACard()
+    {
+        var hardware = Hardware(cuda: true, cudaRuntimeFiles: true);
 
         Assert.Equal(RuntimeProviderKind.Cuda, WhisperPreviewRuntime.Select(hardware));
     }
 
-    /// <summary>And the other library's presence never promotes a machine with no card.</summary>
+    /// <summary>The presence of the runtime files never promotes a machine with no card.</summary>
     [Fact]
-    public void TheOtherRuntimesDependenciesDoNotPromoteAMachineWithNoCard()
+    public void TheCudaRuntimeFilesDoNotPromoteAMachineWithNoCard()
     {
-        var hardware = Hardware(cuda: false, onnxRuntimeCudaDependencies: true);
+        var hardware = Hardware(cuda: false, cudaRuntimeFiles: true);
 
         Assert.Equal(RuntimeProviderKind.Cpu, WhisperPreviewRuntime.Select(hardware));
     }
@@ -36,7 +44,7 @@ public sealed class WhisperPreviewRuntimeTests
     [Fact]
     public void ADriverWithNoDeviceIsNotACard()
     {
-        var hardware = Hardware(cuda: true, onnxRuntimeCudaDependencies: true) with
+        var hardware = Hardware(cuda: true, cudaRuntimeFiles: true) with
         {
             Cuda = new CudaDriverCapability(IsDriverAvailable: true, DeviceCount: 0, DriverVersion: 13_000),
         };
@@ -45,15 +53,10 @@ public sealed class WhisperPreviewRuntimeTests
     }
 
     /// <summary>The preview stands down when the final engine already fell back.</summary>
-    /// <remarks>
-    /// NOT POLITENESS. The final engine falling back means it tried the card and failed; a preview
-    /// that then claimed the card would be asking for something already proved unavailable, on the
-    /// same machine, for the same reason.
-    /// </remarks>
     [Fact]
     public void ThePreviewDoesNotClaimACardTheFinalEngineAlreadyFailedToGet()
     {
-        var hardware = Hardware(cuda: true, onnxRuntimeCudaDependencies: true);
+        var hardware = Hardware(cuda: true, cudaRuntimeFiles: true);
 
         Assert.Equal(RuntimeProviderKind.Cpu, WhisperPreviewRuntime.Select(hardware, forceCpu: true));
     }
@@ -61,7 +64,7 @@ public sealed class WhisperPreviewRuntimeTests
     [Fact]
     public void AnUnsupportedProcessorArchitectureStaysOnTheProcessor()
     {
-        var hardware = Hardware(cuda: true, onnxRuntimeCudaDependencies: true) with
+        var hardware = Hardware(cuda: true, cudaRuntimeFiles: true) with
         {
             Architecture = ProcessorArchitectureKind.Arm64,
         };
@@ -76,15 +79,15 @@ public sealed class WhisperPreviewRuntimeTests
     /// does not, they part company again and this fails.
     /// </remarks>
     [Theory]
-    [InlineData(true, false)]
     [InlineData(true, true)]
+    [InlineData(true, false)]
     [InlineData(false, true)]
     [InlineData(false, false)]
     public void ThePreviewAgreesWithTheFinalWhisperEngineAboutTheCard(
         bool cuda,
-        bool onnxRuntimeCudaDependencies)
+        bool cudaRuntimeFiles)
     {
-        var hardware = Hardware(cuda, onnxRuntimeCudaDependencies);
+        var hardware = Hardware(cuda, cudaRuntimeFiles);
         var final = WhisperRuntimeSelector.Select(
             hardware,
             new WhisperModelInventory(QuantizedComplete: true, FullPrecisionComplete: true));
@@ -92,7 +95,7 @@ public sealed class WhisperPreviewRuntimeTests
         Assert.Equal(final.Provider, WhisperPreviewRuntime.Select(hardware));
     }
 
-    private static HardwareSnapshot Hardware(bool cuda, bool onnxRuntimeCudaDependencies) => new(
+    private static HardwareSnapshot Hardware(bool cuda, bool cudaRuntimeFiles) => new(
         HardwareProbeStatus.Complete,
         ProcessorArchitectureKind.X64,
         ProcessorVendor.Intel,
@@ -102,5 +105,5 @@ public sealed class WhisperPreviewRuntimeTests
         GraphicsAdapters: [],
         IsDirectMlRuntimeAvailable: true,
         new CudaDriverCapability(cuda, cuda ? 1 : 0, cuda ? 13_000 : null),
-        onnxRuntimeCudaDependencies);
+        cudaRuntimeFiles);
 }

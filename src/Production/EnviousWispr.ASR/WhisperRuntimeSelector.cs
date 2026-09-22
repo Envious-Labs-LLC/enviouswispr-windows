@@ -20,7 +20,11 @@ public static class WhisperRuntimeSelector
         var threads = Math.Clamp(hardware.PhysicalCoreCount > 0
             ? hardware.PhysicalCoreCount
             : Math.Max(1, hardware.LogicalProcessorCount / 2), 2, 8);
-        var cudaAvailable = hardware.Cuda.IsDriverAvailable && hardware.Cuda.DeviceCount > 0;
+        // A card without the CUDA runtime files (the `runtime/cuda` folder) cannot run whisper.cpp's
+        // CUDA build: the worker would start and fail to load its runtime. Treat it as no card, so the
+        // selector, the preview, and the worker all agree about what this machine can run. Ref: #163.
+        var cudaAvailable = hardware.Cuda.IsDriverAvailable && hardware.Cuda.DeviceCount > 0 &&
+            hardware.IsOnnxRuntimeCudaDependencySetAvailable;
 
         if (preference == RuntimeProviderPreference.Cuda)
         {
