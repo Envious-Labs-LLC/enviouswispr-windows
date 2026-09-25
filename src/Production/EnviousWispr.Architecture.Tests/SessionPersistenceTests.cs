@@ -375,7 +375,8 @@ public sealed class SessionPersistenceTests
     {
         public List<string> Trace { get; } = [];
 
-        public void ShowPendingRecovery(RecoveryTextRecord record) => Trace.Add($"ShowPendingRecovery:{record.Text}");
+        public void ShowPendingRecovery(RecoveryTextRecord record, bool undoOffered) =>
+            Trace.Add(undoOffered ? $"ShowPendingRecovery:{record.Text}:undo" : $"ShowPendingRecovery:{record.Text}");
 
         public void ClearRecoveredText() => Trace.Add("ClearRecoveredText");
 

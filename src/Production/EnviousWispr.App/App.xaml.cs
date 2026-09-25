@@ -102,6 +102,7 @@ public partial class App : Application, IAsyncDisposable
     private WindowsTrayIcon? _trayIcon;
     private WindowsForegroundHistory? _foregroundHistory;
     private LastDictationReuse? _lastDictation;
+    private SavedDictationPaste? _savedDictationPaste;
     private int _lastDictationPreviewVersion;
 
     /// <summary>The dictation the tray last named; written on the UI thread, where the tray reads it.</summary>
@@ -347,6 +348,8 @@ public partial class App : Application, IAsyncDisposable
         _window.SessionStatusChanged += OnSessionStatusChanged;
         _window.AudioDevicesChanged += OnAudioDevicesChanged;
         _window.RecoveryCleared += OnRecoveryCleared;
+        _window.RecoveryUndoRequested += OnRecoveryUndoRequested;
+        _window.HistoryPasteRequested += OnHistoryPasteRequested;
         _window.DiagnosticsExportCompleted += OnDiagnosticsExportCompleted;
         _window.UpdateCheckRequested += OnUpdateCheckRequested;
         _window.UpdateApplyRequested += OnUpdateApplyRequested;
@@ -542,6 +545,8 @@ public partial class App : Application, IAsyncDisposable
             window.SessionStatusChanged -= OnSessionStatusChanged;
             window.AudioDevicesChanged -= OnAudioDevicesChanged;
             window.RecoveryCleared -= OnRecoveryCleared;
+            window.RecoveryUndoRequested -= OnRecoveryUndoRequested;
+            window.HistoryPasteRequested -= OnHistoryPasteRequested;
             window.DiagnosticsExportCompleted -= OnDiagnosticsExportCompleted;
             window.UpdateCheckRequested -= OnUpdateCheckRequested;
             window.UpdateApplyRequested -= OnUpdateApplyRequested;
@@ -845,6 +850,10 @@ public partial class App : Application, IAsyncDisposable
     }
 
     private void OnRecoveryCleared() => _sessionPersistence.ForgetPendingRecovery();
+
+    private void OnRecoveryUndoRequested() => _ = PasteSavedDictationAsync(SavedDictationPasteAction.Undo, entryId: null);
+
+    private void OnHistoryPasteRequested(Guid entryId) => _ = PasteSavedDictationAsync(SavedDictationPasteAction.HistoryPaste, entryId);
 
     private void OnSettingsChanged(AppSettings settings)
     {
@@ -1434,6 +1443,23 @@ public partial class App : Application, IAsyncDisposable
                 window,
                 TimeSpan.FromMilliseconds(1000),
                 cancellation)));
+        // HOME'S UNDO AND HISTORY'S PASTE: the same borrowing as the reuse above - its own delivery over the
+        // shared adapter, the same own-window rule, the same way back to a window remembered without its field.
+        _savedDictationPaste = new SavedDictationPaste(new SavedDictationPasteEnvironment(
+            async cancellation => (await _historyStore.LoadAsync(
+                _settings.Preferences.History.RetentionDays,
+                DateTimeOffset.UtcNow,
+                cancellation).ConfigureAwait(false)).Entries,
+            () => DateTimeOffset.UtcNow,
+            () => _sessionController?.CurrentSession is not null || _sessionCoordinator?.IsProcessing == true,
+            target => target.ProcessId == (uint)Environment.ProcessId,
+            new ContextAwareTextDelivery(_textTargetAdapter),
+            () => TextDeliveryOptions.Default,
+            (window, cancellation) => WindowsForegroundTargetProvider.ReacquireAsync(
+                window,
+                TimeSpan.FromMilliseconds(1000),
+                cancellation),
+            _sessionPersistence));
         RefreshLastDictationPreview();
         _sessionController = new PushToTalkSessionController(
             audioCapture,
@@ -2289,6 +2315,101 @@ public partial class App : Application, IAsyncDisposable
         }
     }
 
+    /// <summary>Home's Undo or History's Paste, asked for from a button in this app's own window.</summary>
+    /// <remarks>
+    /// THE TARGET IS TAKEN ON THE CLICK, before anything is awaited. The click is in EnviousWispr's window, so
+    /// what is in front is this app. History's Paste goes to the last window the person really worked in,
+    /// which the foreground history kept - the tray's answer to the same problem. Undo needs none from here:
+    /// it goes back to the window and field the take was aimed at, frozen when the key went down. Either way
+    /// the delivery brings its target forward itself - Windows lets the app in front do that - and the words
+    /// land there with this window left open behind it. macOS hides itself first only because its keystroke
+    /// goes to whatever is frontmost; this delivery names its window.
+    ///
+    /// HELD LIKE THE REUSE: a key pressed while saved words are being pasted is Busy, and a paste asked for
+    /// while a dictation or a file transcription has the session is refused and says which. Admitted under a
+    /// presentation lease, because it borrows the delivery adapter the exit disposes.
+    /// </remarks>
+    private async Task PasteSavedDictationAsync(SavedDictationPasteAction action, Guid? entryId)
+    {
+        var target = action == SavedDictationPasteAction.HistoryPaste ? _foregroundHistory?.LastTarget : null;
+        if (Leaving || _savedDictationPaste is not { } paste ||
+            _presentation is not { } presentation ||
+            !presentation.TryEnter(out var lease))
+        {
+            return;
+        }
+
+        SavedDictationPasteResult result;
+        using (lease)
+        {
+            try
+            {
+                var attempt = _sessionCoordinator?.TryHold(SessionHolder.SavedDictationPaste)
+                    ?? new SessionHoldAttempt(NoScope.Instance);
+                using var hold = attempt.Hold;
+                if (hold is null)
+                {
+                    _logger.Write(new AppLogEntry(
+                        DateTimeOffset.UtcNow,
+                        attempt.Refusal == SessionHoldRefusal.Dictation
+                            ? AppEventCode.SavedDictationDeclinedDictationInProgress
+                            : AppEventCode.SavedDictationDeclinedBusy));
+                    ShowSavedDictationPasteResult(action, outcome: null, attempt);
+                    return;
+                }
+
+                result = action == SavedDictationPasteAction.Undo
+                    ? await paste.UndoAsync(lease.Closing).ConfigureAwait(false)
+                    : entryId is { } id
+                        ? await paste.PasteAsync(id, target, lease.Closing).ConfigureAwait(false)
+                        : new SavedDictationPasteResult(action, SavedDictationPasteOutcome.NoLongerAvailable);
+            }
+            catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+            {
+                // A history that cannot be read, or a delivery that threw: said in the window and in the log by
+                // name, never left as a faulted task nobody observes. Never the words or the message.
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.SavedDictationPasteFailed,
+                    AppFailureCategory.Recovery));
+                ShowSavedDictationPasteResult(action, SavedDictationPasteOutcome.Failed, refusal: null);
+                return;
+            }
+        }
+
+        // THE SAME NAMES A DICTATION'S DELIVERY LOGS for the same causes. Never the words.
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            SavedDictationPasteDiagnostics.EventFor(result),
+            result.Outcome is SavedDictationPasteOutcome.KeptOnClipboard or SavedDictationPasteOutcome.Failed
+                ? AppFailureCategory.TextDelivery
+                : AppFailureCategory.None,
+            ErrorCode: result.Delivery is { } delivered ? DeliveryErrorCodes.For(delivered.RefusalReason) : null,
+            DeliveryStage: result.Delivery?.Fault?.Stage,
+            Fault: result.Delivery?.Fault?.Kind));
+        ShowSavedDictationPasteResult(action, result.Outcome, refusal: null);
+    }
+
+    /// <summary>The paste's sentence in the window, and whether Home's Undo still stands, read now.</summary>
+    private void ShowSavedDictationPasteResult(
+        SavedDictationPasteAction action,
+        SavedDictationPasteOutcome? outcome,
+        SessionHoldAttempt? refusal)
+    {
+        var undoStanding = _sessionPersistence.UndoOffer is not null;
+        _window?.DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!Leaving)
+            {
+                _window?.ShowSavedDictationPasteResult(action, outcome, refusal, undoStanding);
+            }
+        });
+    }
+
     /// <summary>Says on the pill what has the session, after a press or a reuse it refused. Ref: #211.</summary>
     /// <remarks>
     /// ASKED AGAIN AT THE DRAW. The notice is queued to the window; by the time it runs the job may have ended and a
@@ -2331,6 +2452,8 @@ public partial class App : Application, IAsyncDisposable
         // SAID, BECAUSE THE ENGINE IS DOWN FOR THE SECONDS IT TAKES TO START ON THE CARD, and a press refused in
         // silence for that long reads as a broken key.
         SessionHolder.GraphicsRuntimeSwitch => DictationStatus.Busy("Moving dictation to your graphics card. Please wait."),
+        // SAID LIKE THE LAST-DICTATION PASTE: a press refused while saved words are being pasted back.
+        SessionHolder.SavedDictationPaste => DictationStatus.Busy("Pasting your dictation. Please wait."),
         _ => null,
     };
 
@@ -2670,6 +2793,20 @@ public partial class App : Application, IAsyncDisposable
         finally
         {
             SignalJourneyUatEvent(completeVariable);
+            if (TryOpenJourneyUatEvent("ENVIOUSWISPR_UAT_JOURNEY_EXIT_EVENT", out var leaveEvent) &&
+                leaveEvent is not null)
+            {
+                // A HARNESS THAT CONFIGURED AN EXIT EVENT DECIDES WHEN THE APP LEAVES, after the take as
+                // well as instead of one. The Escape Recovery journeys press Undo or Paste in this window
+                // once the take has finished, and an app that left 250 ms after completion would take the
+                // offer with it. Bounded as the wait for START is; the synthetic-hotkey journey has
+                // already set the event by the time this runs, so it passes straight through.
+                using (leaveEvent)
+                {
+                    await Task.Run(() => leaveEvent.WaitOne(TimeSpan.FromSeconds(120))).ConfigureAwait(false);
+                }
+            }
+
             if (string.Equals(
                     Environment.GetEnvironmentVariable(
                         "ENVIOUSWISPR_UAT_JOURNEY_EXIT_AFTER_COMPLETION"),
@@ -2803,8 +2940,8 @@ public partial class App : Application, IAsyncDisposable
                 }
             });
 
-        public void ShowRecoveredText(RecoveryTextLoadResult result) =>
-            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetRecoveredText(result));
+        public void ShowRecoveredText(RecoveryTextLoadResult result, bool undoOffered) =>
+            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetRecoveredText(result, undoOffered));
 
         public void ClearRecoveredText() =>
             app._window?.DispatcherQueue.TryEnqueue(() => app._window?.ClearRecoveredText());

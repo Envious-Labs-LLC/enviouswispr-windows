@@ -51,11 +51,11 @@ internal sealed class LivePreviewEffects(RuntimeShell shell) : ILivePreviewEffec
 /// <summary>What the shell shows when persistence changes what the person should see.</summary>
 internal sealed class SessionPersistenceEffects(IRuntimeView view) : ISessionPersistenceEffects
 {
-    public void ShowPendingRecovery(RecoveryTextRecord record)
+    public void ShowPendingRecovery(RecoveryTextRecord record, bool undoOffered)
     {
         // The record first, the window after: the order the window's queue always ran them in,
         // since showing the window was itself a further dispatch.
-        view.ShowRecoveredText(new RecoveryTextLoadResult(RecoveryTextLoadStatus.Found, record));
+        view.ShowRecoveredText(new RecoveryTextLoadResult(RecoveryTextLoadStatus.Found, record), undoOffered);
         view.ShowMainWindow();
     }
 

@@ -112,6 +112,20 @@ dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.
   -c Release -- --escape-recovery
 ```
 
+Add `--escape-action undo` or `--escape-action paste` to press, after that take, Home's one-shot Undo or
+History's Paste selected with a real pointer in the app's own window. The harness puts the controlled target
+in front first (the app the person was in), moves it clear of the button, and clicks; the words must then
+arrive in the target, the log must carry `EscapeRecoveryUndoPasted` or `HistoryEntryPasted` exactly once, the
+History entry must still be the 24-hour Escape Recovery, and Home's copy and its Undo must be gone. The app
+stays open for the press through the journey's exit event and leaves once the harness sets it:
+
+```powershell
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --escape-recovery --escape-action undo
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --escape-recovery --escape-action paste
+```
+
 Three mutually exclusive failure journeys exercise the required native fail-safe paths:
 
 ```powershell

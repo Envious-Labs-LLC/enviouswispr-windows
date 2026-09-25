@@ -252,6 +252,42 @@ public enum AppEventCode
     /// <summary>A last-dictation shortcut could not listen: it clashes, is invalid, or another app holds it. The rest did.</summary>
     LastDictationShortcutUnavailable,
 
+    // ESCAPE RECOVERY UNDO ON HOME AND PASTE IN HISTORY: one event per outcome of SavedDictationPasteOutcome,
+    // the two that put words somewhere named by action, so a reader can count restores without the words.
+
+    /// <summary>Undo put an Escape Recovery's words back into the window and field the take was aimed at.</summary>
+    EscapeRecoveryUndoPasted,
+
+    /// <summary>Undo could not paste into the take's own field, so the words went to the clipboard instead.</summary>
+    EscapeRecoveryUndoKeptOnClipboard,
+
+    /// <summary>History's Paste wrote the entry's words into the window the person was in.</summary>
+    HistoryEntryPasted,
+
+    /// <summary>History's Paste was refused by the target and the clipboard caught the words.</summary>
+    HistoryEntryKeptOnClipboard,
+
+    /// <summary>Undo was pressed with no offer standing: already used, or its copy on Home had moved on.</summary>
+    SavedDictationUndoNotOffered,
+
+    /// <summary>The entry was deleted or had expired by the press; nothing was pasted.</summary>
+    SavedDictationNoLongerAvailable,
+
+    /// <summary>Declined: a dictation was recording or being delivered, and owns the clipboard next.</summary>
+    SavedDictationDeclinedDictationInProgress,
+
+    /// <summary>Declined: another saved-dictation paste was still running, or something else held the session.</summary>
+    SavedDictationDeclinedBusy,
+
+    /// <summary>Declined: no window to paste into, or it had gone.</summary>
+    SavedDictationDeclinedNoTarget,
+
+    /// <summary>Declined: the only window to paste into was EnviousWispr's own.</summary>
+    SavedDictationDeclinedOwnWindow,
+
+    /// <summary>The delivery wrote nothing and the clipboard did not catch the words.</summary>
+    SavedDictationPasteFailed,
+
     // TRANSCRIBE A FILE (#211): what happened to a file, never which file or what it said.
 
     /// <summary>A file transcription began.</summary>

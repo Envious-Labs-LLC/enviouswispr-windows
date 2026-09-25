@@ -21,4 +21,9 @@
   <ItemGroup>
     <PackageReference Include="System.Management" Version="10.0.11" />
   </ItemGroup>
+
+  <!-- UI Automation, to find Home's Undo and History's Paste in the app's window for the Escape Recovery action journeys. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
+  </ItemGroup>
 </Project>

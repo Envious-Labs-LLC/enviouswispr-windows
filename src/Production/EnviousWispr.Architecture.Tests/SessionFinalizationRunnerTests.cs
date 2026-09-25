@@ -201,10 +201,45 @@ public sealed class SessionFinalizationRunnerTests
         Assert.Equal(
             [
                 "ShowTranscribing", "RecordTranscriptionStarted", "ArchiveAudio",
-                "RecordTranscriptionFinished", "CurrentOptions", "SaveRecovery:hello world", "HistoryChanged", "ShowPendingRecovery:hello world",
-                "ShowEscapeRecoveryFinished", "ShowHeldStatus:EscapeRecovery", "RecordDictationCompleted",
+                "RecordTranscriptionFinished", "CurrentOptions", "SaveRecovery:hello world", "HistoryChanged", "ShowPendingRecovery:hello world:undo",
+                "ShowEscapeRecoveryFinished:undo=True", "ShowHeldStatus:EscapeRecovery", "RecordDictationCompleted",
             ],
             world.Trace);
+
+        // THE UNDO NAMES THE SAVED ENTRY AND THE TARGET FROZEN AT THE PRESS, beside the take's own copy.
+        var offer = world.Persistence.UndoOffer;
+        Assert.NotNull(offer);
+        Assert.Equal(entry.Id, offer.EntryId);
+        Assert.Equal(new TargetWindowId(101), offer.Target);
+        Assert.Equal(world.Persistence.PendingRecord!.SessionId, offer.SessionId);
+    }
+
+    /// <summary>A take whose History write failed has nothing to read back at the press, so no Undo is offered.</summary>
+    [Fact]
+    public async Task AnEscapeRecoveryThatHistoryRefusedOffersNoUndo()
+    {
+        var world = await World.RecordingFinishedAsync("hello world");
+        world.History.RefuseAdds = true;
+
+        var report = await world.RunAsync(recoveryOnly: true);
+
+        Assert.Equal(FinalizationOutcome.EscapeRecovery, report.Outcome);
+        Assert.True(world.Persistence.HasPendingRecovery, "Copy on Home still has the words");
+        Assert.Null(world.Persistence.UndoOffer);
+        Assert.Contains("ShowPendingRecovery:hello world", world.Trace);
+        Assert.Contains("ShowEscapeRecoveryFinished:undo=False", world.Trace);
+    }
+
+    /// <summary>An ordinary held take is not an Escape Recovery and never offers Undo.</summary>
+    [Fact]
+    public async Task ARefusedDeliveryOffersNoUndo()
+    {
+        var world = await World.RecordingFinishedAsync("hello world");
+        world.Delivery.Answer = (id, _) => new DeliveryResult(id, Delivered: false, ClipboardFallback: false, RefusalReason: TextDeliveryRefusalReason.TargetChanged);
+
+        await world.RunAsync();
+
+        Assert.Null(world.Persistence.UndoOffer);
     }
 
     [Fact]
@@ -396,7 +431,7 @@ public sealed class SessionFinalizationRunnerTests
 
         public void ReportDelivery(DeliveryResult delivery, string? language) => Trace.Add("ReportDelivery");
 
-        public void ShowEscapeRecoveryFinished() => Trace.Add("ShowEscapeRecoveryFinished");
+        public void ShowEscapeRecoveryFinished(bool undoOffered) => Trace.Add($"ShowEscapeRecoveryFinished:undo={undoOffered}");
 
         public void ShowHeldStatus(FinalizationReport report) => Trace.Add($"ShowHeldStatus:{report.Outcome}");
 
@@ -434,7 +469,8 @@ public sealed class SessionFinalizationRunnerTests
         }
 
         // Persistence effects.
-        public void ShowPendingRecovery(RecoveryTextRecord record) => Trace.Add($"ShowPendingRecovery:{record.Text}");
+        public void ShowPendingRecovery(RecoveryTextRecord record, bool undoOffered) =>
+            Trace.Add(undoOffered ? $"ShowPendingRecovery:{record.Text}:undo" : $"ShowPendingRecovery:{record.Text}");
 
         public void ClearRecoveredText() => Trace.Add("ClearRecovery");
 
@@ -516,11 +552,19 @@ public sealed class SessionFinalizationRunnerTests
     {
         public List<DictationHistoryEntry> Added { get; } = [];
 
+        /// <summary>The store refuses every write, as one that cannot open its file does.</summary>
+        public bool RefuseAdds { get; set; }
+
         public Task<HistoryLoadResult> LoadAsync(int retentionDays, DateTimeOffset now, CancellationToken cancellationToken = default) =>
             Task.FromResult(new HistoryLoadResult(Added, HistoryLoadStatus.Loaded));
 
         public Task<HistoryOperationResult> AddAsync(DictationHistoryEntry entry, int retentionDays, DateTimeOffset now, CancellationToken cancellationToken = default)
         {
+            if (RefuseAdds)
+            {
+                return Task.FromResult(new HistoryOperationResult(false));
+            }
+
             Added.Add(entry);
             return Task.FromResult(new HistoryOperationResult(true));
         }

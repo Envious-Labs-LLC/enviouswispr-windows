@@ -917,6 +917,50 @@ public sealed class DictationSessionCoordinatorTests
         }
     }
 
+    /// <summary>
+    /// Home's Undo and History's Paste take the session like the last-dictation reuse: refused while a
+    /// dictation records or a file is transcribed, and while held a press is Busy and names the paste.
+    /// </summary>
+    [Fact]
+    public async Task ASavedDictationPasteIsRefusedForADictationOrAFileAndHoldsOffAPress()
+    {
+        // REFUSED FOR A DICTATION: the take in flight owns the clipboard and the target next.
+        var recording = new BarrierExecutor();
+        await using (var coordinator = new DictationSessionCoordinator(recording))
+        {
+            var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+            await recording.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+            var refused = coordinator.TryHold(SessionHolder.SavedDictationPaste);
+            Assert.Null(refused.Hold);
+            Assert.Equal(SessionHoldRefusal.Dictation, refused.Refusal);
+            recording.Finish(PushToTalkSignal.Pressed);
+            await press.WaitAsync(Patience);
+        }
+
+        // REFUSED FOR A FILE, and the file is what the refusal names.
+        await using (var coordinator = new DictationSessionCoordinator(new BarrierExecutor()))
+        {
+            using var file = coordinator.TryHold(SessionHolder.FileTranscription).Hold;
+            Assert.NotNull(file);
+            var refused = coordinator.TryHold(SessionHolder.SavedDictationPaste);
+            Assert.Null(refused.Hold);
+            Assert.Equal(SessionHoldRefusal.Held, refused.Refusal);
+            Assert.Equal(SessionHolder.FileTranscription, refused.HeldBy);
+        }
+
+        // HELD: a press is Busy and names the paste, and no command reaches the executor.
+        var executor = new BarrierExecutor();
+        await using (var coordinator = new DictationSessionCoordinator(executor))
+        {
+            using var paste = coordinator.TryHold(SessionHolder.SavedDictationPaste).Hold;
+            Assert.NotNull(paste);
+            var press = await coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+            Assert.Equal(SessionCommandDisposition.Busy, press.Disposition);
+            Assert.Equal(SessionHolder.SavedDictationPaste, press.BusyHolder);
+            Assert.Empty(executor.Seen);
+        }
+    }
+
     [Fact]
     public async Task AHoldRefusedForADictationSaysSo()
     {
