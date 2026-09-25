@@ -152,7 +152,8 @@ public sealed class RuntimeWorkerLivePreviewEngine : IAbortableLivePreviewEngine
                 sequence,
                 Succeeded: true,
                 transcript.Text,
-                transcript.DetectedLanguage);
+                transcript.DetectedLanguage,
+                RecognitionLanguage: transcript.RecognitionLanguage);
         }
         catch (OperationCanceledException)
         {

@@ -250,6 +250,23 @@ if (deterministicProfile != DeterministicJourneyProfile.None &&
     throw new JourneyExpectationException(
         "Deterministic-profile UAT requires --english-parakeet and cannot be combined with local polish, Live Preview, live microphone, Escape Recovery, or failure injection.");
 }
+// A LANGUAGE CHANGE IN THE RUNNING APP, THEN A TAKE WITHOUT A RELAUNCH (#241). The app starts on
+// Automatic, the harness picks French on the Transcription page and saves, and the take's own log line
+// must say the engine was told French. The launch-time language override is deliberately not set: an
+// override would pin the language and no change could be seen.
+var languageChange = args.Any(argument => string.Equals(
+    argument,
+    "--language-change",
+    StringComparison.OrdinalIgnoreCase));
+if (languageChange &&
+    (englishParakeet || liveMicrophone || headStart || escapeRecovery || syntheticHotkey ||
+     failureMode != JourneyFailureMode.None || polishProvider != PolishProvider.None ||
+     deterministicProfile != DeterministicJourneyProfile.None || targetMode != "edit"))
+{
+    throw new JourneyExpectationException(
+        "--language-change runs the reviewed French Whisper fixture alone (Live Preview may be added): a "
+            + "language change is judged on one take with nothing else configured.");
+}
 if (quickTap && !syntheticHotkey)
 {
     throw new JourneyExpectationException(
@@ -442,7 +459,29 @@ var journeyDefaults = AppSettings.Default with
         Dictation = AppSettings.Default.Preferences.Dictation with { PushToTalkGesture = "F8" },
     },
 };
-if (livePreview || escapeRecovery || failureMode == JourneyFailureMode.MicrophoneUnavailable ||
+if (languageChange)
+{
+    // ONBOARDED, SO THE WINDOW OPENS ON ITS PAGES; WHISPER, SO THE PICKER IS THE ONE THAT COUNTS; AUTOMATIC,
+    // SO THE CHANGE TO FRENCH IS A CHANGE. Everything else is the default profile.
+    await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"))
+        .SaveAsync(journeyDefaults with
+        {
+            HasCompletedOnboarding = true,
+            Preferences = journeyDefaults.Preferences with
+            {
+                LivePreviewEnabled = livePreview,
+                PillDesignWithWords = livePreview
+                    ? RecordingPillDesign.ReadingWell
+                    : journeyDefaults.Preferences.PillDesignWithWords,
+                Dictation = journeyDefaults.Preferences.Dictation with
+                {
+                    FinalEngine = FinalAsrEngine.Whisper,
+                    WhisperLanguage = WhisperLanguagePreference.Automatic,
+                },
+            },
+        });
+}
+else if (livePreview || escapeRecovery || failureMode == JourneyFailureMode.MicrophoneUnavailable ||
     deterministicProfile != DeterministicJourneyProfile.None)
 {
     var deterministicFeaturesEnabled = deterministicProfile != DeterministicJourneyProfile.Disabled;
@@ -575,7 +614,14 @@ try
     appStart.Environment["ENVIOUSWISPR_UAT_READY_EVENT"] = readyEventName;
     appStart.Environment["ENVIOUSWISPR_UAT_RUNTIME_READY_EVENT"] = runtimeEventName;
     appStart.Environment["ENVIOUSWISPR_ASR_ENGINE"] = engineName;
-    appStart.Environment["ENVIOUSWISPR_ASR_LANGUAGE"] = language;
+    if (languageChange)
+    {
+        appStart.Environment.Remove("ENVIOUSWISPR_ASR_LANGUAGE");
+    }
+    else
+    {
+        appStart.Environment["ENVIOUSWISPR_ASR_LANGUAGE"] = language;
+    }
     appStart.Environment["ENVIOUSWISPR_MODEL_DIRECTORY"] = modelDirectory;
     appStart.Environment["ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY"] = livePreview
         ? previewModelDirectory
@@ -724,6 +770,20 @@ try
     }
     else
     {
+        if (languageChange)
+        {
+            TranscriptionPageDriver.ChooseWhisperLanguage(app.Id, "French");
+            // THE PRECONDITION LANDED, READ FROM WHAT THE APP WROTE: a save that silently kept Automatic
+            // would otherwise run the take on the default and report whatever that happened to show.
+            var saved = await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json")).LoadAsync();
+            if (saved.Settings.Preferences.Dictation.WhisperLanguage != WhisperLanguagePreference.French)
+            {
+                throw JourneyExpectationException.Instrument(
+                    "The Transcription page's save did not record French; the language change was not staged "
+                        + $"(saved {saved.Settings.Preferences.Dictation.WhisperLanguage}).");
+            }
+        }
+
         BringToForeground(target.MainWindowHandle);
         Thread.Sleep(250);
         if (failureMode == JourneyFailureMode.MicrophoneUnavailable)
@@ -975,6 +1035,23 @@ try
     {
         RequireProductionJourneyEvents(diagnosticEvents, deliveryOutcomeEvent);
     }
+    var takeRecognitionLanguages = ReadTakeRecognitionLanguages(diagnosticPath);
+    if (languageChange &&
+        !(takeRecognitionLanguages.Count == 1 && takeRecognitionLanguages[0] == "French"))
+    {
+        throw new JourneyExpectationException(
+            "The take after the language change was not recognised in French without a relaunch: the "
+                + "transcription line(s) said recognitionLanguage="
+                + $"[{string.Join(',', takeRecognitionLanguages)}].");
+    }
+    var previewRecognitionLanguages = ReadRecognitionLanguages(diagnosticPath, "LivePreviewUpdated");
+    if (languageChange && livePreview &&
+        (previewRecognitionLanguages.Count == 0 || previewRecognitionLanguages.Any(value => value != "French")))
+    {
+        throw new JourneyExpectationException(
+            "Live Preview did not follow the language change without a relaunch: its passes said "
+                + $"recognitionLanguage=[{string.Join(',', previewRecognitionLanguages)}].");
+    }
     var deliveryRoute = failureMode == JourneyFailureMode.None && !escapeRecovery && !manualMicrophone
         ? RequireDeliveryRoute(targetMode, targetResultPath, diagnosticEvents, clipboardRestored)
         : null;
@@ -1094,6 +1171,11 @@ try
         architecture = hardware.Architecture.ToString(),
         engine = engineName,
         language,
+        // THE LANGUAGE EACH TAKE WAS RECOGNISED IN, FROM THE APP'S OWN LINE (#241), and whether it was
+        // changed on the Transcription page inside this launch rather than set before it.
+        takeRecognitionLanguages,
+        previewRecognitionLanguages,
+        languageChangedWithoutRelaunch = languageChange,
         provider,
         modelPack,
         acousticProbe,
@@ -1494,6 +1576,35 @@ static IReadOnlyList<string> ReadDiagnosticEvents(string path)
     }
 
     return events;
+}
+
+/// <summary>The language each take's transcription line says the engine was told, in order; "None" where a line carries none.</summary>
+static IReadOnlyList<string> ReadTakeRecognitionLanguages(string path) =>
+    ReadRecognitionLanguages(path, "DictationTranscriptionCompleted", "DictationTranscriptionDegraded");
+
+/// <summary>The recognitionLanguage of every line with one of these events, in order; "None" where a line carries none.</summary>
+static IReadOnlyList<string> ReadRecognitionLanguages(string path, params string[] eventNames)
+{
+    if (!File.Exists(path))
+    {
+        return [];
+    }
+
+    var languages = new List<string>();
+    foreach (var line in ReadSharedLines(path))
+    {
+        using var document = JsonDocument.Parse(line);
+        var root = document.RootElement;
+        var eventName = root.TryGetProperty("event", out var eventElement) ? eventElement.GetString() : null;
+        if (eventName is not null && eventNames.Contains(eventName, StringComparer.Ordinal))
+        {
+            languages.Add(root.TryGetProperty("recognitionLanguage", out var language)
+                ? language.GetString() ?? "None"
+                : "None");
+        }
+    }
+
+    return languages;
 }
 
 static bool WaitForPolishRuntimeReady(
@@ -2902,7 +3013,7 @@ static void RequireKnownArguments(string[] arguments)
     [
         "--live-microphone", "--manual-microphone", "--english-parakeet", "--live-preview",
         "--head-start", "--escape-recovery", "--synthesized-acoustic", "--synthetic-hotkey",
-        "--quick-tap", "--virtual-cable",
+        "--quick-tap", "--virtual-cable", "--language-change",
     ];
     string[] valuedFlags =
     [

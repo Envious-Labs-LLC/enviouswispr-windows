@@ -264,6 +264,21 @@ fixture and Windows-synthesized sentence were detected by the content-free probe
 speaker echo suppression is the likely boundary. The `--manual-microphone` mode makes the remaining requirement
 directly runnable, but it is not evidence until a person completes it successfully on the exact candidate build.
 
+Add `--language-change` to the default Whisper journey to prove that a language chosen in the running app
+reaches the next take without a relaunch. The app starts on Automatic with no launch-time language override;
+the harness opens the Transcription page through UI Automation, picks French in the Whisper language picker,
+presses Save settings, requires `settings.json` to record French, and only then signals the take. The run passes
+only when the take's `DictationTranscriptionCompleted` line says `recognitionLanguage` French. Add
+`--live-preview` as well to require every `LivePreviewUpdated` line to say French too. The result carries
+`takeRecognitionLanguages` and `previewRecognitionLanguages`:
+
+```powershell
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --language-change
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --language-change --live-preview
+```
+
 ## Synthetic hotkey: the installed global hook, without a sound
 
 `--synthetic-hotkey` is the take that starts the way a finger starts it. The reviewed fixture is still the

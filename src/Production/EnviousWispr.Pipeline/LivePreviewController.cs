@@ -270,7 +270,9 @@ public sealed class LivePreviewController : IAsyncDisposable
                 _logger.Write(new AppLogEntry(
                     _clock.GetUtcNow(),
                     AppEventCode.LivePreviewUpdated,
-                    ElapsedMilliseconds: (long)passCost.TotalMilliseconds));
+                    ElapsedMilliseconds: (long)passCost.TotalMilliseconds,
+                    // WHICH LANGUAGE THIS PASS WAS TOLD, so a change is seen to reach the preview too (#241).
+                    RecognitionLanguage: DiagnosticRecognitionLanguages.From(update.RecognitionLanguage)));
                 // THE CLOSURE IS CHECKED AGAIN AT THE DISPATCH, not only at the start. A stop that
                 // ran out of patience left this loop inside the engine; when the engine answers at
                 // last, the screen this was for has been closed, and its words must not reach it.

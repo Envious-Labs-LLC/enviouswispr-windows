@@ -107,7 +107,9 @@ using (engineCreation?.Engine as IDisposable)
                         string.Empty,
                         "test-transcribe-stub",
                         [],
-                        UsedFallback: false))
+                        UsedFallback: false,
+                        // ECHOED, so a test can read which language the request carried.
+                        RecognitionLanguage: transcription.Language))
                 : await TranscribeAsync(request, engineCreation);
             await WriteResponseAsync(response);
             continue;
@@ -301,11 +303,25 @@ static async Task<RuntimeWorkerResponse> TranscribeAsync(
             MemoryMappedFileAccess.Read);
         view.ReadArray(0, samples, 0, samples.Length);
         var sessionId = new DictationSessionId(transcription.SessionId);
-        var transcript = await engineCreation.Engine.TranscribeAsync(new CapturedAudio(
+        var audio = new CapturedAudio(
             sessionId,
             samples,
             ParakeetTranscriptionEngine.RequiredSampleRate,
-            Channels: 1));
+            Channels: 1);
+        // THE TAKE CARRIES ITS LANGUAGE (#241). A request without one keeps the language the engine
+        // loaded with; one the app could not have sent is refused rather than guessed at; an engine that
+        // takes no language (Parakeet) ignores it and reports none.
+        string? language = null;
+        if (transcription.Language is { } requested &&
+            !WhisperLanguageCodes.TryNormalize(requested, out language))
+        {
+            return Failure(request.RequestId, AppErrorCode.TranscriptionFailed);
+        }
+
+        var transcript = language is not null &&
+            engineCreation.Engine is ILanguageSelectableTranscriptionEngine selectable
+            ? await selectable.TranscribeAsync(audio, language)
+            : await engineCreation.Engine.TranscribeAsync(audio);
         var usedFallback = engineCreation.UsedFallback || transcript.UsedFallback;
         var degradedError = transcript.DegradedError ?? engineCreation.DegradedError;
         return new RuntimeWorkerResponse(
@@ -319,7 +335,8 @@ static async Task<RuntimeWorkerResponse> TranscribeAsync(
                 transcript.TokenTimings ?? [],
                 usedFallback,
                 degradedError,
-                transcript.DetectedLanguage));
+                transcript.DetectedLanguage,
+                transcript.RecognitionLanguage));
     }
     catch (TranscriptionEngineException exception)
     {

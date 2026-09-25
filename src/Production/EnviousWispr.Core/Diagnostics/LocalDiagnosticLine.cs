@@ -43,7 +43,8 @@ public sealed record LocalDiagnosticLine(
     DiagnosticRuntimeSelectionReason? RuntimeSelection = null,
     DeliveryStage? DeliveryStage = null,
     DeliveryFaultKind? Fault = null,
-    Guid? DictationId = null)
+    Guid? DictationId = null,
+    DiagnosticRecognitionLanguage? RecognitionLanguage = null)
 {
     /// <summary>Takes a line that is safe to send and adds what only this machine may know.</summary>
     public static LocalDiagnosticLine From(PrivacySafeDiagnosticRecord record, Guid? dictationId)
@@ -64,6 +65,7 @@ public sealed record LocalDiagnosticLine(
             record.RuntimeSelection,
             record.DeliveryStage,
             record.Fault,
-            dictationId);
+            dictationId,
+            record.RecognitionLanguage);
     }
 }

@@ -7,7 +7,7 @@ using Whisper.net.LibraryLoader;
 
 namespace EnviousWispr.ASR;
 
-public sealed class WhisperTranscriptionEngine : ITranscriptionEngine, IAsyncDisposable, IDisposable
+public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptionEngine, IAsyncDisposable, IDisposable
 {
     public const string ModelId = WhisperModelIds.Final;
     public const string PreviewModelId = WhisperModelIds.Preview;
@@ -17,6 +17,9 @@ public sealed class WhisperTranscriptionEngine : ITranscriptionEngine, IAsyncDis
     private readonly WhisperFactory _factory;
     private readonly WhisperProcessor _processor;
     private readonly SemaphoreSlim _transcriptionGate = new(1, 1);
+    private const string AutomaticLanguage = "auto";
+
+    private string _language;
     private bool _disposed;
 
     public WhisperTranscriptionEngine(WhisperEngineOptions options)
@@ -47,10 +50,13 @@ public sealed class WhisperTranscriptionEngine : ITranscriptionEngine, IAsyncDis
                 .WithNoContext()
                 .WithTokenTimestamps()
                 .WithoutStringPool();
-            builder = string.IsNullOrWhiteSpace(options.Language) ||
-                string.Equals(options.Language, "auto", StringComparison.OrdinalIgnoreCase)
+            _language = string.IsNullOrWhiteSpace(options.Language) ||
+                string.Equals(options.Language, AutomaticLanguage, StringComparison.OrdinalIgnoreCase)
+                ? AutomaticLanguage
+                : options.Language;
+            builder = _language == AutomaticLanguage
                 ? builder.WithLanguageDetection()
-                : builder.WithLanguage(options.Language);
+                : builder.WithLanguage(_language);
             _processor = builder.Build();
             _factory = factory;
         }
@@ -71,9 +77,33 @@ public sealed class WhisperTranscriptionEngine : ITranscriptionEngine, IAsyncDis
 
     public WhisperModelPack ModelPack { get; }
 
-    public async Task<Transcript> TranscribeAsync(
+    public Task<Transcript> TranscribeAsync(
         CapturedAudio audio,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        TranscribeCoreAsync(audio, requestedLanguage: null, cancellationToken);
+
+    /// <summary>Transcribes this take in the language given, switching the loaded model to it first when it differs.</summary>
+    /// <remarks>
+    /// NO RELOAD: whisper.cpp reads the language from its decoding parameters on every call, and
+    /// Whisper.net's ChangeLanguage replaces only that parameter ("auto" turns detection back on). The
+    /// switch happens inside the transcription gate, so a take never runs with half a change.
+    /// </remarks>
+    public Task<Transcript> TranscribeAsync(
+        CapturedAudio audio,
+        string? language,
+        CancellationToken cancellationToken = default) =>
+        TranscribeCoreAsync(audio, NormalizeLanguage(language), cancellationToken);
+
+    private static string NormalizeLanguage(string? language) =>
+        string.IsNullOrWhiteSpace(language) ||
+        string.Equals(language.Trim(), AutomaticLanguage, StringComparison.OrdinalIgnoreCase)
+            ? AutomaticLanguage
+            : language.Trim().ToLowerInvariant();
+
+    private async Task<Transcript> TranscribeCoreAsync(
+        CapturedAudio audio,
+        string? requestedLanguage,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(audio);
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -96,6 +126,13 @@ public sealed class WhisperTranscriptionEngine : ITranscriptionEngine, IAsyncDis
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            if (requestedLanguage is not null &&
+                !string.Equals(requestedLanguage, _language, StringComparison.Ordinal))
+            {
+                _processor.ChangeLanguage(requestedLanguage);
+                _language = requestedLanguage;
+            }
+
             var text = new StringBuilder();
             var timings = new List<TranscriptTokenTiming>();
             string? detectedLanguage = null;
@@ -115,7 +152,8 @@ public sealed class WhisperTranscriptionEngine : ITranscriptionEngine, IAsyncDis
                 text.ToString().Trim(),
                 EngineId,
                 timings,
-                DetectedLanguage: detectedLanguage);
+                DetectedLanguage: detectedLanguage,
+                RecognitionLanguage: _language);
         }
         catch (OperationCanceledException)
         {

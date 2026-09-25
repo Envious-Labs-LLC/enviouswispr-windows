@@ -96,6 +96,11 @@ public static class WhisperLanguageCodes
         _ => throw new ArgumentOutOfRangeException(nameof(preference)),
     };
 
+    /// <summary>The language a take is recognised in: a valid launch override pins it; otherwise the setting as it stands.</summary>
+    /// <remarks>The override (ENVIOUSWISPR_ASR_LANGUAGE) is for tooling and journeys; an invalid one is ignored, as before.</remarks>
+    public static string Current(WhisperLanguagePreference setting, string? environmentOverride) =>
+        TryNormalize(environmentOverride, out var code) ? code : For(setting);
+
     public static bool TryNormalize(string? value, out string code)
     {
         var normalized = value?.Trim().ToLowerInvariant();
