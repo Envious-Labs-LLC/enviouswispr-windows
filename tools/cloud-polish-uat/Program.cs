@@ -12,7 +12,13 @@ if (provider is null)
     return 2;
 }
 
-var store = new WindowsCredentialApiKeyStore();
+// A KEY FROM THE ENVIRONMENT NEVER TOUCHES DISK. A machine whose rule is that agent keys live only in a
+// cloud secret store hands the key to this process through a variable for one run (a launcher that
+// fetches it at the moment of use), and nothing here writes it to Credential Manager or prints it.
+var keyVariable = ValueAfter("--key-from-env");
+IApiKeyStore store = keyVariable is null
+    ? new WindowsCredentialApiKeyStore()
+    : new EnvironmentApiKeyStore(keyVariable);
 if (args.Contains("--status", StringComparer.OrdinalIgnoreCase))
 {
     var status = store.Read(provider.Value).Status;
@@ -22,6 +28,12 @@ if (args.Contains("--status", StringComparer.OrdinalIgnoreCase))
 
 if (args.Contains("--save-key", StringComparer.OrdinalIgnoreCase))
 {
+    if (keyVariable is not null)
+    {
+        Console.Error.WriteLine("--save-key and --key-from-env cannot be combined; nothing was saved.");
+        return 2;
+    }
+
     Console.Write("API key (input hidden): ");
     var key = ReadSecret();
     Console.WriteLine();
@@ -114,10 +126,26 @@ static string ReadSecret()
 
 static void Usage()
 {
+    Console.Error.WriteLine("Add --key-from-env VARIABLE to read the key from that environment variable for this run only.");
     Console.Error.WriteLine("Usage:");
     Console.Error.WriteLine("  --provider openai|anthropic|gemini --status");
     Console.Error.WriteLine("  --provider openai|anthropic|gemini --save-key");
     Console.Error.WriteLine("  --provider openai|anthropic|gemini --delete-key");
     Console.Error.WriteLine(
         $"  --provider openai|anthropic|gemini [--model id] {ConsentFlag}");
+}
+
+/// <summary>A key read from one environment variable for one run; never stored, never deleted.</summary>
+internal sealed class EnvironmentApiKeyStore(string variable) : IApiKeyStore
+{
+    public ApiKeyReadResult Read(PolishProvider provider) =>
+        Environment.GetEnvironmentVariable(variable) is { Length: > 0 } value
+            ? ApiKeyReadResult.Found(value)
+            : ApiKeyReadResult.Missing;
+
+    public void Store(PolishProvider provider, string value) =>
+        throw new InvalidOperationException("An environment-supplied key is never stored.");
+
+    public void Delete(PolishProvider provider) =>
+        throw new InvalidOperationException("An environment-supplied key is never deleted.");
 }
