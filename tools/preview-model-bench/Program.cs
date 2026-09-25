@@ -23,6 +23,8 @@ using EnviousWispr.Services.Runtime;
 
 const int sampleRate = 16_000;
 const double cadenceMilliseconds = 2_500;
+// A card at or above this load, by the middle of five readings, is doing someone else's work.
+const int BusyCard = 50;
 double[] windowSeconds = [0.5, 2.5, 5, 10, 20];
 
 var repositoryRoot = ArgumentValue("--repo") ?? FindRepositoryRoot(AppContext.BaseDirectory);
@@ -42,10 +44,14 @@ var providers = (ArgumentValue("--providers") ?? "cpu,cuda")
 var only = ArgumentValue("--only");
 var output = ArgumentValue("--out") ?? Path.Combine(Path.GetTempPath(), "preview-model-bench.json");
 
-// THE SAME THREAD COUNT LIVE PREVIEW USES (ConfigureLivePreview: physical cores, clamped 2 to 8). The bench has no
-// hardware probe of its own, so it takes half the logical processors, which is the physical count on this machine
-// class; the number is printed so a run on another machine says what it used.
-var threads = Math.Clamp(Math.Max(1, Environment.ProcessorCount / 2), 2, 8);
+// THE SAME THREAD COUNT LIVE PREVIEW USES, from the same hardware probe and the same rule (ConfigureLivePreview:
+// physical cores, else half the logical processors, clamped 2 to 8). Halving the logical count alone gave a
+// four-core machine without hyper-threading two threads where the preview uses four.
+var hardware = await new WindowsHardwareDiscovery(CudaRuntimeDirectory.ForTooling()).ProbeAsync();
+var threads = Math.Clamp(
+    hardware.PhysicalCoreCount > 0 ? hardware.PhysicalCoreCount : Math.Max(1, hardware.LogicalProcessorCount / 2),
+    2,
+    8);
 
 var candidates = new List<Candidate>
 {
@@ -57,6 +63,10 @@ var candidates = new List<Candidate>
         Path.Combine(repositoryRoot, "models", "whisper-large-v3-turbo"), ModelFile: null),
     new("parakeet-tdt-0.6b-v3 int8", FinalAsrEngine.Parakeet, WhisperModelPack.Quantized,
         Path.Combine(repositoryRoot, "models", "parakeet-tdt-0.6b-v3"), ModelFile: null),
+    // THE PRODUCT REFUSES THE QUANTIZED PARAKEET PACK ON THE CARD before it looks for any library, so a card
+    // candidate is the full-precision pack, named as such (ParakeetTranscriptionEngine, validation before CUDA).
+    new("parakeet-tdt-0.6b-v3 full precision", FinalAsrEngine.Parakeet, WhisperModelPack.Quantized,
+        Path.Combine(repositoryRoot, "models", "parakeet-tdt-0.6b-v3"), ModelFile: null, ParakeetModelPack.FullPrecision),
 }
 .Where(candidate => candidate is not null)
 .Select(candidate => candidate!)
@@ -126,13 +136,22 @@ async Task<CandidateResult> MeasureAsync(Candidate candidate, RuntimeProviderKin
     // A CARD SOMETHING ELSE IS SATURATING MEASURES THE OTHER WORK, NOT THE CANDIDATE. The first run of this bench
     // printed card figures slower than the processor's while another process held the card at 100% - an instrument
     // that answered, well-formed, about the wrong thing. So a busy card is refused by name unless asked for.
-    var cardBefore = provider == RuntimeProviderKind.Cuda ? Card() : null;
-    if (cardBefore is { Utilization: >= 30 } busy && !args.Contains("--allow-busy-card", StringComparer.OrdinalIgnoreCase))
+    var allowBusyCard = args.Contains("--allow-busy-card", StringComparer.OrdinalIgnoreCase);
+    var cardBefore = provider == RuntimeProviderKind.Cuda ? CardLoad() : null;
+    if (provider == RuntimeProviderKind.Cuda && !allowBusyCard)
     {
-        return CandidateResult.Failed(candidate.Name, provider, $"card busy with other work ({busy.Utilization}% used, {busy.UsedMegabytes} MB held) - not measured");
+        // FAILS CLOSED: a card the bench cannot read is a card it cannot say was free.
+        if (cardBefore is not { } card)
+        {
+            return CandidateResult.Failed(candidate.Name, provider, "the card could not be read (nvidia-smi) - not measured");
+        }
+
+        if (card.Utilization >= BusyCard)
+        {
+            return CandidateResult.Failed(candidate.Name, provider, $"card busy with other work ({card.Utilization}% used, {card.UsedMegabytes} MB held) - not measured");
+        }
     }
 
-    var workersBefore = WorkerIds();
     var cold = Stopwatch.StartNew();
     try
     {
@@ -140,7 +159,7 @@ async Task<CandidateResult> MeasureAsync(Candidate candidate, RuntimeProviderKin
             worker,
             modelDirectory!,
             provider,
-            ParakeetModelPack.Quantized,
+            candidate.ParakeetPack,
             IntraOpThreads: threads,
             CpuFallbackThreads: threads,
             StartupTimeout: TimeSpan.FromSeconds(60),
@@ -148,7 +167,11 @@ async Task<CandidateResult> MeasureAsync(Candidate candidate, RuntimeProviderKin
             Engine: candidate.Engine,
             WhisperPack: candidate.Pack,
             Language: "auto",
-            CudaRuntimeDirectory: CudaRuntimeDirectory.ForTooling()));
+            CudaRuntimeDirectory: CudaRuntimeDirectory.ForTooling(),
+            // AS THE PREVIEW ADAPTER RUNS IT (RuntimeWorkerLivePreviewEngine): below-normal priority, and no restart -
+            // a restart mid-row would put a cold start inside a pass measured as warm.
+            MaximumWorkerRestarts: 0,
+            WorkerPriority: ProcessPriorityClass.BelowNormal));
         var started = await engine.StartAsync();
         if (!started.Succeeded)
         {
@@ -157,7 +180,11 @@ async Task<CandidateResult> MeasureAsync(Candidate candidate, RuntimeProviderKin
 
         var first = await TranscribeAsync(engine, Prefix(clips[0].Samples, 2.5));
         cold.Stop();
-        var workerId = WorkerIds().Except(workersBefore).FirstOrDefault();
+        // THE ENGINE'S OWN WORKER, by the id it reports - never a process found by name, which could be another's.
+        var workerId = engine.WorkerProcessId ?? 0;
+        // The card's memory with this model loaded, read now rather than after every pass: an estimate of the
+        // candidate's share, stated as one, and null if something else released memory meanwhile.
+        var cardLoaded = provider == RuntimeProviderKind.Cuda ? Card() : null;
 
         // A FALLBACK IS NOT THE CANDIDATE. A card run that fell back to the processor measured the processor.
         if (first.UsedFallback)
@@ -174,8 +201,14 @@ async Task<CandidateResult> MeasureAsync(Candidate candidate, RuntimeProviderKin
                 for (var run = 0; run < repeats; run++)
                 {
                     var timer = Stopwatch.StartNew();
-                    _ = await TranscribeAsync(engine, prefix);
+                    var transcript = await TranscribeAsync(engine, prefix);
                     timer.Stop();
+                    // A FALLBACK MID-ROW IS PERMANENT: every later pass would be the processor under the card's name.
+                    if (transcript.UsedFallback)
+                    {
+                        return CandidateResult.Failed(candidate.Name, provider, "fell back to the processor during the passes");
+                    }
+
                     passes.Add(new Pass(clip.Name, window, timer.ElapsedMilliseconds));
                 }
             }
@@ -187,6 +220,11 @@ async Task<CandidateResult> MeasureAsync(Candidate candidate, RuntimeProviderKin
             var timer = Stopwatch.StartNew();
             var transcript = await TranscribeAsync(engine, fixture.Samples);
             timer.Stop();
+            if (transcript.UsedFallback)
+            {
+                return CandidateResult.Failed(candidate.Name, provider, "fell back to the processor during the fixtures");
+            }
+
             var expected = Words(fixture.Reference);
             var actual = Words(transcript.Text ?? string.Empty);
             accuracy.Add(new FixtureResult(
@@ -198,10 +236,24 @@ async Task<CandidateResult> MeasureAsync(Candidate candidate, RuntimeProviderKin
                 transcript.Text?.Trim() ?? string.Empty));
         }
 
+        if (engine.WorkerProcessId != workerId)
+        {
+            return CandidateResult.Failed(candidate.Name, provider, "the worker changed during measurement");
+        }
+
+        // THE CARD AGAIN, WITH NOTHING OF OURS RUNNING: busy now means something else used it during the row.
+        if (provider == RuntimeProviderKind.Cuda && !allowBusyCard && CardLoad() is { Utilization: >= BusyCard } after)
+        {
+            return CandidateResult.Failed(candidate.Name, provider, $"another process used the card during the row ({after.Utilization}%) - discarded");
+        }
+
         var (peakWorkingSetMb, _) = Memory(workerId, provider);
         // WINDOWS DOES NOT REPORT A PROCESS'S VIDEO MEMORY under the display driver model (nvidia-smi says N/A), so the
-        // candidate's share is the card's total before it started and with it loaded.
-        double? videoMemoryMb = cardBefore is { } before && Card() is { } loaded ? Math.Max(0, loaded.UsedMegabytes - before.UsedMegabytes) : null;
+        // candidate's share is ESTIMATED as the card's total with it loaded less the total before it started. A negative
+        // difference means something else released memory meanwhile, and no estimate is given.
+        double? videoMemoryMb = cardBefore is { } before && cardLoaded is { } loaded && loaded.UsedMegabytes >= before.UsedMegabytes
+            ? loaded.UsedMegabytes - before.UsedMegabytes
+            : null;
         return new CandidateResult(
             candidate.Name,
             provider.ToString(),
@@ -217,6 +269,7 @@ async Task<CandidateResult> MeasureAsync(Candidate candidate, RuntimeProviderKin
                 .OrderBy(group => group.Key, StringComparer.Ordinal)
                 .ToDictionary(group => group.Key, group => Rate(group)),
             WordErrorRate: Rate(accuracy),
+            CardLoadBeforePercent: cardBefore?.Utilization,
             PeakWorkingSetMegabytes: peakWorkingSetMb,
             VideoMemoryMegabytes: videoMemoryMb,
             Fixtures: accuracy,
@@ -245,30 +298,14 @@ static double? Rate(IEnumerable<FixtureResult> results)
     return words == 0 ? null : Math.Round(list.Sum(result => result.EditDistance) / (double)words, 3);
 }
 
+/// The upper middle observation of an even count, so a reported median is always a pass that happened.
 static long? Median(IEnumerable<long> values)
 {
     var sorted = values.Order().ToList();
     return sorted.Count == 0 ? null : sorted[sorted.Count / 2];
 }
 
-static HashSet<int> WorkerIds()
-{
-    var found = Process.GetProcessesByName("EnviousWispr.RuntimeWorker");
-    try
-    {
-        return found.Select(process => process.Id).ToHashSet();
-    }
-    finally
-    {
-        foreach (var process in found)
-        {
-            process.Dispose();
-        }
-    }
-}
-
-/// The worker's peak working set, and on the card what nvidia-smi says it holds. Measured on the worker the bench
-/// started - found by the ids that were not there before it - never on a process picked by name alone.
+/// The worker's peak working set, by the id the engine reported.
 static (double? PeakWorkingSet, double? VideoMemory) Memory(int workerId, RuntimeProviderKind provider)
 {
     if (workerId == 0)
@@ -317,7 +354,7 @@ void PrintTable(List<CandidateResult> rows)
     var header = "| model | on | cold start | " +
         string.Join(" | ", windowSeconds.Select(window => $"pass @ {window.ToString("0.0", CultureInfo.InvariantCulture)} s")) +
         " | over 2.5 s | WER all | " + string.Join(" | ", rows.SelectMany(row => row.WordErrorRateByLanguage?.Keys ?? Enumerable.Empty<string>()).Distinct().Order().Select(language => $"WER {language}")) +
-        " | peak RAM | VRAM |";
+        " | peak RAM | VRAM | card load before |";
     Console.WriteLine(header);
     Console.WriteLine("|" + string.Concat(Enumerable.Repeat("---|", header.Count(character => character == '|') - 1)));
     var languages = rows.SelectMany(row => row.WordErrorRateByLanguage?.Keys ?? Enumerable.Empty<string>()).Distinct().Order().ToList();
@@ -334,8 +371,30 @@ void PrintTable(List<CandidateResult> rows)
             string.Join(" | ", windowSeconds.Select(window => row.MedianPassMilliseconds![window.ToString("0.0", CultureInfo.InvariantCulture)] is { } median ? $"{median} ms" : "-")) +
             $" | {row.PassesOverCadence} of {row.Passes} | {Percent(row.WordErrorRate)} | " +
             string.Join(" | ", languages.Select(language => Percent(row.WordErrorRateByLanguage!.GetValueOrDefault(language)))) +
-            $" | {row.PeakWorkingSetMegabytes} MB | {(row.VideoMemoryMegabytes is { } video ? $"{video} MB" : "-")} |");
+            $" | {row.PeakWorkingSetMegabytes} MB | {(row.VideoMemoryMegabytes is { } video ? $"{video} MB" : "-")} | {(row.CardLoadBeforePercent is { } load ? $"{load}%" : "-")} |");
     }
+}
+
+/// THE CARD'S LOAD IS SAMPLED, NOT READ ONCE. A desktop with ordinary windows open moves the card between about 20%
+/// and 40% from one second to the next, so a single reading refused a free card; five readings over two and a half
+/// seconds, the middle one, say what the card is doing. Another job saturating it - the case this exists for, a
+/// process at 100% - is far above the line. The load before each row is printed, so a reader can judge it.
+static (int Utilization, double UsedMegabytes)? CardLoad()
+{
+    var readings = new List<(int Utilization, double UsedMegabytes)>();
+    for (var i = 0; i < 5; i++)
+    {
+        if (Card() is { } reading)
+        {
+            readings.Add(reading);
+        }
+
+        Thread.Sleep(500);
+    }
+
+    return readings.Count == 0
+        ? null
+        : (readings.Select(reading => reading.Utilization).Order().ElementAt(readings.Count / 2), readings.Max(reading => reading.UsedMegabytes));
 }
 
 /// The card's utilization and the memory held on it, or null without an NVIDIA card.
@@ -405,10 +464,13 @@ static List<Fixture> ReadFixtures(string directory)
             ? evaluation.GetString()!
             : row.GetProperty("transcription").GetString()!;
         var path = Path.Combine(directory, file);
-        if (File.Exists(path))
+        // A MISSING FIXTURE IS A DIFFERENT CORPUS: skipped, the pooled error would be over whatever survived.
+        if (!File.Exists(path))
         {
-            fixtures.Add(new Fixture(file, language, reference, ReadWaveFile(path)));
+            throw new InvalidDataException($"Missing fixture: {file}");
         }
+
+        fixtures.Add(new Fixture(file, language, reference, ReadWaveFile(path)));
     }
 
     return fixtures;
@@ -525,7 +587,8 @@ internal sealed record Candidate(
     FinalAsrEngine Engine,
     WhisperModelPack Pack,
     string? ModelDirectory,
-    string? ModelFile);
+    string? ModelFile,
+    ParakeetModelPack ParakeetPack = ParakeetModelPack.Quantized);
 
 internal sealed record Clip(string Name, float[] Samples);
 
@@ -547,9 +610,10 @@ internal sealed record CandidateResult(
     double? WordErrorRate,
     double? PeakWorkingSetMegabytes,
     double? VideoMemoryMegabytes,
+    int? CardLoadBeforePercent,
     List<FixtureResult>? Fixtures,
     List<Pass>? PassDetails)
 {
     public static CandidateResult Failed(string model, RuntimeProviderKind provider, string error) =>
-        new(model, provider.ToString(), error, null, null, 0, 0, null, null, null, null, null, null);
+        new(model, provider.ToString(), error, null, null, 0, 0, null, null, null, null, null, null, null);
 }

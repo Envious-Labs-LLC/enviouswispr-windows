@@ -23,63 +23,99 @@ and the out-of-process runtime worker, with the thread count live preview picks:
 - **Memory**: the worker's peak working set; on the card, the card's memory before start and after load.
 
 A Whisper candidate other than the shipped preview model is handed to the worker under the preview model's
-file name in a folder of its own, so the product is unchanged. **A card that something else is using is
-refused by name** (`card busy ... not measured`) unless `--allow-busy-card` is passed.
+file name in a folder of its own, so the product is unchanged. The worker runs as the preview adapter runs it:
+below-normal priority and no restart, with the thread count from the same hardware probe and rule.
 
-## Results, processor, 2026-09-25
+It refuses to publish a number it cannot stand behind:
 
-8 threads, 32 logical processors, 11 archived dictations (the longest 9.1 s), 12 fixtures, 2 repeats.
+- **A card it cannot read, or that is 50% busy before a row (the middle of five readings), is not measured**,
+  and a card found busy again once the row is done discards the row (`--allow-busy-card` overrides both).
+- **A row that falls back to the processor at any pass is failed**, not labelled as the card.
+- **A missing fixture stops the run**: a smaller corpus would publish a different error rate.
+- Memory is the worker's own peak working set, by the id the engine reports. **Video memory is an estimate**:
+  Windows does not report a process's share, so it is the card's total with the model loaded less the total
+  before it started, and is omitted if that goes negative.
+- A median of an even count is the upper middle pass, so every reported figure is a pass that happened.
+
+## Results, 2026-09-25
+
+The primary Windows test PC: 32 logical processors, an RTX 4090. 8 threads, 11 archived dictations (the
+longest 9.1 s), 12 fixtures, 2 repeats.
+
+### Processor
 
 | model | pass @ 0.5 s | pass @ 2.5 s | pass @ 5 s | over 2.5 s | WER all | WER de | WER es | cold start | peak RAM |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Whisper Tiny q5_1 | 264 ms | 261 ms | 314 ms | 0 of 66 | 23.9% | 34.6% | 15.6% | 736 ms | 189 MB |
-| Whisper Base q5_1 | 543 ms | 566 ms | 557 ms | 0 of 66 | 10.5% | 11.8% | 11.5% | 720 ms | 253 MB |
-| **Whisper Small q5_1 (shipped)** | 2,088 ms | 2,159 ms | 2,511 ms | 13 of 66 | 6.9% | 9.4% | 5.2% | 2,282 ms | 520 MB |
-| Whisper Large v3 Turbo q5_0 | 11,796 ms | 11,860 ms | 11,757 ms | 66 of 66 | 8.9% | 12.6% | 6.2% | 11,395 ms | 787 MB |
-| **Parakeet TDT 0.6B v3 int8** | **42 ms** | **134 ms** | **251 ms** | 0 of 66 | 8.5% | 8.7% | 10.4% | 1,918 ms | 1,089 MB |
+| Whisper Tiny q5_1 | 258 ms | 261 ms | 274 ms | 0 of 66 | 23.9% | 34.6% | 15.6% | 656 ms | 187 MB |
+| Whisper Base q5_1 | 547 ms | 549 ms | 594 ms | 0 of 66 | 10.5% | 11.8% | 11.5% | 768 ms | 254 MB |
+| **Whisper Small q5_1 (shipped)** | 2,166 ms | 2,170 ms | 2,203 ms | 0 of 66 | 6.9% | 9.4% | 5.2% | 2,377 ms | 518 MB |
+| Whisper Large v3 Turbo q5_0 | 11,711 ms | 11,725 ms | 12,169 ms | 66 of 66 | 8.9% | 12.6% | 6.2% | 12,179 ms | 786 MB |
+| Parakeet TDT 0.6B v3 int8 | 40 ms | 133 ms | 256 ms | 0 of 66 | 8.5% | 8.7% | 10.4% | 1,656 ms | 1,081 MB |
+| Parakeet TDT 0.6B v3 full precision | 67 ms | 129 ms | 228 ms | 0 of 66 | 7.7% | 6.3% | 11.5% | 2,651 ms | 2,787 MB |
 
-English and French scored 0% for every model, on one fixture each, so they are left out of the table;
-the pooled figure includes them.
+### Card (RTX 4090)
 
-The shipped Small figures agree with #127's own measurement (2,047 to 2,495 ms), which is the control
-that the bench measures what the product runs.
+| model | pass @ 0.5 s | pass @ 2.5 s | pass @ 5 s | over 2.5 s | WER all | cold start | video memory (estimate) | card load before |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Whisper Tiny q5_1 | 27 ms | 28 ms | 37 ms | 0 of 66 | 24.3% | 488 ms | 412 MB | 27% |
+| Whisper Base q5_1 | 33 ms | 34 ms | 43 ms | 0 of 66 | 11.3% | 499 ms | 438 MB | 12% |
+| **Whisper Small q5_1 (shipped)** | 55 ms | 54 ms | 72 ms | 0 of 66 | 6.9% | 581 ms | 562 MB | 14% |
+| Whisper Large v3 Turbo q5_0 | 66 ms | 67 ms | 78 ms | 0 of 66 | 9.3% | 825 ms | 928 MB | 16% |
+| Parakeet TDT 0.6B v3 full precision | 16 ms | 25 ms | 34 ms | 0 of 66 | 7.7% | 2,785 ms | 3,768 MB | under 30% |
+| Parakeet TDT 0.6B v3 int8 | the product refuses the quantized pack on the card | | | | | | | |
 
-## What the processor results say
+English and French scored 0% for every model on one fixture each, so they are left out of the tables; the
+pooled figure includes them. The Parakeet full-precision card row came from the run before the load was
+sampled; it passed that run's single-reading guard.
 
-- **Parakeet is the only candidate that is both fast and accurate on the processor.** It is 10 to 50 times
-  cheaper per pass than Small at these windows, with pooled accuracy between Small and Base, and the best
-  German of any candidate. Unlike every Whisper model its cost grows with the window (42 ms at half a
-  second, 251 ms at five), so the 20-second figure matters and is not yet measured.
-- **Whisper Base is the Whisper answer**: about a quarter of Small's cost, clear of the cadence
-  everywhere, at 10.5% pooled error against Small's 6.9%.
-- **Whisper Tiny is not a preview model.** Its German error is 34.6%, and it misheard a German fixture as
-  garbled English, so the language detection a multilingual preview relies on is not dependable.
-- **Large v3 Turbo on the processor is not a preview candidate at all** (about 12 s a pass).
+**The controls.** The shipped Small on the processor (2.2 s) and on the card (54 to 72 ms) agree with #127's
+own measurements (2.0 to 2.5 s, and 51 to 142 ms), so the bench measures what the product runs. **And the
+guard earned its place**: the first run's card figures were taken while another process held the card at 100%
+and 23.6 of 24.5 GB - Small read 3.5 s a pass on a 4090 - and every one was discarded.
+
+**Small on the processor sits within about 300 ms of the cadence.** The first run counted 13 of its 66 passes
+over 2.5 s; the second, at the preview's below-normal priority, counted none. Whether a pass crosses the line
+depends on what else the machine is doing, which is itself the finding: there is no headroom.
+
+## What the results say
+
+- **On the card there is no problem to solve.** Every Whisper candidate is about 30 to 90 times inside the cadence,
+  and the shipped Small is the most accurate on this corpus. Large v3 Turbo costs more memory for no accuracy
+  gain here. Parakeet full precision is the fastest, but holds an estimated 3.8 GB of video memory.
+- **On the processor, Parakeet was the fastest candidate at the measured windows**, about 10 to 50 times faster
+  than Small. Whisper Base also stayed below the cadence in every measured pass, at about a quarter of Small's
+  cost. On 247 reference words from complete fixtures, Parakeet int8 made 21 edits, Parakeet full precision 19,
+  Small 17 and Base 26. These results nominate candidates for further testing; they do not establish
+  short-window preview accuracy or a dependable accuracy ranking.
+- **Whisper Tiny is not a preview model**: 34.6% German error, and it misheard a German fixture as garbled
+  English, so the language detection a multilingual preview relies on is not dependable.
+- **Large v3 Turbo on the processor is not a preview candidate** (about 12 s a pass).
 
 ## What is NOT settled yet
 
-- **The card.** The first run's card figures were taken while another process held the card at 100% and
-  23.6 of 24.5 GB, and are discarded; that run is why the bench now refuses a busy card. #127's earlier card
-  measurement of Small (51 to 308 ms) stands until a clean re-run. Parakeet on the card fell back to the
-  processor: onnxruntime's CUDA files are not on this machine, the known gap on #163.
-- **Windows of 10 and 20 seconds.** The archived dictations on this machine end at 9.1 s. Parakeet's growth
-  with length makes the 20-second pass the number to get, from a longer real recording.
-- **Accuracy is a small sample**: 12 fixtures, one each for English and French. Enough to rank bands, not
-  to split close candidates.
-- **Language coverage.** Parakeet v3 covers 25 European languages; Whisper covers 99. A preview in a
-  language outside Parakeet's set would still need a Whisper model.
-- **Two engines on the processor.** When the final engine is also Parakeet, a Parakeet preview is a second
-  copy of the same model in a second worker, about 1 GB. Whether the preview can share the final engine's
-  worker is an engineering question, not measured here.
+- **Windows of 10 and 20 seconds.** The archived dictations on this machine end at 9.1 s. Parakeet's cost grows
+  with the window (40 ms at half a second, 256 ms at five, int8), so the 20-second pass is the number to get,
+  from a longer real recording.
+- **Accuracy is a small sample, and of whole clips**: 247 reference words over 12 fixtures, one each for English
+  and French, graded on complete fixtures rather than on the short partial windows a preview actually shows.
+  Enough to nominate, not to rank close candidates.
+- **Language coverage.** Parakeet v3 covers 25 European languages; Whisper covers 99. A preview in a language
+  outside Parakeet's set would still need a Whisper model.
+- **Two engines on the processor.** When the final engine is also Parakeet, a Parakeet preview is a second copy
+  of the model in a second worker, about 1 GB for int8. Whether the preview can share the final engine's worker
+  is an engineering question, not measured here.
+- **Other hardware.** One machine, a fast desktop processor and a top-end card. The tier the problem lives on - a
+  laptop processor - is exactly the one not measured; its passes will be slower than these.
 
 ## The decision this feeds (the founder's)
 
-A per-tier choice the numbers support, to be confirmed by a clean card run and a 20-second window:
+Candidate tiers for follow-up, requiring longer windows, accuracy grading of partial previews, and a laptop
+processor:
 
-| tier | preview model | why |
+| tier | candidate | why |
 |---|---|---|
-| card | Whisper Small (as today) | pending the clean re-run; #127 measured it comfortably inside the cadence |
-| processor, language Parakeet covers | Parakeet int8 | tens to hundreds of ms a pass at near-Small accuracy |
+| card | Whisper Small (as today) | well inside the cadence, most accurate here |
+| processor, a language Parakeet covers | Parakeet int8 | tens to hundreds of ms a pass at near-Small accuracy on whole clips |
 | processor, other languages | Whisper Base | a quarter of Small's cost, clear of the cadence |
 
 ## Reproduce
