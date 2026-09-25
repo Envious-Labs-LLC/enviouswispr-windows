@@ -145,7 +145,7 @@ public partial class App
             BundledModelManifests.Load(id, new ModelManifestVerifier(new Dictionary<string, string>()))
                 .Manifest?.Payload.Files.Sum(file => file.SizeBytes) ?? 0);
         _window?.SetModelDelivery(new(
-            $"{DescribeModels(installable)} is not installed on this PC. About {Megabytes(totalBytes)} MB to download, verified file by file.",
+            $"{DescribeModels(installable)} {(installable.Length == 1 ? "is" : "are")} not installed on this PC. About {Megabytes(totalBytes)} MB to download, verified file by file.",
             CanDownload: true));
     }
 
