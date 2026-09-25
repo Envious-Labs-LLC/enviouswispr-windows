@@ -27,6 +27,7 @@ public sealed record TranscriptTokenTiming(
     TimeSpan Start,
     TimeSpan End);
 
+/// <param name="RecognitionLanguage">The language the engine was told to recognise this take in: a Whisper code, "auto" for detection, or null for an engine that takes no language (Parakeet). Not what it heard: that is <paramref name="DetectedLanguage"/>.</param>
 public sealed record Transcript(
     DictationSessionId SessionId,
     string Text,
@@ -34,7 +35,8 @@ public sealed record Transcript(
     IReadOnlyList<TranscriptTokenTiming>? TokenTimings = null,
     bool UsedFallback = false,
     AppError? DegradedError = null,
-    string? DetectedLanguage = null);
+    string? DetectedLanguage = null,
+    string? RecognitionLanguage = null);
 
 public sealed record ProcessedText(DictationSessionId SessionId, string Text);
 

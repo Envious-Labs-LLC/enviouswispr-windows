@@ -114,7 +114,8 @@ public sealed record RuntimeWorkerResponse(
 public sealed record RuntimeWorkerTranscriptionRequest(
     Guid SessionId,
     string MemoryMapName,
-    int SampleCount);
+    int SampleCount,
+    string? Language = null);
 
 public sealed record RuntimeWorkerTranscript(
     Guid SessionId,
@@ -123,4 +124,5 @@ public sealed record RuntimeWorkerTranscript(
     IReadOnlyList<TranscriptTokenTiming> TokenTimings,
     bool UsedFallback,
     AppError? DegradedError = null,
-    string? DetectedLanguage = null);
+    string? DetectedLanguage = null,
+    string? RecognitionLanguage = null);

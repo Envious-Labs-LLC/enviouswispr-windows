@@ -3,7 +3,7 @@ using EnviousWispr.Core.Errors;
 
 namespace EnviousWispr.ASR;
 
-public sealed class FallbackTranscriptionEngine : ITranscriptionEngine, IDisposable
+public sealed class FallbackTranscriptionEngine : ILanguageSelectableTranscriptionEngine, IDisposable
 {
     private readonly ITranscriptionEngine _primary;
     private readonly Func<ITranscriptionEngine> _fallbackFactory;
@@ -25,9 +25,33 @@ public sealed class FallbackTranscriptionEngine : ITranscriptionEngine, IDisposa
         ? _fallback.EngineId
         : _primary.EngineId;
 
-    public async Task<Transcript> TranscribeAsync(
+    public Task<Transcript> TranscribeAsync(
         CapturedAudio audio,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        TranscribeCoreAsync(audio, language: null, languageGiven: false, cancellationToken);
+
+    /// <summary>The take's language goes to whichever engine runs it, the fallback included.</summary>
+    public Task<Transcript> TranscribeAsync(
+        CapturedAudio audio,
+        string? language,
+        CancellationToken cancellationToken = default) =>
+        TranscribeCoreAsync(audio, language, languageGiven: true, cancellationToken);
+
+    private static Task<Transcript> On(
+        ITranscriptionEngine engine,
+        CapturedAudio audio,
+        string? language,
+        bool languageGiven,
+        CancellationToken cancellationToken) =>
+        languageGiven && engine is ILanguageSelectableTranscriptionEngine selectable
+            ? selectable.TranscribeAsync(audio, language, cancellationToken)
+            : engine.TranscribeAsync(audio, cancellationToken);
+
+    private async Task<Transcript> TranscribeCoreAsync(
+        CapturedAudio audio,
+        string? language,
+        bool languageGiven,
+        CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -36,20 +60,20 @@ public sealed class FallbackTranscriptionEngine : ITranscriptionEngine, IDisposa
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_fallbackActive)
             {
-                return MarkFallback(await GetFallback().TranscribeAsync(audio, cancellationToken)
+                return MarkFallback(await On(GetFallback(), audio, language, languageGiven, cancellationToken)
                     .ConfigureAwait(false));
             }
 
             try
             {
-                return await _primary.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+                return await On(_primary, audio, language, languageGiven, cancellationToken).ConfigureAwait(false);
             }
             catch (TranscriptionEngineException exception) when (
                 exception.Error.CanRetry && !cancellationToken.IsCancellationRequested)
             {
                 _primaryError = exception.Error;
                 _fallbackActive = true;
-                return MarkFallback(await GetFallback().TranscribeAsync(audio, cancellationToken)
+                return MarkFallback(await On(GetFallback(), audio, language, languageGiven, cancellationToken)
                     .ConfigureAwait(false));
             }
         }

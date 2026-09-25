@@ -1,5 +1,6 @@
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Core.Diagnostics;
 
@@ -30,6 +31,48 @@ public enum DiagnosticEngineChoice
 {
     Parakeet,
     Whisper,
+}
+
+/// <summary>The language a take was recognised in, as the engine was told it: detection or one fixed language.</summary>
+/// <remarks>
+/// A SETTING, NEVER WHAT WAS SAID. It is the choice the person made in the language picker (or the
+/// pill's Lock), carried to the engine; it says nothing about the words and is the same for every
+/// take until the choice changes. Written so "did my language change take effect" is answered by the
+/// log rather than inferred (#241). An engine that takes no language (Parakeet) writes nothing, and a
+/// code outside the picker's list is Other rather than absent.
+/// </remarks>
+public enum DiagnosticRecognitionLanguage
+{
+    Automatic,
+    English,
+    French,
+    German,
+    Spanish,
+    Other,
+}
+
+public static class DiagnosticRecognitionLanguages
+{
+    /// <summary>The category for a language code an engine reports it was told; null when it was told none.</summary>
+    public static DiagnosticRecognitionLanguage? From(string? code)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            return null;
+        }
+
+        return WhisperLanguageCodes.TryNormalize(code, out var normalized)
+            ? normalized switch
+            {
+                "auto" => DiagnosticRecognitionLanguage.Automatic,
+                "en" => DiagnosticRecognitionLanguage.English,
+                "fr" => DiagnosticRecognitionLanguage.French,
+                "de" => DiagnosticRecognitionLanguage.German,
+                "es" => DiagnosticRecognitionLanguage.Spanish,
+                _ => DiagnosticRecognitionLanguage.Other,
+            }
+            : DiagnosticRecognitionLanguage.Other;
+    }
 }
 
 public enum DiagnosticHardwareClass
@@ -93,7 +136,8 @@ public sealed record PrivacySafeDiagnosticRecord(
     bool? Changed = null,
     DiagnosticRuntimeSelectionReason? RuntimeSelection = null,
     DeliveryStage? DeliveryStage = null,
-    DeliveryFaultKind? Fault = null)
+    DeliveryFaultKind? Fault = null,
+    DiagnosticRecognitionLanguage? RecognitionLanguage = null)
 {
     public const long MaximumElapsedMilliseconds = 86_400_000;
 
@@ -125,6 +169,10 @@ public sealed record PrivacySafeDiagnosticRecord(
             // WHERE A DELIVERY FAULTED AND WHAT FAMILY THE FAULT WAS: two fixed enums (plan-2 step
             // 13), never the exception's type name or message.
             entry.DeliveryStage is { } deliveryStage && Enum.IsDefined(deliveryStage) ? deliveryStage : null,
-            entry.Fault is { } fault && Enum.IsDefined(fault) ? fault : null);
+            entry.Fault is { } fault && Enum.IsDefined(fault) ? fault : null,
+            // THE PICKER'S CHOICE AS A CATEGORY (#241): one of six fixed members, never a code string.
+            entry.RecognitionLanguage is { } recognitionLanguage && Enum.IsDefined(recognitionLanguage)
+                ? recognitionLanguage
+                : null);
     }
 }

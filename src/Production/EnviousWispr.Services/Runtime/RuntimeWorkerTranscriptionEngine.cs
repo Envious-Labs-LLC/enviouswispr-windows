@@ -8,6 +8,8 @@ using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Services.Runtime;
 
+/// <param name="Language">The Whisper language the worker loads with.</param>
+/// <param name="CurrentLanguage">Read at every take and sent with it, so a language changed in the running app reaches the next take with no restart (#241); null sends <paramref name="Language"/>. Ignored for Parakeet, which takes no language.</param>
 public sealed record RuntimeWorkerTranscriptionOptions(
     string WorkerExecutable,
     string ModelDirectory,
@@ -24,7 +26,8 @@ public sealed record RuntimeWorkerTranscriptionOptions(
     FinalAsrEngine Engine = FinalAsrEngine.Parakeet,
     WhisperModelPack WhisperPack = WhisperModelPack.Quantized,
     string? Language = null,
-    ProcessPriorityClass? WorkerPriority = null);
+    ProcessPriorityClass? WorkerPriority = null,
+    Func<string?>? CurrentLanguage = null);
 
 internal interface IWorkerTranscriptionRuntime : ITranscriptionEngine, IAsyncDisposable
 {
@@ -45,6 +48,7 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
     private readonly RuntimeWorkerSupervisor _supervisor;
     private readonly TimeSpan _startupTimeout;
     private readonly TimeSpan _transcriptionTimeout;
+    private readonly Func<string?> _language;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private bool _disposed;
 
@@ -57,6 +61,7 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
             : $"{ParakeetModelIds.Final}:{options.Provider.ToString().ToLowerInvariant()}:isolated";
         _startupTimeout = options.StartupTimeout ?? TimeSpan.FromSeconds(30);
         _transcriptionTimeout = options.TranscriptionTimeout ?? TimeSpan.FromMinutes(2);
+        _language = LanguageFor(options);
         _supervisor = new RuntimeWorkerSupervisor(
             options.WorkerExecutable,
             CreateWorkerArguments(options),
@@ -69,11 +74,13 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
         RuntimeWorkerSupervisor supervisor,
         string engineId,
         TimeSpan? startupTimeout = null,
-        TimeSpan? transcriptionTimeout = null)
+        TimeSpan? transcriptionTimeout = null,
+        Func<string?>? language = null)
     {
         ArgumentNullException.ThrowIfNull(supervisor);
         ArgumentException.ThrowIfNullOrWhiteSpace(engineId);
         _supervisor = supervisor;
+        _language = language ?? (static () => null);
         EngineId = engineId;
         _startupTimeout = startupTimeout ?? TimeSpan.FromSeconds(30);
         _transcriptionTimeout = transcriptionTimeout ?? TimeSpan.FromMinutes(2);
@@ -131,7 +138,9 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
         var request = new RuntimeWorkerTranscriptionRequest(
             audio.SessionId.Value,
             mapName,
-            audio.Samples.Length);
+            audio.Samples.Length,
+            // READ NOW, AT THE TAKE, not when the worker was built: the setting as it stands.
+            _language());
         var response = await _supervisor.TranscribeAsync(
             request,
             _transcriptionTimeout,
@@ -174,8 +183,15 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
             transcript.TokenTimings,
             transcript.UsedFallback,
             transcript.DegradedError,
-            transcript.DetectedLanguage);
+            transcript.DetectedLanguage,
+            transcript.RecognitionLanguage);
     }
+
+    /// <summary>What each take is told: the current language for Whisper (the load-time one when nothing reads it), nothing for Parakeet.</summary>
+    internal static Func<string?> LanguageFor(RuntimeWorkerTranscriptionOptions options) =>
+        options.Engine != FinalAsrEngine.Whisper
+            ? static () => null
+            : options.CurrentLanguage ?? (() => options.Language);
 
     private static string[] CreateWorkerArguments(RuntimeWorkerTranscriptionOptions options)
     {

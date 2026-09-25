@@ -17,4 +17,5 @@ public sealed record AppLogEntry(
     bool? Changed = null,
     DiagnosticRuntimeSelectionReason? RuntimeSelection = null,
     DeliveryStage? DeliveryStage = null,
-    DeliveryFaultKind? Fault = null);
+    DeliveryFaultKind? Fault = null,
+    DiagnosticRecognitionLanguage? RecognitionLanguage = null);

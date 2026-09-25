@@ -1769,14 +1769,8 @@ public partial class App : Application, IAsyncDisposable
         var engine = configuredEngine == FinalAsrEngine.Automatic
             ? FinalAsrEngine.Parakeet
             : configuredEngine;
-        var whisperLanguage = WhisperLanguageCodes.For(
-            _settings.Preferences.Dictation.WhisperLanguage);
-        if (WhisperLanguageCodes.TryNormalize(
-                Environment.GetEnvironmentVariable("ENVIOUSWISPR_ASR_LANGUAGE"),
-                out var environmentLanguage))
-        {
-            whisperLanguage = environmentLanguage;
-        }
+        // THE LANGUAGE TO LOAD WITH ONLY: every take reads it again (CurrentWhisperLanguage), #241.
+        var whisperLanguage = CurrentWhisperLanguage();
 
         var modelDirectory = await ResolveModelDirectoryAsync(engine == FinalAsrEngine.Whisper
             ? WhisperTranscriptionEngine.ModelId
@@ -1939,6 +1933,7 @@ public partial class App : Application, IAsyncDisposable
                 Engine: FinalAsrEngine.Whisper,
                 WhisperPack: WhisperModelPack.PreviewSmall,
                 Language: language,
+                CurrentLanguage: CurrentWhisperLanguage,
                 CudaRuntimeDirectory: _cudaRuntimeDirectory),
             _resourceArbiter);
     }
@@ -2038,10 +2033,11 @@ public partial class App : Application, IAsyncDisposable
             Engine: FinalAsrEngine.Whisper,
             WhisperPack: selection.ModelPack.Value,
             Language: language,
+            CurrentLanguage: CurrentWhisperLanguage,
             CudaRuntimeDirectory: _cudaRuntimeDirectory));
     }
 
-    private static RuntimeWorkerTranscriptionEngine? CreateCpuWhisperEngine(
+    private RuntimeWorkerTranscriptionEngine? CreateCpuWhisperEngine(
         string workerExecutable,
         string modelDirectory,
         HardwareSnapshot hardware,
@@ -2068,7 +2064,8 @@ public partial class App : Application, IAsyncDisposable
             CpuFallbackThreads: selection.ThreadCount,
             Engine: FinalAsrEngine.Whisper,
             WhisperPack: selection.ModelPack.Value,
-            Language: language));
+            Language: language,
+            CurrentLanguage: CurrentWhisperLanguage));
     }
 
     private void OnPushToTalkSignalled(object? sender, PushToTalkSignalEvent args)

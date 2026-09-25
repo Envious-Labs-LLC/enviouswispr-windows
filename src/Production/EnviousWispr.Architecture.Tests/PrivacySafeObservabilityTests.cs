@@ -318,13 +318,14 @@ public sealed class PrivacySafeObservabilityTests
             Changed: true,
             RuntimeSelection: DiagnosticRuntimeSelectionReason.ProcessorSelectedAfterGpuFailedToStart,
             DeliveryStage: DeliveryStage.Commit,
-            Fault: DeliveryFaultKind.ObjectDisposed);
+            Fault: DeliveryFaultKind.ObjectDisposed,
+            RecognitionLanguage: DiagnosticRecognitionLanguage.French);
 
         var populated = typeof(PrivacySafeDiagnosticRecord)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(property => property.Name != "EqualityContract")
             .ToArray();
-        Assert.Equal(14, populated.Length);
+        Assert.Equal(15, populated.Length);
 
         var line = LocalDiagnosticLine.From(record, Guid.NewGuid());
         foreach (var property in populated)

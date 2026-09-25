@@ -39,6 +39,7 @@ JSONL writer, exporter, or HTTP transport.
 | `runtimeSelection` | optional `DiagnosticRuntimeSelectionReason` enum | Which processing path a run ended up on and what put it there: the graphics card, the processor because no card was available, the processor because the user asked for it, or the processor because the card was chosen and would not start. Also the three ways selection can fail. No device name, no driver version, and never the exception text behind a failed start. |
 | `deliveryStage` | optional `DeliveryStage` enum | Where a text delivery was stopped by an unexpected exception: the requested copy, the caret-context capture, or the commit to the target. Set only with `fault`. |
 | `fault` | optional `DeliveryFaultKind` enum | The family of the exception that stopped a delivery (invalid operation, disposed object, null reference, cast, argument, COM, Win32, access, I/O, timeout, cancellation, other). A fixed list, never the exception's type name or message. |
+| `recognitionLanguage` | optional `DiagnosticRecognitionLanguage` enum | The language a take was recognised in as the engine was told it: Automatic, English, French, German, Spanish, or Other. It is the person's language setting, the same for every take until they change it, never what was said or detected. Absent for an engine that takes no language. |
 
 There is no account ID, install ID, session ID, advertising ID, IP field, device name, username, path,
 model ID, locale, transcript length, audio length, target-app name, or free-form string field.

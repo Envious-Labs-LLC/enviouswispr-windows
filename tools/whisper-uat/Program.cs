@@ -46,6 +46,14 @@ if (mode is "fixed-cpu" or "fixed-cuda")
     return fixedLanguage.All(result => result.Passed) ? 0 : 9;
 }
 
+if (mode is "language-switch-cpu" or "language-switch-cuda")
+{
+    var provider = mode == "language-switch-cpu" ? RuntimeProviderKind.Cpu : RuntimeProviderKind.Cuda;
+    var switches = await RunLanguageSwitchAsync(provider, modelPack, repositoryRoot, modelDirectory, multilingual);
+    Console.WriteLine(JsonSerializer.Serialize(new { provider = provider.ToString(), languageSwitch = switches }));
+    return switches.Count > 0 && switches.All(result => result.Passed) ? 0 : 10;
+}
+
 var cpu = requestedProvider is null or "cpu"
     ? await RunProviderAsync(
         RuntimeProviderKind.Cpu,
@@ -216,6 +224,86 @@ static async Task<IReadOnlyList<LanguageResult>> RunFixedLanguageDiagnosticsAsyn
             results.Add(await MeasureLanguageAsync(engine, language, fixture));
         }
     }
+
+    return results;
+}
+
+// ONE WORKER, THE LANGUAGE CHANGED BETWEEN TAKES (#241). Each language's first reviewed fixture is
+// transcribed twice: first straight after the switch, then again in the same language. The difference is
+// what a per-take change costs; the worker's echo says which language it used, and detection is checked
+// after switching back to "auto". Started on "auto", as a fresh install is.
+static async Task<IReadOnlyList<LanguageSwitchResult>> RunLanguageSwitchAsync(
+    RuntimeProviderKind provider,
+    WhisperModelPack modelPack,
+    string repositoryRoot,
+    string modelDirectory,
+    IReadOnlyDictionary<string, IReadOnlyList<MultilingualFixture>> multilingual)
+{
+    var worker = Path.Combine(
+        repositoryRoot,
+        "src",
+        "Production",
+        "EnviousWispr.RuntimeWorker",
+        "bin",
+        "Release",
+        "net10.0-windows10.0.26100.0",
+        "EnviousWispr.RuntimeWorker.exe");
+    string? current = "auto";
+    await using var engine = new RuntimeWorkerTranscriptionEngine(new RuntimeWorkerTranscriptionOptions(
+        worker,
+        modelDirectory,
+        provider,
+        ParakeetModelPack.Quantized,
+        IntraOpThreads: provider == RuntimeProviderKind.Cpu ? 8 : 4,
+        CpuFallbackThreads: 8,
+        Engine: FinalAsrEngine.Whisper,
+        WhisperPack: modelPack,
+        Language: current,
+        CudaRuntimeDirectory: CudaRuntimeDirectory.ForTooling(),
+        CurrentLanguage: () => current));
+    if (!(await engine.StartAsync()).Succeeded)
+    {
+        return [];
+    }
+
+    _ = await TranscribeAsync(engine, multilingual["en"][0].Samples);
+    var results = new List<LanguageSwitchResult>();
+    foreach (var (requested, spoken) in new[] { ("fr", "fr"), ("de", "de"), ("es", "es"), ("en", "en"), ("auto", "fr") })
+    {
+        var samples = multilingual[spoken][0].Samples;
+        current = requested;
+        var switchTimer = Stopwatch.StartNew();
+        var afterSwitch = await TranscribeAsync(engine, samples);
+        switchTimer.Stop();
+        var sameTimer = Stopwatch.StartNew();
+        var again = await TranscribeAsync(engine, samples);
+        sameTimer.Stop();
+        var expectedDetected = requested == "auto" ? spoken : requested;
+        results.Add(new LanguageSwitchResult(
+            requested,
+            afterSwitch.RecognitionLanguage,
+            afterSwitch.DetectedLanguage,
+            switchTimer.ElapsedMilliseconds,
+            sameTimer.ElapsedMilliseconds,
+            Passed: afterSwitch.RecognitionLanguage == requested &&
+                again.RecognitionLanguage == requested &&
+                string.Equals(afterSwitch.DetectedLanguage, expectedDetected, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    // A TAKE THAT NAMES NO LANGUAGE RUNS IN THE LOAD-TIME ONE, never in the previous take's. The engine was
+    // built on "auto"; after a French take, an omitted language must come back as "auto" and detect again.
+    current = "fr";
+    _ = await TranscribeAsync(engine, multilingual["fr"][0].Samples);
+    current = null;
+    var omitted = await TranscribeAsync(engine, multilingual["fr"][0].Samples);
+    results.Add(new LanguageSwitchResult(
+        "(omitted after fr)",
+        omitted.RecognitionLanguage,
+        omitted.DetectedLanguage,
+        0,
+        0,
+        Passed: omitted.RecognitionLanguage == "auto" &&
+            string.Equals(omitted.DetectedLanguage, "fr", StringComparison.OrdinalIgnoreCase)));
 
     return results;
 }
@@ -586,6 +674,14 @@ internal sealed record ProviderResult(
     bool WorkerRemovedAfterCancellation,
     IReadOnlyList<LanguageResult> Multilingual,
     IReadOnlyList<LanguageCorpusSummary> MultilingualSummary,
+    bool Passed);
+
+internal sealed record LanguageSwitchResult(
+    string Requested,
+    string? RecognitionLanguage,
+    string? DetectedLanguage,
+    long AfterSwitchMilliseconds,
+    long SameLanguageMilliseconds,
     bool Passed);
 
 internal sealed record MultilingualFixture(int Row, float[] Samples, string ExpectedText);

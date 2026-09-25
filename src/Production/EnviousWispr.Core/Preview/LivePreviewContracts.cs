@@ -10,7 +10,8 @@ public sealed record LivePreviewUpdate(
     bool Succeeded,
     string Text,
     string? DetectedLanguage = null,
-    AppError? Error = null);
+    AppError? Error = null,
+    string? RecognitionLanguage = null);
 
 public interface ILivePreviewEngine : IAsyncDisposable
 {

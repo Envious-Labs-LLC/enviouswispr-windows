@@ -55,7 +55,8 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts) 
             transcript.UsedFallback
                 ? AppFailureCategories.For(transcript.DegradedError)
                 : AppFailureCategory.None,
-            elapsedMilliseconds));
+            elapsedMilliseconds,
+            RecognitionLanguage: DiagnosticRecognitionLanguages.From(transcript.RecognitionLanguage)));
 
     public void RecordTranscriptionFailed(AppError? failure, long elapsedMilliseconds) =>
         _logger.Write(new AppLogEntry(
