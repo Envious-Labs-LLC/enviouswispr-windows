@@ -202,36 +202,36 @@
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="HighContrast">
-            <Color x:Key="BrandPageBgColor">{ThemeResource SystemColorWindowColor}</Color>
+            <StaticResource x:Key="BrandPageBgColor" ResourceKey="SystemColorWindowColor" />
             <SolidColorBrush x:Key="BrandPageBgBrush" Color="{ThemeResource SystemColorWindowColor}" />
-            <Color x:Key="BrandCardBgColor">{ThemeResource SystemColorWindowColor}</Color>
+            <StaticResource x:Key="BrandCardBgColor" ResourceKey="SystemColorWindowColor" />
             <SolidColorBrush x:Key="BrandCardBgBrush" Color="{ThemeResource SystemColorWindowColor}" />
-            <Color x:Key="BrandSidebarBgColor">{ThemeResource SystemColorWindowColor}</Color>
+            <StaticResource x:Key="BrandSidebarBgColor" ResourceKey="SystemColorWindowColor" />
             <SolidColorBrush x:Key="BrandSidebarBgBrush" Color="{ThemeResource SystemColorWindowColor}" />
-            <Color x:Key="BrandWindowBgColor">{ThemeResource SystemColorWindowColor}</Color>
+            <StaticResource x:Key="BrandWindowBgColor" ResourceKey="SystemColorWindowColor" />
             <SolidColorBrush x:Key="BrandWindowBgBrush" Color="{ThemeResource SystemColorWindowColor}" />
 
-            <Color x:Key="BrandTextPrimaryColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="BrandTextPrimaryColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="BrandTextPrimaryBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="BrandTextBodyColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="BrandTextBodyColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="BrandTextBodyBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="BrandTextSecondaryColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="BrandTextSecondaryColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="BrandTextSecondaryBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="BrandTextTertiaryColor">{ThemeResource SystemColorGrayTextColor}</Color>
+            <StaticResource x:Key="BrandTextTertiaryColor" ResourceKey="SystemColorGrayTextColor" />
             <SolidColorBrush x:Key="BrandTextTertiaryBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
 
-            <Color x:Key="BrandAccentColor">{ThemeResource SystemAccentColor}</Color>
+            <StaticResource x:Key="BrandAccentColor" ResourceKey="SystemAccentColor" />
             <SolidColorBrush x:Key="BrandAccentBrush" Color="{ThemeResource SystemAccentColor}" />
-            <Color x:Key="BrandAccentSolidColor">{ThemeResource SystemAccentColor}</Color>
+            <StaticResource x:Key="BrandAccentSolidColor" ResourceKey="SystemAccentColor" />
             <SolidColorBrush x:Key="BrandAccentSolidBrush" Color="{ThemeResource SystemAccentColor}" />
-            <Color x:Key="BrandOnAccentColor">{ThemeResource SystemColorHighlightTextColor}</Color>
+            <StaticResource x:Key="BrandOnAccentColor" ResourceKey="SystemColorHighlightTextColor" />
             <SolidColorBrush x:Key="BrandOnAccentBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
             <Color x:Key="BrandAccentLightColor">Transparent</Color>
             <SolidColorBrush x:Key="BrandAccentLightBrush" Color="Transparent" />
 
-            <Color x:Key="BrandSuccessColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="BrandSuccessColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="BrandSuccessBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="BrandWarningColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="BrandWarningColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="BrandWarningBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
             <Color x:Key="BrandWarningSoftColor">Transparent</Color>
             <SolidColorBrush x:Key="BrandWarningSoftBrush" Color="Transparent" />
@@ -239,11 +239,11 @@
             <SolidColorBrush x:Key="BrandSuccessSoftBrush" Color="Transparent" />
             <Color x:Key="BrandErrorSoftColor">Transparent</Color>
             <SolidColorBrush x:Key="BrandErrorSoftBrush" Color="Transparent" />
-            <Color x:Key="BrandErrorColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="BrandErrorColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="BrandErrorBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="BrandToggleOnColor">{ThemeResource SystemColorHighlightColor}</Color>
+            <StaticResource x:Key="BrandToggleOnColor" ResourceKey="SystemColorHighlightColor" />
             <SolidColorBrush x:Key="BrandToggleOnBrush" Color="{ThemeResource SystemColorHighlightColor}" />
-            <Color x:Key="BrandToggleOffColor">{ThemeResource SystemColorGrayTextColor}</Color>
+            <StaticResource x:Key="BrandToggleOffColor" ResourceKey="SystemColorGrayTextColor" />
             <!-- THE OFF TRACK'S HOVER, PRESSED AND DISABLED LOOKS. WinUI's ToggleSwitch animates these six with LinearColorKeyFrame,
                  so they must be COLOURS. They were overridden as brushes in the window's resources, which WinUI ignored without a
                  word: a disabled off switch drew no track at all, only a grey dot (seen on Diagnostics, 2026-09-25). -->
@@ -254,9 +254,9 @@
             <StaticResource x:Key="ToggleSwitchFillOffDisabled" ResourceKey="SystemColorWindowColor" />
             <StaticResource x:Key="ToggleSwitchStrokeOffDisabled" ResourceKey="SystemColorGrayTextColor" />
             <SolidColorBrush x:Key="BrandToggleOffBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
-            <Color x:Key="BrandControlBorderColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="BrandControlBorderColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="BrandControlBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="BrandDividerColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="BrandDividerColor" ResourceKey="SystemColorWindowTextColor" />
             <!--
                 A BRUSH THAT EXISTS TO BE HIT-TESTED, NOT TO BE SEEN. WinUI does not hit-test space
                 whose background is null, so a row that should respond to a click needs SOME brush -
@@ -267,23 +267,23 @@
             <SolidColorBrush x:Key="BrandHitTestBrush" Color="Transparent" />
             <SolidColorBrush x:Key="BrandDividerBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
 
-            <Color x:Key="BrandSpectrumRedColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="BrandSpectrumRedColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="BrandSpectrumRedBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="BrandSpectrumOrangeColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="BrandSpectrumOrangeColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="BrandSpectrumOrangeBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="BrandSpectrumGoldColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="BrandSpectrumGoldColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="BrandSpectrumGoldBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="BrandSpectrumLimeColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="BrandSpectrumLimeColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="BrandSpectrumLimeBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="BrandSpectrumSpringColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="BrandSpectrumSpringColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="BrandSpectrumSpringBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="BrandSpectrumCyanColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="BrandSpectrumCyanColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="BrandSpectrumCyanBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="BrandSpectrumBlueColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="BrandSpectrumBlueColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="BrandSpectrumBlueBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="BrandSpectrumRoyalColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="BrandSpectrumRoyalColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="BrandSpectrumRoyalBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="BrandSpectrumVioletColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="BrandSpectrumVioletColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="BrandSpectrumVioletBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>

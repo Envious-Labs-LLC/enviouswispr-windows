@@ -36,7 +36,7 @@ where the two disagree the tests are what ships.
 | `XamlResourceResolutionTests` | a `Brand*` or `Pill*` key that resolves nowhere; a style applied to a control type it does not target |
 | `WindowMinimumSizeTests` | a window minimum that stops being derived from the sidebar width and the frame inset; a content-card minimum too small to be usable |
 | `DesignSystemTokenTests` (types) | a layout token assigned to a property of a different type - the defect that builds clean and then refuses to start |
-| `WinUiResourceTypeTests` | a brand override that is a brush where WinUI's own template animates a colour (read from the restored WinUI package's `generic.xaml`) - ignored by WinUI without a word |
+| `WinUiResourceTypeTests` | a brand override that is a brush where WinUI's own template animates a colour (read from the restored WinUI package's `generic.xaml`) - ignored by WinUI without a word; a `Color` whose element text is a resource reference, which XAML parses as a colour name |
 
 **Two of these guard defects that are invisible to the compiler and fatal at runtime.** A mistyped
 `ThemeResource` key does not fail the build; the page throws when it is opened. A minimum size that stops
@@ -197,6 +197,13 @@ Decorative soft washes and glows, including `BrandAccentLight` and `BrandWarning
 `Transparent`. Structural borders, including `BrandDivider`, take `SystemColorWindowTextColor` so their
 boundaries remain visible. Spectrum colours also collapse to `SystemColorWindowTextColor`. HighContrast
 must never invent a colour.
+
+**A HIGH CONTRAST COLOUR TOKEN IS AN ALIAS, NOT TEXT.** Every High Contrast colour token was once written
+`<Color x:Key="X">{ThemeResource SystemColorWindowColor}</Color>`. It reads like a reference and is not one:
+XAML hands element text to the colour converter, which knows no colour by that name - 41 tokens across
+`DesignTokens.xaml` and `PillTokens.xaml`, so High Contrast resolved none of them (#217). The form is
+`<StaticResource x:Key="X" ResourceKey="SystemColorWindowColor" />`, as WinUI's own theme writes it, and
+`WinUiResourceTypeTests` refuses the text form. Only a desktop switched into High Contrast can show the result.
 
 ## FACT: type-scale
 `Segoe UI Variable` is the Windows body face - it is the platform-correct counterpart to the Mac's

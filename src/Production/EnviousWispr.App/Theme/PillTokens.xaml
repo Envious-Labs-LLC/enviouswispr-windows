@@ -86,33 +86,33 @@
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="HighContrast">
-            <Color x:Key="PillSurfaceColor">{ThemeResource SystemColorWindowColor}</Color>
+            <StaticResource x:Key="PillSurfaceColor" ResourceKey="SystemColorWindowColor" />
             <SolidColorBrush x:Key="PillSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
-            <Color x:Key="PillBorderColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="PillBorderColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="PillBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="PillDividerColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="PillDividerColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="PillDividerBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="PillTimerColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="PillTimerColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="PillTimerBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="PillModeQuietColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="PillModeQuietColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="PillModeQuietBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="PillBadgeFillColor">{ThemeResource SystemColorHighlightColor}</Color>
+            <StaticResource x:Key="PillBadgeFillColor" ResourceKey="SystemColorHighlightColor" />
             <SolidColorBrush x:Key="PillBadgeFillBrush" Color="{ThemeResource SystemColorHighlightColor}" />
-            <Color x:Key="PillBadgeTextColor">{ThemeResource SystemColorHighlightTextColor}</Color>
+            <StaticResource x:Key="PillBadgeTextColor" ResourceKey="SystemColorHighlightTextColor" />
             <SolidColorBrush x:Key="PillBadgeTextBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
-            <Color x:Key="PillTextColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="PillTextColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="PillTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="PillTextDimmedColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="PillTextDimmedColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="PillTextDimmedBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="PillNoticeColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="PillNoticeColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="PillNoticeBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="PillSuccessInkColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="PillSuccessInkColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="PillSuccessInkBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="PillWarningInkColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="PillWarningInkColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="PillWarningInkBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="PillErrorInkColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="PillErrorInkColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="PillErrorInkBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-            <Color x:Key="PillAdvisoryInkColor">{ThemeResource SystemColorWindowTextColor}</Color>
+            <StaticResource x:Key="PillAdvisoryInkColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="PillAdvisoryInkBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
             <Color x:Key="PillSuccessWashColor">Transparent</Color>
             <SolidColorBrush x:Key="PillSuccessWashBrush" Color="Transparent" />
