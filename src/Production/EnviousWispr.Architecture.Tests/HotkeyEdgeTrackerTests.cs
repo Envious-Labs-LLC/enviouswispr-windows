@@ -585,3 +585,44 @@ public sealed class HotkeyEdgeTrackerTests
         Assert.Equal(PushToTalkSignal.Pressed, afterCapturing.Signal);
     }
 }
+
+/// <summary>A single-modifier binding at the modifier state the hook really sees on the press. Ref: #207.</summary>
+/// <remarks>
+/// A LOW-LEVEL HOOK RUNS BEFORE WINDOWS UPDATES THE PRESSED KEY'S OWN STATE, so Right Ctrl's first key-down
+/// arrives with no Control reported. The suite above feeds it with Control, the one value the machine never
+/// supplies on that edge, which is how a tap that started a recording at once went unseen.
+/// </remarks>
+public sealed class SingleModifierFirstPressTests
+{
+    private const uint RightControl = 0xA3;
+
+    [Theory]
+    [InlineData(HotkeyModifiers.None)]
+    [InlineData(HotkeyModifiers.Control)]
+    public void ASingleTapStartsNothingAndIsNeverSwallowed(HotkeyModifiers onThePress)
+    {
+        var tracker = new HotkeyEdgeTracker(RightControl, HotkeyModifiers.None);
+
+        var down = tracker.Process(RightControl, isKeyDown: true, onThePress);
+        var up = tracker.Process(RightControl, isKeyDown: false, HotkeyModifiers.None);
+
+        Assert.NotEqual(PushToTalkSignal.Pressed, down.Signal);
+        Assert.False(down.Consume);
+        Assert.NotEqual(PushToTalkSignal.Pressed, up.Signal);
+        Assert.False(up.Consume);
+    }
+
+    /// <summary>Right Ctrl + C reaches the application as Right Ctrl + C.</summary>
+    [Fact]
+    public void AShortcutUnderTheBoundModifierStillReachesTheApplication()
+    {
+        var tracker = new HotkeyEdgeTracker(RightControl, HotkeyModifiers.None);
+
+        var control = tracker.Process(RightControl, isKeyDown: true, HotkeyModifiers.None);
+        var letter = tracker.Process('C', isKeyDown: true, HotkeyModifiers.Control);
+
+        Assert.False(control.Consume);
+        Assert.False(letter.Consume);
+        Assert.Null(letter.Signal);
+    }
+}
