@@ -49,9 +49,10 @@ without a dedicated GPU.
   can preview the selected start/stop pair while the master switch is off, but never during an active
   recording. **`RecordingSoundCatalog.Choices` owns the sounds, their display names and their order, and
   feeds the picker directly; `RecordingSoundPairing` owns the identities. Never restate either list here.**
-- Keybinds offer Push to Talk and Toggle recording modes. The recording, cancel, and Add-a-word
-  shortcuts are independently configurable and must not overlap. Windows defaults are F8, Escape, and
-  Ctrl+Alt+W respectively.
+- Keybinds offer Push to Talk and Toggle recording modes. The recording, cancel, Add-a-word, Paste Last
+  Dictation and Copy Last Dictation shortcuts are independently configurable and must not overlap. Windows
+  defaults are F8, Escape, Ctrl+Alt+W and Alt+Shift+Z; Copy Last Dictation has none. The two last-dictation
+  shortcuts may be removed; the other three may not.
 - Escape Recovery is off by default and is frozen when each recording starts. When enabled, the cancel
   shortcut finishes local transcription, deterministic cleanup, and configured polish without delivering
   automatically. The audio is released after text is saved; the text is offered on Home and expires from
