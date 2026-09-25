@@ -341,6 +341,31 @@ public sealed class SettingsPresenterTests
         });
     }
 
+    /// <summary>Only the recording key may be a modifier set; Save refuses one in Cancel or Add-a-word. Ref: #66.</summary>
+    /// <remarks>
+    /// THE HOOK REFUSES A CANCEL OR ADD-A-WORD KEY WITH NO KEY OF ITS OWN, and with it the whole hook - recording
+    /// included. Save accepting what the hook refuses would store a profile whose dictation is dead at next launch.
+    /// </remarks>
+    [Fact]
+    public async Task GeneralSaveRefusesAModifierSetOutsideTheRecordingKey()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var store = new JsonSettingsStore(Path.Combine(directory, "settings.json"));
+            using var presenter = new SettingsPresenter(store, AppSettings.Default);
+
+            var cancelSet = await presenter.SaveGeneralAsync(General() with { CancelShortcut = "Ctrl+Shift" });
+            Assert.Equal(GeneralShortcutField.Cancel, cancelSet.InvalidField);
+            var quickAddSet = await presenter.SaveGeneralAsync(General() with { QuickAddShortcut = "Ctrl+Win" });
+            Assert.Equal(GeneralShortcutField.QuickAdd, quickAddSet.InvalidField);
+            Assert.False(File.Exists(Path.Combine(directory, "settings.json")), "a keyless cancel or Add-a-word key reached the store");
+
+            var recordingSet = await presenter.SaveGeneralAsync(General() with { RecordingShortcut = "Ctrl+Win" });
+            Assert.True(recordingSet.Saved);
+            Assert.Equal("Ctrl+Win", (await store.LoadAsync()).Settings.Preferences.Dictation.PushToTalkGesture);
+        });
+    }
+
     [Fact]
     public async Task GeneralSaveRejectsInvalidOrOverlappingShortcuts()
     {

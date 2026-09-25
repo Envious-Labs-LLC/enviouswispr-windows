@@ -80,6 +80,20 @@ public static class HotkeyGestureParser
             : parsed;
     }
 
+    /// <summary>A required shortcut that needs a key of its own: the cancel and Add-a-word keys. Ref: #66.</summary>
+    /// <remarks>
+    /// ONLY THE RECORDING KEY MAY BE A MODIFIER SET. The hook maps the cancel and Add-a-word keys to a virtual key and
+    /// refuses the whole hook - recording included - when either has none, so a Ctrl+Shift saved there would leave
+    /// dictation dead at the next launch. Held to exactly the rules of <see cref="Parse"/> otherwise.
+    /// </remarks>
+    public static HotkeyGestureParseResult ParseKeyed(string? value)
+    {
+        var parsed = Parse(value);
+        return parsed.Gesture is { } gesture && string.IsNullOrEmpty(gesture.Key)
+            ? Failure()
+            : parsed;
+    }
+
     private static bool IsOrdinaryKey(string key) =>
         !string.IsNullOrEmpty(key) &&
         key is not ("RightCtrl" or "LeftCtrl" or "RightShift" or "LeftShift" or "RightWin" or "LeftWin");

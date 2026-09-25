@@ -8,6 +8,40 @@ namespace EnviousWispr.Architecture.Tests;
 
 public sealed class PortableProfileServiceTests
 {
+    /// <summary>A profile with a keyless cancel or Add-a-word key is refused before anything is applied. Ref: #66.</summary>
+    /// <remarks>
+    /// THE HOOK REFUSES BOTH, AND WITH THEM THE WHOLE HOOK, so importing one would leave dictation dead at the next
+    /// launch. The recording key may be a set; the other two may not.
+    /// </remarks>
+    [Theory]
+    [InlineData("Ctrl+Shift", "Ctrl+Alt+W", PortableProfileImportStatus.Invalid)]
+    [InlineData("Escape", "Shift+Win", PortableProfileImportStatus.Invalid)]
+    [InlineData("Escape", "Ctrl+Alt+W", PortableProfileImportStatus.Imported)]
+    public async Task AProfileCannotBringInAKeylessCancelOrAddAWordKey(string cancel, string quickAdd, PortableProfileImportStatus expected)
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "profile.enviouswispr.json");
+            var settings = JsonSettingsStoreTests.CreatePopulatedSettings();
+            settings = settings with
+            {
+                Preferences = settings.Preferences with
+                {
+                    Dictation = settings.Preferences.Dictation with
+                    {
+                        PushToTalkGesture = "Ctrl+Win",
+                        CancelGesture = cancel,
+                        QuickAddGesture = quickAdd,
+                    },
+                },
+            };
+            var service = new JsonPortableProfileService();
+
+            Assert.True((await service.ExportAsync(settings.ToPortableProfile(), path)).Succeeded);
+            Assert.Equal(expected, (await service.ImportAsync(path)).Status);
+        });
+    }
+
     [Fact]
     public async Task ExportThenImportRoundTripsPortableDataOnly()
     {
