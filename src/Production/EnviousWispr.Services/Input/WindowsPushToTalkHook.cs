@@ -73,7 +73,8 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
             new HotkeyBinding(virtualKey, gesture.Modifiers),
             new HotkeyBinding(cancelVirtualKey, cancelGesture.Modifiers),
             new HotkeyBinding(quickAddVirtualKey, quickAddGesture.Modifiers),
-            recordingMode);
+            recordingMode,
+            KeyboardLayoutTyping.TypesInForegroundLayout);
         _procedure = HookCallback;
         _dispatchTask = Task.Run(DispatchAsync);
 
