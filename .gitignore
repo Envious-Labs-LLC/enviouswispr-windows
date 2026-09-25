@@ -8,6 +8,8 @@ SNAPSHOT.txt
 # Build output
 build/
 dist/
+# MSIX output of a packaged build outside scripts/package-store.ps1
+AppPackages/
 out/
 target/
 bin/
