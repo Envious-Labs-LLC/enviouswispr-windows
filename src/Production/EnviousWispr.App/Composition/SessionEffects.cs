@@ -55,17 +55,14 @@ internal sealed class SessionEffects(SessionCompositionParts parts) : IDictation
             "Disk space is critically low",
             "Dictation can continue, but EnviousWispr may be unable to save an encrypted crash-recovery copy.");
 
+    /// <remarks>
+    /// THE HOOK'S RECORDING FLAG IS NOT SET HERE. It was, from the transitions that passed this method - and the
+    /// watchdog's timeout and the lifecycle recovery abort and reset a recording without passing it, so the hook
+    /// went on believing a recording ran (#86). <see cref="SessionComposition"/> ties the flag to the controller's
+    /// own session changes instead, which every ending passes through.
+    /// </remarks>
     public void RecordTransition(SessionTransitionResult result)
     {
-        if (result.Kind == SessionTransitionKind.Started)
-        {
-            parts.Shell.RecordingActive(true);
-        }
-        else if (result.Kind is SessionTransitionKind.FinalizeReady or
-                 SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
-        {
-            parts.Shell.RecordingActive(false);
-        }
 
         var eventCode = result.Kind switch
         {
