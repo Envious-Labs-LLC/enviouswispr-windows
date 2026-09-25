@@ -94,6 +94,12 @@ public partial class App : Application, IAsyncDisposable
     private readonly StreamingTranscriptionController _streaming;
     private MainWindow? _window;
     private WindowsTrayIcon? _trayIcon;
+    private WindowsForegroundHistory? _foregroundHistory;
+    private LastDictationReuse? _lastDictation;
+    private int _lastDictationPreviewVersion;
+
+    /// <summary>The dictation the tray last named; written on the UI thread, where the tray reads it.</summary>
+    private Guid? _lastDictationPreviewEntry;
     private IReadOnlyList<CustomWordEntry> _customWords = [];
     // VOLATILE BECAUSE THE HOTKEY THREAD READS IT AND THE UI THREAD REPLACES IT. The record itself
     // is immutable and cannot tear, but the REFERENCE can be read stale, and one of its readers is
@@ -987,6 +993,12 @@ public partial class App : Application, IAsyncDisposable
         _trayIcon.ShowWindowRequested += () => ShowMainWindow(openSettings: false);
         _trayIcon.OpenSettingsRequested += () => ShowMainWindow(openSettings: true);
         _trayIcon.ExitRequested += ExitFromTray;
+        // THE WINDOW BEFORE THE TRAY CLICK. Clicking the notification area makes the taskbar the
+        // foreground, so "Paste last dictation" pastes into the last window that was really in use.
+        _foregroundHistory = new WindowsForegroundHistory();
+        _trayIcon.PasteLastRequested += () => _ = ReuseLastDictationAsync(LastDictationAction.Paste);
+        _trayIcon.CopyLastRequested += () => _ = ReuseLastDictationAsync(LastDictationAction.Copy);
+        _trayIcon.LastDictationPreviewRequested += RefreshLastDictationPreview;
         _trayIcon.SetStatus("ready");
     }
 
@@ -1270,6 +1282,9 @@ public partial class App : Application, IAsyncDisposable
                 var tray = _trayIcon;
                 _trayIcon = null;
                 tray?.Dispose();
+                var foreground = _foregroundHistory;
+                _foregroundHistory = null;
+                foreground?.Dispose();
             }),
             new LifetimeStep("session coordinator", async () =>
             {
@@ -1350,6 +1365,23 @@ public partial class App : Application, IAsyncDisposable
         audioCapture.LevelChanged += OnAudioLevelChanged;
         _textTargetAdapter = new WindowsTextTargetAdapter();
         _textDelivery = new ContextAwareTextDelivery(_textTargetAdapter);
+        _lastDictation = new LastDictationReuse(new LastDictationEnvironment(
+            async cancellation => (await _historyStore.LoadAsync(
+                _settings.Preferences.History.RetentionDays,
+                DateTimeOffset.UtcNow,
+                cancellation).ConfigureAwait(false)).Entries,
+            () => DateTimeOffset.UtcNow,
+            () => _sessionController?.CurrentSession is not null || _sessionCoordinator?.IsProcessing == true,
+            target => target.ProcessId == (uint)Environment.ProcessId,
+            // ITS OWN DELIVERY over the shared adapter: the dictation's keeps one recovery slot, and an
+            // old dictation pasted through it would replace a take's recovery text.
+            new ContextAwareTextDelivery(_textTargetAdapter),
+            () => TextDeliveryOptions.Default,
+            (window, cancellation) => WindowsForegroundTargetProvider.ReacquireAsync(
+                window,
+                TimeSpan.FromMilliseconds(1000),
+                cancellation)));
+        RefreshLastDictationPreview();
         _sessionController = new PushToTalkSessionController(
             audioCapture,
             new WindowsForegroundTargetProvider(),
@@ -1952,6 +1984,160 @@ public partial class App : Application, IAsyncDisposable
         _ = _runtime.SubmitAsync(args.Signal);
     }
 
+    /// <summary>Paste or copy the last dictation, from the tray. Ref: #206.</summary>
+    /// <remarks>
+    /// THE TARGET IS TAKEN ON THE CLICK, before anything is awaited: the last window the person really
+    /// used, which the foreground history kept while the tray took the foreground. Admitted like Quick
+    /// Add, because it borrows the delivery adapter the exit disposes.
+    /// </remarks>
+    private async Task ReuseLastDictationAsync(LastDictationAction action)
+    {
+        var target = action == LastDictationAction.Paste ? _foregroundHistory?.LastTarget : null;
+        // The entry the menu named, so a deletion since it opened refuses instead of reaching further back.
+        var shownEntry = _lastDictationPreviewEntry;
+        if (Leaving || _lastDictation is not { } reuse ||
+            _presentation is not { } presentation ||
+            !presentation.TryEnter(out var lease))
+        {
+            return;
+        }
+
+        LastDictationReuseResult result;
+        using (lease)
+        {
+            try
+            {
+                // THE SESSION IS HELD FOR THE REUSE, as the update check holds it: a key pressed while an old
+                // dictation is being pasted is answered Busy rather than starting a take whose delivery would
+                // race this one for the clipboard and the target. The checks inside the reuse stay - a
+                // recording can exist between session commands, which the hold alone cannot see.
+                using var hold = _sessionCoordinator?.TryHold();
+                result = hold is null
+                    ? new LastDictationReuseResult(action, LastDictationSource.Menu, LastDictationOutcome.DictationInProgress)
+                    : action == LastDictationAction.Paste
+                        ? await reuse.PasteAsync(target, LastDictationSource.Menu, shownEntry, lease.Closing).ConfigureAwait(false)
+                        : await reuse.CopyAsync(LastDictationSource.Menu, shownEntry, lease.Closing).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+            {
+                // A history that cannot be read or pruned, or a delivery that threw: said on the pill and in the
+                // log by name, never left as a faulted task nobody observes. Never the words or the message.
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.LastDictationReuseFailed,
+                    AppFailureCategory.Recovery));
+                ShowLastDictationStatus(DictationStatus.Error("Your last dictation could not be reused"));
+                return;
+            }
+        }
+
+        // THE SAME NAMES A DICTATION'S DELIVERY LOGS for the same causes: the refusal's error code, and a
+        // fault's stage and family. Never the words.
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            LastDictationDiagnostics.EventFor(result.Outcome),
+            result.Outcome is LastDictationOutcome.KeptOnClipboard or LastDictationOutcome.Failed
+                ? AppFailureCategory.TextDelivery
+                : AppFailureCategory.None,
+            ErrorCode: result.Delivery is { } delivered ? DeliveryErrorCodes.For(delivered.RefusalReason) : null,
+            DeliveryStage: result.Delivery?.Fault?.Stage,
+            Fault: result.Delivery?.Fault?.Kind));
+        if (LastDictationStatus(result.Outcome) is { } shown)
+        {
+            ShowLastDictationStatus(shown);
+        }
+    }
+
+    /// <summary>The reuse's sentence on the pill, queued to the window and checked when it runs.</summary>
+    /// <remarks>
+    /// NEVER OVER A LIVE DICTATION. The pill is also the recording indicator, and a reuse's sentence set while a
+    /// take records would tell the person it had stopped when it has not. So the sentence is shown only when
+    /// nothing is recording or queued at the moment it would be drawn; otherwise the log keeps the outcome.
+    /// </remarks>
+    private void ShowLastDictationStatus(DictationStatus reuseStatus) =>
+        _window?.DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!Leaving &&
+                _sessionController?.CurrentSession is null &&
+                _sessionCoordinator is { IsProcessing: false, PendingCount: 0 })
+            {
+                _window?.SetSessionStatus(reuseStatus);
+            }
+        });
+
+    /// <summary>
+    /// What the pill says after a reuse, or nothing when the words landing in front of the person already
+    /// say it. A refusal that is silent reads exactly like a menu item that did nothing.
+    /// </summary>
+    private static DictationStatus? LastDictationStatus(LastDictationOutcome outcome) => outcome switch
+    {
+        LastDictationOutcome.Pasted => null,
+        LastDictationOutcome.Copied => DictationStatus.Success("Your last dictation is on the clipboard"),
+        LastDictationOutcome.KeptOnClipboard =>
+            DictationStatus.Warning("That app refused the paste. Your last dictation is on the clipboard"),
+        LastDictationOutcome.NothingToReuse => DictationStatus.Warning("There is no dictation to reuse yet"),
+        LastDictationOutcome.DictationInProgress or LastDictationOutcome.Busy =>
+            DictationStatus.Warning("EnviousWispr is busy with a dictation. Try again in a moment"),
+        LastDictationOutcome.NoTarget or LastDictationOutcome.OwnWindow =>
+            DictationStatus.Warning("Click into the app you want it in, then try again"),
+        LastDictationOutcome.Failed => DictationStatus.Error("Your last dictation could not be pasted"),
+        _ => null,
+    };
+
+    /// <summary>Tells the tray which dictation its two items mean, read the same way the action reads it.</summary>
+    private void RefreshLastDictationPreview() => _ = RefreshLastDictationPreviewAsync();
+
+    private async Task RefreshLastDictationPreviewAsync()
+    {
+        if (Leaving || _lastDictation is not { } reuse ||
+            _presentation is not { } presentation ||
+            !presentation.TryEnter(out var lease))
+        {
+            return;
+        }
+
+        // THE NEWEST READ WINS. A menu opening and a dictation finishing can start two reads at once, and the one
+        // that finishes last is not necessarily the one that started last.
+        var version = Interlocked.Increment(ref _lastDictationPreviewVersion);
+        string? preview;
+        Guid? entryId;
+        using (lease)
+        {
+            try
+            {
+                var entry = await reuse.PeekAsync(lease.Closing).ConfigureAwait(false);
+                preview = entry is null ? null : LastDictation.Preview(entry.Text);
+                entryId = entry?.Id;
+            }
+            catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+            {
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.LastDictationReuseFailed,
+                    AppFailureCategory.Recovery));
+                preview = null;
+                entryId = null;
+            }
+        }
+
+        _window?.DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!Leaving && version == Volatile.Read(ref _lastDictationPreviewVersion))
+            {
+                _lastDictationPreviewEntry = entryId;
+                _trayIcon?.SetLastDictationPreview(preview);
+            }
+        });
+    }
+
     private async Task HandleQuickAddAsync()
     {
         // ADMITTED LIKE A PRESENTER'S OPERATION. This borrows the delivery adapter - the thing the
@@ -2322,6 +2508,7 @@ public partial class App : Application, IAsyncDisposable
         public void NotifyHistoryChanged() =>
             app._window?.DispatcherQueue.TryEnqueue(() =>
             {
+                app.RefreshLastDictationPreview();
                 if (app._window is not null)
                 {
                     _ = app._window.NotifyHistoryChangedAsync();
