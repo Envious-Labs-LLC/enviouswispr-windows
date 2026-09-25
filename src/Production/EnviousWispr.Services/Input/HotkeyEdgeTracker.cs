@@ -318,7 +318,13 @@ internal sealed class HotkeyEdgeTracker
                 return new HotkeyEdgeDecision(Consume: false);
             }
 
-            if (virtualKey == _record.VirtualKey && activeModifiers == _record.Modifiers &&
+            // A GESTURE BINDING NEVER TAKES THIS ROUTE. A lone modifier or a modifier set is decided by the gesture
+            // policy above, and when that policy is still waiting it answers null - which used to fall through to
+            // here. The hook runs before Windows updates the pressed key's own state, so a Right Ctrl press arrives
+            // with no modifiers, matched a binding of "RightCtrl" with none, and was consumed as an instant recording:
+            // a 50 ms tap started a take and Right Ctrl + C stopped working. Ref: #207.
+            if (_recordGesture is null &&
+                virtualKey == _record.VirtualKey && activeModifiers == _record.Modifiers &&
                 !StandsAsideForTyping(virtualKey, activeModifiers, _recordHeld))
             {
                 return ProcessRecord(isKeyDown: true, activeModifiers: activeModifiers);
