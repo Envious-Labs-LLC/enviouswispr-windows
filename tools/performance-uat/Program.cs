@@ -473,7 +473,7 @@ static int IntegerArgument(
 static string FindRepositoryRoot(string startDirectory)
 {
     var directory = new DirectoryInfo(startDirectory);
-    while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "CLAUDE.md")))
+    while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "EnviousWispr.Windows.slnx")))
     {
         directory = directory.Parent;
     }

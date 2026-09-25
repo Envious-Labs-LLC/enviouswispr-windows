@@ -554,7 +554,7 @@ static float[] Resample(float[] source, int sourceRate, int destinationRate)
 static string FindRepositoryRoot(string startDirectory)
 {
     var directory = new DirectoryInfo(startDirectory);
-    while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "CLAUDE.md")))
+    while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "EnviousWispr.Windows.slnx")))
     {
         directory = directory.Parent;
     }

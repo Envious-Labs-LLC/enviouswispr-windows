@@ -256,7 +256,7 @@ public sealed class EgOnePolishProviderTests
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "CLAUDE.md")))
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "EnviousWispr.Windows.slnx")))
         {
             directory = directory.Parent;
         }

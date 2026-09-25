@@ -1,6 +1,6 @@
 # The macOS reference snapshot lives beside this checkout on the rig and is
 # deliberately NOT tracked: it belongs to the macOS repo, it is 175 MB, and one
-# artifact in two places drifts. See AGENTS.md.
+# artifact in two places drifts.
 macos-source/
 macos-knowledge/
 SNAPSHOT.txt
@@ -67,6 +67,25 @@ spikes/s1/audio/*.flac
 # Local llama.cpp toolchain (prebuilt, ~61 MB — not repo content)
 tools/llama.cpp/
 
-# Session-state notes are written for the NEXT session, not for the repository. Their durable parts
-# belong in the knowledge files beside them; the rest goes stale the moment the branch moves.
-.claude/knowledge/session-state-*.md
+# Only code is public. Agent instructions, working notes, internal plans and runbooks, and anything
+# holding dictated content live beside the checkout and are never committed.
+CLAUDE.md
+AGENTS.md
+/LOG.md
+.claude/
+.codex/
+/notes/
+docs/plans/
+docs/phase-zero/
+docs/founder-local-daily-use.md
+docs/performance/
+docs/reliability/
+docs/compatibility/
+docs/international-accessibility/
+docs/model-delivery/
+docs/distribution/windows-release.md
+docs/distribution/private-beta-release.md
+docs/privacy/private-beta-telemetry-server.md
+spikes/s1/corpus-results/
+spikes/s1/s1-results-*.json
+.harness-installed.json
