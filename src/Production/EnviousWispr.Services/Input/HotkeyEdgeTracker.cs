@@ -16,6 +16,7 @@ internal sealed class HotkeyEdgeTracker
     private readonly HotkeyBinding _record;
     private readonly HotkeyBinding _cancel;
     private readonly HotkeyBinding _quickAdd;
+    private readonly Func<uint, HotkeyModifiers, bool>? _typesCharacter;
     private readonly DictationRecordingMode _recordingMode;
     private bool _recordHeld;
     private bool _cancelHeld;
@@ -58,12 +59,19 @@ internal sealed class HotkeyEdgeTracker
     {
     }
 
+    /// <param name="typesCharacter">
+    /// Whether a key with the modifiers held types a character in the layout the person is typing in; a
+    /// Ctrl+Alt binding then stands aside (see <see cref="IsTypingChord"/>). Null answers never, which is
+    /// what a test that is not about layouts wants; the hook always passes the real question.
+    /// </param>
     public HotkeyEdgeTracker(
         HotkeyBinding record,
         HotkeyBinding cancel,
         HotkeyBinding quickAdd,
-        DictationRecordingMode recordingMode)
+        DictationRecordingMode recordingMode,
+        Func<uint, HotkeyModifiers, bool>? typesCharacter = null)
     {
+        _typesCharacter = typesCharacter;
         _record = record;
         _cancel = cancel;
         _quickAdd = quickAdd;
@@ -201,6 +209,12 @@ internal sealed class HotkeyEdgeTracker
 
             if (!isKeyDown)
             {
+                if (virtualKey == _typingKey)
+                {
+                    _typingKey = NoKey;
+                    return new HotkeyEdgeDecision(Consume: false);
+                }
+
                 if (_recordHeld && virtualKey == _record.VirtualKey)
                 {
                     return ProcessRecord(isKeyDown: false, activeModifiers: activeModifiers);
@@ -219,17 +233,27 @@ internal sealed class HotkeyEdgeTracker
                 return new HotkeyEdgeDecision(Consume: false);
             }
 
-            if (virtualKey == _record.VirtualKey && activeModifiers == _record.Modifiers)
+            // A HELD KEY REPEATING IS STILL THE SAME PRESS. It went to the application on the way down, so
+            // every repeat and its release go there too, whatever the layout or modifiers say by then.
+            if (virtualKey == _typingKey)
+            {
+                return new HotkeyEdgeDecision(Consume: false);
+            }
+
+            if (virtualKey == _record.VirtualKey && activeModifiers == _record.Modifiers &&
+                !StandsAsideForTyping(virtualKey, activeModifiers, _recordHeld))
             {
                 return ProcessRecord(isKeyDown: true, activeModifiers: activeModifiers);
             }
 
-            if (virtualKey == _cancel.VirtualKey && ModifiersMatch(activeModifiers, _cancel.Modifiers))
+            if (virtualKey == _cancel.VirtualKey && ModifiersMatch(activeModifiers, _cancel.Modifiers) &&
+                !StandsAsideForTyping(virtualKey, activeModifiers, _cancelHeld))
             {
                 return ProcessCancel(isKeyDown: true, activeModifiers: activeModifiers);
             }
 
-            if (virtualKey == _quickAdd.VirtualKey && activeModifiers == _quickAdd.Modifiers)
+            if (virtualKey == _quickAdd.VirtualKey && activeModifiers == _quickAdd.Modifiers &&
+                !StandsAsideForTyping(virtualKey, activeModifiers, _quickAddHeld))
             {
                 return ProcessQuickAdd(isKeyDown: true, activeModifiers: activeModifiers);
             }
@@ -237,6 +261,60 @@ internal sealed class HotkeyEdgeTracker
             return new HotkeyEdgeDecision(Consume: false);
         }
     }
+
+    /// <summary>
+    /// Whether a key-down that would match a binding is AltGr typing instead, decided ONCE for the press.
+    /// </summary>
+    /// <remarks>
+    /// A press the binding already owns is never re-asked: its repeats stay the binding's. A press that
+    /// goes to the application is remembered in <see cref="_typingKey"/>, so its repeats and its release go
+    /// there too even if the layout or the modifiers change while it is held - otherwise the application
+    /// could receive a key-down without its key-up. Ref: #206.
+    /// </remarks>
+    private bool StandsAsideForTyping(uint virtualKey, HotkeyModifiers activeModifiers, bool alreadyHeld)
+    {
+        if (alreadyHeld || !IsTypingChord(virtualKey, activeModifiers))
+        {
+            return false;
+        }
+
+        _typingKey = virtualKey;
+        return true;
+    }
+
+    /// <summary>A Ctrl+Alt press that the person's keyboard layout turns into a character: AltGr typing.</summary>
+    /// <remarks>
+    /// ASKED ONLY ON A KEY-DOWN THAT WOULD OTHERWISE MATCH, so the layout is read once per candidate press
+    /// and never for ordinary typing. Windows chords are left alone - no layout puts characters on Win.
+    ///
+    /// AN ANSWER THAT CANNOT BE HAD IS TYPING. This runs inside the low-level hook; an exception escaping
+    /// it would take the hook down, and a shortcut that does not fire is visible and retryable where a
+    /// swallowed character is neither.
+    /// </remarks>
+    private bool IsTypingChord(uint virtualKey, HotkeyModifiers activeModifiers)
+    {
+        if (_typesCharacter is null ||
+            (activeModifiers & CtrlAlt) != CtrlAlt ||
+            activeModifiers.HasFlag(HotkeyModifiers.Windows))
+        {
+            return false;
+        }
+
+        try
+        {
+            return _typesCharacter(virtualKey, activeModifiers);
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            return true;
+        }
+    }
+
+    private const HotkeyModifiers CtrlAlt = HotkeyModifiers.Control | HotkeyModifiers.Alt;
+    private const uint NoKey = 0;
+
+    /// <summary>The key whose current press went to the application as typing, or <see cref="NoKey"/>.</summary>
+    private uint _typingKey = NoKey;
 
     /// <summary>
     /// True while a gesture is part-way through, or a toggle-mode recording is running - the
