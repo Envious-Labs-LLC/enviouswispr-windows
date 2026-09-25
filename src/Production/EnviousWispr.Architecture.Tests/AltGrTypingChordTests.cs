@@ -39,6 +39,56 @@ public sealed class AltGrTypingChordTests
         Assert.True(up.Consume);
     }
 
+    /// <summary>A press that went to the application stays there through its repeats, whatever the layout says later.</summary>
+    [Fact]
+    public void ATypedPressStaysTypedThroughItsRepeatsAndRelease()
+    {
+        var types = true;
+        var tracker = Tracker(typesCharacter: (_, _) => types);
+
+        var down = tracker.Process('W', isKeyDown: true, CtrlAlt);
+        types = false;
+        var repeat = tracker.Process('W', isKeyDown: true, CtrlAlt);
+        var up = tracker.Process('W', isKeyDown: false, CtrlAlt);
+
+        Assert.All([down, repeat, up], decision =>
+        {
+            Assert.Null(decision.Signal);
+            Assert.False(decision.Consume);
+        });
+    }
+
+    /// <summary>And a press the shortcut owns stays the shortcut's.</summary>
+    [Fact]
+    public void AnOwnedPressStaysOwnedThroughItsRepeatsAndRelease()
+    {
+        var types = false;
+        var tracker = Tracker(typesCharacter: (_, _) => types);
+
+        var down = tracker.Process('W', isKeyDown: true, CtrlAlt);
+        types = true;
+        var repeat = tracker.Process('W', isKeyDown: true, CtrlAlt);
+        var up = tracker.Process('W', isKeyDown: false, CtrlAlt);
+
+        Assert.Equal(PushToTalkSignal.QuickAdd, down.Signal);
+        Assert.True(down.Consume);
+        Assert.Null(repeat.Signal);
+        Assert.True(repeat.Consume);
+        Assert.True(up.Consume);
+    }
+
+    /// <summary>A layout question that throws is answered as typing, inside the hook, not thrown out of it.</summary>
+    [Fact]
+    public void ALayoutQuestionThatThrowsCountsAsTyping()
+    {
+        var tracker = Tracker(typesCharacter: (_, _) => throw new InvalidOperationException("layout unreadable"));
+
+        var down = tracker.Process('W', isKeyDown: true, CtrlAlt);
+
+        Assert.Null(down.Signal);
+        Assert.False(down.Consume);
+    }
+
     /// <summary>A recording bound to a Ctrl+Alt chord stands aside the same way.</summary>
     [Fact]
     public void ARecordBindingOnCtrlAltStandsAsideToo()
@@ -132,7 +182,7 @@ public sealed class AltGrTypingChordTests
         {
             if (_loadedHere)
             {
-                UnloadKeyboardLayout(Handle);
+                Assert.True(UnloadKeyboardLayout(Handle), "The test could not unload the keyboard layout it loaded.");
             }
 
             Assert.True(_before.SetEquals(LayoutList()), "The test left the keyboard layout list changed.");

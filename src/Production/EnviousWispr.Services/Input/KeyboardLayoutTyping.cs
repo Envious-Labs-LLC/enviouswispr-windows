@@ -35,7 +35,12 @@ internal static class KeyboardLayoutTyping
     public static bool TypesInForegroundLayout(uint virtualKey, HotkeyModifiers modifiers)
     {
         var layout = ForegroundLayout();
-        return layout == 0 || Types(virtualKey, modifiers, layout, CapsLockOn());
+        // EITHER CAPS LOCK STATE. The layout is the foreground thread's but GetKeyState answers for OURS,
+        // so Caps Lock cannot be read for the application reliably; a press that types in either state
+        // is typing.
+        return layout == 0 ||
+            Types(virtualKey, modifiers, layout, capsLock: false) ||
+            Types(virtualKey, modifiers, layout, capsLock: true);
     }
 
     /// <summary>Whether <paramref name="virtualKey"/> with <paramref name="modifiers"/> produces a character in <paramref name="layout"/>.</summary>
@@ -97,8 +102,6 @@ internal static class KeyboardLayoutTyping
         return thread == 0 ? 0 : GetKeyboardLayout(thread);
     }
 
-    private static bool CapsLockOn() => (GetKeyState(VirtualKeyCapital) & 0x0001) != 0;
-
     [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();
 
@@ -107,9 +110,6 @@ internal static class KeyboardLayoutTyping
 
     [DllImport("user32.dll")]
     private static extern nint GetKeyboardLayout(uint threadId);
-
-    [DllImport("user32.dll")]
-    private static extern short GetKeyState(int virtualKey);
 
     [DllImport("user32.dll")]
     private static extern uint MapVirtualKeyEx(uint code, uint mapType, nint layout);
