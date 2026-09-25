@@ -10,6 +10,22 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Only code is public: nothing the .gitignore marks private may be tracked.
+      - name: No private files tracked
+        shell: pwsh
+        run: |
+          $tracked = @(git ls-files -ci --exclude-standard)
+          if ($tracked.Count -gt 0) { "Private (gitignored) files are tracked:"; $tracked; exit 1 }
+
+      - name: No AI attribution in commit messages
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          $hits = @(git log --format='%h %B' "origin/${{ github.base_ref }}..HEAD" | Select-String -Pattern '^\s*(Co-Authored-By:\s*Claude|Claude-Session:|\W{0,3}\s*Generated with \[?Claude Code)')
+          if ($hits.Count -gt 0) { "AI attribution found:"; $hits; exit 1 }
 
       - uses: actions/setup-dotnet@v4
         with:
