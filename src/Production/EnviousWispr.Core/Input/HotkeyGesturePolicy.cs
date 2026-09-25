@@ -56,9 +56,9 @@ public enum HotkeyGestureOutcome
 /// <remarks>
 /// THE GESTURES SHIPPED AND NOBODY COULD REACH THEM. Hold to talk, double tap to record hands-free,
 /// one tap to stop and three taps to throw away are all built and all tested, and every one of them
-/// requires a modifier binding. The shipped default is F8, so on a fresh install the policy that
-/// implements them is never constructed and three macOS features are present in the source and
-/// absent from the product. This is the one-press way across that gap.
+/// requires a modifier binding. The default is now Ctrl+Win (#66), so a fresh install has them; this
+/// is the one-press way back to them for anyone who moved to an ordinary key such as F8, and a
+/// one-handed alternative to the two-key default.
 ///
 /// RIGHT CONTROL, AND THE CHOICE IS FORCED RATHER THAN PICKED. macOS binds right Option. Alt is
 /// refused by the engine because a lone Alt tap opens a window's menu bar, which rules out the

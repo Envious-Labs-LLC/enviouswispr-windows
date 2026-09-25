@@ -410,19 +410,30 @@ if (failureMode == JourneyFailureMode.WorkerStartup)
 Directory.CreateDirectory(Path.Combine(uatDirectory, "no-preview-model"));
 var profileDirectory = Path.Combine(uatDirectory, "profile");
 Directory.CreateDirectory(profileDirectory);
+// THE HARNESS CHOOSES ITS OWN RECORDING KEY, AND IT IS F8, whatever a fresh install starts on. It presses the key
+// itself - SendKey, the synthetic hook, and the words a person is told to follow - and an ordinary key is the one it can
+// drive: a modifier set (Ctrl+Win, the product default since #66) completes on a gesture timer this harness has declared
+// undrivable. So every profile it writes pins F8, and a journey that presses the key always writes one.
+var journeyDefaults = AppSettings.Default with
+{
+    Preferences = AppSettings.Default.Preferences with
+    {
+        Dictation = AppSettings.Default.Preferences.Dictation with { PushToTalkGesture = "F8" },
+    },
+};
 if (livePreview || escapeRecovery || failureMode == JourneyFailureMode.MicrophoneUnavailable ||
     deterministicProfile != DeterministicJourneyProfile.None)
 {
     var deterministicFeaturesEnabled = deterministicProfile != DeterministicJourneyProfile.Disabled;
-    var journeySettings = AppSettings.Default with
+    var journeySettings = journeyDefaults with
     {
         HasCompletedOnboarding = true,
         PreferredMicrophoneId = audioRoute?.CaptureId,
-        Preferences = AppSettings.Default.Preferences with
+        Preferences = journeyDefaults.Preferences with
         {
             LivePreviewEnabled = livePreview,
             PillDesignWithWords = RecordingPillDesign.ReadingWell,
-            Dictation = AppSettings.Default.Preferences.Dictation with
+            Dictation = journeyDefaults.Preferences.Dictation with
             {
                 EscapeRecoveryEnabled = escapeRecovery,
                 WordCorrectionEnabled = deterministicFeaturesEnabled,
@@ -448,7 +459,14 @@ else if (audioRoute is not null)
     // pipeline did to the words. The silent journey must differ from the audible one by the endpoint
     // and nothing else.
     await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"))
-        .SaveAsync(AppSettings.Default with { PreferredMicrophoneId = audioRoute.CaptureId });
+        .SaveAsync(journeyDefaults with { PreferredMicrophoneId = audioRoute.CaptureId });
+}
+else if (liveMicrophone || syntheticHotkey)
+{
+    // A JOURNEY THAT PRESSES THE KEY ALWAYS HAS A PROFILE: without one the app would start on the product default and
+    // the harness would press a key nobody bound. Otherwise the default profile, as the silent journey above keeps.
+    await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"))
+        .SaveAsync(journeyDefaults);
 }
 
 var diagnosticPath = Path.Combine(profileDirectory, "diagnostics", "app.jsonl");

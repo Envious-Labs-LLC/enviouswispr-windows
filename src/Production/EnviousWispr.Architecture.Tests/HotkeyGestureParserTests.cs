@@ -53,7 +53,8 @@ public sealed class HotkeyGestureParserTests
             {
                 Dictation = DictationPreferences.Default with
                 {
-                    CancelGesture = "F8",
+                    // A clash with another binding, named from the defaults so it survives a change of default (#66).
+                    CancelGesture = DictationPreferences.Default.QuickAddGesture,
                 },
             },
         };
