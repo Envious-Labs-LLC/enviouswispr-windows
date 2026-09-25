@@ -117,6 +117,56 @@ public sealed class OllamaModelManagementTests
         Assert.Equal(OllamaPullOutcome.Refused, await client.PullAsync("qwen3:0.6b", null, CancellationToken.None));
     }
 
+    /// <summary>A string the JSON reader cannot decode throws from GetString, not Parse; it ends the download, never escapes it.</summary>
+    [Fact]
+    public async Task AnUndecodableLineIsRefusedNotThrown()
+    {
+        var bad = "{\"status\":\"" + (char)92 + "uD800\"}";
+        await using var client = new OllamaApiClient(Endpoint, new StreamHandler(Chunks(bad)));
+
+        Assert.Equal(OllamaPullOutcome.Refused, await client.PullAsync("qwen3:0.6b", null, CancellationToken.None));
+    }
+
+    /// <summary>The endpoint is checked to be this PC; a redirect would send the request wherever the answer said. Ref: #213 review.</summary>
+    [Fact]
+    public async Task ARedirectFromTheEndpointIsNotFollowed()
+    {
+        var elsewhere = new TcpListener(IPAddress.Loopback, 0);
+        elsewhere.Start();
+        var redirector = new TcpListener(IPAddress.Loopback, 0);
+        redirector.Start();
+        try
+        {
+            var target = ((IPEndPoint)elsewhere.LocalEndpoint).Port;
+            var reached = elsewhere.AcceptTcpClientAsync();
+            var answered = Task.Run(async () =>
+            {
+                using var connection = await redirector.AcceptTcpClientAsync();
+                var stream = connection.GetStream();
+                var buffer = new byte[4096];
+                _ = await stream.ReadAsync(buffer);
+                var reply = Encoding.ASCII.GetBytes(
+                    $"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{target}/api/tags\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                await stream.WriteAsync(reply);
+            });
+            await using var client = new OllamaApiClient(
+                $"http://127.0.0.1:{((IPEndPoint)redirector.LocalEndpoint).Port}",
+                readinessTimeout: TimeSpan.FromSeconds(5));
+
+            var discovery = await client.DiscoverAsync();
+            await answered.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.NotEqual(OllamaHealth.Ready, discovery.Health);
+            var first = await Task.WhenAny(reached, Task.Delay(TimeSpan.FromMilliseconds(500)));
+            Assert.False(first == reached, "the redirect was followed to another address");
+        }
+        finally
+        {
+            redirector.Stop();
+            elsewhere.Stop();
+        }
+    }
+
     [Fact]
     public async Task AnInvalidEndpointNeverSendsAnything()
     {
@@ -177,27 +227,6 @@ public sealed class OllamaModelManagementTests
         Assert.Equal(OllamaHealth.ServerUnavailable, timedOut.Health);
         Assert.False(timedOut.ConnectionRefused);
     }
-
-    /// <summary>
-    /// Starting Ollama inherits OLLAMA_HOST, so only a value that keeps the server on this PC at the default port lets
-    /// the app start it. The test PC's own value, 0.0.0.0:11434, is the case this exists for.
-    /// </summary>
-    [Theory]
-    [InlineData(null, true)]
-    [InlineData("", true)]
-    [InlineData("127.0.0.1", true)]
-    [InlineData("127.0.0.1:11434", true)]
-    [InlineData("http://localhost:11434/", true)]
-    [InlineData("[::1]:11434", true)]
-    [InlineData(":11434", true)]
-    [InlineData("0.0.0.0:11434", false)]
-    [InlineData("0.0.0.0", false)]
-    [InlineData("192.168.1.20:11434", false)]
-    [InlineData("127.0.0.1:8080", false)]
-    [InlineData("[::]:11434", false)]
-    [InlineData("localhost:notaport", false)]
-    public void OnlyAHostSettingThatStaysOnThisPcAllowsStartingOllama(string? value, bool staysOnThisPc) =>
-        Assert.Equal(staysOnThisPc, OllamaEndpointPolicy.IsLoopbackHostSetting(value));
 
     [Fact]
     public void TheCatalogueIsTheElevenMacModelsWithTheRecommendationAmongThem()

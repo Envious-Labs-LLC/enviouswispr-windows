@@ -3603,7 +3603,11 @@ public sealed partial class MainWindow : Window, IDisposable
         // field after a download, or the model just removed. A model the person typed is theirs. Ref: #213.
         if (ollamaChange is not null &&
             choices.Discovery is { Status: PolishModelDiscoveryStatus.Ready } &&
-            OllamaModelsPresenter.RepairSelection(choices.Models, PolishModelTextBox.Text, ollamaChange) is { } repaired)
+            OllamaModelsPresenter.RepairSelection(
+                choices.Models,
+                PolishModelTextBox.Text,
+                _session.Settings.Current.Preferences.Polish.ModelId,
+                ollamaChange) is { } repaired)
         {
             PolishModelTextBox.Text = repaired;
             var repairedIndex = -1;

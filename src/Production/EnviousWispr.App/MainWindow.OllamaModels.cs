@@ -104,16 +104,6 @@ public sealed partial class MainWindow
             case OllamaSetupAction.DownloadOllama:
                 _ = await Windows.System.Launcher.LaunchUriAsync(new Uri("https://ollama.com/download"));
                 break;
-            case OllamaSetupAction.StartOllama when OllamaModels is { } models:
-                OllamaSetupActionButton.IsEnabled = false;
-                RenderOllamaModels(models.View with { Notice = "Starting Ollama..." });
-                if (await models.StartAsync(NullIfBlank(OllamaEndpointTextBox.Text)).ConfigureAwait(true) is { } started)
-                {
-                    RenderOllamaModels(started);
-                    await RefreshPolishModelChoicesAsync(PolishProvider.Ollama, chooseDefault: false).ConfigureAwait(true);
-                }
-
-                break;
             case OllamaSetupAction.DownloadRecommended:
                 await DownloadOllamaModelAsync(OllamaModelCatalog.RecommendedModelId).ConfigureAwait(true);
                 break;
@@ -144,10 +134,10 @@ public sealed partial class MainWindow
                     return;
                 }
 
-                if (await models.RemoveAsync(NullIfBlank(OllamaEndpointTextBox.Text), row.Id).ConfigureAwait(true) is { } removed)
+                if (await models.RemoveAsync(NullIfBlank(OllamaEndpointTextBox.Text), row.Id).ConfigureAwait(true) is { } removed &&
+                    !_session.Closing)
                 {
-                    RenderOllamaModels(removed.View);
-                    await RefreshPolishModelChoicesAsync(PolishProvider.Ollama, chooseDefault: false, removed).ConfigureAwait(true);
+                    await ApplyOllamaChangeAsync(removed).ConfigureAwait(true);
                 }
 
                 break;
@@ -182,15 +172,34 @@ public sealed partial class MainWindow
         var downloaded = await models.DownloadAsync(
                 NullIfBlank(OllamaEndpointTextBox.Text),
                 modelId,
-                new Progress<OllamaModelsView>(RenderOllamaModels))
+                // A PROGRESS VIEW QUEUED BEFORE THE DOWNLOAD ENDED IS NOT DRAWN AFTER IT: the final view is.
+                new Progress<OllamaModelsView>(view =>
+                {
+                    if (models.Changing)
+                    {
+                        RenderOllamaModels(view);
+                    }
+                }))
             .ConfigureAwait(true);
         if (downloaded is null || _session.Closing)
         {
             return;
         }
 
-        RenderOllamaModels(downloaded.View);
-        await RefreshPolishModelChoicesAsync(PolishProvider.Ollama, chooseDefault: false, downloaded).ConfigureAwait(true);
+        await ApplyOllamaChangeAsync(downloaded).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Draws the block after a download or removal and repairs the picker - only while Ollama is still the provider. A
+    /// download stopped by switching to a cloud provider still ends here, and must not bring the Ollama controls back.
+    /// </summary>
+    private async Task ApplyOllamaChangeAsync(OllamaModelChange change)
+    {
+        RenderOllamaModels(change.View);
+        if (PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)) == PolishProvider.Ollama)
+        {
+            await RefreshPolishModelChoicesAsync(PolishProvider.Ollama, chooseDefault: false, change).ConfigureAwait(true);
+        }
     }
 
     private async Task<bool> ConfirmOllamaAsync(string title, string message, string proceed)
@@ -217,6 +226,9 @@ public sealed partial class MainWindow
         public event PropertyChangedEventHandler? PropertyChanged;
 
         public string Id => _row.Id;
+
+        /// <summary>Installed models carry a check, the rest the download mark (Segoe Fluent E73E and E896).</summary>
+        public string Glyph => ((char)(_row.Installed ? 0xE73E : 0xE896)).ToString();
 
         public string Name => _row.Name;
 

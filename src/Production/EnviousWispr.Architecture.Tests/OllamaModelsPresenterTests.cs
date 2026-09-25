@@ -8,23 +8,20 @@ public sealed class OllamaModelsPresenterTests
 {
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(10);
 
+    /// <summary>The app never starts Ollama: when nothing answers it says how, and offers the download only when Ollama was not found.</summary>
     [Theory]
-    [InlineData(OllamaServerState.NotListening, OllamaStartability.Startable, OllamaSetupAction.StartOllama, "isn't running yet")]
-    [InlineData(OllamaServerState.NotListening, OllamaStartability.LauncherNotFound, OllamaSetupAction.DownloadOllama, "couldn't find Ollama")]
-    [InlineData(OllamaServerState.NotListening, OllamaStartability.ExposedHost, OllamaSetupAction.None, "OLLAMA_HOST")]
-    [InlineData(OllamaServerState.NotListening, OllamaStartability.Elevated, OllamaSetupAction.None, "administrator")]
-    [InlineData(OllamaServerState.NotListening, OllamaStartability.AlreadyRunning, OllamaSetupAction.None, "Restart Ollama")]
-    [InlineData(OllamaServerState.NotListening, OllamaStartability.CustomEndpoint, OllamaSetupAction.None, "Start Ollama there yourself")]
-    [InlineData(OllamaServerState.NotResponding, OllamaStartability.Startable, OllamaSetupAction.None, "isn't responding")]
-    [InlineData(OllamaServerState.EndpointInvalid, OllamaStartability.Startable, OllamaSetupAction.None, "must be on this PC")]
-    [InlineData(OllamaServerState.NoModels, OllamaStartability.Startable, OllamaSetupAction.DownloadRecommended, "needs a language model")]
-    public async Task EachStateSaysWhatToDoAndOffersOnlyWhatIsSafe(
+    [InlineData(OllamaServerState.NotListening, true, OllamaSetupAction.None, "Start Ollama from the Start menu")]
+    [InlineData(OllamaServerState.NotListening, false, OllamaSetupAction.DownloadOllama, "couldn't find Ollama")]
+    [InlineData(OllamaServerState.NotResponding, true, OllamaSetupAction.None, "isn't responding")]
+    [InlineData(OllamaServerState.EndpointInvalid, true, OllamaSetupAction.None, "must be on this PC")]
+    [InlineData(OllamaServerState.NoModels, true, OllamaSetupAction.DownloadRecommended, "needs a language model")]
+    public async Task EachStateSaysWhatToDo(
         OllamaServerState server,
-        OllamaStartability start,
+        bool found,
         OllamaSetupAction action,
         string says)
     {
-        var host = new Host { Inventory = new OllamaInventory(server, [], start) };
+        var host = new Host { Inventory = new OllamaInventory(server, [], found) };
         var presenter = new OllamaModelsPresenter(host);
 
         var view = await presenter.RefreshAsync(null).WaitAsync(Patience);
@@ -98,6 +95,8 @@ public sealed class OllamaModelsPresenterTests
         Assert.Equal("qwen3:0.6b", change.Changed);
         Assert.StartsWith("Qwen 3 (0.6B) is downloaded", change.View.Notice, StringComparison.Ordinal);
         Assert.True(change.View.Rows.Single(row => row.Id == "qwen3:0.6b").Installed);
+        // THE FINAL VIEW IS DRAWN AFTER THE CHANGE IS GIVEN BACK: drawn inside it, every button came back disabled.
+        Assert.All(change.View.Rows.Where(row => row.Action == OllamaRowAction.Download), row => Assert.True(row.ActionEnabled));
         Assert.Equal(OllamaCheck.Proceed, presenter.CheckDownload("qwen2.5:3b"));
     }
 
@@ -180,29 +179,72 @@ public sealed class OllamaModelsPresenterTests
     }
 
     [Theory]
-    [InlineData(true, "", "qwen3:0.6b", new[] { "deepseek-r1:14b", "qwen3:0.6b" }, "qwen3:0.6b")]
-    [InlineData(true, "deepseek-r1:14b", "qwen3:0.6b", new[] { "deepseek-r1:14b", "qwen3:0.6b" }, null)]
-    [InlineData(true, "something-typed", "qwen3:0.6b", new[] { "deepseek-r1:14b", "qwen3:0.6b" }, null)]
-    [InlineData(false, "Qwen3:0.6b:latest", "qwen3:0.6b", new[] { "deepseek-r1:14b", "qwen2.5:3b" }, "qwen2.5:3b")]
-    [InlineData(false, "qwen3:0.6b", "qwen3:0.6b", new[] { "tinyllama", "gemma2:2b" }, "gemma2:2b")]
-    [InlineData(false, "qwen3:0.6b", "qwen3:0.6b", new string[0], "")]
-    [InlineData(false, "deepseek-r1:14b", "qwen3:0.6b", new[] { "deepseek-r1:14b" }, null)]
+    // After a download: an empty field, or the untouched saved model that is missing, takes the model just downloaded.
+    [InlineData(true, "", null, "qwen3:0.6b", new[] { "deepseek-r1:14b", "qwen3:0.6b" }, "qwen3:0.6b")]
+    [InlineData(true, "llama3", "llama3", "qwen3:0.6b", new[] { "deepseek-r1:14b", "qwen3:0.6b" }, "qwen3:0.6b")]
+    // An installed model is right, and a typed one is the person's.
+    [InlineData(true, "deepseek-r1:14b", null, "qwen3:0.6b", new[] { "deepseek-r1:14b", "qwen3:0.6b" }, null)]
+    [InlineData(true, "something-typed", "llama3", "qwen3:0.6b", new[] { "deepseek-r1:14b", "qwen3:0.6b" }, null)]
+    // After a removal of the model the field named: the recommendation, then the best band, then empty.
+    [InlineData(false, "Qwen3:0.6b:latest", "qwen3:0.6b", "qwen3:0.6b", new[] { "deepseek-r1:14b", "qwen2.5:3b" }, "qwen2.5:3b")]
+    [InlineData(false, "qwen3:0.6b", "qwen3:0.6b", "qwen3:0.6b", new[] { "tinyllama", "gemma2:2b" }, "gemma2:2b")]
+    [InlineData(false, "qwen3:0.6b", "qwen3:0.6b", "qwen3:0.6b", new string[0], "")]
+    // Reinstalled by another tool before this listing: installed again, so left alone.
+    [InlineData(false, "qwen3:0.6b", "qwen3:0.6b", "qwen3:0.6b", new[] { "qwen3:0.6b", "qwen2.5:3b" }, null)]
+    [InlineData(false, "deepseek-r1:14b", null, "qwen3:0.6b", new[] { "deepseek-r1:14b" }, null)]
     public void TheFieldIsRepairedOnlyWhereTheChangeLeftItNamingNothing(
         bool downloaded,
         string field,
+        string? saved,
         string changed,
         string[] installed,
         string? expected)
     {
         var change = new OllamaModelChange(new OllamaModelsView(new OllamaSetupView("", OllamaSetupAction.None, null, true), [], null), changed, downloaded, !downloaded);
 
-        Assert.Equal(expected, OllamaModelsPresenter.RepairSelection(installed, field, change));
+        Assert.Equal(expected, OllamaModelsPresenter.RepairSelection(installed, field, saved, change));
+    }
+
+    /// <summary>A slow look after a change never overwrites a newer look that finished first. Ref: #213 review.</summary>
+    [Fact]
+    public async Task ASlowLookAfterADownloadDoesNotOverwriteANewerOne()
+    {
+        var hold = new TaskCompletionSource<OllamaInventory>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var host = new Host { Inventory = Ready() };
+        var presenter = new OllamaModelsPresenter(host);
+        await presenter.RefreshAsync(null).WaitAsync(Patience);
+        host.NextInspection = hold.Task;
+
+        var download = presenter.DownloadAsync(null, "qwen3:0.6b", null);
+        await host.Held.Task.WaitAsync(Patience);
+        host.Inventory = Ready(("gemma2", null, null));
+        Assert.NotNull(await presenter.RefreshAsync(null).WaitAsync(Patience));
+        hold.SetResult(Ready(("qwen3:0.6b", null, null)));
+        await download.WaitAsync(Patience);
+
+        Assert.Contains(presenter.View.Rows, row => row is { Id: "gemma2", Installed: true });
+        Assert.DoesNotContain(presenter.View.Rows, row => row is { Id: "qwen3:0.6b", Installed: true });
+    }
+
+    /// <summary>Whatever the host throws, the block is free again afterwards. Ref: #213 review.</summary>
+    [Fact]
+    public async Task AHostThatThrowsStillGivesTheBlockBack()
+    {
+        var host = new Host { Inventory = Ready(), OnPull = _ => throw new InvalidOperationException("boom") };
+        var presenter = new OllamaModelsPresenter(host);
+        await presenter.RefreshAsync(null).WaitAsync(Patience);
+
+        var change = await presenter.DownloadAsync(null, "qwen3:0.6b", null).WaitAsync(Patience);
+
+        Assert.StartsWith("Ollama could not download", change!.View.Notice, StringComparison.Ordinal);
+        Assert.False(presenter.Changing);
+        Assert.Equal(OllamaCheck.Proceed, presenter.CheckDownload("qwen3:0.6b"));
     }
 
     private static OllamaInventory Ready(params (string Id, long? Size, string? Parameters)[] models) =>
         new(models.Length == 0 ? OllamaServerState.NoModels : OllamaServerState.Ready,
             models.Select(model => new OllamaInstalledModel(model.Id, model.Size, model.Parameters)).ToArray(),
-            OllamaStartability.Startable);
+            OllamaFound: true);
 
     private sealed class Collect(List<OllamaModelsView> into) : IProgress<OllamaModelsView>
     {
@@ -211,7 +253,7 @@ public sealed class OllamaModelsPresenterTests
 
     private sealed class Host : IOllamaModelHost
     {
-        public OllamaInventory Inventory { get; set; } = new(OllamaServerState.NoModels, [], OllamaStartability.Startable);
+        public OllamaInventory Inventory { get; set; } = new(OllamaServerState.NoModels, [], OllamaFound: true);
 
         public string? ActiveModelId { get; set; }
 
@@ -227,14 +269,22 @@ public sealed class OllamaModelsPresenterTests
 
         public int Deletes { get; private set; }
 
+        public Task<OllamaInventory>? NextInspection { get; set; }
+
+        public TaskCompletionSource Held { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public Task<OllamaInventory> InspectAsync(string? endpoint, CancellationToken cancellationToken)
         {
             Inspections++;
+            if (NextInspection is { } held)
+            {
+                NextInspection = null;
+                Held.TrySetResult();
+                return held;
+            }
+
             return Task.FromResult(Inventory);
         }
-
-        public Task<OllamaStartOutcome> StartAsync(string? endpoint, CancellationToken cancellationToken) =>
-            Task.FromResult(OllamaStartOutcome.Started);
 
         public async Task<OllamaPullOutcome> PullAsync(string? endpoint, string modelId, IProgress<OllamaPullUpdate> progress, CancellationToken cancellationToken)
         {

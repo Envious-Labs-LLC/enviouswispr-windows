@@ -257,7 +257,7 @@ public enum AppEventCode
     /// <summary>A file was not started: a dictation or an update had the session.</summary>
     FileTranscriptionRefused,
 
-    // OLLAMA MODELS (#213): what happened to a download, a removal or a start - never which model, never where.
+    // OLLAMA MODELS (#213): what happened to a download or a removal - never which model, never where.
 
     /// <summary>A model download began.</summary>
     OllamaModelDownloadStarted,
@@ -277,10 +277,5 @@ public enum AppEventCode
     /// <summary>A removal was refused or went unanswered.</summary>
     OllamaModelRemoveFailed,
 
-    /// <summary>EnviousWispr started Ollama and it answered.</summary>
-    OllamaStarted,
-
-    /// <summary>Starting Ollama was refused, failed, or went unanswered.</summary>
-    OllamaStartFailed,
     UnhandledFailure,
 }

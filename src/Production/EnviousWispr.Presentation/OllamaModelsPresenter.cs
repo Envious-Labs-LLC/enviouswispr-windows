@@ -9,67 +9,33 @@ public enum OllamaServerState
     Ready,
     NoModels,
 
-    /// <summary>Nothing is listening: the one state in which starting Ollama may be offered.</summary>
+    /// <summary>Nothing is listening at the endpoint.</summary>
     NotListening,
 
-    /// <summary>Something is there and slow, or answering wrongly. Never grounds to start a second server.</summary>
+    /// <summary>Something is there and slow, or answering wrongly.</summary>
     NotResponding,
     EndpointInvalid,
 }
 
-/// <summary>Whether the app may start Ollama itself, and if not, why not.</summary>
-/// <remarks>
-/// STARTING OLLAMA IS GUARDED BECAUSE ITS DESKTOP APP IS NOT GENTLE. On start it cleans up earlier servers and can
-/// terminate one another tool started; it merges its own settings into the server's environment; and a child of an
-/// elevated process runs elevated. So the app starts it only in the plain case - the default endpoint, nothing
-/// listening, no Ollama process already there, not elevated, OLLAMA_HOST unset or on this PC - and otherwise says
-/// what to do by hand. Ref: #213 design review.
-/// </remarks>
-public enum OllamaStartability
-{
-    Startable,
-
-    /// <summary>No launcher where the Windows installer puts it or on PATH. Not proof it is not installed.</summary>
-    LauncherNotFound,
-    CustomEndpoint,
-
-    /// <summary>OLLAMA_HOST would make the server listen beyond this PC.</summary>
-    ExposedHost,
-    Elevated,
-
-    /// <summary>An Ollama process exists but the endpoint does not answer; starting another would fight it.</summary>
-    AlreadyRunning,
-}
-
 public sealed record OllamaInstalledModel(string Id, long? SizeBytes, string? ParameterSize);
 
-/// <summary>One look at Ollama: what answered, what is installed, and whether the app may start it.</summary>
+/// <summary>One look at Ollama: what answered, what is installed, and whether its app was found on this PC.</summary>
+/// <param name="OllamaFound">
+/// The Ollama app is where its installer puts it, or on PATH. Decides only which instructions to give when nothing
+/// answers - never whether to start anything. The app does not start Ollama (see <see cref="OllamaModelsPresenter"/>).
+/// </param>
 public sealed record OllamaInventory(
     OllamaServerState Server,
     IReadOnlyList<OllamaInstalledModel> Models,
-    OllamaStartability Start);
+    bool OllamaFound);
 
-public enum OllamaStartOutcome
-{
-    Started,
-
-    /// <summary>The guards said no when asked again right before launching.</summary>
-    NotAllowed,
-    LaunchFailed,
-
-    /// <summary>Launched, and nothing answered in time.</summary>
-    NoAnswer,
-}
-
-/// <summary>The app's side of the Ollama models block: the wire client, the launcher, and the log. Core types only.</summary>
+/// <summary>The app's side of the Ollama models block: the wire client and the log. Core types only.</summary>
 public interface IOllamaModelHost
 {
     /// <summary>The model the running polish provider uses this launch, or null. It cannot be removed from the page.</summary>
     string? ActiveModelId { get; }
 
     Task<OllamaInventory> InspectAsync(string? endpoint, CancellationToken cancellationToken);
-
-    Task<OllamaStartOutcome> StartAsync(string? endpoint, CancellationToken cancellationToken);
 
     Task<OllamaPullOutcome> PullAsync(string? endpoint, string modelId, IProgress<OllamaPullUpdate> progress, CancellationToken cancellationToken);
 
@@ -80,7 +46,6 @@ public enum OllamaSetupAction
 {
     None,
     DownloadOllama,
-    StartOllama,
     DownloadRecommended,
 }
 
@@ -123,7 +88,7 @@ public enum OllamaCheck
     /// <summary>Not recommended: the person is asked first, as macOS asks.</summary>
     Confirm,
 
-    /// <summary>Another download, removal or start is running.</summary>
+    /// <summary>Another download or removal is running.</summary>
     Busy,
 
     /// <summary>Not one of the catalogue's models: the page offers nothing for it.</summary>
@@ -134,19 +99,28 @@ public enum OllamaCheck
 }
 
 /// <summary>How a download or removal went, and the page as it stands after it.</summary>
-/// <param name="Changed">The model the change was about, when it happened; the picker repairs against it.</param>
+/// <param name="Changed">The model the change was about; the picker repairs against it.</param>
 public sealed record OllamaModelChange(OllamaModelsView View, string? Changed, bool Downloaded, bool Removed);
 
 /// <summary>The Ollama models block of the AI Polish page: setup, the catalogue, downloads and removals. Ref: #213.</summary>
 /// <remarks>
-/// ONE CHANGE AT A TIME. A download, a removal and a start each take the block for their whole run, and anything
-/// asked for meanwhile is Busy - as on macOS, where every row's button is disabled while one download runs. Each
-/// runs inside the presentation's admission, so the exit stops it and waits, and each ends by looking at Ollama
-/// again: a stopped download may have finished anyway, and the list shows what Ollama has, not what was hoped.
+/// ONE CHANGE AT A TIME. A download or a removal takes the block for its whole run, and anything asked for meanwhile
+/// is Busy - as on macOS, where every row's button is disabled while one download runs. Each runs inside the
+/// presentation's admission, so the exit stops it and waits, and each ends by looking at Ollama again: a stopped
+/// download may have finished anyway, and the list shows what Ollama has, not what was hoped. The change is given
+/// back in a finally, whatever the host did.
 ///
-/// THE WINDOW RENDERS, THIS DECIDES. Every sentence, label and ordering is made here; the window draws a view and
-/// wires its buttons to these methods. Calls are made from the window's thread; progress arrives on whatever thread
-/// the host reports it and is folded in under a lock.
+/// THE APP DOES NOT START OLLAMA, which is the one thing here macOS does and Windows deliberately does not. Ollama's
+/// Windows desktop app keeps its own saved "expose to the network" setting and applies it to the server it starts; the
+/// app cannot read that setting reliably, so a start could open Ollama to the whole network - and the same app can
+/// stop a server another tool started. The page says how to start it instead. Ref: #213 review.
+///
+/// A DOWNLOAD RUNS ON WHEN THE PAGE IS LEFT OR THE WINDOW HIDDEN, as a browser's does: a 7 GB model should not need
+/// watching. Stop is on the row when the page is opened again; switching the provider away from Ollama stops it, as
+/// on macOS; the app's exit stops it through the admission.
+///
+/// THE WINDOW RENDERS, THIS DECIDES. Every sentence, label and ordering is made here. Calls come from the window's
+/// thread; progress arrives on whatever thread the host reports it and is folded in under a lock.
 /// </remarks>
 public sealed class OllamaModelsPresenter
 {
@@ -181,6 +155,18 @@ public sealed class OllamaModelsPresenter
         }
     }
 
+    /// <summary>Whether a download or removal is running. A progress view queued to the window before it ended is not drawn after.</summary>
+    public bool Changing
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _change is not null;
+            }
+        }
+    }
+
     /// <summary>Looks at Ollama again. Null when a later look overtook this one, or the window is closing.</summary>
     public async Task<OllamaModelsView?> RefreshAsync(string? endpoint)
     {
@@ -191,18 +177,16 @@ public sealed class OllamaModelsPresenter
 
         using (lease)
         {
-            var ticket = Interlocked.Increment(ref _inspections);
             try
             {
-                var inventory = await _host.InspectAsync(endpoint, lease.Closing).ConfigureAwait(false);
+                var (_, current) = await InspectAsync(endpoint, lease.Closing).ConfigureAwait(false);
+                if (!current)
+                {
+                    return null;
+                }
+
                 lock (_lock)
                 {
-                    if (ticket != _inspections)
-                    {
-                        return null;
-                    }
-
-                    _inventory = inventory;
                     return Render();
                 }
             }
@@ -278,7 +262,18 @@ public sealed class OllamaModelsPresenter
                 return null;
             }
 
-            return await DownloadInsideAsync(endpoint, modelId, progress, lease, change).ConfigureAwait(false);
+            OllamaModelChange? result;
+            try
+            {
+                result = await DownloadInsideAsync(endpoint, modelId, progress, lease, change).ConfigureAwait(false);
+            }
+            finally
+            {
+                End(change);
+            }
+
+            // DRAWN AGAIN ONCE THE CHANGE IS GIVEN BACK: drawn inside it, every Download button came back disabled.
+            return result is null ? null : result with { View = View };
         }
     }
 
@@ -289,55 +284,54 @@ public sealed class OllamaModelsPresenter
         PresentationAdmission.Lease lease,
         CancellationTokenSource change)
     {
-        using (var stop = CancellationTokenSource.CreateLinkedTokenSource(lease.Closing, change.Token))
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(lease.Closing, change.Token);
+        lock (_lock)
         {
-            lock (_lock)
-            {
-                _downloading = modelId;
-                _phase = OllamaPullPhase.Starting;
-                _quiet = false;
-                _layers.Clear();
-                _notice = null;
-            }
+            _downloading = modelId;
+            _phase = OllamaPullPhase.Starting;
+            _quiet = false;
+            _layers.Clear();
+            _notice = null;
+        }
 
-            progress?.Report(View);
-            OllamaPullOutcome outcome;
-            try
-            {
-                outcome = await _host.PullAsync(endpoint, modelId, new FoldIntoView(this, progress), stop.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (stop.IsCancellationRequested)
-            {
-                outcome = OllamaPullOutcome.Cancelled;
-            }
-
+        progress?.Report(View);
+        OllamaPullOutcome outcome;
+        try
+        {
+            outcome = await _host.PullAsync(endpoint, modelId, new FoldIntoView(this, progress), stop.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested)
+        {
+            outcome = OllamaPullOutcome.Cancelled;
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException or OperationCanceledException))
+        {
+            // The host answers every ending itself; anything it throws anyway is an ending too, never an escape.
+            outcome = OllamaPullOutcome.Refused;
+        }
+        finally
+        {
             lock (_lock)
             {
                 _downloading = null;
                 _layers.Clear();
             }
+        }
 
-            if (lease.Closing.IsCancellationRequested)
-            {
-                End(change);
-                return null;
-            }
+        if (lease.Closing.IsCancellationRequested)
+        {
+            return null;
+        }
 
-            // LOOK AGAIN WHATEVER HAPPENED. A stopped download may have finished in the moment it was stopped, and a
-            // succeeded one is only on the list once Ollama lists it.
-            var after = await InspectQuietlyAsync(endpoint, lease.Closing).ConfigureAwait(false);
-            var installed = after is not null && after.Models.Any(model => OllamaModelCatalog.SameModel(model.Id, modelId));
-            lock (_lock)
-            {
-                if (after is not null)
-                {
-                    _inventory = after;
-                }
-
-                _notice = DownloadNotice(outcome, modelId, refreshed: after is not null);
-                End(change);
-                return new OllamaModelChange(Render(), modelId, Downloaded: installed, Removed: false);
-            }
+        // LOOK AGAIN WHATEVER HAPPENED. A stopped download may have finished in the moment it was stopped, and a
+        // succeeded one is only on the list once Ollama lists it.
+        var (after, _) = await InspectQuietlyAsync(endpoint, lease.Closing).ConfigureAwait(false);
+        lock (_lock)
+        {
+            var installed = _inventory is { Server: OllamaServerState.Ready } now &&
+                now.Models.Any(model => OllamaModelCatalog.SameModel(model.Id, modelId));
+            _notice = DownloadNotice(outcome, modelId, refreshed: after is not null);
+            return new OllamaModelChange(Render(), modelId, Downloaded: installed, Removed: false);
         }
     }
 
@@ -368,107 +362,62 @@ public sealed class OllamaModelsPresenter
                 return null;
             }
 
-            OllamaDeleteOutcome outcome;
+            OllamaModelChange? result;
             try
             {
-                outcome = await _host.DeleteAsync(endpoint, modelId, lease.Closing).ConfigureAwait(false);
+                result = await RemoveInsideAsync(endpoint, modelId, lease).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
+            finally
             {
                 End(change);
-                return null;
             }
 
-            var after = await InspectQuietlyAsync(endpoint, lease.Closing).ConfigureAwait(false);
-            var gone = after is not null && !after.Models.Any(model => OllamaModelCatalog.SameModel(model.Id, modelId));
-            lock (_lock)
-            {
-                if (after is not null)
-                {
-                    _inventory = after;
-                }
-
-                _notice = outcome switch
-                {
-                    OllamaDeleteOutcome.Deleted or OllamaDeleteOutcome.NotFound => after is null
-                        ? $"{NameOf(modelId)} was removed. The list could not be refreshed; choose Check again."
-                        : $"{NameOf(modelId)} was removed.",
-                    OllamaDeleteOutcome.ServerUnavailable => "Ollama stopped answering. Start it and try again.",
-                    _ => $"Ollama could not remove {NameOf(modelId)}. Try again, or remove it in Ollama.",
-                };
-                End(change);
-                return new OllamaModelChange(Render(), modelId, Downloaded: false, Removed: gone);
-            }
+            return result is null ? null : result with { View = View };
         }
     }
 
-    /// <summary>Starts Ollama, when the guards allow it; then looks again. Null when refused.</summary>
-    public async Task<OllamaModelsView?> StartAsync(string? endpoint)
+    private async Task<OllamaModelChange?> RemoveInsideAsync(string? endpoint, string modelId, PresentationAdmission.Lease lease)
     {
-        lock (_lock)
+        OllamaDeleteOutcome outcome;
+        try
         {
-            if (_inventory is not { Server: OllamaServerState.NotListening, Start: OllamaStartability.Startable })
-            {
-                return null;
-            }
+            outcome = await _host.DeleteAsync(endpoint, modelId, lease.Closing).ConfigureAwait(false);
         }
-
-        if (!_admission.TryEnter(out var lease))
+        catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
         {
             return null;
         }
-
-        using (lease)
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException or OperationCanceledException))
         {
-            if (!TryBegin(out var change))
-            {
-                return null;
-            }
+            outcome = OllamaDeleteOutcome.Refused;
+        }
 
-            lock (_lock)
+        var (after, _) = await InspectQuietlyAsync(endpoint, lease.Closing).ConfigureAwait(false);
+        lock (_lock)
+        {
+            var gone = _inventory is { Server: OllamaServerState.Ready or OllamaServerState.NoModels } now &&
+                !now.Models.Any(model => OllamaModelCatalog.SameModel(model.Id, modelId));
+            _notice = outcome switch
             {
-                _notice = "Starting Ollama...";
-            }
-
-            OllamaStartOutcome outcome;
-            try
-            {
-                outcome = await _host.StartAsync(endpoint, lease.Closing).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
-            {
-                End(change);
-                return null;
-            }
-
-            var after = await InspectQuietlyAsync(endpoint, lease.Closing).ConfigureAwait(false);
-            lock (_lock)
-            {
-                if (after is not null)
-                {
-                    _inventory = after;
-                }
-
-                _notice = outcome switch
-                {
-                    OllamaStartOutcome.Started => null,
-                    OllamaStartOutcome.NoAnswer => "Ollama was started but has not answered yet. Wait a moment, then choose Check again.",
-                    OllamaStartOutcome.NotAllowed => null,
-                    _ => "Couldn't start Ollama. Start it from the Start menu, then choose Check again.",
-                };
-                End(change);
-                return Render();
-            }
+                OllamaDeleteOutcome.Deleted or OllamaDeleteOutcome.NotFound => after is null
+                    ? $"{NameOf(modelId)} was removed. The list could not be refreshed; choose Check again."
+                    : $"{NameOf(modelId)} was removed.",
+                OllamaDeleteOutcome.ServerUnavailable => "Ollama stopped answering. Start it and try again.",
+                _ => $"Ollama could not remove {NameOf(modelId)}. Try again, or remove it in Ollama.",
+            };
+            return new OllamaModelChange(Render(), modelId, Downloaded: false, Removed: gone);
         }
     }
 
     /// <summary>
     /// What the model field should say after a download or a removal, or null to leave it as it is. Made only from a
-    /// listing that succeeded, and it never overwrites a choice the person made, valid or not.
+    /// listing that succeeded (the caller's to check); never overwrites a model that is installed, nor one the person
+    /// typed this visit.
     /// </summary>
-    /// <param name="installed">The picker's fresh listing of installed models.</param>
+    /// <param name="installed">The picker's fresh listing of installed models; empty when there are none.</param>
     /// <param name="field">The model field as it reads now.</param>
-    public static string? RepairSelection(IReadOnlyList<string> installed, string field, OllamaModelChange change)
+    /// <param name="saved">The model id as last saved. A field that still reads it has not been edited this visit.</param>
+    public static string? RepairSelection(IReadOnlyList<string> installed, string field, string? saved, OllamaModelChange change)
     {
         ArgumentNullException.ThrowIfNull(installed);
         ArgumentNullException.ThrowIfNull(field);
@@ -480,15 +429,29 @@ public sealed class OllamaModelsPresenter
             OllamaModelCatalog.OrderedByVerdict(installed.OrderBy(model => model, StringComparer.OrdinalIgnoreCase), model => model)
                 .FirstOrDefault();
 
+        // A FIELD THAT NAMES AN INSTALLED MODEL IS RIGHT, whatever just happened - a removed model reinstalled by
+        // another tool before this listing is installed again.
+        if (current.Length > 0 && Installed(current) is not null)
+        {
+            return null;
+        }
+
+        // Empty, or still the saved value the person has not touched: the app may choose. Anything else was typed.
+        var untouched = current.Length == 0 || OllamaModelCatalog.SameModel(current, saved);
+        if (!untouched)
+        {
+            return null;
+        }
+
         if (change.Downloaded && change.Changed is { } downloaded)
         {
-            // ONLY AN EMPTY FIELD IS FILLED, and with the model just downloaded - not whichever sorts first.
-            return current.Length == 0 ? Installed(downloaded) ?? Fallback() : null;
+            // The model just downloaded - not whichever sorts first.
+            return Installed(downloaded) ?? Fallback();
         }
 
         if (change.Removed && change.Changed is { } removed && OllamaModelCatalog.SameModel(current, removed))
         {
-            // The field named what is gone. Something that is installed, or empty when nothing is.
+            // The field named what is gone: something installed, or empty when nothing is.
             return Fallback() ?? string.Empty;
         }
 
@@ -510,13 +473,8 @@ public sealed class OllamaModelsPresenter
         }
     }
 
-    private void End(CancellationTokenSource? change)
+    private void End(CancellationTokenSource change)
     {
-        if (change is null)
-        {
-            return;
-        }
-
         lock (_lock)
         {
             if (ReferenceEquals(_change, change))
@@ -528,17 +486,37 @@ public sealed class OllamaModelsPresenter
         change.Dispose();
     }
 
-    private async Task<OllamaInventory?> InspectQuietlyAsync(string? endpoint, CancellationToken closing)
+    /// <summary>
+    /// Looks at Ollama and keeps the answer only if no later look has begun since: a slow answer never overwrites a
+    /// newer one. Returns the inventory seen and whether it was the one kept.
+    /// </summary>
+    private async Task<(OllamaInventory Inventory, bool Current)> InspectAsync(string? endpoint, CancellationToken closing)
+    {
+        var ticket = Interlocked.Increment(ref _inspections);
+        var inventory = await _host.InspectAsync(endpoint, closing).ConfigureAwait(false);
+        lock (_lock)
+        {
+            if (ticket != _inspections)
+            {
+                return (inventory, false);
+            }
+
+            _inventory = inventory;
+            return (inventory, true);
+        }
+    }
+
+    /// <summary>The look after a change: null when Ollama did not answer with a list, which the notice then says.</summary>
+    private async Task<(OllamaInventory? Inventory, bool Current)> InspectQuietlyAsync(string? endpoint, CancellationToken closing)
     {
         try
         {
-            Interlocked.Increment(ref _inspections);
-            var inventory = await _host.InspectAsync(endpoint, closing).ConfigureAwait(false);
-            return inventory.Server is OllamaServerState.Ready or OllamaServerState.NoModels ? inventory : null;
+            var (inventory, current) = await InspectAsync(endpoint, closing).ConfigureAwait(false);
+            return (inventory.Server is OllamaServerState.Ready or OllamaServerState.NoModels ? inventory : null, current);
         }
         catch (OperationCanceledException) when (closing.IsCancellationRequested)
         {
-            return null;
+            return (null, false);
         }
     }
 
@@ -673,21 +651,12 @@ public sealed class OllamaModelsPresenter
                 new("The Ollama endpoint must be on this PC, such as http://127.0.0.1:11434.", OllamaSetupAction.None, null, false),
             { Server: OllamaServerState.NotResponding } =>
                 new("Ollama isn't responding at this endpoint. Check that it's running, then choose Check again.", OllamaSetupAction.None, null, false),
-            { Server: OllamaServerState.NotListening, Start: OllamaStartability.Startable } =>
-                new("Ollama is installed but isn't running yet.", OllamaSetupAction.StartOllama, "Start Ollama", false),
-            { Server: OllamaServerState.NotListening, Start: OllamaStartability.LauncherNotFound } =>
-                new("EnviousWispr couldn't find Ollama on this PC. Ollama runs AI models on your PC: no API keys, completely free. After installing it, choose Check again.",
-                    OllamaSetupAction.DownloadOllama, "Download Ollama", false),
-            { Server: OllamaServerState.NotListening, Start: OllamaStartability.ExposedHost } =>
-                new("Ollama isn't running. Your OLLAMA_HOST setting would make it listen beyond this PC, so EnviousWispr won't start it for you. Start it yourself, then choose Check again.",
+            { Server: OllamaServerState.NotListening, OllamaFound: true } =>
+                new("Ollama is installed but isn't running. Start Ollama from the Start menu, then choose Check again.",
                     OllamaSetupAction.None, null, false),
-            { Server: OllamaServerState.NotListening, Start: OllamaStartability.Elevated } =>
-                new("Ollama isn't running. EnviousWispr is running as administrator, so it won't start Ollama for you. Start it yourself, then choose Check again.",
-                    OllamaSetupAction.None, null, false),
-            { Server: OllamaServerState.NotListening, Start: OllamaStartability.AlreadyRunning } =>
-                new("Ollama is running but not answering at this endpoint. Restart Ollama, then choose Check again.", OllamaSetupAction.None, null, false),
             { Server: OllamaServerState.NotListening } =>
-                new("Nothing is answering at this endpoint. Start Ollama there yourself, then choose Check again.", OllamaSetupAction.None, null, false),
+                new("EnviousWispr couldn't find Ollama on this PC. Ollama runs AI models on your PC: no API keys, completely free. After installing and starting it, choose Check again.",
+                    OllamaSetupAction.DownloadOllama, "Download Ollama", false),
             { Server: OllamaServerState.NoModels } =>
                 new($"Ollama needs a language model to polish your text. {recommended.DisplayName} did best in our tests: about {recommended.DownloadSize.TrimStart('~')}, and it runs entirely on your PC.",
                     OllamaSetupAction.DownloadRecommended, $"Download {recommended.DisplayName}", true),
@@ -697,14 +666,14 @@ public sealed class OllamaModelsPresenter
         };
     }
 
-    /// <summary>macOS writes the notes to follow a dash; here each stands on its own line, so it starts as a sentence.</summary>
-    private static string Sentence(string note) =>
-        note.Length == 0 ? note : string.Concat(char.ToUpper(note[0], CultureInfo.CurrentCulture).ToString(), note.AsSpan(1));
-
     private static string NameOf(string modelId) => OllamaModelCatalog.Offered(modelId)?.DisplayName ?? modelId;
 
     private static string SizeOf(string modelId) =>
         OllamaModelCatalog.Offered(modelId)?.DownloadSize.TrimStart('~') ?? "a few GB";
+
+    /// <summary>macOS writes the notes to follow a dash; here each stands on its own line, so it starts as a sentence.</summary>
+    private static string Sentence(string note) =>
+        note.Length == 0 ? note : string.Concat(char.ToUpper(note[0], CultureInfo.CurrentCulture).ToString(), note.AsSpan(1));
 
     private static string Bytes(long bytes) => bytes >= 1_000_000_000
         ? $"{(bytes / 1e9).ToString("0.0", CultureInfo.CurrentCulture)} GB"

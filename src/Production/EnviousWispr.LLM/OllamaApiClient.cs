@@ -66,8 +66,10 @@ public sealed partial class OllamaApiClient : IModelCatalog, IAsyncDisposable
         _ = OllamaEndpointPolicy.TryNormalize(endpoint, out _endpoint);
         _readinessTimeout = readinessTimeout ?? DefaultReadinessTimeout;
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(_readinessTimeout, TimeSpan.Zero);
+        // NO REDIRECTS: the endpoint is checked to be this PC, and a redirect would send the request wherever the
+        // answer pointed. A loopback Ollama never redirects. Ref: #213 review.
         _httpClient = messageHandler is null
-            ? new HttpClient()
+            ? new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
             : new HttpClient(messageHandler, disposeHandler: false);
         _httpClient.Timeout = Timeout.InfiniteTimeSpan;
     }

@@ -141,6 +141,11 @@ public sealed partial class OllamaApiClient
             {
                 return OllamaPullOutcome.Refused;
             }
+            catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+            {
+                // NOTHING ESCAPES A DOWNLOAD: a caller holding the page's one change must always get an ending.
+                return OllamaPullOutcome.Refused;
+            }
         }
     }
 
@@ -183,6 +188,19 @@ public sealed partial class OllamaApiClient
 
     /// <summary>One progress line: an update, an ending, or neither. Internal so the classification is tested directly.</summary>
     internal static (OllamaPullUpdate? Update, OllamaPullOutcome? Outcome) ReadPullLine(string line)
+    {
+        try
+        {
+            return ReadPullLineUnchecked(line);
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException or FormatException)
+        {
+            // A string the JSON reader cannot decode (a lone surrogate) throws from GetString, not from Parse.
+            throw new InvalidDataException("A progress line could not be read.", exception);
+        }
+    }
+
+    private static (OllamaPullUpdate? Update, OllamaPullOutcome? Outcome) ReadPullLineUnchecked(string line)
     {
         using var document = JsonDocument.Parse(line);
         var root = document.RootElement;
