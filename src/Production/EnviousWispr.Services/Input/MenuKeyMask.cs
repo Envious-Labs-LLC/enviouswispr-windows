@@ -18,7 +18,10 @@ namespace EnviousWispr.Services.Input;
 /// </remarks>
 internal static class MenuKeyMask
 {
-    /// <summary>Carried in the injected events' extra info, so the hook can tell its own mask from a person's key.</summary>
+    /// <summary>
+    /// Carried in the extra info of every keystroke the app itself sends - this mask, and the clipboard route's Ctrl+V
+    /// and Ctrl+C - so the app's own hook hands them straight on instead of offering them to a binding.
+    /// </summary>
     public static readonly nint Tag = 0x45574D4B;
 
     private const ushort VirtualKeyUnassigned = 0xE8;

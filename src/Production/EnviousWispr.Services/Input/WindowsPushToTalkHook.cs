@@ -284,7 +284,8 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
         {
             var keyboard = Marshal.PtrToStructure<LowLevelKeyboardData>(data);
 
-            // OUR OWN MASK, COMING BACK THROUGH: handed on untouched, never offered to a binding.
+            // OUR OWN KEYSTROKES, COMING BACK THROUGH - the mask, the clipboard route's Ctrl+V and Ctrl+C: handed on
+            // untouched, never offered to a binding. A person's key and another program's synthetic key carry no tag.
             if (keyboard.ExtraInfo == MenuKeyMask.Tag)
             {
                 return CallNextHookEx(_hook, code, message, data);

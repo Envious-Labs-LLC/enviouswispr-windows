@@ -6,6 +6,19 @@ namespace EnviousWispr.Services.Input;
 
 public sealed class WindowsForegroundTargetProvider : IForegroundTargetProvider
 {
+    /// <summary>The window in front and its process, read in microseconds - no UI Automation.</summary>
+    public static TargetWindowId? ForegroundWindow()
+    {
+        var handle = GetForegroundWindow();
+        if (handle == 0)
+        {
+            return null;
+        }
+
+        _ = GetWindowThreadProcessId(handle, out var processId);
+        return new TargetWindowId(handle, processId);
+    }
+
     public TargetWindowId? CaptureForegroundTarget()
     {
         var handle = GetForegroundWindow();

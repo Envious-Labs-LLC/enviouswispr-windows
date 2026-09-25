@@ -166,6 +166,79 @@ public sealed class LastDictationShortcutTests
         Assert.False(plain.Consume);
     }
 
+    /// <summary>Letting go of Alt and Shift while Z still repeats: the press stays the shortcut's to the end.</summary>
+    [Fact]
+    public void ReleasingTheModifiersMidPressDoesNotLeakRepeats()
+    {
+        var tracker = Tracker();
+
+        var down = tracker.Process(LetterZ, isKeyDown: true, AltShift);
+        var repeat = tracker.Process(LetterZ, isKeyDown: true, HotkeyModifiers.None);
+        var up = tracker.Process(LetterZ, isKeyDown: false, HotkeyModifiers.None);
+
+        Assert.True(down.Consume);
+        Assert.True(repeat.Consume);
+        Assert.Null(repeat.Signal);
+        Assert.True(up.Consume);
+    }
+
+    /// <summary>Pressed during a recording, it passed through; the recording ending mid-press does not fire it.</summary>
+    [Fact]
+    public void APressThatBeganDuringARecordingNeverFires()
+    {
+        var tracker = Tracker();
+        tracker.SetRecordingActive(active: true);
+
+        var down = tracker.Process(LetterZ, isKeyDown: true, AltShift);
+        tracker.SetRecordingActive(active: false);
+        var repeat = tracker.Process(LetterZ, isKeyDown: true, AltShift);
+        var up = tracker.Process(LetterZ, isKeyDown: false, AltShift);
+
+        Assert.False(down.Consume);
+        Assert.False(repeat.Consume);
+        Assert.Null(repeat.Signal);
+        Assert.False(up.Consume);
+    }
+
+    /// <summary>Recording on Z and Paste on Alt+Shift+Z share a key: a recording's press does not strand the paste.</summary>
+    [Fact]
+    public void ARecordingKeySharedWithThePasteKeyLeavesThePasteUsable()
+    {
+        var tracker = new HotkeyEdgeTracker(
+            new HotkeyBinding(LetterZ, HotkeyModifiers.None),
+            new HotkeyBinding(Escape, HotkeyModifiers.None),
+            new HotkeyBinding('W', HotkeyModifiers.Control | HotkeyModifiers.Alt),
+            DictationRecordingMode.PushToTalk,
+            typesCharacter: (_, _) => false,
+            pasteLast: new HotkeyBinding(LetterZ, AltShift));
+
+        var pasteDown = tracker.Process(LetterZ, isKeyDown: true, AltShift);
+        tracker.Process(LetterZ, isKeyDown: true, HotkeyModifiers.None);
+        tracker.Process(LetterZ, isKeyDown: false, HotkeyModifiers.None);
+        var again = tracker.Process(LetterZ, isKeyDown: true, AltShift);
+
+        Assert.Equal(PushToTalkSignal.PasteLast, pasteDown.Signal);
+        Assert.Equal(PushToTalkSignal.PasteLast, again.Signal);
+    }
+
+    /// <summary>A damaged version-16 file is refused as invalid, not thrown on by the migration.</summary>
+    [Fact]
+    public async Task ADamagedVersionSixteenFileIsInvalidNotAnException()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "settings.json");
+            var json = JsonSerializer.Serialize(AppSettings.Default with { SchemaVersion = 16 }, JsonSettingsStore.SerializerOptions);
+            var root = JsonNode.Parse(json)!.AsObject();
+            root["preferences"]!.AsObject()["dictation"] = null;
+            await File.WriteAllTextAsync(path, root.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var result = await new JsonSettingsStore(path).LoadAsync();
+
+            Assert.Equal(SettingsLoadStatus.Invalid, result.Status);
+        });
+    }
+
     /// <summary>An optional shortcut that cannot listen is switched off on its own; the hook is still built.</summary>
     [Theory]
     [InlineData("", LastDictationShortcutState.Unset)]

@@ -2019,8 +2019,19 @@ public partial class App : Application, IAsyncDisposable
         // anything can move it. Copy needs none. Neither is a dictation command. Ref: #206.
         if (args.Signal == PushToTalkSignal.PasteLast)
         {
-            var pressed = new WindowsForegroundTargetProvider().CaptureForegroundTarget();
-            _ = ReuseLastDictationAsync(LastDictationAction.Paste, LastDictationSource.Shortcut, pressed);
+            // The window only, here - microseconds. Naming its focused field takes UI Automation, which must not
+            // hold up the signal loop a recording key is waiting in, so it runs off it and is accepted only if the
+            // same window is still the one in front.
+            var pressedWindow = WindowsForegroundTargetProvider.ForegroundWindow();
+            _ = Task.Run(() =>
+            {
+                var captured = new WindowsForegroundTargetProvider().CaptureForegroundTarget();
+                var pressed = captured is { } target && pressedWindow is { } window &&
+                    target.Value == window.Value && target.ProcessId == window.ProcessId
+                        ? captured
+                        : null;
+                return ReuseLastDictationAsync(LastDictationAction.Paste, LastDictationSource.Shortcut, pressed);
+            });
             return;
         }
 

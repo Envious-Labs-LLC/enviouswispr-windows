@@ -2979,10 +2979,10 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        // THE LAST-DICTATION SHORTCUTS CAN BE REMOVED, the others cannot: Backspace or Delete with nothing held empties
-        // one of those two fields, which Save stores as "no shortcut". Every other field captures the key as before.
+        // THE LAST-DICTATION SHORTCUTS CAN BE REMOVED, the others cannot: Backspace with nothing held empties one of
+        // those two fields (Delete stays a key that can be bound), which Save stores as "no shortcut". Every other field captures the key as before.
         // Ref: #206.
-        if (e.Key is VirtualKey.Back or VirtualKey.Delete &&
+        if (e.Key == VirtualKey.Back &&
             (ReferenceEquals(box, PasteLastHotkeyTextBox) || ReferenceEquals(box, CopyLastHotkeyTextBox)) &&
             !IsHeld(VirtualKey.Control) && !IsHeld(VirtualKey.Menu) && !IsHeld(VirtualKey.Shift) &&
             !IsHeld(VirtualKey.LeftWindows) && !IsHeld(VirtualKey.RightWindows))
@@ -3063,6 +3063,14 @@ public sealed partial class MainWindow : Window, IDisposable
             e.Key is not (VirtualKey.Control or VirtualKey.Shift
                 or VirtualKey.LeftWindows or VirtualKey.RightWindows))
         {
+            return;
+        }
+
+        // A LONE MODIFIER IS A RECORDING KEY'S SHAPE, not a last-dictation shortcut's: those fire once per press and
+        // need an ordinary key, so the tap is not offered to their fields (Save would refuse it). Ref: #206.
+        if (ReferenceEquals(box, PasteLastHotkeyTextBox) || ReferenceEquals(box, CopyLastHotkeyTextBox))
+        {
+            e.Handled = true;
             return;
         }
 

@@ -90,7 +90,7 @@ public sealed class JsonPortableProfileService : IPortableProfileService
             };
             // As the settings load does: a profile from before the last-dictation shortcuts keeps its own keys
             // rather than being refused over the new Alt+Shift+Z default. Ref: #206.
-            if (profile is not null && schemaVersion < 11)
+            if (profile is { Preferences.Dictation: not null } && schemaVersion < 11)
             {
                 profile = profile with
                 {

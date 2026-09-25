@@ -75,7 +75,7 @@ public sealed class JsonSettingsStore : ISettingsStore
             };
             // A FILE FROM BEFORE THE LAST-DICTATION SHORTCUTS gains their defaults on load; one that already gave
             // Alt+Shift+Z to another key keeps its own binding rather than being refused and reset. Ref: #206.
-            if (settings is not null && schemaVersion < LastDictationShortcutsSchema)
+            if (settings is { Preferences.Dictation: not null } && schemaVersion < LastDictationShortcutsSchema)
             {
                 settings = settings with
                 {

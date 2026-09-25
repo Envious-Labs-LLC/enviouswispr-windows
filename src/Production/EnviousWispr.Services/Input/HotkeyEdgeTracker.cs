@@ -200,7 +200,58 @@ internal sealed class HotkeyEdgeTracker
         }
     }
 
+    /// <summary>
+    /// One decision per physical press for a key a last-dictation shortcut uses: its first key-down decides, and its
+    /// repeats and release follow that decision whatever changes in between. Ref: #206 review.
+    /// </summary>
+    /// <remarks>
+    /// WITHOUT THIS A PRESS COULD CHANGE HANDS HALF WAY. Release Alt and Shift while Z is still held and the repeats
+    /// no longer match the shortcut, so they went to the application while the release was still swallowed; press
+    /// the shortcut during a recording and end the recording while it is held, and a repeat fired the paste. Every
+    /// other key is untouched by this wrapper.
+    /// </remarks>
     public HotkeyEdgeDecision Process(uint virtualKey, bool isKeyDown, HotkeyModifiers activeModifiers)
+    {
+        lock (_sync)
+        {
+            if (!OneShots().Any(oneShot => oneShot.Binding.VirtualKey == virtualKey))
+            {
+                return ProcessCore(virtualKey, isKeyDown, activeModifiers);
+            }
+
+            if (isKeyDown && _oneShotKeyPresses.TryGetValue(virtualKey, out var consumedDown))
+            {
+                return new HotkeyEdgeDecision(Consume: consumedDown);
+            }
+
+            var decision = ProcessCore(virtualKey, isKeyDown, activeModifiers);
+            if (isKeyDown)
+            {
+                _oneShotKeyPresses[virtualKey] = decision.Consume;
+                return decision;
+            }
+
+            if (_oneShotKeyPresses.Remove(virtualKey, out var consumed))
+            {
+                decision = decision with { Consume = consumed };
+            }
+
+            foreach (var oneShot in OneShots())
+            {
+                if (oneShot.Binding.VirtualKey == virtualKey)
+                {
+                    oneShot.Held = false;
+                }
+            }
+
+            return decision;
+        }
+    }
+
+    /// <summary>What each key a one-shot uses did on its first key-down: true if the app consumed it.</summary>
+    private readonly Dictionary<uint, bool> _oneShotKeyPresses = new();
+
+    private HotkeyEdgeDecision ProcessCore(uint virtualKey, bool isKeyDown, HotkeyModifiers activeModifiers)
     {
         lock (_sync)
         {
