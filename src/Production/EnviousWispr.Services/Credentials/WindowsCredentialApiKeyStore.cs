@@ -145,6 +145,76 @@ public sealed class WindowsCredentialApiKeyStore : IApiKeyStore
         }
     }
 
+    /// <summary>
+    /// Deletes every credential this store's namespace owns, for "Delete all EnviousWispr data", and
+    /// returns how many could not be deleted. Throws when Windows cannot list them at all.
+    /// </summary>
+    /// <remarks>
+    /// ENUMERATED, NOT RECITED. A key stored under a provider this build no longer lists is still the
+    /// person's key and still this app's, so the store asks Windows for every generic credential under
+    /// its own prefix rather than deleting the three names it knows today.
+    ///
+    /// ONE LEVEL, EXACTLY THIS NAMESPACE. Windows matches the filter as "prefix.*", which would also
+    /// match a deeper namespace sharing the prefix - the production prefix is the stem of every
+    /// isolated UAT one. So a target is deleted only when what follows the prefix is a single name
+    /// with no further dot, which is the shape <see cref="TargetName"/> writes. Anything outside the
+    /// prefix is never returned by the filter and never touched.
+    /// </remarks>
+    public int DeleteAll()
+    {
+        var failed = 0;
+        foreach (var target in OwnedTargets())
+        {
+            if (!CredDelete(target, CredTypeGeneric, 0) && Marshal.GetLastWin32Error() != ErrorNotFound)
+            {
+                failed++;
+            }
+        }
+
+        return failed;
+    }
+
+    /// <summary>The generic credentials directly under this store's prefix: the targets it wrote, and any it wrote for a provider since retired.</summary>
+    internal IReadOnlyList<string> OwnedTargets()
+    {
+        var namespacePrefix = _targetPrefix + ".";
+        if (!CredEnumerate(namespacePrefix + "*", 0, out var count, out var credentials))
+        {
+            var error = Marshal.GetLastWin32Error();
+            return error == ErrorNotFound
+                ? []
+                : throw new Win32Exception(error, "Credential Manager enumeration failed.");
+        }
+
+        try
+        {
+            var owned = new List<string>();
+            for (var index = 0; index < count; index++)
+            {
+                var pointer = Marshal.ReadIntPtr(credentials, index * IntPtr.Size);
+                var credential = Marshal.PtrToStructure<Credential>(pointer);
+                if (credential.Type != CredTypeGeneric ||
+                    credential.TargetName is not { } target ||
+                    !target.StartsWith(namespacePrefix, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var name = target[namespacePrefix.Length..];
+                if (name.Length > 0 && !name.Contains('.', StringComparison.Ordinal))
+                {
+                    owned.Add(target);
+                }
+            }
+
+            return owned;
+        }
+        finally
+        {
+            CredFree(credentials);
+        }
+    }
+
     internal string TargetName(PolishProvider provider) =>
         $"{_targetPrefix}.{ProviderSuffix(provider)}";
 
@@ -191,6 +261,14 @@ public sealed class WindowsCredentialApiKeyStore : IApiKeyStore
     [DllImport("Advapi32.dll", EntryPoint = "CredDeleteW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CredDelete(string target, uint type, uint flags);
+
+    [DllImport("Advapi32.dll", EntryPoint = "CredEnumerateW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CredEnumerate(
+        string filter,
+        uint flags,
+        out int count,
+        out IntPtr credentials);
 
     [DllImport("Advapi32.dll")]
     private static extern void CredFree(IntPtr buffer);

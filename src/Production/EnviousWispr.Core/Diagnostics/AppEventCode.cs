@@ -280,5 +280,13 @@ public enum AppEventCode
     /// <summary>A removal was refused or went unanswered.</summary>
     OllamaModelRemoveFailed,
 
+    // DELETE ALL ENVIOUSWISPR DATA (#42): whether it could run and whether it finished - never a path or a name.
+
+    /// <summary>The deletion was refused: a dictation, a file or an update had the session, or the data folder is a link, a file or a drive root and was left alone.</summary>
+    DataDeletionRefused,
+
+    /// <summary>At launch: the last deletion left entries in the data folder, or keys in Credential Manager.</summary>
+    DataDeletionIncomplete,
+
     UnhandledFailure,
 }

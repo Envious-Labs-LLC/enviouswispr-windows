@@ -4288,7 +4288,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 (FrameworkElement?)DiagnosticsSection),
             "settings-profile" => (
                 "Backup",
-                "Move your settings, words, and snippets to another PC.",
+                "Move your settings, words, and snippets to another PC, or keep a copy of everything and remove it all.",
                 (FrameworkElement?)PortableProfileSection),
             "settings-clipboard" => (
                 "Clipboard",
@@ -4327,11 +4327,15 @@ public sealed partial class MainWindow : Window, IDisposable
         // No "show everything" branch any more. Every tag resolves to exactly one section, so the
         // aggregate page cannot be reached by any route rather than merely being unlinked.
         var showTranscriptionCompanion = tag == "settings-transcription";
+        // Backup carries Your data beside the profile: export and deletion are about the same data the
+        // profile moves, and the page is where a person looks for what happens to it. Ref: #42.
+        var showBackupCompanion = tag == "settings-profile";
         foreach (var candidate in SettingsSections())
         {
             candidate.Visibility =
                 ReferenceEquals(candidate, section) ||
-                (showTranscriptionCompanion && ReferenceEquals(candidate, DeterministicCleanupSection))
+                (showTranscriptionCompanion && ReferenceEquals(candidate, DeterministicCleanupSection)) ||
+                (showBackupCompanion && ReferenceEquals(candidate, YourDataSection))
                     ? Visibility.Visible
                     : Visibility.Collapsed;
         }
@@ -4445,6 +4449,7 @@ public sealed partial class MainWindow : Window, IDisposable
         ClipboardSection,
         DiagnosticsSection,
         PortableProfileSection,
+        YourDataSection,
     ];
 
     private Border? HelpSectionFor(string tag) => tag switch
