@@ -19,6 +19,9 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
     private readonly SemaphoreSlim _transcriptionGate = new(1, 1);
     private const string AutomaticLanguage = "auto";
 
+    // THE LOAD-TIME LANGUAGE IS KEPT APART FROM THE CURRENT ONE. A take that names no language runs in
+    // the language this engine was built with, never in whatever the previous take switched it to.
+    private readonly string _initialLanguage;
     private string _language;
     private bool _disposed;
 
@@ -50,10 +53,11 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
                 .WithNoContext()
                 .WithTokenTimestamps()
                 .WithoutStringPool();
-            _language = string.IsNullOrWhiteSpace(options.Language) ||
+            _initialLanguage = string.IsNullOrWhiteSpace(options.Language) ||
                 string.Equals(options.Language, AutomaticLanguage, StringComparison.OrdinalIgnoreCase)
                 ? AutomaticLanguage
                 : options.Language;
+            _language = _initialLanguage;
             builder = _language == AutomaticLanguage
                 ? builder.WithLanguageDetection()
                 : builder.WithLanguage(_language);
@@ -80,7 +84,7 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
     public Task<Transcript> TranscribeAsync(
         CapturedAudio audio,
         CancellationToken cancellationToken = default) =>
-        TranscribeCoreAsync(audio, requestedLanguage: null, cancellationToken);
+        TranscribeCoreAsync(audio, _initialLanguage, cancellationToken);
 
     /// <summary>Transcribes this take in the language given, switching the loaded model to it first when it differs.</summary>
     /// <remarks>

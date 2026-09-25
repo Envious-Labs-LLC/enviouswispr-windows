@@ -248,7 +248,7 @@ static async Task<IReadOnlyList<LanguageSwitchResult>> RunLanguageSwitchAsync(
         "Release",
         "net10.0-windows10.0.26100.0",
         "EnviousWispr.RuntimeWorker.exe");
-    var current = "auto";
+    string? current = "auto";
     await using var engine = new RuntimeWorkerTranscriptionEngine(new RuntimeWorkerTranscriptionOptions(
         worker,
         modelDirectory,
@@ -289,6 +289,21 @@ static async Task<IReadOnlyList<LanguageSwitchResult>> RunLanguageSwitchAsync(
                 again.RecognitionLanguage == requested &&
                 string.Equals(afterSwitch.DetectedLanguage, expectedDetected, StringComparison.OrdinalIgnoreCase)));
     }
+
+    // A TAKE THAT NAMES NO LANGUAGE RUNS IN THE LOAD-TIME ONE, never in the previous take's. The engine was
+    // built on "auto"; after a French take, an omitted language must come back as "auto" and detect again.
+    current = "fr";
+    _ = await TranscribeAsync(engine, multilingual["fr"][0].Samples);
+    current = null;
+    var omitted = await TranscribeAsync(engine, multilingual["fr"][0].Samples);
+    results.Add(new LanguageSwitchResult(
+        "(omitted after fr)",
+        omitted.RecognitionLanguage,
+        omitted.DetectedLanguage,
+        0,
+        0,
+        Passed: omitted.RecognitionLanguage == "auto" &&
+            string.Equals(omitted.DetectedLanguage, "fr", StringComparison.OrdinalIgnoreCase)));
 
     return results;
 }
