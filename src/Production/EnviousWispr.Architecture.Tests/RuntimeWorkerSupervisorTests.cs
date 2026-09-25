@@ -220,7 +220,17 @@ public sealed class RuntimeWorkerSupervisorTests
         _ = worker.SafeHandle;
 
         var dispose = Task.Run(async () => await supervisor.DisposeAsync());
-        await Task.Delay(150);
+
+        // THE DISPOSAL MUST OWN THE TEARDOWN BEFORE THE ABORT ARRIVES - that ordering is what this test is about. A
+        // fixed 150 ms sleep assumed it, and on a slow CI runner the abort got there first and owned the teardown
+        // itself ("abort" where "stop" was expected), failing a test of the other ordering. Wait for the claim.
+        var claimDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (supervisor.LastTeardownOwner is null && DateTime.UtcNow < claimDeadline)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.Equal("stop", supervisor.LastTeardownOwner);
         var abort = await supervisor.AbortAsync(TimeSpan.FromSeconds(10)).WaitAsync(TimeSpan.FromSeconds(15));
         await dispose.WaitAsync(TimeSpan.FromSeconds(15));
 
