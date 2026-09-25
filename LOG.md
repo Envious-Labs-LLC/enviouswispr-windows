@@ -21,6 +21,60 @@ No machine paths, no personal data, no credentials. This file is public.
 
 ---
 
+## 2026-09-24 / 25: a sprint of macOS features, and what review found underneath them
+
+Eight pull requests merged: #205 (#163), #208 and #209 (#206 parts 1 and 2), #210 (UK spelling), #212 (Transcribe a
+File, #211), #214 (the Ollama model catalogue, #213) and #215 (the live preview model bench, #127). Two more are
+finished, green and rebased, and waiting only on a native keyboard check: #206 part 3 (the last-dictation shortcuts)
+and #207. Injected input did not reach Windows for most of the sprint - a system service held the foreground, so
+`SendInput` succeeded and the idle timer never moved - which is why those two wait; UI Automation, window messages
+and the app's journey route carried every other native check.
+
+### Decisions
+
+- **A file job holds the session for the whole file, and a record press during it is refused on the pill**
+  ("Transcribing a file. Please wait."). This is macOS's founder decision of 2026-09-04, adopted after the first
+  design - hold the engine one piece at a time so a dictation could go first - was shown by review to drop the
+  press silently instead. Never queued: a queued press opens the microphone after the key is let go.
+- **The app never starts Ollama.** Ollama's Windows desktop app applies its own saved network-exposure setting to
+  the server it starts, which the app cannot read reliably, and it can stop a server another tool started. The page
+  says how to start it instead. Recorded as a deliberate difference in `mac-parity-audit.md`.
+- **Live preview is chosen per tier by measurement, and the first numbers are in** (#127). On a free card every
+  candidate is far inside the 2.5 s cadence; on the processor the shipped Whisper Small runs within about 12% of
+  it, and Parakeet int8 costs 40 to 256 ms at near-Small accuracy on whole clips. Candidate tiers are for the
+  founder; the laptop processor, longer windows and partial-preview accuracy are the open measurements.
+
+### Defects that survived to be found by something else
+
+- **A session hold was granted while a recording was live.** The press hands the session gate back once capture has
+  started, so an update check, a last-dictation reuse or a file job could take the session mid-recording, and the
+  key's release then waited behind it with the microphone open. It predates this sprint; review of Transcribe a
+  File found it. `TryHold` now refuses while a recording is in flight, and every hold names its holder.
+- **The Ollama client followed redirects.** The loopback check was on the first URL only, so a redirect could take a
+  request anywhere. Discovery and polish had carried this since they were written; review of the catalogue found it.
+- **The live-region gate read one file of a window.** A status line written from `MainWindow.TranscribeFile.cs` was
+  invisible to it, so a screen reader was never told of progress and the gate passed. It now reads every partial
+  file of the class.
+- **A late answer applied in the context it was not asked in** - the one class that took four review rounds on the
+  Ollama block: a refresh drawn after a newer one, a removal sent to the endpoint the page was loading rather than
+  the one its rows came from, a picker listing applied after the provider changed. Fixed as a class once the second
+  round showed its shape: the window draws current state, a change carries the list the person clicked in, the
+  picker applies a listing only in its own context.
+- **The benchmark's first card figures measured someone else's work.** Another process held the card at 100%, and
+  Whisper Small read 3.5 s a pass on an RTX 4090. The bench now refuses a busy card by name.
+
+### Facts that would cost a day
+
+- **The Win32 Open dialog a WinUI app shows lives in another process**, so a search for it by the app's process id
+  finds nothing; it is a child of the app's window in the UI Automation tree. Its file-name box is exposed as a
+  bare `Pane` with no Value pattern: set it with `WM_SETTEXT` on the `Edit` inside `ComboBoxEx32` id 1148, and read
+  it back with `WM_GETTEXTLENGTH`, not `GetWindowTextLength`, which returns 0 across processes. Open is `BM_CLICK` on
+  control id 1.
+- **A `TextBlock` with `AutomationProperties.Name` reports that name, not its text**, to UI Automation - a transcript
+  labelled "Transcript" read as ten characters. Read the text through the Text pattern.
+- **Under the Windows display driver model, `nvidia-smi` reports no per-process video memory** (N/A); a card figure
+  for one process is an estimate from the card's total.
+
 ## 2026-09-21: plan 2, from 6.5 to 8.5
 
 ### The reviewer's own plan, landed, and its own regrade
