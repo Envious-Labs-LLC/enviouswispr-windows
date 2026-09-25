@@ -150,7 +150,10 @@ public sealed partial class MainWindow : Window, IDisposable
         // pasted sentences nobody said (#101): the engine elaborates room noise into fluent prose,
         // where Parakeet degrades into a fragment a person can see is wrong. Until that closes, the
         // card says so, and the sentence names the condition rather than the mechanism.
-        new("Whisper", "Multilingual, but not yet recommended: with room noise it can add words that were never spoken."),
+        // THE CARD ALSO SAYS WHERE IT IS FAST. Whisper runs on an NVIDIA card or on the processor, and on
+        // the processor a 10-second take measured 11.7 to 32.2 s (#47); founder decision 2026-09-25: say
+        // "NVIDIA recommended" rather than build an AMD and Intel graphics path before launch.
+        new("Whisper", "Multilingual, but not yet recommended: with room noise it can add words that were never spoken. Best with an NVIDIA graphics card; on other PCs it is slow."),
     ];
 
     private readonly SelectableChoiceOption[] PolishProviderChoices =
