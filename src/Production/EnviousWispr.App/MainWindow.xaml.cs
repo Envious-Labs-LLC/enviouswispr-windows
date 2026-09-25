@@ -1192,10 +1192,12 @@ public sealed partial class MainWindow : Window, IDisposable
                 break;
             case SavedDictationPasteOutcome.MayHavePasted:
                 // NOT "NOTHING WAS TYPED", AND NO INVITATION TO PRESS AGAIN: the words may already be there, and a
-                // second paste would put them in twice. Home keeps its copy.
+                // second paste would put them in twice. Only Undo promises a copy: Home keeps it, and a History entry may not.
                 ShowMessage(
                     "Your dictation may have been pasted",
-                    "EnviousWispr could not confirm it. Check the app before you try again. The text is still on Home and in History.",
+                    undo
+                        ? "EnviousWispr could not confirm it. Check the app before you try again. The text is still on Home."
+                        : "EnviousWispr could not confirm it. Check the app before you try again.",
                     InfoBarSeverity.Warning);
                 break;
             case SavedDictationPasteOutcome.NoLongerAvailable:
