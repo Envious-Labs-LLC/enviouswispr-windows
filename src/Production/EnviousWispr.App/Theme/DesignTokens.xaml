@@ -48,6 +48,15 @@
             <Color x:Key="BrandToggleOnColor">#00A366</Color>
             <SolidColorBrush x:Key="BrandToggleOnBrush" Color="#00A366" />
             <Color x:Key="BrandToggleOffColor">#9B8EB8</Color>
+            <!-- THE OFF TRACK'S HOVER, PRESSED AND DISABLED LOOKS. WinUI's ToggleSwitch animates these six with LinearColorKeyFrame,
+                 so they must be COLOURS. They were overridden as brushes in the window's resources, which WinUI ignored without a
+                 word: a disabled off switch drew no track at all, only a grey dot (seen on Diagnostics, 2026-09-25). -->
+            <StaticResource x:Key="ToggleSwitchFillOffPointerOver" ResourceKey="BrandToggleOffColor" />
+            <StaticResource x:Key="ToggleSwitchStrokeOffPointerOver" ResourceKey="BrandToggleOffColor" />
+            <StaticResource x:Key="ToggleSwitchFillOffPressed" ResourceKey="BrandToggleOffColor" />
+            <StaticResource x:Key="ToggleSwitchStrokeOffPressed" ResourceKey="BrandToggleOffColor" />
+            <StaticResource x:Key="ToggleSwitchFillOffDisabled" ResourceKey="BrandCardBgColor" />
+            <StaticResource x:Key="ToggleSwitchStrokeOffDisabled" ResourceKey="BrandToggleOffColor" />
             <SolidColorBrush x:Key="BrandToggleOffBrush" Color="#9B8EB8" />
             <!--
                 A CONTROL BOUNDARY IS NOT A DIVIDER, AND SHARING A TOKEN MADE THEM ONE. A
@@ -148,6 +157,15 @@
             <Color x:Key="BrandToggleOnColor">#5CC99A</Color>
             <SolidColorBrush x:Key="BrandToggleOnBrush" Color="#5CC99A" />
             <Color x:Key="BrandToggleOffColor">#4A4360</Color>
+            <!-- THE OFF TRACK'S HOVER, PRESSED AND DISABLED LOOKS. WinUI's ToggleSwitch animates these six with LinearColorKeyFrame,
+                 so they must be COLOURS. They were overridden as brushes in the window's resources, which WinUI ignored without a
+                 word: a disabled off switch drew no track at all, only a grey dot (seen on Diagnostics, 2026-09-25). -->
+            <StaticResource x:Key="ToggleSwitchFillOffPointerOver" ResourceKey="BrandToggleOffColor" />
+            <StaticResource x:Key="ToggleSwitchStrokeOffPointerOver" ResourceKey="BrandToggleOffColor" />
+            <StaticResource x:Key="ToggleSwitchFillOffPressed" ResourceKey="BrandToggleOffColor" />
+            <StaticResource x:Key="ToggleSwitchStrokeOffPressed" ResourceKey="BrandToggleOffColor" />
+            <StaticResource x:Key="ToggleSwitchFillOffDisabled" ResourceKey="BrandCardBgColor" />
+            <StaticResource x:Key="ToggleSwitchStrokeOffDisabled" ResourceKey="BrandToggleOffColor" />
             <SolidColorBrush x:Key="BrandToggleOffBrush" Color="#4A4360" />
             <!-- 3.55:1 on the card, 3.99:1 on the field fill. See the light block. -->
             <Color x:Key="BrandControlBorderColor">#75708C</Color>
@@ -226,6 +244,15 @@
             <Color x:Key="BrandToggleOnColor">{ThemeResource SystemColorHighlightColor}</Color>
             <SolidColorBrush x:Key="BrandToggleOnBrush" Color="{ThemeResource SystemColorHighlightColor}" />
             <Color x:Key="BrandToggleOffColor">{ThemeResource SystemColorGrayTextColor}</Color>
+            <!-- THE OFF TRACK'S HOVER, PRESSED AND DISABLED LOOKS. WinUI's ToggleSwitch animates these six with LinearColorKeyFrame,
+                 so they must be COLOURS. They were overridden as brushes in the window's resources, which WinUI ignored without a
+                 word: a disabled off switch drew no track at all, only a grey dot (seen on Diagnostics, 2026-09-25). -->
+            <StaticResource x:Key="ToggleSwitchFillOffPointerOver" ResourceKey="SystemColorGrayTextColor" />
+            <StaticResource x:Key="ToggleSwitchStrokeOffPointerOver" ResourceKey="SystemColorGrayTextColor" />
+            <StaticResource x:Key="ToggleSwitchFillOffPressed" ResourceKey="SystemColorGrayTextColor" />
+            <StaticResource x:Key="ToggleSwitchStrokeOffPressed" ResourceKey="SystemColorGrayTextColor" />
+            <StaticResource x:Key="ToggleSwitchFillOffDisabled" ResourceKey="SystemColorWindowColor" />
+            <StaticResource x:Key="ToggleSwitchStrokeOffDisabled" ResourceKey="SystemColorGrayTextColor" />
             <SolidColorBrush x:Key="BrandToggleOffBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
             <Color x:Key="BrandControlBorderColor">{ThemeResource SystemColorWindowTextColor}</Color>
             <SolidColorBrush x:Key="BrandControlBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
