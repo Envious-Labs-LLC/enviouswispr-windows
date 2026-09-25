@@ -224,10 +224,13 @@ worker answered first is INSTRUMENT INVALID and asks to be re-run. Live Preview 
 synthetic-hotkey take. Every journey now also refuses to pass if the app exits leaving any runtime worker it started
 still running (`strayWorkerCount`), whichever take started it.
 
-Add `--live-preview` to the same command when the gitignored small preview model is installed. On a machine with
-an NVIDIA card, also set `ENVIOUSWISPR_CUDA_RUNTIME_DIR` to a directory holding the CUDA runtime: the isolated
-profile has no `runtime/cuda`, and the preview asks for the card without checking for it, so every take records
-`LivePreviewFailed/RuntimeWorker` and the journey fails (#163). The guided mode
+Add `--live-preview` to the same command when the gitignored small preview model is installed. The isolated
+profile has no `runtime/cuda`. Whisper - the preview and the final engine alike - takes the card only when its own
+three CUDA files (cuBLAS, cuBLASLt, the CUDA runtime; not Parakeet's twelve) are in one of the places the probe
+looks: `ENVIOUSWISPR_CUDA_RUNTIME_DIR`, the app's folder, its `runtimes/cuda/win-x64` folder, or PATH. Otherwise
+both run on the processor; set the variable to exercise the card. The result's
+`provider` field is the HARNESS's own selection, made with every channel's `runtime/cuda` in view, not the app's
+(#163). The guided mode
 passes only when the real global hook starts and stops recording, production WASAPI captures the spoken phrase,
 the real worker and deterministic pipeline complete, the known public word appears in the native edit target,
 the app exits cleanly, and no owned worker remains. It retains the same content-free boolean, character-count,
