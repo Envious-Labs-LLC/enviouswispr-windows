@@ -358,18 +358,11 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
             return;
         }
 
-        var runtimeDirectory = Path.GetFullPath(options.CudaRuntimeDirectory);
-        if (!Directory.Exists(runtimeDirectory))
+        // THE SAME MECHANISM THE WORKER USES, NOT PATH, which a packaged process never searches for a DLL.
+        // Kept here as well so a harness that runs this engine in its own process gets the same search.
+        if (NativeRuntimeSearchPath.Configure(options.CudaRuntimeDirectory) != NativeRuntimeSearchPathOutcome.Added)
         {
             throw CreateFailure(AppErrorCode.RuntimeProviderUnavailable);
-        }
-
-        var currentPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        if (!currentPath.Split(Path.PathSeparator).Contains(runtimeDirectory, StringComparer.OrdinalIgnoreCase))
-        {
-            Environment.SetEnvironmentVariable(
-                "PATH",
-                runtimeDirectory + Path.PathSeparator + currentPath);
         }
     }
 

@@ -149,9 +149,13 @@ try {
             "$(MarkdownCell "$($row.Kind): $($row.License)") | $(MarkdownCell $row.Sha256) |")
     }
     $lines.Add('')
-    $lines.Add('Model packs, CUDA redistributables, and EG-1 are separately delivered artifacts. Their signed model')
-    $lines.Add('manifests must carry the exact upstream license notice and acceptance requirements; this NuGet')
-    $lines.Add('inventory does not approve or replace those notices. A public release remains blocked until every')
+    $lines.Add('Model packs, CUDA redistributables, and EG-1 are separately delivered artifacts, outside this NuGet')
+    $lines.Add('inventory. The NVIDIA CUDA and cuDNN runtime libraries are not in the Store package: they are the')
+    $lines.Add('`cuda-runtime` delivery manifest, downloaded only on an NVIDIA PC. That manifest names the NVIDIA CUDA')
+    $lines.Add('Toolkit EULA (https://docs.nvidia.com/cuda/eula/) and the NVIDIA cuDNN Software License Agreement')
+    $lines.Add('(https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html); the founder approves')
+    $lines.Add('those terms in the artifact license inventory. This NuGet inventory approves no separately delivered')
+    $lines.Add('artifact. A public release remains blocked until every')
     $lines.Add('shipped artifact has a reviewed license record. Source evidence and open decisions are tracked in')
     $lines.Add('`docs/distribution/artifact-license-inventory.md`.')
     # Keep generated Markdown stable across Windows and Linux validation hosts.

@@ -36,8 +36,12 @@ the result. Canonical validation rejects missing license metadata or notice drif
 | Whisper.net.Runtime.Cuda.Windows | 1.9.1 | expression: MIT | not-applicable |
 | Whisper.net.Runtime.Metal | 1.9.1 | expression: MIT | not-applicable |
 
-Model packs, CUDA redistributables, and EG-1 are separately delivered artifacts. Their signed model
-manifests must carry the exact upstream license notice and acceptance requirements; this NuGet
-inventory does not approve or replace those notices. A public release remains blocked until every
+Model packs, CUDA redistributables, and EG-1 are separately delivered artifacts, outside this NuGet
+inventory. The NVIDIA CUDA and cuDNN runtime libraries are not in the Store package: they are the
+`cuda-runtime` delivery manifest, downloaded only on an NVIDIA PC. That manifest names the NVIDIA CUDA
+Toolkit EULA (https://docs.nvidia.com/cuda/eula/) and the NVIDIA cuDNN Software License Agreement
+(https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html); the founder approves
+those terms in the artifact license inventory. This NuGet inventory approves no separately delivered
+artifact. A public release remains blocked until every
 shipped artifact has a reviewed license record. Source evidence and open decisions are tracked in
 `docs/distribution/artifact-license-inventory.md`.

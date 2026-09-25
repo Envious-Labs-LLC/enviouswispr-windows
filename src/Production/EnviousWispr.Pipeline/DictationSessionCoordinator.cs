@@ -50,6 +50,9 @@ public enum SessionHolder
 
     /// <summary>"Delete all EnviousWispr data" is running: held from the confirmation until the app has left.</summary>
     DataDeletion,
+
+    /// <summary>The speech engine is being restarted onto the NVIDIA card after its runtime was downloaded.</summary>
+    GraphicsRuntimeSwitch,
 }
 
 /// <summary>Why a hold was refused.</summary>

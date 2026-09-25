@@ -207,6 +207,18 @@ public enum AppEventCode
     /// <summary>The download stopped short; the category says whether the network, the disk, or the manifest was the reason.</summary>
     ModelDeliveryFailed,
 
+    // THE NVIDIA GRAPHICS RUNTIME (the cuda-runtime pack): delivered like a speech model, logged apart from
+    // one, because "the model downloaded" and "the card's libraries downloaded" answer different questions.
+
+    /// <summary>The graphics runtime download began, from the bundled manifest.</summary>
+    GraphicsRuntimeDeliveryStarted,
+
+    /// <summary>Every graphics runtime file arrived, matched its published hash, and the pack was activated.</summary>
+    GraphicsRuntimeDeliveryCompleted,
+
+    /// <summary>The graphics runtime download stopped short; the category says whether the network, the disk, or the manifest was the reason.</summary>
+    GraphicsRuntimeDeliveryFailed,
+
     // PASTE AND COPY LAST DICTATION (#206): one event per outcome, the same closed set as
     // LastDictationOutcome, so a reader can tell every ending apart without the words.
 

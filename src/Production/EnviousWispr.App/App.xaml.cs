@@ -54,7 +54,9 @@ public partial class App : Application, IAsyncDisposable
     private readonly ISystemResourceProbe _resourceProbe;
     private readonly WindowsCredentialApiKeyStore _credentialStore;
     private readonly string _dataDirectory;
-    private readonly string? _cudaRuntimeDirectory;
+    // RESOLVED AT EACH CONFIGURATION, NOT ONCE AT CONSTRUCTION: the graphics runtime pack can arrive while
+    // the app runs, and the next worker it starts must be given its folder.
+    private string? _cudaRuntimeDirectory;
     private readonly RuntimeResourceArbiter _resourceArbiter = new();
     private readonly LivePreviewController _livePreview;
     private DictationSessionCoordinator? _sessionCoordinator;
@@ -145,7 +147,6 @@ public partial class App : Application, IAsyncDisposable
         }
 
         _dataDirectory = Path.GetFullPath(dataDirectory);
-        _cudaRuntimeDirectory = ResolveCudaRuntimeDirectory(_dataDirectory);
         var diagnosticPath = Path.Combine(_dataDirectory, "diagnostics", "app.jsonl");
         IPrivacySafeTelemetryTransport? telemetryTransport = null;
         var allowLoopbackTelemetry = string.Equals(
@@ -351,6 +352,8 @@ public partial class App : Application, IAsyncDisposable
         _window.UpdateApplyRequested += OnUpdateApplyRequested;
         _window.ModelDownloadRequested += OnModelDownloadRequested;
         _window.ModelDownloadCancelRequested += OnModelDownloadCancelRequested;
+        _window.GraphicsRuntimeDownloadRequested += OnGraphicsRuntimeDownloadRequested;
+        _window.GraphicsRuntimeDownloadCancelRequested += OnGraphicsRuntimeDownloadCancelRequested;
         _window.KeybindCaptureActiveChanged += OnKeybindCaptureActiveChanged;
         _window.TranscribeFile = TranscribeFileAsync;
         _window.ExportUserData = ExportUserDataAsync;
@@ -425,6 +428,7 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
+        PresentGraphicsRuntime();
         await PresentModelDeliveryAsync().ConfigureAwait(true);
         if (Leaving)
         {
@@ -543,6 +547,8 @@ public partial class App : Application, IAsyncDisposable
             window.UpdateApplyRequested -= OnUpdateApplyRequested;
             window.ModelDownloadRequested -= OnModelDownloadRequested;
             window.ModelDownloadCancelRequested -= OnModelDownloadCancelRequested;
+            window.GraphicsRuntimeDownloadRequested -= OnGraphicsRuntimeDownloadRequested;
+            window.GraphicsRuntimeDownloadCancelRequested -= OnGraphicsRuntimeDownloadCancelRequested;
             window.KeybindCaptureActiveChanged -= OnKeybindCaptureActiveChanged;
             window.SpeedCheckRequested -= OnSpeedCheckRequested;
             window.MishearingSuggestionsRequested -= OnMishearingSuggestionsRequested;
@@ -1156,6 +1162,7 @@ public partial class App : Application, IAsyncDisposable
             _polishLifetime.Cancel();
             _startupCancellation.Cancel();
             _modelDownload?.Cancel();
+            _graphicsRuntimeDownload?.Cancel();
         },
         ReleaseInputs:
         [
@@ -1188,6 +1195,7 @@ public partial class App : Application, IAsyncDisposable
             // the exit has begun.
             new LifetimeStep("startup", () => Join(Interlocked.Exchange(ref _startup, null))),
             new LifetimeStep("model delivery", () => Join(Interlocked.Exchange(ref _modelDelivery, null))),
+            new LifetimeStep("graphics runtime delivery", () => Join(Interlocked.Exchange(ref _graphicsRuntimeDelivery, null))),
             new LifetimeStep("polish warm-up", async () =>
             {
                 if (_polishWarmup is { } warmup)
@@ -1713,6 +1721,8 @@ public partial class App : Application, IAsyncDisposable
 
     private async Task ConfigureTranscriptionAsync(FinalAsrEngine configuredEngine)
     {
+        // WHAT THE GRAPHICS RUNTIME OFFER READS, reset first so a configuration that stops early offers nothing.
+        _configuredTranscription = null;
         if (string.Equals(
                 Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_DISABLE_LOCAL_RUNTIME"),
                 "1",
@@ -1758,9 +1768,11 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
+        _cudaRuntimeDirectory = await ResolveCudaRuntimeDirectoryAsync().ConfigureAwait(true);
         var hardware = await new WindowsHardwareDiscovery(_cudaRuntimeDirectory)
             .ProbeAsync()
             .ConfigureAwait(true);
+        _configuredTranscription = new ConfiguredTranscription(engine, modelDirectory, hardware);
         var workerExecutable = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
         var previewModelDirectory = await ResolveModelDirectoryAsync(
             WhisperTranscriptionEngine.PreviewModelId,
@@ -2032,13 +2044,6 @@ public partial class App : Application, IAsyncDisposable
             WhisperPack: selection.ModelPack.Value,
             Language: language));
     }
-
-    // MOVED TO CORE, UNCHANGED IN BEHAVIOUR, so the harnesses that judge this app can ask the same
-    // question and get the same answer. They used to read the environment variable alone, so on a
-    // machine with the runtime provisioned and the variable unset the app ran on the card while the
-    // gate reported that CUDA could not load. Ref: #129.
-    private static string? ResolveCudaRuntimeDirectory(string dataDirectory) =>
-        CudaRuntimeDirectory.ForApplication(dataDirectory);
 
     private void OnPushToTalkSignalled(object? sender, PushToTalkSignalEvent args)
     {
@@ -2323,6 +2328,9 @@ public partial class App : Application, IAsyncDisposable
         // SAID FOR THE SAME REASON: the exit and the deletion run inside the hold, and a press refused in
         // silence then reads as a broken key rather than an app on its way out.
         SessionHolder.DataDeletion => DictationStatus.Busy("Deleting your EnviousWispr data. Please wait."),
+        // SAID, BECAUSE THE ENGINE IS DOWN FOR THE SECONDS IT TAKES TO START ON THE CARD, and a press refused in
+        // silence for that long reads as a broken key.
+        SessionHolder.GraphicsRuntimeSwitch => DictationStatus.Busy("Moving dictation to your graphics card. Please wait."),
         _ => null,
     };
 

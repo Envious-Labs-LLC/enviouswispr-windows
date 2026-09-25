@@ -138,7 +138,6 @@ return 0;
 
 static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments)
 {
-    ConfigureNativeRuntimePath(ReadStringArgument(arguments, "--asr-cuda-runtime-directory"));
     var modelDirectory = ReadStringArgument(arguments, "--asr-model-directory");
     if (modelDirectory is null)
     {
@@ -165,6 +164,16 @@ static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments
         "--asr-cpu-fallback-threads",
         defaultValue: Math.Clamp(Environment.ProcessorCount / 4, 2, 8));
     var cudaRuntimeDirectory = ReadStringArgument(arguments, "--asr-cuda-runtime-directory");
+    // BEFORE ANY ENGINE LOADS A NATIVE LIBRARY, and by the one mechanism a packaged process honours.
+    // PATH is not it: a packaged process never searches PATH for a DLL. See NativeRuntimeSearchPath.
+    var search = NativeRuntimeSearchPath.Configure(cudaRuntimeDirectory);
+    // A CUDA FOLDER WAS GIVEN AND COULD NOT BE MADE VISIBLE, so the card cannot load its libraries: go
+    // straight to the processor and say so the way an engine that failed to start on the card does
+    // (UsedFallback with RuntimeProviderUnavailable), rather than start a card engine that cannot load.
+    // No folder at all leaves the search as it was, and a card engine then finds its files beside the
+    // executable or not at all, as before.
+    var cardUnreachable = provider != RuntimeProviderKind.Cpu &&
+        search is NativeRuntimeSearchPathOutcome.DirectoryMissing or NativeRuntimeSearchPathOutcome.Refused;
     if (engineKind == FinalAsrEngine.Whisper)
     {
         return CreateWhisperEngine(
@@ -172,7 +181,8 @@ static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments
             modelDirectory,
             provider,
             intraOpThreads,
-            fallbackThreads);
+            fallbackThreads,
+            cardUnreachable);
     }
 
     if (engineKind is not (FinalAsrEngine.Parakeet or FinalAsrEngine.Automatic) ||
@@ -201,6 +211,11 @@ static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments
             fallbackThreads,
             InterOpThreads: 1,
             maximumTokensPerStep);
+    if (cardUnreachable)
+    {
+        return OnTheProcessor(new ParakeetEngineFactory().Create(fallback!).Engine);
+    }
+
     var creation = new ParakeetEngineFactory().Create(primary, fallback);
     return new TranscriptionEngineCreation(
         creation.Engine,
@@ -208,32 +223,13 @@ static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments
         creation.DegradedError);
 }
 
-static void ConfigureNativeRuntimePath(string? runtimeDirectory)
-{
-    if (string.IsNullOrWhiteSpace(runtimeDirectory))
-    {
-        return;
-    }
-
-    var fullPath = Path.GetFullPath(runtimeDirectory);
-    if (!Directory.Exists(fullPath))
-    {
-        return;
-    }
-
-    var currentPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-    if (!currentPath.Split(Path.PathSeparator).Contains(fullPath, StringComparer.OrdinalIgnoreCase))
-    {
-        Environment.SetEnvironmentVariable("PATH", fullPath + Path.PathSeparator + currentPath);
-    }
-}
-
 static TranscriptionEngineCreation CreateWhisperEngine(
     string[] arguments,
     string modelDirectory,
     RuntimeProviderKind provider,
     int threadCount,
-    int fallbackThreads)
+    int fallbackThreads,
+    bool cardUnreachable)
 {
     var packText = ReadStringArgument(arguments, "--asr-whisper-model-pack") ?? "quantized";
     if (!Enum.TryParse<WhisperModelPack>(packText, ignoreCase: true, out var pack))
@@ -267,12 +263,22 @@ static TranscriptionEngineCreation CreateWhisperEngine(
             UseFlashAttention: false);
     }
 
+    if (cardUnreachable)
+    {
+        return OnTheProcessor(new WhisperEngineFactory().Create(fallback!).Engine);
+    }
+
     var creation = new WhisperEngineFactory().Create(primary, fallback);
     return new TranscriptionEngineCreation(
         creation.Engine,
         creation.UsedFallback,
         creation.DegradedError);
 }
+
+static TranscriptionEngineCreation OnTheProcessor(ITranscriptionEngine engine) => new(
+    engine,
+    UsedFallback: true,
+    new AppError(AppErrorCode.RuntimeProviderUnavailable, AppErrorStage.FinalAsr, CanRetry: true));
 
 static async Task<RuntimeWorkerResponse> TranscribeAsync(
     RuntimeWorkerRequest request,

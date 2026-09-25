@@ -1,52 +1,28 @@
+using EnviousWispr.Core.Runtime;
+
 namespace EnviousWispr.Services.Runtime;
 
 /// <summary>Whether the CUDA runtime files each engine loads are on this machine.</summary>
 /// <remarks>
-/// TWO ENGINES, TWO FILE SETS, AND NEITHER MAY BORROW THE OTHER'S ANSWER. Parakeet runs on onnxruntime,
-/// whose CUDA provider needs cuBLAS, cuFFT, the CUDA runtime and all of cuDNN. whisper.cpp's CUDA backend
-/// imports cuBLAS alone and cuBLAS imports cuBLASLt (read from the PE import tables of the pinned Whisper.net
-/// 1.9.1 CUDA runtime). Asking Whisper about the onnxruntime set put a working card on the processor for
-/// want of cuDNN (#99); asking it nothing put a card with no files on the card and the worker failed to
-/// start (#163).
+/// THE FILE SETS ARE <see cref="CudaRuntimeLibraries"/>'S, where the reason each file is required is kept.
 ///
-/// `cudart64_13` IS REQUIRED BY THE MANAGED LOADER, NOT BY THE NATIVE IMPORTS. None of the three native
-/// libraries imports it; Whisper.net's own `CudaHelper` loads it by name to decide whether CUDA is
-/// available at all (the pinned `Whisper.net.dll` carries the name `cudart64_13`), so without it the
-/// CUDA runtime is never chosen.
-///
-/// THE SEARCH IS WHERE THE WORKER CAN FIND THEM: the configured runtime folder, the app's own folder, the
-/// folder the CUDA backend itself is loaded from (`runtimes/cuda/win-x64`, which the loader searches for
-/// that library's dependencies), and PATH - which the runtime worker prepends to and inherits. This is
-/// not full loader parity: System32 and the current directory are not searched, and no shipped layout
-/// puts cuBLAS in either.
+/// THE SEARCH IS WHERE THE WORKER CAN FIND THEM: the configured runtime folder (which the worker adds to
+/// its DLL search with <c>AddDllDirectory</c>), the app's own folder, and the folder the CUDA backend itself
+/// is loaded from (`runtimes/cuda/win-x64`, which the loader searches for that library's dependencies).
+/// NOT PATH, WHICH THE WORKER NO LONGER SEARCHES: a packaged process never searches PATH for a DLL, and
+/// the worker now switches its default search to the application folder, System32 and the folders it
+/// adds, packaged or not (<c>NativeRuntimeSearchPath</c>). A probe that still counted PATH would put a
+/// card on files the worker cannot load. System32 is not searched here either; no shipped layout puts
+/// cuBLAS there.
 /// </remarks>
 public static class CudaRuntimeDependencyProbe
 {
-    internal static IReadOnlyList<string> RequiredLibraryNames { get; } =
-    [
-        "cublasLt64_13.dll",
-        "cublas64_13.dll",
-        "cufft64_12.dll",
-        "cudart64_13.dll",
-        "cudnn64_9.dll",
-        "cudnn_adv64_9.dll",
-        "cudnn_engines_precompiled64_9.dll",
-        "cudnn_engines_runtime_compiled64_9.dll",
-        "cudnn_engines_tensor_ir64_9.dll",
-        "cudnn_graph64_9.dll",
-        "cudnn_heuristic64_9.dll",
-        "cudnn_ops64_9.dll",
-    ];
+    internal static IReadOnlyList<string> RequiredLibraryNames => CudaRuntimeLibraries.Required;
 
     internal static string WhisperCudaBackendDirectory { get; } =
         Path.Combine(AppContext.BaseDirectory, "runtimes", "cuda", "win-x64");
 
-    internal static IReadOnlyList<string> WhisperRequiredLibraryNames { get; } =
-    [
-        "cublasLt64_13.dll",
-        "cublas64_13.dll",
-        "cudart64_13.dll",
-    ];
+    internal static IReadOnlyList<string> WhisperRequiredLibraryNames => CudaRuntimeLibraries.Whisper;
 
     /// <summary>The onnxruntime (Parakeet) set.</summary>
     public static bool IsComplete(string? preferredRuntimeDirectory) =>
@@ -83,12 +59,6 @@ public static class CudaRuntimeDependencyProbe
             // Where Whisper.net loads ggml-cuda from; the loader searches a library's own folder for its
             // dependencies. onnxruntime loads nothing from here, so the Parakeet set does not look.
             AddDirectory(searchDirectories, WhisperCudaBackendDirectory);
-        }
-
-        foreach (var pathEntry in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
-                     .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            AddDirectory(searchDirectories, pathEntry);
         }
 
         return searchDirectories;

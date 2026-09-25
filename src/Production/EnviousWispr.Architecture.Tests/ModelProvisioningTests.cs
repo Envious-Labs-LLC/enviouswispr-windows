@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using EnviousWispr.Core.Runtime;
 using EnviousWispr.ModelDelivery;
 
 namespace EnviousWispr.Architecture.Tests;
@@ -121,6 +122,78 @@ public sealed class ModelProvisioningTests
         }
     }
 
+    /// <summary>Packs with no upstream that serves the raw file, so the mirror is their only source.</summary>
+    private static readonly HashSet<string> MirrorOnlyPacks = new(StringComparer.Ordinal) { CudaRuntimeDirectory.PackId };
+
+    [Fact]
+    public void TheGraphicsRuntimePackCarriesExactlyTheFilesTheProbeRequiresFromOnePinnedRelease()
+    {
+        // THE PACK AND THE PROBE MUST AGREE. A file the probe requires and the pack lacks is a download that
+        // installs and still leaves the card unused; a file the pack carries and nothing needs is size for
+        // nothing. Named here as literals as well, so a change to both at once still has to be made on purpose.
+        var loaded = BundledModelManifests.Load(
+            CudaRuntimeDirectory.PackId,
+            new ModelManifestVerifier(new Dictionary<string, string>()));
+        Assert.True(loaded.Succeeded, loaded.Status.ToString());
+        var files = loaded.Manifest!.Payload.Files.Select(file => file.RelativePath).Order(StringComparer.Ordinal).ToArray();
+        Assert.Equal(
+            EnviousWispr.Services.Runtime.CudaRuntimeDependencyProbe.RequiredLibraryNames.Order(StringComparer.Ordinal),
+            files);
+        Assert.Equal(
+            [
+                "cublas64_13.dll", "cublasLt64_13.dll", "cudart64_13.dll", "cudnn64_9.dll", "cudnn_adv64_9.dll",
+                "cudnn_engines_precompiled64_9.dll", "cudnn_engines_runtime_compiled64_9.dll",
+                "cudnn_engines_tensor_ir64_9.dll", "cudnn_graph64_9.dll", "cudnn_heuristic64_9.dll",
+                "cudnn_ops64_9.dll", "cufft64_12.dll",
+            ],
+            files);
+        Assert.All(
+            loaded.Manifest.Payload.Files,
+            file => Assert.Contains(
+                "/cuda-runtime/cublas13.6.0.2-cudart13.3.29-cudnn9.24.0.43-cufft12.3.0.29/",
+                file.Sources[0].AbsolutePath,
+                StringComparison.Ordinal));
+        Assert.Contains("docs.nvidia.com/cuda/eula", loaded.Manifest.Payload.License.Url.AbsoluteUri, StringComparison.Ordinal);
+        Assert.Contains("cudnn", loaded.Manifest.Payload.License.Notice, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheCorePointerReadNamesTheDirectoryTheStoreAdmittedThePackTo()
+    {
+        // THE TWIN. Core reads the store's pointer without the store (a harness has none); this installs a
+        // pack through the real store and requires both to name the same folder.
+        var verifier = new ModelManifestVerifier(new Dictionary<string, string>());
+        var manifest = verifier.VerifyBundled(BundledDocument(CudaRuntimeDirectory.PackId, "1.0.0"));
+        Assert.True(manifest.Succeeded);
+        using var handler = new RoutingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(ModelBytes) });
+        var data = Directory.CreateTempSubdirectory("EnviousWispr.CudaPack.").FullName;
+        try
+        {
+            var store = new ModelStore(
+                Path.Combine(data, "models"),
+                new HttpClient(handler, disposeHandler: false),
+                verifier,
+                new Version(1, 0, 0),
+                new FixedDiskSpaceProbe(long.MaxValue),
+                options: new ModelDeliveryOptions(DiskReserveBytes: 0, MaximumAttemptsPerSource: 1, RetryDelay: _ => TimeSpan.Zero));
+            Assert.Null(CudaRuntimeDirectory.ActivePackDirectory(data, path => File.Exists(path) ? File.ReadAllText(path) : null));
+
+            var result = await new ModelProvisioner(store, _ => manifest).ProvisionAsync(CudaRuntimeDirectory.PackId);
+
+            Assert.True(result.Succeeded, result.Failure.ToString());
+            var active = await store.OpenActiveOfflineAsync(CudaRuntimeDirectory.PackId);
+            Assert.True(active.Succeeded);
+            Assert.Equal(
+                Path.GetFullPath(active.Installed!.DirectoryPath),
+                CudaRuntimeDirectory.ActivePackDirectory(data, path => File.Exists(path) ? File.ReadAllText(path) : null));
+            Assert.True(File.Exists(Path.Combine(active.Installed.DirectoryPath, "model.bin")));
+        }
+        finally
+        {
+            Directory.Delete(data, recursive: true);
+        }
+    }
+
     [Fact]
     public void EveryBundledManifestInTheBuildVerifiesAndNamesItsOwnModel()
     {
@@ -131,6 +204,25 @@ public sealed class ModelProvisioningTests
             var loaded = BundledModelManifests.Load(modelId, verifier);
             Assert.True(loaded.Succeeded, $"{modelId}: {loaded.Status}");
             Assert.Equal(modelId, loaded.Manifest!.Payload.ModelId);
+            if (MirrorOnlyPacks.Contains(modelId))
+            {
+                // NO BYTE-IDENTICAL UPSTREAM EXISTS TO NAME AS A BACKUP. NVIDIA publishes these libraries only
+                // inside archives (Python wheels, redistributable zips), and a source must serve the file
+                // itself. So the mirror is the only source, every file is whole and under the edge-cache
+                // ceiling, and the prefix pins the upstream release it was taken from.
+                foreach (var file in loaded.Manifest.Payload.Files)
+                {
+                    var source = Assert.Single(file.Sources);
+                    Assert.Equal("models.enviouslabs.co", source.Host);
+                    Assert.StartsWith($"/{modelId}/", source.AbsolutePath, StringComparison.Ordinal);
+                    Assert.EndsWith("/" + file.RelativePath, source.AbsolutePath, StringComparison.Ordinal);
+                    Assert.False(file.IsSharded, $"{modelId}/{file.RelativePath} is sharded with no whole-file source to fall back to");
+                    Assert.True(file.SizeBytes <= 512L * 1024 * 1024, $"{modelId}/{file.RelativePath} is over the edge-cache ceiling");
+                }
+
+                continue;
+            }
+
             foreach (var file in loaded.Manifest.Payload.Files)
             {
                 // MIRROR FIRST, PINNED BACKUP SECOND, matching the macOS contract. A backup pinned to

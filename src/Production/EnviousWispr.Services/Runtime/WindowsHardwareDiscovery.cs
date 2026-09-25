@@ -55,10 +55,11 @@ public sealed class WindowsHardwareDiscovery : IHardwareDiscovery
 
         var directMlAvailable = ProbeNativeLibrary("DirectML.dll");
         var cuda = ProbeCudaDriver();
-        var onnxRuntimeCudaDependencies = CudaRuntimeDependencyProbe.IsComplete(
-            _cudaRuntimeDirectory ?? Environment.GetEnvironmentVariable("ENVIOUSWISPR_CUDA_RUNTIME_DIR"));
-        var whisperCudaDependencies = CudaRuntimeDependencyProbe.IsWhisperComplete(
-            _cudaRuntimeDirectory ?? Environment.GetEnvironmentVariable("ENVIOUSWISPR_CUDA_RUNTIME_DIR"));
+        // THE RESOLVED FOLDER ONLY. The environment override is honoured by CudaRuntimeDirectory, and only
+        // when it holds the whole runtime; reading the raw variable here as well let an incomplete override
+        // that the resolver had refused decide what this machine could do.
+        var onnxRuntimeCudaDependencies = CudaRuntimeDependencyProbe.IsComplete(_cudaRuntimeDirectory);
+        var whisperCudaDependencies = CudaRuntimeDependencyProbe.IsWhisperComplete(_cudaRuntimeDirectory);
         return new HardwareSnapshot(
             status,
             CurrentArchitecture(),
