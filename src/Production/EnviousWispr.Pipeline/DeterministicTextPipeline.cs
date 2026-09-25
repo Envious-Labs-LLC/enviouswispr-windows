@@ -339,10 +339,19 @@ public sealed class DeterministicTextPipeline
         /// <summary>10,000 words convert in well under this; the macOS budget for them is 150 ms.</summary>
         public TimeSpan Timeout => TimeSpan.FromMilliseconds(200);
 
+        /// <remarks>
+        /// A REPORTED LANGUAGE DECIDES; AN UNREPORTED ONE MUST READ AS ENGLISH. The other English-only stages
+        /// treat a Parakeet take - which reports no language - as English, and for numbers and emoji that is
+        /// harmless. Spelling is not: the table shares "color", "favor" and "honor" with Spanish and Portuguese.
+        /// So here an unreported language also has to pass <see cref="BritishSpellingConverter.LooksEnglish"/>
+        /// over the deterministic text, and a take that does not stays as it was said.
+        /// </remarks>
         public bool IsEnabled(DeterministicTextContext context) =>
             converter is not null &&
             context.Options.EnglishSpelling == EnglishSpelling.British &&
             IsEnglishDeterministicLanguage(context.Transcript) &&
+            (!string.IsNullOrWhiteSpace(context.Transcript.DetectedLanguage) ||
+                BritishSpellingConverter.LooksEnglish(context.Text)) &&
             (!afterPolish || context.PolishedText is not null);
 
         public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)

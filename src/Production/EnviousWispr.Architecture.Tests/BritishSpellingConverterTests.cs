@@ -219,3 +219,49 @@ public sealed class BritishSpellingConverterTests
         Assert.True(timer.ElapsedMilliseconds < 150, $"10,000 words took {timer.ElapsedMilliseconds} ms");
     }
 }
+
+/// <summary>What the Codex review of the port found where UTF-16 and Swift's Characters part company.</summary>
+public sealed class BritishSpellingConverterUnicodeTests
+{
+    private static readonly BritishSpellingConverter Converter = BritishSpellingConverter.LoadBundled();
+
+    public static TheoryData<string> JoinedToSomethingOutsideAscii => new()
+    {
+        string.Concat("cafe", ((char)0x0301).ToString(), "color"),   // a combining accent before the word
+        string.Concat("color", ((char)0x0301).ToString()),           // and after it
+        char.ConvertFromUtf32(0x10400) + "color",                     // a letter outside the basic plane
+        char.ConvertFromUtf32(0x1D7CE) + "color",                     // a mathematical digit
+    };
+
+    [Theory]
+    [MemberData(nameof(JoinedToSomethingOutsideAscii))]
+    public void AWordJoinedToANonAsciiNeighbourIsLeftAlone(string text)
+    {
+        var result = Converter.Convert(text);
+
+        Assert.Equal(text, result.Text);
+        Assert.Equal(0, result.Swaps);
+    }
+
+    /// <summary>A custom word carrying a combining accent is one word, not a word and a stray "color".</summary>
+    [Fact]
+    public void ACustomWordWithACombiningAccentIsOneWord()
+    {
+        var words = BritishSpellingConverter.ProtectedWords([string.Concat("cafe", ((char)0x0301).ToString(), "color")]);
+
+        Assert.DoesNotContain("color", words);
+        Assert.Equal("the colour", Converter.Convert("the color", words).Text);
+    }
+
+    [Theory]
+    [InlineData("we moved the color printer to the center", true)]
+    [InlineData("please send it over", true)]
+    [InlineData("El color del centro", false)]
+    [InlineData("a cor do centro por favor", false)]
+    [InlineData("color", false)]
+    [InlineData("", false)]
+    public void AnUnreportedLanguageConvertsOnlyWhenItReadsAsEnglish(string text, bool english)
+    {
+        Assert.Equal(english, BritishSpellingConverter.LooksEnglish(text));
+    }
+}

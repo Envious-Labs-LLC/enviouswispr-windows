@@ -11,7 +11,9 @@ The order is part of the product behavior and must not drift casually:
 5. Convert spoken punctuation and spoken emoji commands.
 6. Apply deterministic inverse text normalization for numbers, dates, times, currency, email, and URLs.
 7. When English (UK) spelling is chosen and the take is English, respell American forms the British way
-   (`BritishSpellingConverter`, the macOS table). The person's own Custom Words keep their spelling.
+   (`BritishSpellingConverter`, the macOS table). The person's own Custom Words keep their spelling. A take
+   whose engine reports no language (Parakeet) is respelled only when its words read as English
+   (`LooksEnglish`): the table shares "color" and "favor" with Spanish and Portuguese.
 8. Optionally polish through EG-1, Ollama, or the selected cloud provider.
 9. Respell the POLISH the British way too, so a model cannot undo the choice, then restore protected emoji
    and deterministic tokens that the model was not allowed to alter.

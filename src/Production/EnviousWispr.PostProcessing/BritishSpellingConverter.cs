@@ -86,11 +86,13 @@ public sealed class BritishSpellingConverter
             var lowered = canonical.ToLowerInvariant();
             words.Add(lowered);
             var word = new StringBuilder();
-            foreach (var character in lowered)
+            // By scalar, as the converter reads a word: a combining mark belongs to its letter, so
+            // "cafe" + accent + "color" is one word here, as it is when the text is converted.
+            foreach (var character in lowered.EnumerateRunes())
             {
-                if (char.IsLetter(character) || character is '\'' or '\u2019')
+                if (Rune.IsLetter(character) || IsMark(character) || character.Value is '\'' or RightSingleQuote)
                 {
-                    word.Append(character == '\u2019' ? '\'' : character);
+                    word.Append(character.Value == RightSingleQuote ? "'" : character.ToString());
                 }
                 else if (word.Length > 0)
                 {
@@ -107,6 +109,57 @@ public sealed class BritishSpellingConverter
 
         return words;
     }
+
+    /// <summary>
+    /// Whether a text with no language reported for it reads as English: at least one English function word
+    /// for every twelve words, and at least one in all. Ref: Codex review of this port.
+    /// </summary>
+    /// <remarks>
+    /// PARAKEET REPORTS NO LANGUAGE, AND THE TABLE SHARES WORDS WITH SPANISH AND PORTUGUESE - "color", "favor",
+    /// "honor", "humor", "labor". Treating an unreported language as English turned "El color del centro" into
+    /// "El colour del centro". macOS never meets this: it converts only under a language lock to English, which its
+    /// engine takes; Windows' default engine has no lock to take. So an unreported language converts only when
+    /// the words themselves say English, and the list holds only words other European languages do not use as
+    /// words ("a", "in", "on", "no", "he", "me", "i" and "or" are all left out for that reason). It errs toward NOT
+    /// converting: a short take with none of these words stays American, which is the product without the
+    /// setting, not a wrong word.
+    /// </remarks>
+    public static bool LooksEnglish(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        var words = 0;
+        var functionWords = 0;
+        var start = -1;
+        for (var index = 0; index <= text.Length; index++)
+        {
+            var inWord = index < text.Length && (IsAsciiLetter(text[index]) || (start >= 0 && text[index] is '\'' ));
+            if (inWord && start < 0)
+            {
+                start = index;
+            }
+            else if (!inWord && start >= 0)
+            {
+                words++;
+                if (EnglishFunctionWords.Contains(text[start..index].ToLowerInvariant()))
+                {
+                    functionWords++;
+                }
+
+                start = -1;
+            }
+        }
+
+        return functionWords >= Math.Max(1, words / 12);
+    }
+
+    private static readonly HashSet<string> EnglishFunctionWords = new(StringComparer.Ordinal)
+    {
+        "the", "and", "of", "to", "is", "are", "was", "were", "be", "been", "being", "it", "its", "it's",
+        "this", "that", "these", "those", "with", "for", "you", "your", "we", "our", "they", "their", "them",
+        "my", "have", "has", "had", "will", "would", "should", "could", "can", "not", "but", "from", "at",
+        "by", "about", "what", "which", "who", "when", "where", "how", "there", "here", "just", "if", "then",
+        "than", "also", "into", "over", "after", "before", "because", "please", "thanks", "i'm", "don't",
+    };
 
     /// <summary>Converts every eligible American spelling in <paramref name="text"/> to British.</summary>
     public Result Convert(
@@ -248,7 +301,7 @@ public sealed class BritishSpellingConverter
         if (start > 0)
         {
             var previous = text[start - 1];
-            if (IsCodeNeighbour(previous))
+            if (IsCodeNeighbourAt(text, start - 1))
             {
                 return true;
             }
@@ -263,7 +316,7 @@ public sealed class BritishSpellingConverter
         if (end < text.Length)
         {
             var next = text[end];
-            if (IsCodeNeighbour(next))
+            if (IsCodeNeighbourAt(text, end))
             {
                 return true;
             }
@@ -384,8 +437,37 @@ public sealed class BritishSpellingConverter
     private static bool IsClosingPunctuation(char character) =>
         character is '"' or '\'' or ')' or ']' or '\u201D' or '\u2019';
 
-    private static bool IsCodeNeighbour(char character) =>
-        char.IsLetterOrDigit(character) || character is '_' or '@' or '/' or '\\' or '#' or '$' or '=' or '<' or '>';
+    /// <summary>Whether the Unicode scalar at <paramref name="offset"/> joins the word it touches.</summary>
+    /// <remarks>
+    /// BY SCALAR, NOT BY UTF-16 UNIT, AND A COMBINING MARK COUNTS. Swift compares Characters - whole graphemes -
+    /// so the macOS converter sees an e with a combining accent, or a letter outside the basic plane, as a letter
+    /// beside the word. Read char by char, a lone mark or half a surrogate pair looked like punctuation here, and
+    /// the word attached to it was respelled. An unpaired surrogate counts as joined: nothing is known about it.
+    /// </remarks>
+    private static bool IsCodeNeighbourAt(string text, int offset)
+    {
+        if (offset > 0 && char.IsLowSurrogate(text[offset]) && char.IsHighSurrogate(text[offset - 1]))
+        {
+            offset--;
+        }
+
+        if (!Rune.TryGetRuneAt(text, offset, out var rune))
+        {
+            return true;
+        }
+
+        return Rune.IsLetter(rune) || Rune.IsNumber(rune) || IsMark(rune) ||
+            rune.Value is '_' or '@' or '/' or Backslash or '#' or '$' or '=' or '<' or '>';
+    }
+
+    private const int Backslash = 0x5C;
+
+    private const int RightSingleQuote = 0x2019;
+
+    private static bool IsMark(Rune rune) => Rune.GetUnicodeCategory(rune) is
+        System.Globalization.UnicodeCategory.NonSpacingMark or
+        System.Globalization.UnicodeCategory.SpacingCombiningMark or
+        System.Globalization.UnicodeCategory.EnclosingMark;
 
     private static bool IsNewline(char character) => character is '\n' or '\r' or '\u2028' or '\u2029' or '\u0085';
 

@@ -116,3 +116,47 @@ public sealed class EnglishSpellingPipelineTests
             [],
             options));
 }
+
+/// <summary>The spelling over the polish is logged with the polish half, where its outcome is known.</summary>
+public sealed class EnglishSpellingReceiptEmissionTests
+{
+    [Fact]
+    public void ThePolishHalfCarriesBothPolishStagesAndTheMainHalfNeither()
+    {
+        var logger = new RecordingLogger();
+        var effects = new EnviousWispr.App.Composition.TranscriptFinalizationEffects(logger, null!);
+        DeterministicStageReceipt[] receipts =
+        [
+            new(DeterministicTextStage.InverseTextNormalization, DeterministicStageStatus.Completed, false, 1),
+            new(DeterministicTextStage.EnglishSpelling, DeterministicStageStatus.Completed, true, 1),
+            new(DeterministicTextStage.EnglishSpellingAfterPolish, DeterministicStageStatus.Completed, true, 1),
+            new(DeterministicTextStage.EmojiRestoration, DeterministicStageStatus.Completed, false, 1),
+        ];
+
+        effects.EmitStageReceipts(receipts, emojiRestorationOnly: false);
+        var main = logger.Entries.Select(entry => entry.Stage).ToArray();
+        effects.EmitStageReceipts(receipts, emojiRestorationOnly: true);
+        var polish = logger.Entries.Skip(main.Length).Select(entry => entry.Stage).ToArray();
+
+        Assert.Equal([DeterministicTextStage.InverseTextNormalization, DeterministicTextStage.EnglishSpelling], main);
+        Assert.Equal([DeterministicTextStage.EnglishSpellingAfterPolish, DeterministicTextStage.EmojiRestoration], polish);
+    }
+}
+
+/// <summary>Parakeet reports no language; a Spanish take on it must not be respelled.</summary>
+public sealed class EnglishSpellingUnreportedLanguageTests
+{
+    [Fact]
+    public async Task ASpanishTakeWithNoReportedLanguageKeepsItsWords()
+    {
+        var result = await new DeterministicTextPipeline().ProcessAsync(new DeterministicTextRequest(
+            new Transcript(DictationSessionId.Create(), "El color del centro es favor", "parakeet"),
+            [],
+            new DeterministicTextOptions(true, false, false, false, EnglishSpelling.British)));
+
+        Assert.Equal("El color del centro es favor", result.Output.Text);
+        Assert.Equal(
+            DeterministicStageStatus.Skipped,
+            result.Receipts.Single(item => item.Stage == DeterministicTextStage.EnglishSpelling).Status);
+    }
+}
