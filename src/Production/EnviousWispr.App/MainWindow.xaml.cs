@@ -292,10 +292,12 @@ public sealed partial class MainWindow : Window, IDisposable
         // A keybind field waiting for a keystroke must not let the system-wide hook act on it.
         // Focus is what the hook needs to know, so focus is what is reported - see
         // KeybindCaptureActiveChanged.
+        // A CHORD HALF-CAPTURED IN ONE FIELD NEVER FINISHES IN ANOTHER: focus moving either way forgets it, so a set
+        // begun here cannot be completed there, nor a release seen elsewhere leave it held. Ref: #66 review.
         foreach (var box in new[] { HotkeyTextBox, CancelHotkeyTextBox, QuickAddHotkeyTextBox, PasteLastHotkeyTextBox, CopyLastHotkeyTextBox })
         {
-            box.GotFocus += (_, _) => KeybindCaptureActiveChanged?.Invoke(true);
-            box.LostFocus += (_, _) => KeybindCaptureActiveChanged?.Invoke(false);
+            box.GotFocus += (_, _) => { ForgetKeybindChord(); KeybindCaptureActiveChanged?.Invoke(true); };
+            box.LostFocus += (_, _) => { ForgetKeybindChord(); KeybindCaptureActiveChanged?.Invoke(false); };
         }
 
         // Subscribed HERE rather than with a KeyDown="" attribute in the markup, and the
@@ -539,6 +541,13 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void OnWindowActivated(object sender, WindowActivatedEventArgs args)
     {
+        // The window losing activation keeps its focused field, so a chord held while it did is forgotten here: its
+        // release goes to another window and would never reach the field. Ref: #66 review.
+        if (args.WindowActivationState == WindowActivationState.Deactivated)
+        {
+            ForgetKeybindChord();
+        }
+
         if (_initialFocusAssigned || args.WindowActivationState == WindowActivationState.Deactivated)
         {
             return;
@@ -3093,7 +3102,11 @@ public sealed partial class MainWindow : Window, IDisposable
 
         // A LONE MODIFIER IS A RECORDING KEY'S SHAPE, not a last-dictation shortcut's: those fire once per press and
         // need an ordinary key, so the tap is not offered to their fields (Save would refuse it). Ref: #206.
-        if (ReferenceEquals(box, PasteLastHotkeyTextBox) || ReferenceEquals(box, CopyLastHotkeyTextBox))
+        // ONLY THE RECORDING KEY MAY BE A SET: the cancel and Add-a-word keys need a key of their own, and one without
+        // leaves the whole hook refused (HotkeyGestureParser.ParseKeyed). Ref: #66 review.
+        if (ReferenceEquals(box, PasteLastHotkeyTextBox) ||
+            ReferenceEquals(box, CopyLastHotkeyTextBox) ||
+            (isSet && !ReferenceEquals(box, HotkeyTextBox)))
         {
             e.Handled = true;
             return;
@@ -3104,6 +3117,12 @@ public sealed partial class MainWindow : Window, IDisposable
             ? new HotkeyGesture(set, string.Empty).ToString()
             : new HotkeyGesture(HotkeyModifiers.None, candidate).ToString();
         box.SelectionStart = box.Text.Length;
+    }
+
+    private void ForgetKeybindChord()
+    {
+        _keybindModifierCandidate = null;
+        _keybindModifierSet = HotkeyModifiers.None;
     }
 
     /// <summary>The modifiers the keyboard state says are down right now, sides folded together.</summary>

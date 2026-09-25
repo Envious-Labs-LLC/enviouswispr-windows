@@ -268,8 +268,8 @@ public sealed class SettingsPresenter : IDisposable
     {
         ArgumentNullException.ThrowIfNull(input);
         var recording = HotkeyGestureParser.Parse(input.RecordingShortcut);
-        var cancel = HotkeyGestureParser.Parse(input.CancelShortcut);
-        var quickAdd = HotkeyGestureParser.Parse(input.QuickAddShortcut);
+        var cancel = HotkeyGestureParser.ParseKeyed(input.CancelShortcut);
+        var quickAdd = HotkeyGestureParser.ParseKeyed(input.QuickAddShortcut);
         if (!recording.Succeeded || !cancel.Succeeded || !quickAdd.Succeeded)
         {
             return new GeneralSaveOutcome(
