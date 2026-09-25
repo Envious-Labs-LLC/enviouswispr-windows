@@ -269,9 +269,11 @@ press-to-recording latency must fit comfortably inside the quiet window, or the 
 absence. The result adds a content-free `syntheticHotkey` object: the virtual key, how long it was held, the
 quiet window, the press-to-recording latency, and whether the target observed the phrase.
 
-The recording key is resolved through the app's own parser and key map from the isolated profile, in three
-states: no settings file resolves to the app's default (`F8`, `DictationPreferences.Default`); a gesture the
-app accepts is the binding; anything else is refused. Chords and modifier taps are refused as a declared
+Key-driven journeys write an isolated profile with F8 before launching the app.
+The resolver uses the app's parser and key map. Without a settings file it reads
+DictationPreferences.Default.PushToTalkGesture, currently Ctrl+Win, which this
+injector refuses as undrivable. Malformed profiles and unsupported bindings are
+also refused as instrument failures. Chords and modifier taps are refused as a declared
 boundary - their gesture completes on a 40 ms poll that an instant synthetic press can fall between - and
 that refusal says so rather than reporting a flaky hotkey.
 

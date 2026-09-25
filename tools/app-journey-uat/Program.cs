@@ -2571,9 +2571,9 @@ static SyntheticHotkeyEvidence DriveSyntheticHotkey(
 /// nothing was listening for and the FAIL was believed, on the one branch where a hotkey FAIL was most
 /// likely to be believed. The defect class is an instrument failure reported as a product verdict, and
 /// the design that stops it has THREE states, not two:
-///   absent    - no settings file in the isolated profile - resolves through the SAME default the app
-///               applies, DictationPreferences.Default, because a fresh profile really is running F8
-///               with nothing on disk, and refusing there would reject a valid configuration;
+///   absent    - resolves through DictationPreferences.Default.PushToTalkGesture;
+///               the current Ctrl+Win default is refused as undrivable below.
+///               Key-driven journeys therefore write an explicit F8 profile before launch;
 ///   valid     - a gesture the app's own parser accepts and its own key map can name - the binding;
 ///   malformed - anything else - REFUSED, because it says nothing about what the app is using.
 /// The parser and the key map are the app's own (WindowsVirtualKeyMap, through InternalsVisibleTo), so

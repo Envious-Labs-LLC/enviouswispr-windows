@@ -236,6 +236,15 @@ public sealed class JsonSettingsStore : ISettingsStore
             {
                 LaunchCount = legacy.LaunchCount,
                 HasCompletedOnboarding = legacy.HasCompletedOnboarding,
+                // A SCHEMA-1 FILE IS AN EXISTING USER, and it stored no recording key because every install then
+                // recorded on F8. The upgrade keeps them on F8 rather than the Ctrl+Win a fresh install starts on (#66).
+                Preferences = UserPreferences.Default with
+                {
+                    Dictation = DictationPreferences.Default with
+                    {
+                        PushToTalkGesture = "F8",
+                    },
+                },
             };
     }
 
