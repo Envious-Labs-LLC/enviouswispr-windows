@@ -100,7 +100,8 @@ public enum OllamaCheck
 
 /// <summary>How a download or removal went, and the page as it stands after it.</summary>
 /// <param name="Changed">The model the change was about; the picker repairs against it.</param>
-public sealed record OllamaModelChange(OllamaModelsView View, string? Changed, bool Downloaded, bool Removed);
+/// <param name="Endpoint">The endpoint the change was made against. The window repairs the picker only while the page still names it.</param>
+public sealed record OllamaModelChange(OllamaModelsView View, string? Changed, bool Downloaded, bool Removed, string? Endpoint);
 
 /// <summary>The Ollama models block of the AI Polish page: setup, the catalogue, downloads and removals. Ref: #213.</summary>
 /// <remarks>
@@ -136,6 +137,10 @@ public sealed class OllamaModelsPresenter
     private CancellationTokenSource? _change;
     private int _inspections;
 
+    /// <summary>The endpoint the list on the page came from; downloads and removals go to it, and a look at any other is not kept.</summary>
+    private string? _endpoint;
+    private bool _endpointKnown;
+
     public OllamaModelsPresenter(IOllamaModelHost host, PresentationAdmission? admission = null)
     {
         ArgumentNullException.ThrowIfNull(host);
@@ -167,7 +172,11 @@ public sealed class OllamaModelsPresenter
         }
     }
 
-    /// <summary>Looks at Ollama again. Null when a later look overtook this one, or the window is closing.</summary>
+    /// <summary>
+    /// Looks at Ollama at <paramref name="endpoint"/>, which becomes the endpoint the block is about. Null when a later
+    /// look overtook this one, or the window is closing. The window draws <see cref="View"/> when it draws, never an
+    /// older answer it was handed.
+    /// </summary>
     public async Task<OllamaModelsView?> RefreshAsync(string? endpoint)
     {
         if (!_admission.TryEnter(out var lease))
@@ -179,7 +188,7 @@ public sealed class OllamaModelsPresenter
         {
             try
             {
-                var (_, current) = await InspectAsync(endpoint, lease.Closing).ConfigureAwait(false);
+                var (_, current) = await InspectAsync(endpoint, claim: true, lease.Closing).ConfigureAwait(false);
                 if (!current)
                 {
                     return null;
@@ -247,10 +256,14 @@ public sealed class OllamaModelsPresenter
          "It is removed from Ollama on this PC, so other apps that use it lose it too. You can download it again later.",
          "Remove");
 
-    /// <summary>Downloads a catalogue model. Null when refused (busy, closing, not offered).</summary>
-    public async Task<OllamaModelChange?> DownloadAsync(string? endpoint, string modelId, IProgress<OllamaModelsView>? progress)
+    /// <summary>
+    /// Downloads a catalogue model from the endpoint the block's list came from. Null when refused (busy, closing, not
+    /// offered, or Ollama never looked at).
+    /// </summary>
+    public async Task<OllamaModelChange?> DownloadAsync(string modelId, IProgress<OllamaModelsView>? progress)
     {
-        if (OllamaModelCatalog.Offered(modelId) is null || !_admission.TryEnter(out var lease))
+        if (OllamaModelCatalog.Offered(modelId) is null || EndpointOfTheList() is not { } target ||
+            !_admission.TryEnter(out var lease))
         {
             return null;
         }
@@ -265,7 +278,7 @@ public sealed class OllamaModelsPresenter
             OllamaModelChange? result;
             try
             {
-                result = await DownloadInsideAsync(endpoint, modelId, progress, lease, change).ConfigureAwait(false);
+                result = await DownloadInsideAsync(target.Endpoint, modelId, progress, lease, change).ConfigureAwait(false);
             }
             finally
             {
@@ -331,7 +344,7 @@ public sealed class OllamaModelsPresenter
             var installed = _inventory is { Server: OllamaServerState.Ready } now &&
                 now.Models.Any(model => OllamaModelCatalog.SameModel(model.Id, modelId));
             _notice = DownloadNotice(outcome, modelId, refreshed: after is not null);
-            return new OllamaModelChange(Render(), modelId, Downloaded: installed, Removed: false);
+            return new OllamaModelChange(Render(), modelId, Downloaded: installed, Removed: false, endpoint);
         }
     }
 
@@ -347,10 +360,11 @@ public sealed class OllamaModelsPresenter
         }
     }
 
-    /// <summary>Removes a catalogue model, after the window asked. Null when refused.</summary>
-    public async Task<OllamaModelChange?> RemoveAsync(string? endpoint, string modelId)
+    /// <summary>Removes a catalogue model at the endpoint the block's list came from, after the window asked. Null when refused.</summary>
+    public async Task<OllamaModelChange?> RemoveAsync(string modelId)
     {
-        if (CheckRemove(modelId) != OllamaCheck.Confirm || !_admission.TryEnter(out var lease))
+        if (CheckRemove(modelId) != OllamaCheck.Confirm || EndpointOfTheList() is not { } target ||
+            !_admission.TryEnter(out var lease))
         {
             return null;
         }
@@ -365,7 +379,7 @@ public sealed class OllamaModelsPresenter
             OllamaModelChange? result;
             try
             {
-                result = await RemoveInsideAsync(endpoint, modelId, lease).ConfigureAwait(false);
+                result = await RemoveInsideAsync(target.Endpoint, modelId, lease).ConfigureAwait(false);
             }
             finally
             {
@@ -405,19 +419,22 @@ public sealed class OllamaModelsPresenter
                 OllamaDeleteOutcome.ServerUnavailable => "Ollama stopped answering. Start it and try again.",
                 _ => $"Ollama could not remove {NameOf(modelId)}. Try again, or remove it in Ollama.",
             };
-            return new OllamaModelChange(Render(), modelId, Downloaded: false, Removed: gone);
+            return new OllamaModelChange(Render(), modelId, Downloaded: false, Removed: gone, endpoint);
         }
     }
 
     /// <summary>
     /// What the model field should say after a download or a removal, or null to leave it as it is. Made only from a
     /// listing that succeeded (the caller's to check); never overwrites a model that is installed, nor one the person
-    /// typed this visit.
+    /// typed.
     /// </summary>
     /// <param name="installed">The picker's fresh listing of installed models; empty when there are none.</param>
     /// <param name="field">The model field as it reads now.</param>
-    /// <param name="saved">The model id as last saved. A field that still reads it has not been edited this visit.</param>
-    public static string? RepairSelection(IReadOnlyList<string> installed, string field, string? saved, OllamaModelChange change)
+    /// <param name="setByApp">
+    /// The value the app itself last put in the field - loaded from settings, chosen as a default, or repaired. A field
+    /// that still reads it has not been edited by the person, however many times the app changed it.
+    /// </param>
+    public static string? RepairSelection(IReadOnlyList<string> installed, string field, string? setByApp, OllamaModelChange change)
     {
         ArgumentNullException.ThrowIfNull(installed);
         ArgumentNullException.ThrowIfNull(field);
@@ -436,8 +453,8 @@ public sealed class OllamaModelsPresenter
             return null;
         }
 
-        // Empty, or still the saved value the person has not touched: the app may choose. Anything else was typed.
-        var untouched = current.Length == 0 || OllamaModelCatalog.SameModel(current, saved);
+        // Empty, or still what the app last put there: the app may choose again. Anything else was typed.
+        var untouched = current.Length == 0 || OllamaModelCatalog.SameModel(current, setByApp);
         if (!untouched)
         {
             return null;
@@ -487,16 +504,33 @@ public sealed class OllamaModelsPresenter
     }
 
     /// <summary>
-    /// Looks at Ollama and keeps the answer only if no later look has begun since: a slow answer never overwrites a
-    /// newer one. Returns the inventory seen and whether it was the one kept.
+    /// Looks at Ollama and keeps the answer only if it is still the latest look, at the endpoint the block is about. The
+    /// ticket is taken and compared under the same lock that installs the answer, so a slow answer never overwrites a
+    /// newer one. <paramref name="claim"/> makes <paramref name="endpoint"/> the block's endpoint (a refresh); without it
+    /// (the look after a change) a look at any other endpoint is not even made - it would supersede the block's own.
     /// </summary>
-    private async Task<(OllamaInventory Inventory, bool Current)> InspectAsync(string? endpoint, CancellationToken closing)
+    private async Task<(OllamaInventory? Inventory, bool Current)> InspectAsync(string? endpoint, bool claim, CancellationToken closing)
     {
-        var ticket = Interlocked.Increment(ref _inspections);
+        int ticket;
+        lock (_lock)
+        {
+            if (claim)
+            {
+                _endpoint = endpoint;
+                _endpointKnown = true;
+            }
+            else if (!IsTheBlocksEndpoint(endpoint))
+            {
+                return (null, false);
+            }
+
+            ticket = ++_inspections;
+        }
+
         var inventory = await _host.InspectAsync(endpoint, closing).ConfigureAwait(false);
         lock (_lock)
         {
-            if (ticket != _inspections)
+            if (ticket != _inspections || !IsTheBlocksEndpoint(endpoint))
             {
                 return (inventory, false);
             }
@@ -506,13 +540,25 @@ public sealed class OllamaModelsPresenter
         }
     }
 
+    private bool IsTheBlocksEndpoint(string? endpoint) =>
+        _endpointKnown && string.Equals(endpoint, _endpoint, StringComparison.Ordinal);
+
+    /// <summary>The endpoint the block's list came from, or null before Ollama has been looked at.</summary>
+    private (string? Endpoint, bool Known)? EndpointOfTheList()
+    {
+        lock (_lock)
+        {
+            return _endpointKnown ? (_endpoint, true) : null;
+        }
+    }
+
     /// <summary>The look after a change: null when Ollama did not answer with a list, which the notice then says.</summary>
     private async Task<(OllamaInventory? Inventory, bool Current)> InspectQuietlyAsync(string? endpoint, CancellationToken closing)
     {
         try
         {
-            var (inventory, current) = await InspectAsync(endpoint, closing).ConfigureAwait(false);
-            return (inventory.Server is OllamaServerState.Ready or OllamaServerState.NoModels ? inventory : null, current);
+            var (inventory, current) = await InspectAsync(endpoint, claim: false, closing).ConfigureAwait(false);
+            return (inventory?.Server is OllamaServerState.Ready or OllamaServerState.NoModels ? inventory : null, current);
         }
         catch (OperationCanceledException) when (closing.IsCancellationRequested)
         {

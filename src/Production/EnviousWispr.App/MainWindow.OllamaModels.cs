@@ -46,11 +46,12 @@ public sealed partial class MainWindow
             return;
         }
 
-        RenderOllamaModels(models.View with { Notice = models.View.Notice });
-        if (await models.RefreshAsync(NullIfBlank(OllamaEndpointTextBox.Text)).ConfigureAwait(true) is { } view &&
+        RenderOllamaModels(models.View);
+        // THE BLOCK AS IT IS WHEN DRAWN, never the answer this call was handed: a newer look may have finished first.
+        if (await models.RefreshAsync(NullIfBlank(OllamaEndpointTextBox.Text)).ConfigureAwait(true) is not null &&
             !_session.Closing)
         {
-            RenderOllamaModels(view);
+            RenderOllamaModels(models.View);
         }
     }
 
@@ -134,7 +135,7 @@ public sealed partial class MainWindow
                     return;
                 }
 
-                if (await models.RemoveAsync(NullIfBlank(OllamaEndpointTextBox.Text), row.Id).ConfigureAwait(true) is { } removed &&
+                if (await models.RemoveAsync(row.Id).ConfigureAwait(true) is { } removed &&
                     !_session.Closing)
                 {
                     await ApplyOllamaChangeAsync(removed).ConfigureAwait(true);
@@ -170,14 +171,13 @@ public sealed partial class MainWindow
         }
 
         var downloaded = await models.DownloadAsync(
-                NullIfBlank(OllamaEndpointTextBox.Text),
                 modelId,
                 // A PROGRESS VIEW QUEUED BEFORE THE DOWNLOAD ENDED IS NOT DRAWN AFTER IT: the final view is.
-                new Progress<OllamaModelsView>(view =>
+                new Progress<OllamaModelsView>(_ =>
                 {
                     if (models.Changing)
                     {
-                        RenderOllamaModels(view);
+                        RenderOllamaModels(models.View);
                     }
                 }))
             .ConfigureAwait(true);
@@ -190,13 +190,20 @@ public sealed partial class MainWindow
     }
 
     /// <summary>
-    /// Draws the block after a download or removal and repairs the picker - only while Ollama is still the provider. A
-    /// download stopped by switching to a cloud provider still ends here, and must not bring the Ollama controls back.
+    /// Draws the block after a download or removal and repairs the picker - only while Ollama is still the provider and
+    /// the endpoint is still the one the change was made against. A download stopped by switching to a cloud provider
+    /// still ends here, and must not bring the Ollama controls back; one made at an endpoint since edited must not
+    /// repair the field against another server's list.
     /// </summary>
     private async Task ApplyOllamaChangeAsync(OllamaModelChange change)
     {
-        RenderOllamaModels(change.View);
-        if (PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)) == PolishProvider.Ollama)
+        if (OllamaModels is { } models)
+        {
+            RenderOllamaModels(models.View);
+        }
+
+        if (PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)) == PolishProvider.Ollama &&
+            string.Equals(change.Endpoint, NullIfBlank(OllamaEndpointTextBox.Text), StringComparison.Ordinal))
         {
             await RefreshPolishModelChoicesAsync(PolishProvider.Ollama, chooseDefault: false, change).ConfigureAwait(true);
         }

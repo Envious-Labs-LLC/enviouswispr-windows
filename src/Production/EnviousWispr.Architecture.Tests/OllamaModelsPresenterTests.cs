@@ -84,7 +84,7 @@ public sealed class OllamaModelsPresenterTests
             return OllamaPullOutcome.Succeeded;
         };
 
-        var change = await presenter.DownloadAsync(null, "qwen3:0.6b", new Collect(views)).WaitAsync(Patience);
+        var change = await presenter.DownloadAsync("qwen3:0.6b", new Collect(views)).WaitAsync(Patience);
 
         var downloading = views.Select(view => view.Rows.Single(row => row.Id == "qwen3:0.6b")).ToArray();
         Assert.Contains(downloading, row => row is { Downloading: true, Action: OllamaRowAction.Stop, ProgressText: "Downloading... 12%" });
@@ -110,7 +110,7 @@ public sealed class OllamaModelsPresenterTests
         var presenter = new OllamaModelsPresenter(host);
         await presenter.RefreshAsync(null).WaitAsync(Patience);
 
-        var change = await presenter.DownloadAsync(null, "qwen3:0.6b", null).WaitAsync(Patience);
+        var change = await presenter.DownloadAsync("qwen3:0.6b", null).WaitAsync(Patience);
 
         Assert.False(change!.Downloaded);
         Assert.Equal(notice, change.View.Notice);
@@ -133,7 +133,7 @@ public sealed class OllamaModelsPresenterTests
         await presenter.RefreshAsync(null).WaitAsync(Patience);
         var inspections = host.Inspections;
 
-        var download = presenter.DownloadAsync(null, "qwen3:0.6b", null);
+        var download = presenter.DownloadAsync("qwen3:0.6b", null);
         await entered.Task.WaitAsync(Patience);
         presenter.Stop();
         var change = await download.WaitAsync(Patience);
@@ -153,8 +153,8 @@ public sealed class OllamaModelsPresenterTests
         await admission.CloseAsync().WaitAsync(Patience);
 
         Assert.Null(await presenter.RefreshAsync(null).WaitAsync(Patience));
-        Assert.Null(await presenter.DownloadAsync(null, "qwen3:0.6b", null).WaitAsync(Patience));
-        Assert.Null(await presenter.RemoveAsync(null, "tinyllama").WaitAsync(Patience));
+        Assert.Null(await presenter.DownloadAsync("qwen3:0.6b", null).WaitAsync(Patience));
+        Assert.Null(await presenter.RemoveAsync("tinyllama").WaitAsync(Patience));
         Assert.Equal(0, host.Pulls);
         Assert.Equal(0, host.Deletes);
         Assert.Equal(OllamaCheck.Confirm, presenter.CheckRemove("tinyllama"));
@@ -167,11 +167,11 @@ public sealed class OllamaModelsPresenterTests
         var presenter = new OllamaModelsPresenter(host);
         await presenter.RefreshAsync(null).WaitAsync(Patience);
 
-        Assert.Null(await presenter.RemoveAsync(null, "phi3").WaitAsync(Patience));
+        Assert.Null(await presenter.RemoveAsync("phi3").WaitAsync(Patience));
         Assert.Equal(0, host.Deletes);
 
         host.OnDelete = () => host.Inventory = Ready(("phi3", null, null));
-        var change = await presenter.RemoveAsync(null, "tinyllama").WaitAsync(Patience);
+        var change = await presenter.RemoveAsync("tinyllama").WaitAsync(Patience);
 
         Assert.True(change!.Removed);
         Assert.Equal("TinyLlama was removed.", change.View.Notice);
@@ -200,7 +200,7 @@ public sealed class OllamaModelsPresenterTests
         string[] installed,
         string? expected)
     {
-        var change = new OllamaModelChange(new OllamaModelsView(new OllamaSetupView("", OllamaSetupAction.None, null, true), [], null), changed, downloaded, !downloaded);
+        var change = new OllamaModelChange(new OllamaModelsView(new OllamaSetupView("", OllamaSetupAction.None, null, true), [], null), changed, downloaded, !downloaded, null);
 
         Assert.Equal(expected, OllamaModelsPresenter.RepairSelection(installed, field, saved, change));
     }
@@ -215,7 +215,7 @@ public sealed class OllamaModelsPresenterTests
         await presenter.RefreshAsync(null).WaitAsync(Patience);
         host.NextInspection = hold.Task;
 
-        var download = presenter.DownloadAsync(null, "qwen3:0.6b", null);
+        var download = presenter.DownloadAsync("qwen3:0.6b", null);
         await host.Held.Task.WaitAsync(Patience);
         host.Inventory = Ready(("gemma2", null, null));
         Assert.NotNull(await presenter.RefreshAsync(null).WaitAsync(Patience));
@@ -234,11 +234,76 @@ public sealed class OllamaModelsPresenterTests
         var presenter = new OllamaModelsPresenter(host);
         await presenter.RefreshAsync(null).WaitAsync(Patience);
 
-        var change = await presenter.DownloadAsync(null, "qwen3:0.6b", null).WaitAsync(Patience);
+        var change = await presenter.DownloadAsync("qwen3:0.6b", null).WaitAsync(Patience);
 
         Assert.StartsWith("Ollama could not download", change!.View.Notice, StringComparison.Ordinal);
         Assert.False(presenter.Changing);
         Assert.Equal(OllamaCheck.Proceed, presenter.CheckDownload("qwen3:0.6b"));
+    }
+
+    /// <summary>
+    /// A download finishes after the page moved to another endpoint: its look afterwards is not even made, and the page
+    /// keeps the other endpoint's list. Downloads go to the endpoint the list came from. Ref: #213 re-review.
+    /// </summary>
+    [Fact]
+    public async Task ADownloadThatEndsAfterTheEndpointChangedLeavesTheNewEndpointsList()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var host = new Host();
+        host.ByEndpoint["http://a:11434"] = Ready(("qwen3:0.6b", null, null));
+        host.ByEndpoint["http://b:11434"] = Ready(("gemma2", null, null));
+        host.OnPullAsync = async (_, _) =>
+        {
+            entered.SetResult();
+            await release.Task;
+            return OllamaPullOutcome.Succeeded;
+        };
+        var presenter = new OllamaModelsPresenter(host);
+        host.ByEndpoint["http://a:11434"] = Ready();
+        await presenter.RefreshAsync("http://a:11434").WaitAsync(Patience);
+        host.ByEndpoint["http://a:11434"] = Ready(("qwen3:0.6b", null, null));
+
+        var download = presenter.DownloadAsync("qwen3:0.6b", null);
+        await entered.Task.WaitAsync(Patience);
+        Assert.Equal("http://a:11434", host.LastPullEndpoint);
+        await presenter.RefreshAsync("http://b:11434").WaitAsync(Patience);
+        var inspections = host.Inspections;
+        release.SetResult();
+        var change = await download.WaitAsync(Patience);
+
+        Assert.Equal("http://a:11434", change!.Endpoint);
+        Assert.Equal(inspections, host.Inspections);
+        Assert.Contains(presenter.View.Rows, row => row is { Id: "gemma2", Installed: true });
+        Assert.DoesNotContain(presenter.View.Rows, row => row is { Id: "qwen3:0.6b", Installed: true });
+    }
+
+    [Fact]
+    public async Task NothingIsDownloadedOrRemovedBeforeOllamaHasBeenLookedAt()
+    {
+        var host = new Host { Inventory = Ready(("tinyllama", null, null)) };
+        var presenter = new OllamaModelsPresenter(host);
+
+        Assert.Null(await presenter.DownloadAsync("qwen3:0.6b", null).WaitAsync(Patience));
+        Assert.Null(await presenter.RemoveAsync("tinyllama").WaitAsync(Patience));
+        Assert.Equal(0, host.Pulls);
+        Assert.Equal(0, host.Deletes);
+    }
+
+    /// <summary>
+    /// A model the app selected after a download, then removed before saving: the field still reads what the app put
+    /// there, so it is repaired - comparing with the saved value called that an edit. Ref: #213 re-review.
+    /// </summary>
+    [Fact]
+    public void AModelTheAppSelectedIsStillTheAppsToRepairAfterItIsRemoved()
+    {
+        var view = new OllamaModelsView(new OllamaSetupView("", OllamaSetupAction.None, null, true), [], null);
+        var downloaded = new OllamaModelChange(view, "qwen3:0.6b", Downloaded: true, Removed: false, null);
+        var chosen = OllamaModelsPresenter.RepairSelection(["qwen3:0.6b"], "llama3", setByApp: "llama3", downloaded);
+        Assert.Equal("qwen3:0.6b", chosen);
+
+        var removed = new OllamaModelChange(view, "qwen3:0.6b", Downloaded: false, Removed: true, null);
+        Assert.Equal(string.Empty, OllamaModelsPresenter.RepairSelection([], chosen!, setByApp: chosen, removed));
     }
 
     private static OllamaInventory Ready(params (string Id, long? Size, string? Parameters)[] models) =>
@@ -273,9 +338,16 @@ public sealed class OllamaModelsPresenterTests
 
         public TaskCompletionSource Held { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public Dictionary<string, OllamaInventory> ByEndpoint { get; } = new(StringComparer.Ordinal);
+
         public Task<OllamaInventory> InspectAsync(string? endpoint, CancellationToken cancellationToken)
         {
             Inspections++;
+            if (endpoint is not null && ByEndpoint.TryGetValue(endpoint, out var there))
+            {
+                return Task.FromResult(there);
+            }
+
             if (NextInspection is { } held)
             {
                 NextInspection = null;
@@ -286,9 +358,12 @@ public sealed class OllamaModelsPresenterTests
             return Task.FromResult(Inventory);
         }
 
+        public string? LastPullEndpoint { get; private set; }
+
         public async Task<OllamaPullOutcome> PullAsync(string? endpoint, string modelId, IProgress<OllamaPullUpdate> progress, CancellationToken cancellationToken)
         {
             Pulls++;
+            LastPullEndpoint = endpoint;
             if (OnPullAsync is { } slow)
             {
                 return await slow(progress, cancellationToken);

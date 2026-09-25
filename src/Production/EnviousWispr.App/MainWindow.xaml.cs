@@ -3493,7 +3493,7 @@ public sealed partial class MainWindow : Window, IDisposable
             AutoStopSecondsBox.Value = preferences.Dictation.AutoStopSilenceSeconds;
             UpdateAutoStopAvailability();
             SelectChoice(PolishProviderChoices, PolishProviderIndex(preferences.Polish.Provider));
-            PolishModelTextBox.Text = preferences.Polish.ModelId ?? string.Empty;
+            PolishModelTextBox.Text = _polishModelSetByApp = preferences.Polish.ModelId ?? string.Empty;
             OllamaEndpointTextBox.Text = preferences.Polish.OllamaEndpoint ?? string.Empty;
             HistoryEnabledToggle.IsOn = preferences.History.IsEnabled;
             RetentionDaysBox.Value = preferences.History.RetentionDays;
@@ -3540,6 +3540,12 @@ public sealed partial class MainWindow : Window, IDisposable
             _settings.Preferences.Polish.Provider,
             chooseDefault: false);
     }
+
+    /// <summary>
+    /// What the app itself last wrote into the model field: loaded, chosen as a default, or repaired. The field still
+    /// reading it means the person has not edited it, which is what lets a repair replace it. Ref: #213 review.
+    /// </summary>
+    private string _polishModelSetByApp = string.Empty;
 
     /// <param name="ollamaChange">A download or removal just made on the Ollama models block, to repair the field against; null otherwise.</param>
     private async Task RefreshPolishModelChoicesAsync(
@@ -3594,7 +3600,7 @@ public sealed partial class MainWindow : Window, IDisposable
         PolishModelPicker.IsEnabled = providerUsesAModel && choices.Models.Count > 0;
         if (choices.ModelToApply is { } model)
         {
-            PolishModelTextBox.Text = model;
+            PolishModelTextBox.Text = _polishModelSetByApp = model;
         }
 
         PolishModelPicker.SelectedIndex = choices.SelectedIndex;
@@ -3606,10 +3612,10 @@ public sealed partial class MainWindow : Window, IDisposable
             OllamaModelsPresenter.RepairSelection(
                 choices.Models,
                 PolishModelTextBox.Text,
-                _session.Settings.Current.Preferences.Polish.ModelId,
+                _polishModelSetByApp,
                 ollamaChange) is { } repaired)
         {
-            PolishModelTextBox.Text = repaired;
+            PolishModelTextBox.Text = _polishModelSetByApp = repaired;
             var repairedIndex = -1;
             for (var i = 0; i < choices.Models.Count && repairedIndex < 0; i++)
             {
