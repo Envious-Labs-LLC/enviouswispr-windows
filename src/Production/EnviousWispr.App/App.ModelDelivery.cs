@@ -148,7 +148,7 @@ public partial class App
             BundledModelManifests.Load(id, new ModelManifestVerifier(new Dictionary<string, string>()))
                 .Manifest?.Payload.Files.Sum(file => file.SizeBytes) ?? 0);
         _window?.SetModelDelivery(new(
-            $"{DescribeModels(installable)} {(installable.Length == 1 ? "is" : "are")} not installed on this PC. About {Megabytes(totalBytes)} MB to download, verified file by file.",
+            $"{SentenceStart(DescribeModels(installable))} {(installable.Length == 1 ? "is" : "are")} not installed on this PC. About {Megabytes(totalBytes)} MB to download, verified file by file.",
             CanDownload: true));
     }
 
@@ -286,10 +286,15 @@ public partial class App
         };
     }
 
+    // LOWER CASE, BECAUSE A NAME SITS INSIDE SENTENCES. "Downloading The Whisper speech model" and "the Live
+    // Preview model is not installed" both came from mixed casing here; the sentence capitalises its start.
+    private static string SentenceStart(string text) =>
+        text.Length == 0 ? text : char.ToUpper(text[0], CultureInfo.CurrentCulture) + text[1..];
+
     private static string ModelDisplayName(string modelId) => modelId switch
     {
-        ParakeetTranscriptionEngine.ModelId => "The Parakeet speech model",
-        WhisperTranscriptionEngine.ModelId => "The Whisper speech model",
+        ParakeetTranscriptionEngine.ModelId => "the Parakeet speech model",
+        WhisperTranscriptionEngine.ModelId => "the Whisper speech model",
         WhisperTranscriptionEngine.PreviewModelId => "the Live Preview model",
         _ => modelId,
     };
