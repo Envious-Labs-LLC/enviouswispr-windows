@@ -98,6 +98,14 @@ public enum OllamaCheck
     InUse,
 }
 
+/// <summary>Which list a question was asked about: the endpoint it came from, and its version.</summary>
+/// <remarks>
+/// A DOWNLOAD OR REMOVAL CARRIES THE LIST THE PERSON SAW. A confirmation dialog stays open while the page can move to
+/// another endpoint; the action is refused if the list changed underneath it, rather than sent to a server the person
+/// was not looking at. Ref: #213 review.
+/// </remarks>
+public sealed record OllamaListContext(string? Endpoint, int Version);
+
 /// <summary>How a download or removal went, and the page as it stands after it.</summary>
 /// <param name="Changed">The model the change was about; the picker repairs against it.</param>
 /// <param name="Endpoint">The endpoint the change was made against. The window repairs the picker only while the page still names it.</param>
@@ -137,9 +145,14 @@ public sealed class OllamaModelsPresenter
     private CancellationTokenSource? _change;
     private int _inspections;
 
-    /// <summary>The endpoint the list on the page came from; downloads and removals go to it, and a look at any other is not kept.</summary>
-    private string? _endpoint;
-    private bool _endpointKnown;
+    /// <summary>The endpoint the page last asked about. A look at any other is not made after a change, and not kept.</summary>
+    private string? _requested;
+    private bool _requestedKnown;
+
+    /// <summary>The endpoint the list on the page came from, set only when a list arrives. Downloads and removals go here.</summary>
+    private string? _listEndpoint;
+    private bool _listKnown;
+    private int _listVersion;
 
     public OllamaModelsPresenter(IOllamaModelHost host, PresentationAdmission? admission = null)
     {
@@ -156,6 +169,21 @@ public sealed class OllamaModelsPresenter
             lock (_lock)
             {
                 return Render();
+            }
+        }
+    }
+
+    /// <summary>
+    /// The list on the page, or null while there is none or a look at another endpoint is still out - a moment in which
+    /// the rows on screen belong to one server and the page is asking another, so nothing may be changed.
+    /// </summary>
+    public OllamaListContext? Context
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return Settled() ? new OllamaListContext(_listEndpoint, _listVersion) : null;
             }
         }
     }
@@ -260,17 +288,17 @@ public sealed class OllamaModelsPresenter
     /// Downloads a catalogue model from the endpoint the block's list came from. Null when refused (busy, closing, not
     /// offered, or Ollama never looked at).
     /// </summary>
-    public async Task<OllamaModelChange?> DownloadAsync(string modelId, IProgress<OllamaModelsView>? progress)
+    public async Task<OllamaModelChange?> DownloadAsync(string modelId, OllamaListContext context, IProgress<OllamaModelsView>? progress)
     {
-        if (OllamaModelCatalog.Offered(modelId) is null || EndpointOfTheList() is not { } target ||
-            !_admission.TryEnter(out var lease))
+        ArgumentNullException.ThrowIfNull(context);
+        if (OllamaModelCatalog.Offered(modelId) is null || Context != context || !_admission.TryEnter(out var lease))
         {
             return null;
         }
 
         using (lease)
         {
-            if (!TryBegin(out var change))
+            if (!TryBegin(context, out var change))
             {
                 return null;
             }
@@ -278,7 +306,7 @@ public sealed class OllamaModelsPresenter
             OllamaModelChange? result;
             try
             {
-                result = await DownloadInsideAsync(target.Endpoint, modelId, progress, lease, change).ConfigureAwait(false);
+                result = await DownloadInsideAsync(context.Endpoint, modelId, progress, lease, change).ConfigureAwait(false);
             }
             finally
             {
@@ -343,7 +371,11 @@ public sealed class OllamaModelsPresenter
         {
             var installed = _inventory is { Server: OllamaServerState.Ready } now &&
                 now.Models.Any(model => OllamaModelCatalog.SameModel(model.Id, modelId));
-            _notice = DownloadNotice(outcome, modelId, refreshed: after is not null);
+            if (IsRequested(endpoint))
+            {
+                // A NOTICE ABOUT ANOTHER SERVER IS NOT SHOWN: the page has moved to a different endpoint since.
+                _notice = DownloadNotice(outcome, modelId, refreshed: after is not null);
+            }
             return new OllamaModelChange(Render(), modelId, Downloaded: installed, Removed: false, endpoint);
         }
     }
@@ -361,17 +393,17 @@ public sealed class OllamaModelsPresenter
     }
 
     /// <summary>Removes a catalogue model at the endpoint the block's list came from, after the window asked. Null when refused.</summary>
-    public async Task<OllamaModelChange?> RemoveAsync(string modelId)
+    public async Task<OllamaModelChange?> RemoveAsync(string modelId, OllamaListContext context)
     {
-        if (CheckRemove(modelId) != OllamaCheck.Confirm || EndpointOfTheList() is not { } target ||
-            !_admission.TryEnter(out var lease))
+        ArgumentNullException.ThrowIfNull(context);
+        if (CheckRemove(modelId) != OllamaCheck.Confirm || Context != context || !_admission.TryEnter(out var lease))
         {
             return null;
         }
 
         using (lease)
         {
-            if (!TryBegin(out var change))
+            if (!TryBegin(context, out var change))
             {
                 return null;
             }
@@ -379,7 +411,7 @@ public sealed class OllamaModelsPresenter
             OllamaModelChange? result;
             try
             {
-                result = await RemoveInsideAsync(target.Endpoint, modelId, lease).ConfigureAwait(false);
+                result = await RemoveInsideAsync(context.Endpoint, modelId, lease).ConfigureAwait(false);
             }
             finally
             {
@@ -411,7 +443,7 @@ public sealed class OllamaModelsPresenter
         {
             var gone = _inventory is { Server: OllamaServerState.Ready or OllamaServerState.NoModels } now &&
                 !now.Models.Any(model => OllamaModelCatalog.SameModel(model.Id, modelId));
-            _notice = outcome switch
+            _notice = !IsRequested(endpoint) ? _notice : outcome switch
             {
                 OllamaDeleteOutcome.Deleted or OllamaDeleteOutcome.NotFound => after is null
                     ? $"{NameOf(modelId)} was removed. The list could not be refreshed; choose Check again."
@@ -475,11 +507,11 @@ public sealed class OllamaModelsPresenter
         return null;
     }
 
-    private bool TryBegin(out CancellationTokenSource change)
+    private bool TryBegin(OllamaListContext context, out CancellationTokenSource change)
     {
         lock (_lock)
         {
-            if (_change is not null)
+            if (_change is not null || !Settled() || _listVersion != context.Version)
             {
                 change = null!;
                 return false;
@@ -516,10 +548,10 @@ public sealed class OllamaModelsPresenter
         {
             if (claim)
             {
-                _endpoint = endpoint;
-                _endpointKnown = true;
+                _requested = endpoint;
+                _requestedKnown = true;
             }
-            else if (!IsTheBlocksEndpoint(endpoint))
+            else if (!IsRequested(endpoint))
             {
                 return (null, false);
             }
@@ -530,27 +562,28 @@ public sealed class OllamaModelsPresenter
         var inventory = await _host.InspectAsync(endpoint, closing).ConfigureAwait(false);
         lock (_lock)
         {
-            if (ticket != _inspections || !IsTheBlocksEndpoint(endpoint))
+            if (ticket != _inspections || !IsRequested(endpoint))
             {
                 return (inventory, false);
             }
 
             _inventory = inventory;
+            if (!_listKnown || !string.Equals(_listEndpoint, endpoint, StringComparison.Ordinal))
+            {
+                _listEndpoint = endpoint;
+                _listKnown = true;
+                _listVersion++;
+            }
+
             return (inventory, true);
         }
     }
 
-    private bool IsTheBlocksEndpoint(string? endpoint) =>
-        _endpointKnown && string.Equals(endpoint, _endpoint, StringComparison.Ordinal);
+    private bool IsRequested(string? endpoint) =>
+        _requestedKnown && string.Equals(endpoint, _requested, StringComparison.Ordinal);
 
-    /// <summary>The endpoint the block's list came from, or null before Ollama has been looked at.</summary>
-    private (string? Endpoint, bool Known)? EndpointOfTheList()
-    {
-        lock (_lock)
-        {
-            return _endpointKnown ? (_endpoint, true) : null;
-        }
-    }
+    /// <summary>A list is on the page, and it came from the endpoint the page is asking about.</summary>
+    private bool Settled() => _listKnown && IsRequested(_listEndpoint);
 
     /// <summary>The look after a change: null when Ollama did not answer with a list, which the notice then says.</summary>
     private async Task<(OllamaInventory? Inventory, bool Current)> InspectQuietlyAsync(string? endpoint, CancellationToken closing)
@@ -602,7 +635,7 @@ public sealed class OllamaModelsPresenter
             return new OllamaModelsView(setup, [], _notice);
         }
 
-        var busy = _change is not null;
+        var busy = _change is not null || !Settled();
         var installed = OllamaModelCatalog.OrderedByVerdict(
                 _inventory.Models.OrderBy(model => model.Id, StringComparer.OrdinalIgnoreCase),
                 model => model.Id)

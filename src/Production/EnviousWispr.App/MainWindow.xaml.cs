@@ -3579,14 +3579,27 @@ public sealed partial class MainWindow : Window, IDisposable
         // against. A listing overtaken by a later refresh comes back as nothing, and the one that
         // came back is asked once more, here with no wait in between, whether it is still the
         // latest - a person can change provider between the answer and this thread.
-        var listing = await _session.Provider.ListModelsAsync(provider, NullIfBlank(OllamaEndpointTextBox.Text))
+        var endpoint = NullIfBlank(OllamaEndpointTextBox.Text);
+        var fieldBefore = PolishModelTextBox.Text;
+        var listing = await _session.Provider.ListModelsAsync(provider, endpoint)
             .ConfigureAwait(true);
         if (listing is null || _session.Closing || !_session.Provider.IsCurrent(listing.Ticket))
         {
             return;
         }
 
-        var choices = _session.Provider.Choose(listing, PolishModelTextBox.Text, chooseDefault);
+        // THE LISTING IS APPLIED ONLY IN THE CONTEXT IT WAS ASKED IN. The ticket catches a later listing; it cannot see a
+        // provider chosen or an endpoint edited meanwhile without one, and a field typed into while the listing was out
+        // is the person's - no default and no repair replaces it. Ref: #213 review.
+        if (PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)) != provider ||
+            (provider == PolishProvider.Ollama &&
+             !string.Equals(NullIfBlank(OllamaEndpointTextBox.Text), endpoint, StringComparison.Ordinal)))
+        {
+            return;
+        }
+
+        var editedMeanwhile = !string.Equals(PolishModelTextBox.Text, fieldBefore, StringComparison.Ordinal);
+        var choices = _session.Provider.Choose(listing, PolishModelTextBox.Text, chooseDefault && !editedMeanwhile);
 
         // All three model controls follow the PROVIDER, not just the two that used to. With the
         // provider set to None the picker and the refresh button were correctly disabled while
@@ -3608,6 +3621,7 @@ public sealed partial class MainWindow : Window, IDisposable
         // REPAIRED ONLY FROM A LISTING THAT SUCCEEDED, and only where the change left the field naming nothing - an empty
         // field after a download, or the model just removed. A model the person typed is theirs. Ref: #213.
         if (ollamaChange is not null &&
+            !editedMeanwhile &&
             choices.Discovery is { Status: PolishModelDiscoveryStatus.Ready } &&
             OllamaModelsPresenter.RepairSelection(
                 choices.Models,

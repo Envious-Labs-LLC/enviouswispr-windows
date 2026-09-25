@@ -94,8 +94,11 @@ public sealed partial class MainWindow
 
     private async void OllamaCheckAgainButton_Click(object sender, RoutedEventArgs e)
     {
-        await RefreshOllamaModelsAsync().ConfigureAwait(true);
-        await RefreshPolishModelChoicesAsync(PolishProvider.Ollama, chooseDefault: false).ConfigureAwait(true);
+        // ONE REFRESH, FOR THE PROVIDER SELECTED NOW: it shows the block and looks at Ollama itself. Refreshing the block and
+        // then asking for Ollama's choices after that await brought the Ollama controls back over a provider chosen meanwhile.
+        await RefreshPolishModelChoicesAsync(
+            PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)),
+            chooseDefault: false).ConfigureAwait(true);
     }
 
     private async void OllamaSetupActionButton_Click(object sender, RoutedEventArgs e)
@@ -105,8 +108,8 @@ public sealed partial class MainWindow
             case OllamaSetupAction.DownloadOllama:
                 _ = await Windows.System.Launcher.LaunchUriAsync(new Uri("https://ollama.com/download"));
                 break;
-            case OllamaSetupAction.DownloadRecommended:
-                await DownloadOllamaModelAsync(OllamaModelCatalog.RecommendedModelId).ConfigureAwait(true);
+            case OllamaSetupAction.DownloadRecommended when OllamaModels?.Context is { } context:
+                await DownloadOllamaModelAsync(OllamaModelCatalog.RecommendedModelId, context).ConfigureAwait(true);
                 break;
             default:
                 break;
@@ -120,10 +123,16 @@ public sealed partial class MainWindow
             return;
         }
 
+        // THE LIST THE PERSON CLICKED IN, taken before any dialog: the action is refused if the page moved meanwhile.
+        if (models.Context is not { } context)
+        {
+            return;
+        }
+
         switch (row.Action)
         {
             case OllamaRowAction.Download:
-                await DownloadOllamaModelAsync(row.Id).ConfigureAwait(true);
+                await DownloadOllamaModelAsync(row.Id, context).ConfigureAwait(true);
                 break;
             case OllamaRowAction.Stop:
                 models.Stop();
@@ -135,7 +144,7 @@ public sealed partial class MainWindow
                     return;
                 }
 
-                if (await models.RemoveAsync(row.Id).ConfigureAwait(true) is { } removed &&
+                if (await models.RemoveAsync(row.Id, context).ConfigureAwait(true) is { } removed &&
                     !_session.Closing)
                 {
                     await ApplyOllamaChangeAsync(removed).ConfigureAwait(true);
@@ -147,7 +156,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private async Task DownloadOllamaModelAsync(string modelId)
+    private async Task DownloadOllamaModelAsync(string modelId, OllamaListContext context)
     {
         if (OllamaModels is not { } models)
         {
@@ -172,6 +181,7 @@ public sealed partial class MainWindow
 
         var downloaded = await models.DownloadAsync(
                 modelId,
+                context,
                 // A PROGRESS VIEW QUEUED BEFORE THE DOWNLOAD ENDED IS NOT DRAWN AFTER IT: the final view is.
                 new Progress<OllamaModelsView>(_ =>
                 {
