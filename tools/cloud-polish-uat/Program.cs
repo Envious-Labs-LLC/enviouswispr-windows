@@ -15,7 +15,24 @@ if (provider is null)
 // A KEY FROM THE ENVIRONMENT NEVER TOUCHES DISK. A machine whose rule is that agent keys live only in a
 // cloud secret store hands the key to this process through a variable for one run (a launcher that
 // fetches it at the moment of use), and nothing here writes it to Credential Manager or prints it.
+var keyFromEnv = args.Contains("--key-from-env", StringComparer.OrdinalIgnoreCase);
 var keyVariable = ValueAfter("--key-from-env");
+if (keyFromEnv && (keyVariable is null || keyVariable.StartsWith("--", StringComparison.Ordinal)))
+{
+    Console.Error.WriteLine("--key-from-env needs the name of the environment variable that holds the key.");
+    return 2;
+}
+
+// REFUSED BEFORE ANY MODE RUNS: a key handed over for one run is never saved or deleted, and a missing
+// variable name must not quietly fall back to Credential Manager.
+if (keyFromEnv &&
+    (args.Contains("--save-key", StringComparer.OrdinalIgnoreCase) ||
+     args.Contains("--delete-key", StringComparer.OrdinalIgnoreCase)))
+{
+    Console.Error.WriteLine("--save-key and --delete-key cannot be combined with --key-from-env; nothing was changed.");
+    return 2;
+}
+
 IApiKeyStore store = keyVariable is null
     ? new WindowsCredentialApiKeyStore()
     : new EnvironmentApiKeyStore(keyVariable);
@@ -28,11 +45,6 @@ if (args.Contains("--status", StringComparer.OrdinalIgnoreCase))
 
 if (args.Contains("--save-key", StringComparer.OrdinalIgnoreCase))
 {
-    if (keyVariable is not null)
-    {
-        Console.Error.WriteLine("--save-key and --key-from-env cannot be combined; nothing was saved.");
-        return 2;
-    }
 
     Console.Write("API key (input hidden): ");
     var key = ReadSecret();
