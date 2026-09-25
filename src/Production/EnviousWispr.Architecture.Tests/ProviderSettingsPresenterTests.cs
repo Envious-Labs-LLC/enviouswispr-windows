@@ -175,6 +175,19 @@ public sealed class ProviderSettingsPresenterTests
         Assert.Equal(PolishModelDiscoveryStatus.OllamaNotReady, down.Discovery!.Status);
     }
 
+    /// <summary>Ollama treats foo and foo:latest as one model; so does the picker, or a valid choice is "repaired" away. Ref: #213.</summary>
+    [Fact]
+    public async Task AnOllamaFieldNamingTheModelUnderItsOtherSpellingIsLeftAlone()
+    {
+        var (presenter, _, models) = Build();
+        models.Answer = new PolishModelDiscovery(PolishModelDiscoveryStatus.Ready, ["deepseek-r1:14b", "llama3.2:latest"]);
+
+        var choices = await RefreshAsync(presenter, PolishProvider.Ollama, null, "Llama3.2", chooseDefault: true).WaitAsync(Patience);
+
+        Assert.Null(choices!.ModelToApply);
+        Assert.Equal(1, choices.SelectedIndex);
+    }
+
     [Fact]
     public async Task AModelTypedWhileTheListingWasOutIsHonoured()
     {

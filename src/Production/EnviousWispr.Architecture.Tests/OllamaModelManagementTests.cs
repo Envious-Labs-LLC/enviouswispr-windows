@@ -178,6 +178,27 @@ public sealed class OllamaModelManagementTests
         Assert.False(timedOut.ConnectionRefused);
     }
 
+    /// <summary>
+    /// Starting Ollama inherits OLLAMA_HOST, so only a value that keeps the server on this PC at the default port lets
+    /// the app start it. The test PC's own value, 0.0.0.0:11434, is the case this exists for.
+    /// </summary>
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("127.0.0.1", true)]
+    [InlineData("127.0.0.1:11434", true)]
+    [InlineData("http://localhost:11434/", true)]
+    [InlineData("[::1]:11434", true)]
+    [InlineData(":11434", true)]
+    [InlineData("0.0.0.0:11434", false)]
+    [InlineData("0.0.0.0", false)]
+    [InlineData("192.168.1.20:11434", false)]
+    [InlineData("127.0.0.1:8080", false)]
+    [InlineData("[::]:11434", false)]
+    [InlineData("localhost:notaport", false)]
+    public void OnlyAHostSettingThatStaysOnThisPcAllowsStartingOllama(string? value, bool staysOnThisPc) =>
+        Assert.Equal(staysOnThisPc, OllamaEndpointPolicy.IsLoopbackHostSetting(value));
+
     [Fact]
     public void TheCatalogueIsTheElevenMacModelsWithTheRecommendationAmongThem()
     {

@@ -81,6 +81,9 @@ public partial class App : Application, IAsyncDisposable
     /// </remarks>
     private AppErrorCode? _previewUnavailableReason;
     private IPolishProvider? _polishProvider;
+
+    /// <summary>The model Ollama polish uses this launch, or null; the page will not remove it from under the provider.</summary>
+    private string? _ollamaActiveModel;
     private WindowsTextTargetAdapter? _textTargetAdapter;
     private ContextAwareTextDelivery? _textDelivery;
     private RuntimeResourceKind _polishResource = RuntimeResourceKind.Cpu;
@@ -332,7 +335,8 @@ public partial class App : Application, IAsyncDisposable
             _credentialStore,
             _polishModelSource,
             _profileService,
-            _diagnosticExportService);
+            _diagnosticExportService,
+            new OllamaModelHost(_logger, () => _ollamaActiveModel));
         _window = new MainWindow(
             settings,
             _presentation,
@@ -1546,6 +1550,7 @@ public partial class App : Application, IAsyncDisposable
                 model = preferences.ModelId ?? string.Empty;
             }
 
+            _ollamaActiveModel = string.IsNullOrWhiteSpace(model) ? null : model;
             _polishProvider = new OllamaPolishProvider(new OllamaPolishOptions(endpoint, model));
             _polishUsesLocalRuntime = true;
             _localPolishNotice = OllamaEndpointPolicy.TryNormalize(endpoint, out var normalized)

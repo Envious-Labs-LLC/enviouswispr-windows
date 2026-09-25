@@ -39,7 +39,8 @@ public static class WindowComposition
         IApiKeyStore apiKeys,
         IPolishModelSource polishModels,
         IPortableProfileService profiles,
-        IDiagnosticExportService diagnostics) =>
+        IDiagnosticExportService diagnostics,
+        IOllamaModelHost? ollamaModels = null) =>
         new(new WindowPresentationParts(
             settingsStore,
             settings,
@@ -50,5 +51,6 @@ public static class WindowComposition
             profiles,
             diagnostics,
             OpenMicrophoneTestCapture,
-            OpenDeviceCatalog));
+            OpenDeviceCatalog,
+            ollamaModels));
 }

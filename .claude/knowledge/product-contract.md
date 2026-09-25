@@ -60,7 +60,9 @@ without a dedicated GPU.
 - Add-a-word reads the current selection before EnviousWispr takes focus and opens Your Words with the
   selected spelling ready to correct. No selection text crosses a network or diagnostic boundary.
   Terminals and inaccessible targets fail safely with by-hand guidance.
-- AI Polish lists installed Ollama models locally. For direct OpenAI, Anthropic, and Gemini providers,
+- AI Polish lists installed Ollama models locally and, when Ollama is the provider, guides setup and downloads or
+  removes the eleven curated local models macOS measured (#213). Downloads go through Ollama's own API on this PC;
+  hosted Ollama models are never offered, and Ollama is started only in the plain default case. For direct OpenAI, Anthropic, and Gemini providers,
   a stored BYOK credential may list the compatible model IDs available to that account without sending
   transcript text or invoking a generation endpoint. The recommended model and a custom compatible ID
   remain available when discovery cannot run.

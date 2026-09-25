@@ -12,6 +12,7 @@ using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Distribution;
 using EnviousWispr.Core.History;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Runtime;
@@ -3540,10 +3541,17 @@ public sealed partial class MainWindow : Window, IDisposable
             chooseDefault: false);
     }
 
+    /// <param name="ollamaChange">A download or removal just made on the Ollama models block, to repair the field against; null otherwise.</param>
     private async Task RefreshPolishModelChoicesAsync(
         PolishProvider provider,
-        bool chooseDefault)
+        bool chooseDefault,
+        OllamaModelChange? ollamaChange = null)
     {
+        if (ollamaChange is null)
+        {
+            ShowOllamaModels(provider);
+        }
+
         var isCloudProvider = IsCloudProvider(provider);
         OllamaEndpointTextBoxRow.Visibility = provider == PolishProvider.Ollama
             ? Visibility.Visible
@@ -3590,6 +3598,22 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         PolishModelPicker.SelectedIndex = choices.SelectedIndex;
+
+        // REPAIRED ONLY FROM A LISTING THAT SUCCEEDED, and only where the change left the field naming nothing - an empty
+        // field after a download, or the model just removed. A model the person typed is theirs. Ref: #213.
+        if (ollamaChange is not null &&
+            choices.Discovery is { Status: PolishModelDiscoveryStatus.Ready } &&
+            OllamaModelsPresenter.RepairSelection(choices.Models, PolishModelTextBox.Text, ollamaChange) is { } repaired)
+        {
+            PolishModelTextBox.Text = repaired;
+            var repairedIndex = -1;
+            for (var i = 0; i < choices.Models.Count && repairedIndex < 0; i++)
+            {
+                repairedIndex = OllamaModelCatalog.SameModel(choices.Models[i], repaired) ? i : -1;
+            }
+
+            PolishModelPicker.SelectedIndex = repairedIndex;
+        }
         if (choices.Discovery is { } discovery)
         {
             SetLiveText(ApiKeyStatusText, ModelDiscoveryNotice(provider, discovery));
