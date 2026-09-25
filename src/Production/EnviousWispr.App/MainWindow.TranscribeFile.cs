@@ -118,7 +118,7 @@ public sealed partial class MainWindow
     private static string RefusalSentence(SessionHoldAttempt? refusal) => refusal switch
     {
         { Refusal: SessionHoldRefusal.Dictation } => "A dictation is running. Try again when it finishes.",
-        { HeldBy: SessionHolder.UpdateCheck or SessionHolder.UpdateApply } => "EnviousWispr is updating. Try again when it finishes.",
+        { HeldBy: SessionHolder.UpdateApply } => "EnviousWispr is updating. Try again when it finishes.",
         { HeldBy: SessionHolder.LastDictationReuse } => "EnviousWispr is pasting your last dictation. Try again in a moment.",
         { HeldBy: SessionHolder.FileTranscription } => "Another file is being transcribed right now.",
         _ => "EnviousWispr is closing.",

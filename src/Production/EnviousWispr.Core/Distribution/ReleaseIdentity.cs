@@ -10,7 +10,6 @@ public enum ReleaseChannel
 public sealed record ReleaseIdentity(
     ReleaseChannel Channel,
     string ChannelName,
-    string PackageId,
     string DataDirectoryName,
     string SingleInstanceKey,
     string DisplayName)
@@ -36,21 +35,18 @@ public sealed record ReleaseIdentity(
         ReleaseChannel.Stable => new ReleaseIdentity(
             channel,
             "win-x64-stable",
-            "EnviousLabs.EnviousWispr",
             "EnviousWispr",
             "EnviousLabs.EnviousWispr.Production.Stable",
             "EnviousWispr"),
         ReleaseChannel.Founder => new ReleaseIdentity(
             channel,
             "win-x64-founder",
-            "EnviousLabs.EnviousWispr.Founder",
             "EnviousWispr-Founder",
             "EnviousLabs.EnviousWispr.Production.Founder",
             "EnviousWispr Founder"),
         ReleaseChannel.Beta => new ReleaseIdentity(
             channel,
             "win-x64-beta",
-            "EnviousLabs.EnviousWispr.Beta",
             "EnviousWispr-Beta",
             "EnviousLabs.EnviousWispr.Production.Beta",
             "EnviousWispr Beta"),

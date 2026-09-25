@@ -125,7 +125,6 @@ try {
         'Microsoft.ML.OnnxRuntime.Gpu',
         'Microsoft.WindowsAppSDK',
         'NAudio.Wasapi',
-        'Velopack',
         'Whisper.net',
         'Whisper.net.Runtime',
         'Whisper.net.Runtime.Cuda.Windows'
