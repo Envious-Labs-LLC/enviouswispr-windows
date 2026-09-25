@@ -228,6 +228,10 @@ public sealed partial class MainWindow : Window, IDisposable
     // The lone modifier a keybind field has seen go down with nothing else after it. Null the
     // moment any ordinary key arrives, because from then on the modifier is qualifying that key.
     private string? _keybindModifierCandidate;
+
+    // Every modifier held together since the candidate began, so two held at once can be offered as a set
+    // (Ctrl+Win). Cleared with the candidate. Ref: #66.
+    private HotkeyModifiers _keybindModifierSet;
     private CancellationTokenSource? _soundPreviewCancellation;
 
     public MainWindow(
@@ -2975,6 +2979,7 @@ public sealed partial class MainWindow : Window, IDisposable
             or VirtualKey.LeftWindows or VirtualKey.RightWindows)
         {
             _keybindModifierCandidate ??= SidedModifierName();
+            _keybindModifierSet |= HeldModifierSet() | ModifierFlagOf(e.Key);
             e.Handled = true;
             return;
         }
@@ -2988,6 +2993,7 @@ public sealed partial class MainWindow : Window, IDisposable
             !IsHeld(VirtualKey.LeftWindows) && !IsHeld(VirtualKey.RightWindows))
         {
             _keybindModifierCandidate = null;
+            _keybindModifierSet = HotkeyModifiers.None;
             e.Handled = true;
             box.Text = string.Empty;
             return;
@@ -2997,6 +3003,7 @@ public sealed partial class MainWindow : Window, IDisposable
         // rather than on the modifier's release, because by then the field already holds the
         // combination and overwriting it would undo what the user just chose.
         _keybindModifierCandidate = null;
+        _keybindModifierSet = HotkeyModifiers.None;
 
         // Handled regardless of whether the key is usable: the field is capture-driven, so a
         // keystroke must never fall through and be inserted as text. That fall-through is the
@@ -3057,11 +3064,29 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         var candidate = _keybindModifierCandidate;
+        var set = _keybindModifierSet | ModifierFlagOf(e.Key);
         _keybindModifierCandidate = null;
+        _keybindModifierSet = HotkeyModifiers.None;
 
         if (candidate is null ||
-            e.Key is not (VirtualKey.Control or VirtualKey.Shift
+            e.Key is not (VirtualKey.Control or VirtualKey.Shift or VirtualKey.Menu
                 or VirtualKey.LeftWindows or VirtualKey.RightWindows))
+        {
+            return;
+        }
+
+        // TWO OR MORE MODIFIERS HELD TOGETHER ARE A SET, AND THE SET IS THE BINDING - Ctrl+Win, the default. This field
+        // only ever offered the first modifier down, so pressing Ctrl+Win here produced "LeftCtrl": the engine could
+        // run the set and nobody could choose it. Offered on the first release, while the set is still whole. Alt is
+        // refused in a set as it is alone, matching the parser. Ref: #66.
+        var isSet = System.Numerics.BitOperations.PopCount((uint)set) >= 2;
+        if (isSet && set.HasFlag(HotkeyModifiers.Alt))
+        {
+            e.Handled = true;
+            return;
+        }
+
+        if (!isSet && e.Key == VirtualKey.Menu)
         {
             return;
         }
@@ -3075,9 +3100,48 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         e.Handled = true;
-        box.Text = new HotkeyGesture(HotkeyModifiers.None, candidate).ToString();
+        box.Text = isSet
+            ? new HotkeyGesture(set, string.Empty).ToString()
+            : new HotkeyGesture(HotkeyModifiers.None, candidate).ToString();
         box.SelectionStart = box.Text.Length;
     }
+
+    /// <summary>The modifiers the keyboard state says are down right now, sides folded together.</summary>
+    private static HotkeyModifiers HeldModifierSet()
+    {
+        var held = HotkeyModifiers.None;
+        if (IsHeld(VirtualKey.Control))
+        {
+            held |= HotkeyModifiers.Control;
+        }
+
+        if (IsHeld(VirtualKey.Menu))
+        {
+            held |= HotkeyModifiers.Alt;
+        }
+
+        if (IsHeld(VirtualKey.Shift))
+        {
+            held |= HotkeyModifiers.Shift;
+        }
+
+        if (IsHeld(VirtualKey.LeftWindows) || IsHeld(VirtualKey.RightWindows))
+        {
+            held |= HotkeyModifiers.Windows;
+        }
+
+        return held;
+    }
+
+    /// <summary>The modifier a key is, for the key this event is about, whatever the state has caught up with.</summary>
+    private static HotkeyModifiers ModifierFlagOf(VirtualKey key) => key switch
+    {
+        VirtualKey.Control or VirtualKey.LeftControl or VirtualKey.RightControl => HotkeyModifiers.Control,
+        VirtualKey.Menu or VirtualKey.LeftMenu or VirtualKey.RightMenu => HotkeyModifiers.Alt,
+        VirtualKey.Shift or VirtualKey.LeftShift or VirtualKey.RightShift => HotkeyModifiers.Shift,
+        VirtualKey.LeftWindows or VirtualKey.RightWindows => HotkeyModifiers.Windows,
+        _ => HotkeyModifiers.None,
+    };
 
     /// <summary>Which physical modifier is down, by side.</summary>
     /// <remarks>
