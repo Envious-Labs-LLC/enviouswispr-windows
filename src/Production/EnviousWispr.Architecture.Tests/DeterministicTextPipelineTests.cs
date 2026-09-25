@@ -138,6 +138,11 @@ public sealed class DeterministicTextPipelineTests
     public async Task PolishRunsAfterDeterministicWorkAndBeforeEmojiRestoration()
     {
         var pipeline = new DeterministicTextPipeline();
+        // WARMED AS THE APP WARMS IT, with the production deadlines untouched (#239). This test is about
+        // order, and a stage's first call on a loaded hosted runner once crossed its deadline here and
+        // stood down, which is the deadline doing its job, not the order failing. The deadline's own
+        // behaviour is tested below with a stage that overruns it.
+        Assert.Empty(pipeline.WarmStages());
         var request = new DeterministicTextRequest(
             new Transcript(
                 DictationSessionId.Create(),
@@ -211,6 +216,133 @@ public sealed class DeterministicTextPipelineTests
         {
             release.Set();
         }
+    }
+
+    /// <summary>
+    /// Each production stage, held past its OWN production deadline, stands down at that deadline with the
+    /// last valid text (#239). The deadlines were raised from measurement; this proves each is still a
+    /// deadline. The step is the production one, its Timeout read through unchanged; only its work is held.
+    /// </summary>
+    [Theory]
+    [InlineData(DeterministicTextStage.CustomWords)]
+    [InlineData(DeterministicTextStage.FillerAndFalseStarts)]
+    [InlineData(DeterministicTextStage.SpokenEmoji)]
+    [InlineData(DeterministicTextStage.InverseTextNormalization)]
+    [InlineData(DeterministicTextStage.EnglishSpelling)]
+    [InlineData(DeterministicTextStage.EnglishSpellingAfterPolish)]
+    [InlineData(DeterministicTextStage.EmojiRestoration)]
+    public async Task ProductionStageThatOverrunsItsDeadlineStandsDownWithTheLastValidText(DeterministicTextStage stage)
+    {
+        const string spoken = "um so send envy wisper the color version thumbs up emoji at three thirty period";
+        const string polished = "Send EnviousWispr the color version at 3:30.";
+        var production = DeterministicTextPipeline.DefaultSteps().Single(step => step.Stage == stage);
+        using var release = new ManualResetEventSlim(false);
+        using var entered = new ManualResetEventSlim(false);
+        using var finished = new ManualResetEventSlim(false);
+        var overrunning = new OverrunningStep(production, release, entered, finished);
+        var request = new DeterministicTextRequest(
+            new Transcript(DictationSessionId.Create(), spoken, "test", DetectedLanguage: "en"),
+            [new CustomWordEntry("envy wisper", "EnviousWispr")],
+            new DeterministicTextOptions(true, true, true, true, EnglishSpelling.British));
+        var afterPolish = stage is DeterministicTextStage.EnglishSpellingAfterPolish or DeterministicTextStage.EmojiRestoration;
+        try
+        {
+            DeterministicTextResult result;
+            string lastValid;
+            if (afterPolish)
+            {
+                // The restoration the after-polish spelling hands on to is an identity with no deadline to speak of.
+                IDeterministicTextStep[] steps = stage == DeterministicTextStage.EmojiRestoration
+                    ? [overrunning]
+                    : [overrunning, new DelegateStep(DeterministicTextStage.EmojiRestoration, context => context, Patience)];
+                var pipeline = new DeterministicTextPipeline(steps);
+                var deterministic = await pipeline.ProcessAsync(request);
+                Assert.Equal(
+                    DeterministicStageStatus.Skipped,
+                    deterministic.Receipts.Single(receipt => receipt.Stage == stage).Status);
+                result = await pipeline.ApplyPolishedTextAsync(request, deterministic, polished);
+                lastValid = polished;
+            }
+            else
+            {
+                result = await new DeterministicTextPipeline([overrunning]).ProcessAsync(request);
+                lastValid = spoken;
+            }
+
+            // THE HELD STEP REALLY RAN. Without this, a worker still queued at its deadline would time out
+            // without ever reaching the gate, and every assertion below would pass having tested nothing.
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(10)), "The held production step never started.");
+            var receipt = result.Receipts.Single(candidate => candidate.Stage == stage);
+            Assert.Equal(DeterministicStageStatus.TimedOut, receipt.Status);
+            Assert.Equal(lastValid, result.Output.Text);
+            Assert.True(result.IsDegraded);
+            Assert.False(release.IsSet);
+            // Stood down AT the production deadline: not before it (with room for timer granularity), and
+            // nowhere near the thirty seconds the held step would otherwise have taken.
+            Assert.InRange(
+                receipt.ElapsedMilliseconds,
+                (long)(production.Timeout.TotalMilliseconds * 0.9),
+                (long)(Patience.TotalMilliseconds / 2));
+        }
+        finally
+        {
+            release.Set();
+            // The worker is let go and seen to finish before the gates it uses are disposed.
+            if (entered.IsSet)
+            {
+                Assert.True(finished.Wait(Patience), "The released production step never finished; its gates would be disposed under it.");
+            }
+        }
+    }
+
+    [Fact]
+    public void WarmStagesRunsEveryProductionStageOnceWithoutFailure()
+    {
+        var calls = new Dictionary<DeterministicTextStage, int>();
+        var pipeline = new DeterministicTextPipeline(DeterministicTextPipeline.DefaultSteps()
+            .Select(step => new CountingStep(step, calls))
+            .ToArray());
+
+        Assert.Empty(pipeline.WarmStages());
+
+        // A stage its warm-up sentence leaves switched off would pass the line above and stay cold.
+        Assert.Equal(
+            [
+                DeterministicTextStage.CustomWords,
+                DeterministicTextStage.FillerAndFalseStarts,
+                DeterministicTextStage.SpokenEmoji,
+                DeterministicTextStage.InverseTextNormalization,
+                DeterministicTextStage.EnglishSpelling,
+                DeterministicTextStage.EnglishSpellingAfterPolish,
+                DeterministicTextStage.EmojiRestoration,
+            ],
+            calls.Keys.Order());
+        Assert.All(calls.Values, count => Assert.Equal(1, count));
+    }
+
+    [Fact]
+    public void WarmStagesReportsAThrowingStageAndStillWarmsTheNext()
+    {
+        string? handedOn = null;
+        IDeterministicTextStep[] steps =
+        [
+            new DelegateStep(
+                DeterministicTextStage.CustomWords,
+                context => context with { Text = "last valid" }),
+            new DelegateStep(
+                DeterministicTextStage.FillerAndFalseStarts,
+                _ => throw new InvalidOperationException("synthetic failure")),
+            new DelegateStep(
+                DeterministicTextStage.SpokenEmoji,
+                context =>
+                {
+                    handedOn = context.Text;
+                    return context;
+                }),
+        ];
+
+        Assert.Equal([DeterministicTextStage.FillerAndFalseStarts], new DeterministicTextPipeline(steps).WarmStages());
+        Assert.Equal("last valid", handedOn);
     }
 
     [Fact]
@@ -836,6 +968,50 @@ public sealed class DeterministicTextPipelineTests
         string Expected,
         string Category,
         string Slice);
+
+    /// <summary>A production step whose work is held on a gate the test owns; its deadline is the production one.</summary>
+    private sealed class OverrunningStep(
+        IDeterministicTextStep production,
+        ManualResetEventSlim release,
+        ManualResetEventSlim entered,
+        ManualResetEventSlim finished) : IDeterministicTextStep
+    {
+        public DeterministicTextStage Stage => production.Stage;
+
+        public TimeSpan Timeout => production.Timeout;
+
+        public bool IsEnabled(DeterministicTextContext context) => production.IsEnabled(context);
+
+        public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
+        {
+            try
+            {
+                entered.Set();
+                release.Wait(Patience, CancellationToken.None); // A hung stage: it ignores its deadline.
+                return production.Process(context, CancellationToken.None);
+            }
+            finally
+            {
+                finished.Set();
+            }
+        }
+    }
+
+    private sealed class CountingStep(IDeterministicTextStep production, Dictionary<DeterministicTextStage, int> calls)
+        : IDeterministicTextStep
+    {
+        public DeterministicTextStage Stage => production.Stage;
+
+        public TimeSpan Timeout => production.Timeout;
+
+        public bool IsEnabled(DeterministicTextContext context) => production.IsEnabled(context);
+
+        public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
+        {
+            calls[production.Stage] = calls.GetValueOrDefault(production.Stage) + 1;
+            return production.Process(context, cancellationToken);
+        }
+    }
 
     private sealed class DelegateStep(
         DeterministicTextStage stage,

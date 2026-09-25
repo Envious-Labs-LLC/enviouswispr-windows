@@ -383,6 +383,12 @@ public partial class App : Application, IAsyncDisposable
 
     private async Task CompleteStartupAsync(AppSettings settings, ApplicationRunStartResult runStart, MainWindow window)
     {
+        // THE CLEANUP STAGES ARE WARMED BESIDE THE LAUNCH, OFF THE UI THREAD (#239). A stage's first call
+        // pays compilation and first-use construction, and on a slow or throttled machine that once crossed
+        // the stage's deadline, so the first dictation after launch lost its spoken emoji. Joined in the
+        // finally below, so it belongs to the launch's one tracked task, which the exit already joins before
+        // it disposes the logger this writes to. It takes milliseconds and never throws.
+        var cleanupWarmUp = Task.Run(WarmDeterministicStages);
         try
         {
             await CompleteStartupCoreAsync(settings, runStart, window).ConfigureAwait(true);
@@ -393,6 +399,32 @@ public partial class App : Application, IAsyncDisposable
             // launch's token while the recovery read was out; the read ends cancelled, the launch is
             // over, and nothing of it escapes to the launch entry point - the lifetime finishes its
             // teardown and reports.
+        }
+        finally
+        {
+            await cleanupWarmUp.ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>Warms the deterministic cleanup stages once; a failure is logged by stage name only and swallowed.</summary>
+    private void WarmDeterministicStages()
+    {
+        try
+        {
+            foreach (var stage in _deterministicTextPipeline.WarmStages())
+            {
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.DeterministicStageWarmUpFailed,
+                    AppFailureCategory.PostProcessing,
+                    Stage: stage,
+                    StageStatus: DeterministicStageStatus.Failed));
+            }
+        }
+        catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
+        {
+            // A WARM-UP IS AN OPTIMISATION, NEVER A LAUNCH FAILURE. Each stage still runs on every dictation
+            // under its own deadline; all this costs is that the first one pays the first-call cost.
         }
     }
 
