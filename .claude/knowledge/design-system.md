@@ -36,6 +36,7 @@ where the two disagree the tests are what ships.
 | `XamlResourceResolutionTests` | a `Brand*` or `Pill*` key that resolves nowhere; a style applied to a control type it does not target |
 | `WindowMinimumSizeTests` | a window minimum that stops being derived from the sidebar width and the frame inset; a content-card minimum too small to be usable |
 | `DesignSystemTokenTests` (types) | a layout token assigned to a property of a different type - the defect that builds clean and then refuses to start |
+| `WinUiResourceTypeTests` | a brand override that is a brush where WinUI's own template animates a colour (read from the restored WinUI package's `generic.xaml`) - ignored by WinUI without a word |
 
 **Two of these guard defects that are invisible to the compiler and fatal at runtime.** A mistyped
 `ThemeResource` key does not fail the build; the page throws when it is opened. A minimum size that stops
@@ -91,6 +92,19 @@ for a longer word or a larger font.
 of the family is code that is entirely correct and that nobody can REACH -
 RULE: a-feature-is-reachable-only-if-every-set-agrees. Both ship green; the measurement tell above finds
 the first and cannot find the second, because an unreachable feature never runs at all.
+
+## FACT: a-brush-where-winui-animates-a-colour-is-silently-ignored
+WinUI's `ToggleSwitch` animates the off track's hover, pressed and disabled looks with `LinearColorKeyFrame`, so
+those six resources are COLOURS. The window overrode them as `SolidColorBrush`, and nothing complained: not the build,
+not the XAML compiler, not a gate. A disabled off switch drew no track at all - a bare grey dot that does not read as
+a switch - and was found only by photographing the Diagnostics page (2026-09-25). The pixels where the track belonged
+were exactly the card colour, which is what told a faint outline apart from none.
+
+**The rule lives in WinUI's template, not in our XAML**, which is why no check that reads our files could see it.
+`WinUiResourceTypeTests` reads the template itself - the `generic.xaml` of the exact WinUI package the build
+restored, found through `obj/project.assets.json` - and refuses a brush override of any key it animates as a colour.
+A colour override belongs in the theme dictionaries of `Theme/DesignTokens.xaml`, as a `StaticResource` of a
+`Brand*Color` token, so it follows Light, Dark and High Contrast. Proved able to fail by putting one brush back.
 
 ## RULE: a-green-suite-here-is-not-evidence-the-app-starts
 **Every check in this file parses the views as XML. None of them LOADS them as XAML, and those are
