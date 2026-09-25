@@ -39,9 +39,9 @@ public enum NativeRuntimeSearchPathOutcome
 /// <c>AddDllDirectory</c>), then <c>AddDllDirectory</c> for the CUDA folder. It behaves the same packaged and
 /// unpackaged, which is the point: one layout, one answer, both ways the app runs.
 ///
-/// IT MUST RUN BEFORE ANY ENGINE LOADS A NATIVE LIBRARY. The worker calls it first thing in engine
-/// creation. It deliberately drops PATH and the current directory from the default search, which nothing
-/// in the worker relies on: .NET and Whisper.net load their own libraries by full path, and the display
+/// IT MUST RUN BEFORE ANY ENGINE LOADS A NATIVE LIBRARY. The worker calls it in engine creation before any
+/// engine is built. Once it succeeds, PATH and the current directory are out of the default search, which
+/// nothing in the worker relies on: .NET and Whisper.net load their own libraries by full path, and the display
 /// driver's <c>nvcuda.dll</c> lives in System32.
 /// </remarks>
 public static class NativeRuntimeSearchPath
@@ -70,26 +70,37 @@ public static class NativeRuntimeSearchPath
             return NativeRuntimeSearchPathOutcome.DirectoryMissing;
         }
 
-        // THE DEFAULT FIRST, THEN THE FOLDER. A folder added while the process still uses the standard
-        // search order is consulted only by loads that pass LOAD_LIBRARY_SEARCH_USER_DIRS themselves, which
-        // neither engine does; it is the default that makes every by-name load see it.
-        if (!nativeDirectories.SetDefaultDllDirectories(LoadLibrarySearchDefaultDirs))
+        // THE FOLDER FIRST, THEN THE DEFAULT, AND NEVER ONE WITHOUT THE OTHER. Switching the default drops
+        // PATH and the current directory from every later by-name load, so a process left with the switch and
+        // no CUDA folder has lost search places for nothing. The folder is added first; the default is
+        // switched only once the folder is in; a refused switch takes the folder back out. The folder alone
+        // changes nothing for either engine: until the default is switched, only loads that ask for user
+        // folders themselves see it, and neither engine's loader does.
+        var cookie = nativeDirectories.AddDllDirectory(fullPath);
+        if (cookie == IntPtr.Zero)
         {
             return NativeRuntimeSearchPathOutcome.Refused;
         }
 
-        return nativeDirectories.AddDllDirectory(fullPath)
-            ? NativeRuntimeSearchPathOutcome.Added
-            : NativeRuntimeSearchPathOutcome.Refused;
+        if (!nativeDirectories.SetDefaultDllDirectories(LoadLibrarySearchDefaultDirs))
+        {
+            nativeDirectories.RemoveDllDirectory(cookie);
+            return NativeRuntimeSearchPathOutcome.Refused;
+        }
+
+        return NativeRuntimeSearchPathOutcome.Added;
     }
 }
 
-/// <summary>The two kernel32 calls, behind an interface so the order and the refusals can be tested.</summary>
+/// <summary>The three kernel32 calls, behind an interface so the order and the refusals can be tested.</summary>
 internal interface INativeDllDirectories
 {
+    /// <summary>Adds a folder; returns its cookie, or <see cref="IntPtr.Zero"/> when refused.</summary>
+    IntPtr AddDllDirectory(string directory);
+
     bool SetDefaultDllDirectories(uint flags);
 
-    bool AddDllDirectory(string directory);
+    bool RemoveDllDirectory(IntPtr cookie);
 }
 
 internal sealed class Kernel32DllDirectories : INativeDllDirectories
@@ -100,9 +111,11 @@ internal sealed class Kernel32DllDirectories : INativeDllDirectories
     {
     }
 
+    IntPtr INativeDllDirectories.AddDllDirectory(string directory) => AddDllDirectory(directory);
+
     bool INativeDllDirectories.SetDefaultDllDirectories(uint flags) => SetDefaultDllDirectories(flags);
 
-    bool INativeDllDirectories.AddDllDirectory(string directory) => AddDllDirectory(directory) != IntPtr.Zero;
+    bool INativeDllDirectories.RemoveDllDirectory(IntPtr cookie) => RemoveDllDirectory(cookie);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -110,4 +123,8 @@ internal sealed class Kernel32DllDirectories : INativeDllDirectories
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern IntPtr AddDllDirectory(string newDirectory);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RemoveDllDirectory(IntPtr cookie);
 }

@@ -49,11 +49,17 @@ public partial class App
             .OpenActiveOfflineAsync(CudaRuntimeDirectory.PackId)
             .ConfigureAwait(true);
         var packDirectory = active.Succeeded ? active.Installed?.DirectoryPath : null;
+        // "INSTALLED" MEANS THE VERIFIED PACK AND NOTHING ELSE. An environment override or a hand-provisioned
+        // folder can put the card to work, but never counts as the pack being here.
         _graphicsRuntimeInstalled = packDirectory is not null;
         return CudaRuntimeDirectory.ForApplication(_dataDirectory, packDirectory);
     }
 
     /// <summary>Shows the graphics runtime row when the offer applies or the pack is installed, and hides it otherwise.</summary>
+    /// <remarks>
+    /// THE ROW REACHES WHISPER USERS ONLY, AND THAT IS INTENDED: Parakeet stays on the processor by founder
+    /// decision (2026-09-25), so its full-precision model is never offered and it never asks for the card.
+    /// </remarks>
     private void PresentGraphicsRuntime()
     {
         // A DOWNLOAD IN PROGRESS OWNS THE ROW; its progress and its outcome are what it shows.

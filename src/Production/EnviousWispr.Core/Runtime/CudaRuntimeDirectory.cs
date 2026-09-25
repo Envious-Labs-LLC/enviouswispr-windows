@@ -40,15 +40,16 @@ public static partial class CudaRuntimeDirectory
     /// The rule itself, with nothing read from the machine, so it can be tested without one.
     /// </summary>
     /// <remarks>
-    /// AN EXPLICIT SETTING WINS EVEN WHEN IT IS WRONG, ONLY IF IT EXISTS. A configured directory that
-    /// is not there is not honoured: it would put the caller on a path with no files in it and report
-    /// success, which is the failure this whole type exists to stop.
+    /// AN EXPLICIT SETTING WINS ONLY IF IT HOLDS THE RUNTIME. A configured directory that is not there, or
+    /// that lacks any file the probe requires, is not honoured: it would put the caller on a path the card
+    /// cannot load from, and - worse since the pack exists - shadow a verified pack that would have worked.
     /// </remarks>
     public static string? Resolve(
         string? configured,
         IEnumerable<string> dataDirectories,
-        Func<string, bool> directoryExists) =>
-        Resolve(configured, installedPackDirectory: null, dataDirectories, directoryExists);
+        Func<string, bool> directoryExists,
+        Func<string, bool> holdsRuntime) =>
+        Resolve(configured, installedPackDirectory: null, dataDirectories, directoryExists, holdsRuntime);
 
     /// <summary>The rule with the downloaded pack in it: configured, then the pack, then a hand-provisioned folder.</summary>
     /// <remarks>
@@ -60,11 +61,13 @@ public static partial class CudaRuntimeDirectory
         string? configured,
         string? installedPackDirectory,
         IEnumerable<string> dataDirectories,
-        Func<string, bool> directoryExists)
+        Func<string, bool> directoryExists,
+        Func<string, bool> holdsRuntime)
     {
         ArgumentNullException.ThrowIfNull(dataDirectories);
         ArgumentNullException.ThrowIfNull(directoryExists);
-        if (!string.IsNullOrWhiteSpace(configured) && directoryExists(configured))
+        ArgumentNullException.ThrowIfNull(holdsRuntime);
+        if (!string.IsNullOrWhiteSpace(configured) && directoryExists(configured) && holdsRuntime(configured))
         {
             return Path.GetFullPath(configured);
         }
@@ -107,7 +110,8 @@ public static partial class CudaRuntimeDirectory
             Environment.GetEnvironmentVariable(EnvironmentVariable),
             verifiedPackDirectory,
             [dataDirectory],
-            Directory.Exists);
+            Directory.Exists,
+            HoldsRuntime);
     }
 
     /// <summary>
@@ -130,7 +134,8 @@ public static partial class CudaRuntimeDirectory
                 .Select(dataDirectory => ActivePackDirectory(dataDirectory, ReadIfExists))
                 .FirstOrDefault(pack => pack is not null && Directory.Exists(pack)),
             dataDirectories,
-            Directory.Exists);
+            Directory.Exists,
+            HoldsRuntime);
     }
 
     /// <summary>
@@ -201,6 +206,10 @@ public static partial class CudaRuntimeDirectory
 
         return false;
     }
+
+    /// <summary>The probe's own check, on one folder: every file of the full runtime set is there.</summary>
+    public static bool HoldsRuntime(string directory) =>
+        CudaRuntimeLibraries.AllPresentIn(Path.GetFullPath(directory), File.Exists);
 
     private static string? ReadIfExists(string path) => File.Exists(path) ? File.ReadAllText(path) : null;
 

@@ -19,9 +19,10 @@ namespace EnviousWispr.ASR;
 /// requires an active NVIDIA adapter, so a machine whose driver answers but whose display adapter list does
 /// not show the card is not asked for 1.3 GB on the strength of one probe.
 ///
-/// NOT FOR PARAKEET AS THE STORE DELIVERS IT. Parakeet runs on the card only with its full-precision model,
-/// and the delivered Parakeet pack is the quantized one, so on a Store install with Parakeet selected the
-/// selector keeps the processor whatever the runtime - and this says so by not offering.
+/// WHISPER USERS ONLY, BY DECISION. Parakeet runs on the card only with its full-precision model, and the
+/// founder decided on 2026-09-25 to keep Parakeet on the processor: the full-precision model is neither
+/// offered nor delivered. So with Parakeet selected the selector keeps the processor whatever the runtime,
+/// and this does not offer. The offer reaching Whisper users only is the intended behaviour, not a gap.
 /// </remarks>
 public static class GraphicsRuntimeOffer
 {

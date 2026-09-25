@@ -75,8 +75,9 @@ public sealed class GraphicsRuntimeOfferTests
     [InlineData(FinalAsrEngine.Automatic)]
     public void ParakeetAsTheStoreDeliversItWouldStayOnTheProcessorSoItIsNotOffered(FinalAsrEngine engine)
     {
-        // THE DELIVERED PARAKEET PACK IS THE QUANTIZED ONE, and Parakeet uses the card only with the full
-        // precision model. 1.3 GB would change nothing, so nothing is offered.
+        // PARAKEET STAYS ON THE PROCESSOR BY FOUNDER DECISION (2026-09-25): its full-precision model, the only
+        // one that uses the card, is neither offered nor delivered. With the quantized pack, 1.3 GB would change
+        // nothing, so nothing is offered; the full-precision case shows the rule still asks the selector.
         var hardware = Snapshot(driver: true, GraphicsVendor.Nvidia, runtimeFiles: false);
 
         Assert.False(GraphicsRuntimeOffer.ShouldOffer(hardware, engine, ParakeetAsDelivered, null, runtimeInstalled: false));
