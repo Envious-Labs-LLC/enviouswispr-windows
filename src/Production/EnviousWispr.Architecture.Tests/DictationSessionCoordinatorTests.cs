@@ -196,6 +196,38 @@ public sealed class DictationSessionCoordinatorTests
         Assert.Same(snapshot, result.Session);
     }
 
+    /// <summary>
+    /// Between a press and its release nothing holds the gate, and the recording is still live. A hold
+    /// taken then made the release wait behind it, so the microphone ran on past the key. Ref: #211.
+    /// </summary>
+    [Fact]
+    public async Task AHoldIsRefusedWhileARecordingIsLiveAndGrantedOnceItEnds()
+    {
+        var executor = new BarrierExecutor
+        {
+            Answer = new SessionCommandResult(
+                SessionCommandDisposition.Applied,
+                DictationSessionSnapshot.Start(DateTimeOffset.UnixEpoch)),
+        };
+        await using var coordinator = new DictationSessionCoordinator(executor);
+
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        Assert.True(coordinator.IsIdle, "the press has handed the gate back; only the recording remains");
+
+        Assert.Null(coordinator.TryHold(SessionHolder.UpdateCheck).Hold);
+
+        var release = coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await executor.Started(PushToTalkSignal.Released).WaitAsync(Patience);
+        executor.Finish(PushToTalkSignal.Released);
+        await release.WaitAsync(Patience);
+
+        using var hold = coordinator.TryHold(SessionHolder.UpdateCheck).Hold;
+        Assert.NotNull(hold);
+    }
+
     [Fact]
     public async Task AnExecutorExceptionFaultsThatSubmitterAndTheLoopSurvives()
     {
@@ -225,7 +257,7 @@ public sealed class DictationSessionCoordinatorTests
         var executor = new BarrierExecutor();
         await using var coordinator = new DictationSessionCoordinator(executor);
 
-        var hold = coordinator.TryHold();
+        var hold = coordinator.TryHold(SessionHolder.UpdateCheck).Hold;
         Assert.NotNull(hold);
         var press = await coordinator.SubmitAsync(PushToTalkSignal.Pressed);
 
@@ -252,13 +284,13 @@ public sealed class DictationSessionCoordinatorTests
 
         var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
         await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
-        Assert.Null(coordinator.TryHold());
+        Assert.Null(coordinator.TryHold(SessionHolder.UpdateCheck).Hold);
         executor.Finish(PushToTalkSignal.Pressed);
         await press.WaitAsync(Patience);
 
-        using var first = coordinator.TryHold();
+        using var first = coordinator.TryHold(SessionHolder.UpdateCheck).Hold;
         Assert.NotNull(first);
-        Assert.Null(coordinator.TryHold());
+        Assert.Null(coordinator.TryHold(SessionHolder.UpdateCheck).Hold);
     }
 
     [Fact]
@@ -269,7 +301,7 @@ public sealed class DictationSessionCoordinatorTests
         var executor = new BarrierExecutor();
         await using var coordinator = new DictationSessionCoordinator(executor);
 
-        var hold = coordinator.TryHold();
+        var hold = coordinator.TryHold(SessionHolder.UpdateCheck).Hold;
         Assert.NotNull(hold);
         var release = coordinator.SubmitAsync(PushToTalkSignal.Released);
         Assert.Equal(1, coordinator.PendingCount);
@@ -314,7 +346,7 @@ public sealed class DictationSessionCoordinatorTests
         var executor = new BarrierExecutor();
         await using var coordinator = new DictationSessionCoordinator(executor);
 
-        var hold = coordinator.TryHold();
+        var hold = coordinator.TryHold(SessionHolder.UpdateCheck).Hold;
         Assert.NotNull(hold);
         var release = coordinator.SubmitAsync(PushToTalkSignal.Released);
         // The consumer has to be PARKED on the gate before the stop, or this proves that stopping an
@@ -573,7 +605,7 @@ public sealed class DictationSessionCoordinatorTests
         Assert.Equal(SessionCommandDisposition.Stopping, (await coordinator.SubmitAsync(PushToTalkSignal.Released)).Disposition);
         Assert.Equal(SessionCommandDisposition.Stopping, (await coordinator.InterruptAsync(SystemLifecycleTransition.Suspending)).Disposition);
         Assert.Equal(SessionCommandDisposition.Stopping, (await coordinator.TimeOutAsync(DictationSessionId.Create())).Disposition);
-        Assert.Null(coordinator.TryHold());
+        Assert.Null(coordinator.TryHold(SessionHolder.UpdateCheck).Hold);
         executor.Finish(PushToTalkSignal.Pressed);
         Assert.Equal(SessionCommandDisposition.Applied, (await press.WaitAsync(Patience)).Disposition);
         Assert.True(await coordinator.StopAsync(Patience));
@@ -587,7 +619,7 @@ public sealed class DictationSessionCoordinatorTests
         // throw on. The gate is simply not disposed while a hold is out.
         var executor = new BarrierExecutor();
         var coordinator = new DictationSessionCoordinator(executor);
-        var hold = coordinator.TryHold();
+        var hold = coordinator.TryHold(SessionHolder.UpdateCheck).Hold;
         Assert.NotNull(hold);
 
         Assert.True(await coordinator.StopAsync(Patience));
@@ -595,7 +627,7 @@ public sealed class DictationSessionCoordinatorTests
 
         hold.Dispose();
         hold.Dispose();
-        Assert.Null(coordinator.TryHold());
+        Assert.Null(coordinator.TryHold(SessionHolder.UpdateCheck).Hold);
     }
 
     [Fact]
@@ -792,33 +824,67 @@ public sealed class DictationSessionCoordinatorTests
     }
 
     [Fact]
-    public async Task AnInterruptionParkedBehindAnUpdateHoldExpiresAtFiveSecondsAndIsSkippedWhenTheHoldEnds()
+    public async Task AnInterruptionWhileTheSessionIsHeldHasNoDictationToInterruptAndIsIgnoredAtOnce()
     {
-        // THE DEADLINE COUNTS WHILE PARKED BEHIND A HOLD, NOT ONLY BEHIND A COMMAND. The update check
-        // holds the session; Windows locks; at five seconds the shell is told recovery is pending while
-        // the download carries on; when the hold ends the interruption is skipped, not run late.
+        // A HOLD PROVES THERE IS NO DICTATION. It is granted only when nothing records or waits, and a
+        // press under it is refused. This used to park behind the hold, and at five seconds tell the
+        // shell a dictation's recovery was pending - during an update download or a file transcription
+        // with no dictation anywhere. Ref: #211.
+        foreach (var holder in Enum.GetValues<SessionHolder>())
+        {
+            var executor = new BarrierExecutor();
+            var clock = new Deterministic.ManualClock();
+            await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
+            using var hold = coordinator.TryHold(holder).Hold;
+            Assert.NotNull(hold);
+
+            var result = await coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked).WaitAsync(Patience);
+
+            Assert.Equal(SessionCommandDisposition.Ignored, result.Disposition);
+            Assert.Equal(0, coordinator.PendingCount);
+            Assert.Empty(executor.SeenKinds);
+            Assert.Empty(executor.ExpiredKinds);
+        }
+    }
+
+    /// <summary>A refusal names its reason, decided under the same lock as the refusal. Ref: #211.</summary>
+    [Fact]
+    public async Task ARefusedPressAndARefusedHoldNameWhatHeldTheSession()
+    {
         var executor = new BarrierExecutor();
-        var clock = new Deterministic.ManualClock();
-        await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
-        var hold = coordinator.TryHold();
+        await using var coordinator = new DictationSessionCoordinator(executor);
+        using var hold = coordinator.TryHold(SessionHolder.FileTranscription).Hold;
         Assert.NotNull(hold);
 
-        var interruption = coordinator.InterruptAsync(SystemLifecycleTransition.SessionLocked);
-        await UntilAsync(() => coordinator.GateWaitsEntered == 1);
-        await clock.WhenRegistered(1).WaitAsync(Patience);
-        Assert.Equal(DictationSessionCoordinator.InterruptionPatience, clock.NextDue);
-        clock.Advance(DictationSessionCoordinator.InterruptionPatience);
-        await executor.Expired(SessionCommandKind.Interruption).WaitAsync(Patience);
-        Assert.False(interruption.IsCompleted);
+        var press = await coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        Assert.Equal(SessionCommandDisposition.Busy, press.Disposition);
+        Assert.Equal(SessionHolder.FileTranscription, press.BusyHolder);
 
-        hold.Dispose();
-        var result = await interruption.WaitAsync(Patience);
+        // The key's release queues behind the hold; the file is still the reason, not a dictation.
+        _ = coordinator.SubmitAsync(PushToTalkSignal.Released);
+        var second = coordinator.TryHold(SessionHolder.UpdateCheck);
+        Assert.Null(second.Hold);
+        Assert.Equal(SessionHoldRefusal.Held, second.Refusal);
+        Assert.Equal(SessionHolder.FileTranscription, second.HeldBy);
+    }
 
-        Assert.Equal(SessionCommandDisposition.Ignored, result.Disposition);
-        Assert.True(result.WasQueued);
-        Assert.Empty(executor.SeenKinds);
-        Assert.Equal([SessionCommandKind.Interruption], executor.ExpiredKinds);
-        Assert.True(coordinator.IsIdle);
+    [Fact]
+    public async Task AHoldRefusedForADictationSaysSo()
+    {
+        var executor = new BarrierExecutor();
+        await using var coordinator = new DictationSessionCoordinator(executor);
+
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+
+        var attempt = coordinator.TryHold(SessionHolder.FileTranscription);
+        Assert.Null(attempt.Hold);
+        Assert.Equal(SessionHoldRefusal.Dictation, attempt.Refusal);
+
+        var busy = await coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        Assert.Null(busy.BusyHolder);
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
     }
 
     [Fact]
@@ -1152,7 +1218,7 @@ public sealed class DictationSessionCoordinatorTests
         var executor = new BarrierExecutor();
         var clock = new Deterministic.ManualClock();
         await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
-        var hold = coordinator.TryHold();
+        var hold = coordinator.TryHold(SessionHolder.UpdateCheck).Hold;
         Assert.NotNull(hold);
 
         var budget = TimeSpan.FromSeconds(10);
@@ -1171,7 +1237,7 @@ public sealed class DictationSessionCoordinatorTests
         var executor2 = new BarrierExecutor();
         var clock2 = new Deterministic.ManualClock();
         await using var coordinator2 = new DictationSessionCoordinator(executor2, clock: clock2);
-        var hold2 = coordinator2.TryHold();
+        var hold2 = coordinator2.TryHold(SessionHolder.UpdateCheck).Hold;
         var shutdown2 = coordinator2.ShutdownAsync(budget);
         await clock2.WhenRegistered(1).WaitAsync(Patience);
         Assert.False(shutdown2.IsCompleted);

@@ -233,6 +233,7 @@ public sealed partial class DictationOverlayWindow : Window
             // WRONG. This is the one pill that asks a question instead of reporting news.
             DictationOverlayState.Suggestion => ("A suggestion", "\uE774", detail),
             DictationOverlayState.Warning => ("Your text is safe", "\uE7BA", detail),
+            DictationOverlayState.Busy => ("EnviousWispr is busy", "\uE7BA", detail),
             // Distress reuses the error glyph deliberately. It is the same bad news arriving
             // louder, and the pulse plus the deeper wash carry the difference. A codepoint chosen
             // for novelty is a hollow box on a machine whose font does not have it, and nothing in
@@ -287,9 +288,15 @@ public sealed partial class DictationOverlayWindow : Window
         // reader reads when a live region changes.
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
             StateTitle,
-            state == DictationOverlayState.Recording
-                ? $"{RecordingPillCatalog.DisplayName(_activeDesign)} recording pill. {presentation.Item1}."
-                : $"{presentation.Item1}. {presentation.Item3}");
+            state switch
+            {
+                DictationOverlayState.Recording =>
+                    $"{RecordingPillCatalog.DisplayName(_activeDesign)} recording pill. {presentation.Item1}.",
+                // THE SENTENCE ALONE, as macOS says it: "Transcribing a file. Please wait." The heading
+                // before it would be read as a second, vaguer version of the same news.
+                DictationOverlayState.Busy => presentation.Item3,
+                _ => $"{presentation.Item1}. {presentation.Item3}",
+            });
         PositionOnForegroundMonitor();
         AppWindow.Show(activateWindow: false);
         // AFTER THE WINDOW IS SHOWN. Raising while it is still hidden announces something the user
@@ -298,7 +305,8 @@ public sealed partial class DictationOverlayWindow : Window
 
         if (state is DictationOverlayState.Success or DictationOverlayState.Advisory
             or DictationOverlayState.Suggestion or DictationOverlayState.Warning
-            or DictationOverlayState.Distress or DictationOverlayState.Error)
+            or DictationOverlayState.Distress or DictationOverlayState.Error
+            or DictationOverlayState.Busy)
         {
             // AN ADVISORY DWELLS LONGEST BECAUSE IT ASKS THE USER TO DO SOMETHING. It names a
             // setting they have to go and change, which is more words than "your text is safe" and
@@ -308,7 +316,8 @@ public sealed partial class DictationOverlayWindow : Window
                 // A SUGGESTION DWELLS AS LONG AS AN ADVISORY. It asks a question and offers a
                 // button, and a question the user has not finished reading is a question they
                 // answer by default.
-                DictationOverlayState.Advisory or DictationOverlayState.Suggestion => 6,
+                // BUSY DWELLS AS LONG, because it carries a button the person may want to reach.
+                DictationOverlayState.Advisory or DictationOverlayState.Suggestion or DictationOverlayState.Busy => 6,
                 DictationOverlayState.Error or DictationOverlayState.Distress => 5,
                 _ => 3,
             });
@@ -708,7 +717,9 @@ public sealed partial class DictationOverlayWindow : Window
             // nothing is broken", which is exactly what a suggestion is.
             DictationOverlayState.Advisory or DictationOverlayState.Suggestion =>
                 ("PillAdvisoryIconStyle", "PillAdvisoryEdgeStyle", "PillAdvisoryWashStyle"),
-            DictationOverlayState.Warning =>
+            // BUSY SHARES THE WARNING PALETTE ON PURPOSE: amber says the press did not do what was asked,
+            // without saying anything broke or any text was at risk.
+            DictationOverlayState.Warning or DictationOverlayState.Busy =>
                 ("PillWarningIconStyle", "PillWarningEdgeStyle", "PillWarningWashStyle"),
             DictationOverlayState.Distress =>
                 ("PillDistressIconStyle", "PillDistressEdgeStyle", "PillDistressWashStyle"),

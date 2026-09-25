@@ -45,6 +45,17 @@ public enum DictationOverlayState
     /// </remarks>
     Distress,
     Error,
+
+    /// <summary>
+    /// A record press was refused because something else has the session - a file being transcribed.
+    /// </summary>
+    /// <remarks>
+    /// NOT A WARNING, BECAUSE NO TEXT WAS AT RISK, AND NOT AN ADVISORY, BECAUSE NOTHING IN THE SETUP IS WRONG.
+    /// Under either heading the pill would say something untrue. It takes the warning PALETTE deliberately -
+    /// amber says "this did not happen the way you asked" without saying anything broke - and differs only
+    /// in what it calls itself, as Suggestion does beside Advisory. macOS shows the same refusal. Ref: #211.
+    /// </remarks>
+    Busy,
 }
 
 
@@ -75,6 +86,9 @@ public enum PillActionKind
     /// settings page happens to hold. The window that made the offer remembers what it offered.
     /// </remarks>
     LockDetectedLanguage,
+
+    /// <summary>Show the Transcribe a File page, where the job that has the session can be watched or stopped.</summary>
+    OpenFileTranscription,
 }
 
 /// <summary>The one button a notice may carry.</summary>
@@ -180,6 +194,10 @@ public readonly record struct DictationStatus(
     /// <summary>The text is safe, but it did not arrive the way the user asked.</summary>
     public static DictationStatus Warning(string text) =>
         new(text, DictationOverlayState.Warning);
+
+    /// <summary>A press was refused because something else has the session, and the pill says what.</summary>
+    public static DictationStatus Busy(string text, PillAction? action = null) =>
+        new(text, DictationOverlayState.Busy, action);
 
     /// <summary>Something outside the app interrupted a live dictation.</summary>
     public static DictationStatus Distress(string text) =>

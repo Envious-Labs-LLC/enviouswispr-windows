@@ -6,6 +6,9 @@ public enum UpdateOperationStatus
     DevelopmentBuild,
     NotConfigured,
     BusyDictating,
+
+    /// <summary>A file is being transcribed; it holds the session until it finishes or is stopped. Ref: #211.</summary>
+    BusyTranscribingFile,
     NoUpdate,
     DownloadedAndVerified,
     RejectedHash,

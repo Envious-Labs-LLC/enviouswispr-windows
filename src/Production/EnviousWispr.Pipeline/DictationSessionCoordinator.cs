@@ -27,6 +27,10 @@ public enum SessionCommandDisposition
 
 /// <param name="Disposition">What happened to the command.</param>
 /// <param name="Session">The session the executor reported, when it reported one.</param>
+/// <param name="BusyHolder">
+/// For a press refused Busy: what held the session at that moment, or null when it was a dictation's own
+/// command. Decided under the same lock as the refusal, so the reason cannot drift from the decision.
+/// </param>
 /// <param name="WasQueued">
 /// True when the command had to wait for an earlier command or an outside holder of the session gate
 /// before it ran. This is the evidence that the window the queue exists for was actually entered.
@@ -34,7 +38,39 @@ public enum SessionCommandDisposition
 public sealed record SessionCommandResult(
     SessionCommandDisposition Disposition,
     DictationSessionSnapshot? Session = null,
-    bool WasQueued = false);
+    bool WasQueued = false,
+    SessionHolder? BusyHolder = null);
+
+/// <summary>What is holding the session when it is not a dictation.</summary>
+public enum SessionHolder
+{
+    UpdateCheck,
+    UpdateApply,
+    LastDictationReuse,
+    FileTranscription,
+}
+
+/// <summary>Why a hold was refused.</summary>
+public enum SessionHoldRefusal
+{
+    /// <summary>The app is shutting down.</summary>
+    Closed,
+
+    /// <summary>A dictation is recording, or one of its commands is waiting or running.</summary>
+    Dictation,
+
+    /// <summary>Something else holds the session; <see cref="SessionHoldAttempt.HeldBy"/> says what.</summary>
+    Held,
+}
+
+/// <summary>A hold, or why there is none.</summary>
+/// <param name="Hold">The hold; disposing gives the session back. Null when refused.</param>
+/// <param name="Refusal">Why it was refused, when it was.</param>
+/// <param name="HeldBy">What holds the session, when <see cref="SessionHoldRefusal.Held"/>.</param>
+public sealed record SessionHoldAttempt(
+    IDisposable? Hold,
+    SessionHoldRefusal? Refusal = null,
+    SessionHolder? HeldBy = null);
 
 /// <summary>What a session command is: a key, Windows interrupting, or the recording's own limit.</summary>
 public enum SessionCommandKind
@@ -181,6 +217,8 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     private readonly SemaphoreSlim _sessionGate = new(1, 1);
     private readonly TimeProvider _clock;
     private int _holds;
+    /// <summary>What holds the session while <see cref="_holds"/> is above zero. One at a time: the gate admits one.</summary>
+    private SessionHolder? _heldBy;
     private bool _gateDisposed;
     private readonly Func<RecordingStartContext>? _captureStartContext;
     private readonly Channel<QueuedCommand> _queue;
@@ -227,6 +265,18 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     /// <summary>How many commands are waiting or running. Exposed for tests and shutdown accounting.</summary>
     public int PendingCount => Volatile.Read(ref _pendingOrRunning);
 
+    /// <summary>What holds the session right now, or null when no hold is taken.</summary>
+    public SessionHolder? HeldBy
+    {
+        get
+        {
+            lock (_admission)
+            {
+                return _holds > 0 ? _heldBy : null;
+            }
+        }
+    }
+
     /// <summary>Whether nothing holds the session: no command running, no hold taken.</summary>
     internal bool IsIdle => !_gateDisposed && _sessionGate.CurrentCount == 1;
 
@@ -236,17 +286,34 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     /// press admitted while the hold is held is <see cref="SessionCommandDisposition.Busy"/>; a
     /// terminal or an interruption waits for the hold to be released, as it waits for a command.
     /// </summary>
-    public IDisposable? TryHold()
+    public SessionHoldAttempt TryHold(SessionHolder holder)
     {
         lock (_admission)
         {
-            if (_closed || _pendingOrRunning > 0 || !_sessionGate.Wait(0))
+            if (_closed)
             {
-                return null;
+                return new SessionHoldAttempt(null, SessionHoldRefusal.Closed);
+            }
+
+            // ANOTHER HOLDER IS NAMED BEFORE A DICTATION IS BLAMED. A key released while a file job
+            // holds the session queues a terminal behind the hold, so the pending count is not zero -
+            // but the file is still why nothing else can have the session.
+            if (_holds > 0)
+            {
+                return new SessionHoldAttempt(null, SessionHoldRefusal.Held, _heldBy);
+            }
+
+            // A RECORDING IN FLIGHT IS NOT IDLE, though its press has finished and handed the gate back:
+            // capture runs between the press and the release with nothing holding the gate. A hold taken
+            // then made the release wait behind it, and the microphone ran on past the key. Ref: #211.
+            if (_recording is not null || _pendingOrRunning > 0 || !_sessionGate.Wait(0))
+            {
+                return new SessionHoldAttempt(null, SessionHoldRefusal.Dictation);
             }
 
             _holds++;
-            return new Hold(this);
+            _heldBy = holder;
+            return new SessionHoldAttempt(new Hold(this));
         }
     }
 
@@ -263,6 +330,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 
             if (_holds == 0)
             {
+                _heldBy = null;
                 _noHolds?.TrySetResult();
             }
         }
@@ -475,6 +543,15 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
                 return Task.FromResult(new SessionCommandResult(SessionCommandDisposition.Stopping));
             }
 
+            // A HOLD PROVES THERE IS NO DICTATION TO INTERRUPT: one is granted only when nothing records
+            // or waits, and a press while it is held is refused. An interruption queued behind it used to
+            // wait out its patience and then report a dictation's recovery as pending - during a healthy
+            // file transcription, which runs on across a lock and ends through its own result. Ref: #211.
+            if (command.Kind == SessionCommandKind.Interruption && _holds > 0)
+            {
+                return Task.FromResult(new SessionCommandResult(SessionCommandDisposition.Ignored));
+            }
+
             var gateReserved = false;
             var startContext = command.StartContext;
             if (command.IsPress)
@@ -484,7 +561,9 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
                 // can slip in between the decision and the start.
                 if (_pendingOrRunning > 0 || !_sessionGate.Wait(0))
                 {
-                    return Task.FromResult(new SessionCommandResult(SessionCommandDisposition.Busy));
+                    return Task.FromResult(new SessionCommandResult(
+                        SessionCommandDisposition.Busy,
+                        BusyHolder: _holds > 0 ? _heldBy : null));
                 }
 
                 gateReserved = true;

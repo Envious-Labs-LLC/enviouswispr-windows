@@ -352,6 +352,7 @@ public partial class App : Application, IAsyncDisposable
         _window.ModelDownloadRequested += OnModelDownloadRequested;
         _window.ModelDownloadCancelRequested += OnModelDownloadCancelRequested;
         _window.KeybindCaptureActiveChanged += OnKeybindCaptureActiveChanged;
+        _window.TranscribeFile = TranscribeFileAsync;
         _window.SpeedCheckRequested += OnSpeedCheckRequested;
         _window.MishearingSuggestionsRequested += OnMishearingSuggestionsRequested;
         _window.AppWindow.Closing += OnAppWindowClosing;
@@ -872,10 +873,10 @@ public partial class App : Application, IAsyncDisposable
 
         // THE SESSION IS HELD FOR THE WHOLE CHECK, so a press during the download is Busy rather than
         // a recording under an update; before the coordinator exists there is nothing to hold.
-        var hold = _sessionCoordinator is { } coordinator ? coordinator.TryHold() : NoScope.Instance;
-        if (hold is null)
+        var attempt = _sessionCoordinator?.TryHold(SessionHolder.UpdateCheck) ?? new SessionHoldAttempt(NoScope.Instance);
+        if (attempt.Hold is not { } hold)
         {
-            _window?.SetUpdateStatus(new UpdateOperationResult(UpdateOperationStatus.BusyDictating));
+            _window?.SetUpdateStatus(new UpdateOperationResult(UpdateBusyStatus(attempt)));
             return;
         }
 
@@ -891,6 +892,12 @@ public partial class App : Application, IAsyncDisposable
         }
     }
 
+    /// <summary>What an update refused for the session says: a running file is named, not blamed on a dictation.</summary>
+    private static UpdateOperationStatus UpdateBusyStatus(SessionHoldAttempt attempt) =>
+        attempt.HeldBy == SessionHolder.FileTranscription
+            ? UpdateOperationStatus.BusyTranscribingFile
+            : UpdateOperationStatus.BusyDictating;
+
     private async void OnUpdateApplyRequested()
     {
         if (_exitRequested || _disposed)
@@ -901,10 +908,10 @@ public partial class App : Application, IAsyncDisposable
         // THE SESSION IS HELD THROUGH THE ATTEMPT, and the leaving flag is set before it is given
         // back: a press admitted between the two would have opened a microphone under a restart. If the
         // restart does not happen the flag comes off and the hold goes back, and dictation resumes.
-        var hold = _sessionCoordinator is { } coordinator ? coordinator.TryHold() : NoScope.Instance;
-        if (hold is null)
+        var attempt = _sessionCoordinator?.TryHold(SessionHolder.UpdateApply) ?? new SessionHoldAttempt(NoScope.Instance);
+        if (attempt.Hold is not { } hold)
         {
-            _window?.SetUpdateStatus(new UpdateOperationResult(UpdateOperationStatus.BusyDictating));
+            _window?.SetUpdateStatus(new UpdateOperationResult(UpdateBusyStatus(attempt)));
             return;
         }
 
@@ -998,6 +1005,11 @@ public partial class App : Application, IAsyncDisposable
         _foregroundHistory = new WindowsForegroundHistory();
         _trayIcon.PasteLastRequested += () => _ = ReuseLastDictationAsync(LastDictationAction.Paste);
         _trayIcon.CopyLastRequested += () => _ = ReuseLastDictationAsync(LastDictationAction.Copy);
+        _trayIcon.TranscribeFileRequested += () =>
+        {
+            ShowMainWindow(openSettings: false);
+            _window?.OpenPage("settings-transcribe-file");
+        };
         _trayIcon.LastDictationPreviewRequested += RefreshLastDictationPreview;
         _trayIcon.SetStatus("ready");
     }
@@ -1984,6 +1996,112 @@ public partial class App : Application, IAsyncDisposable
         _ = _runtime.SubmitAsync(args.Signal);
     }
 
+    /// <summary>Transcribes a chosen audio file for the Transcribe a File page. Ref: #211, macOS #2648.</summary>
+    /// <remarks>
+    /// ADMITTED LIKE THE WINDOW'S OTHER OPERATIONS, because it borrows the final engine the exit disposes. THE SESSION
+    /// IS HELD FOR THE WHOLE FILE, taken before the file is opened and given back after the job returns, inside the
+    /// presentation lease so the exit cancels the job and then waits for the hold: a record press meanwhile is refused
+    /// at once and the pill says why (macOS, founder decision 2026-09-04). A start refused because the session is in
+    /// use says so; with no engine ready the job refuses at once rather than waiting for one that is not coming. Content-free log: the outcome and how long
+    /// it took, never a path, a file name or a word.
+    /// </remarks>
+    private async Task<FileTranscriptionResult> TranscribeFileAsync(
+        string path,
+        IProgress<FileTranscriptionProgress> progress,
+        CancellationToken cancellationToken)
+    {
+        static FileTranscriptionResult Refused() =>
+            new(FileTranscriptionOutcome.Failed, string.Empty, Pieces: 0, TimeSpan.Zero);
+
+        if (Leaving || _transcriptionEngine is null ||
+            _presentation is not { } presentation ||
+            !presentation.TryEnter(out var lease))
+        {
+            return Refused();
+        }
+
+        using (lease)
+        {
+            var attempt = _sessionCoordinator?.TryHold(SessionHolder.FileTranscription)
+                ?? new SessionHoldAttempt(NoScope.Instance);
+            if (attempt.Hold is null)
+            {
+                _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.FileTranscriptionRefused));
+                return new FileTranscriptionResult(
+                    FileTranscriptionOutcome.Refused, string.Empty, Pieces: 0, TimeSpan.Zero, Refusal: attempt);
+            }
+
+            using var hold = attempt.Hold;
+            // THE PAGE HEARS THE JOB HAS STARTED before the file is even opened, so it can clear the last result.
+            progress.Report(new FileTranscriptionProgress(0, TimeSpan.Zero, null));
+            using var run = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.Closing);
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.FileTranscriptionStarted));
+            FileTranscriptionResult result;
+            try
+            {
+                var (source, failure) = await Task.Run(
+                    () =>
+                    {
+                        var opened = AudioFileSource.TryOpen(path, out var why);
+                        return (opened, why);
+                    },
+                    run.Token).ConfigureAwait(false);
+                if (source is null)
+                {
+                    _logger.Write(new AppLogEntry(
+                        DateTimeOffset.UtcNow,
+                        AppEventCode.FileTranscriptionFailed,
+                        failure == AudioFileOpenFailure.NotAudio ? AppFailureCategory.InvalidData : AppFailureCategory.StorageUnavailable,
+                        timer.ElapsedMilliseconds,
+                        ErrorCode: failure == AudioFileOpenFailure.NotAudio
+                            ? AppErrorCode.AudioFormatUnsupported
+                            : AppErrorCode.StorageUnavailable));
+                    return Refused();
+                }
+
+                using (source)
+                {
+                    var environment = new FileTranscriptionEnvironment(
+                        Transcribe: (audio, token) => (_transcriptionEngine
+                                ?? throw new TranscriptionEngineException(new AppError(
+                                    AppErrorCode.RuntimeProviderUnavailable,
+                                    AppErrorStage.FinalAsr,
+                                    CanRetry: true)))
+                            .TranscribeAsync(audio, token),
+                        Finish: async (transcript, token) => (await _deterministicTextPipeline.ProcessAsync(
+                                new DeterministicTextRequest(transcript, _settings.UserData.CustomWords, _deterministicTextOptions),
+                                token).ConfigureAwait(false)).Output.Text);
+                    result = await Task.Run(
+                        () => FileTranscriptionJob.RunAsync(source, environment, progress, run.Token),
+                        run.Token).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (run.IsCancellationRequested)
+            {
+                result = new FileTranscriptionResult(FileTranscriptionOutcome.Cancelled, string.Empty, Pieces: 0, TimeSpan.Zero);
+            }
+            catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+            {
+                result = Refused();
+            }
+
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                result.Outcome switch
+                {
+                    FileTranscriptionOutcome.Completed => AppEventCode.FileTranscriptionCompleted,
+                    FileTranscriptionOutcome.Empty => AppEventCode.FileTranscriptionEmpty,
+                    FileTranscriptionOutcome.Cancelled => AppEventCode.FileTranscriptionCancelled,
+                    _ => AppEventCode.FileTranscriptionFailed,
+                },
+                result.Outcome == FileTranscriptionOutcome.Failed ? AppFailureCategory.AsrUnavailable : AppFailureCategory.None,
+                timer.ElapsedMilliseconds,
+                ErrorCode: result.Error?.Code));
+            return result;
+        }
+    }
+
     /// <summary>Paste or copy the last dictation, from the tray. Ref: #206.</summary>
     /// <remarks>
     /// THE TARGET IS TAKEN ON THE CLICK, before anything is awaited: the last window the person really
@@ -2003,6 +2121,7 @@ public partial class App : Application, IAsyncDisposable
         }
 
         LastDictationReuseResult result;
+        SessionHolder? heldBy = null;
         using (lease)
         {
             try
@@ -2011,9 +2130,15 @@ public partial class App : Application, IAsyncDisposable
                 // dictation is being pasted is answered Busy rather than starting a take whose delivery would
                 // race this one for the clipboard and the target. The checks inside the reuse stay - a
                 // recording can exist between session commands, which the hold alone cannot see.
-                using var hold = _sessionCoordinator?.TryHold();
+                var attempt = _sessionCoordinator?.TryHold(SessionHolder.LastDictationReuse)
+                    ?? new SessionHoldAttempt(NoScope.Instance);
+                heldBy = attempt.HeldBy;
+                using var hold = attempt.Hold;
                 result = hold is null
-                    ? new LastDictationReuseResult(action, LastDictationSource.Menu, LastDictationOutcome.DictationInProgress)
+                    ? new LastDictationReuseResult(
+                        action,
+                        LastDictationSource.Menu,
+                        heldBy is null ? LastDictationOutcome.DictationInProgress : LastDictationOutcome.Busy)
                     : action == LastDictationAction.Paste
                         ? await reuse.PasteAsync(target, LastDictationSource.Menu, shownEntry, lease.Closing).ConfigureAwait(false)
                         : await reuse.CopyAsync(LastDictationSource.Menu, shownEntry, lease.Closing).ConfigureAwait(false);
@@ -2046,11 +2171,55 @@ public partial class App : Application, IAsyncDisposable
             ErrorCode: result.Delivery is { } delivered ? DeliveryErrorCodes.For(delivered.RefusalReason) : null,
             DeliveryStage: result.Delivery?.Fault?.Stage,
             Fault: result.Delivery?.Fault?.Kind));
-        if (LastDictationStatus(result.Outcome) is { } shown)
+        // A REFUSAL FOR A HOLDER NAMES IT - a file being transcribed is not "busy with a dictation".
+        if (heldBy is { } holder)
+        {
+            ShowSessionBusy(holder);
+        }
+        else         if (LastDictationStatus(result.Outcome) is { } shown)
         {
             ShowLastDictationStatus(shown);
         }
     }
+
+    /// <summary>Says on the pill what has the session, after a press or a reuse it refused. Ref: #211.</summary>
+    /// <remarks>
+    /// ASKED AGAIN AT THE DRAW. The notice is queued to the window; by the time it runs the job may have ended and a
+    /// new recording begun, and its pill must not be replaced by news that is no longer true. So it is drawn only
+    /// while the same holder still has the session - which also means no recording can be on screen.
+    /// </remarks>
+    private void ShowSessionBusy(SessionHolder holder)
+    {
+        if (SessionBusyStatus(holder) is not { } found)
+        {
+            return;
+        }
+
+        DictationStatus busy = found;
+        _window?.DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!Leaving && _sessionCoordinator?.HeldBy == holder)
+            {
+                _window?.SetSessionStatus(busy);
+            }
+        });
+    }
+
+    /// <summary>The pill for each holder, in macOS's words where macOS has them; null where nothing is worth saying.</summary>
+    internal static DictationStatus? SessionBusyStatus(SessionHolder holder) => holder switch
+    {
+        SessionHolder.FileTranscription => DictationStatus.Busy(
+            "Transcribing a file. Please wait.",
+            new PillAction(
+                "View progress",
+                PillActionKind.OpenFileTranscription,
+                "Open Transcribe a File to watch its progress or stop it")),
+        SessionHolder.UpdateCheck => DictationStatus.Busy("Checking for updates. Please wait."),
+        SessionHolder.LastDictationReuse => DictationStatus.Busy("Pasting your last dictation. Please wait."),
+        // THE APP IS RESTARTING INTO THE UPDATE; a notice now would be drawn over a window about to close.
+        SessionHolder.UpdateApply => null,
+        _ => null,
+    };
 
     /// <summary>The reuse's sentence on the pill, queued to the window and checked when it runs.</summary>
     /// <remarks>
@@ -2516,6 +2685,8 @@ public partial class App : Application, IAsyncDisposable
             });
 
         public void ShowMainWindow() => app.ShowMainWindow(openSettings: false);
+
+        public void ShowSessionBusy(SessionHolder holder) => app.ShowSessionBusy(holder);
     }
 
     /// <summary>The window as the session sees it: each sink one dispatch to the window, and nothing decided here.</summary>

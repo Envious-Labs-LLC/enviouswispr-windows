@@ -45,6 +45,7 @@ public sealed class WindowsTrayIcon : IDisposable
         menu.Items.Add(_pasteLast);
         menu.Items.Add(_copyLast);
         menu.Items.Add(_lastPreview);
+        menu.Items.Add("Transcribe a file...", image: null, (_, _) => TranscribeFileRequested?.Invoke());
         // READ AGAIN EVERY TIME THE MENU OPENS. History changes from places that never tell the tray - a
         // deletion, a Keep, a retention expiry - and a preview that outlived its entry would name one dictation
         // and paste another. The items wait, disabled, for the read.
@@ -95,6 +96,9 @@ public sealed class WindowsTrayIcon : IDisposable
     public event Action? PasteLastRequested;
 
     public event Action? CopyLastRequested;
+
+    /// <summary>Open the Transcribe a File page - with the other ways to get words in, as on macOS. Ref: #211.</summary>
+    public event Action? TranscribeFileRequested;
 
     /// <summary>The menu is opening; the app reads the history and answers with <see cref="SetLastDictationPreview"/>.</summary>
     public event Action? LastDictationPreviewRequested;

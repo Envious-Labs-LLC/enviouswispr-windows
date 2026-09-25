@@ -640,6 +640,8 @@ public sealed partial class MainWindow : Window, IDisposable
             {
                 UpdateOperationStatus.BusyDictating =>
                     "Finish or cancel the active dictation before checking or applying an update.",
+                UpdateOperationStatus.BusyTranscribingFile =>
+                    "A file is being transcribed. Let it finish or stop it, then try the update again.",
                 UpdateOperationStatus.NoUpdate =>
                     $"Version {result.Version} is current on this isolated channel.",
                 UpdateOperationStatus.DownloadedAndVerified =>
@@ -812,6 +814,9 @@ public sealed partial class MainWindow : Window, IDisposable
                 break;
             case PillActionKind.OpenTranscriptionSettings:
                 OpenPage("settings-transcription");
+                break;
+            case PillActionKind.OpenFileTranscription:
+                OpenPage("settings-transcribe-file");
                 break;
 
             // NOT NAVIGATION. Sending it to a page would open the settings and leave the thing the
@@ -4063,6 +4068,10 @@ public sealed partial class MainWindow : Window, IDisposable
                 "Transcription",
                 "The speech engine that turns your voice into text.",
                 (FrameworkElement?)TranscriptionEngineSection),
+            "settings-transcribe-file" => (
+                "Transcribe a File",
+                "Turn a recording into text, on this PC, with the same engine and clean-up as your dictation.",
+                (FrameworkElement?)TranscribeFileSection),
             "settings-live-preview" => (
                 "Live Preview",
                 "See your words on screen while you are still speaking, and choose how the recording pill looks.",
@@ -4242,6 +4251,7 @@ public sealed partial class MainWindow : Window, IDisposable
         KeybindsSection,
         SoundSection,
         DeterministicCleanupSection,
+        TranscribeFileSection,
         AiPolishSection,
         HistorySettingsSection,
         AppearanceSection,
