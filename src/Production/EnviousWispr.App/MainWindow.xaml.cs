@@ -4063,6 +4063,10 @@ public sealed partial class MainWindow : Window, IDisposable
                 "Transcription",
                 "The speech engine that turns your voice into text.",
                 (FrameworkElement?)TranscriptionEngineSection),
+            "settings-transcribe-file" => (
+                "Transcribe a File",
+                "Turn a recording into text, on this PC, with the same engine and clean-up as your dictation.",
+                (FrameworkElement?)TranscribeFileSection),
             "settings-live-preview" => (
                 "Live Preview",
                 "See your words on screen while you are still speaking, and choose how the recording pill looks.",
@@ -4242,6 +4246,7 @@ public sealed partial class MainWindow : Window, IDisposable
         KeybindsSection,
         SoundSection,
         DeterministicCleanupSection,
+        TranscribeFileSection,
         AiPolishSection,
         HistorySettingsSection,
         AppearanceSection,

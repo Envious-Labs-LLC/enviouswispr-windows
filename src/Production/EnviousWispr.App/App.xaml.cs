@@ -352,6 +352,7 @@ public partial class App : Application, IAsyncDisposable
         _window.ModelDownloadRequested += OnModelDownloadRequested;
         _window.ModelDownloadCancelRequested += OnModelDownloadCancelRequested;
         _window.KeybindCaptureActiveChanged += OnKeybindCaptureActiveChanged;
+        _window.TranscribeFile = TranscribeFileAsync;
         _window.SpeedCheckRequested += OnSpeedCheckRequested;
         _window.MishearingSuggestionsRequested += OnMishearingSuggestionsRequested;
         _window.AppWindow.Closing += OnAppWindowClosing;
@@ -998,6 +999,11 @@ public partial class App : Application, IAsyncDisposable
         _foregroundHistory = new WindowsForegroundHistory();
         _trayIcon.PasteLastRequested += () => _ = ReuseLastDictationAsync(LastDictationAction.Paste);
         _trayIcon.CopyLastRequested += () => _ = ReuseLastDictationAsync(LastDictationAction.Copy);
+        _trayIcon.TranscribeFileRequested += () =>
+        {
+            ShowMainWindow(openSettings: false);
+            _window?.OpenPage("settings-transcribe-file");
+        };
         _trayIcon.LastDictationPreviewRequested += RefreshLastDictationPreview;
         _trayIcon.SetStatus("ready");
     }
@@ -1982,6 +1988,99 @@ public partial class App : Application, IAsyncDisposable
         }
 
         _ = _runtime.SubmitAsync(args.Signal);
+    }
+
+    /// <summary>Transcribes a chosen audio file for the Transcribe a File page. Ref: #211, macOS #2648.</summary>
+    /// <remarks>
+    /// ADMITTED LIKE THE WINDOW'S OTHER OPERATIONS, because it borrows the final engine the exit disposes. The engine is
+    /// taken one piece at a time through the session hold, so a dictation always goes first; with no engine ready the
+    /// job refuses at once rather than waiting for one that is not coming. Content-free log: the outcome and how long
+    /// it took, never a path, a file name or a word.
+    /// </remarks>
+    private async Task<FileTranscriptionResult> TranscribeFileAsync(
+        string path,
+        IProgress<FileTranscriptionProgress> progress,
+        CancellationToken cancellationToken)
+    {
+        static FileTranscriptionResult Refused() =>
+            new(FileTranscriptionOutcome.Failed, string.Empty, Pieces: 0, TimeSpan.Zero);
+
+        if (Leaving || _transcriptionEngine is null ||
+            _presentation is not { } presentation ||
+            !presentation.TryEnter(out var lease))
+        {
+            return Refused();
+        }
+
+        using (lease)
+        {
+            using var run = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.Closing);
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.FileTranscriptionStarted));
+            FileTranscriptionResult result;
+            try
+            {
+                var (source, failure) = await Task.Run(
+                    () =>
+                    {
+                        var opened = AudioFileSource.TryOpen(path, out var why);
+                        return (opened, why);
+                    },
+                    run.Token).ConfigureAwait(false);
+                if (source is null)
+                {
+                    _logger.Write(new AppLogEntry(
+                        DateTimeOffset.UtcNow,
+                        AppEventCode.FileTranscriptionFailed,
+                        failure == AudioFileOpenFailure.NotAudio ? AppFailureCategory.InvalidData : AppFailureCategory.StorageUnavailable,
+                        timer.ElapsedMilliseconds,
+                        ErrorCode: failure == AudioFileOpenFailure.NotAudio
+                            ? AppErrorCode.AudioFormatUnsupported
+                            : AppErrorCode.StorageUnavailable));
+                    return Refused();
+                }
+
+                using (source)
+                {
+                    var environment = new FileTranscriptionEnvironment(
+                        AcquireEngine: () => _sessionCoordinator is { } coordinator ? coordinator.TryHold() : NoScope.Instance,
+                        Transcribe: (audio, token) => (_transcriptionEngine
+                                ?? throw new TranscriptionEngineException(new AppError(
+                                    AppErrorCode.RuntimeProviderUnavailable,
+                                    AppErrorStage.FinalAsr,
+                                    CanRetry: true)))
+                            .TranscribeAsync(audio, token),
+                        Finish: async (transcript, token) => (await _deterministicTextPipeline.ProcessAsync(
+                                new DeterministicTextRequest(transcript, _settings.UserData.CustomWords, _deterministicTextOptions),
+                                token).ConfigureAwait(false)).Output.Text);
+                    result = await Task.Run(
+                        () => FileTranscriptionJob.RunAsync(source, environment, progress, run.Token),
+                        run.Token).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (run.IsCancellationRequested)
+            {
+                result = new FileTranscriptionResult(FileTranscriptionOutcome.Cancelled, string.Empty, Pieces: 0, TimeSpan.Zero);
+            }
+            catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+            {
+                result = Refused();
+            }
+
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                result.Outcome switch
+                {
+                    FileTranscriptionOutcome.Completed => AppEventCode.FileTranscriptionCompleted,
+                    FileTranscriptionOutcome.Empty => AppEventCode.FileTranscriptionEmpty,
+                    FileTranscriptionOutcome.Cancelled => AppEventCode.FileTranscriptionCancelled,
+                    _ => AppEventCode.FileTranscriptionFailed,
+                },
+                result.Outcome == FileTranscriptionOutcome.Failed ? AppFailureCategory.AsrUnavailable : AppFailureCategory.None,
+                timer.ElapsedMilliseconds,
+                ErrorCode: result.Error?.Code));
+            return result;
+        }
     }
 
     /// <summary>Paste or copy the last dictation, from the tray. Ref: #206.</summary>

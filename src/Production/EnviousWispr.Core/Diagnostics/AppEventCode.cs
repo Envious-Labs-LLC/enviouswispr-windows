@@ -236,5 +236,22 @@ public enum AppEventCode
 
     /// <summary>The delivery wrote nothing and the clipboard did not catch the words.</summary>
     LastDictationReuseFailed,
+
+    // TRANSCRIBE A FILE (#211): what happened to a file, never which file or what it said.
+
+    /// <summary>A file transcription began.</summary>
+    FileTranscriptionStarted,
+
+    /// <summary>Every piece of the file was transcribed.</summary>
+    FileTranscriptionCompleted,
+
+    /// <summary>The file held no speech.</summary>
+    FileTranscriptionEmpty,
+
+    /// <summary>The person stopped it; the words so far were kept.</summary>
+    FileTranscriptionCancelled,
+
+    /// <summary>The file could not be read as audio, or a piece failed; any words so far were kept.</summary>
+    FileTranscriptionFailed,
     UnhandledFailure,
 }

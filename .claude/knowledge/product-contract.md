@@ -37,7 +37,7 @@ without a dedicated GPU.
 ## macOS interaction parity
 
 - The main navigation uses the macOS product groups and names: APP (History, What’s New, Appearance),
-  RECORD (Transcription, Live Preview, Microphone, Sounds, Keybinds), PROCESS (AI Polish, Your Words),
+  RECORD (Transcription, Transcribe a File, Live Preview, Microphone, Sounds, Keybinds), PROCESS (AI Polish, Your Words),
   OUTPUT (Clipboard), and SYSTEM (Permissions, Check for Updates, Open Source Licenses).
 - Appearance follows the Windows setting by default and also offers explicit Light and Dark modes.
 - The recording pill can appear at the top or bottom of the active monitor.
