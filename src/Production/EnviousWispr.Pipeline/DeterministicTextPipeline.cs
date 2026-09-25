@@ -202,11 +202,84 @@ public sealed class DeterministicTextPipeline
     }
 
     /// <summary>
+    /// Runs every enabled stage once, in order, on a fixed sentence that exercises each of them, with
+    /// no deadline, so a person's first dictation does not pay the stages' first-call cost. Returns
+    /// the stages that threw; the caller decides how to report them. Ref: #239.
+    /// </summary>
+    /// <remarks>
+    /// OUTSIDE THE EXECUTOR ON PURPOSE. Warmed through the executor, a warm-up still running when the
+    /// first dictation arrives would make that dictation's stage Busy, which is the very loss this
+    /// exists to prevent; and a warm-up held to the stage's deadline would stand down exactly when
+    /// warming is needed most. The stages keep no state between calls (their tables and generated
+    /// patterns are read-only), so a dictation that overlaps the warm-up only shares its first-call cost.
+    /// A stage that fails here fails alone: the next one is still warmed from the last valid text.
+    /// </remarks>
+    public IReadOnlyList<DeterministicTextStage> WarmStages()
+    {
+        var context = WarmUpContext();
+        var failed = new List<DeterministicTextStage>();
+        foreach (var step in _steps)
+        {
+            try
+            {
+                if (step.IsEnabled(context))
+                {
+                    var next = step.Process(context, CancellationToken.None);
+                    if (next is null || next.Text is null)
+                    {
+                        throw new InvalidOperationException("A deterministic text stage returned no context.");
+                    }
+
+                    context = next;
+                }
+            }
+            catch (Exception exception) when (exception is not (StackOverflowException or OutOfMemoryException))
+            {
+                failed.Add(step.Stage);
+            }
+        }
+
+        return failed;
+    }
+
+    /// <summary>
+    /// A made-up sentence, never a person's words, that turns every stage on: a custom word, a filler, a
+    /// spoken emoji, a number, an American spelling, and a polish that dropped the emoji for restoration.
+    /// </summary>
+    private static DeterministicTextContext WarmUpContext() =>
+        new(
+            new Transcript(DictationSessionId.Create(), WarmUpSpoken, "warm-up", DetectedLanguage: "en"),
+            WarmUpSpoken,
+            [new CustomWordEntry("envy wisper", "EnviousWispr")],
+            new DeterministicTextOptions(
+                WordCorrectionEnabled: true,
+                FillerRemovalEnabled: true,
+                EmojiFormatterEnabled: true,
+                SpokenPunctuationEnabled: true,
+                EnglishSpelling: EnglishSpelling.British),
+            PolishedText: "Send EnviousWispr the colour version at 3:30.");
+
+    private const string WarmUpSpoken =
+        "um so send envy wisper the color version thumbs up emoji at three thirty period";
+
+    /// <summary>
     /// The production stages in their production order, for a test that wants the real text decisions
     /// without the real deadlines: wrap each one and hand the list to the other constructor.
     /// </summary>
     internal static IReadOnlyList<IDeterministicTextStep> DefaultSteps() => CreateDefaultSteps();
 
+    /// <remarks>
+    /// EVERY DEADLINE BELOW IS SET FROM A MEASUREMENT, recorded beside it (#239). The instrument is
+    /// tools/stage-budget-bench: one fresh process per stage and run, the stages built as the app builds them,
+    /// the stage's first call timed whole with no deadline. "Throttled" is Idle priority, EcoQoS and the
+    /// efficiency cores only; 30 runs each on a hybrid desktop processor (8 performance, 16 efficiency cores),
+    /// 2026-09-25. A deadline is at least five times the slowest throttled first call, and also clears that
+    /// call plus the longest garbage-collection pause seen inside one call (105 ms throttled): a collection
+    /// lands in whichever stage is running, and the deadline cannot tell it from slow work. The startup
+    /// warm-up (<see cref="WarmStages"/>) takes the first-call cost off a person's first dictation; the
+    /// deadlines are sized to hold without it, for the dictation that arrives before the warm-up finishes.
+    /// Each stays a deadline: a stage that hangs still stands down at it with the last valid text.
+    /// </remarks>
     private static IReadOnlyList<IDeterministicTextStep> CreateDefaultSteps()
     {
         SpokenEmojiFormatter? emojiFormatter;
@@ -235,6 +308,7 @@ public sealed class DeterministicTextPipeline
     {
         public DeterministicTextStage Stage => DeterministicTextStage.CustomWords;
 
+        /// <summary>Throttled first call: median 24 ms, slowest 51 ms (normal 12 ms). Unchanged: 3 s is 59 times the slowest.</summary>
         public TimeSpan Timeout => TimeSpan.FromSeconds(3);
 
         public bool IsEnabled(DeterministicTextContext context) =>
@@ -251,7 +325,8 @@ public sealed class DeterministicTextPipeline
     {
         public DeterministicTextStage Stage => DeterministicTextStage.FillerAndFalseStarts;
 
-        public TimeSpan Timeout => TimeSpan.FromMilliseconds(50);
+        /// <summary>Throttled first call: median 6 ms, slowest 19 ms (normal 3 ms). 50 ms was under 5x the slowest.</summary>
+        public TimeSpan Timeout => TimeSpan.FromMilliseconds(200);
 
         public bool IsEnabled(DeterministicTextContext context) => context.Options.FillerRemovalEnabled;
 
@@ -269,7 +344,8 @@ public sealed class DeterministicTextPipeline
     {
         public DeterministicTextStage Stage => DeterministicTextStage.SpokenEmoji;
 
-        public TimeSpan Timeout => TimeSpan.FromMilliseconds(50);
+        /// <summary>Throttled first call: median 4 ms, slowest 14 ms (normal 2 ms). 50 ms was under 5x the slowest.</summary>
+        public TimeSpan Timeout => TimeSpan.FromMilliseconds(200);
 
         public bool IsEnabled(DeterministicTextContext context) =>
             context.Options.EmojiFormatterEnabled &&
@@ -287,6 +363,7 @@ public sealed class DeterministicTextPipeline
     {
         public DeterministicTextStage Stage => DeterministicTextStage.InverseTextNormalization;
 
+        /// <summary>Throttled first call: median 10 ms, slowest 24 ms (normal 5 ms), after construction's warm. Unchanged.</summary>
         public TimeSpan Timeout => TimeSpan.FromMilliseconds(500);
 
         public bool IsEnabled(DeterministicTextContext context)
@@ -308,7 +385,11 @@ public sealed class DeterministicTextPipeline
     {
         public DeterministicTextStage Stage => DeterministicTextStage.EmojiRestoration;
 
-        public TimeSpan Timeout => TimeSpan.FromMilliseconds(50);
+        /// <summary>
+        /// Throttled first call: median 13 ms, slowest 36 ms (normal 8 ms); 50 ms was under 5x the slowest, and
+        /// CI crossed it (#239). The restorer's own 1,000-token cap bounds its work on a long dictation.
+        /// </summary>
+        public TimeSpan Timeout => TimeSpan.FromMilliseconds(200);
 
         public bool IsEnabled(DeterministicTextContext context) => context.PolishedText is not null;
 
@@ -336,7 +417,10 @@ public sealed class DeterministicTextPipeline
             ? DeterministicTextStage.EnglishSpellingAfterPolish
             : DeterministicTextStage.EnglishSpelling;
 
-        /// <summary>10,000 words convert in well under this; the macOS budget for them is 150 ms.</summary>
+        /// <summary>
+        /// 10,000 words convert in well under this; the macOS budget for them is 150 ms. Throttled first call:
+        /// median 2 ms, slowest 27 ms (normal 1.5 ms), before or after polish. Unchanged.
+        /// </summary>
         public TimeSpan Timeout => TimeSpan.FromMilliseconds(200);
 
         /// <remarks>

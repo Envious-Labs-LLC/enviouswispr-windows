@@ -3,6 +3,9 @@
     <!-- The coordinator tests need to see that the consumer is parked on the session gate before
          they prove a stop releases it; a test that stops before the wait was entered proves nothing. -->
     <InternalsVisibleTo Include="EnviousWispr.Architecture.Tests" />
+    <!-- The stage-budget bench times each production stage on its own, without the executor's
+         deadline cutting the measurement short (#239). -->
+    <InternalsVisibleTo Include="EnviousWispr.StageBudget.Bench" />
   </ItemGroup>
 
   <ItemGroup>

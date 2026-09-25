@@ -87,6 +87,13 @@ public enum AppEventCode
     /// where it stops being thrown away.
     /// </remarks>
     DeterministicStageObserved,
+
+    /// <summary>At launch, warming one deterministic cleanup stage threw; the Stage field names which (#239).</summary>
+    /// <remarks>
+    /// The warm-up runs a fixed made-up sentence, so this carries no dictated text. The stage still runs on
+    /// every dictation under its own deadline; a failure here only means its first call was not paid early.
+    /// </remarks>
+    DeterministicStageWarmUpFailed,
     PolishStarted,
     PolishCompleted,
     PolishDegraded,

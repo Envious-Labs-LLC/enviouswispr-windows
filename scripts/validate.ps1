@@ -314,6 +314,11 @@ try {
     Write-Host "Building live-preview model bench (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/preview-model-bench/EnviousWispr.Preview.Model.Bench.csproj", "-c", "Release", "--nologo")
 
+    # THE STAGE BUDGET BENCH (#239), compiled for the same reason: the cleanup stages' deadlines are set from
+    # what it prints, so it must still build against the stages the next time one of them changes.
+    Write-Host "Building deterministic stage budget bench (Release)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/stage-budget-bench/EnviousWispr.StageBudget.Bench.csproj", "-c", "Release", "--nologo")
+
     Write-Host "Building production WinUI end-to-end journey UAT harness (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", "Release", "--nologo")
 
