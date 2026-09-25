@@ -1,12 +1,65 @@
+using System.Runtime.InteropServices;
 using EnviousWispr.Core.Credentials;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Services.Credentials;
 
 namespace EnviousWispr.Architecture.Tests;
 
+/// <summary>
+/// A fact that needs Windows Credential Manager to be reachable from this logon session; skipped
+/// where there is no logon session for it (ERROR_NO_LOGON_SESSIONS / 1312), as in a non-interactive
+/// session (SSH, service, agent). A real Credential Manager failure in a reachable session is not
+/// skipped: the test runs and fails.
+/// </summary>
+[AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
+public sealed class CredentialManagerFactAttribute : FactAttribute
+{
+    private const uint CredTypeGeneric = 1;
+    private const int ErrorNoLogonSessions = 1312;
+
+    public CredentialManagerFactAttribute()
+    {
+        if (!CredentialManagerReachable())
+        {
+            Skip = "Windows Credential Manager has no logon session in this context " +
+                   "(ERROR_NO_LOGON_SESSIONS / 1312); the create/read/replace/delete path did not run. " +
+                   "It runs in an interactive session.";
+        }
+    }
+
+    /// <summary>
+    /// Whether this logon session can reach Windows Credential Manager. A read of a throwaway target
+    /// answers the session, not the target: in a non-interactive session the whole store is
+    /// unreachable and even a read of a missing credential returns 1312 instead of 1168 (not found).
+    /// Any other answer - a hit, 1168, or another failure - means the session reaches Credential
+    /// Manager, so the test runs and a real failure fails it.
+    /// </summary>
+    private static bool CredentialManagerReachable()
+    {
+        if (CredReadW($"EnviousWispr.Tests.Probe.{Guid.NewGuid():N}", CredTypeGeneric, 0, out var credential))
+        {
+            if (credential != IntPtr.Zero)
+            {
+                CredFree(credential);
+            }
+
+            return true;
+        }
+
+        return Marshal.GetLastWin32Error() != ErrorNoLogonSessions;
+    }
+
+    [DllImport("Advapi32.dll", EntryPoint = "CredReadW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CredReadW(string target, uint type, uint flags, out IntPtr credential);
+
+    [DllImport("Advapi32.dll")]
+    private static extern void CredFree(IntPtr buffer);
+}
+
 public sealed class WindowsCredentialApiKeyStoreTests
 {
-    [Fact]
+    [CredentialManagerFact]
     public void CredentialManagerSupportsCreateReadReplaceAndIdempotentDelete()
     {
         var prefix = $"EnviousLabs.EnviousWispr.Tests.{Guid.NewGuid():N}";
