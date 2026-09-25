@@ -301,6 +301,9 @@ internal static class WindowsClipboardPaste
             {
                 VirtualKey = virtualKey,
                 Flags = keyUp ? KeyEventKeyUp : 0,
+                // THE APP'S OWN KEYSTROKE, SO ITS OWN HOOK STEPS ASIDE. With a last-dictation shortcut bound to
+                // Ctrl+V or Ctrl+C, the hook would otherwise swallow the very paste or copy this sends. Ref: #206.
+                ExtraInfo = MenuKeyMask.Tag,
             },
         },
     };

@@ -4,7 +4,12 @@ using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Services.Input;
 
-internal readonly record struct HotkeyEdgeDecision(bool Consume, PushToTalkSignal? Signal = null);
+/// <param name="MaskMenuKey">
+/// The press consumed a key while Alt or Win was held, so Windows must be told something happened between that
+/// modifier's press and release: otherwise releasing Alt opens a menu, Win opens Start, and Alt+Shift switches the
+/// keyboard layout. The hook answers it by sending one unassigned key (VK 0xE8). Ref: #206.
+/// </param>
+internal readonly record struct HotkeyEdgeDecision(bool Consume, PushToTalkSignal? Signal = null, bool MaskMenuKey = false);
 
 internal readonly record struct HotkeyBinding(uint VirtualKey, HotkeyModifiers Modifiers);
 
@@ -17,6 +22,8 @@ internal sealed class HotkeyEdgeTracker
     private readonly HotkeyBinding _cancel;
     private readonly HotkeyBinding _quickAdd;
     private readonly Func<uint, HotkeyModifiers, bool>? _typesCharacter;
+    private readonly OneShotBinding? _pasteLast;
+    private readonly OneShotBinding? _copyLast;
     private readonly DictationRecordingMode _recordingMode;
     private bool _recordHeld;
     private bool _cancelHeld;
@@ -69,9 +76,13 @@ internal sealed class HotkeyEdgeTracker
         HotkeyBinding cancel,
         HotkeyBinding quickAdd,
         DictationRecordingMode recordingMode,
-        Func<uint, HotkeyModifiers, bool>? typesCharacter = null)
+        Func<uint, HotkeyModifiers, bool>? typesCharacter = null,
+        HotkeyBinding? pasteLast = null,
+        HotkeyBinding? copyLast = null)
     {
         _typesCharacter = typesCharacter;
+        _pasteLast = pasteLast is { } paste ? new OneShotBinding(paste, PushToTalkSignal.PasteLast) : null;
+        _copyLast = copyLast is { } copy ? new OneShotBinding(copy, PushToTalkSignal.CopyLast) : null;
         _record = record;
         _cancel = cancel;
         _quickAdd = quickAdd;
@@ -189,7 +200,65 @@ internal sealed class HotkeyEdgeTracker
         }
     }
 
+    /// <summary>
+    /// One decision per physical press for a key a last-dictation shortcut uses: its first key-down decides, and its
+    /// repeats and release follow that decision whatever changes in between. Ref: #206 review.
+    /// </summary>
+    /// <remarks>
+    /// WITHOUT THIS A PRESS COULD CHANGE HANDS HALF WAY. Release Alt and Shift while Z is still held and the repeats
+    /// no longer match the shortcut, so they went to the application while the release was still swallowed; press
+    /// the shortcut during a recording and end the recording while it is held, and a repeat fired the paste. Every
+    /// other key is untouched by this wrapper.
+    /// </remarks>
     public HotkeyEdgeDecision Process(uint virtualKey, bool isKeyDown, HotkeyModifiers activeModifiers)
+    {
+        lock (_sync)
+        {
+            if (!OneShots().Any(oneShot => oneShot.Binding.VirtualKey == virtualKey))
+            {
+                return ProcessCore(virtualKey, isKeyDown, activeModifiers);
+            }
+
+            if (isKeyDown && _oneShotKeyPresses.TryGetValue(virtualKey, out var consumedDown))
+            {
+                // THE REPEAT KEEPS ITS OWNER, AND A PENDING MODIFIER GESTURE STILL SEES IT: an ordinary key repeating
+                // while Right Ctrl or Ctrl+Win is held is what disqualifies that gesture, so it is still offered to
+                // it. Ref: #206 review round 2.
+                var gestureDecision =
+                    _recordGesture is not null && (!_capturingKeybind || IsAnythingInFlight())
+                        ? ProcessRecordGesture(virtualKey, isKeyDown, activeModifiers)
+                        : null;
+                return new HotkeyEdgeDecision(Consume: consumedDown, Signal: gestureDecision?.Signal);
+            }
+
+            var decision = ProcessCore(virtualKey, isKeyDown, activeModifiers);
+            if (isKeyDown)
+            {
+                _oneShotKeyPresses[virtualKey] = decision.Consume;
+                return decision;
+            }
+
+            if (_oneShotKeyPresses.Remove(virtualKey, out var consumed))
+            {
+                decision = decision with { Consume = consumed };
+            }
+
+            foreach (var oneShot in OneShots())
+            {
+                if (oneShot.Binding.VirtualKey == virtualKey)
+                {
+                    oneShot.Held = false;
+                }
+            }
+
+            return decision;
+        }
+    }
+
+    /// <summary>What each key a one-shot uses did on its first key-down: true if the app consumed it.</summary>
+    private readonly Dictionary<uint, bool> _oneShotKeyPresses = new();
+
+    private HotkeyEdgeDecision ProcessCore(uint virtualKey, bool isKeyDown, HotkeyModifiers activeModifiers)
     {
         lock (_sync)
         {
@@ -230,6 +299,15 @@ internal sealed class HotkeyEdgeTracker
                     return ProcessQuickAdd(isKeyDown: false, activeModifiers: activeModifiers);
                 }
 
+                foreach (var oneShot in OneShots())
+                {
+                    if (oneShot.Held && virtualKey == oneShot.Binding.VirtualKey)
+                    {
+                        oneShot.Held = false;
+                        return new HotkeyEdgeDecision(Consume: true);
+                    }
+                }
+
                 return new HotkeyEdgeDecision(Consume: false);
             }
 
@@ -256,6 +334,15 @@ internal sealed class HotkeyEdgeTracker
                 !StandsAsideForTyping(virtualKey, activeModifiers, _quickAddHeld))
             {
                 return ProcessQuickAdd(isKeyDown: true, activeModifiers: activeModifiers);
+            }
+
+            foreach (var oneShot in OneShots())
+            {
+                if (virtualKey == oneShot.Binding.VirtualKey && activeModifiers == oneShot.Binding.Modifiers &&
+                    !StandsAsideForTyping(virtualKey, activeModifiers, oneShot.Held))
+                {
+                    return ProcessOneShot(oneShot);
+                }
             }
 
             return new HotkeyEdgeDecision(Consume: false);
@@ -321,7 +408,8 @@ internal sealed class HotkeyEdgeTracker
     /// states in which a key must still reach the tracker so the recording can be ended.
     /// </summary>
     private bool IsAnythingInFlight() =>
-        _recordHeld || _cancelHeld || _quickAddHeld || _recordingActive;
+        _recordHeld || _cancelHeld || _quickAddHeld || _recordingActive ||
+        _pasteLast?.Held == true || _copyLast?.Held == true;
 
     /// <summary>
     /// The modifier-binding route: every key is offered, and the modifier is never swallowed.
@@ -525,5 +613,54 @@ internal sealed class HotkeyEdgeTracker
 
         _quickAddHeld = false;
         return new HotkeyEdgeDecision(Consume: true);
+    }
+
+    /// <summary>The last-dictation shortcuts that are bound, in a fixed order.</summary>
+    private IEnumerable<OneShotBinding> OneShots()
+    {
+        if (_pasteLast is not null)
+        {
+            yield return _pasteLast;
+        }
+
+        if (_copyLast is not null)
+        {
+            yield return _copyLast;
+        }
+    }
+
+    /// <summary>A last-dictation shortcut went down: one signal per press, never while a take records. Ref: #206.</summary>
+    /// <remarks>
+    /// SHAPED LIKE QUICK ADD'S: the first press signals and is consumed, its repeats are consumed silently, its release
+    /// is consumed. While a recording runs the key passes through untouched - the app would refuse the reuse anyway,
+    /// and a key swallowed then is a key the person's application never got. A chord holding Alt or Win asks the
+    /// hook to mask it, so the modifier's release does not open a menu, Start, or switch the keyboard layout.
+    /// </remarks>
+    private HotkeyEdgeDecision ProcessOneShot(OneShotBinding oneShot)
+    {
+        if (oneShot.Held)
+        {
+            return new HotkeyEdgeDecision(Consume: true);
+        }
+
+        if (_recordingActive)
+        {
+            return new HotkeyEdgeDecision(Consume: false);
+        }
+
+        oneShot.Held = true;
+        return new HotkeyEdgeDecision(
+            Consume: true,
+            oneShot.Signal,
+            MaskMenuKey: (oneShot.Binding.Modifiers & (HotkeyModifiers.Alt | HotkeyModifiers.Windows)) != 0);
+    }
+
+    private sealed class OneShotBinding(HotkeyBinding binding, PushToTalkSignal signal)
+    {
+        public HotkeyBinding Binding { get; } = binding;
+
+        public PushToTalkSignal Signal { get; } = signal;
+
+        public bool Held { get; set; }
     }
 }

@@ -117,6 +117,11 @@ reason but ask rather than assert it, and write the answer here when you get it.
   needs the key-UP edge and `RegisterHotKey` delivers only the press. `RegisterHotKey` remains in that file
   as a conflict PROBE - register, unregister, report - and never receives a keystroke, which is why a
   synthetic press takes exactly the path a finger takes (see `uat-testing.md`).
+  Two OPTIONAL bindings ride the same hook - Paste and Copy Last Dictation (#206): one that cannot listen
+  (unset, invalid, clashing, or held by another app) is switched off alone and never fails the hook. A consumed
+  key under Alt or Win is followed by a tagged VK 0xE8 (`MenuKeyMask`), so releasing the modifier opens no menu,
+  no Start, and no Alt+Shift layout switch - measured: 1 switch in 8 without it, 0 in 8 with it. A Ctrl+Alt
+  binding stands aside when the foreground layout types the press (AltGr, `KeyboardLayoutTyping`).
 - Focus and context: Windows UI Automation with explicit fallbacks and privacy limits.
 - Delivery: three routes, tried in this order by `WindowsTextTargetAdapter.CommitAsync`, and every
   result names the one that ran (`TextDeliveryRoute`).

@@ -1274,8 +1274,11 @@ public sealed class DictationSessionCoordinatorTests
         Assert.Equal(1, executor.ShutdownCalls);
     }
 
-    [Fact]
-    public async Task QuickAddIsNotASessionCommand()
+    [Theory]
+    [InlineData(PushToTalkSignal.QuickAdd)]
+    [InlineData(PushToTalkSignal.PasteLast)]
+    [InlineData(PushToTalkSignal.CopyLast)]
+    public async Task QuickAddAndTheLastDictationShortcutsAreNotSessionCommands(PushToTalkSignal signal)
     {
         var executor = new BarrierExecutor();
         await using var coordinator = new DictationSessionCoordinator(executor);
@@ -1284,7 +1287,7 @@ public sealed class DictationSessionCoordinatorTests
         // exception is caught by an ordinary delegate, not awaited off a faulted task.
         Assert.Throws<ArgumentOutOfRangeException>(() =>
         {
-            _ = coordinator.SubmitAsync(PushToTalkSignal.QuickAdd);
+            _ = coordinator.SubmitAsync(signal);
         });
         Assert.Equal(0, coordinator.PendingCount);
     }

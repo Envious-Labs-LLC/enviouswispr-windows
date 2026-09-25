@@ -1359,6 +1359,8 @@ public partial class App : Application, IAsyncDisposable
                 preferences.RecordingMode,
                 preferences.CancelGesture,
                 preferences.QuickAddGesture,
+                preferences.PasteLastGesture,
+                preferences.CopyLastGesture,
                 out _pushToTalkHook,
                 out var error) ||
             _pushToTalkHook is null)
@@ -1449,6 +1451,28 @@ public partial class App : Application, IAsyncDisposable
             _pushToTalkHook.CancelGesture.ToString(),
             _pushToTalkHook.QuickAddGesture.ToString());
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.HotkeyReady));
+
+        // A LAST-DICTATION SHORTCUT THAT COULD NOT LISTEN SAYS SO, by its own state, and costs nothing else: the
+        // recording key is already listening above. The tray shows the shortcuts that are. Ref: #206.
+        foreach (var state in new[] { _pushToTalkHook.PasteLastState, _pushToTalkHook.CopyLastState })
+        {
+            if (state is not (LastDictationShortcutState.Unset or LastDictationShortcutState.Bound))
+            {
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.LastDictationShortcutUnavailable,
+                    state == LastDictationShortcutState.Unavailable
+                        ? AppFailureCategory.HotkeyConflict
+                        : AppFailureCategory.HotkeyUnavailable,
+                    ErrorCode: state == LastDictationShortcutState.Unavailable
+                        ? AppErrorCode.HotkeyConflict
+                        : AppErrorCode.HotkeyInvalid));
+            }
+        }
+
+        var pasteShortcut = _pushToTalkHook.PasteLastGesture?.ToString();
+        var copyShortcut = _pushToTalkHook.CopyLastGesture?.ToString();
+        _window?.DispatcherQueue.TryEnqueue(() => _trayIcon?.SetLastDictationShortcuts(pasteShortcut, copyShortcut));
     }
 
     /// <summary>Drives the meters from a synthetic ramp, with no microphone in the loop.</summary>
@@ -1991,6 +2015,24 @@ public partial class App : Application, IAsyncDisposable
 
     private void OnPushToTalkSignalled(object? sender, PushToTalkSignalEvent args)
     {
+        // THE WINDOW IN FRONT AT THE PRESS is where the words go - read now, on the key's own dispatch, before
+        // anything can move it. Copy needs none. Neither is a dictation command. Ref: #206.
+        if (args.Signal == PushToTalkSignal.PasteLast)
+        {
+            // The window only, here - microseconds. Naming its focused field takes UI Automation, which must not
+            // hold up the signal loop a recording key is waiting in, so it runs off it and is accepted only if the
+            // same window is still the one in front.
+            var pressedWindow = WindowsForegroundTargetProvider.ForegroundWindow();
+            _ = ReuseLastDictationAsync(LastDictationAction.Paste, LastDictationSource.Shortcut, pressedWindow);
+            return;
+        }
+
+        if (args.Signal == PushToTalkSignal.CopyLast)
+        {
+            _ = ReuseLastDictationAsync(LastDictationAction.Copy, LastDictationSource.Shortcut);
+            return;
+        }
+
         if (args.Signal == PushToTalkSignal.QuickAdd)
         {
             _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.QuickAddRequested));
@@ -2113,11 +2155,19 @@ public partial class App : Application, IAsyncDisposable
     /// used, which the foreground history kept while the tray took the foreground. Admitted like Quick
     /// Add, because it borrows the delivery adapter the exit disposes.
     /// </remarks>
-    private async Task ReuseLastDictationAsync(LastDictationAction action)
+    private async Task ReuseLastDictationAsync(
+        LastDictationAction action,
+        LastDictationSource source = LastDictationSource.Menu,
+        TargetWindowId? pressed = null)
     {
-        var target = action == LastDictationAction.Paste ? _foregroundHistory?.LastTarget : null;
-        // The entry the menu named, so a deletion since it opened refuses instead of reaching further back.
-        var shownEntry = _lastDictationPreviewEntry;
+        // FROM THE TRAY: the last window really in use, and the entry the menu named, so a deletion since it opened
+        // refuses instead of reaching further back. FROM A SHORTCUT: the window in front at the press, and the
+        // newest dictation - there was no menu to name one.
+        var fromMenu = source == LastDictationSource.Menu;
+        var target = action != LastDictationAction.Paste
+            ? null
+            : fromMenu ? _foregroundHistory?.LastTarget : pressed;
+        var shownEntry = fromMenu ? _lastDictationPreviewEntry : null;
         if (Leaving || _lastDictation is not { } reuse ||
             _presentation is not { } presentation ||
             !presentation.TryEnter(out var lease))
@@ -2139,14 +2189,34 @@ public partial class App : Application, IAsyncDisposable
                     ?? new SessionHoldAttempt(NoScope.Instance);
                 heldBy = attempt.HeldBy;
                 using var hold = attempt.Hold;
+
+                // THE FIELD IS NAMED ONLY ONCE THE SESSION IS HELD: named before, a quick dictation could start and
+                // finish while UI Automation answered, and this paste would then reuse THAT dictation. Held first,
+                // a later key is Busy until the paste is done. Accepted only for the window in front at the press.
+                // Ref: #206 review round 2.
+                if (hold is not null &&
+                    action == LastDictationAction.Paste &&
+                    source == LastDictationSource.Shortcut)
+                {
+                    var requestedWindow = target;
+                    var captured = await Task.Run(
+                        () => new WindowsForegroundTargetProvider().CaptureForegroundTarget(),
+                        lease.Closing).ConfigureAwait(false);
+                    target = captured is { } capturedTarget &&
+                        requestedWindow is { } window &&
+                        capturedTarget.Value == window.Value &&
+                        capturedTarget.ProcessId == window.ProcessId
+                            ? captured
+                            : null;
+                }
                 result = hold is null
                     ? new LastDictationReuseResult(
                         action,
-                        LastDictationSource.Menu,
+                        source,
                         heldBy is null ? LastDictationOutcome.DictationInProgress : LastDictationOutcome.Busy)
                     : action == LastDictationAction.Paste
-                        ? await reuse.PasteAsync(target, LastDictationSource.Menu, shownEntry, lease.Closing).ConfigureAwait(false)
-                        : await reuse.CopyAsync(LastDictationSource.Menu, shownEntry, lease.Closing).ConfigureAwait(false);
+                        ? await PasteWhenKeysAreUpAsync(reuse, target, source, shownEntry, lease.Closing).ConfigureAwait(false)
+                        : await reuse.CopyAsync(source, shownEntry, lease.Closing).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
             {
@@ -2181,7 +2251,7 @@ public partial class App : Application, IAsyncDisposable
         {
             ShowSessionBusy(holder);
         }
-        else         if (LastDictationStatus(result.Outcome) is { } shown)
+        else if (LastDictationStatus(result.Outcome) is { } shown)
         {
             ShowLastDictationStatus(shown);
         }
@@ -2225,6 +2295,28 @@ public partial class App : Application, IAsyncDisposable
         SessionHolder.UpdateApply => null,
         _ => null,
     };
+
+    /// <summary>A shortcut's paste waits for the person's fingers to leave the chord.</summary>
+    /// <remarks>
+    /// THE CHORD'S MODIFIERS ARE STILL DOWN WHEN ITS KEY IS, and a synthesised Ctrl+V under a held Alt or Shift is a
+    /// different chord in the target. The delivery already refuses a held modifier, so without this wait a paste from
+    /// the shortcut would fall back to the clipboard almost every time. Waited for up to a second, observed, not
+    /// guessed; a key still held after that is left to the delivery's own refusal. The tray needs no wait.
+    /// </remarks>
+    private static async Task<LastDictationReuseResult> PasteWhenKeysAreUpAsync(
+        LastDictationReuse reuse,
+        TargetWindowId? target,
+        LastDictationSource source,
+        Guid? shownEntry,
+        CancellationToken cancellationToken)
+    {
+        if (source == LastDictationSource.Shortcut)
+        {
+            await ModifierKeys.WaitForReleaseAsync(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+        }
+
+        return await reuse.PasteAsync(target, source, shownEntry, cancellationToken).ConfigureAwait(false);
+    }
 
     /// <summary>The reuse's sentence on the pill, queued to the window and checked when it runs.</summary>
     /// <remarks>

@@ -69,9 +69,23 @@ public sealed class JsonSettingsStore : ISettingsStore
                 13 => MigrateFromV13(json),
                 14 => MigrateFromV14(json),
                 15 => MigrateFromV15(json),
+                16 => MigrateFromV16(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
+            // A FILE FROM BEFORE THE LAST-DICTATION SHORTCUTS gains their defaults on load; one that already gave
+            // Alt+Shift+Z to another key keeps its own binding rather than being refused and reset. Ref: #206.
+            if (settings is { Preferences.Dictation: not null } && schemaVersion < LastDictationShortcutsSchema)
+            {
+                settings = settings with
+                {
+                    Preferences = settings.Preferences with
+                    {
+                        Dictation = settings.Preferences.Dictation.WithoutClashingLastDictationShortcuts(),
+                    },
+                };
+            }
+
             var validationError = AppSettingsValidator.Validate(settings, AppErrorStage.SettingsLoad);
             if (validationError is not null)
             {
@@ -429,6 +443,22 @@ public sealed class JsonSettingsStore : ISettingsStore
     /// deserializes to - American - keeps doing exactly that. The step records that the file was read at the new
     /// shape, so an older build refuses a newer file by its version rather than tripping on an unknown field.
     /// </remarks>
+    /// <summary>The schema that introduced the Paste and Copy Last Dictation shortcuts.</summary>
+    private const int LastDictationShortcutsSchema = 17;
+
+    /// <summary>Takes a settings file written before the last-dictation shortcuts existed.</summary>
+    /// <remarks>
+    /// The absent fields deserialize to their defaults - Paste Last on Alt+Shift+Z, Copy Last unset - and the load
+    /// then settles any clash with the person's own keys (see the caller).
+    /// </remarks>
+    private static AppSettings? MigrateFromV16(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+    }
+
     private static AppSettings? MigrateFromV15(string json)
     {
         var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
