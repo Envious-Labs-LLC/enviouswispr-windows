@@ -69,9 +69,9 @@ public sealed class WindowsHardwareDiscovery : IHardwareDiscovery
             graphicsAdapters,
             directMlAvailable,
             cuda,
-            onnxRuntimeCudaDependencies,
-            whisperCudaDependencies,
-            status == HardwareProbeStatus.Complete
+            IsOnnxRuntimeCudaDependencySetAvailable: onnxRuntimeCudaDependencies,
+            IsWhisperCudaDependencySetAvailable: whisperCudaDependencies,
+            Error: status == HardwareProbeStatus.Complete
                 ? null
                 : new AppError(
                     AppErrorCode.HardwareProbeFailed,

@@ -37,23 +37,24 @@ public sealed class CudaRuntimeDependencyProbeTests : IDisposable
         Assert.False(CudaRuntimeDependencyProbe.IsCompleteInDirectories([_scratch]));
     }
 
-    /// <summary>whisper.cpp needs its three files and nothing of cuDNN or cuFFT.</summary>
+    /// <summary>whisper.cpp's three files, spelled here rather than read from the probe.</summary>
     /// <remarks>
-    /// Measured from the import tables of the pinned CUDA runtime: ggml-cuda imports cuBLAS alone,
-    /// cuBLAS imports cuBLASLt, and cuBLASLt loads the CUDA runtime on its first call. Ref: #99, #163.
+    /// LITERALS ON PURPOSE. A fixture built from the probe's own list passes whatever the list says -
+    /// add cuDNN to it and the fixture creates cuDNN too. cuBLAS and cuBLASLt come from the native import
+    /// chain; the CUDA runtime from Whisper.net's own CUDA check. Ref: #99, #163.
     /// </remarks>
+    private static readonly string[] WhisperFiles = ["cublas64_13.dll", "cublasLt64_13.dll", "cudart64_13.dll"];
+
     [Fact]
-    public void WhispersSetIsCompleteWithoutCudnnOrCufft()
+    public void WhispersThreeFilesAloneAreComplete()
     {
         Directory.CreateDirectory(_scratch);
-        foreach (var library in CudaRuntimeDependencyProbe.WhisperRequiredLibraryNames)
+        foreach (var library in WhisperFiles)
         {
             File.WriteAllBytes(Path.Combine(_scratch, library), [0]);
         }
 
-        Assert.True(CudaRuntimeDependencyProbe.IsCompleteInDirectories(
-            [_scratch],
-            CudaRuntimeDependencyProbe.WhisperRequiredLibraryNames));
+        Assert.True(CudaRuntimeDependencyProbe.IsWhisperComplete(_scratch));
         Assert.False(CudaRuntimeDependencyProbe.IsCompleteInDirectories([_scratch]));
     }
 
@@ -64,7 +65,13 @@ public sealed class CudaRuntimeDependencyProbeTests : IDisposable
     public void AMissingWhisperFileFailsClosed(string missing)
     {
         Directory.CreateDirectory(_scratch);
-        foreach (var library in CudaRuntimeDependencyProbe.RequiredLibraryNames.Where(name => name != missing))
+        foreach (var library in WhisperFiles.Where(name => name != missing))
+        {
+            File.WriteAllBytes(Path.Combine(_scratch, library), [0]);
+        }
+
+        // Everything the OTHER engine needs is present too, so it cannot stand in for the missing file.
+        foreach (var library in new[] { "cufft64_12.dll", "cudnn64_9.dll", "cudnn_ops64_9.dll" })
         {
             File.WriteAllBytes(Path.Combine(_scratch, library), [0]);
         }
@@ -72,6 +79,29 @@ public sealed class CudaRuntimeDependencyProbeTests : IDisposable
         Assert.False(CudaRuntimeDependencyProbe.IsCompleteInDirectories(
             [_scratch],
             CudaRuntimeDependencyProbe.WhisperRequiredLibraryNames));
+    }
+
+    [Fact]
+    public void WhispersSetIsExactlyTheThreeFiles()
+    {
+        Assert.Equal(
+            WhisperFiles.Order(StringComparer.OrdinalIgnoreCase),
+            CudaRuntimeDependencyProbe.WhisperRequiredLibraryNames.Order(StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>The discovery hands the Whisper answer to the Whisper flag, not the other one.</summary>
+    [Fact]
+    public async Task DiscoveryReportsWhispersFilesOnTheWhisperFlag()
+    {
+        Directory.CreateDirectory(_scratch);
+        foreach (var library in WhisperFiles)
+        {
+            File.WriteAllBytes(Path.Combine(_scratch, library), [0]);
+        }
+
+        var hardware = await new WindowsHardwareDiscovery(_scratch).ProbeAsync();
+
+        Assert.True(hardware.IsWhisperCudaDependencySetAvailable);
     }
 
     [Fact]

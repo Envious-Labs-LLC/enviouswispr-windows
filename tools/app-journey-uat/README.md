@@ -225,8 +225,10 @@ synthetic-hotkey take. Every journey now also refuses to pass if the app exits l
 still running (`strayWorkerCount`), whichever take started it.
 
 Add `--live-preview` to the same command when the gitignored small preview model is installed. The isolated
-profile has no `runtime/cuda`, so on a machine without the CUDA runtime on its path the app puts both the preview
-and the final engine on the processor; set `ENVIOUSWISPR_CUDA_RUNTIME_DIR` to exercise the card. The result's
+profile has no `runtime/cuda`. Whisper - the preview and the final engine alike - takes the card only when its own
+three CUDA files (cuBLAS, cuBLASLt, the CUDA runtime; not Parakeet's twelve) are in one of the places the probe
+looks: `ENVIOUSWISPR_CUDA_RUNTIME_DIR`, the app's folder, its `runtimes/cuda/win-x64` folder, or PATH. Otherwise
+both run on the processor; set the variable to exercise the card. The result's
 `provider` field is the HARNESS's own selection, made with every channel's `runtime/cuda` in view, not the app's
 (#163). The guided mode
 passes only when the real global hook starts and stops recording, production WASAPI captures the spoken phrase,
