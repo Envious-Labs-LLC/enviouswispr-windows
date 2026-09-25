@@ -142,6 +142,23 @@ internal static class WindowsClipboardPaste
         return string.IsNullOrWhiteSpace(selection) ? null : selection;
     }
 
+    /// <summary>The clipboard's plain text, read WITHOUT CHANGING THE CLIPBOARD; null when it holds none or cannot be read.</summary>
+    /// <remarks>
+    /// FOR A SNIPPET THAT PASTES WHAT WAS COPIED, and the opposite of every other clipboard path in this
+    /// class: nothing is snapshotted, emptied, written or restored, so the sequence number does not
+    /// move and a delivery that borrows the clipboard afterwards borrows exactly what the person left
+    /// there. A clipboard another app is holding reads as nothing rather than failing the dictation.
+    /// </remarks>
+    public static Task<string?> TryReadTextAsync(CancellationToken cancellationToken) =>
+        RunStaAsync<string?>(
+            () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return TryGetClipboardText();
+            },
+            onUnexpectedFailure: static _ => null,
+            cancellationToken);
+
     private static bool SendCtrlC()
     {
         var inputs = new[]

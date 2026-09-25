@@ -36,7 +36,7 @@ public sealed class VocabularyImportController
         return _vocabulary.ChangeAsync(data =>
         {
             var plan = CustomWordImport.Read(text, data.CustomWords);
-            return (new ReusableUserData([.. data.CustomWords, .. plan.Additions], data.Snippets), plan);
+            return (data.WithCustomWords([.. data.CustomWords, .. plan.Additions]), plan);
         });
     }
 
@@ -61,8 +61,7 @@ public sealed class VocabularyImportController
     public Task<SettingsSaveResult> ReplaceConflictsAsync(IReadOnlyList<CustomWordEntry> replacements)
     {
         ArgumentNullException.ThrowIfNull(replacements);
-        return _vocabulary.ChangeAsync(data => new ReusableUserData(
-            CustomWordImport.Merge(data.CustomWords, replacements),
-            data.Snippets));
+        return _vocabulary.ChangeAsync(data => data.WithCustomWords(
+            CustomWordImport.Merge(data.CustomWords, replacements)));
     }
 }

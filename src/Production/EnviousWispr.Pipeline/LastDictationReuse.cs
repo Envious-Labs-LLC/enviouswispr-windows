@@ -211,7 +211,10 @@ public sealed class LastDictationReuse
                     new ProcessedText(DictationSessionId.Create(), entry.Text),
                     aimed ?? default,
                     LanguageCode: null,
-                    options),
+                    options,
+                    // A history entry does not record whether its words came from a snippet, so a
+                    // re-paste takes the ordinary route, the one this action has always taken.
+                    SnippetExpanded: false),
                 cancellationToken).ConfigureAwait(false);
             return Ended(Classify(action, result), result);
         }

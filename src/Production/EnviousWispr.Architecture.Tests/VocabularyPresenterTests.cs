@@ -76,6 +76,72 @@ public sealed class VocabularyPresenterTests
         Assert.Equal(["sig"], store.Saved!.UserData.Snippets.Select(snippet => snippet.Name));
     }
 
+    /// <summary>
+    /// A TRIGGER ANOTHER SNIPPET ALREADY ANSWERS TO IS REFUSED, named, and nothing is stored: "My Email."
+    /// is the same spoken words as "my email", so saving both would make which one fires a tie nobody
+    /// chose. The same name, ignoring case, is still the edit it always was.
+    /// </summary>
+    [Fact]
+    public async Task ADuplicateTriggerIsRefusedAndNamedAndTheSameNameStillReplaces()
+    {
+        var existing = new SnippetEntry("my email", "sam@example.com");
+        var (presenter, store) = Build(snippets: [existing]);
+
+        var duplicate = await presenter.AddSnippetAsync(new SnippetEntry("My Email.", "other@example.com")).WaitAsync(Patience);
+
+        Assert.True(duplicate.Saved);
+        Assert.Equal(new SnippetSaveOutcome(SnippetRefusal.DuplicateTrigger, existing), duplicate.Value);
+        Assert.True(store.Saved is null || store.Saved.UserData.Snippets.SequenceEqual([existing]), "a refused snippet changed the list");
+
+        var edit = await presenter.AddSnippetAsync(new SnippetEntry("MY EMAIL", "new@example.com")).WaitAsync(Patience);
+
+        Assert.Null(edit.Value.Refusal);
+        Assert.Equal([new SnippetEntry("MY EMAIL", "new@example.com")], store.Saved!.UserData.Snippets);
+    }
+
+    [Theory]
+    [InlineData("...", "some text", SnippetRefusal.TriggerEmpty)]
+    [InlineData("   ", "some text", SnippetRefusal.TriggerEmpty)]
+    [InlineData("my email", "   \n ", SnippetRefusal.ExpansionEmpty)]
+    public async Task ASnippetNobodyCanSayOrThatPastesNothingIsRefused(string trigger, string body, SnippetRefusal expected)
+    {
+        var (presenter, store) = Build();
+
+        var result = await presenter.AddSnippetAsync(new SnippetEntry(trigger, body)).WaitAsync(Patience);
+
+        Assert.Equal(expected, result.Value.Refusal);
+        Assert.Empty((store.Saved?.UserData ?? ReusableUserData.Empty).Snippets);
+    }
+
+    /// <summary>
+    /// The keyword is stored in its comparison form, a cleared box stores the default, two words are
+    /// refused before anything is written, and a later word or snippet change keeps the keyword.
+    /// </summary>
+    [Fact]
+    public async Task TheKeywordIsCleanedStoredAndKeptByEveryLaterChange()
+    {
+        var (presenter, store) = Build(snippets: [new SnippetEntry("my email", "sam@example.com")]);
+
+        var set = await presenter.SetSnippetKeywordAsync("  Insert. ").WaitAsync(Patience);
+        Assert.Equal(new SnippetKeywordOutcome(null, "insert"), set.Value);
+        Assert.Equal("insert", store.Saved!.UserData.SnippetKeyword);
+
+        await presenter.AddWordAsync(new CustomWordEntry("envy", "EnviousWispr")).WaitAsync(Patience);
+        await presenter.AddSnippetAsync(new SnippetEntry("my cell", "555-0100")).WaitAsync(Patience);
+        await presenter.RemoveSnippetAsync(new SnippetEntry("my cell", "555-0100")).WaitAsync(Patience);
+        Assert.Equal("insert", store.Saved!.UserData.SnippetKeyword);
+
+        var saves = store.Saves;
+        var twoWords = await presenter.SetSnippetKeywordAsync("hey wispr").WaitAsync(Patience);
+        Assert.Equal(new SnippetKeywordOutcome(SnippetRefusal.KeywordNotOneWord, null), twoWords.Value);
+        Assert.Equal(saves, store.Saves);
+        Assert.Equal("insert", store.Saved!.UserData.SnippetKeyword);
+
+        var cleared = await presenter.SetSnippetKeywordAsync("   ").WaitAsync(Patience);
+        Assert.Equal(new SnippetKeywordOutcome(null, "backslash"), cleared.Value);
+        Assert.Equal("backslash", store.Saved!.UserData.SnippetKeyword);
+    }
+
     [Fact]
     public async Task TwoEditsLandingTogetherBothSurvive()
     {
@@ -123,6 +189,9 @@ public sealed class VocabularyPresenterTests
     {
         public AppSettings? Saved { get; private set; }
 
+        /// <summary>How many writes landed, so a refusal can be shown to have written nothing.</summary>
+        public int Saves { get; private set; }
+
         public Exception? FailNext { get; set; }
 
         public bool Hold { get; set; }
@@ -146,6 +215,7 @@ public sealed class VocabularyPresenterTests
             }
 
             Saved = settings;
+            Saves++;
         }
 
         public Task<SettingsLoadResult> LoadAsync(CancellationToken cancellationToken = default) =>

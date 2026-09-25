@@ -186,6 +186,48 @@ public sealed class PortableProfileServiceTests
         });
     }
 
+    /// <summary>A profile carries the snippet keyword with the snippets it belongs to.</summary>
+    [Fact]
+    public async Task AProfileCarriesTheSnippetKeyword()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "profile.enviouswispr.json");
+            var profile = JsonSettingsStoreTests.CreatePopulatedSettings().ToPortableProfile();
+            Assert.Equal("insert", profile.UserData.SnippetKeyword);
+            var service = new JsonPortableProfileService();
+
+            Assert.True((await service.ExportAsync(profile, path)).Succeeded);
+            var imported = await service.ImportAsync(path);
+
+            Assert.Equal(PortableProfileImportStatus.Imported, imported.Status);
+            Assert.Equal("insert", imported.Profile?.UserData.SnippetKeyword);
+            Assert.Equal("insert", AppSettings.Default.Apply(imported.Profile!).UserData.SnippetKeyword);
+        });
+    }
+
+    /// <summary>A version-11 profile, exported before the keyword could be chosen, imports with "backslash".</summary>
+    [Fact]
+    public async Task ImportMigratesVersionElevenProfileWithTheBackslashKeyword()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "profile.enviouswispr.json");
+            var current = JsonSettingsStoreTests.CreatePopulatedSettings().ToPortableProfile();
+            var json = JsonSerializer.Serialize(current with { SchemaVersion = 11 }, JsonSettingsStore.SerializerOptions);
+            var root = JsonNode.Parse(json)!.AsObject();
+            Assert.True(root["userData"]!.AsObject().Remove("snippetKeyword"));
+            await File.WriteAllTextAsync(path, root.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var result = await new JsonPortableProfileService().ImportAsync(path);
+
+            Assert.Equal(PortableProfileImportStatus.Imported, result.Status);
+            Assert.Equal(12, result.Profile?.SchemaVersion);
+            Assert.Equal("backslash", result.Profile?.UserData.SnippetKeyword);
+            Assert.Equal(current.UserData.Snippets, result.Profile?.UserData.Snippets);
+        });
+    }
+
     /// <summary>A version-9 profile, exported before English spelling existed, imports as American.</summary>
     [Fact]
     public async Task ImportMigratesVersionNineProfileAsAmericanSpelling()

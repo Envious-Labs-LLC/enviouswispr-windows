@@ -4,6 +4,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The snippet expander's ending and collision decisions are tested directly, as macOS tests them. -->
+    <InternalsVisibleTo Include="EnviousWispr.Architecture.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <EmbeddedResource Include="Resources\emoji-dictionary.json" />
     <EmbeddedResource Include="Resources\british-spelling.json" />
     <None Include="Resources\varcon-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" Link="licenses\varcon-LICENSE.txt" />

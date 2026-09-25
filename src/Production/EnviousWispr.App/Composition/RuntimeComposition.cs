@@ -1,3 +1,4 @@
+using System.Globalization;
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
@@ -37,6 +38,9 @@ public interface IRuntimeView
 
 /// <summary>The shell's leaf reads the long-lived session owners need; nothing here sequences anything.</summary>
 /// <remarks>
+/// <c>ClipboardText</c> reads the clipboard's plain text without changing it, for a snippet that pastes
+/// what was copied; it is asked only on a take where such a snippet fired.
+///
 /// EVERY READ IS MADE AT THE CALL. The capture changes with each hook start, the engines load and
 /// unload, the preferences are saved while a recording runs, and the coordinator exists only while a
 /// session controller does. Capturing any of them when the owners were built would hand a loop a
@@ -53,7 +57,8 @@ public sealed record RuntimeShell(
     Func<AppErrorCode?> PreviewUnavailableReason,
     Func<DictationSessionId?> RecordingSessionId,
     Func<DictationSessionCoordinator?> Coordinator,
-    Func<bool> Leaving);
+    Func<bool> Leaving,
+    Func<CancellationToken, Task<string?>> ClipboardText);
 
 /// <summary>Everything the long-lived session owners are built from.</summary>
 public sealed record RuntimeCompositionParts(
@@ -202,7 +207,15 @@ public static class RuntimeComposition
                 finalizationEffects,
                 // Read at the call, as before: a word taught mid-dictation reaches this polish.
                 parts.Shell.CustomWords),
-            finalizationEffects);
+            finalizationEffects,
+            // THE CULTURE AND ZONE ARE READ WHEN A SNIPPET FIRES, not now: a fill-in renders in the
+            // Windows region the person has at the moment they speak, frozen for that one take.
+            new SnippetExpansionStage(
+                new SnippetExpander(),
+                parts.Clock,
+                () => CultureInfo.CurrentCulture,
+                parts.Shell.ClipboardText,
+                SnippetExpansionStage.Timeout));
         var preview = new LivePreviewController(new LivePreviewEffects(parts.Shell), parts.Logger, parts.Clock);
         var streaming = new StreamingTranscriptionController(new StreamingTranscriptionEffects(parts.Shell), parts.Logger, parts.Clock);
         var queue = new SessionQueue(parts.Shell, parts.Logger);

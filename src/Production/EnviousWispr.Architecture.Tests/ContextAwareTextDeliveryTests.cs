@@ -26,6 +26,28 @@ public sealed class ContextAwareTextDeliveryTests
         Assert.Null(delivery.RecoveryText);
     }
 
+    /// <summary>
+    /// A TAKE THAT EXPANDED A SNIPPET IS NOT REPAIRED: the words are committed as the fallback payload,
+    /// with no seam space added before them and nothing re-cased, while the target is still read and
+    /// handed to the commit, which routes on it. The twin above, with the same caret, is repaired.
+    /// </summary>
+    [Fact]
+    public async Task ASnippetTakeSkipsTheCursorRepairButTheTargetIsStillRead()
+    {
+        var adapter = new FakeTargetAdapter(AvailableContext(left: "hello,", right: "again"));
+        var delivery = new ContextAwareTextDelivery(adapter);
+
+        var result = await delivery.DeliverAsync(Request("Sam.Smith@Example.com") with { SnippetExpanded = true });
+
+        Assert.Equal("Sam.Smith@Example.com ", adapter.LastCommit?.Text.Text);
+        Assert.Equal("Sam.Smith@Example.com ", adapter.LastCommit?.FallbackText.Text);
+        Assert.Equal(CursorRepairDisposition.FallbackPayload, result.RepairDisposition);
+        Assert.Equal(1, adapter.Captures);
+        Assert.NotNull(adapter.LastCommit?.ExpectedContext);
+        Assert.Equal(TextTargetKind.StandardEdit, adapter.LastCommit?.TargetKind);
+        Assert.True(result.Delivered);
+    }
+
     [Fact]
     public async Task ProtectedFieldForcesClipboardOnlyWithoutReadingContext()
     {
@@ -67,7 +89,8 @@ public sealed class ContextAwareTextDeliveryTests
             new ProcessedText(SessionId, "hello"),
             default,
             "en",
-            TextDeliveryOptions.Default);
+            TextDeliveryOptions.Default,
+            SnippetExpanded: false);
 
         var result = await delivery.DeliverAsync(request);
 
@@ -250,7 +273,8 @@ public sealed class ContextAwareTextDeliveryTests
             new ProcessedText(SessionId, "hello"),
             new TargetWindowId(0),
             "en",
-            TextDeliveryOptions.Default with { CopyInsteadOfPaste = true }));
+            TextDeliveryOptions.Default with { CopyInsteadOfPaste = true },
+            SnippetExpanded: false));
 
         Assert.True(result.Delivered);
         Assert.Equal("hello", adapter.LastCopied?.Text);
@@ -304,13 +328,15 @@ public sealed class ContextAwareTextDeliveryTests
         new ProcessedText(SessionId, text),
         Target,
         "en",
-        TextDeliveryOptions.Default with { CopyInsteadOfPaste = true });
+        TextDeliveryOptions.Default with { CopyInsteadOfPaste = true },
+        SnippetExpanded: false);
 
     private static TextDeliveryRequest Request(string text) => new(
         new ProcessedText(SessionId, text),
         Target,
         "en",
-        TextDeliveryOptions.Default);
+        TextDeliveryOptions.Default,
+        SnippetExpanded: false);
 
     private static TargetContextResult AvailableContext(string left, string right) => new(
         TargetContextStatus.Available,
