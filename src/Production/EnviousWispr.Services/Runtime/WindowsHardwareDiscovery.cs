@@ -57,6 +57,8 @@ public sealed class WindowsHardwareDiscovery : IHardwareDiscovery
         var cuda = ProbeCudaDriver();
         var onnxRuntimeCudaDependencies = CudaRuntimeDependencyProbe.IsComplete(
             _cudaRuntimeDirectory ?? Environment.GetEnvironmentVariable("ENVIOUSWISPR_CUDA_RUNTIME_DIR"));
+        var whisperCudaDependencies = CudaRuntimeDependencyProbe.IsWhisperComplete(
+            _cudaRuntimeDirectory ?? Environment.GetEnvironmentVariable("ENVIOUSWISPR_CUDA_RUNTIME_DIR"));
         return new HardwareSnapshot(
             status,
             CurrentArchitecture(),
@@ -68,6 +70,7 @@ public sealed class WindowsHardwareDiscovery : IHardwareDiscovery
             directMlAvailable,
             cuda,
             onnxRuntimeCudaDependencies,
+            whisperCudaDependencies,
             status == HardwareProbeStatus.Complete
                 ? null
                 : new AppError(

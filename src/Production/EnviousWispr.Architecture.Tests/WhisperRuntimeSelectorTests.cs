@@ -66,5 +66,6 @@ public sealed class WhisperRuntimeSelectorTests
         GraphicsAdapters: [],
         IsDirectMlRuntimeAvailable: true,
         new CudaDriverCapability(cuda, cuda ? 1 : 0, cuda ? 13_000 : null),
-        IsOnnxRuntimeCudaDependencySetAvailable: cuda);
+        IsOnnxRuntimeCudaDependencySetAvailable: false,
+        IsWhisperCudaDependencySetAvailable: cuda);
 }

@@ -37,6 +37,43 @@ public sealed class CudaRuntimeDependencyProbeTests : IDisposable
         Assert.False(CudaRuntimeDependencyProbe.IsCompleteInDirectories([_scratch]));
     }
 
+    /// <summary>whisper.cpp needs its three files and nothing of cuDNN or cuFFT.</summary>
+    /// <remarks>
+    /// Measured from the import tables of the pinned CUDA runtime: ggml-cuda imports cuBLAS alone,
+    /// cuBLAS imports cuBLASLt, and cuBLASLt loads the CUDA runtime on its first call. Ref: #99, #163.
+    /// </remarks>
+    [Fact]
+    public void WhispersSetIsCompleteWithoutCudnnOrCufft()
+    {
+        Directory.CreateDirectory(_scratch);
+        foreach (var library in CudaRuntimeDependencyProbe.WhisperRequiredLibraryNames)
+        {
+            File.WriteAllBytes(Path.Combine(_scratch, library), [0]);
+        }
+
+        Assert.True(CudaRuntimeDependencyProbe.IsCompleteInDirectories(
+            [_scratch],
+            CudaRuntimeDependencyProbe.WhisperRequiredLibraryNames));
+        Assert.False(CudaRuntimeDependencyProbe.IsCompleteInDirectories([_scratch]));
+    }
+
+    [Theory]
+    [InlineData("cublas64_13.dll")]
+    [InlineData("cublasLt64_13.dll")]
+    [InlineData("cudart64_13.dll")]
+    public void AMissingWhisperFileFailsClosed(string missing)
+    {
+        Directory.CreateDirectory(_scratch);
+        foreach (var library in CudaRuntimeDependencyProbe.RequiredLibraryNames.Where(name => name != missing))
+        {
+            File.WriteAllBytes(Path.Combine(_scratch, library), [0]);
+        }
+
+        Assert.False(CudaRuntimeDependencyProbe.IsCompleteInDirectories(
+            [_scratch],
+            CudaRuntimeDependencyProbe.WhisperRequiredLibraryNames));
+    }
+
     [Fact]
     public void MalformedSearchDirectoryFailsClosed()
     {

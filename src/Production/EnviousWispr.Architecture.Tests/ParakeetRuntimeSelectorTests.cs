@@ -123,5 +123,6 @@ public sealed class ParakeetRuntimeSelectorTests
         GraphicsAdapters: [new GraphicsAdapterCapability(vendor, true, true)],
         IsDirectMlRuntimeAvailable: true,
         new CudaDriverCapability(cuda, cuda ? 1 : 0, cuda ? 13_000 : null),
-        IsOnnxRuntimeCudaDependencySetAvailable: cuda);
+        IsOnnxRuntimeCudaDependencySetAvailable: cuda,
+        IsWhisperCudaDependencySetAvailable: cuda);
 }

@@ -93,6 +93,7 @@ var summary = new
         directMlRuntime = hardware.IsDirectMlRuntimeAvailable,
         cudaAvailable = hardware.Cuda.IsDriverAvailable,
         onnxRuntimeCudaDependencies = hardware.IsOnnxRuntimeCudaDependencySetAvailable,
+        whisperCudaDependencies = hardware.IsWhisperCudaDependencySetAvailable,
         cudaDevices = hardware.Cuda.DeviceCount,
         cudaDriverVersion = hardware.Cuda.DriverVersion,
     },
