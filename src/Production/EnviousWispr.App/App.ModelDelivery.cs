@@ -36,12 +36,15 @@ public partial class App
 
     private string ModelStoreRoot => Path.Combine(_dataDirectory, "models");
 
-    private ModelStore CreateModelStore() => new(
+    private ModelStore CreateModelStore() =>
+        CreateModelStore(new ModelDeliveryProgressObserver(ReportModelDeliveryProgress));
+
+    private ModelStore CreateModelStore(IModelDeliveryObserver observer) => new(
         ModelStoreRoot,
         ModelDeliveryHttpClient,
         new ModelManifestVerifier(new Dictionary<string, string>()),
         Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0),
-        observer: new ModelDeliveryProgressObserver(this));
+        observer: observer);
 
     /// <summary>
     /// Where a model is loaded from, or null when this configuration cannot run it.
@@ -228,18 +231,13 @@ public partial class App
         }
 
         _window?.SetModelDelivery(new("Download verified. Starting local transcription…"));
-        await TeardownTranscriptionAsync().ConfigureAwait(true);
+        await ReconfigureTranscriptionAsync().ConfigureAwait(true);
         if (Leaving)
         {
             return;
         }
 
-        await ConfigureTranscriptionAsync(_settings.Preferences.Dictation.FinalEngine).ConfigureAwait(true);
-        if (Leaving)
-        {
-            return;
-        }
-
+        PresentGraphicsRuntime();
         await PresentModelDeliveryAsync().ConfigureAwait(true);
     }
 
@@ -321,7 +319,7 @@ public partial class App
         _ => "This build's model manifest is not valid. Reinstall EnviousWispr.",
     };
 
-    private sealed class ModelDeliveryProgressObserver(App app) : IModelDeliveryObserver
+    private sealed class ModelDeliveryProgressObserver(Action<ModelDeliveryEvent> report) : IModelDeliveryObserver
     {
         private DateTimeOffset _lastReport = DateTimeOffset.MinValue;
 
@@ -337,7 +335,7 @@ public partial class App
             }
 
             _lastReport = now;
-            app.ReportModelDeliveryProgress(deliveryEvent);
+            report(deliveryEvent);
         }
     }
 }

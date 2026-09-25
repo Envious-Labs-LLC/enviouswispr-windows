@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "modelId": "cuda-runtime",
+  "version": "1.0.0",
+  "minimumAppVersion": "0.19.0",
+  "license": {
+    "name": "NVIDIA CUDA Toolkit EULA and NVIDIA cuDNN Software License Agreement",
+    "url": "https://docs.nvidia.com/cuda/eula/",
+    "notice": "NVIDIA CUDA and cuDNN runtime libraries for Windows x64, byte-identical to the files in the NVIDIA Python wheels nvidia-cublas 13.6.0.2 (cublas64_13.dll, cublasLt64_13.dll), nvidia-cuda-runtime 13.3.29 (cudart64_13.dll), nvidia-cufft 12.3.0.29 (cufft64_12.dll) and nvidia-cudnn-cu13 9.24.0.43 (cudnn*64_9.dll). Copyright NVIDIA Corporation. Redistributed unmodified under the NVIDIA CUDA Toolkit End User License Agreement (https://docs.nvidia.com/cuda/eula/) and the NVIDIA cuDNN Software License Agreement (https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html). Used only by the EnviousWispr speech engines on an NVIDIA graphics card."
+  },
+  "files": [
+    {
+      "relativePath": "cublasLt64_13.dll",
+      "sizeBytes": 463655536,
+      "sha256": "e323abd89e0f03c1db91a09d7aeb1928de08e1f86192cc713b335fefe3e368a9",
+      "sources": [
+        "https://models.enviouslabs.co/cuda-runtime/cublas13.6.0.2-cudart13.3.29-cudnn9.24.0.43-cufft12.3.0.29/cublasLt64_13.dll"
+      ]
+    },
+    {
+      "relativePath": "cublas64_13.dll",
+      "sizeBytes": 52697712,
+      "sha256": "8c6bac24474af29627ec96500025a5d410a1b7e8ffa00e1fe13b1781fc6b3ddc",
+      "sources": [
+        "https://models.enviouslabs.co/cuda-runtime/cublas13.6.0.2-cudart13.3.29-cudnn9.24.0.43-cufft12.3.0.29/cublas64_13.dll"
+      ]
+    },
+    {
+      "relativePath": "cufft64_12.dll",
+      "sizeBytes": 256092784,
+      "sha256": "35e531c8b4796b1a073948447dba618069fc839ded3da625416dfc7de496c1a1",
+      "sources": [
+        "https://models.enviouslabs.co/cuda-runtime/cublas13.6.0.2-cudart13.3.29-cudnn9.24.0.43-cufft12.3.0.29/cufft64_12.dll"
+      ]
+    },
+    {
+      "relativePath": "cudart64_13.dll",
+      "sizeBytes": 551024,
+      "sha256": "b00ca6f53699120da815bf3e06e2e4285fae2f201235b883dcbb50eec51e2a2a",
+      "sources": [
+        "https://models.enviouslabs.co/cuda-runtime/cublas13.6.0.2-cudart13.3.29-cudnn9.24.0.43-cufft12.3.0.29/cudart64_13.dll"
+      ]
+    },
+    {
+      "relativePath": "cudnn64_9.dll",
+      "sizeBytes": 267888,
+      "sha256": "506be0b0f0b0f8856c9b2171a859097fa383d7f28243ebff3859d8502acb0e95",
+      "sources": [
+        "https://models.enviouslabs.co/cuda-runtime/cublas13.6.0.2-cudart13.3.29-cudnn9.24.0.43-cufft12.3.0.29/cudnn64_9.dll"
+      ]
+    },
+    {
+      "relativePath": "cudnn_adv64_9.dll",
+      "sizeBytes": 106547312,
+      "sha256": "f311722e33217d08b3704c81631e607b2c3fc22b5adfe7b0949dec865eda6e8c",
+      "sources": [
+        "https://models.enviouslabs.co/cuda-runtime/cublas13.6.0.2-cudart13.3.29-cudnn9.24.0.43-cufft12.3.0.29/cudnn_adv64_9.dll"
+      ]
+    },
+    {
+      "relativePath": "cudnn_engines_precompiled64_9.dll",
+      "sizeBytes": 221832304,
+      "sha256": "62c784a31cf3655b8ec9ba42ec2c13cf97ba0be17c551a6e62e6787d6f6ca81c",
+      "sources": [
+        "https://models.enviouslabs.co/cuda-runtime/cublas13.6.0.2-cudart13.3.29-cudnn9.24.0.43-cufft12.3.0.29/cudnn_engines_precompiled64_9.dll"
+      ]
+    },
+    {
+      "relativePath": "cudnn_engines_runtime_compiled64_9.dll",
+      "sizeBytes": 31745136,
+      "sha256": "7aca3dcef5506660956d2332d1e0cf3b0c4fc114e8dcf147cd7e8575ead02c4f",
+      "sources": [
+        "https://models.enviouslabs.co/cuda-runtime/cublas13.6.0.2-cudart13.3.29-cudnn9.24.0.43-cufft12.3.0.29/cudnn_engines_runtime_compiled64_9.dll"
+      ]
+    },
+    {
+      "relativePath": "cudnn_engines_tensor_ir64_9.dll",
+      "sizeBytes": 155248,
+      "sha256": "5e62dd3d01f96315b20e3d940525964f44be669610478850f1dbe174bbe30cc0",
+      "sources": [
+        "https://models.enviouslabs.co/cuda-runtime/cublas13.6.0.2-cudart13.3.29-cudnn9.24.0.43-cufft12.3.0.29/cudnn_engines_tensor_ir64_9.dll"
+      ]
+    },
+    {
+      "relativePath": "cudnn_graph64_9.dll",
+      "sizeBytes": 110908016,
+      "sha256": "5153eaeae1133c1eed80492b2489d2487b045c87985e3d5ee3855ea57745f1f9",
+      "sources": [
+        "https://models.enviouslabs.co/cuda-runtime/cublas13.6.0.2-cudart13.3.29-cudnn9.24.0.43-cufft12.3.0.29/cudnn_graph64_9.dll"
+      ]
+    },
+    {
+      "relativePath": "cudnn_heuristic64_9.dll",
+      "sizeBytes": 58741360,
+      "sha256": "b74f827fc6b78e7a31463759e03c69fe0ea273f496531373a73f153b8858ddea",
+      "sources": [
+        "https://models.enviouslabs.co/cuda-runtime/cublas13.6.0.2-cudart13.3.29-cudnn9.24.0.43-cufft12.3.0.29/cudnn_heuristic64_9.dll"
+      ]
+    },
+    {
+      "relativePath": "cudnn_ops64_9.dll",
+      "sizeBytes": 36770416,
+      "sha256": "dc4bb901ddb9aab204f98ccd7cdf9556b3af20e4305c710d4d10a88fa3d7ff61",
+      "sources": [
+        "https://models.enviouslabs.co/cuda-runtime/cublas13.6.0.2-cudart13.3.29-cudnn9.24.0.43-cufft12.3.0.29/cudnn_ops64_9.dll"
+      ]
+    }
+  ],
+  "manifestDigest": "1f7c92b03c81cc9d44a0f2627a4ae8f4bba9d57f0aded3e634ed554277fcd8f5"
+}

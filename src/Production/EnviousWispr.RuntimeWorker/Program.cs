@@ -138,7 +138,9 @@ return 0;
 
 static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments)
 {
-    ConfigureNativeRuntimePath(ReadStringArgument(arguments, "--asr-cuda-runtime-directory"));
+    // BEFORE ANY ENGINE LOADS A NATIVE LIBRARY, and by the one mechanism a packaged process honours.
+    // PATH is not it: a packaged process never searches PATH for a DLL. See NativeRuntimeSearchPath.
+    NativeRuntimeSearchPath.Configure(ReadStringArgument(arguments, "--asr-cuda-runtime-directory"));
     var modelDirectory = ReadStringArgument(arguments, "--asr-model-directory");
     if (modelDirectory is null)
     {
@@ -206,26 +208,6 @@ static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments
         creation.Engine,
         creation.UsedFallback,
         creation.DegradedError);
-}
-
-static void ConfigureNativeRuntimePath(string? runtimeDirectory)
-{
-    if (string.IsNullOrWhiteSpace(runtimeDirectory))
-    {
-        return;
-    }
-
-    var fullPath = Path.GetFullPath(runtimeDirectory);
-    if (!Directory.Exists(fullPath))
-    {
-        return;
-    }
-
-    var currentPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-    if (!currentPath.Split(Path.PathSeparator).Contains(fullPath, StringComparer.OrdinalIgnoreCase))
-    {
-        Environment.SetEnvironmentVariable("PATH", fullPath + Path.PathSeparator + currentPath);
-    }
 }
 
 static TranscriptionEngineCreation CreateWhisperEngine(

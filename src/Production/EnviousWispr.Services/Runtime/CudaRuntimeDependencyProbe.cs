@@ -14,11 +14,14 @@ namespace EnviousWispr.Services.Runtime;
 /// available at all (the pinned `Whisper.net.dll` carries the name `cudart64_13`), so without it the
 /// CUDA runtime is never chosen.
 ///
-/// THE SEARCH IS WHERE THE WORKER CAN FIND THEM: the configured runtime folder, the app's own folder, the
-/// folder the CUDA backend itself is loaded from (`runtimes/cuda/win-x64`, which the loader searches for
-/// that library's dependencies), and PATH - which the runtime worker prepends to and inherits. This is
-/// not full loader parity: System32 and the current directory are not searched, and no shipped layout
-/// puts cuBLAS in either.
+/// THE SEARCH IS WHERE THE WORKER CAN FIND THEM: the configured runtime folder (which the worker adds to
+/// its DLL search with <c>AddDllDirectory</c>), the app's own folder, and the folder the CUDA backend itself
+/// is loaded from (`runtimes/cuda/win-x64`, which the loader searches for that library's dependencies).
+/// NOT PATH, WHICH THE WORKER NO LONGER SEARCHES: a packaged process never searches PATH for a DLL, and
+/// the worker now switches its default search to the application folder, System32 and the folders it
+/// adds, packaged or not (<c>NativeRuntimeSearchPath</c>). A probe that still counted PATH would put a
+/// card on files the worker cannot load. System32 is not searched here either; no shipped layout puts
+/// cuBLAS there.
 /// </remarks>
 public static class CudaRuntimeDependencyProbe
 {
@@ -83,12 +86,6 @@ public static class CudaRuntimeDependencyProbe
             // Where Whisper.net loads ggml-cuda from; the loader searches a library's own folder for its
             // dependencies. onnxruntime loads nothing from here, so the Parakeet set does not look.
             AddDirectory(searchDirectories, WhisperCudaBackendDirectory);
-        }
-
-        foreach (var pathEntry in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
-                     .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            AddDirectory(searchDirectories, pathEntry);
         }
 
         return searchDirectories;

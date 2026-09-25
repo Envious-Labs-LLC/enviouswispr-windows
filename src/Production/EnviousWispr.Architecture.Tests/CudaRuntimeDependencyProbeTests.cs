@@ -105,6 +105,33 @@ public sealed class CudaRuntimeDependencyProbeTests : IDisposable
     }
 
     [Fact]
+    public void FilesReachableOnlyThroughPathDoNotCount()
+    {
+        // THE WORKER NO LONGER SEARCHES PATH (a packaged process never does), so a probe that counted it
+        // would put the card on files the worker cannot load. Restored whatever happens.
+        Directory.CreateDirectory(_scratch);
+        foreach (var library in CudaRuntimeDependencyProbe.RequiredLibraryNames)
+        {
+            File.WriteAllBytes(Path.Combine(_scratch, library), [0]);
+        }
+
+        Assert.True(CudaRuntimeDependencyProbe.IsComplete(_scratch));
+        var original = Environment.GetEnvironmentVariable("PATH");
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", _scratch + Path.PathSeparator + original);
+            Assert.False(CudaRuntimeDependencyProbe.IsComplete(null));
+            Assert.False(CudaRuntimeDependencyProbe.IsWhisperComplete(null));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", original);
+        }
+
+        Assert.Equal(original, Environment.GetEnvironmentVariable("PATH"));
+    }
+
+    [Fact]
     public void MalformedSearchDirectoryFailsClosed()
     {
         Assert.False(CudaRuntimeDependencyProbe.IsCompleteInDirectories(["\0invalid"]));

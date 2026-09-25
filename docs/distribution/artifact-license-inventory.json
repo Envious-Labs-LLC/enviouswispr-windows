@@ -90,35 +90,35 @@
     {
       "id": "nvidia-cuda-runtime",
       "artifactClass": "native-runtime",
-      "plannedPayload": "Private app-local CUDA 13 runtime subset",
-      "upstreamIdentity": "NVIDIA CUDA Toolkit",
+      "plannedPayload": "Separately delivered on-demand CUDA 13 runtime subset, not in the Store package: cublas64_13.dll, cublasLt64_13.dll, cudart64_13.dll and cufft64_12.dll in the cuda-runtime delivery manifest (models/manifests/cuda-runtime.json), downloaded only on an NVIDIA PC whose speech engine would use the card",
+      "upstreamIdentity": "NVIDIA CUDA Toolkit libraries as published in the NVIDIA Python wheels nvidia-cublas, nvidia-cuda-runtime and nvidia-cufft",
       "observedLicense": "LicenseRef-NVIDIA-CUDA-EULA",
       "sourceUrl": "https://docs.nvidia.com/cuda/eula/",
-      "sourceRevision": "PENDING",
+      "sourceRevision": "nvidia-cublas 13.6.0.2, nvidia-cuda-runtime 13.3.29, nvidia-cufft 12.3.0.29 (files byte-identical to the wheels; sizes and SHA-256 in models/manifests/cuda-runtime.json)",
       "shipDisposition": "pending-review",
       "approvedBy": null,
       "approvedAt": null,
       "openRequirements": [
-        "Select the exact CUDA release and only Attachment A redistributable files.",
-        "Record NVIDIA source manifests, file names, sizes, and hashes.",
-        "Approve required downstream terms, notices, and private-directory packaging."
+        "Confirm each of the four files is a distributable portion under the CUDA EULA Attachment A.",
+        "Approve redistribution from the Envious Labs mirror and the notice the manifest installs beside the files.",
+        "Upload the files to the pinned mirror prefix before any build carrying the manifest ships."
       ]
     },
     {
       "id": "nvidia-cudnn-runtime",
       "artifactClass": "native-runtime",
-      "plannedPayload": "Private app-local cuDNN 9 runtime DLL subset",
-      "upstreamIdentity": "NVIDIA cuDNN",
+      "plannedPayload": "Separately delivered on-demand cuDNN 9 runtime subset, not in the Store package: the eight cudnn*64_9.dll files in the cuda-runtime delivery manifest (models/manifests/cuda-runtime.json)",
+      "upstreamIdentity": "NVIDIA cuDNN as published in the NVIDIA Python wheel nvidia-cudnn-cu13",
       "observedLicense": "LicenseRef-NVIDIA-cuDNN-SLA",
       "sourceUrl": "https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html",
-      "sourceRevision": "PENDING",
+      "sourceRevision": "nvidia-cudnn-cu13 9.24.0.43 (files byte-identical to the wheel; sizes and SHA-256 in models/manifests/cuda-runtime.json)",
       "shipDisposition": "pending-review",
       "approvedBy": null,
       "approvedAt": null,
       "openRequirements": [
-        "Select the exact cuDNN release and official redistributable archive.",
-        "Record NVIDIA source manifests, runtime DLL names, sizes, and hashes.",
-        "Approve required downstream terms and notices for app-only access."
+        "Confirm the runtime DLLs are distributable under the cuDNN agreement when delivered as a separate download.",
+        "Approve redistribution from the Envious Labs mirror and the notice the manifest installs beside the files.",
+        "Upload the files to the pinned mirror prefix before any build carrying the manifest ships."
       ]
     },
     {

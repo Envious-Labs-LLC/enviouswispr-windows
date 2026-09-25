@@ -105,6 +105,74 @@ public sealed class CudaRuntimeDirectoryTests
     [Fact]
     public void TheApplicationRefusesToResolveWithoutADataDirectory()
     {
-        Assert.Throws<ArgumentException>(() => CudaRuntimeDirectory.ForApplication("  "));
+        Assert.Throws<ArgumentException>(() => CudaRuntimeDirectory.ForApplication("  ", verifiedPackDirectory: null));
+    }
+
+    private const string Digest = "1f7c92b03c81cc9d44a0f2627a4ae8f4bba9d57f0aded3e634ed554277fcd8f5";
+
+    [Fact]
+    public void TheDownloadedPackOutranksTheHandProvisionedFolderAndTheOverrideOutranksBoth()
+    {
+        var configured = Path.GetFullPath(Path.Combine("C:", "chosen"));
+        var data = Path.GetFullPath(Path.Combine("C:", "data"));
+        var pack = Path.Combine(data, "models", "cuda-runtime", "versions", "1.0.0", Digest);
+        var legacy = Path.Combine(data, "runtime", "cuda");
+
+        Assert.Equal(configured, CudaRuntimeDirectory.Resolve(configured, pack, [data], Existing(configured, pack, legacy)));
+        Assert.Equal(pack, CudaRuntimeDirectory.Resolve(null, pack, [data], Existing(pack, legacy)));
+        Assert.Equal(legacy, CudaRuntimeDirectory.Resolve(null, null, [data], Existing(pack, legacy)));
+    }
+
+    [Fact]
+    public void APackDirectoryThatIsNotThereFallsThroughToTheHandProvisionedFolder()
+    {
+        // THIS PC'S CASE: the founder machine has only the hand-provisioned folder, and must keep its card.
+        var data = Path.GetFullPath(Path.Combine("C:", "data"));
+        var pack = Path.Combine(data, "models", "cuda-runtime", "versions", "1.0.0", Digest);
+        var legacy = Path.Combine(data, "runtime", "cuda");
+
+        Assert.Equal(legacy, CudaRuntimeDirectory.Resolve(null, pack, [data], Existing(legacy)));
+        Assert.Null(CudaRuntimeDirectory.Resolve(null, pack, [data], Existing()));
+    }
+
+    [Fact]
+    public void TheActivePointerNamesTheVersionAndDigestFolder()
+    {
+        var data = Path.GetFullPath(Path.Combine("C:", "data"));
+        var pointer = Path.Combine(data, "models", "cuda-runtime", "active.json");
+        string? Read(string path) => string.Equals(path, pointer, StringComparison.OrdinalIgnoreCase)
+            ? $$"""{"schemaVersion":1,"modelId":"cuda-runtime","version":"1.0.0","manifestDigest":"{{Digest}}"}"""
+            : null;
+
+        Assert.Equal(
+            Path.Combine(data, "models", "cuda-runtime", "versions", "1.0.0", Digest),
+            CudaRuntimeDirectory.ActivePackDirectory(data, Read));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("not json")]
+    [InlineData("[]")]
+    [InlineData("""{"modelId":"some-other-pack","version":"1.0.0","manifestDigest":"1f7c92b03c81cc9d44a0f2627a4ae8f4bba9d57f0aded3e634ed554277fcd8f5"}""")]
+    [InlineData("""{"modelId":"cuda-runtime","version":"..","manifestDigest":"1f7c92b03c81cc9d44a0f2627a4ae8f4bba9d57f0aded3e634ed554277fcd8f5"}""")]
+    [InlineData("""{"modelId":"cuda-runtime","version":"1.0.0/../../x","manifestDigest":"1f7c92b03c81cc9d44a0f2627a4ae8f4bba9d57f0aded3e634ed554277fcd8f5"}""")]
+    [InlineData("""{"modelId":"cuda-runtime","version":"1.0.0","manifestDigest":"../../../windows"}""")]
+    [InlineData("""{"modelId":"cuda-runtime","version":"1.0.0"}""")]
+    [InlineData("""{"modelId":"cuda-runtime","version":1,"manifestDigest":"1f7c92b03c81cc9d44a0f2627a4ae8f4bba9d57f0aded3e634ed554277fcd8f5"}""")]
+    public void APointerThatIsMissingMalformedForeignOrSteeringOutOfThePackIsNoPack(string? pointerText)
+    {
+        var data = Path.GetFullPath(Path.Combine("C:", "data"));
+
+        Assert.Null(CudaRuntimeDirectory.ActivePackDirectory(data, _ => pointerText));
+    }
+
+    [Fact]
+    public void AnUnreadablePointerIsNoPackRatherThanAFault()
+    {
+        var data = Path.GetFullPath(Path.Combine("C:", "data"));
+
+        Assert.Null(CudaRuntimeDirectory.ActivePackDirectory(data, _ => throw new IOException("locked")));
+        Assert.Null(CudaRuntimeDirectory.ActivePackDirectory(data, _ => throw new UnauthorizedAccessException()));
     }
 }

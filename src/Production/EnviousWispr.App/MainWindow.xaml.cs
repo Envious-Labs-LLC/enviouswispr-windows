@@ -404,6 +404,12 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>The person asked for the running download to stop.</summary>
     public event Action? ModelDownloadCancelRequested;
 
+    /// <summary>The person asked for the NVIDIA graphics runtime to be downloaded.</summary>
+    public event Action? GraphicsRuntimeDownloadRequested;
+
+    /// <summary>The person asked for the running graphics runtime download to stop.</summary>
+    public event Action? GraphicsRuntimeDownloadCancelRequested;
+
     public event Action<bool, int>? DiagnosticsExportCompleted;
 
     public event Action? UpdateCheckRequested;
@@ -2646,6 +2652,35 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void CancelModelDownloadButton_Click(object sender, RoutedEventArgs e) =>
         ModelDownloadCancelRequested?.Invoke();
+
+    private void DownloadGraphicsRuntimeButton_Click(object sender, RoutedEventArgs e) =>
+        GraphicsRuntimeDownloadRequested?.Invoke();
+
+    private void CancelGraphicsRuntimeDownloadButton_Click(object sender, RoutedEventArgs e) =>
+        GraphicsRuntimeDownloadCancelRequested?.Invoke();
+
+    /// <summary>
+    /// Shows the NVIDIA graphics runtime row on the Transcription card, or hides it when there is nothing to say.
+    /// </summary>
+    /// <remarks>
+    /// HIDDEN UNLESS IT APPLIES. The app decides whether this PC's card would be used; a PC without an NVIDIA
+    /// card never sees the row at all, so null is the common case and it collapses the whole row.
+    /// </remarks>
+    public void SetGraphicsRuntimeDelivery(ModelDeliveryPresentation? presentation)
+    {
+        if (presentation is null)
+        {
+            GraphicsRuntimeRow.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        GraphicsRuntimeRow.Visibility = Visibility.Visible;
+        SetLiveText(GraphicsRuntimeStatusText, presentation.Text);
+        GraphicsRuntimeProgress.Visibility = presentation.Percent is null ? Visibility.Collapsed : Visibility.Visible;
+        GraphicsRuntimeProgress.Value = presentation.Percent ?? 0;
+        DownloadGraphicsRuntimeButton.Visibility = presentation.CanDownload ? Visibility.Visible : Visibility.Collapsed;
+        CancelGraphicsRuntimeDownloadButton.Visibility = presentation.CanCancel ? Visibility.Visible : Visibility.Collapsed;
+    }
 
     /// <summary>
     /// Shows the speech-model situation on the Transcription card and the onboarding card together.

@@ -149,8 +149,11 @@ try {
             "$(MarkdownCell "$($row.Kind): $($row.License)") | $(MarkdownCell $row.Sha256) |")
     }
     $lines.Add('')
-    $lines.Add('Model packs, CUDA redistributables, and EG-1 are separately delivered artifacts. Their signed model')
-    $lines.Add('manifests must carry the exact upstream license notice and acceptance requirements; this NuGet')
+    $lines.Add('Model packs, CUDA redistributables, and EG-1 are separately delivered artifacts. The NVIDIA CUDA and')
+    $lines.Add('cuDNN runtime libraries are not in the Store package: they are the `cuda-runtime` delivery manifest,')
+    $lines.Add('downloaded only on an NVIDIA PC, under the NVIDIA CUDA Toolkit EULA and the NVIDIA cuDNN Software')
+    $lines.Add('License Agreement. Their bundled delivery manifests carry the exact upstream license notice, which the')
+    $lines.Add('store installs beside the files, and the acceptance requirements; this NuGet')
     $lines.Add('inventory does not approve or replace those notices. A public release remains blocked until every')
     $lines.Add('shipped artifact has a reviewed license record. Source evidence and open decisions are tracked in')
     $lines.Add('`docs/distribution/artifact-license-inventory.md`.')

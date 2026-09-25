@@ -122,6 +122,7 @@ public sealed partial class MainWindow
         { HeldBy: SessionHolder.LastDictationReuse } => "EnviousWispr is pasting your last dictation. Try again in a moment.",
         { HeldBy: SessionHolder.FileTranscription } => "Another file is being transcribed right now.",
         { HeldBy: SessionHolder.DataDeletion } => "EnviousWispr is deleting your data and will close.",
+        { HeldBy: SessionHolder.GraphicsRuntimeSwitch } => "EnviousWispr is moving dictation to your graphics card. Try again in a moment.",
         _ => "EnviousWispr is closing.",
     };
 

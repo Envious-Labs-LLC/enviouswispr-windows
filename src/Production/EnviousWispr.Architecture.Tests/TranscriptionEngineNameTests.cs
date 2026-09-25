@@ -929,8 +929,23 @@ public sealed partial class DesignSystemTokenTests
         var tail = core.Body!.Statements.SkipWhile(statement => statement is not TryStatementSyntax).Skip(1).ToArray();
         var afterTry = string.Join("\n", tail.Select(statement => statement.ToString().Split('\n')[0].Trim()));
         Assert.Equal(
-            "if (Leaving)\n_window?.SetModelDelivery(new(\"Download verified. Starting local transcription…\"));\nawait TeardownTranscriptionAsync().ConfigureAwait(true);\nif (Leaving)\nawait ConfigureTranscriptionAsync(_settings.Preferences.Dictation.FinalEngine).ConfigureAwait(true);\nif (Leaving)\nawait PresentModelDeliveryAsync().ConfigureAwait(true);",
+            "if (Leaving)\n_window?.SetModelDelivery(new(\"Download verified. Starting local transcription…\"));\nawait ReconfigureTranscriptionAsync().ConfigureAwait(true);\nif (Leaving)\nPresentGraphicsRuntime();\nawait PresentModelDeliveryAsync().ConfigureAwait(true);",
             afterTry);
+
+        // THE RECONFIGURATION BOTH DELIVERIES SHARE (a speech model, the graphics runtime) checks Leaving
+        // before it tears an engine down and after the teardown, before it builds one.
+        var graphics = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "App.GraphicsRuntime.cs"));
+        var graphicsTree = CSharpSyntaxTree.ParseText(graphics).GetRoot();
+        var reconfigure = graphicsTree.DescendantNodes().OfType<MethodDeclarationSyntax>().Single(method => method.Identifier.ValueText == "ReconfigureTranscriptionAsync");
+        var guarded = Assert.IsType<TryStatementSyntax>(reconfigure.Body!.Statements[1]).Block.Statements;
+        Assert.Equal(
+            "if (Leaving)\nawait TeardownTranscriptionAsync().ConfigureAwait(true);\nif (Leaving)\nawait ConfigureTranscriptionAsync(_settings.Preferences.Dictation.FinalEngine).ConfigureAwait(true);",
+            string.Join("\n", guarded.Select(statement => statement.ToString().Split('\n')[0].Trim())));
+
+        // THE GRAPHICS RUNTIME DELIVERY IS CANCELLED AND JOINED LIKE THE MODEL DELIVERY.
+        Assert.Contains("_graphicsRuntimeDownload?.Cancel();", policy, StringComparison.Ordinal);
+        Assert.Contains("new LifetimeStep(\"graphics runtime delivery\", () => Join(Interlocked.Exchange(ref _graphicsRuntimeDelivery, null)))", quiesce, StringComparison.Ordinal);
+        Assert.Contains("_graphicsRuntimeDelivery is { IsCompleted: false }", graphics, StringComparison.Ordinal);
     }
 
     [Fact]
