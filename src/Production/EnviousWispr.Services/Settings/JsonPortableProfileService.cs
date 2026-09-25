@@ -1,6 +1,7 @@
 using System.Security;
 using System.Text.Json;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Services.Settings;
@@ -101,7 +102,15 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 };
             }
 
-            var validationError = AppSettingsValidator.Validate(profile, AppErrorStage.ProfileImport);
+            // A PROFILE CANNOT BRING IN A CANCEL OR ADD-A-WORD KEY WITH NO KEY OF ITS OWN: the hook refuses both, and with
+            // them the whole hook, so the import would leave dictation dead at the next launch. Refused here, before
+            // anything is applied, rather than in the settings-file validator, where a refusal resets every setting. #66.
+            var validationError = AppSettingsValidator.Validate(profile, AppErrorStage.ProfileImport) ??
+                (profile?.Preferences?.Dictation is { } dictation &&
+                 !(HotkeyGestureParser.ParseKeyed(dictation.CancelGesture).Succeeded &&
+                   HotkeyGestureParser.ParseKeyed(dictation.QuickAddGesture).Succeeded)
+                    ? new AppError(AppErrorCode.InvalidData, AppErrorStage.ProfileImport, CanRetry: false)
+                    : null);
             return validationError is null
                 ? new PortableProfileImportResult(PortableProfileImportStatus.Imported, profile)
                 : Invalid(validationError);
