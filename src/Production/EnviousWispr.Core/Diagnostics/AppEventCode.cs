@@ -282,8 +282,8 @@ public enum AppEventCode
     /// <summary>Declined: no window to paste into, or it had gone.</summary>
     SavedDictationDeclinedNoTarget,
 
-    /// <summary>Declined: the only window to paste into was EnviousWispr's own.</summary>
-    SavedDictationDeclinedOwnWindow,
+    /// <summary>The write was issued and could not be confirmed, or the commit threw; the words may be in the field.</summary>
+    SavedDictationMayHavePasted,
 
     /// <summary>The delivery wrote nothing and the clipboard did not catch the words.</summary>
     SavedDictationPasteFailed,

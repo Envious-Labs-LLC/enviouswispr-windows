@@ -21,8 +21,17 @@ public enum SavedDictationPasteOutcome
     /// <summary>The words were written into the target by one of the delivery's routes.</summary>
     Pasted,
 
-    /// <summary>The target refused the paste, or was not the field the words belong in; the clipboard caught them.</summary>
+    /// <summary>
+    /// The target refused the paste, or was not the field the words belong in, or (Undo) no field was named at the
+    /// key press to return to; the clipboard caught them.
+    /// </summary>
     KeptOnClipboard,
+
+    /// <summary>
+    /// The write may or may not have landed: a direct write that could not be verified, or a commit that threw after
+    /// it began. Nothing is retried and Home keeps its copy, because a second paste could put the words in twice.
+    /// </summary>
+    MayHavePasted,
 
     /// <summary>Undo only: no offer stands - it was already used, or the copy on Home is not that take's any more.</summary>
     NotOffered,
@@ -39,9 +48,6 @@ public enum SavedDictationPasteOutcome
     /// <summary>Nothing to paste into, or it has gone.</summary>
     NoTarget,
 
-    /// <summary>History only: the window to paste into is EnviousWispr's own.</summary>
-    OwnWindow,
-
     /// <summary>The delivery wrote nothing and the clipboard did not catch the words either.</summary>
     Failed,
 }
@@ -55,7 +61,6 @@ public sealed record SavedDictationPasteResult(
 /// <param name="LoadHistory">The store's current entries.</param>
 /// <param name="Now">The clock the 24-hour expiry is read against.</param>
 /// <param name="IsDictationActive">True while a take is recording, finalising or being delivered.</param>
-/// <param name="IsOwnWindow">Whether a target is one of EnviousWispr's own windows.</param>
 /// <param name="Delivery">
 /// A delivery of its OWN over the shared adapter, as Paste Last Dictation has: `ContextAwareTextDelivery`
 /// keeps one recovery slot, and sharing the dictation's would overwrite a take's recovery text.
@@ -67,7 +72,6 @@ public sealed record SavedDictationPasteEnvironment(
     Func<CancellationToken, Task<IReadOnlyList<DictationHistoryEntry>>> LoadHistory,
     Func<DateTimeOffset> Now,
     Func<bool> IsDictationActive,
-    Func<TargetWindowId, bool> IsOwnWindow,
     ITextDelivery Delivery,
     Func<TextDeliveryOptions> DeliveryOptions,
     Func<TargetWindowId, CancellationToken, Task<TargetWindowId?>> Reacquire,
@@ -150,18 +154,11 @@ public sealed class SavedDictationPaste
                 return new(action, SavedDictationPasteOutcome.NoTarget);
             }
 
-            var aimed = offer.Target;
-            if (aimed.FocusedElementId is null)
-            {
-                // A WINDOW WITH NO FIELD NAMED AT THE PRESS is completed after it is brought back, as Paste Last
-                // Dictation completes one, rather than loosening the delivery's field check.
-                if (await _environment.Reacquire(aimed, cancellationToken).ConfigureAwait(false) is not { } reacquired)
-                {
-                    return new(action, SavedDictationPasteOutcome.NoTarget);
-                }
-
-                aimed = reacquired;
-            }
+            // A TAKE THAT FROZE NO FIELD HAS NO FIELD TO GO BACK TO. Reading whichever field has the focus now
+            // would put the words wherever the caret happens to be, which is exactly what macOS refuses when it
+            // cannot refocus the original field: it stops at the clipboard. So does this - a requested copy
+            // through the same delivery, and no keystroke. History's Paste reacquires by design; Undo does not.
+            var clipboardOnly = offer.Target.FocusedElementId is null;
 
             if (_environment.IsDictationActive())
             {
@@ -170,7 +167,11 @@ public sealed class SavedDictationPaste
                 return new(action, SavedDictationPasteOutcome.DictationInProgress);
             }
 
-            var result = await DeliverAsync(action, entry, aimed, cancellationToken).ConfigureAwait(false);
+            // THE OWN-WINDOW RULE IS THE DICTATION'S, NOT A NEW ONE. Ordinary delivery refuses only a target that
+            // is not valid; it never asks whose window it is, so a take dictated into one of EnviousWispr's own
+            // fields is delivered there. Undo returns the words to where that take was aimed, under the same rule
+            // and the same delivery checks (window alive, same process, integrity, the field's id).
+            var result = await DeliverAsync(action, entry, offer.Target, clipboardOnly, cancellationToken).ConfigureAwait(false);
             await SettleHomeCopyAsync(result, offer.SessionId).ConfigureAwait(false);
             return result;
         }
@@ -200,14 +201,11 @@ public sealed class SavedDictationPaste
 
         try
         {
-            if (target is null)
+            // NO OWN-WINDOW RULE OF ITS OWN: the dictation's delivery has none, and this applies exactly that one.
+            // The target comes from the foreground history, which never records EnviousWispr's windows anyway.
+            if (target is null || !target.Value.IsValid)
             {
                 return new(action, SavedDictationPasteOutcome.NoTarget);
-            }
-
-            if (_environment.IsOwnWindow(target.Value))
-            {
-                return new(action, SavedDictationPasteOutcome.OwnWindow);
             }
 
             var entry = await FindAsync(entryId, cancellationToken).ConfigureAwait(false);
@@ -236,7 +234,7 @@ public sealed class SavedDictationPaste
                 }
             }
 
-            var result = await DeliverAsync(action, entry, aimed, cancellationToken).ConfigureAwait(false);
+            var result = await DeliverAsync(action, entry, aimed, clipboardOnly: false, cancellationToken).ConfigureAwait(false);
 
             // THE SAME TAKE AS THE COPY ON HOME: its words went back through History instead, so Home stops
             // holding them and the Undo beside them is spent. Any other entry leaves Home as it was.
@@ -274,12 +272,14 @@ public sealed class SavedDictationPaste
         SavedDictationPasteAction action,
         DictationHistoryEntry entry,
         TargetWindowId aimed,
+        bool clipboardOnly,
         CancellationToken cancellationToken)
     {
         var options = _environment.DeliveryOptions() with
         {
             // The person asked for a paste; the dictation's copy-instead setting does not turn it into a copy.
-            CopyInsteadOfPaste = false,
+            // Only an Undo with no field to return to is a copy, and that is this code's choice, not a setting.
+            CopyInsteadOfPaste = clipboardOnly,
         };
         var delivery = await _environment.Delivery.DeliverAsync(
             new TextDeliveryRequest(
@@ -293,11 +293,25 @@ public sealed class SavedDictationPaste
         var outcome = delivery switch
         {
             { ClipboardFallback: true } => SavedDictationPasteOutcome.KeptOnClipboard,
+            // A requested copy "delivers" to the clipboard: the words are there and nothing was typed.
+            { Delivered: true } when clipboardOnly => SavedDictationPasteOutcome.KeptOnClipboard,
             { Delivered: true } => SavedDictationPasteOutcome.Pasted,
+            _ when MayHaveLanded(delivery) => SavedDictationPasteOutcome.MayHavePasted,
             _ => SavedDictationPasteOutcome.Failed,
         };
         return new(action, outcome, delivery);
     }
+
+    /// <summary>A delivery that stopped where the words may already be in the field.</summary>
+    /// <remarks>
+    /// Two ways, both named by the delivery itself: a direct write whose read-back did not match (issued, effect
+    /// unknown), and an exception out of the commit (the stage where text is written). Every other refusal comes
+    /// before anything is written. The caller's own cancellation is not here: it is the app leaving, and no result
+    /// is shown for it.
+    /// </remarks>
+    internal static bool MayHaveLanded(DeliveryResult delivery) =>
+        delivery.RefusalReason == TextDeliveryRefusalReason.DirectWriteUnverified ||
+        delivery.Fault?.Stage == DeliveryStage.Commit;
 
     /// <summary>Once the words landed or reached the clipboard, Home stops holding that take's copy.</summary>
     private Task SettleHomeCopyAsync(SavedDictationPasteResult result, DictationSessionId sessionId) =>
@@ -324,7 +338,7 @@ public static class SavedDictationPasteDiagnostics
             SavedDictationPasteOutcome.DictationInProgress => AppEventCode.SavedDictationDeclinedDictationInProgress,
             SavedDictationPasteOutcome.Busy => AppEventCode.SavedDictationDeclinedBusy,
             SavedDictationPasteOutcome.NoTarget => AppEventCode.SavedDictationDeclinedNoTarget,
-            SavedDictationPasteOutcome.OwnWindow => AppEventCode.SavedDictationDeclinedOwnWindow,
+            SavedDictationPasteOutcome.MayHavePasted => AppEventCode.SavedDictationMayHavePasted,
             SavedDictationPasteOutcome.Failed => AppEventCode.SavedDictationPasteFailed,
             _ => throw new ArgumentOutOfRangeException(nameof(result), result.Outcome, null),
         };

@@ -1444,7 +1444,8 @@ public partial class App : Application, IAsyncDisposable
                 TimeSpan.FromMilliseconds(1000),
                 cancellation)));
         // HOME'S UNDO AND HISTORY'S PASTE: the same borrowing as the reuse above - its own delivery over the
-        // shared adapter, the same own-window rule, the same way back to a window remembered without its field.
+        // shared adapter, and the same way back to a window remembered without its field. The own-window rule
+        // is the dictation's, which has none; the reuse's own-window refusal is not carried over.
         _savedDictationPaste = new SavedDictationPaste(new SavedDictationPasteEnvironment(
             async cancellation => (await _historyStore.LoadAsync(
                 _settings.Preferences.History.RetentionDays,
@@ -1452,7 +1453,6 @@ public partial class App : Application, IAsyncDisposable
                 cancellation).ConfigureAwait(false)).Entries,
             () => DateTimeOffset.UtcNow,
             () => _sessionController?.CurrentSession is not null || _sessionCoordinator?.IsProcessing == true,
-            target => target.ProcessId == (uint)Environment.ProcessId,
             new ContextAwareTextDelivery(_textTargetAdapter),
             () => TextDeliveryOptions.Default,
             (window, cancellation) => WindowsForegroundTargetProvider.ReacquireAsync(
@@ -2386,6 +2386,7 @@ public partial class App : Application, IAsyncDisposable
             DateTimeOffset.UtcNow,
             SavedDictationPasteDiagnostics.EventFor(result),
             result.Outcome is SavedDictationPasteOutcome.KeptOnClipboard or SavedDictationPasteOutcome.Failed
+                or SavedDictationPasteOutcome.MayHavePasted
                 ? AppFailureCategory.TextDelivery
                 : AppFailureCategory.None,
             ErrorCode: result.Delivery is { } delivered ? DeliveryErrorCodes.For(delivered.RefusalReason) : null,

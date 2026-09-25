@@ -197,16 +197,101 @@ public sealed class SavedDictationPasteTests
         Assert.True(world.Persistence.HasPendingRecovery);
     }
 
-    /// <summary>A take aimed at a window with no field named is brought back and its field read, as the reuse does.</summary>
+    /// <summary>
+    /// A take that froze no field is not pasted into whichever field has the focus later: the words go to the
+    /// clipboard through the delivery's requested copy, and no window is read, brought back or typed into.
+    /// macOS stops at the clipboard when it cannot refocus the original field.
+    /// </summary>
     [Fact]
-    public async Task UndoToAWindowWithoutAFieldReacquiresIt()
+    public async Task UndoWithNoFrozenFieldPutsTheWordsOnTheClipboardOnly()
     {
-        var world = await World.AfterEscapeAsync(target: Frozen with { FocusedElementId = null });
+        var adapter = new FakeTargetAdapter { Capture = TargetContextStatus.Available };
+        var world = await World.AfterEscapeAsync(
+            target: Frozen with { FocusedElementId = null },
+            delivery: new ContextAwareTextDelivery(adapter));
+
+        var result = await world.Paste.UndoAsync();
+
+        Assert.Equal(SavedDictationPasteOutcome.KeptOnClipboard, result.Outcome);
+        Assert.Equal(Words, Assert.Single(adapter.Copied).Text);
+        Assert.Empty(adapter.Captured);
+        Assert.Empty(adapter.Commits);
+        Assert.Equal(0, world.Reacquired);
+        Assert.False(world.Persistence.HasPendingRecovery, "the words reached the clipboard, so Home stops holding them");
+    }
+
+    /// <summary>History's Paste still brings the last window back and names its field, by design.</summary>
+    [Fact]
+    public async Task HistoryPasteReacquiresTheLastWindowsField()
+    {
+        var world = await World.AfterEscapeAsync();
+
+        var result = await world.Paste.PasteAsync(world.EntryId, Previous);
+
+        Assert.Equal(SavedDictationPasteOutcome.Pasted, result.Outcome);
+        Assert.Equal(1, world.Reacquired);
+        Assert.False(Assert.Single(world.Delivery.Requests).Options.CopyInsteadOfPaste);
+    }
+
+    /// <summary>
+    /// THE OWN-WINDOW RULE IS THE DICTATION'S. Ordinary delivery refuses only an invalid target and never asks
+    /// whose window it is (ContextAwareTextDelivery's IsValid check; the adapter checks the window is alive, the
+    /// same process, not elevated, and the same field). A take dictated into one of EnviousWispr's own fields
+    /// is therefore delivered there, and Undo, through the same delivery, puts it back there.
+    /// </summary>
+    [Fact]
+    public async Task UndoAppliesTheDictationsOwnWindowRuleWhichAllowsOurOwnField()
+    {
+        var own = World.OwnWindow with { FocusedElementId = "own.field" };
+        var adapter = new FakeTargetAdapter { Capture = TargetContextStatus.Available };
+        var world = await World.AfterEscapeAsync(target: own, delivery: new ContextAwareTextDelivery(adapter));
 
         var result = await world.Paste.UndoAsync();
 
         Assert.Equal(SavedDictationPasteOutcome.Pasted, result.Outcome);
-        Assert.Equal(Frozen with { FocusedElementId = "reacquired" }, Assert.Single(world.Delivery.Requests).Target);
+        Assert.Equal(own, Assert.Single(adapter.Captured));
+        Assert.Equal(own, Assert.Single(adapter.Commits).Target);
+
+        // THE TWIN, WITH NO SAVED-DICTATION CODE IN IT: the dictation's own delivery takes the same target.
+        var dictation = new FakeTargetAdapter { Capture = TargetContextStatus.Available };
+        var delivered = await new ContextAwareTextDelivery(dictation).DeliverAsync(
+            new TextDeliveryRequest(new ProcessedText(DictationSessionId.Create(), Words), own, null, TextDeliveryOptions.Default, SnippetExpanded: false));
+        Assert.True(delivered.Delivered);
+        Assert.Equal(own, Assert.Single(dictation.Commits).Target);
+    }
+
+    /// <summary>A write that was issued and could not be confirmed is its own result, and Home keeps its copy.</summary>
+    [Fact]
+    public async Task AnUnverifiedWriteMayHavePastedAndHomeKeepsItsCopy()
+    {
+        var world = await World.AfterEscapeAsync();
+        world.Delivery.Answer = id => new DeliveryResult(id, Delivered: false, ClipboardFallback: false, RefusalReason: TextDeliveryRefusalReason.DirectWriteUnverified);
+
+        var result = await world.Paste.UndoAsync();
+
+        Assert.Equal(SavedDictationPasteOutcome.MayHavePasted, result.Outcome);
+        Assert.True(world.Persistence.HasPendingRecovery);
+        Assert.Equal(AppEventCode.SavedDictationMayHavePasted, SavedDictationPasteDiagnostics.EventFor(result));
+    }
+
+    /// <summary>A commit that threw may have written before it did; a capture that threw wrote nothing.</summary>
+    [Fact]
+    public async Task ACommitThatThrewMayHavePastedButACaptureThatThrewFailed()
+    {
+        var committing = new FakeTargetAdapter { Capture = TargetContextStatus.Available, ThrowOnCommit = true };
+        var world = await World.AfterEscapeAsync(delivery: new ContextAwareTextDelivery(committing));
+
+        var result = await world.Paste.PasteAsync(world.EntryId, Previous);
+
+        Assert.Equal(SavedDictationPasteOutcome.MayHavePasted, result.Outcome);
+        Assert.Equal(DeliveryStage.Commit, result.Delivery?.Fault?.Stage);
+        Assert.True(world.Persistence.HasPendingRecovery);
+        Assert.NotNull(world.Persistence.UndoOffer);
+
+        var capturing = new FakeTargetAdapter { ThrowOnCapture = true };
+        var control = await World.AfterEscapeAsync(delivery: new ContextAwareTextDelivery(capturing));
+        Assert.Equal(SavedDictationPasteOutcome.Failed, (await control.Paste.UndoAsync()).Outcome);
+        Assert.Empty(capturing.Commits);
     }
 
     [Fact]
@@ -267,12 +352,12 @@ public sealed class SavedDictationPasteTests
     }
 
     [Fact]
-    public async Task HistoryPasteNeedsAWindowThatIsNotOurOwn()
+    public async Task HistoryPasteNeedsAWindowItCanBringBack()
     {
         var world = await World.AfterEscapeAsync();
 
         Assert.Equal(SavedDictationPasteOutcome.NoTarget, (await world.Paste.PasteAsync(world.EntryId, target: null)).Outcome);
-        Assert.Equal(SavedDictationPasteOutcome.OwnWindow, (await world.Paste.PasteAsync(world.EntryId, World.OwnWindow)).Outcome);
+        Assert.Equal(SavedDictationPasteOutcome.NoTarget, (await world.Paste.PasteAsync(world.EntryId, new TargetWindowId(0))).Outcome);
         world.ReacquireFails = true;
         Assert.Equal(SavedDictationPasteOutcome.NoTarget, (await world.Paste.PasteAsync(world.EntryId, Previous)).Outcome);
         Assert.Empty(world.Delivery.Requests);
@@ -372,11 +457,14 @@ public sealed class SavedDictationPasteTests
                 cancellation => Task.FromResult<IReadOnlyList<DictationHistoryEntry>>([.. History.Entries]),
                 () => Clock,
                 () => DictationActive,
-                target => target.ProcessId == OwnWindow.ProcessId,
                 delivery ?? Delivery,
                 () => TextDeliveryOptions.Default with { CopyInsteadOfPaste = true },
-                (window, _) => Task.FromResult<TargetWindowId?>(
-                    ReacquireFails ? null : window with { FocusedElementId = "reacquired" }),
+                (window, _) =>
+                {
+                    Reacquired++;
+                    return Task.FromResult<TargetWindowId?>(
+                        ReacquireFails ? null : window with { FocusedElementId = "reacquired" });
+                },
                 Persistence));
         }
 
@@ -385,6 +473,9 @@ public sealed class SavedDictationPasteTests
         public bool DictationActive { get; set; }
 
         public bool ReacquireFails { get; set; }
+
+        /// <summary>How many times a window was brought back to have its field read.</summary>
+        public int Reacquired { get; private set; }
 
         public RecordingDelivery Delivery { get; }
 
@@ -454,9 +545,20 @@ public sealed class SavedDictationPasteTests
 
         public List<TextCommitRequest> Commits { get; } = [];
 
+        public List<ProcessedText> Copied { get; } = [];
+
+        public bool ThrowOnCommit { get; set; }
+
+        public bool ThrowOnCapture { get; set; }
+
         public Task<TargetContextResult> CaptureContextAsync(TargetWindowId target, TextDeliveryOptions options, CancellationToken cancellationToken = default)
         {
             Captured.Add(target);
+            if (ThrowOnCapture)
+            {
+                throw new InvalidOperationException("The capture failed before anything was written.");
+            }
+
             return Task.FromResult(Capture == TargetContextStatus.Available
                 ? new TargetContextResult(
                     TargetContextStatus.Available,
@@ -467,13 +569,21 @@ public sealed class SavedDictationPasteTests
         public Task<TextCommitResult> CommitAsync(TextCommitRequest request, CancellationToken cancellationToken = default)
         {
             Commits.Add(request);
+            if (ThrowOnCommit)
+            {
+                throw new InvalidOperationException("The commit failed after it began.");
+            }
+
             return Task.FromResult(request.ForcedRefusalReason == TextDeliveryRefusalReason.None
                 ? new TextCommitResult(TextDeliveryRoute.ClipboardPaste, Delivered: true, ClipboardFallback: false, ClipboardRestored: true)
                 : new TextCommitResult(TextDeliveryRoute.ClipboardOnly, Delivered: false, ClipboardFallback: true, ClipboardRestored: false, request.ForcedRefusalReason));
         }
 
-        public Task<TextCommitResult> CopyOnlyAsync(ProcessedText text, CancellationToken cancellationToken = default) =>
-            throw new InvalidOperationException("A paste the person asked for is never a copy.");
+        public Task<TextCommitResult> CopyOnlyAsync(ProcessedText text, CancellationToken cancellationToken = default)
+        {
+            Copied.Add(text);
+            return Task.FromResult(new TextCommitResult(TextDeliveryRoute.ClipboardOnly, Delivered: true, ClipboardFallback: false, ClipboardRestored: false));
+        }
     }
 
     private sealed class FakeRecoveryStore : IRecoveryTextStore

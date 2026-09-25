@@ -1186,8 +1186,16 @@ public sealed partial class MainWindow : Window, IDisposable
                 ShowMessage(
                     "Your dictation is on the clipboard",
                     undo
-                        ? "The place you were dictating into could not take it, so nothing was typed there. Paste it where you want it."
+                        ? "EnviousWispr could not get back to the place you were dictating into, so nothing was typed there. Paste it where you want it."
                         : "That app refused the paste. Paste it where you want it.",
+                    InfoBarSeverity.Warning);
+                break;
+            case SavedDictationPasteOutcome.MayHavePasted:
+                // NOT "NOTHING WAS TYPED", AND NO INVITATION TO PRESS AGAIN: the words may already be there, and a
+                // second paste would put them in twice. Home keeps its copy.
+                ShowMessage(
+                    "Your dictation may have been pasted",
+                    "EnviousWispr could not confirm it. Check the app before you try again. The text is still on Home and in History.",
                     InfoBarSeverity.Warning);
                 break;
             case SavedDictationPasteOutcome.NoLongerAvailable:
@@ -1202,7 +1210,7 @@ public sealed partial class MainWindow : Window, IDisposable
                     "EnviousWispr is busy with a dictation. Try again in a moment.",
                     InfoBarSeverity.Informational);
                 break;
-            case SavedDictationPasteOutcome.NoTarget or SavedDictationPasteOutcome.OwnWindow:
+            case SavedDictationPasteOutcome.NoTarget:
                 ShowMessage(
                     "Not pasted",
                     undo
