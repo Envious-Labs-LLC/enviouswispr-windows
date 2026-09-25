@@ -688,7 +688,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 UpdateOperationStatus.UpdateAvailable =>
                     $"Version {result.Version} is available. Choose Install update when you are not dictating.",
                 UpdateOperationStatus.Installing =>
-                    "The Microsoft Store is installing the update. Windows will close EnviousWispr while it updates.",
+                    "The Microsoft Store installed the update. EnviousWispr closes now; open it again from the Start menu.",
                 UpdateOperationStatus.Cancelled =>
                     "The update was not installed. Check for updates again when you are ready.",
                 _ => "The Microsoft Store could not finish that. Your current version is unchanged. Try again later.",

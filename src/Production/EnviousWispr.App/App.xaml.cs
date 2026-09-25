@@ -893,8 +893,7 @@ public partial class App : Application, IAsyncDisposable
         }
 
         // THE INSTALL IS ASKED FOR ONLY WHEN IDLE, and the session is held from before the request until
-        // Windows takes the app down: a press admitted in between would open a microphone under an
-        // update. A dictation or a file already running refuses the hold, and nothing is requested.
+        // the app has left: a press admitted in between would open a microphone under an update. A dictation or a file already running refuses the hold, and nothing is requested.
         var attempt = _sessionCoordinator?.TryHold(SessionHolder.UpdateApply) ?? new SessionHoldAttempt(NoScope.Instance);
         if (attempt.Hold is not { } hold)
         {
@@ -902,6 +901,10 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
+        // PUBLISHED BEFORE THE STORE IS ASKED. An exit that starts during the Store's prompt or download
+        // closes admission and takes this hold on its way out; a hold still in a local here would be one
+        // the session's shutdown waits its whole budget for, and the exit would read as unclean.
+        Volatile.Write(ref _updateInstallHold, hold);
         var status = UpdateOperationStatus.Failed;
         try
         {
@@ -910,24 +913,32 @@ public partial class App : Application, IAsyncDisposable
         }
         finally
         {
-            // KEPT ONLY WHEN THE STORE IS INSTALLING. Windows closes the app to apply the package, so
-            // the hold is parked until admission closes on the way out; a request that was declined or
-            // failed gives the session back at once and dictation resumes. An exit that began while the
-            // Store was asked has already closed admission, and its shutdown is waiting for this hold.
-            if (status == UpdateOperationStatus.Installing && !_exitRequested && !_disposed)
+            // GIVEN BACK UNLESS THE STORE IS INSTALLING: a declined or failed request lets dictation
+            // resume at once. Taken atomically, because an exit may already have taken it.
+            if (status != UpdateOperationStatus.Installing || _exitRequested || _disposed)
             {
-                _updateInstallHold = hold;
-            }
-            else
-            {
-                hold.Dispose();
+                Interlocked.Exchange(ref _updateInstallHold, null)?.Dispose();
             }
         }
 
-        if (!_exitRequested && !_disposed)
+        if (_exitRequested || _disposed)
         {
-            _window?.SetUpdateStatus(new UpdateOperationResult(status));
+            return;
         }
+
+        _window?.SetUpdateStatus(new UpdateOperationResult(status));
+        if (status != UpdateOperationStatus.Installing)
+        {
+            return;
+        }
+
+        // THE APP LEAVES ITSELF RATHER THAN WAITING TO BE CLOSED. Microsoft says a completed install may
+        // need the app to restart and does not promise to close a full-trust process, so waiting would
+        // leave dictation held until the person quit. The orderly exit runs with the hold still parked;
+        // admission closes first and only then gives it back, so no key is admitted in between.
+        _exitRequested = true;
+        await PrepareForExitAsync().ConfigureAwait(true);
+        Exit();
     }
 
     private void ApplyOverlayUatState()
