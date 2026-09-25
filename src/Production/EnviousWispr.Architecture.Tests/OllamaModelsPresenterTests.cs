@@ -372,6 +372,23 @@ public sealed class OllamaModelsPresenterTests
         Assert.Null(presenter.View.Notice);
     }
 
+    [Fact]
+    public async Task ANoticeStaysWithTheServerItWasAbout()
+    {
+        var host = new Host();
+        host.ByEndpoint["http://a:11434"] = Ready();
+        host.ByEndpoint["http://b:11434"] = Ready(("gemma2", null, null));
+        host.OnPull = _ => OllamaPullOutcome.NetworkFailed;
+        var presenter = new OllamaModelsPresenter(host);
+        await presenter.RefreshAsync("http://a:11434").WaitAsync(Patience);
+        await presenter.DownloadAsync("qwen3:0.6b", presenter.Context!, null).WaitAsync(Patience);
+        Assert.NotNull(presenter.View.Notice);
+
+        await presenter.RefreshAsync("http://b:11434").WaitAsync(Patience);
+
+        Assert.Null(presenter.View.Notice);
+    }
+
     private static OllamaInventory Ready(params (string Id, long? Size, string? Parameters)[] models) =>
         new(models.Length == 0 ? OllamaServerState.NoModels : OllamaServerState.Ready,
             models.Select(model => new OllamaInstalledModel(model.Id, model.Size, model.Parameters)).ToArray(),

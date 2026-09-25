@@ -570,6 +570,8 @@ public sealed class OllamaModelsPresenter
             _inventory = inventory;
             if (!_listKnown || !string.Equals(_listEndpoint, endpoint, StringComparison.Ordinal))
             {
+                // A NEW SERVER'S LIST STARTS WITHOUT THE OLD ONE'S NEWS.
+                _notice = null;
                 _listEndpoint = endpoint;
                 _listKnown = true;
                 _listVersion++;
