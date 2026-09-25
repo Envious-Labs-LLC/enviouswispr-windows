@@ -12,6 +12,9 @@ public sealed class WindowsTrayIcon : IDisposable
     private readonly Icon _icon;
     private readonly SynchronizationContext _ui;
     private readonly System.Threading.Timer _sweepTimer;
+    private readonly ToolStripMenuItem _pasteLast;
+    private readonly ToolStripMenuItem _copyLast;
+    private readonly ToolStripMenuItem _lastPreview;
     private TrayIconState _state = TrayIconState.Idle;
     private Icon? _renderedIcon;
     private TrayIconPalette _palette = TrayIconPalette.Brand;
@@ -33,6 +36,16 @@ public sealed class WindowsTrayIcon : IDisposable
                     + "system-preference callbacks back through that thread's context.");
 
         var menu = new ContextMenuStrip();
+        // THE LAST DICTATION FIRST, because it is the one item used while working in another app; the
+        // rest open this one. Both are disabled with nothing to reuse, and the grey line under them says
+        // which dictation they mean, so a paste is never a surprise. Ref: #206, macOS #3106.
+        _pasteLast = new ToolStripMenuItem("Paste last dictation", image: null, (_, _) => PasteLastRequested?.Invoke()) { Enabled = false };
+        _copyLast = new ToolStripMenuItem("Copy last dictation", image: null, (_, _) => CopyLastRequested?.Invoke()) { Enabled = false };
+        _lastPreview = new ToolStripMenuItem("No dictation yet") { Enabled = false };
+        menu.Items.Add(_pasteLast);
+        menu.Items.Add(_copyLast);
+        menu.Items.Add(_lastPreview);
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Open EnviousWispr", image: null, (_, _) => ShowWindowRequested?.Invoke());
         menu.Items.Add("Settings", image: null, (_, _) => OpenSettingsRequested?.Invoke());
         menu.Items.Add(new ToolStripSeparator());
@@ -69,6 +82,27 @@ public sealed class WindowsTrayIcon : IDisposable
     public event Action? OpenSettingsRequested;
 
     public event Action? ExitRequested;
+
+    public event Action? PasteLastRequested;
+
+    public event Action? CopyLastRequested;
+
+    /// <summary>Names the dictation the two items would reuse, or disables them when there is none.</summary>
+    /// <remarks>
+    /// PUSHED, NOT READ WHEN THE MENU OPENS: the menu opens synchronously and the history is on disk, so
+    /// the app tells the tray whenever the history changes and the menu shows what it was last told.
+    /// </remarks>
+    public void SetLastDictationPreview(string? preview)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var available = !string.IsNullOrEmpty(preview);
+        _pasteLast.Enabled = available;
+        _copyLast.Enabled = available;
+        // "&" marks a mnemonic in a menu item, so "salt & pepper" would draw "salt _pepper".
+        _lastPreview.Text = available
+            ? $"“{preview!.Replace("&", "&&", StringComparison.Ordinal)}”"
+            : "No dictation yet";
+    }
 
     public void SetStatus(string status)
     {

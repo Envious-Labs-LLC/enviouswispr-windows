@@ -85,29 +85,7 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts) 
             { ClipboardFallback: true } => AppEventCode.TextDeliveryRefused,
             _ => AppEventCode.TextDeliveryFailed,
         };
-        var errorCode = delivery.RefusalReason switch
-        {
-            TextDeliveryRefusalReason.None => (AppErrorCode?)null,
-            TextDeliveryRefusalReason.TargetUnavailable or
-                TextDeliveryRefusalReason.TargetChanged => AppErrorCode.DeliveryTargetChanged,
-            TextDeliveryRefusalReason.ProtectedField => AppErrorCode.DeliveryProtectedField,
-            TextDeliveryRefusalReason.ElevatedTarget => AppErrorCode.DeliveryElevatedTarget,
-            TextDeliveryRefusalReason.ClipboardUnavailable => AppErrorCode.DeliveryClipboardUnavailable,
-            TextDeliveryRefusalReason.InputStateUnsafe or
-                TextDeliveryRefusalReason.InputBlocked => AppErrorCode.DeliveryInputBlocked,
-            TextDeliveryRefusalReason.UnsupportedTarget or
-                TextDeliveryRefusalReason.UnsafeMultilineTarget => AppErrorCode.DeliveryUnsupportedTarget,
-            // EACH WAY THE WORDS DID NOT LAND KEEPS ITS NAME IN THE LOG (plan-2 step 13): an
-            // accessibility failure Windows reported, a direct write that could not be verified, the
-            // caller's cancellation, a disposal under the delivery, a defect. They used to share
-            // "unsupported target", which is a policy refusal and none of them.
-            TextDeliveryRefusalReason.AccessibilityUnavailable => AppErrorCode.DeliveryAccessibilityUnavailable,
-            TextDeliveryRefusalReason.DirectWriteUnverified => AppErrorCode.DeliveryUnverified,
-            TextDeliveryRefusalReason.Cancelled => AppErrorCode.DeliveryCancelled,
-            TextDeliveryRefusalReason.DeliveryDisposed => AppErrorCode.DeliveryDisposed,
-            TextDeliveryRefusalReason.DeliveryFaulted => AppErrorCode.DeliveryFaulted,
-            _ => AppErrorCode.DeliveryFaulted,
-        };
+        var errorCode = DeliveryErrorCodes.For(delivery.RefusalReason);
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
             eventCode,
