@@ -82,7 +82,8 @@ public interface ISessionFinalizationEffects
     /// <summary>The delivered outcome on screen, with the language offer that may follow it.</summary>
     void ReportDelivery(DeliveryResult delivery, string? language);
 
-    void ShowEscapeRecoveryFinished();
+    /// <summary>An Escape Recovery kept the words; <paramref name="undoOffered"/> says whether Home offers its one-shot Undo.</summary>
+    void ShowEscapeRecoveryFinished(bool undoOffered);
 
     /// <summary>The final status line for a dictation that was not delivered.</summary>
     void ShowHeldStatus(FinalizationReport report);
@@ -300,7 +301,10 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                 }
             }
 
-            await _persistence.SaveHistoryAsync(
+            // THE TARGET THE TAKE WAS AIMED AT, read before the reset lets go of the session: an Escape
+            // Recovery's Undo puts the words back there, as the macOS pill returns to the frozen app and field.
+            var frozenTarget = _controller.CurrentSession?.Target ?? default;
+            var entryId = await _persistence.SaveHistoryAsync(
                     transcript,
                     processed.Output.Text,
                     recoveryOnly
@@ -308,10 +312,18 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                         : HistoryWriteIntent.Held(finalized.WasPolished))
                 .ConfigureAwait(false);
             await CompleteAndResetAsync(sessionId).ConfigureAwait(false);
+
+            // UNDO IS OFFERED ONLY FOR WORDS DURABLY SAVED, beside their own copy on Home. A History write
+            // that failed leaves nothing to read back at the press, and macOS never offers a restore for
+            // a take it did not save; Copy on Home still has the words.
+            var undoOffered = recoveryOnly &&
+                entryId is { } savedEntry &&
+                !string.IsNullOrWhiteSpace(processed.Output.Text) &&
+                _persistence.OfferUndo(new EscapeRecoveryUndoOffer(processed.Output.SessionId, savedEntry, frozenTarget));
             _persistence.ShowPendingRecovery();
             if (recoveryOnly && !string.IsNullOrWhiteSpace(processed.Output.Text))
             {
-                _effects.ShowEscapeRecoveryFinished();
+                _effects.ShowEscapeRecoveryFinished(undoOffered);
             }
 
             var report = new FinalizationReport(

@@ -24,7 +24,8 @@ public interface IRuntimeView
     /// <summary>A frame for the preview screen, or null to clear it. The frame's <see cref="LivePreviewFrame.IsCurrent"/> is asked at the draw.</summary>
     void ShowPreview(LivePreviewFrame? frame);
 
-    void ShowRecoveredText(RecoveryTextLoadResult result);
+    /// <param name="undoOffered">The text is an Escape Recovery whose one-shot Undo still stands.</param>
+    void ShowRecoveredText(RecoveryTextLoadResult result, bool undoOffered);
 
     void ClearRecoveredText();
 

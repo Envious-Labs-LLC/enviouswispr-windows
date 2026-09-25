@@ -101,10 +101,20 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts) 
     public void ReportDelivery(DeliveryResult delivery, string? language) =>
         _view.ReportDelivery(DeliveryStatusReport.For(delivery), language);
 
-    public void ShowEscapeRecoveryFinished() =>
+    // IN macOS's WORDS WHERE IT OFFERS UNDO: the pill's title and the announcement that names both doors
+    // back, Undo and History. Without the offer (the History write failed) Home can only offer Copy.
+    public void ShowEscapeRecoveryFinished(bool undoOffered)
+    {
+        if (undoOffered)
+        {
+            _view.ShowNotice("Dictation cancelled", "Press Undo to get it back, or find it in History.");
+            return;
+        }
+
         _view.ShowNotice(
             "Escape Recovery finished",
             "The dictation is ready to copy on Home and stays in History for 24 hours unless you Keep it.");
+    }
 
     public void ShowHeldStatus(FinalizationReport report)
     {

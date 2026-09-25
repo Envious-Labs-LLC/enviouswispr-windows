@@ -781,7 +781,7 @@ public sealed class BoundedStopTests
             }
         }
 
-        public void ShowRecoveredText(RecoveryTextLoadResult result)
+        public void ShowRecoveredText(RecoveryTextLoadResult result, bool undoOffered)
         {
         }
 

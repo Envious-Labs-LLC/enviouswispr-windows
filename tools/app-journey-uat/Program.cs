@@ -126,6 +126,20 @@ var escapeRecovery = args.Any(argument => string.Equals(
     argument,
     "--escape-recovery",
     StringComparison.OrdinalIgnoreCase));
+// WHAT THE PERSON DOES WITH THE KEPT WORDS, pressed in the app's own window with a real pointer: Home's
+// one-shot Undo, or History's Paste. The take itself is the ordinary Escape Recovery journey; this adds
+// the press, and reads where the words went from the controlled target and the app's log.
+var escapeAction = ArgumentValue(args, "--escape-action")?.ToLowerInvariant() switch
+{
+    null => EscapeRecoveryAction.None,
+    "undo" => EscapeRecoveryAction.Undo,
+    "paste" => EscapeRecoveryAction.HistoryPaste,
+    _ => throw new JourneyExpectationException("--escape-action must be undo or paste."),
+};
+if (escapeAction != EscapeRecoveryAction.None && !escapeRecovery)
+{
+    throw new JourneyExpectationException("--escape-action presses Undo or Paste after an Escape Recovery and needs --escape-recovery.");
+}
 var acousticPlaybackGain = ParseBoundedIntArgument(
     args,
     "--acoustic-gain",
@@ -518,6 +532,7 @@ ClipboardGuard? clipboardGuard = null;
 string? clipboardSentinel = null;
 bool? clipboardRestored = null;
 SyntheticHotkeyEvidence? syntheticHotkeyEvidence = null;
+EscapeActionEvidence? escapeActionEvidence = null;
 var usesPublicFixtureJourney = !liveMicrophone &&
     failureMode is JourneyFailureMode.None or JourneyFailureMode.TargetUnavailable;
 
@@ -534,7 +549,9 @@ try
     targetStart.ArgumentList.Add("--mode");
     targetStart.ArgumentList.Add(manualMicrophone ? "manual-microphone" : targetMode);
     targetStart.ArgumentList.Add("--hold-focus-ms");
-    targetStart.ArgumentList.Add("30000");
+    // AN ACTION RUN LETS THE PERSON LEAVE. The target re-takes the foreground every 100 ms while it holds
+    // focus, which would fight the click in EnviousWispr's window the action is about.
+    targetStart.ArgumentList.Add(escapeAction == EscapeRecoveryAction.None ? "30000" : "0");
     targetStart.ArgumentList.Add("--result");
     targetStart.ArgumentList.Add(targetResultPath);
     targetStart.ArgumentList.Add("--expected-substring");
@@ -603,10 +620,12 @@ try
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_START_EVENT"] = startEventName;
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_COMPLETE_EVENT"] = completeEventName;
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_EXIT_AFTER_COMPLETION"] = "1";
-        if (syntheticHotkey)
+        if (syntheticHotkey || escapeAction != EscapeRecoveryAction.None)
         {
-            // START is never signalled in this mode; the harness ends the run through this event once
-            // the log and the target have spoken, and the app's own exit-after-completion does the rest.
+            // START is never signalled in the synthetic mode; the harness ends the run through this event
+            // once the log and the target have spoken, and the app's own exit-after-completion does the
+            // rest. An Escape Recovery action run signals START and then keeps the app until its press has
+            // been made and read.
             appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_EXIT_EVENT"] = exitEventName;
         }
         if (failureMode == JourneyFailureMode.TargetUnavailable)
@@ -824,6 +843,31 @@ try
                         escapeRecovery || failureMode == JourneyFailureMode.TargetUnavailable
                             ? TimeSpan.FromMilliseconds(500)
                             : TimeSpan.FromSeconds(5));
+
+            if (escapeAction != EscapeRecoveryAction.None)
+            {
+                // THE TAKE DELIVERED NOTHING FIRST, or the action proves nothing about where the words came from.
+                if (targetObserved)
+                {
+                    throw new JourneyExpectationException("The Escape Recovery take delivered text before Undo or Paste was pressed.");
+                }
+
+                clipboardGuard = ClipboardGuard.CaptureOrThrow();
+                try
+                {
+                    escapeActionEvidence = DriveEscapeRecoveryAction(
+                        escapeAction,
+                        app,
+                        target,
+                        diagnosticPath,
+                        targetResultPath,
+                        Path.Combine(profileDirectory, "history.json"));
+                }
+                finally
+                {
+                    exitEvent.Set();
+                }
+            }
         }
 
         if (clipboardSentinel is not null)
@@ -922,6 +966,10 @@ try
     else if (escapeRecovery)
     {
         RequireEscapeRecoveryJourneyEvents(diagnosticEvents);
+        if (escapeActionEvidence is not null)
+        {
+            RequireEscapeActionEvents(escapeAction, diagnosticEvents);
+        }
     }
     else
     {
@@ -1002,6 +1050,7 @@ try
         failureMode = failureMode == JourneyFailureMode.None ? null : FailureModeName(failureMode),
         escapeRecovery,
         recoveryHistoryObserved,
+        escapeAction = escapeActionEvidence,
         productionStagesObserved,
         livePreview,
         livePreviewUpdated = livePreview && diagnosticEvents.Any(value => value.StartsWith(
@@ -1094,7 +1143,9 @@ try
             : failureMode is JourneyFailureMode.MicrophoneUnavailable or JourneyFailureMode.WorkerStartup
                 ? "NotReached"
                 : escapeRecovery
-                    ? "SuppressedForEscapeRecovery"
+                    ? escapeActionEvidence is null
+                        ? "SuppressedForEscapeRecovery"
+                        : "SuppressedForEscapeRecoveryThenControlledWinFormsEditOnAction"
                     : "ControlledWinFormsEdit",
     }));
     return 0;
@@ -1873,6 +1924,124 @@ static TargetResult? ReadTargetResult(string path)
     catch (Exception exception) when (exception is IOException or JsonException)
     {
         return null;
+    }
+}
+
+/// <summary>Presses Home's Undo or History's Paste the way a person does, and reads what came of it.</summary>
+/// <remarks>
+/// A REAL POINTER, NOT AN INVOKE. The person is in the target app, reaches for EnviousWispr's window and
+/// clicks; that click is what makes EnviousWispr the window in front, which is the situation both actions
+/// are built for - Undo must bring the take's own field back, and Paste must find the window the person
+/// came from rather than paste into EnviousWispr. A UI Automation invoke would press the button with the
+/// target still in front and prove neither. The rectangle is read at the click, and the target is moved
+/// clear of it first, because it is a topmost window and a click through it would land in the target.
+///
+/// THE VERDICT IS THE TARGET'S AND THE LOG'S. The words must arrive in the controlled field, the app must
+/// log the action's own event, and the History entry must still be the 24-hour Escape Recovery afterwards.
+/// </remarks>
+static EscapeActionEvidence DriveEscapeRecoveryAction(
+    EscapeRecoveryAction action,
+    Process app,
+    Process target,
+    string diagnosticPath,
+    string targetResultPath,
+    string historyPath)
+{
+    if (!ReadEscapeRecoveryHistory(historyPath))
+    {
+        throw new JourneyExpectationException("Before the action: no single 24-hour Escape Recovery entry in History.");
+    }
+
+    var window = JourneyUi.FindMainWindow(app.Id, TimeSpan.FromSeconds(15));
+    var undoShown = JourneyUi.WaitForElement(window, "UndoRecoveryButton", TimeSpan.FromSeconds(10)) is not null;
+    if (!undoShown)
+    {
+        throw new JourneyExpectationException("Home did not offer Undo beside the Escape Recovery.");
+    }
+
+    // THE POSITIVE HALF OF "HOME'S COPY WENT": the copy is on screen before the press, so its absence
+    // afterwards is a change this reader can see, not a control it could never find.
+    if (JourneyUi.WaitForAbsence(window, "Recovered dictation text", TimeSpan.FromMilliseconds(300)))
+    {
+        throw JourneyExpectationException.Instrument("Home's recovery copy is not readable through UI Automation before the press.");
+    }
+
+    JourneyUi.MoveClearOf(target.MainWindowHandle, window);
+
+    // THE PERSON WAS IN THE TARGET before reaching for EnviousWispr: the window Paste must come back to.
+    BringToForeground(target.MainWindowHandle);
+    Thread.Sleep(400);
+    var targetWasInFront = NativeMethods.GetForegroundWindow() == target.MainWindowHandle;
+    if (!targetWasInFront)
+    {
+        throw JourneyExpectationException.Instrument("The controlled target could not be put in front before the action.");
+    }
+
+    string expectedEvent;
+    if (action == EscapeRecoveryAction.Undo)
+    {
+        JourneyUi.Click(JourneyUi.WaitForElement(window, "UndoRecoveryButton", TimeSpan.FromSeconds(5))
+            ?? throw new JourneyExpectationException("Undo was not on Home to press."));
+        expectedEvent = "EscapeRecoveryUndoPasted/";
+    }
+    else
+    {
+        JourneyUi.Click(JourneyUi.WaitForNamed(window, "History", System.Windows.Automation.ControlType.ListItem, TimeSpan.FromSeconds(5))
+            ?? throw new JourneyExpectationException("The History navigation item was not found."));
+        // BY ITS ID: the list's accessible name carries the count ("Transcript history, 1 dictation.").
+        var list = JourneyUi.WaitForElement(window, "HistoryList", TimeSpan.FromSeconds(10))
+            ?? throw new JourneyExpectationException("History did not list the Escape Recovery entry: " + JourneyUi.DescribeLists(window));
+        var row = JourneyUi.WaitForFirstChild(list, System.Windows.Automation.ControlType.ListItem, TimeSpan.FromSeconds(10))
+            ?? throw new JourneyExpectationException("History listed no entry to select.");
+        JourneyUi.Click(row);
+        var paste = JourneyUi.WaitForEnabled(window, "PasteHistoryButton", TimeSpan.FromSeconds(5))
+            ?? throw new JourneyExpectationException("Paste selected did not become available for the selected entry.");
+        JourneyUi.Click(paste);
+        expectedEvent = "HistoryEntryPasted/";
+    }
+
+    var appWasInFrontAtClick = JourneyUi.LastClickLandedInProcess(app.Id);
+    var landed = WaitForExpectedTargetResult(targetResultPath, TimeSpan.FromSeconds(10));
+    var logged = WaitForDiagnosticEvent(diagnosticPath, expectedEvent, TimeSpan.FromSeconds(5));
+    var targetInFrontAfter = NativeMethods.GetForegroundWindow() == target.MainWindowHandle;
+    if (!landed || !logged)
+    {
+        throw new JourneyExpectationException(
+            $"The {action} press did not put the kept words into the controlled target " +
+            $"(landed={landed}, logged={logged}, events={string.Join(',', ReadDiagnosticEvents(diagnosticPath))}).");
+    }
+
+    // THE ENTRY IS STILL THE 24-HOUR ESCAPE RECOVERY: neither door consumes, promotes or extends it.
+    var entryStillPending = ReadEscapeRecoveryHistory(historyPath);
+
+    // HOME STOPS HOLDING THE WORDS ONCE THEY ARE BACK, and its one-shot Undo has gone with them.
+    var homeCardGone = JourneyUi.WaitForAbsence(window, "Recovered dictation text", TimeSpan.FromSeconds(5));
+    var undoGone = JourneyUi.WaitForElement(window, "UndoRecoveryButton", TimeSpan.FromMilliseconds(300)) is null;
+    if (!entryStillPending || !homeCardGone || !undoGone)
+    {
+        throw new JourneyExpectationException(
+            $"After {action}: entryStillPending={entryStillPending}, homeCardGone={homeCardGone}, undoGone={undoGone}.");
+    }
+
+    return new EscapeActionEvidence(
+        action == EscapeRecoveryAction.Undo ? "Undo" : "HistoryPaste",
+        TargetWasInFrontBeforeClick: targetWasInFront,
+        ClickLandedInApp: appWasInFrontAtClick,
+        WordsLandedInTarget: landed,
+        ActionEventLogged: expectedEvent.TrimEnd('/'),
+        TargetInFrontAfter: targetInFrontAfter,
+        EntryStillPending24Hours: entryStillPending,
+        HomeCopyCleared: homeCardGone,
+        UndoGone: undoGone);
+}
+
+static void RequireEscapeActionEvents(EscapeRecoveryAction action, IReadOnlyList<string> events)
+{
+    var expected = action == EscapeRecoveryAction.Undo ? "EscapeRecoveryUndoPasted/" : "HistoryEntryPasted/";
+    var count = events.Count(value => value.StartsWith(expected, StringComparison.Ordinal));
+    if (count != 1)
+    {
+        throw new JourneyExpectationException($"Expected exactly one {expected.TrimEnd('/')} in the log; found {count}.");
     }
 }
 
@@ -2738,7 +2907,7 @@ static void RequireKnownArguments(string[] arguments)
     string[] valuedFlags =
     [
         "--acoustic-gain", "--app-executable", "--deterministic-profile", "--eg1-model", "--eg1-server",
-        "--failure", "--ollama-endpoint", "--ollama-model", "--polish", "--target-mode",
+        "--escape-action", "--failure", "--ollama-endpoint", "--ollama-model", "--polish", "--target-mode",
     ];
     for (var index = 0; index < arguments.Length; index++)
     {
@@ -2970,6 +3139,20 @@ internal struct InputUnion
 {
     [FieldOffset(0)]
     public KeyboardInput Keyboard;
+
+    [FieldOffset(0)]
+    public MouseInput Mouse;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct MouseInput
+{
+    public int X;
+    public int Y;
+    public uint Data;
+    public uint Flags;
+    public uint Time;
+    public nuint ExtraInfo;
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -3014,7 +3197,47 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool SetForegroundWindow(nint window);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool SetCursorPos(int x, int y);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool SetWindowPos(nint window, nint insertAfter, int x, int y, int width, int height, uint flags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetWindowRect(nint window, out NativeRect rect);
 }
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeRect
+{
+    public int Left;
+    public int Top;
+    public int Right;
+    public int Bottom;
+}
+
+internal enum EscapeRecoveryAction
+{
+    None,
+    Undo,
+    HistoryPaste,
+}
+
+/// <summary>What one Undo or Paste press did, from the target, the log and History. Never the words.</summary>
+internal sealed record EscapeActionEvidence(
+    string Action,
+    bool TargetWasInFrontBeforeClick,
+    bool ClickLandedInApp,
+    bool WordsLandedInTarget,
+    string ActionEventLogged,
+    bool TargetInFrontAfter,
+    bool EntryStillPending24Hours,
+    bool HomeCopyCleared,
+    bool UndoGone);
 
 internal enum JourneyFailureMode
 {

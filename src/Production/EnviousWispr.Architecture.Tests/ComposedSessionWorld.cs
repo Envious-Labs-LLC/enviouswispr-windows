@@ -261,7 +261,14 @@ internal sealed class FakeRuntimeView : IRuntimeView
 
     public void ShowPreview(LivePreviewFrame? frame) => Previews.Add(frame?.Text);
 
-    public void ShowRecoveredText(RecoveryTextLoadResult result) => Recovered.Add(result);
+    public void ShowRecoveredText(RecoveryTextLoadResult result, bool undoOffered)
+    {
+        Recovered.Add(result);
+        UndoOffered.Add(undoOffered);
+    }
+
+    /// <summary>Whether each recovered text arrived with Home's one-shot Undo standing beside it.</summary>
+    public List<bool> UndoOffered { get; } = [];
 
     public void ClearRecoveredText() => Cleared++;
 

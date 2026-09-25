@@ -21,6 +21,7 @@ using Microsoft.UI.Xaml.Media.Animation;
 using Windows.UI.ViewManagement;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.LLM;
+using EnviousWispr.Pipeline;
 using EnviousWispr.Presentation;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -397,6 +398,12 @@ public sealed partial class MainWindow : Window, IDisposable
     public event Action<AudioDeviceChange>? AudioDevicesChanged;
 
     public event Action? RecoveryCleared;
+
+    /// <summary>The person pressed Undo beside an Escape Recovery on Home.</summary>
+    public event Action? RecoveryUndoRequested;
+
+    /// <summary>The person asked for the selected History entry to be pasted into the app they were using.</summary>
+    public event Action<Guid>? HistoryPasteRequested;
 
     /// <summary>The person asked for the speech model this build pins to be downloaded.</summary>
     public event Action? ModelDownloadRequested;
@@ -1008,12 +1015,30 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public void Dispose() => ShutdownProductWindows();
 
-    public void SetRecoveredText(RecoveryTextLoadResult result)
+    /// <param name="undoOffered">
+    /// The text is an Escape Recovery whose one-shot Undo still stands: the card speaks macOS's words for it,
+    /// the pill's title and the announcement that names both ways back, and shows the Undo button.
+    /// </param>
+    public void SetRecoveredText(RecoveryTextLoadResult result, bool undoOffered = false)
     {
         if (result.Status == RecoveryTextLoadStatus.Found && result.Record is not null)
         {
             RecoveryTextBox.Text = result.Record.Text;
             RecoveryCard.Visibility = Visibility.Visible;
+            if (undoOffered)
+            {
+                RecoveryTitleText.Text = EscapeRecoveryCardTitle;
+                RecoveryBodyText.Text = EscapeRecoveryUndoBody;
+                UndoRecoveryButton.Visibility = Visibility.Visible;
+                UndoRecoveryButton.IsEnabled = true;
+                _foundationBeforeEscape ??= (FoundationInfoBar.Title, FoundationInfoBar.Message, FoundationInfoBar.Severity);
+                FoundationInfoBar.Title = EscapeRecoveryCardTitle;
+                FoundationInfoBar.Message = EscapeRecoveryUndoBody;
+                FoundationInfoBar.Severity = InfoBarSeverity.Informational;
+                return;
+            }
+
+            ResetRecoveryCardWords();
             FoundationInfoBar.Title = "Interrupted dictation recovered";
             FoundationInfoBar.Message = "Review or copy the private recovery text on Home. It was not pasted automatically.";
             FoundationInfoBar.Severity = InfoBarSeverity.Warning;
@@ -1093,6 +1118,147 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         RecoveryTextBox.Text = string.Empty;
         RecoveryCard.Visibility = Visibility.Collapsed;
+        ResetRecoveryCardWords();
+    }
+
+    // macOS's words for an Escape Recovery: the pill's title, and its spoken offer after the title.
+    private const string EscapeRecoveryCardTitle = "Dictation cancelled";
+    private const string EscapeRecoveryUndoBody = "Press Undo to get it back, or find it in History.";
+
+    /// <summary>What Home's banner said before an Escape Recovery borrowed it, put back when the offer ends.</summary>
+    private (string Title, string Message, InfoBarSeverity Severity)? _foundationBeforeEscape;
+
+    /// <summary>The card's words for text found after an unfinished run, and no Undo.</summary>
+    private void ResetRecoveryCardWords()
+    {
+        // THE BANNER STOPS OFFERING UNDO WHEN THE CARD DOES, or Home would say "Press Undo" with no Undo on it.
+        if (_foundationBeforeEscape is { } before)
+        {
+            FoundationInfoBar.Title = before.Title;
+            FoundationInfoBar.Message = before.Message;
+            FoundationInfoBar.Severity = before.Severity;
+            _foundationBeforeEscape = null;
+        }
+
+        RecoveryTitleText.Text = "Recovered unfinished dictation";
+        RecoveryBodyText.Text =
+            "EnviousWispr found text that had not reached its destination before the previous run ended. "
+            + "Review it here; it will never be pasted automatically.";
+        UndoRecoveryButton.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>What a paste of a saved dictation came to, in this window, and whether Home's Undo still stands.</summary>
+    /// <remarks>
+    /// ONE-SHOT ON SCREEN AS WELL AS IN THE OWNER. The button goes the moment the offer is spent (used, or its
+    /// copy moved on) and is live again only when a refusal left the offer standing. A landed paste says
+    /// nothing here: the words arriving in front of the person say it, and Home's copy has already gone.
+    /// </remarks>
+    public void ShowSavedDictationPasteResult(
+        SavedDictationPasteAction action,
+        SavedDictationPasteOutcome? outcome,
+        SessionHoldAttempt? refusal,
+        bool undoStanding)
+    {
+        var undo = action == SavedDictationPasteAction.Undo;
+        if (RecoveryCard.Visibility == Visibility.Visible && UndoRecoveryButton.Visibility == Visibility.Visible)
+        {
+            UndoRecoveryButton.IsEnabled = undoStanding;
+            if (!undoStanding)
+            {
+                UndoRecoveryButton.Visibility = Visibility.Collapsed;
+                RecoveryBodyText.Text = "Copy it from here, or find it in History.";
+                if (_foundationBeforeEscape is not null)
+                {
+                    FoundationInfoBar.Message = "Copy it from Home, or find it in History.";
+                }
+            }
+        }
+
+        if (refusal is not null)
+        {
+            ShowMessage("Not pasted", SavedDictationPasteRefusalSentence(refusal), InfoBarSeverity.Informational);
+            return;
+        }
+
+        switch (outcome)
+        {
+            case SavedDictationPasteOutcome.KeptOnClipboard:
+                ShowMessage(
+                    "Your dictation is on the clipboard",
+                    undo
+                        ? "EnviousWispr could not get back to the place you were dictating into, so nothing was typed there. Paste it where you want it."
+                        : "That app refused the paste. Paste it where you want it.",
+                    InfoBarSeverity.Warning);
+                break;
+            case SavedDictationPasteOutcome.MayHavePasted:
+                // NOT "NOTHING WAS TYPED", AND NO INVITATION TO PRESS AGAIN: the words may already be there, and a
+                // second paste would put them in twice. Only Undo promises a copy: Home keeps it, and a History entry may not.
+                ShowMessage(
+                    "Your dictation may have been pasted",
+                    undo
+                        ? "EnviousWispr could not confirm it. Check the app before you try again. The text is still on Home."
+                        : "EnviousWispr could not confirm it. Check the app before you try again.",
+                    InfoBarSeverity.Warning);
+                break;
+            case SavedDictationPasteOutcome.NoLongerAvailable:
+                ShowMessage(
+                    "That dictation is no longer in History",
+                    "It was deleted or its 24 hours ran out, so nothing was pasted.",
+                    InfoBarSeverity.Informational);
+                break;
+            case SavedDictationPasteOutcome.DictationInProgress or SavedDictationPasteOutcome.Busy:
+                ShowMessage(
+                    "Not pasted",
+                    "EnviousWispr is busy with a dictation. Try again in a moment.",
+                    InfoBarSeverity.Informational);
+                break;
+            case SavedDictationPasteOutcome.NoTarget:
+                ShowMessage(
+                    "Not pasted",
+                    undo
+                        ? "The app you were dictating into has gone. Copy the text from Home instead."
+                        : "Click into the app you want it in, then come back and try again.",
+                    InfoBarSeverity.Informational);
+                break;
+            case SavedDictationPasteOutcome.Failed:
+                ShowMessage(
+                    "Your dictation could not be pasted",
+                    "Nothing was typed. Copy it from Home or History instead.",
+                    InfoBarSeverity.Error);
+                break;
+        }
+    }
+
+    /// <summary>Why a paste could not start, in the words the other refusals use.</summary>
+    private static string SavedDictationPasteRefusalSentence(SessionHoldAttempt refusal) => refusal switch
+    {
+        { Refusal: SessionHoldRefusal.Dictation } => "A dictation is running. Try again when it finishes.",
+        { HeldBy: SessionHolder.UpdateApply } => "EnviousWispr is updating. Try again when it finishes.",
+        { HeldBy: SessionHolder.LastDictationReuse } => "EnviousWispr is pasting your last dictation. Try again in a moment.",
+        { HeldBy: SessionHolder.FileTranscription } => "A file is being transcribed. Try again when it finishes.",
+        { HeldBy: SessionHolder.DataDeletion } => "EnviousWispr is deleting your data and will close.",
+        { HeldBy: SessionHolder.GraphicsRuntimeSwitch } => "EnviousWispr is moving dictation to your graphics card. Try again in a moment.",
+        { HeldBy: SessionHolder.SavedDictationPaste } => "EnviousWispr is pasting your dictation. Try again in a moment.",
+        _ => "EnviousWispr is closing.",
+    };
+
+    private void UndoRecoveryButton_Click(object sender, RoutedEventArgs e)
+    {
+        // ONE PRESS: greyed at once, so a double click asks once. The owner's exchange is the guarantee;
+        // this is the picture of it.
+        UndoRecoveryButton.IsEnabled = false;
+        RecoveryUndoRequested?.Invoke();
+    }
+
+    private void PasteHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (HistoryList.SelectedItem is not HistoryItemViewModel selected)
+        {
+            ShowMessage("Select a dictation first", "Choose the history entry you want to paste.", InfoBarSeverity.Informational);
+            return;
+        }
+
+        HistoryPasteRequested?.Invoke(selected.Id);
     }
 
     private async void FinishOnboardingButton_Click(object sender, RoutedEventArgs e)
@@ -2913,6 +3079,7 @@ public sealed partial class MainWindow : Window, IDisposable
         // dereferencing six would be correct only because of the order they happen to sit in the
         // markup, which is a premise nothing states and any reorder silently breaks.
         if (CopyHistoryButton is null
+            || PasteHistoryButton is null
             || KeepHistoryButton is null
             || DeleteHistoryButton is null
             || ClearHistoryButton is null
@@ -2926,6 +3093,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
         var historySelected = HistoryList.SelectedItem is not null;
         CopyHistoryButton.IsEnabled = historySelected;
+        PasteHistoryButton.IsEnabled = historySelected;
         KeepHistoryButton.IsEnabled = historySelected;
         DeleteHistoryButton.IsEnabled = historySelected;
         ClearHistoryButton.IsEnabled = _history.Count > 0;
