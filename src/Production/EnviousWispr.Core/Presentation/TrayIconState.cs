@@ -53,7 +53,9 @@ public static class TrayIconStates
         DictationOverlayState.Error or DictationOverlayState.Distress => TrayIconState.Error,
         DictationOverlayState.Hidden or DictationOverlayState.Success
             or DictationOverlayState.Advisory or DictationOverlayState.Suggestion
-            or DictationOverlayState.Warning => TrayIconState.Idle,
+            or DictationOverlayState.Warning
+            // A refused press is a notice, not a state: nothing records or processes because of it.
+            or DictationOverlayState.Busy => TrayIconState.Idle,
         _ => TrayIconState.Idle,
     };
 }

@@ -76,37 +76,40 @@ public enum FileTranscriptionOutcome
 
     /// <summary>A piece failed; the words so far are kept.</summary>
     Failed,
+
+    /// <summary>
+    /// Never started: the session was in use - a dictation, an update - and the job holds it for the whole file or
+    /// not at all. <see cref="FileTranscriptionResult.Refusal"/> says why.
+    /// </summary>
+    Refused,
 }
 
 /// <summary>How far a job has got, for the page's bar.</summary>
 public sealed record FileTranscriptionProgress(int PiecesDone, TimeSpan AudioDone, TimeSpan? AudioTotal);
 
+/// <param name="Refusal">For <see cref="FileTranscriptionOutcome.Refused"/>: why the session could not be had.</param>
 public sealed record FileTranscriptionResult(
     FileTranscriptionOutcome Outcome,
     string Text,
     int Pieces,
     TimeSpan AudioDone,
-    AppError? Error = null);
+    AppError? Error = null,
+    SessionHoldAttempt? Refusal = null);
 
 /// <summary>Everything a job touches, handed in so a test drives it without an engine or a file.</summary>
-/// <param name="AcquireEngine">
-/// The session hold, or null while a dictation holds the session. The job asks again until it gets it: the engine
-/// is the dictation's, and a dictation always goes first.
-/// </param>
 /// <param name="Transcribe">One piece through the final engine.</param>
 /// <param name="Finish">The deterministic text pipeline over the joined words, with the person's settings.</param>
 public sealed record FileTranscriptionEnvironment(
-    Func<IDisposable?> AcquireEngine,
     Func<CapturedAudio, CancellationToken, Task<Transcript>> Transcribe,
-    Func<Transcript, CancellationToken, Task<string>> Finish,
-    TimeSpan? RetryDelay = null);
+    Func<Transcript, CancellationToken, Task<string>> Finish);
 
-/// <summary>Transcribes a decoded file piece by piece, a dictation first whenever one starts. Ref: #211, macOS #2648.</summary>
+/// <summary>Transcribes a decoded file piece by piece. Ref: #211, macOS #2648.</summary>
 /// <remarks>
-/// THE ENGINE IS HELD FOR ONE PIECE AT A TIME, never for the whole file. A job an hour long that held the session
-/// would lock out dictation for its whole run; held per piece, a person can dictate between pieces and the job
-/// waits its turn. A FAILURE OR A CANCEL KEEPS THE WORDS SO FAR, the product's rule that a failure returns the last
-/// good text rather than nothing.
+/// THE CALLER HOLDS THE SESSION FOR THE WHOLE FILE, as macOS does (founder decision 2026-09-04): a press during
+/// the job is refused at once and says why, rather than queued - a queued press would open the microphone
+/// minutes after the person let go. An earlier version held the engine one piece at a time so a dictation could
+/// go first, and a review showed that press was dropped silently instead. A FAILURE OR A CANCEL KEEPS THE WORDS
+/// SO FAR, the product's rule that a failure returns the last good text rather than nothing.
 /// </remarks>
 public static class FileTranscriptionJob
 {
@@ -160,9 +163,8 @@ public static class FileTranscriptionJob
                 pieces++;
                 if (!AudioPieceCutter.IsSilent(piece))
                 {
-                    var transcript = await TranscribeWhenFreeAsync(
+                    var transcript = await environment.Transcribe(
                         new CapturedAudio(sessionId, piece, AudioPieceCutter.SampleRate, Channels: 1),
-                        environment,
                         cancellationToken).ConfigureAwait(false);
                     first ??= transcript;
                     if (!string.IsNullOrWhiteSpace(transcript.Text))
@@ -174,7 +176,24 @@ public static class FileTranscriptionJob
                 samplesDone += length;
                 progress?.Report(new FileTranscriptionProgress(pieces, Seconds(samplesDone), audio.Duration));
             }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (texts.Count == 0 || first is null)
+            {
+                return Ended(FileTranscriptionOutcome.Empty);
+            }
+
+            var joined = new Transcript(
+                sessionId,
+                string.Join(' ', texts),
+                first.EngineId,
+                DetectedLanguage: first.DetectedLanguage);
+            var finished = await environment.Finish(joined, cancellationToken).ConfigureAwait(false);
+            return new FileTranscriptionResult(FileTranscriptionOutcome.Completed, finished, pieces, Seconds(samplesDone));
         }
+        // EVERY WAY OUT KEEPS THE WORDS SO FAR. A Stop during the clean-up, or a file that stops
+        // reading part way (a damaged recording, a drive unplugged), used to escape this method and
+        // throw away every piece already transcribed. Ref: #211.
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             return Ended(FileTranscriptionOutcome.Cancelled);
@@ -183,38 +202,9 @@ public static class FileTranscriptionJob
         {
             return Ended(FileTranscriptionOutcome.Failed, exception.Error);
         }
-
-        if (texts.Count == 0 || first is null)
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
         {
-            return Ended(FileTranscriptionOutcome.Empty);
-        }
-
-        var joined = new Transcript(
-            sessionId,
-            string.Join(' ', texts),
-            first.EngineId,
-            DetectedLanguage: first.DetectedLanguage);
-        var finished = await environment.Finish(joined, cancellationToken).ConfigureAwait(false);
-        return new FileTranscriptionResult(FileTranscriptionOutcome.Completed, finished, pieces, Seconds(samplesDone));
-    }
-
-    private static async Task<Transcript> TranscribeWhenFreeAsync(
-        CapturedAudio piece,
-        FileTranscriptionEnvironment environment,
-        CancellationToken cancellationToken)
-    {
-        using var scope = DictationScope.Begin(piece.SessionId.Value);
-        var retry = environment.RetryDelay ?? TimeSpan.FromMilliseconds(500);
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            using var hold = environment.AcquireEngine();
-            if (hold is not null)
-            {
-                return await environment.Transcribe(piece, cancellationToken).ConfigureAwait(false);
-            }
-
-            await Task.Delay(retry, cancellationToken).ConfigureAwait(false);
+            return Ended(FileTranscriptionOutcome.Failed);
         }
     }
 

@@ -30,6 +30,9 @@ public interface IRuntimeView
     void NotifyHistoryChanged();
 
     void ShowMainWindow();
+
+    /// <summary>A record press was refused because <paramref name="holder"/> had the session; the pill says so.</summary>
+    void ShowSessionBusy(SessionHolder holder);
 }
 
 /// <summary>The shell's leaf reads the long-lived session owners need; nothing here sequences anything.</summary>
@@ -91,6 +94,15 @@ internal sealed class SessionQueue(RuntimeShell shell, IAppLogger logger)
         try
         {
             var result = await coordinator.SubmitAsync(signal, forSession).ConfigureAwait(false);
+            // A PRESS REFUSED FOR A HOLDER IS SAID, NOT SWALLOWED. A person who pressed the key during a file
+            // transcription saw nothing happen at all; macOS names the job on its pill. A press refused for a
+            // dictation's own command stays silent - that dictation's pill is already on screen. Ref: #211.
+            if (result is { Disposition: SessionCommandDisposition.Busy, BusyHolder: { } holder } &&
+                signal == PushToTalkSignal.Pressed)
+            {
+                shell.View.ShowSessionBusy(holder);
+            }
+
             if (result.WasQueued)
             {
                 logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.DictationSignalQueued));

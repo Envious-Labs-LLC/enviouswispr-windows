@@ -795,6 +795,10 @@ public sealed class BoundedStopTests
         public void ShowMainWindow()
         {
         }
+
+        public void ShowSessionBusy(SessionHolder holder)
+        {
+        }
     }
 
     /// <summary>A preview engine whose passes can be held - honouring the cancel, or not - and whose stop can be held.</summary>

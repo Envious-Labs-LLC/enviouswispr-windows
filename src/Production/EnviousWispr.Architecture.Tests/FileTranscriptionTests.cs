@@ -57,7 +57,7 @@ public sealed class FileTranscriptionTests
 
         var result = await FileTranscriptionJob.RunAsync(
             audio,
-            new FileTranscriptionEnvironment(() => new Hold(), engine.TranscribeAsync, (transcript, _) => Task.FromResult(transcript.Text.ToUpperInvariant())),
+            new FileTranscriptionEnvironment(engine.TranscribeAsync, (transcript, _) => Task.FromResult(transcript.Text.ToUpperInvariant())),
             new SynchronousProgress(seen.Add),
             CancellationToken.None);
 
@@ -68,54 +68,6 @@ public sealed class FileTranscriptionTests
         Assert.Equal(TimeSpan.FromSeconds(95.5), result.AudioDone);
     }
 
-    /// <summary>A dictation holds the session: the job waits its turn rather than taking the engine from it.</summary>
-    [Fact]
-    public async Task APieceWaitsWhileADictationHoldsTheEngine()
-    {
-        var engine = new FakeEngine();
-        var refusals = 3;
-
-        var result = await FileTranscriptionJob.RunAsync(
-            new ArraySource(Tone(5)),
-            new FileTranscriptionEnvironment(
-                () => refusals-- > 0 ? null : new Hold(),
-                engine.TranscribeAsync,
-                (transcript, _) => Task.FromResult(transcript.Text),
-                RetryDelay: TimeSpan.FromMilliseconds(1)),
-            progress: null,
-            CancellationToken.None);
-
-        Assert.Equal(FileTranscriptionOutcome.Completed, result.Outcome);
-        Assert.Equal(-1, refusals);
-        Assert.Single(engine.Pieces);
-    }
-
-    /// <summary>The engine is held only while a piece is transcribed.</summary>
-    [Fact]
-    public async Task TheHoldIsGivenBackAfterEveryPiece()
-    {
-        var engine = new FakeEngine();
-        var holds = new List<Hold>();
-
-        await FileTranscriptionJob.RunAsync(
-            new ArraySource(Concat(Tone(55), Silence(0.5), Tone(40))),
-            new FileTranscriptionEnvironment(
-                () =>
-                {
-                    Assert.All(holds, hold => Assert.True(hold.Released));
-                    var hold = new Hold();
-                    holds.Add(hold);
-                    return hold;
-                },
-                engine.TranscribeAsync,
-                (transcript, _) => Task.FromResult(transcript.Text)),
-            progress: null,
-            CancellationToken.None);
-
-        Assert.Equal(2, holds.Count);
-        Assert.All(holds, hold => Assert.True(hold.Released));
-    }
-
     [Fact]
     public async Task AFailedPieceKeepsTheWordsSoFar()
     {
@@ -123,7 +75,7 @@ public sealed class FileTranscriptionTests
 
         var result = await FileTranscriptionJob.RunAsync(
             new ArraySource(Concat(Tone(55), Silence(0.5), Tone(40))),
-            new FileTranscriptionEnvironment(() => new Hold(), engine.TranscribeAsync, (transcript, _) => Task.FromResult(transcript.Text)),
+            new FileTranscriptionEnvironment(engine.TranscribeAsync, (transcript, _) => Task.FromResult(transcript.Text)),
             progress: null,
             CancellationToken.None);
 
@@ -140,12 +92,53 @@ public sealed class FileTranscriptionTests
 
         var result = await FileTranscriptionJob.RunAsync(
             new ArraySource(Concat(Tone(55), Silence(0.5), Tone(40))),
-            new FileTranscriptionEnvironment(() => new Hold(), engine.TranscribeAsync, (transcript, _) => Task.FromResult(transcript.Text)),
+            new FileTranscriptionEnvironment(engine.TranscribeAsync, (transcript, _) => Task.FromResult(transcript.Text)),
             progress: null,
             cancel.Token);
 
         Assert.Equal(FileTranscriptionOutcome.Cancelled, result.Outcome);
         Assert.Equal("piece 1", result.Text);
+    }
+
+    /// <summary>A recording that stops reading part way - damaged, or its drive unplugged - keeps what was read.</summary>
+    [Fact]
+    public async Task AFileThatFailsToReadPartWayKeepsTheWordsSoFar()
+    {
+        var engine = new FakeEngine();
+        var audio = new FailingAfter(new ArraySource(Concat(Tone(55), Silence(0.5), Tone(40))), samples: 70 * Rate);
+
+        var result = await FileTranscriptionJob.RunAsync(
+            audio,
+            new FileTranscriptionEnvironment(engine.TranscribeAsync, (transcript, _) => Task.FromResult(transcript.Text)),
+            progress: null,
+            CancellationToken.None);
+
+        Assert.Equal(FileTranscriptionOutcome.Failed, result.Outcome);
+        Assert.Equal("piece 1", result.Text);
+    }
+
+    /// <summary>A Stop that lands during the clean-up keeps every piece's words, uncleaned, rather than none.</summary>
+    [Fact]
+    public async Task AStopDuringTheCleanUpKeepsTheWords()
+    {
+        using var cancel = new CancellationTokenSource();
+        var engine = new FakeEngine();
+
+        var result = await FileTranscriptionJob.RunAsync(
+            new ArraySource(Concat(Tone(55), Silence(0.5), Tone(40))),
+            new FileTranscriptionEnvironment(
+                engine.TranscribeAsync,
+                (_, token) =>
+                {
+                    cancel.Cancel();
+                    token.ThrowIfCancellationRequested();
+                    return Task.FromResult("unreachable");
+                }),
+            progress: null,
+            cancel.Token);
+
+        Assert.Equal(FileTranscriptionOutcome.Cancelled, result.Outcome);
+        Assert.Equal("piece 1 piece 2", result.Text);
     }
 
     [Fact]
@@ -155,7 +148,7 @@ public sealed class FileTranscriptionTests
 
         var result = await FileTranscriptionJob.RunAsync(
             new ArraySource(Silence(30)),
-            new FileTranscriptionEnvironment(() => new Hold(), engine.TranscribeAsync, (transcript, _) => Task.FromResult(transcript.Text)),
+            new FileTranscriptionEnvironment(engine.TranscribeAsync, (transcript, _) => Task.FromResult(transcript.Text)),
             progress: null,
             CancellationToken.None);
 
@@ -185,6 +178,25 @@ public sealed class FileTranscriptionTests
         }
     }
 
+    private sealed class FailingAfter(IAudioSampleSource inner, int samples) : IAudioSampleSource
+    {
+        private int _read;
+
+        public TimeSpan? Duration => inner.Duration;
+
+        public int Read(Span<float> buffer)
+        {
+            if (_read >= samples)
+            {
+                throw new IOException("The device is not ready.");
+            }
+
+            var count = inner.Read(buffer[..Math.Min(buffer.Length, samples - _read)]);
+            _read += count;
+            return count;
+        }
+    }
+
     private sealed class FakeEngine
     {
         public List<int> Pieces { get; } = [];
@@ -205,13 +217,6 @@ public sealed class FileTranscriptionTests
             AfterPiece?.Invoke(Pieces.Count);
             return Task.FromResult(new Transcript(audio.SessionId, $"piece {Pieces.Count}", "engine"));
         }
-    }
-
-    private sealed class Hold : IDisposable
-    {
-        public bool Released { get; private set; }
-
-        public void Dispose() => Released = true;
     }
 
     private sealed class SynchronousProgress(Action<FileTranscriptionProgress> report) : IProgress<FileTranscriptionProgress>

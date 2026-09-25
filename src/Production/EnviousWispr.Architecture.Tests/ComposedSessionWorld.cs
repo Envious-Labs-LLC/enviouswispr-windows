@@ -254,6 +254,10 @@ internal sealed class FakeRuntimeView : IRuntimeView
     public void NotifyHistoryChanged() => HistoryChanges++;
 
     public void ShowMainWindow() => MainWindowShown++;
+
+    public List<SessionHolder> BusyShown { get; } = [];
+
+    public void ShowSessionBusy(SessionHolder holder) => BusyShown.Add(holder);
 }
 
 /// <summary>A preview engine that answers every snapshot with the same words, and counts them.</summary>

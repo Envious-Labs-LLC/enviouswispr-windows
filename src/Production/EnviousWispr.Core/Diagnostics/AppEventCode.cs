@@ -253,5 +253,8 @@ public enum AppEventCode
 
     /// <summary>The file could not be read as audio, or a piece failed; any words so far were kept.</summary>
     FileTranscriptionFailed,
+
+    /// <summary>A file was not started: a dictation or an update had the session.</summary>
+    FileTranscriptionRefused,
     UnhandledFailure,
 }

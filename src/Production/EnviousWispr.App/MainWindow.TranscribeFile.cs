@@ -44,7 +44,6 @@ public sealed partial class MainWindow
         _transcribeFileRun = run;
         TranscribeFileChooseButton.IsEnabled = false;
         TranscribeFileCancelButton.Visibility = Visibility.Visible;
-        TranscribeFileResultPanel.Visibility = Visibility.Collapsed;
         TranscribeFileProgress.Value = 0;
         TranscribeFileProgress.IsIndeterminate = true;
         TranscribeFileProgress.Visibility = Visibility.Visible;
@@ -72,6 +71,13 @@ public sealed partial class MainWindow
 
     private void ShowTranscribeFileProgress(FileTranscriptionProgress progress)
     {
+        // THE JOB HAS THE SESSION: the last file's words go now, and not before - a refused start keeps them.
+        TranscribeFileResultPanel.Visibility = Visibility.Collapsed;
+        if (progress.PiecesDone == 0)
+        {
+            return;
+        }
+
         if (progress.AudioTotal is { TotalSeconds: > 0 } total)
         {
             TranscribeFileProgress.IsIndeterminate = false;
@@ -86,6 +92,13 @@ public sealed partial class MainWindow
 
     private void ShowTranscribeFileResult(FileTranscriptionResult result)
     {
+        // A START THAT WAS REFUSED CHANGES NOTHING ELSE ON THE PAGE: the words from the last file stay where they were.
+        if (result.Outcome == FileTranscriptionOutcome.Refused)
+        {
+            ShowTranscribeFileStatus(RefusalSentence(result.Refusal));
+            return;
+        }
+
         var (status, showText) = result.Outcome switch
         {
             FileTranscriptionOutcome.Completed => ($"Done: {Minutes(result.AudioDone)} of audio.", true),
@@ -100,6 +113,16 @@ public sealed partial class MainWindow
         TranscribeFileResultText.Text = showText ? result.Text : string.Empty;
         TranscribeFileResultPanel.Visibility = showText ? Visibility.Visible : Visibility.Collapsed;
     }
+
+    /// <summary>Why a file could not start, in macOS's words where macOS has them. Ref: #211.</summary>
+    private static string RefusalSentence(SessionHoldAttempt? refusal) => refusal switch
+    {
+        { Refusal: SessionHoldRefusal.Dictation } => "A dictation is running. Try again when it finishes.",
+        { HeldBy: SessionHolder.UpdateCheck or SessionHolder.UpdateApply } => "EnviousWispr is updating. Try again when it finishes.",
+        { HeldBy: SessionHolder.LastDictationReuse } => "EnviousWispr is pasting your last dictation. Try again in a moment.",
+        { HeldBy: SessionHolder.FileTranscription } => "Another file is being transcribed right now.",
+        _ => "EnviousWispr is closing.",
+    };
 
     private void ShowTranscribeFileStatus(string text)
     {
