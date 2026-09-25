@@ -241,10 +241,26 @@ async Task<CandidateResult> MeasureAsync(Candidate candidate, RuntimeProviderKin
             return CandidateResult.Failed(candidate.Name, provider, "the worker changed during measurement");
         }
 
-        // THE CARD AGAIN, WITH NOTHING OF OURS RUNNING: busy now means something else used it during the row.
-        if (provider == RuntimeProviderKind.Cuda && !allowBusyCard && CardLoad() is { Utilization: >= BusyCard } after)
+        // THE CARD AGAIN, WITH NOTHING OF OURS RUNNING. Busy now, unreadable now, or holding more memory than it did with
+        // this model loaded means something else was on the card during the row, and the row is discarded. What this
+        // cannot see is work that came and went between the two looks without touching memory: during the row the card's
+        // load includes the candidate's own, and Windows reports only the total.
+        if (provider == RuntimeProviderKind.Cuda && !allowBusyCard)
         {
-            return CandidateResult.Failed(candidate.Name, provider, $"another process used the card during the row ({after.Utilization}%) - discarded");
+            if (CardLoad() is not { } after)
+            {
+                return CandidateResult.Failed(candidate.Name, provider, "the card could not be read after the row - discarded");
+            }
+
+            if (after.Utilization >= BusyCard)
+            {
+                return CandidateResult.Failed(candidate.Name, provider, $"another process used the card during the row ({after.Utilization}%) - discarded");
+            }
+
+            if (cardLoaded is { } loadedNow && after.UsedMegabytes > loadedNow.UsedMegabytes + 256)
+            {
+                return CandidateResult.Failed(candidate.Name, provider, $"card memory grew by {after.UsedMegabytes - loadedNow.UsedMegabytes} MB during the row - discarded");
+            }
         }
 
         var (peakWorkingSetMb, _) = Memory(workerId, provider);
@@ -392,7 +408,9 @@ static (int Utilization, double UsedMegabytes)? CardLoad()
         Thread.Sleep(500);
     }
 
-    return readings.Count == 0
+    // ALL FIVE OR NOTHING: a failed reading is not a low one, and four failures around one quiet sample are not
+    // "the middle of five".
+    return readings.Count < 5
         ? null
         : (readings.Select(reading => reading.Utilization).Order().ElementAt(readings.Count / 2), readings.Max(reading => reading.UsedMegabytes));
 }

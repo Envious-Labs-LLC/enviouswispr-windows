@@ -28,8 +28,12 @@ below-normal priority and no restart, with the thread count from the same hardwa
 
 It refuses to publish a number it cannot stand behind:
 
-- **A card it cannot read, or that is 50% busy before a row (the middle of five readings), is not measured**,
-  and a card found busy again once the row is done discards the row (`--allow-busy-card` overrides both).
+- **A card it cannot read, or that is 50% busy before a row (the middle of five readings, all five required),
+  is not measured.** After the row the card is looked at again: busy, unreadable, or holding more memory than it
+  did with the model loaded, and the row is discarded (`--allow-busy-card` overrides these). The 50% line is a
+  saturation heuristic, not a proven boundary below which other work cannot affect a pass; and **work that came
+  and went between the two looks without holding memory is not seen**, because during a row the card's load
+  includes the candidate's own and Windows reports only the total.
 - **A row that falls back to the processor at any pass is failed**, not labelled as the card.
 - **A missing fixture stops the run**: a smaller corpus would publish a different error rate.
 - Memory is the worker's own peak working set, by the id the engine reports. **Video memory is an estimate**:
@@ -61,12 +65,12 @@ longest 9.1 s), 12 fixtures, 2 repeats.
 | Whisper Base q5_1 | 33 ms | 34 ms | 43 ms | 0 of 66 | 11.3% | 499 ms | 438 MB | 12% |
 | **Whisper Small q5_1 (shipped)** | 55 ms | 54 ms | 72 ms | 0 of 66 | 6.9% | 581 ms | 562 MB | 14% |
 | Whisper Large v3 Turbo q5_0 | 66 ms | 67 ms | 78 ms | 0 of 66 | 9.3% | 825 ms | 928 MB | 16% |
-| Parakeet TDT 0.6B v3 full precision | 16 ms | 25 ms | 34 ms | 0 of 66 | 7.7% | 2,785 ms | 3,768 MB | under 30% |
+| Parakeet TDT 0.6B v3 full precision | 16 ms | 25 ms | 34 ms | 0 of 66 | 7.7% | 2,785 ms | 3,768 MB | not recorded |
 | Parakeet TDT 0.6B v3 int8 | the product refuses the quantized pack on the card | | | | | | | |
 
 English and French scored 0% for every model on one fixture each, so they are left out of the tables; the
 pooled figure includes them. The Parakeet full-precision card row came from the run before the load was
-sampled; it passed that run's single-reading guard.
+sampled, so its load is not recorded; it passed that run's single reading below 30%, before and after.
 
 **The controls.** The shipped Small on the processor (2.2 s) and on the card (54 to 72 ms) agree with #127's
 own measurements (2.0 to 2.5 s, and 51 to 142 ms), so the bench measures what the product runs. **And the
@@ -74,12 +78,14 @@ guard earned its place**: the first run's card figures were taken while another 
 and 23.6 of 24.5 GB - Small read 3.5 s a pass on a 4090 - and every one was discarded.
 
 **Small on the processor sits within about 300 ms of the cadence.** The first run counted 13 of its 66 passes
-over 2.5 s; the second, at the preview's below-normal priority, counted none. Whether a pass crosses the line
-depends on what else the machine is doing, which is itself the finding: there is no headroom.
+over 2.5 s; the second, at the preview's below-normal priority, counted none. The two runs do not establish why
+they differ; what they do establish is that the shipped model runs within about 12% of the cadence on a fast
+desktop processor, so a modest change in conditions decides whether a pass keeps up.
 
 ## What the results say
 
-- **On the card there is no problem to solve.** Every Whisper candidate is about 30 to 90 times inside the cadence,
+- **On the card, no problem was measured at these windows.** Every Whisper candidate's median pass is about 30 to
+  90 times inside the cadence,
   and the shipped Small is the most accurate on this corpus. Large v3 Turbo costs more memory for no accuracy
   gain here. Parakeet full precision is the fastest, but holds an estimated 3.8 GB of video memory.
 - **On the processor, Parakeet was the fastest candidate at the measured windows**, about 10 to 50 times faster
@@ -105,7 +111,8 @@ depends on what else the machine is doing, which is itself the finding: there is
   of the model in a second worker, about 1 GB for int8. Whether the preview can share the final engine's worker
   is an engineering question, not measured here.
 - **Other hardware.** One machine, a fast desktop processor and a top-end card. The tier the problem lives on - a
-  laptop processor - is exactly the one not measured; its passes will be slower than these.
+  laptop processor - is exactly the one not measured; its passes are expected to be slower than these, but that is a
+  prediction, not a result.
 
 ## The decision this feeds (the founder's)
 
