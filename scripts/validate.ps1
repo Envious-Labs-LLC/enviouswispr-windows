@@ -327,6 +327,12 @@ try {
     Write-Host "Building live-preview cost spike (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/asr-incremental-spike/EnviousWispr.Asr.Incremental.Spike.csproj", "-c", "Release", "--nologo")
 
+    # THE PREVIEW MODEL BENCH (#127), compiled for the same reason: it runs against the product's own runtime worker
+    # and model packs, so a change there that it no longer builds against is found here, not the next time a model
+    # has to be chosen.
+    Write-Host "Building live-preview model bench (Release)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/preview-model-bench/EnviousWispr.Preview.Model.Bench.csproj", "-c", "Release", "--nologo")
+
     Write-Host "Building production WinUI end-to-end journey UAT harness (Release)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", "Release", "--nologo")
 
