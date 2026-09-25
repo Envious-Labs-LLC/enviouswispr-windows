@@ -475,11 +475,51 @@ public sealed class SnippetExpanderTests
     public void AFallbackSentinelAlreadyInTheDictatedTextIsSkippedAndIssuedOnesToo()
     {
         var outcome = Fixed("EWSNIPSAME").Expand(
-            "EWSNIPSAME EWSNIPFALLBACK0 backslash my email or backslash support address",
+            "EWSNIPSAME EWSNIPFALLBACK0X backslash my email or backslash support address",
             Vocabulary(("my email", "sam@example.com"), ("support address", "help@example.com")),
             NoFillIns);
 
-        Assert.Equal(["EWSNIPFALLBACK1", "EWSNIPFALLBACK2"], outcome.Records.Select(record => record.Sentinel));
+        Assert.Equal(["EWSNIPFALLBACK1X", "EWSNIPFALLBACK2X"], outcome.Records.Select(record => record.Sentinel));
+    }
+
+    /// <summary>A candidate that contains an issued sentinel, or sits inside one, would be matched by the other's restoration.</summary>
+    [Fact]
+    public void ACandidateThatContainsOrIsContainedByAnIssuedSentinelIsRejected()
+    {
+        var outcome = Fixed("EWSNIPAB", "EWSNIPABC", "EWSNIPA", "EWSNIPZZ").Expand(
+            "backslash my email or backslash support address",
+            Vocabulary(("my email", "sam@example.com"), ("support address", "help@example.com")),
+            NoFillIns);
+
+        Assert.Equal(["EWSNIPAB", "EWSNIPZZ"], outcome.Records.Select(record => record.Sentinel));
+    }
+
+    /// <summary>
+    /// THE COUNTED FALLBACK CROSSES TEN: unterminated, "EWSNIPFALLBACK1" is inside "EWSNIPFALLBACK10".
+    /// Twelve snippets from a degenerate source reach it; every one must come back as its own text in its
+    /// own place, promptly - the first fix looped until the counter wrapped.
+    /// </summary>
+    [Fact]
+    public void TwelveFallbackSentinelsNeverOverlapAndEachResolvesToItsOwnText()
+    {
+        var pairs = Enumerable.Range(0, 12).Select(index => ($"item {index}", $"text{index}")).ToArray();
+        var spoken = string.Join(" ", Enumerable.Range(0, 12).Select(index => $"backslash item {index}"));
+
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var outcome = Fixed("EWSNIPSAME").Expand(spoken, Vocabulary(pairs), NoFillIns);
+        timer.Stop();
+
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(5), $"minting took {timer.Elapsed}");
+        Assert.Equal(12, outcome.Records.Count);
+        Assert.Equal("EWSNIPFALLBACK10X", outcome.Records[11].Sentinel);
+        foreach (var record in outcome.Records)
+        {
+            Assert.Single(outcome.Records, other => other.Sentinel.Contains(record.Sentinel, StringComparison.Ordinal));
+        }
+
+        Assert.Equal(
+            "text0 text1 text2 text3 text4 text5 text6 text7 text8 text9 text10 text11",
+            SnippetFinalizer.Resolve(outcome.Text, null, outcome.Records).Text);
     }
 
     [Fact]
@@ -618,10 +658,10 @@ public sealed class SnippetExpanderTests
         var outcome = Fixed("EWSNIPSAME").Expand(
             "backslash my link",
             Vocabulary(("my link", "see {{clipboard}}")),
-            FillIns("EWSNIPSAME and EWSNIPFALLBACK0 both appear"));
+            FillIns("EWSNIPSAME and EWSNIPFALLBACK0X both appear"));
 
-        Assert.Equal("EWSNIPFALLBACK1", outcome.Records[0].Sentinel);
-        Assert.Equal("see EWSNIPSAME and EWSNIPFALLBACK0 both appear", outcome.Records[0].Expansion);
+        Assert.Equal("EWSNIPFALLBACK1X", outcome.Records[0].Sentinel);
+        Assert.Equal("see EWSNIPSAME and EWSNIPFALLBACK0X both appear", outcome.Records[0].Expansion);
     }
 
     [Fact]

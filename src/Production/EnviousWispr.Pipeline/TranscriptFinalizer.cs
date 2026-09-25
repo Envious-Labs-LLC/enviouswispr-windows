@@ -113,6 +113,7 @@ public sealed class TranscriptFinalizer
             ? request
             : request with { Transcript = transcript with { Text = expansion.Outcome.Text } };
         var processed = await _pipeline.ProcessAsync(masked, cancellationToken).ConfigureAwait(false);
+        var rolledBack = false;
         if (records.Count > 0 &&
             string.IsNullOrWhiteSpace(SnippetFinalizer.Resolve(processed.DeterministicText, null, records).Text))
         {
@@ -120,6 +121,7 @@ public sealed class TranscriptFinalizer
             // clipboard - would deliver nothing at all; the take delivers the spoken words instead, as
             // macOS does, so a dictation is never lost to an empty snippet.
             records = [];
+            rolledBack = true;
             masked = request;
             expansion = expansion with { Receipt = expansion.Receipt with { Changed = false } };
             processed = await _pipeline.ProcessAsync(request, cancellationToken).ConfigureAwait(false);
@@ -140,7 +142,13 @@ public sealed class TranscriptFinalizer
         // A TAKE THAT IS NOTHING BUT SNIPPETS HAS NOTHING TO POLISH. A model handed a bare sentinel can
         // only return it or lose it, so it is not asked - macOS reaches the same outcome through its
         // short-text bypass, which this app does not have.
-        var polishSetup = records.Count > 0 && !HasWordsOutsideSentinels(processed.Output.Text, records)
+        //
+        // NOR DOES A TAKE WHOSE SNIPPET STAGE STOOD DOWN OR WAS ROLLED BACK. Its text still carries the
+        // keyword and the trigger as spoken, so a snippet may have been meant - and without a mask, a
+        // polish would send those words to the model and could rewrite them. The cleaned spoken text
+        // is delivered instead, the stage's own floor.
+        var polishSetup = expansion.IsDegraded || rolledBack ||
+            (records.Count > 0 && !HasWordsOutsideSentinels(processed.Output.Text, records))
             ? null
             : polish;
         var polishResult = await _polish

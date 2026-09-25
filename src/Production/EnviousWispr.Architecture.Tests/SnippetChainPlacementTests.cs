@@ -310,6 +310,57 @@ public sealed class SnippetChainPlacementTests
         Assert.Equal(0, finalized.SnippetsExpanded);
     }
 
+    /// <summary>
+    /// A STAND-DOWN IS NOT POLISHED: the keyword and trigger are still in the text unmasked, so a
+    /// model would see and could rewrite them. Without the rule the provider is asked here.
+    /// </summary>
+    [Fact]
+    public async Task AStageThatStoodDownIsNeverSentToPolish()
+    {
+        var vocabulary = new SnippetVocabulary([new SnippetEntry("my link", "see {{clipboard}}")], SnippetVocabulary.DefaultKeyword);
+        var never = new TaskCompletionSource<string?>();
+        var provider = new RecordingPolish(input => input + "!");
+        var world = new World { Timeout = TimeSpan.FromMilliseconds(200), ClipboardReader = _ => never.Task };
+
+        var finalized = await world.Finalizer.FinalizeAsync(
+            Spoken("ok send the backslash my link now"), [], AllOn, vocabulary, Polishing(provider), CancellationToken.None);
+
+        Assert.Empty(provider.Inputs);
+        Assert.Null(finalized.Polish);
+        Assert.Equal("ok send the backslash my link now", finalized.Processed.Output.Text);
+    }
+
+    /// <summary>A rolled-back snippet (an empty fill-in, spoken words delivered instead) is not polished either.</summary>
+    [Fact]
+    public async Task ARolledBackSnippetIsNeverSentToPolish()
+    {
+        var vocabulary = new SnippetVocabulary([new SnippetEntry("my link", "{{clipboard}}")], SnippetVocabulary.DefaultKeyword);
+        var provider = new RecordingPolish(input => input + "!");
+        var world = new World { Clipboard = string.Empty };
+
+        var finalized = await world.Finalizer.FinalizeAsync(
+            Spoken("backslash my link"), [], AllOn, vocabulary, Polishing(provider), CancellationToken.None);
+
+        Assert.Empty(provider.Inputs);
+        Assert.Null(finalized.Polish);
+        Assert.Equal("backslash my link", finalized.Processed.Output.Text);
+    }
+
+    /// <summary>The control for both: an ordinary take with the same provider IS polished, so the empty lists above are the rule.</summary>
+    [Fact]
+    public async Task AnOrdinaryTakeWithTheSameProviderIsPolished()
+    {
+        var vocabulary = new SnippetVocabulary([new SnippetEntry("my link", "see {{clipboard}}")], SnippetVocabulary.DefaultKeyword);
+        var provider = new RecordingPolish(input => input + "!");
+        var world = new World();
+
+        var finalized = await world.Finalizer.FinalizeAsync(
+            Spoken("ok send it now"), [], AllOn, vocabulary, Polishing(provider), CancellationToken.None);
+
+        Assert.Single(provider.Inputs);
+        Assert.Equal("ok send it now!", finalized.Processed.Output.Text);
+    }
+
     // The world.
 
     private sealed class World : ITranscriptFinalizationEffects

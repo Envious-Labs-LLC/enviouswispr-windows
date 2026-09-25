@@ -134,8 +134,8 @@ public sealed class SnippetPlaceholderTests
     public void TextWithNoFillInComesBackByteForByte()
     {
         Assert.Equal(
-            "Dear {name},\n\tThe path is C:\\Users\\{{  }}\\x, see attached.\n\nRegards",
-            SnippetPlaceholders.Resolve("Dear {name},\n\tThe path is C:\\Users\\{{  }}\\x, see attached.\n\nRegards", Values(clipboard: "x")));
+            "Dear {name},\n\tThe path is D:\\Shared\\{{  }}\\x, see attached.\n\nRegards",
+            SnippetPlaceholders.Resolve("Dear {name},\n\tThe path is D:\\Shared\\{{  }}\\x, see attached.\n\nRegards", Values(clipboard: "x")));
         Assert.Equal("Kind regards,\nSam\n", SnippetPlaceholders.Resolve("Kind regards,\nSam\n", Values(clipboard: "x")));
     }
 

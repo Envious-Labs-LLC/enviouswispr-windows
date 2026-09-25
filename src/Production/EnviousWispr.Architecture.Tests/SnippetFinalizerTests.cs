@@ -128,6 +128,15 @@ public sealed class SnippetFinalizerTests
             Resolve("EWSNIPAAA and EWSNIPBBB", "EWSNIPAAA and the sign off.", Email, SignOff));
     }
 
+    /// <summary>Two placeholders swapped would paste each snippet where the other was said: refused like a drop.</summary>
+    [Fact]
+    public void TwoSentinelsSwappedByTheModelRejectThePolish()
+    {
+        Assert.Equal(
+            new SnippetResolution("sam@example.com and Thanks,\nSam", null, RejectedPolish: true),
+            Resolve("EWSNIPAAA and EWSNIPBBB", "EWSNIPBBB and EWSNIPAAA.", Email, SignOff));
+    }
+
     [Fact]
     public void AMangledSentinelIsALostSentinel()
     {

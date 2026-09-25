@@ -26,6 +26,10 @@ public static class SnippetFinalizer
     /// a missing flourish. A lost or duplicated sentinel costs the WHOLE polish, not a repair at a
     /// guessed position: the promise is that the saved text arrives exactly, and reconstructing a lost
     /// span trades that for a heuristic on the one property whose value is that it is not one.
+    ///
+    /// AND IN THE ORDER THEY WERE SPOKEN. A model that swapped two placeholders would paste each
+    /// snippet where the other was said - every sentinel present once, and the document still wrong -
+    /// so a swap is refused like a drop.
     /// </remarks>
     public static SnippetResolution Resolve(string text, string? polishedText, IReadOnlyList<SnippetExpansionRecord> records)
     {
@@ -42,7 +46,7 @@ public static class SnippetFinalizer
             return new SnippetResolution(deterministic, null, RejectedPolish: false);
         }
 
-        return records.All(record => Occurrences(record.Sentinel, polishedText) == 1)
+        return CarriesEverySentinelOnceInOrder(polishedText, records)
             ? new SnippetResolution(deterministic, Substitute(records, polishedText), RejectedPolish: false)
             : new SnippetResolution(deterministic, null, RejectedPolish: true);
     }
@@ -96,6 +100,29 @@ public static class SnippetFinalizer
         }
 
         return output.Append(text, cursor, text.Length - cursor).ToString();
+    }
+
+    /// <summary>Each record's sentinel exactly once in the polish, and at positions that rise in record (spoken) order.</summary>
+    private static bool CarriesEverySentinelOnceInOrder(string polishedText, IReadOnlyList<SnippetExpansionRecord> records)
+    {
+        var previous = -1;
+        foreach (var record in records)
+        {
+            if (Occurrences(record.Sentinel, polishedText) != 1)
+            {
+                return false;
+            }
+
+            var position = polishedText.IndexOf(record.Sentinel, StringComparison.Ordinal);
+            if (position <= previous)
+            {
+                return false;
+            }
+
+            previous = position;
+        }
+
+        return true;
     }
 
     private static int Occurrences(string needle, string haystack)

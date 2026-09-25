@@ -201,13 +201,23 @@ public sealed class SnippetExpander
     /// after the finalizer had checked. A collision on 128 random bits does not recur, but the loop is
     /// written to terminate rather than to trust that: a degenerate source falls back to a counted
     /// spelling that is checked against the same three domains.
+    ///
+    /// AN ISSUED SENTINEL MAY NEITHER CONTAIN NOR BE CONTAINED BY ANOTHER, not merely differ from it.
+    /// Restoration replaces by substring, so a counted fallback spelled "EWSNIPFALLBACK1" would also
+    /// match inside "EWSNIPFALLBACK10" and splice one snippet's text into the other's placeholder.
+    ///
+    /// THE FALLBACK IS THEREFORE CLOSED WITH A TERMINATOR, "EWSNIPFALLBACK1X". Without it the overlap
+    /// rule and the count would fight: once "EWSNIPFALLBACK0" to "9" were issued, every larger number
+    /// starts with one of them, and the loop ran on until the counter wrapped - measured at over two
+    /// minutes for twelve snippets. With the terminator no count is a prefix of another, so only a real
+    /// collision with the dictated text or a saved text can skip a number.
     /// </remarks>
     internal string MintSentinel(string rawInput, SnippetResolvedExpansions expansions, IReadOnlySet<string> alreadyIssued, bool domainCanCollide)
     {
         for (var attempt = 0; attempt < 8; attempt++)
         {
             var candidate = _candidateSource();
-            if (string.IsNullOrEmpty(candidate) || alreadyIssued.Contains(candidate))
+            if (string.IsNullOrEmpty(candidate) || OverlapsIssued(candidate, alreadyIssued))
             {
                 continue;
             }
@@ -223,8 +233,8 @@ public sealed class SnippetExpander
 
         for (var suffix = 0; ; suffix++)
         {
-            var candidate = $"{Prefix}FALLBACK{suffix}";
-            var collides = alreadyIssued.Contains(candidate) ||
+            var candidate = $"{Prefix}FALLBACK{suffix}X";
+            var collides = OverlapsIssued(candidate, alreadyIssued) ||
                 (domainCanCollide &&
                     (rawInput.Contains(candidate, StringComparison.Ordinal) || expansions.Contains(candidate)));
             if (!collides)
@@ -233,6 +243,12 @@ public sealed class SnippetExpander
             }
         }
     }
+
+    /// <summary>Whether a candidate equals, contains, or is contained by a sentinel already issued this take.</summary>
+    private static bool OverlapsIssued(string candidate, IReadOnlySet<string> alreadyIssued) =>
+        alreadyIssued.Any(issued =>
+            issued.Contains(candidate, StringComparison.Ordinal) ||
+            candidate.Contains(issued, StringComparison.Ordinal));
 
     private readonly record struct Match(SnippetEntry Snippet, int Length);
 
