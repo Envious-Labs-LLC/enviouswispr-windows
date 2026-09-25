@@ -51,6 +51,32 @@ public sealed class WinUiResourceTypeTests
                 + string.Join(", ", offenders));
     }
 
+    /// <summary>A Color whose element text is a markup extension is not a reference, it is an unparseable colour.</summary>
+    /// <remarks>
+    /// `<Color x:Key="X">{ThemeResource SystemColorWindowColor}</Color>` reads like a reference and is not one: XAML hands
+    /// element text to the colour converter, which knows no colour by that name. Every High Contrast colour token in
+    /// DesignTokens.xaml (27) and PillTokens.xaml (14) was written this way, so High Contrast resolved none of them
+    /// (#217). An alias is `<StaticResource x:Key="X" ResourceKey="SystemColorWindowColor" />`, as WinUI's own theme does.
+    /// </remarks>
+    [Fact]
+    public void NoColourIsAResourceReferenceWrittenAsText()
+    {
+        var app = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
+        var offenders = Directory.EnumerateFiles(app, "*.xaml", SearchOption.AllDirectories)
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal) &&
+                           !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .SelectMany(path => XDocument.Load(path).Descendants(Presentation + "Color")
+                .Where(colour => colour.Value.TrimStart().StartsWith('{'))
+                .Select(colour => $"{Path.GetFileName(path)}: {(string?)colour.Attribute(Xaml + "Key")} = {colour.Value.Trim()}"))
+            .ToList();
+
+        Assert.True(
+            offenders.Count == 0,
+            "These colours are a resource reference written as element text, which XAML parses as a colour name and "
+                + "cannot resolve; alias them with <StaticResource x:Key=... ResourceKey=... /> instead: "
+                + string.Join(", ", offenders));
+    }
+
     /// <summary>Every resource WinUI's template names as the value of a colour animation or colour key frame.</summary>
     private static HashSet<string> ColourAnimatedKeys(string genericXaml)
     {
