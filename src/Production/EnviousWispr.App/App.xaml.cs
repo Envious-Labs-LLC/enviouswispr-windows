@@ -355,6 +355,7 @@ public partial class App : Application, IAsyncDisposable
         _window.UpdateApplyRequested += OnUpdateApplyRequested;
         _window.ModelDownloadRequested += OnModelDownloadRequested;
         _window.ModelDownloadCancelRequested += OnModelDownloadCancelRequested;
+        _window.TranscriptionRetryRequested += OnTranscriptionRetryRequested;
         _window.GraphicsRuntimeDownloadRequested += OnGraphicsRuntimeDownloadRequested;
         _window.GraphicsRuntimeDownloadCancelRequested += OnGraphicsRuntimeDownloadCancelRequested;
         _window.KeybindCaptureActiveChanged += OnKeybindCaptureActiveChanged;
@@ -584,6 +585,7 @@ public partial class App : Application, IAsyncDisposable
             window.UpdateApplyRequested -= OnUpdateApplyRequested;
             window.ModelDownloadRequested -= OnModelDownloadRequested;
             window.ModelDownloadCancelRequested -= OnModelDownloadCancelRequested;
+            window.TranscriptionRetryRequested -= OnTranscriptionRetryRequested;
             window.GraphicsRuntimeDownloadRequested -= OnGraphicsRuntimeDownloadRequested;
             window.GraphicsRuntimeDownloadCancelRequested -= OnGraphicsRuntimeDownloadCancelRequested;
             window.KeybindCaptureActiveChanged -= OnKeybindCaptureActiveChanged;
@@ -1531,7 +1533,9 @@ public partial class App : Application, IAsyncDisposable
                 ArchiveAudio: audio => ArchiveDictationAudio(audio),
                 DetachCaptureObservers: DetachCaptureObservers,
                 ReleaseSession: ReleaseSession,
-                DisposeDeliveryRoute: DisposeDeliveryRoute),
+                DisposeDeliveryRoute: DisposeDeliveryRoute,
+                DictationActivityChanged: active =>
+                    _window?.DispatcherQueue.TryEnqueue(() => _window?.SetDictationActive(active))),
             TimeProvider.System));
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
         // A saved keybind builds a NEW hook, which starts armed and knows nothing about a capture
@@ -1540,9 +1544,7 @@ public partial class App : Application, IAsyncDisposable
         _pushToTalkHook.SetCapturingKeybind(_keybindCaptureActive);
         _window?.SetHotkeyReady(
             _pushToTalkHook.Gesture.ToString(),
-            _pushToTalkHook.RecordingMode,
-            _pushToTalkHook.CancelGesture.ToString(),
-            _pushToTalkHook.QuickAddGesture.ToString());
+            _pushToTalkHook.RecordingMode);
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.HotkeyReady));
 
         // A LAST-DICTATION SHORTCUT THAT COULD NOT LISTEN SAYS SO, by its own state, and costs nothing else: the
@@ -1781,6 +1783,8 @@ public partial class App : Application, IAsyncDisposable
     {
         // WHAT THE GRAPHICS RUNTIME OFFER READS, reset first so a configuration that stops early offers nothing.
         _configuredTranscription = null;
+        // THE FIRST-RUN GATE READS THIS, NOT THE SENTENCES BELOW: every return from here says which it was.
+        _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Preparing);
         if (string.Equals(
                 Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_DISABLE_LOCAL_RUNTIME"),
                 "1",
@@ -1789,6 +1793,7 @@ public partial class App : Application, IAsyncDisposable
             _window?.SetSessionStatus(DictationStatus
                 .Quiet("Local transcription disabled for performance UAT")
                 .AboutTheTranscriptionEngine());
+            _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Unavailable);
             return;
         }
 
@@ -1813,6 +1818,7 @@ public partial class App : Application, IAsyncDisposable
                 DictationStatus.Advisory(
                         "Local transcription model is not installed", StatusActions.OpenTranscription)
                     .AboutTheTranscriptionEngine());
+            _window?.SetTranscriptionReadiness(SpeechEngineReadiness.NotInstalled);
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionFailed,
@@ -1852,6 +1858,7 @@ public partial class App : Application, IAsyncDisposable
                 DictationStatus.Advisory(
                         "Local transcription is unavailable on this machine", StatusActions.OpenTranscription)
                     .AboutTheTranscriptionEngine());
+            _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Unavailable);
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionFailed,
@@ -1881,6 +1888,7 @@ public partial class App : Application, IAsyncDisposable
                     DictationStatus.Advisory(
                             "Local transcription could not start", StatusActions.OpenTranscription)
                         .AboutTheTranscriptionEngine());
+                _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Unavailable);
                 _logger.Write(new AppLogEntry(
                     DateTimeOffset.UtcNow,
                     AppEventCode.DictationTranscriptionFailed,
@@ -1910,6 +1918,7 @@ public partial class App : Application, IAsyncDisposable
                         "Your graphics card did not start, so dictation is slower", StatusActions.OpenTranscription)
                     : DictationStatus.Quiet("Local transcription ready on the processor"))
                     .AboutTheTranscriptionEngine());
+            _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Ready);
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionDegraded,
@@ -1922,6 +1931,7 @@ public partial class App : Application, IAsyncDisposable
         ConfigureLivePreview(workerExecutable, hardware, whisperLanguage, previewModelDirectory);
         _window?.SetSessionStatus(
             DictationStatus.Quiet("Local transcription ready").AboutTheTranscriptionEngine());
+        _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Ready);
     }
 
     private void ConfigureLivePreview(

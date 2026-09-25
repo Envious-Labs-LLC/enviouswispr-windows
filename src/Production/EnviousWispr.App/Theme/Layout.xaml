@@ -71,4 +71,15 @@
     <x:Double x:Key="BrandOnboardingCardSpacing">12</x:Double>
     <x:Double x:Key="BrandOnboardingTextSpacing">4</x:Double>
     <Thickness x:Key="BrandOnboardingCardPadding">20</Thickness>
+    <!-- The first-run column inside its side padding: the 1040 measure less the 40 each side, so a card lines up with
+         the pinned footer button, which is capped at 1040 and padded 40 a side. -->
+    <x:Double x:Key="BrandOnboardingContentColumnMaxWidth">960</x:Double>
+    <!-- The setup checklist's status mark: a number, a spinner, a tick or a cross, all in the one square so a
+         row does not shift sideways as its status changes. The row-icon column's width, for the same reason. -->
+    <x:Double x:Key="BrandOnboardingStatusSize">28</x:Double>
+    <!-- The practice box: macOS's is 132 tall, room for two or three dictated sentences before it scrolls.
+         A MINIMUM, so a longer take grows the box rather than clipping it. -->
+    <x:Double x:Key="BrandOnboardingPracticeBoxHeight">132</x:Double>
+    <!-- The Ready screen's keycap: the key's name set in the title style with room around it, as macOS draws it. -->
+    <Thickness x:Key="BrandOnboardingKeycapPadding">32,14,32,14</Thickness>
 </ResourceDictionary>

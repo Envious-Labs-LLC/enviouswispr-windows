@@ -18,8 +18,6 @@
   <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
   <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
   <data name="OnboardingTitle.Text" xml:space="preserve"><value>Your voice, instantly captured.</value></data>
-  <data name="FinishOnboardingButton.Content" xml:space="preserve"><value>Get started</value></data>
-  <data name="FinishOnboardingButton.AccessKey" xml:space="preserve"><value>G</value></data>
   <data name="HomeNavItem.Content" xml:space="preserve"><value>Home</value></data>
   <data name="HomeNavItem.AccessKey" xml:space="preserve"><value>M</value></data>
   <data name="HistoryNavItem.Content" xml:space="preserve"><value>History</value></data>

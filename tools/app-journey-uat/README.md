@@ -324,3 +324,17 @@ This mode cannot be combined with live or manual microphone, Live Preview, the h
 failure injection, each of which owns the trigger or the hold differently. It refuses to run while an unowned
 EnviousWispr instance exists, because a second low-level hook would also receive the injected key and start a
 real take. It proves the installed hook and the real key path; it still does not prove the microphone.
+
+Add `--onboarding-practice` to aim the same take at the first-run practice box instead of the controlled target.
+The profile is a first run's (setup not done, F8 pinned); the harness walks the setup screens through UI
+Automation the way a person does - Get Started, the permission screen once the speech-model gate opens, GET
+STARTED! - requires FINISH SETUP to be unavailable before any take, presses the key, and takes its verdict from
+`TextDeliveryCompleted` in the log, the practice box's own contents read back through UI Automation, and the
+stored completion flag after it presses FINISH SETUP. The controlled target is started without taking focus and
+must receive nothing. No delivery route is reported for the box: the route is read from the controlled target's
+message counts, which this run does not aim at.
+
+```powershell
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --synthetic-hotkey --onboarding-practice
+```

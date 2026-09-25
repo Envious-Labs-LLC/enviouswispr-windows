@@ -6,15 +6,21 @@ using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.ModelDelivery;
+using EnviousWispr.Presentation;
 
 namespace EnviousWispr.App;
 
-/// <summary>What the window shows about the speech model: a sentence, optional progress, and which buttons apply.</summary>
+/// <summary>What the window shows about the speech model: a sentence, optional progress, which buttons apply, and where it stands.</summary>
+/// <param name="Stage">
+/// Where the delivery stands, said by the code that knows rather than read back out of the sentence. The first-run
+/// checklist gates on it; the graphics runtime, which shares this record, leaves it unknown.
+/// </param>
 public sealed record ModelDeliveryPresentation(
     string Text,
     double? Percent = null,
     bool CanDownload = false,
-    bool CanCancel = false);
+    bool CanCancel = false,
+    SpeechModelDelivery Stage = SpeechModelDelivery.Unknown);
 
 /// <summary>
 /// The first-run path a new install was missing: find the model this configuration needs, and if it
@@ -132,7 +138,9 @@ public partial class App
         _missingModelIds = await MissingModelIdsAsync(_settings.Preferences).ConfigureAwait(true);
         if (_missingModelIds.Count == 0)
         {
-            _window?.SetModelDelivery(new("The speech model this build pins is installed and verified."));
+            _window?.SetModelDelivery(new(
+                "The speech model this build pins is installed and verified.",
+                Stage: SpeechModelDelivery.Installed));
             return;
         }
 
@@ -140,7 +148,8 @@ public partial class App
         if (installable.Length == 0)
         {
             _window?.SetModelDelivery(new(
-                "This build cannot download the model it needs. Reinstall EnviousWispr."));
+                "This build cannot download the model it needs. Reinstall EnviousWispr.",
+                Stage: SpeechModelDelivery.CannotDownload));
             return;
         }
 
@@ -149,7 +158,8 @@ public partial class App
                 .Manifest?.Payload.Files.Sum(file => file.SizeBytes) ?? 0);
         _window?.SetModelDelivery(new(
             $"{SentenceStart(DescribeModels(installable))} {(installable.Length == 1 ? "is" : "are")} not installed on this PC. About {Megabytes(totalBytes)} MB to download, verified file by file.",
-            CanDownload: true));
+            CanDownload: true,
+            Stage: SpeechModelDelivery.Missing));
     }
 
     private void OnModelDownloadRequested()
@@ -173,7 +183,10 @@ public partial class App
 
         if (_sessionController?.CurrentSession is not null)
         {
-            _window?.SetModelDelivery(new("Finish the current dictation, then download.", CanDownload: true));
+            _window?.SetModelDelivery(new(
+                "Finish the current dictation, then download.",
+                CanDownload: true,
+                Stage: SpeechModelDelivery.Failed));
             return;
         }
 
@@ -188,7 +201,11 @@ public partial class App
         _modelDownload = download;
         var clock = System.Diagnostics.Stopwatch.StartNew();
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ModelDeliveryStarted));
-        _window?.SetModelDelivery(new($"Downloading {DescribeModels(wanted)}…", Percent: 0, CanCancel: true));
+        _window?.SetModelDelivery(new(
+            $"Downloading {DescribeModels(wanted)}…",
+            Percent: 0,
+            CanCancel: true,
+            Stage: SpeechModelDelivery.Downloading));
         try
         {
             var verifier = new ModelManifestVerifier(new Dictionary<string, string>());
@@ -206,7 +223,12 @@ public partial class App
                         AppFailureCategory.ModelDelivery,
                         clock.ElapsedMilliseconds));
                     _modelDownload = null;
-                    _window?.SetModelDelivery(new(FailureSentence(result), CanDownload: true));
+                    _window?.SetModelDelivery(new(
+                        FailureSentence(result),
+                        CanDownload: true,
+                        Stage: result.Failure == ModelDeliveryFailure.Cancelled
+                            ? SpeechModelDelivery.Cancelled
+                            : SpeechModelDelivery.Failed));
                     return;
                 }
             }
@@ -230,7 +252,7 @@ public partial class App
             return;
         }
 
-        _window?.SetModelDelivery(new("Download verified. Starting local transcription…"));
+        _window?.SetModelDelivery(new("Download verified. Starting local transcription…", Stage: SpeechModelDelivery.Activating));
         await ReconfigureTranscriptionAsync().ConfigureAwait(true);
         if (Leaving)
         {
@@ -242,6 +264,51 @@ public partial class App
     }
 
     private void OnModelDownloadCancelRequested() => _modelDownload?.Cancel();
+
+    /// <summary>The person asked for local transcription to be started again, from the first-run checklist or warm-up.</summary>
+    /// <remarks>
+    /// THE SAME TRACKED SLOT AS A DOWNLOAD, because it is the second half of one: a download ends by running the
+    /// launch configuration again, and this runs only that half. One task at a time, joined under Quiesce, and
+    /// refused while a dictation holds the session - tearing an engine down under a take would lose the take.
+    /// </remarks>
+    private void OnTranscriptionRetryRequested()
+    {
+        if (_modelDelivery is { IsCompleted: false } || Leaving)
+        {
+            return;
+        }
+
+        _modelDelivery = RetryTranscriptionAsync();
+    }
+
+    private async Task RetryTranscriptionAsync()
+    {
+        if (_sessionController?.CurrentSession is not null || _sessionCoordinator?.IsProcessing == true)
+        {
+            return;
+        }
+
+        _missingModelIds = await MissingModelIdsAsync(_settings.Preferences).ConfigureAwait(true);
+        if (Leaving)
+        {
+            return;
+        }
+
+        if (_missingModelIds.Count > 0)
+        {
+            await DeliverModelsAsync().ConfigureAwait(true);
+            return;
+        }
+
+        await ReconfigureTranscriptionAsync().ConfigureAwait(true);
+        if (Leaving)
+        {
+            return;
+        }
+
+        PresentGraphicsRuntime();
+        await PresentModelDeliveryAsync().ConfigureAwait(true);
+    }
 
     private async Task TeardownTranscriptionAsync()
     {
@@ -269,10 +336,19 @@ public partial class App
         var completedMb = Megabytes(deliveryEvent.CompletedBytes.Value);
         var totalMb = Megabytes(deliveryEvent.TotalBytes.Value);
         _window?.DispatcherQueue.TryEnqueue(() =>
-            _window.SetModelDelivery(new(
-                $"Downloading… {completedMb} of {totalMb} MB, verified as it arrives.",
-                Percent: percent,
-                CanCancel: true)));
+        {
+            // A LATE REPORT MUST NOT REDRAW A FINISHED DOWNLOAD, as the graphics runtime's already knows: reports
+            // are queued to the window, and one that runs after a cancel or a failure would put the progress bar
+            // back over the outcome - and tell the first-run checklist a stopped download is still running.
+            if (_modelDownload is not null)
+            {
+                _window?.SetModelDelivery(new(
+                    $"Downloading… {completedMb} of {totalMb} MB, verified as it arrives.",
+                    Percent: percent,
+                    CanCancel: true,
+                    Stage: SpeechModelDelivery.Downloading));
+            }
+        });
     }
 
     private static string DescribeModels(IReadOnlyList<string> modelIds)
