@@ -206,5 +206,35 @@ public enum AppEventCode
 
     /// <summary>The download stopped short; the category says whether the network, the disk, or the manifest was the reason.</summary>
     ModelDeliveryFailed,
+
+    // PASTE AND COPY LAST DICTATION (#206): one event per outcome, the same closed set as
+    // LastDictationOutcome, so a reader can tell every ending apart without the words.
+
+    /// <summary>Paste last dictation wrote the words into the window the person was in.</summary>
+    LastDictationPasted,
+
+    /// <summary>Copy last dictation put the words on the clipboard.</summary>
+    LastDictationCopied,
+
+    /// <summary>The target refused the paste and the clipboard caught the words; route and reason ride on the entry.</summary>
+    LastDictationKeptOnClipboard,
+
+    /// <summary>Nothing could be reused: history empty or off, or only a take the person cancelled.</summary>
+    LastDictationNothingToReuse,
+
+    /// <summary>Declined: a dictation was recording or being delivered, and owns the clipboard next.</summary>
+    LastDictationDeclinedDictationInProgress,
+
+    /// <summary>Declined: another reuse was still running.</summary>
+    LastDictationDeclinedBusy,
+
+    /// <summary>Declined: no window to paste into, or it had gone.</summary>
+    LastDictationDeclinedNoTarget,
+
+    /// <summary>Declined: the window in front was EnviousWispr's own.</summary>
+    LastDictationDeclinedOwnWindow,
+
+    /// <summary>The delivery wrote nothing and the clipboard did not catch the words.</summary>
+    LastDictationReuseFailed,
     UnhandledFailure,
 }
