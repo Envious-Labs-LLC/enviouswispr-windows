@@ -18,7 +18,6 @@ using EnviousWispr.App.Composition;
 using EnviousWispr.Pipeline;
 using EnviousWispr.Presentation;
 using EnviousWispr.Services.Diagnostics;
-using EnviousWispr.Services.Distribution;
 using EnviousWispr.Services.Credentials;
 using EnviousWispr.Services.Input;
 using EnviousWispr.Services.History;
@@ -38,7 +37,9 @@ public partial class App : Application, IAsyncDisposable
 
     private readonly PrivacySafeObservabilityLogger _logger;
     private readonly ReleaseIdentity _releaseIdentity;
-    private readonly VelopackUpdateService _updateService;
+    private readonly StoreUpdateService _updateService;
+    // The session hold an accepted Store install keeps until the app leaves; see OnUpdateApplyRequested.
+    private IDisposable? _updateInstallHold;
     private readonly JsonDiagnosticExportService _diagnosticExportService;
     private readonly JsonSettingsStore _settingsStore;
     private readonly JsonPortableProfileService _profileService = new();
@@ -196,18 +197,10 @@ public partial class App : Application, IAsyncDisposable
         _autoStop = _runtime.AutoStop;
         _resourceProbe = new WindowsSystemResourceProbe(_dataDirectory);
 
-        var allowLoopbackUpdates = string.Equals(
-            Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_ALLOW_LOOPBACK_UPDATES"),
-            "1",
-            StringComparison.Ordinal);
-        _ = UpdateEndpointPolicy.TryNormalize(
-            Environment.GetEnvironmentVariable("ENVIOUSWISPR_UPDATE_ENDPOINT"),
-            allowLoopbackUpdates,
-            out var updateEndpoint);
-        _updateService = new VelopackUpdateService(
-            _releaseIdentity,
-            updateEndpoint,
-            new WindowsUpdateArtifactValidator());
+        // THE WINDOW IS READ WHEN THE STORE IS FIRST ASKED, not now: it does not exist yet, and the
+        // Store needs it as the owner of its install prompt.
+        _updateService = new StoreUpdateService(
+            () => _window is { } window ? WinRT.Interop.WindowNative.GetWindowHandle(window) : 0);
 
         UnhandledException += (_, eventArgs) =>
         {
@@ -344,8 +337,8 @@ public partial class App : Application, IAsyncDisposable
                 loadResult.Status,
                 _logger.TelemetryAvailable,
                 _releaseIdentity,
-                _updateService.IsConfigured,
-                _updateService.CurrentVersion));
+                _updateService.IsStoreInstalled,
+                _updateService.InstalledVersion));
         _window.SettingsChanged += OnSettingsChanged;
         _window.SessionStatusChanged += OnSessionStatusChanged;
         _window.AudioDevicesChanged += OnAudioDevicesChanged;
@@ -875,24 +868,14 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        // THE SESSION IS HELD FOR THE WHOLE CHECK, so a press during the download is Busy rather than
-        // a recording under an update; before the coordinator exists there is nothing to hold.
-        var attempt = _sessionCoordinator?.TryHold(SessionHolder.UpdateCheck) ?? new SessionHoldAttempt(NoScope.Instance);
-        if (attempt.Hold is not { } hold)
+        // NO SESSION HOLD FOR A CHECK. Asking the Store downloads and applies nothing, so a dictation
+        // may start or finish while it runs; only the install below needs the session idle.
+        _window?.SetUpdateCheckInProgress();
+        var result = await _updateService.CheckAsync().ConfigureAwait(true);
+        // THE APP MAY HAVE LEFT WHILE THE STORE ANSWERED; the window is not told anything then.
+        if (!_exitRequested && !_disposed)
         {
-            _window?.SetUpdateStatus(new UpdateOperationResult(UpdateBusyStatus(attempt)));
-            return;
-        }
-
-        using (hold)
-        {
-            _window?.SetUpdateCheckInProgress();
-            var result = await _updateService.CheckDownloadAndVerifyAsync().ConfigureAwait(true);
-            // THE APP MAY HAVE LEFT WHILE THE DOWNLOAD RAN; the window is not told anything then.
-            if (!_exitRequested && !_disposed)
-            {
-                _window?.SetUpdateStatus(result);
-            }
+            _window?.SetUpdateStatus(result);
         }
     }
 
@@ -909,9 +892,9 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        // THE SESSION IS HELD THROUGH THE ATTEMPT, and the leaving flag is set before it is given
-        // back: a press admitted between the two would have opened a microphone under a restart. If the
-        // restart does not happen the flag comes off and the hold goes back, and dictation resumes.
+        // THE INSTALL IS ASKED FOR ONLY WHEN IDLE, and the session is held from before the request until
+        // Windows takes the app down: a press admitted in between would open a microphone under an
+        // update. A dictation or a file already running refuses the hold, and nothing is requested.
         var attempt = _sessionCoordinator?.TryHold(SessionHolder.UpdateApply) ?? new SessionHoldAttempt(NoScope.Instance);
         if (attempt.Hold is not { } hold)
         {
@@ -919,32 +902,32 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        using (hold)
+        var status = UpdateOperationStatus.Failed;
+        try
         {
-            _exitRequested = true;
-            try
+            _window?.SetUpdateInstallInProgress();
+            status = await _updateService.RequestInstallAsync().ConfigureAwait(true);
+        }
+        finally
+        {
+            // KEPT ONLY WHEN THE STORE IS INSTALLING. Windows closes the app to apply the package, so
+            // the hold is parked until admission closes on the way out; a request that was declined or
+            // failed gives the session back at once and dictation resumes. An exit that began while the
+            // Store was asked has already closed admission, and its shutdown is waiting for this hold.
+            if (status == UpdateOperationStatus.Installing && !_exitRequested && !_disposed)
             {
-                if (!_updateService.TryApplyPendingAndRestart())
-                {
-                    _exitRequested = false;
-                    _window?.SetUpdateStatus(new UpdateOperationResult(UpdateOperationStatus.Failed));
-                    return;
-                }
+                _updateInstallHold = hold;
             }
-            catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+            else
             {
-                _exitRequested = false;
-                _window?.SetUpdateStatus(new UpdateOperationResult(UpdateOperationStatus.Failed));
-                return;
+                hold.Dispose();
             }
-
-            // ADMISSION CLOSES INSIDE THE HOLD. The restart is going to happen; a key that lands between
-            // the hold going back and the exit path closing admission would otherwise be admitted.
-            _sessionCoordinator?.Close();
         }
 
-        await PrepareForExitAsync().ConfigureAwait(true);
-        Exit();
+        if (!_exitRequested && !_disposed)
+        {
+            _window?.SetUpdateStatus(new UpdateOperationResult(status));
+        }
     }
 
     private void ApplyOverlayUatState()
@@ -1129,7 +1112,14 @@ public partial class App : Application, IAsyncDisposable
     /// and after the heartbeat, joined under Quiesce, which does too.
     /// </remarks>
     private LifetimeParts LifetimeParts() => new(
-        CloseAdmission: () => _sessionCoordinator?.Close(),
+        CloseAdmission: () =>
+        {
+            _sessionCoordinator?.Close();
+            // AFTER THE CLOSE, NOT BEFORE. An installing update keeps the session until the app leaves;
+            // once admission is closed nothing can take it, and a hold still out would make the session's
+            // shutdown wait its whole budget and report the exit unclean.
+            Interlocked.Exchange(ref _updateInstallHold, null)?.Dispose();
+        },
         DrainPresentation: () => _presentation?.DrainAsync() ?? Task.CompletedTask,
         ShellClosing: () =>
         {
@@ -2289,10 +2279,10 @@ public partial class App : Application, IAsyncDisposable
                 "View progress",
                 PillActionKind.OpenFileTranscription,
                 "Open Transcribe a File to watch its progress or stop it")),
-        SessionHolder.UpdateCheck => DictationStatus.Busy("Checking for updates. Please wait."),
         SessionHolder.LastDictationReuse => DictationStatus.Busy("Pasting your last dictation. Please wait."),
-        // THE APP IS RESTARTING INTO THE UPDATE; a notice now would be drawn over a window about to close.
-        SessionHolder.UpdateApply => null,
+        // SAID, BECAUSE THE HOLD NOW LASTS. The Store's prompt and download run inside it, which can be
+        // minutes, and a press refused in silence for that long reads as a broken key.
+        SessionHolder.UpdateApply => DictationStatus.Busy("Installing an update. Please wait."),
         _ => null,
     };
 

@@ -25,7 +25,8 @@ or its draft pull requests is approved for public distribution.
   opt-in and sends text only to the provider selected by the user; audio never leaves the PC.
 - Onboarding, overlay, tray, settings, history, dictionary, snippets, import/export, updates, diagnostics,
   accessibility, and localization foundations.
-- Self-contained Velopack founder, beta, and stable identities with isolated data and update channels.
+- Ships through the Microsoft Store, which signs the package and delivers updates; the app asks the Store
+  to install one only while dictation is idle.
 
 ## Current measured evidence
 
@@ -65,15 +66,6 @@ The production executable after a Release/x64 build is under:
 src/Production/EnviousWispr.App/bin/x64/Release/net10.0-windows10.0.26100.0/win-x64/
 ```
 
-Unsigned packaging is only for isolated installer UAT. Production packaging fails closed unless approved
-Azure Artifact Signing metadata is supplied:
-
-```powershell
-pwsh -NoProfile -File .\scripts\package-windows.ps1 `
-  -Version <version> -Channel founder `
-  -AzureTrustedSignFile <secure-signing-metadata>
-```
-
 Never commit signing metadata, credentials, model weights, private machine paths, audio, transcripts, or
 user content.
 
@@ -91,9 +83,9 @@ models/                    local model packs, ignored by Git
 
 ## Release status
 
-The direct installer is the primary distribution path; Microsoft Store/MSIX is a later secondary option.
-Draft release gates exist, but public release still requires a valid Envious Labs signature, immutable HTTPS
-feeds, clean-machine install/update/rollback/uninstall, representative laptop and target-app evidence,
+The Microsoft Store is the only distribution channel: Microsoft signs the MSIX package and delivers updates,
+and no direct download is offered. Draft release gates exist, but public release still requires Store
+certification, clean-machine install/update/uninstall, representative laptop and target-app evidence,
 reviewed model/CUDA licenses, security and privacy review, private-beta daily use, and Saurabh's explicit
 approval for the exact release candidate. Pull requests are never merged automatically.
 

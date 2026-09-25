@@ -44,7 +44,6 @@ public sealed record SessionCommandResult(
 /// <summary>What is holding the session when it is not a dictation.</summary>
 public enum SessionHolder
 {
-    UpdateCheck,
     UpdateApply,
     LastDictationReuse,
     FileTranscription,

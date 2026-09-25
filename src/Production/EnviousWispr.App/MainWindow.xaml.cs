@@ -192,6 +192,13 @@ public sealed partial class MainWindow : Window, IDisposable
     private readonly WindowPresentationSession _session;
 
     private readonly bool _telemetryAvailable;
+
+    // Whether this copy came from the Microsoft Store; an unpackaged copy has nothing to check.
+    private readonly bool _storeInstalled;
+
+    // Whether the last Store answer offered an update. A busy refusal leaves it as it was, so the
+    // person can install once the dictation or the file has finished without checking again.
+    private bool _updateOffered;
     private readonly DictationOverlayWindow _overlayWindow;
     private readonly RecordingSoundCuePlayer _recordingSoundPlayer = new();
     private readonly RecordingSoundCueCoordinator _recordingSoundCoordinator;
@@ -248,8 +255,8 @@ public sealed partial class MainWindow : Window, IDisposable
         _telemetryAvailable = launch.TelemetryAvailable;
         var settingsLoadStatus = launch.SettingsLoadStatus;
         var releaseIdentity = launch.ReleaseIdentity;
-        var updateConfigured = launch.UpdateConfigured;
-        var currentVersion = launch.CurrentVersion;
+        _storeInstalled = launch.StoreInstalled;
+        var installedVersion = launch.InstalledVersion;
 
         InitializeComponent();
 
@@ -364,10 +371,10 @@ public sealed partial class MainWindow : Window, IDisposable
             ReleaseNotesMark.IsUnread(settings.LastSeenReleaseNotes, _releaseNotesIdentity));
         SetLiveText(
             UpdateStatusText,
-    updateConfigured
-                ? $"Installed {releaseIdentity.ChannelName} version {currentVersion}. Updates are downloaded only while dictation is idle and must pass SHA-256 plus Envious Labs publisher verification before apply."
-                : $"This {releaseIdentity.ChannelName} build has no update endpoint configured. It will not contact an update server.");
-        CheckForUpdatesButton.IsEnabled = updateConfigured;
+            _storeInstalled
+                ? $"Version {installedVersion} is installed from the Microsoft Store."
+                : NotFromStoreSentence);
+        CheckForUpdatesButton.IsEnabled = _storeInstalled;
         if (settingsLoadStatus is SettingsLoadStatus.Invalid or SettingsLoadStatus.Migrated)
         {
             FoundationInfoBar.Message += " Previous settings were recovered safely.";
@@ -637,40 +644,54 @@ public sealed partial class MainWindow : Window, IDisposable
             _settings.Preferences.RecordingSoundPairing);
     }
 
+    private const string NotFromStoreSentence =
+        "This copy of EnviousWispr was not installed from the Microsoft Store, so it cannot check for updates.";
+
     public void SetUpdateCheckInProgress()
     {
         CheckForUpdatesButton.IsEnabled = false;
         ApplyUpdateButton.IsEnabled = false;
-        SetLiveText(UpdateStatusText, "Checking the isolated signed update channel and staging any newer version…");
+        SetLiveText(UpdateStatusText, "Checking the Microsoft Store for updates…");
+    }
+
+    public void SetUpdateInstallInProgress()
+    {
+        CheckForUpdatesButton.IsEnabled = false;
+        ApplyUpdateButton.IsEnabled = false;
+        SetLiveText(UpdateStatusText, "Asking the Microsoft Store to install the update…");
     }
 
     public void SetUpdateStatus(UpdateOperationResult result)
     {
-        CheckForUpdatesButton.IsEnabled = result.Status is not UpdateOperationStatus.NotConfigured;
-        ApplyUpdateButton.IsEnabled = result.CanApply;
+        // A BUSY REFUSAL CHANGES NOTHING ABOUT WHAT THE STORE OFFERED. Every other answer is the Store's
+        // latest word, and only an available update can be installed.
+        if (result.Status is not (UpdateOperationStatus.BusyDictating or UpdateOperationStatus.BusyTranscribingFile))
+        {
+            _updateOffered = result.CanApply;
+        }
+
+        // WINDOWS IS ABOUT TO CLOSE THE APP ONCE THE STORE IS INSTALLING, so nothing is offered after it.
+        var installing = result.Status == UpdateOperationStatus.Installing;
+        CheckForUpdatesButton.IsEnabled = _storeInstalled && !installing;
+        ApplyUpdateButton.IsEnabled = _storeInstalled && _updateOffered && !installing;
         SetLiveText(
             UpdateStatusText,
-    result.Status switch
+            result.Status switch
             {
+                UpdateOperationStatus.NotPackaged => NotFromStoreSentence,
                 UpdateOperationStatus.BusyDictating =>
-                    "Finish or cancel the active dictation before checking or applying an update.",
+                    "Finish or cancel your dictation, then choose Install update.",
                 UpdateOperationStatus.BusyTranscribingFile =>
-                    "A file is being transcribed. Let it finish or stop it, then try the update again.",
+                    "A file is being transcribed. Let it finish or stop it, then choose Install update.",
                 UpdateOperationStatus.NoUpdate =>
-                    $"Version {result.Version} is current on this isolated channel.",
-                UpdateOperationStatus.DownloadedAndVerified =>
-                    $"Version {result.Version} is staged and verified. Apply it when you are ready to restart.",
-                UpdateOperationStatus.DevelopmentBuild =>
-                    "Updates can only be checked from a Velopack-installed build.",
-                UpdateOperationStatus.NotConfigured =>
-                    "No update endpoint is configured; no network request was made.",
-                UpdateOperationStatus.RejectedHash =>
-                    "The update hash did not match. It was rejected and will not run.",
-                UpdateOperationStatus.RejectedSignature or UpdateOperationStatus.RejectedPublisher =>
-                    "The update did not pass trusted Envious Labs publisher verification. It was rejected.",
-                UpdateOperationStatus.RejectedChannel =>
-                    "The update identity did not match this release channel. It was rejected.",
-                _ => "The update could not be prepared safely. The installed version is unchanged.",
+                    $"You have the latest version, {result.Version}.",
+                UpdateOperationStatus.UpdateAvailable =>
+                    $"Version {result.Version} is available. Choose Install update when you are not dictating.",
+                UpdateOperationStatus.Installing =>
+                    "The Microsoft Store is installing the update. Windows will close EnviousWispr while it updates.",
+                UpdateOperationStatus.Cancelled =>
+                    "The update was not installed. Check for updates again when you are ready.",
+                _ => "The Microsoft Store could not finish that. Your current version is unchanged. Try again later.",
             });
     }
 

@@ -13,14 +13,14 @@ namespace EnviousWispr.Presentation;
 /// <param name="SettingsLoadStatus">How the settings were read at launch: loaded, created, migrated, recovered.</param>
 /// <param name="TelemetryAvailable">Whether this build can share anonymous telemetry at all.</param>
 /// <param name="ReleaseIdentity">The product name and channel this build carries.</param>
-/// <param name="UpdateConfigured">Whether an update endpoint is configured for this channel.</param>
-/// <param name="CurrentVersion">The version installed, as the updater reports it.</param>
+/// <param name="StoreInstalled">Whether this copy was installed from the Microsoft Store, and so can check it for updates.</param>
+/// <param name="InstalledVersion">The installed package's version, or null for a copy without package identity.</param>
 public sealed record WindowLaunch(
     SettingsLoadStatus SettingsLoadStatus,
     bool TelemetryAvailable,
     ReleaseIdentity ReleaseIdentity,
-    bool UpdateConfigured,
-    string CurrentVersion);
+    bool StoreInstalled,
+    string? InstalledVersion);
 
 /// <summary>The services the shell hands the window's presentation session: stores it does not own, and the factories for what the session opens itself.</summary>
 /// <param name="SettingsStore">The settings file; the session's one writer sits over it.</param>

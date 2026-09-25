@@ -5,25 +5,6 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
-Write-Host "Validating the private-beta release gate and deliberately red evidence example..."
-$releaseGatePath = Join-Path $repoRoot "scripts\validate-release-candidate.ps1"
-$parseErrors = $null
-[void][System.Management.Automation.Language.Parser]::ParseFile(
-    $releaseGatePath,
-    [ref]$null,
-    [ref]$parseErrors)
-if ($parseErrors.Count -gt 0) {
-    throw "The private-beta release gate has PowerShell parse errors."
-}
-$redEvidence = Get-Content `
-    -LiteralPath (Join-Path $repoRoot "docs\distribution\private-beta-evidence.example.json") `
-    -Raw | ConvertFrom-Json -ErrorAction Stop
-if (@($redEvidence.checks.PSObject.Properties.Value | Where-Object { $_ -ne 'unobserved' }).Count -gt 0 -or
-    @($redEvidence.approvals.PSObject.Properties.Value | Where-Object { $_ -ne $false }).Count -gt 0 -or
-    @($redEvidence.blockerIssueNumbers).Count -eq 0) {
-    throw "The checked-in private-beta evidence example must remain explicitly unobserved and blocked."
-}
-
 Write-Host "Validating public-release repository compliance..."
 & pwsh -NoProfile -File (Join-Path $repoRoot "scripts\audit-public-release.ps1")
 if ($LASTEXITCODE -ne 0) {

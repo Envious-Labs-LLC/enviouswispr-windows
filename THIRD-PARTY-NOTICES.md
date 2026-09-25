@@ -31,7 +31,6 @@ the result. Canonical validation rejects missing license metadata or notice drif
 | System.CodeDom | 10.0.11 | expression: MIT | not-applicable |
 | System.Management | 10.0.11 | expression: MIT | not-applicable |
 | System.Numerics.Tensors | 9.0.0 | expression: MIT | not-applicable |
-| Velopack | 1.2.0 | expression: MIT | not-applicable |
 | Whisper.net | 1.9.1 | file: embedded package file LICENSE | D9CA846BBB028D80A87027B886DC7DB63BA22DFC6A5E17C4AACE03F62AB644EC |
 | Whisper.net.Runtime | 1.9.1 | expression: MIT | not-applicable |
 | Whisper.net.Runtime.Cuda.Windows | 1.9.1 | expression: MIT | not-applicable |
