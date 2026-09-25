@@ -350,6 +350,9 @@ public partial class App : Application, IAsyncDisposable
         _window.ModelDownloadCancelRequested += OnModelDownloadCancelRequested;
         _window.KeybindCaptureActiveChanged += OnKeybindCaptureActiveChanged;
         _window.TranscribeFile = TranscribeFileAsync;
+        _window.ExportUserData = ExportUserDataAsync;
+        _window.DeleteAllData = DeleteAllData;
+        ReportDataDeletionLeftover(_window);
         _window.SpeedCheckRequested += OnSpeedCheckRequested;
         _window.MishearingSuggestionsRequested += OnMishearingSuggestionsRequested;
         _window.AppWindow.Closing += OnAppWindowClosing;
@@ -1108,7 +1111,7 @@ public partial class App : Application, IAsyncDisposable
 
     /// <summary>The lifetime, built once; its parts read the shell's fields at the step, not at the build.</summary>
     private ApplicationLifetime Lifetime() =>
-        _lifetime ??= new ApplicationLifetime(LifetimeParts(), _logger, TimeProvider.System, new HostTerminator());
+        _lifetime ??= new ApplicationLifetime(LifetimeParts(), _logger, TimeProvider.System, new HostTerminator(EraseDataDirectory));
 
     /// <summary>
     /// The shell's steps of leaving, in the order the lifetime runs them. What each touches is the
@@ -1130,6 +1133,8 @@ public partial class App : Application, IAsyncDisposable
             // once admission is closed nothing can take it, and a hold still out would make the session's
             // shutdown wait its whole budget and report the exit unclean.
             Interlocked.Exchange(ref _updateInstallHold, null)?.Dispose();
+            // The deletion's hold likewise: it was kept so no press could start a recording on the way out.
+            Interlocked.Exchange(ref _dataDeletionHold, null)?.Dispose();
         },
         DrainPresentation: () => _presentation?.DrainAsync() ?? Task.CompletedTask,
         ShellClosing: () =>
@@ -1346,11 +1351,28 @@ public partial class App : Application, IAsyncDisposable
     /// still running, holding whatever it holds; the log has said so and been closed; the next launch
     /// reads an interrupted run. The exit code is the escalation's own, so a harness can tell it apart.
     /// </summary>
-    private sealed class HostTerminator : IHostTerminator
+    /// <remarks>
+    /// THE DELETION IS NOT DROPPED BECAUSE THE EXIT WAS NOT CLEAN. The person asked for their data to be
+    /// removed and was told the app would close to do it; an exit that escalates still reaches here, so the
+    /// folder is emptied as far as it can be, and whatever was still held is counted for the next launch.
+    /// </remarks>
+    private sealed class HostTerminator(Action beforeExit) : IHostTerminator
     {
         public const int ExitCode = 70;
 
-        public void Terminate(ExitReport report) => Environment.Exit(ExitCode);
+        public void Terminate(ExitReport report)
+        {
+            try
+            {
+                beforeExit();
+            }
+            catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+            {
+                // The process is ending either way; a failure here must not stop it ending.
+            }
+
+            Environment.Exit(ExitCode);
+        }
     }
 
     private void ConfigurePushToTalk(DictationPreferences preferences)
@@ -2294,6 +2316,9 @@ public partial class App : Application, IAsyncDisposable
         // SAID, BECAUSE THE HOLD NOW LASTS. The Store's prompt and download run inside it, which can be
         // minutes, and a press refused in silence for that long reads as a broken key.
         SessionHolder.UpdateApply => DictationStatus.Busy("Installing an update. Please wait."),
+        // SAID FOR THE SAME REASON: the exit and the deletion run inside the hold, and a press refused in
+        // silence then reads as a broken key rather than an app on its way out.
+        SessionHolder.DataDeletion => DictationStatus.Busy("Deleting your EnviousWispr data. Please wait."),
         _ => null,
     };
 

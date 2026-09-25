@@ -868,6 +868,55 @@ public sealed class DictationSessionCoordinatorTests
         Assert.Equal(SessionHolder.FileTranscription, second.HeldBy);
     }
 
+    /// <summary>"Delete all EnviousWispr data" holds the session like the others, and is refused like them. Ref: #42.</summary>
+    [Fact]
+    public async Task TheDataDeletionHoldRefusesAPressAndIsRefusedWhileADictationOrAFileHasTheSession()
+    {
+        // HELD: a press is Busy and names the deletion, and nothing else can take the session.
+        var executor = new BarrierExecutor();
+        await using (var coordinator = new DictationSessionCoordinator(executor))
+        {
+            var hold = coordinator.TryHold(SessionHolder.DataDeletion).Hold;
+            Assert.NotNull(hold);
+            Assert.Equal(SessionHolder.DataDeletion, coordinator.HeldBy);
+
+            var press = await coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+            Assert.Equal(SessionCommandDisposition.Busy, press.Disposition);
+            Assert.Equal(SessionHolder.DataDeletion, press.BusyHolder);
+            Assert.Empty(executor.Seen);
+            var file = coordinator.TryHold(SessionHolder.FileTranscription);
+            Assert.Null(file.Hold);
+            Assert.Equal(SessionHoldRefusal.Held, file.Refusal);
+            Assert.Equal(SessionHolder.DataDeletion, file.HeldBy);
+            hold.Dispose();
+        }
+
+        // REFUSED FOR A DICTATION: a recording in flight keeps its files, and the deletion does not start.
+        var recording = new BarrierExecutor();
+        await using (var coordinator = new DictationSessionCoordinator(recording))
+        {
+            var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+            await recording.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+            var refused = coordinator.TryHold(SessionHolder.DataDeletion);
+            Assert.Null(refused.Hold);
+            Assert.Equal(SessionHoldRefusal.Dictation, refused.Refusal);
+            Assert.Null(coordinator.HeldBy);
+            recording.Finish(PushToTalkSignal.Pressed);
+            await press.WaitAsync(Patience);
+        }
+
+        // REFUSED FOR A FILE: the file is named, not blamed on a dictation.
+        await using (var coordinator = new DictationSessionCoordinator(new BarrierExecutor()))
+        {
+            using var file = coordinator.TryHold(SessionHolder.FileTranscription).Hold;
+            Assert.NotNull(file);
+            var refused = coordinator.TryHold(SessionHolder.DataDeletion);
+            Assert.Null(refused.Hold);
+            Assert.Equal(SessionHoldRefusal.Held, refused.Refusal);
+            Assert.Equal(SessionHolder.FileTranscription, refused.HeldBy);
+        }
+    }
+
     [Fact]
     public async Task AHoldRefusedForADictationSaysSo()
     {

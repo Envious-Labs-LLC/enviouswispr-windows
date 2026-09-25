@@ -47,6 +47,9 @@ public enum SessionHolder
     UpdateApply,
     LastDictationReuse,
     FileTranscription,
+
+    /// <summary>"Delete all EnviousWispr data" is running: held from the confirmation until the app has left.</summary>
+    DataDeletion,
 }
 
 /// <summary>Why a hold was refused.</summary>

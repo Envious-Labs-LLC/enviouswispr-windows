@@ -91,6 +91,47 @@ public sealed class WindowsCredentialApiKeyStoreTests
         }
     }
 
+    /// <summary>"Delete all EnviousWispr data" removes this store's keys and nothing outside its namespace. Ref: #42.</summary>
+    /// <remarks>
+    /// THE PRODUCTION PREFIX IS THE STEM OF EVERY UAT ONE, and Windows matches a filter as "prefix.*", so a
+    /// deeper namespace comes back from the same enumeration. It must survive, as must a target that merely
+    /// starts with the same characters without the separating dot.
+    /// </remarks>
+    [CredentialManagerFact]
+    public void DeleteAllRemovesThisNamespaceOnlyAndLeavesDeeperAndLookalikeTargets()
+    {
+        var prefix = $"EnviousLabs.EnviousWispr.Tests.{Guid.NewGuid():N}";
+        var store = new WindowsCredentialApiKeyStore(prefix);
+        var deeper = new WindowsCredentialApiKeyStore($"{prefix}.Uat.other");
+        var lookalike = new WindowsCredentialApiKeyStore($"{prefix}X");
+        try
+        {
+            store.Store(PolishProvider.OpenAI, "store-openai");
+            store.Store(PolishProvider.Gemini, "store-gemini");
+            deeper.Store(PolishProvider.OpenAI, "deeper-openai");
+            lookalike.Store(PolishProvider.Anthropic, "lookalike-anthropic");
+            Assert.Equal(
+                [$"{prefix}.Gemini", $"{prefix}.OpenAI"],
+                store.OwnedTargets().Order(StringComparer.Ordinal).ToArray());
+
+            Assert.Equal(0, store.DeleteAll());
+
+            Assert.Equal(ApiKeyReadStatus.Missing, store.GetStatus(PolishProvider.OpenAI));
+            Assert.Equal(ApiKeyReadStatus.Missing, store.GetStatus(PolishProvider.Gemini));
+            Assert.Empty(store.OwnedTargets());
+            Assert.Equal("deeper-openai", deeper.Read(PolishProvider.OpenAI).Value);
+            Assert.Equal("lookalike-anthropic", lookalike.Read(PolishProvider.Anthropic).Value);
+            Assert.Equal(0, store.DeleteAll());
+        }
+        finally
+        {
+            store.Delete(PolishProvider.OpenAI);
+            store.Delete(PolishProvider.Gemini);
+            deeper.Delete(PolishProvider.OpenAI);
+            lookalike.Delete(PolishProvider.Anthropic);
+        }
+    }
+
     [Fact]
     public void NonCloudProvidersAreRejectedBeforeCallingWindows()
     {
