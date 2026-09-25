@@ -237,7 +237,9 @@ public sealed class DeterministicTextPipelineTests
         const string polished = "Send EnviousWispr the color version at 3:30.";
         var production = DeterministicTextPipeline.DefaultSteps().Single(step => step.Stage == stage);
         using var release = new ManualResetEventSlim(false);
-        var overrunning = new OverrunningStep(production, release);
+        using var entered = new ManualResetEventSlim(false);
+        using var finished = new ManualResetEventSlim(false);
+        var overrunning = new OverrunningStep(production, release, entered, finished);
         var request = new DeterministicTextRequest(
             new Transcript(DictationSessionId.Create(), spoken, "test", DetectedLanguage: "en"),
             [new CustomWordEntry("envy wisper", "EnviousWispr")],
@@ -267,6 +269,9 @@ public sealed class DeterministicTextPipelineTests
                 lastValid = spoken;
             }
 
+            // THE HELD STEP REALLY RAN. Without this, a worker still queued at its deadline would time out
+            // without ever reaching the gate, and every assertion below would pass having tested nothing.
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(10)), "The held production step never started.");
             var receipt = result.Receipts.Single(candidate => candidate.Stage == stage);
             Assert.Equal(DeterministicStageStatus.TimedOut, receipt.Status);
             Assert.Equal(lastValid, result.Output.Text);
@@ -282,6 +287,11 @@ public sealed class DeterministicTextPipelineTests
         finally
         {
             release.Set();
+            // The worker is let go and seen to finish before the gates it uses are disposed.
+            if (entered.IsSet)
+            {
+                finished.Wait(Patience);
+            }
         }
     }
 
@@ -960,7 +970,11 @@ public sealed class DeterministicTextPipelineTests
         string Slice);
 
     /// <summary>A production step whose work is held on a gate the test owns; its deadline is the production one.</summary>
-    private sealed class OverrunningStep(IDeterministicTextStep production, ManualResetEventSlim release) : IDeterministicTextStep
+    private sealed class OverrunningStep(
+        IDeterministicTextStep production,
+        ManualResetEventSlim release,
+        ManualResetEventSlim entered,
+        ManualResetEventSlim finished) : IDeterministicTextStep
     {
         public DeterministicTextStage Stage => production.Stage;
 
@@ -970,8 +984,16 @@ public sealed class DeterministicTextPipelineTests
 
         public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
         {
-            release.Wait(Patience, CancellationToken.None); // A hung stage: it ignores its deadline.
-            return production.Process(context, CancellationToken.None);
+            try
+            {
+                entered.Set();
+                release.Wait(Patience, CancellationToken.None); // A hung stage: it ignores its deadline.
+                return production.Process(context, CancellationToken.None);
+            }
+            finally
+            {
+                finished.Set();
+            }
         }
     }
 
