@@ -1,3 +1,5 @@
+using EnviousWispr.Core.Input;
+
 namespace EnviousWispr.Core.Settings;
 
 public enum FinalAsrEngine
@@ -124,8 +126,47 @@ public sealed record DictationPreferences(
     string QuickAddGesture = "Ctrl+Alt+W",
     bool AutoStopEnabled = false,
     double AutoStopSilenceSeconds = 2.0,
-    EnglishSpelling EnglishSpelling = EnglishSpelling.American)
+    EnglishSpelling EnglishSpelling = EnglishSpelling.American,
+    string PasteLastGesture = DictationPreferences.DefaultPasteLastGesture,
+    string CopyLastGesture = "")
 {
+    /// <summary>Paste Last Dictation's default: Wispr Flow's Windows binding for the same action. Ref: #206.</summary>
+    /// <remarks>
+    /// Measured before it was chosen (issue #206): consuming the Z of Alt+Shift+Z let Windows' Alt+Shift layout toggle
+    /// fire once in eight runs, and never with the masking key the hook sends; Ctrl+Alt+V is Paste Special in Office
+    /// and AltGr+V is "@" in Hungarian. Copy Last has no default: the tray carries it until someone binds one.
+    /// </remarks>
+    public const string DefaultPasteLastGesture = "Alt+Shift+Z";
+
+    /// <summary>
+    /// The last-dictation shortcuts with any that would clash with a required key left unset.
+    /// </summary>
+    /// <remarks>
+    /// FOR A FILE WRITTEN BEFORE THESE SHORTCUTS EXISTED. It gains the Alt+Shift+Z default on load, and somebody who
+    /// had already given Alt+Shift+Z to recording, cancel or Add-a-word would then hold a file the validator refuses
+    /// - which resets every setting they have. Their own binding wins; Paste Last starts unset. Ref: #206.
+    /// </remarks>
+    public DictationPreferences WithoutClashingLastDictationShortcuts()
+    {
+        var required = new[] { PushToTalkGesture, CancelGesture, QuickAddGesture }
+            .Select(value => HotkeyGestureParser.Parse(value).Gesture)
+            .ToArray();
+        string Settled(string value) =>
+            HotkeyGestureParser.ParseOptional(value).Gesture is { } gesture && required.Contains(gesture)
+                ? string.Empty
+                : value;
+
+        var paste = Settled(PasteLastGesture);
+        var copy = Settled(CopyLastGesture);
+        if (!string.IsNullOrEmpty(copy) &&
+            HotkeyGestureParser.ParseOptional(copy).Gesture == HotkeyGestureParser.ParseOptional(paste).Gesture)
+        {
+            copy = string.Empty;
+        }
+
+        return this with { PasteLastGesture = paste, CopyLastGesture = copy };
+    }
+
     public static DictationPreferences Default { get; } = new(
         FinalAsrEngine.Automatic,
         "F8",

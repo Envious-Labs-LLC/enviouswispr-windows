@@ -522,12 +522,12 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     /// </summary>
     public Task<SessionCommandResult> SubmitAsync(PushToTalkSignal signal, DictationSessionId? forSession)
     {
-        if (signal == PushToTalkSignal.QuickAdd)
+        if (signal is PushToTalkSignal.QuickAdd or PushToTalkSignal.PasteLast or PushToTalkSignal.CopyLast)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(signal),
                 signal,
-                "Quick add is not a dictation session command.");
+                "Quick add and the last-dictation shortcuts are not dictation session commands.");
         }
 
         return Submit(new SessionCommand(signal) with { ForSession = forSession });

@@ -103,6 +103,16 @@ public sealed class WindowsTrayIcon : IDisposable
     /// <summary>The menu is opening; the app reads the history and answers with <see cref="SetLastDictationPreview"/>.</summary>
     public event Action? LastDictationPreviewRequested;
 
+    /// <summary>Shows each item's shortcut beside it, or nothing for one that is unset or not listening. Ref: #206.</summary>
+    public void SetLastDictationShortcuts(string? pasteShortcut, string? copyShortcut)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _pasteLast.ShortcutKeyDisplayString = pasteShortcut ?? string.Empty;
+        _copyLast.ShortcutKeyDisplayString = copyShortcut ?? string.Empty;
+        _pasteLast.ShowShortcutKeys = !string.IsNullOrEmpty(pasteShortcut);
+        _copyLast.ShowShortcutKeys = !string.IsNullOrEmpty(copyShortcut);
+    }
+
     /// <summary>Names the dictation the two items would reuse, or disables them when there is none.</summary>
     /// <remarks>
     /// PUSHED, NOT READ WHEN THE MENU OPENS: the menu opens synchronously and the history is on disk, so

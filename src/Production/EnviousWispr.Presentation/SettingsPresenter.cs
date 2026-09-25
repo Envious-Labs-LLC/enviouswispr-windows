@@ -102,7 +102,9 @@ public sealed record GeneralSettingsInput(
     double DiagnosticRetentionDays,
     bool ShareTelemetry,
     bool TelemetryAvailable,
-    string? MicrophoneId);
+    string? MicrophoneId,
+    string PasteLastShortcut,
+    string CopyLastShortcut);
 
 /// <summary>Which shortcut field a General save found wanting, for the window to put the focus in.</summary>
 public enum GeneralShortcutField
@@ -111,6 +113,8 @@ public enum GeneralShortcutField
     Recording,
     Cancel,
     QuickAdd,
+    PasteLast,
+    CopyLast,
 }
 
 /// <summary>How a General save went.</summary>
@@ -277,6 +281,16 @@ public sealed class SettingsPresenter : IDisposable
                         : GeneralShortcutField.QuickAdd);
         }
 
+        // THE LAST-DICTATION SHORTCUTS MAY BE LEFT EMPTY, and otherwise need an ordinary key (#206).
+        var pasteLast = HotkeyGestureParser.ParseOneShot(input.PasteLastShortcut);
+        var copyLast = HotkeyGestureParser.ParseOneShot(input.CopyLastShortcut);
+        if (!pasteLast.Succeeded || !copyLast.Succeeded)
+        {
+            return new GeneralSaveOutcome(
+                GeneralSaveStatus.InvalidShortcut,
+                InvalidField: !pasteLast.Succeeded ? GeneralShortcutField.PasteLast : GeneralShortcutField.CopyLast);
+        }
+
         var clashes = HotkeyConflictDetector.Find(ShortcutRoles(input));
         if (clashes.Count > 0)
         {
@@ -297,7 +311,9 @@ public sealed class SettingsPresenter : IDisposable
             quickAdd.Gesture!.Value.ToString(),
             input.AutoStop,
             double.IsNaN(input.AutoStopSeconds) ? DictationPreferences.Default.AutoStopSilenceSeconds : input.AutoStopSeconds,
-            (EnglishSpelling)Math.Clamp(Chosen(input.EnglishSpellingIndex), 0, 1));
+            (EnglishSpelling)Math.Clamp(Chosen(input.EnglishSpellingIndex), 0, 1),
+            pasteLast.Gesture?.ToString() ?? string.Empty,
+            copyLast.Gesture?.ToString() ?? string.Empty);
         var polish = new PolishPreferences(
             PolishProviderFromIndex(Chosen(input.PolishProviderIndex)),
             NullIfBlank(input.PolishModel),
@@ -345,14 +361,26 @@ public sealed class SettingsPresenter : IDisposable
     public static (string Role, string Text)[] ShortcutRoles(GeneralSettingsInput input)
     {
         ArgumentNullException.ThrowIfNull(input);
-        return ShortcutRoles(input.RecordingShortcut, input.CancelShortcut, input.QuickAddShortcut);
+        return ShortcutRoles(
+            input.RecordingShortcut,
+            input.CancelShortcut,
+            input.QuickAddShortcut,
+            input.PasteLastShortcut,
+            input.CopyLastShortcut);
     }
 
-    public static (string Role, string Text)[] ShortcutRoles(string recording, string cancel, string quickAdd) =>
+    public static (string Role, string Text)[] ShortcutRoles(
+        string recording,
+        string cancel,
+        string quickAdd,
+        string pasteLast,
+        string copyLast) =>
     [
         ("Recording", recording),
         ("Cancel", cancel),
         ("Add-a-word", quickAdd),
+        ("Paste last dictation", pasteLast),
+        ("Copy last dictation", copyLast),
     ];
 
     /// <summary>The theme a choice index means; the window applies a theme the moment it is chosen and needs the same map.</summary>

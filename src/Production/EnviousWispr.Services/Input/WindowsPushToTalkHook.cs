@@ -63,9 +63,15 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
         DictationRecordingMode recordingMode,
         uint virtualKey,
         uint cancelVirtualKey,
-        uint quickAddVirtualKey)
+        uint quickAddVirtualKey,
+        OptionalShortcut pasteLast,
+        OptionalShortcut copyLast)
     {
         Gesture = gesture;
+        PasteLastGesture = pasteLast.Gesture;
+        PasteLastState = pasteLast.State;
+        CopyLastGesture = copyLast.Gesture;
+        CopyLastState = copyLast.State;
         CancelGesture = cancelGesture;
         QuickAddGesture = quickAddGesture;
         RecordingMode = recordingMode;
@@ -74,7 +80,9 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
             new HotkeyBinding(cancelVirtualKey, cancelGesture.Modifiers),
             new HotkeyBinding(quickAddVirtualKey, quickAddGesture.Modifiers),
             recordingMode,
-            KeyboardLayoutTyping.TypesInForegroundLayout);
+            KeyboardLayoutTyping.TypesInForegroundLayout,
+            pasteLast.Binding,
+            copyLast.Binding);
         _procedure = HookCallback;
         _dispatchTask = Task.Run(DispatchAsync);
 
@@ -113,6 +121,16 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
 
     public HotkeyGesture QuickAddGesture { get; }
 
+    /// <summary>Paste Last Dictation's shortcut, when it is listening.</summary>
+    public HotkeyGesture? PasteLastGesture { get; }
+
+    public LastDictationShortcutState PasteLastState { get; }
+
+    /// <summary>Copy Last Dictation's shortcut, when it is listening.</summary>
+    public HotkeyGesture? CopyLastGesture { get; }
+
+    public LastDictationShortcutState CopyLastState { get; }
+
     public DictationRecordingMode RecordingMode { get; }
 
     public bool IsInstalled => _hook != 0;
@@ -133,6 +151,31 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
         DictationRecordingMode recordingMode,
         string configuredCancelGesture,
         string configuredQuickAddGesture,
+        out WindowsPushToTalkHook? hook,
+        out AppError? error) =>
+        TryCreate(
+            configuredGesture,
+            recordingMode,
+            configuredCancelGesture,
+            configuredQuickAddGesture,
+            configuredPasteLastGesture: string.Empty,
+            configuredCopyLastGesture: string.Empty,
+            out hook,
+            out error);
+
+    /// <remarks>
+    /// THE LAST-DICTATION SHORTCUTS CAN NEVER COST THE RECORDING KEY. A required key that fails still fails the whole
+    /// hook, as before; an optional one that does not parse, clashes with another of the app's shortcuts, or is held
+    /// by another application is switched off on its own and says why in its state, and everything else listens.
+    /// Ref: #206.
+    /// </remarks>
+    public static bool TryCreate(
+        string configuredGesture,
+        DictationRecordingMode recordingMode,
+        string configuredCancelGesture,
+        string configuredQuickAddGesture,
+        string configuredPasteLastGesture,
+        string configuredCopyLastGesture,
         out WindowsPushToTalkHook? hook,
         out AppError? error)
     {
@@ -175,6 +218,15 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
             return false;
         }
 
+        var taken = new List<HotkeyGesture> { gesture, cancelGesture, quickAddGesture };
+        var pasteLast = ResolveOptional(configuredPasteLastGesture, taken);
+        if (pasteLast.Gesture is { } pasteGesture)
+        {
+            taken.Add(pasteGesture);
+        }
+
+        var copyLast = ResolveOptional(configuredCopyLastGesture, taken);
+
         try
         {
             hook = new WindowsPushToTalkHook(
@@ -184,7 +236,9 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
                 recordingMode,
                 virtualKey,
                 cancelVirtualKey,
-                quickAddVirtualKey);
+                quickAddVirtualKey,
+                pasteLast,
+                copyLast);
             error = null;
             return true;
         }
@@ -229,6 +283,14 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
         if (code >= 0 && IsKeyboardEdge(message))
         {
             var keyboard = Marshal.PtrToStructure<LowLevelKeyboardData>(data);
+
+            // OUR OWN KEYSTROKES, COMING BACK THROUGH - the mask, the clipboard route's Ctrl+V and Ctrl+C: handed on
+            // untouched, never offered to a binding. A person's key and another program's synthetic key carry no tag.
+            if (keyboard.ExtraInfo == MenuKeyMask.Tag)
+            {
+                return CallNextHookEx(_hook, code, message, data);
+            }
+
             var decision = _edgeTracker.Process(
                 keyboard.VirtualKey,
                 IsKeyDown(message),
@@ -236,6 +298,11 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
             if (decision.Signal is not null)
             {
                 _signals.Writer.TryWrite(decision.Signal.Value);
+            }
+
+            if (decision.MaskMenuKey)
+            {
+                MenuKeyMask.Send();
             }
 
             if (decision.Consume)
@@ -260,6 +327,48 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
                 // Subscribers cannot be allowed to tear down the native hook dispatch loop.
             }
         }
+    }
+
+    /// <summary>An optional shortcut as resolved: its state, and the gesture and binding when it is listening.</summary>
+    internal readonly record struct OptionalShortcut(
+        LastDictationShortcutState State,
+        HotkeyGesture? Gesture = null,
+        HotkeyBinding? Binding = null);
+
+    /// <summary>
+    /// A last-dictation shortcut needs an ordinary key: a modifier-only gesture has no key-down of its own to fire on,
+    /// and a lone modifier is a recording gesture's shape.
+    /// </summary>
+    internal static OptionalShortcut ResolveOptional(string? configured, IReadOnlyCollection<HotkeyGesture> taken)
+    {
+        var parsed = HotkeyGestureParser.ParseOneShot(configured);
+        if (parsed.Succeeded && parsed.Gesture is null)
+        {
+            return new OptionalShortcut(LastDictationShortcutState.Unset);
+        }
+
+        if (parsed.Gesture is not { } gesture ||
+            string.IsNullOrEmpty(gesture.Key) ||
+            !WindowsVirtualKeyMap.TryMap(gesture.Key, out var virtualKey) ||
+            HotkeyEdgeTracker.IsModifierKey(virtualKey))
+        {
+            return new OptionalShortcut(LastDictationShortcutState.Invalid);
+        }
+
+        if (taken.Contains(gesture))
+        {
+            return new OptionalShortcut(LastDictationShortcutState.Clashes);
+        }
+
+        if (ProbeConflict(gesture, virtualKey) is not null)
+        {
+            return new OptionalShortcut(LastDictationShortcutState.Unavailable);
+        }
+
+        return new OptionalShortcut(
+            LastDictationShortcutState.Bound,
+            gesture,
+            new HotkeyBinding(virtualKey, gesture.Modifiers));
     }
 
     private static AppError? ProbeConflict(HotkeyGesture gesture, uint virtualKey)
