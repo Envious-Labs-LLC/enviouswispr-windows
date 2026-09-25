@@ -103,8 +103,7 @@ public sealed partial class MainWindow
 
     private void ShowTranscribeFileStatus(string text)
     {
-        TranscribeFileStatusText.Text = text;
-        TranscribeFileStatusText.Visibility = Visibility.Visible;
+        SetLiveRegion(TranscribeFileStatusText, text, Visibility.Visible);
     }
 
     private void TranscribeFileCopyButton_Click(object sender, RoutedEventArgs e)

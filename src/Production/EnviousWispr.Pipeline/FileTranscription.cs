@@ -1,3 +1,4 @@
+using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 
@@ -118,6 +119,8 @@ public static class FileTranscriptionJob
         ArgumentNullException.ThrowIfNull(audio);
         ArgumentNullException.ThrowIfNull(environment);
         var sessionId = DictationSessionId.Create();
+        // ONE FILE IS ONE SESSION: every line its pieces and its clean-up write is joined to it.
+        using var scope = DictationScope.Begin(sessionId.Value);
         var texts = new List<string>();
         Transcript? first = null;
         var pieces = 0;
@@ -200,6 +203,7 @@ public static class FileTranscriptionJob
         FileTranscriptionEnvironment environment,
         CancellationToken cancellationToken)
     {
+        using var scope = DictationScope.Begin(piece.SessionId.Value);
         var retry = environment.RetryDelay ?? TimeSpan.FromMilliseconds(500);
         while (true)
         {

@@ -1266,7 +1266,18 @@ public sealed partial class DesignSystemTokenTests
                 continue;
             }
 
-            var text = File.ReadAllText(codeBehind);
+            // THE WHOLE CLASS, NOT ONE FILE OF IT. A window's code-behind can be split into partial
+            // files (MainWindow.TranscribeFile.cs), and a region written from one of those was
+            // invisible here: its direct writes were never seen, and its announcement was reported
+            // missing. Every file of the class is read as one. Ref: #211.
+            var stem = Path.GetFileNameWithoutExtension(markup);
+            var text = string.Join(
+                "\n",
+                new[] { codeBehind }
+                    .Concat(Directory.EnumerateFiles(Path.GetDirectoryName(markup)!, stem + ".*.cs")
+                        .Where(file => !string.Equals(file, codeBehind, StringComparison.OrdinalIgnoreCase))
+                        .Order(StringComparer.Ordinal))
+                    .Select(File.ReadAllText));
             foreach (var region in regions)
             {
                 // A DIRECT WRITE IS ONLY A DEFECT WHEN NOTHING ANNOUNCES THAT REGION BY NAME. Two
