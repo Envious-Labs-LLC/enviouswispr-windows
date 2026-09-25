@@ -290,7 +290,7 @@ public sealed class DeterministicTextPipelineTests
             // The worker is let go and seen to finish before the gates it uses are disposed.
             if (entered.IsSet)
             {
-                finished.Wait(Patience);
+                Assert.True(finished.Wait(Patience), "The released production step never finished; its gates would be disposed under it.");
             }
         }
     }
