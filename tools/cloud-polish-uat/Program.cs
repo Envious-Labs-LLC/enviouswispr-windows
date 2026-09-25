@@ -17,7 +17,7 @@ if (provider is null)
 // fetches it at the moment of use), and nothing here writes it to Credential Manager or prints it.
 var keyFromEnv = args.Contains("--key-from-env", StringComparer.OrdinalIgnoreCase);
 var keyVariable = ValueAfter("--key-from-env");
-if (keyFromEnv && (keyVariable is null || keyVariable.StartsWith("--", StringComparison.Ordinal)))
+if (keyFromEnv && (string.IsNullOrWhiteSpace(keyVariable) || keyVariable.StartsWith("--", StringComparison.Ordinal)))
 {
     Console.Error.WriteLine("--key-from-env needs the name of the environment variable that holds the key.");
     return 2;
