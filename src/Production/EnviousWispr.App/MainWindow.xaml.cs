@@ -1904,25 +1904,123 @@ public sealed partial class MainWindow : Window, IDisposable
         return await dialog.ShowAsync().AsTask().ConfigureAwait(true) == ContentDialogResult.Primary;
     }
 
+    /// <summary>Saves the snippet in the boxes, or says in the person's terms why it was not saved.</summary>
+    /// <remarks>
+    /// THE TEXT IS NOT TRIMMED. Leading or trailing space or a line break can be deliberate - a snippet
+    /// that starts on a new line, or ends with a space before the next word - and "exactly as written"
+    /// has to mean exactly (macOS <c>SnippetEditSheet.save</c>). The trigger is trimmed; its spacing
+    /// means nothing to the matcher.
+    /// </remarks>
     private async void AddSnippetButton_Click(object sender, RoutedEventArgs e)
     {
-        var name = SnippetNameBox.Text.Trim();
+        var trigger = SnippetNameBox.Text.Trim();
         var body = SnippetBodyBox.Text;
-        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(body))
-        {
-            ShowMessage("Name and text are required", "Give this snippet a name and some reusable text.", InfoBarSeverity.Warning);
-            return;
-        }
 
         // Same reason as the word boxes above: a refused save must not eat the snippet someone
         // just wrote.
-        if (!await CommitVocabularyAsync(_session.Vocabulary.AddSnippetAsync(new SnippetEntry(name, body)), "Snippet saved").ConfigureAwait(true))
+        var saved = await CommitVocabularyAsync(_session.Vocabulary.AddSnippetAsync(new SnippetEntry(trigger, body))).ConfigureAwait(true);
+        if (!saved.Saved)
         {
             return;
         }
 
+        if (saved.Value.Refusal is { } refusal)
+        {
+            ShowMessage("Snippet not saved", SnippetRefusalMessage(refusal, saved.Value.Clash), InfoBarSeverity.Warning);
+            return;
+        }
+
+        ShowMessage("Snippet saved", "The change was saved locally.", InfoBarSeverity.Success);
         SnippetNameBox.Text = string.Empty;
         SnippetBodyBox.Text = string.Empty;
+    }
+
+    /// <summary>Appends a fill-in's token to the snippet text.</summary>
+    /// <remarks>
+    /// AT THE END, NOT AT THE CARET, as macOS does: the helper copy under the buttons says so, and the
+    /// person can move the token anywhere. The token comes from the one spelling the matcher reads,
+    /// never a string written here.
+    /// </remarks>
+    private void SnippetFillInButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string tag } ||
+            !Enum.TryParse<SnippetPlaceholder>(tag, ignoreCase: false, out var placeholder))
+        {
+            return;
+        }
+
+        SnippetBodyBox.Text += SnippetPlaceholders.Token(placeholder);
+        SnippetBodyBox.SelectionStart = SnippetBodyBox.Text.Length;
+    }
+
+    private void SnippetKeywordBox_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key == VirtualKey.Enter)
+        {
+            e.Handled = true;
+            CommitSnippetKeyword();
+        }
+    }
+
+    private void SnippetKeywordBox_LostFocus(object sender, RoutedEventArgs e) => CommitSnippetKeyword();
+
+    /// <summary>Stores the keyword in the box when it changed, then shows what was stored.</summary>
+    /// <remarks>
+    /// READ BACK RATHER THAN KEEPING WHAT WAS TYPED: a cleared box stores the default, so the box must
+    /// show what was saved, not what was on screen. A refused keyword puts the stored one back.
+    /// </remarks>
+    private async void CommitSnippetKeyword()
+    {
+        var typed = SnippetKeywordBox.Text;
+        if (_isApplyingSettings || string.Equals(typed, _settings.UserData.SnippetKeyword, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var saved = await CommitVocabularyAsync(_session.Vocabulary.SetSnippetKeywordAsync(typed)).ConfigureAwait(true);
+        if (saved.Saved && saved.Value.Refusal is { } refusal)
+        {
+            ShowMessage("Keyword not saved", SnippetRefusalMessage(refusal, clash: null), InfoBarSeverity.Warning);
+        }
+
+        RefreshSnippetKeywordViews(force: true);
+    }
+
+    /// <summary>One sentence per refusal, written for the person who typed the thing; the macOS copy.</summary>
+    private static string SnippetRefusalMessage(SnippetRefusal refusal, SnippetEntry? clash) => refusal switch
+    {
+        SnippetRefusal.TriggerEmpty =>
+            "Give the snippet something to say. A trigger of only punctuation can never match.",
+        SnippetRefusal.ExpansionEmpty =>
+            "Add the text this snippet should paste. An empty snippet would delete the words you said.",
+        SnippetRefusal.DuplicateTrigger =>
+            $"You already have a snippet for those words: \u201C{clash?.Name}\u201D. Change one of them.",
+        SnippetRefusal.KeywordNotOneWord =>
+            "Your keyword has to be a single word. Pick one you would not say by accident.",
+        _ => throw new ArgumentOutOfRangeException(nameof(refusal), refusal, "Not a snippet refusal."),
+    };
+
+    /// <summary>The keyword box and the two sentences built from the keyword the person actually has.</summary>
+    /// <remarks>
+    /// THE EXAMPLE IS BUILT FROM A TRIGGER THE PERSON ACTUALLY HAS, never a literal: a fixed "my email"
+    /// becomes a lie the moment that snippet is renamed or deleted, and with no snippets there is no
+    /// honest example, so it names none (macOS <c>SnippetsView.keywordExample</c>). The box is left
+    /// alone while it has focus unless a commit asks, or a refresh would write the old keyword over
+    /// what is being typed.
+    /// </remarks>
+    private void RefreshSnippetKeywordViews(bool force)
+    {
+        var keyword = _settings.UserData.SnippetKeyword;
+        if (force || SnippetKeywordBox.FocusState == FocusState.Unfocused)
+        {
+            SnippetKeywordBox.Text = keyword;
+        }
+
+        var snippets = _settings.UserData.Snippets;
+        SnippetKeywordExample.Text = snippets.Count > 0
+            ? $"For example, say \u201C{keyword} {snippets[0].Name}\u201D and that snippet is pasted."
+            : "Say your keyword, then the words you saved a snippet under, and that snippet is pasted.";
+        SnippetTriggerHelp.Text = $"Matched word for word, and only after you say \u201C{keyword}\u201D.";
     }
 
     private async void RemoveSnippetButton_Click(object sender, RoutedEventArgs e)
@@ -3559,6 +3657,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var snippets = _settings.UserData.Snippets;
         DictionaryList.ItemsSource = customWords;
         SnippetList.ItemsSource = snippets;
+        RefreshSnippetKeywordViews(force: false);
         UpdateListAndEmptyStateVisibility(DictionaryList, DictionaryEmptyState, customWords.Count);
         UpdateListAndEmptyStateVisibility(SnippetList, SnippetEmptyState, snippets.Count);
         UpdateSelectionDependentButtons();

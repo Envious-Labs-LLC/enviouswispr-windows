@@ -84,6 +84,7 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 8 => MigrateFromV8(json),
                 9 => MigrateFromV9(json),
                 10 => MigrateFromV10(json),
+                11 => MigrateFromV11(json),
                 PortableProfile.CurrentSchemaVersion => JsonSerializer.Deserialize<PortableProfile>(
                     json,
                     JsonSettingsStore.SerializerOptions),
@@ -260,6 +261,18 @@ public sealed class JsonPortableProfileService : IPortableProfileService
     /// </remarks>
     /// <summary>A profile exported before the last-dictation shortcuts: their defaults, settled by the caller.</summary>
     private static PortableProfile? MigrateFromV10(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<PortableProfile>(
+            json,
+            JsonSettingsStore.SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = PortableProfile.CurrentSchemaVersion };
+    }
+
+    /// <summary>A profile exported before the snippet keyword could be chosen: "backslash", the only word there was.</summary>
+    /// <remarks>See <c>JsonSettingsStore.MigrateFromV17</c>; an absent keyword reads as the default.</remarks>
+    private static PortableProfile? MigrateFromV11(string json)
     {
         var legacy = JsonSerializer.Deserialize<PortableProfile>(
             json,

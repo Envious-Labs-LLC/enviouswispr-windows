@@ -70,6 +70,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 14 => MigrateFromV14(json),
                 15 => MigrateFromV15(json),
                 16 => MigrateFromV16(json),
+                17 => MigrateFromV17(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -461,6 +462,20 @@ public sealed class JsonSettingsStore : ISettingsStore
     /// then settles any clash with the person's own keys (see the caller).
     /// </remarks>
     private static AppSettings? MigrateFromV16(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+    }
+
+    /// <summary>Takes a settings file written before the snippet keyword could be chosen.</summary>
+    /// <remarks>
+    /// NOTHING IS REWRITTEN. Every snippet so far fired on "backslash" - the only word there was - and an
+    /// absent keyword reads as exactly that. The version moves so an older build refuses the newer file
+    /// by its number rather than tripping on the unknown member and resetting every setting.
+    /// </remarks>
+    private static AppSettings? MigrateFromV17(string json)
     {
         var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
         return legacy is null

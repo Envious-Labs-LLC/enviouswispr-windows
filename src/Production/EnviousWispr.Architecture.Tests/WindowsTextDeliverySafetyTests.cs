@@ -637,7 +637,8 @@ public sealed class WindowsTextDeliverySafetyTests
             new ProcessedText(new DictationSessionId(Guid.NewGuid()), "kept"),
             new TargetWindowId(42, 7, "1.2.3"),
             "en",
-            TextDeliveryOptions.Default));
+            TextDeliveryOptions.Default,
+            SnippetExpanded: false));
 
         Assert.Equal(TextDeliveryRefusalReason.UnsupportedTarget, result.RefusalReason);
         Assert.True(result.ClipboardFallback);
@@ -687,7 +688,8 @@ public sealed class WindowsTextDeliverySafetyTests
             new ProcessedText(new DictationSessionId(Guid.NewGuid()), "kept"),
             new TargetWindowId(42, 7, "1.2.3"),
             "en",
-            TextDeliveryOptions.Default));
+            TextDeliveryOptions.Default,
+            SnippetExpanded: false));
 
         Assert.Equal(TextDeliveryRefusalReason.DeliveryFaulted, result.RefusalReason);
         Assert.Equal(new DeliveryFault(DeliveryStage.Commit, DeliveryFaultKind.InvalidCast, nameof(InvalidCastException)), result.Fault);
@@ -723,7 +725,8 @@ public sealed class WindowsTextDeliverySafetyTests
             new ProcessedText(new DictationSessionId(Guid.NewGuid()), "kept"),
             new TargetWindowId(42, 7, "1.2.3"),
             "en",
-            TextDeliveryOptions.Default));
+            TextDeliveryOptions.Default,
+            SnippetExpanded: false));
 
         Assert.Equal(TextDeliveryRefusalReason.AccessibilityUnavailable, result.RefusalReason);
         Assert.True(result.ClipboardFallback);
@@ -857,7 +860,8 @@ public sealed class WindowsTextDeliverySafetyTests
             new ProcessedText(new DictationSessionId(Guid.NewGuid()), "kept"),
             target,
             "en",
-            TextDeliveryOptions.Default));
+            TextDeliveryOptions.Default,
+            SnippetExpanded: false));
 
         Assert.Equal(TextDeliveryRefusalReason.DeliveryDisposed, result.RefusalReason);
         Assert.Equal(new DeliveryFault(DeliveryStage.ContextCapture, DeliveryFaultKind.ObjectDisposed, nameof(ObjectDisposedException)), result.Fault);

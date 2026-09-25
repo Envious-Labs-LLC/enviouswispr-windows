@@ -105,9 +105,13 @@ public sealed class ContextAwareTextDelivery : ITextDelivery
         // alone and puts the text on the clipboard - the same road every refused paste takes. (Copy-
         // only, the person's own choice, took its own early branch above; it does not come through here.)
         var forcedRefusal = RefusalFor(capture);
+        // A TAKE THAT EXPANDED A SNIPPET IS NOT REPAIRED. Handing the repair no context is its whole
+        // bypass - with none it returns the fallback payload - so it needs no branch of its own. The
+        // capture still runs: its refusals (a protected field, an elevated or changed window) and the
+        // target facts the commit routes on are about WHERE the words go, not what they say.
         var repair = CursorInsertionRepair.Apply(
             request.Text,
-            capture.Status == TargetContextStatus.Available ? capture.Context : null,
+            capture.Status == TargetContextStatus.Available && !request.SnippetExpanded ? capture.Context : null,
             request.LanguageCode);
         var targetKind = capture.Context?.TargetKind ?? TextTargetKind.Unknown;
         TextCommitResult commit;

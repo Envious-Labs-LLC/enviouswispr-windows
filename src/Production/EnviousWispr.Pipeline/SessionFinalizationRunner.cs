@@ -92,9 +92,11 @@ public interface ISessionFinalizationEffects
 }
 
 /// <summary>What the runner needs from the shell's settings at the moment a finalisation starts.</summary>
+/// <param name="Snippets">The saved snippets and their keyword, read at the same moment as the words.</param>
 public sealed record FinalizationOptions(
     IReadOnlyList<CustomWordEntry> CustomWords,
     DeterministicTextOptions TextOptions,
+    SnippetVocabulary Snippets,
     PolishSetup? Polish);
 
 /// <summary>
@@ -235,7 +237,7 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
             _effects.RecordTranscriptionFinished(transcript, timer.ElapsedMilliseconds);
             var options = _effects.CurrentOptions();
             var finalized = await _finalizer
-                .FinalizeAsync(transcript, options.CustomWords, options.TextOptions, options.Polish, cancellationToken)
+                .FinalizeAsync(transcript, options.CustomWords, options.TextOptions, options.Snippets, options.Polish, cancellationToken)
                 .ConfigureAwait(false);
             var processed = finalized.Processed;
 
@@ -266,7 +268,8 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                             processed.Output,
                             pendingSession.Target,
                             language,
-                            pendingSession.DeliveryOptions),
+                            pendingSession.DeliveryOptions,
+                            SnippetExpanded: finalized.SnippetsExpanded > 0),
                         cancellationToken).ConfigureAwait(false);
                     deliveryTimer.Stop();
                     _effects.RecordDelivery(result, deliveryTimer.ElapsedMilliseconds);

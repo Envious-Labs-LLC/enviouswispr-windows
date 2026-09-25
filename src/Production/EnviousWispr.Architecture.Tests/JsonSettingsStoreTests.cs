@@ -259,6 +259,55 @@ public sealed class JsonSettingsStoreTests
         });
     }
 
+    /// <summary>
+    /// A file written before the snippet keyword could be chosen loads with "backslash", the only
+    /// word every snippet ever needed, and keeps its snippets.
+    /// </summary>
+    [Fact]
+    public async Task LoadMigratesPhaseSeventeenSettingsWithTheBackslashKeyword()
+    {
+        await WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "settings.json");
+            var legacy = CreatePopulatedSettings() with { SchemaVersion = 17 };
+            var json = System.Text.Json.JsonSerializer.Serialize(legacy, JsonSettingsStore.SerializerOptions);
+            var root = JsonNode.Parse(json)!.AsObject();
+            Assert.True(root["userData"]!.AsObject().Remove("snippetKeyword"));
+            Assert.NotEmpty(root["userData"]!["snippets"]!.AsArray());
+            await File.WriteAllTextAsync(path, root.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var result = await new JsonSettingsStore(path).LoadAsync();
+
+            Assert.Equal(SettingsLoadStatus.Migrated, result.Status);
+            Assert.Equal(17, result.SourceSchemaVersion);
+            Assert.Equal(18, result.Settings.SchemaVersion);
+            Assert.Equal("backslash", result.Settings.UserData.SnippetKeyword);
+            Assert.Equal(legacy.UserData.Snippets, result.Settings.UserData.Snippets);
+        });
+    }
+
+    /// <summary>A chosen keyword survives a save and a load, as a member of the file.</summary>
+    [Fact]
+    public async Task AChosenSnippetKeywordRoundTrips()
+    {
+        await WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "settings.json");
+            var store = new JsonSettingsStore(path);
+            var settings = AppSettings.Default with
+            {
+                UserData = new ReusableUserData([], [new SnippetEntry("my email", "sam@example.com")], "insert"),
+            };
+
+            await store.SaveAsync(settings);
+            var result = await store.LoadAsync();
+
+            Assert.Equal(SettingsLoadStatus.Loaded, result.Status);
+            Assert.Equal("insert", result.Settings.UserData.SnippetKeyword);
+            Assert.Equal("insert", JsonNode.Parse(await File.ReadAllTextAsync(path))!["userData"]!["snippetKeyword"]!.GetValue<string>());
+        });
+    }
+
     /// <summary>British survives a save and a load at the current version.</summary>
     [Fact]
     public async Task BritishSpellingRoundTrips()
@@ -499,7 +548,9 @@ public sealed class JsonSettingsStoreTests
         },
         UserData = new ReusableUserData(
             [new CustomWordEntry("envy wisper", "EnviousWispr")],
-            [new SnippetEntry("signature", "Kind regards")]),
+            [new SnippetEntry("signature", "Kind regards")],
+            // NOT THE DEFAULT, so a round trip that dropped the member would read back a different word.
+            "insert"),
     };
 
     internal static async Task WithTestDirectoryAsync(Func<string, Task> test)

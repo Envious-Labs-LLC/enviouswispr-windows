@@ -9,6 +9,7 @@ using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Sessions;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Pipeline;
+using EnviousWispr.PostProcessing;
 
 namespace EnviousWispr.Architecture.Tests;
 
@@ -48,6 +49,51 @@ public sealed class SessionFinalizationRunnerTests
         Assert.True(entry.WasDelivered);
     }
 
+    /// <summary>
+    /// A MULTI-LINE SNIPPET GOES THROUGH THE ORDINARY DELIVERY ROUTE WITH ITS LINE BREAKS, marked so the
+    /// route leaves its words alone, and the recovery copy and History hold the saved text - never the
+    /// placeholder the text pass carried. macOS #2639: a snippet is delivered like any other text.
+    /// </summary>
+    [Fact]
+    public async Task AMultiLineSnippetIsDeliveredWithItsLineBreaksAndMarkedForTheRoute()
+    {
+        var world = await World.RecordingFinishedAsync("backslash my sign off");
+        world.OptionsOverride = () => new FinalizationOptions(
+            [],
+            new DeterministicTextOptions(true, true, true, true),
+            new SnippetVocabulary([new SnippetEntry("my sign off", "Kind regards,\nSam Smith\nsam@example.com")], "backslash"),
+            null);
+
+        var report = await world.RunAsync();
+
+        Assert.Equal(FinalizationOutcome.Delivered, report.Outcome);
+        var request = Assert.Single(world.Delivery.Requests);
+        Assert.Equal("Kind regards,\nSam Smith\nsam@example.com", request.Text.Text);
+        Assert.True(request.SnippetExpanded);
+        Assert.Equal(1, report.Finalized?.SnippetsExpanded);
+        Assert.Contains("SaveRecovery:Kind regards,\nSam Smith\nsam@example.com", world.Trace);
+        Assert.DoesNotContain(world.Trace, entry => entry.Contains("EWSNIP", StringComparison.Ordinal));
+        Assert.Equal("Kind regards,\nSam Smith\nsam@example.com", Assert.Single(world.History.Added).Text);
+    }
+
+    /// <summary>The twin: an ordinary take is not marked, so the route's cursor-aware repair still runs for it.</summary>
+    [Fact]
+    public async Task ATakeWithNoSnippetIsNotMarkedForTheRoute()
+    {
+        var world = await World.RecordingFinishedAsync("my sign off");
+        world.OptionsOverride = () => new FinalizationOptions(
+            [],
+            new DeterministicTextOptions(true, true, true, true),
+            new SnippetVocabulary([new SnippetEntry("my sign off", "Kind regards")], "backslash"),
+            null);
+
+        await world.RunAsync();
+
+        var request = Assert.Single(world.Delivery.Requests);
+        Assert.False(request.SnippetExpanded);
+        Assert.DoesNotContain("Kind regards", request.Text.Text, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task TheRecoveryCopyIsWrittenBeforeAnythingIsDelivered()
     {
@@ -68,7 +114,7 @@ public sealed class SessionFinalizationRunnerTests
         // engine here flips the options source mid-call; the later values must be the ones used.
         var world = await World.RecordingFinishedAsync("envy wisper is here");
         var words = new List<CustomWordEntry>();
-        world.OptionsOverride = () => new FinalizationOptions(words.ToArray(), new DeterministicTextOptions(true, true, true, true), null);
+        world.OptionsOverride = () => new FinalizationOptions(words.ToArray(), new DeterministicTextOptions(true, true, true, true), SnippetVocabulary.Empty, null);
         world.Engine.BeforeReturning = () => words.Add(new CustomWordEntry("envy wisper", "EnviousWispr"));
 
         var report = await world.RunAsync();
@@ -271,7 +317,13 @@ public sealed class SessionFinalizationRunnerTests
             var finalizer = new TranscriptFinalizer(
                 PatientPipeline.Create(),
                 new PolishExecutor(new FakeAdmission(), effects, () => []),
-                effects);
+                effects,
+                new SnippetExpansionStage(
+                    new SnippetExpander(),
+                    new FrozenClock(Now),
+                    () => System.Globalization.CultureInfo.InvariantCulture,
+                    _ => Task.FromResult<string?>(null),
+                    TimeSpan.FromSeconds(30)));
             // A streaming owner that was never started: it has no head start, so the runner's
             // transcription is the whole take through the engine, which is what these tests are about.
             var streaming = new StreamingTranscriptionController(new NoStreaming(), new NullLogger(), new FrozenClock(Now));
@@ -296,7 +348,7 @@ public sealed class SessionFinalizationRunnerTests
         {
             var polish = Polish;
             Effects.Options = OptionsOverride
-                ?? (() => new FinalizationOptions([], new DeterministicTextOptions(true, true, true, true), polish));
+                ?? (() => new FinalizationOptions([], new DeterministicTextOptions(true, true, true, true), SnippetVocabulary.Empty, polish));
             return Runner.RunAsync(SessionId, Audio, recoveryOnly, CancellationToken.None);
         }
     }
@@ -312,7 +364,7 @@ public sealed class SessionFinalizationRunnerTests
         public ITextDelivery? Delivery => DeliveryRoute;
 
         public Func<FinalizationOptions> Options { get; set; } =
-            () => new FinalizationOptions([], new DeterministicTextOptions(true, true, true, true), null);
+            () => new FinalizationOptions([], new DeterministicTextOptions(true, true, true, true), SnippetVocabulary.Empty, null);
 
         public FinalizationOptions CurrentOptions()
         {

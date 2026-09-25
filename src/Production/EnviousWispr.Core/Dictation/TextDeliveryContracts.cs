@@ -180,11 +180,20 @@ public sealed record TextDeliveryOptions(
         CopyInsteadOfPaste: false);
 }
 
+/// <param name="SnippetExpanded">
+/// True when the text carries a snippet's saved words. The cursor-aware repair is then not applied:
+/// it owns seam spacing, seam capitalisation and cross-seam de-duplication, any of which would silently
+/// edit a saved email address or signature, and "exactly as written" is the promise snippets are for
+/// (macOS <c>KernelFinalizationWiring</c>, #628). The words are delivered as the fallback payload, by
+/// the same routes as any other text, line breaks included. Stated at every call site rather than
+/// defaulted, so no caller can deliver a snippet through the repair by leaving it out.
+/// </param>
 public sealed record TextDeliveryRequest(
     ProcessedText Text,
     TargetWindowId Target,
     string? LanguageCode,
-    TextDeliveryOptions Options);
+    TextDeliveryOptions Options,
+    bool SnippetExpanded);
 
 public sealed record CaretContext(
     TargetWindowId Target,

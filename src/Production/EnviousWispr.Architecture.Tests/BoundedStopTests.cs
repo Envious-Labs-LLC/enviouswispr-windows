@@ -644,7 +644,8 @@ public sealed class BoundedStopTests
                     PreviewUnavailableReason: () => null,
                     RecordingSessionId: () => world?.Session,
                     Coordinator: () => null,
-                    Leaving: () => false),
+                    Leaving: () => false,
+                    ClipboardText: _ => Task.FromResult<string?>(null)),
                 clock));
             world = new World
             {

@@ -24,6 +24,8 @@ using System.Text.Json;
 using System.Windows.Forms;
 
 const byte F8 = 0x77;
+const string SnippetJourneyKeyword = "joint";
+const string SnippetJourneyExpansion = "SNIPPETCHECK";
 const int DefaultAcousticPlaybackGain = 2;
 const int AcousticPlaybackRepetitions = 2;
 const string SynthesizedAcousticPhrase =
@@ -100,8 +102,9 @@ var deterministicProfile = deterministicProfileArgument?.ToLowerInvariant() swit
     null => DeterministicJourneyProfile.None,
     "enabled" => DeterministicJourneyProfile.Enabled,
     "disabled" => DeterministicJourneyProfile.Disabled,
+    "snippet" => DeterministicJourneyProfile.Snippet,
     _ => throw new JourneyExpectationException(
-        "--deterministic-profile must be enabled or disabled."),
+        "--deterministic-profile must be enabled, disabled or snippet."),
 };
 var polishArgument = ArgumentValue(args, "--polish");
 var polishProvider = polishArgument?.ToLowerInvariant() switch
@@ -319,6 +322,8 @@ var expectedSubstring = synthesizedAcoustic || manualMicrophone
     ? "microphone"
     : deterministicProfile == DeterministicJourneyProfile.Enabled
         ? "👍."
+        : deterministicProfile == DeterministicJourneyProfile.Snippet
+            ? SnippetJourneyExpansion
         : englishParakeet
             ? "account"
             : "adresse";
@@ -326,6 +331,8 @@ var forbiddenSubstring = deterministicProfile switch
 {
     DeterministicJourneyProfile.Enabled => "um ",
     DeterministicJourneyProfile.Disabled => "👍",
+    // THE KEYWORD IS SPOKEN AND MUST NOT ARRIVE: a snippet that fired consumes it with the trigger.
+    DeterministicJourneyProfile.Snippet => SnippetJourneyKeyword,
     _ => null,
 };
 var fixtureFileName = englishParakeet ? "en-US-row0.wav" : "fr-FR-row0.wav";
@@ -442,11 +449,21 @@ if (livePreview || escapeRecovery || failureMode == JourneyFailureMode.Microphon
                 SpokenPunctuationEnabled = deterministicFeaturesEnabled,
             },
         },
-        UserData = deterministicProfile == DeterministicJourneyProfile.None
-            ? ReusableUserData.Empty
-            : new ReusableUserData(
+        UserData = deterministicProfile switch
+        {
+            DeterministicJourneyProfile.None => ReusableUserData.Empty,
+            // THE FIXTURE ALREADY SAYS THE KEYWORD. The reviewed English take is "I would like to set up a
+            // joint account with my partner", so "joint" is the keyword and "account" the trigger: the
+            // real capture, engine and chain fire the snippet with no new recording, and the result must
+            // hold the expansion and not the keyword.
+            DeterministicJourneyProfile.Snippet => new ReusableUserData(
+                [],
+                [new SnippetEntry("account", SnippetJourneyExpansion)],
+                SnippetJourneyKeyword),
+            _ => new ReusableUserData(
                 [new CustomWordEntry("account", "um thumbs up emoji period")],
                 []),
+        },
     };
     await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"))
         .SaveAsync(journeySettings);
@@ -1045,7 +1062,7 @@ try
             : deterministicProfile.ToString(),
         deterministicFeaturesEnabled = deterministicProfile == DeterministicJourneyProfile.None
             ? (bool?)null
-            : deterministicProfile == DeterministicJourneyProfile.Enabled,
+            : deterministicProfile != DeterministicJourneyProfile.Disabled,
         inputKind = failureMode switch
         {
             JourneyFailureMode.MicrophoneUnavailable => "SyntheticF8-AllowlistedAccessDeniedAudioFault",
@@ -3220,4 +3237,5 @@ enum DeterministicJourneyProfile
     None,
     Enabled,
     Disabled,
+    Snippet,
 }

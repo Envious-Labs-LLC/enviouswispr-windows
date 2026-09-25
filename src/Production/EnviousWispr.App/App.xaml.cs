@@ -105,6 +105,7 @@ public partial class App : Application, IAsyncDisposable
     /// <summary>The dictation the tray last named; written on the UI thread, where the tray reads it.</summary>
     private Guid? _lastDictationPreviewEntry;
     private IReadOnlyList<CustomWordEntry> _customWords = [];
+    private SnippetVocabulary _snippetVocabulary = SnippetVocabulary.Empty;
     // VOLATILE BECAUSE THE HOTKEY THREAD READS IT AND THE UI THREAD REPLACES IT. The record itself
     // is immutable and cannot tear, but the REFERENCE can be read stale, and one of its readers is
     // the delivery-options closure that decides where a recording's words are about to go.
@@ -188,7 +189,8 @@ public partial class App : Application, IAsyncDisposable
                 PreviewUnavailableReason: () => _previewUnavailableReason,
                 RecordingSessionId: () => _sessionController?.CurrentSession?.Id,
                 Coordinator: () => _sessionCoordinator,
-                Leaving: () => _exitRequested || _disposed),
+                Leaving: () => _exitRequested || _disposed,
+                ClipboardText: WindowsClipboardText.TryReadAsync),
             TimeProvider.System));
         _sessionPersistence = _runtime.Persistence;
         _livePreview = _runtime.Preview;
@@ -275,6 +277,7 @@ public partial class App : Application, IAsyncDisposable
         };
         _settings = settings;
         _customWords = settings.UserData.CustomWords;
+        _snippetVocabulary = SnippetVocabulary.From(settings.UserData);
         _deterministicTextOptions = DeterministicTextOptions.From(settings.Preferences.Dictation);
         ConfigurePolish(settings.Preferences.Polish);
 
@@ -842,6 +845,7 @@ public partial class App : Application, IAsyncDisposable
         var previousSharing = _settings.Observability?.ShareAnonymousTelemetry == true;
         _settings = settings;
         _customWords = settings.UserData.CustomWords;
+        _snippetVocabulary = SnippetVocabulary.From(settings.UserData);
         _deterministicTextOptions = DeterministicTextOptions.From(settings.Preferences.Dictation);
         var observability = settings.Observability ?? ObservabilityPreferences.Default;
         _logger.Configure(observability, DateTimeOffset.UtcNow);
@@ -1454,7 +1458,7 @@ public partial class App : Application, IAsyncDisposable
                 Dictation: () => _settings.Preferences.Dictation,
                 Engine: () => _transcriptionEngine,
                 Delivery: () => _textDelivery,
-                Options: () => new FinalizationOptions(_customWords, _deterministicTextOptions, CurrentPolishSetup()),
+                Options: () => new FinalizationOptions(_customWords, _deterministicTextOptions, _snippetVocabulary, CurrentPolishSetup()),
                 CloudPolishProviderName: () => _cloudPolishConsent?.ProviderName,
                 RunId: () => _runId,
                 RecordingActive: active => _pushToTalkHook?.SetRecordingActive(active),

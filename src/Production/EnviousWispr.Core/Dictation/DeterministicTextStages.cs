@@ -9,6 +9,12 @@ namespace EnviousWispr.Core.Dictation;
 /// </remarks>
 public enum DeterministicTextStage
 {
+    /// <summary>
+    /// Each fired snippet masked behind a sentinel, FIRST, before anything can alter the words it
+    /// matches. The receipt's Changed says whether a snippet fired; nothing about which, or what it says.
+    /// </summary>
+    SnippetExpansion,
+
     CustomWords,
     FillerAndFalseStarts,
     SpokenEmoji,

@@ -7,6 +7,7 @@ public static class AppSettingsValidator
 {
     public const int MaximumCustomWords = 10_000;
     public const int MaximumSnippets = 1_000;
+    public const int MaximumSnippetKeywordLength = 64;
 
     public static AppError? Validate(AppSettings? settings, AppErrorStage stage)
     {
@@ -118,6 +119,11 @@ public static class AppSettingsValidator
             // "default" - a file that changed meaning on the way through and said nothing. Refusing
             // it makes the file visibly wrong instead.
             Enum.IsDefined(entry.Strictness)) &&
+        // THE KEYWORD IS NOT HELD TO ITS SAVE-TIME RULE HERE. A keyword of two words cannot fire, and
+        // the page refuses one, but refusing it at load would reset every setting a person has over
+        // one word; it is bounded only so a file cannot carry an arbitrary string.
+        userData.SnippetKeyword is not null &&
+        userData.SnippetKeyword.Length <= MaximumSnippetKeywordLength &&
         userData.Snippets.All(entry =>
             entry is not null &&
             !string.IsNullOrWhiteSpace(entry.Name) &&

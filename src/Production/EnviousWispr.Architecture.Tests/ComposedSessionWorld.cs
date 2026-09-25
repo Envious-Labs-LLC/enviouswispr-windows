@@ -73,6 +73,15 @@ internal sealed class ComposedSessionWorld
 
     public PolishSetup? Polish { get; set; }
 
+    /// <summary>The snippets and keyword the shell would read with the words; settable between commands, as a save is.</summary>
+    public SnippetVocabulary Snippets { get; set; } = SnippetVocabulary.Empty;
+
+    /// <summary>What the clipboard holds as text, for a snippet that pastes it.</summary>
+    public string? ClipboardHolds { get; set; }
+
+    /// <summary>How many times the clipboard was read: a snippet that does not use it must never cost a read.</summary>
+    public int ClipboardReads { get; set; }
+
     /// <summary>The engine the shell would hand over; replaceable between commands, as a reload is.</summary>
     public ITranscriptionEngine EngineRef { get; set; } = null!;
 
@@ -127,7 +136,12 @@ internal sealed class ComposedSessionWorld
                 PreviewUnavailableReason: () => null,
                 RecordingSessionId: () => controller.CurrentSession?.Id,
                 Coordinator: () => world is { Detached: false } ? world.Coordinator : null,
-                Leaving: () => false),
+                Leaving: () => false,
+                ClipboardText: _ =>
+                {
+                    world!.ClipboardReads++;
+                    return Task.FromResult(world.ClipboardHolds);
+                }),
             clock));
 
         var coordinator = SessionComposition.Compose(new SessionCompositionParts(
@@ -143,7 +157,7 @@ internal sealed class ComposedSessionWorld
                 Dictation: () => world!.Dictation,
                 Engine: () => world!.EngineRef,
                 Delivery: () => delivery,
-                Options: () => new FinalizationOptions(words.ToArray(), new DeterministicTextOptions(true, true, true, true), world!.Polish),
+                Options: () => new FinalizationOptions(words.ToArray(), new DeterministicTextOptions(true, true, true, true), world!.Snippets, world!.Polish),
                 CloudPolishProviderName: () => null,
                 RunId: () => runId,
                 RecordingActive: recordingActive.Add,

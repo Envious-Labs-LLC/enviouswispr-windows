@@ -63,7 +63,8 @@ var result = await delivery.DeliverAsync(new TextDeliveryRequest(
     new ProcessedText(DictationSessionId.Create(), text),
     target.Value,
     language,
-    TextDeliveryOptions.Default));
+    TextDeliveryOptions.Default,
+    SnippetExpanded: false));
 emit(JsonSerializer.Serialize(new
 {
     route = result.Route.ToString(),

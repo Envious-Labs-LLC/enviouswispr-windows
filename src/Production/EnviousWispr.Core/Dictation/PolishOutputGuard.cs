@@ -31,6 +31,14 @@ public enum PolishOutputVerdict
 
     /// <summary>Most of what was said is gone, so this is a summary rather than a tidy-up.</summary>
     RefusedGutted,
+
+    /// <summary>A snippet's placeholder did not come back exactly once, so the polish cannot carry the saved text.</summary>
+    /// <remarks>
+    /// NOT A VERDICT OF THE GUARD, which never sees snippets: the finalizer reaches it after resolving
+    /// the take's sentinels. A dropped placeholder would lose the saved text and a doubled one would paste
+    /// it twice, so the whole polish goes and the cleaned text with the snippet in place is delivered.
+    /// </remarks>
+    RefusedSnippetLost,
 }
 
 /// <summary>What the guard decided, and the text to use if it accepted.</summary>
