@@ -16,16 +16,12 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
     private const int WmSystemKeyUp = 0x0105;
     private const int ErrorHotkeyAlreadyRegistered = 1409;
     private const uint ModifierNoRepeat = 0x4000;
-    private const uint VirtualKeyShift = 0x10;
-    private const uint VirtualKeyControl = 0x11;
-    private const uint VirtualKeyAlt = 0x12;
-    private const uint VirtualKeyLeftWindows = 0x5B;
-    private const uint VirtualKeyRightWindows = 0x5C;
 
     private static int _probeId = 0x5100;
 
     private readonly LowLevelKeyboardProcedure _procedure;
     private readonly HotkeyEdgeTracker _edgeTracker;
+    private readonly HeldModifierKeys _heldModifiers = new();
     private readonly Channel<PushToTalkSignal> _signals = Channel.CreateUnbounded<PushToTalkSignal>(
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
     private readonly Task _dispatchTask;
@@ -198,7 +194,7 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
         var gesture = parsed.Gesture.Value;
         var cancelGesture = parsedCancel.Gesture.Value;
         var quickAddGesture = parsedQuickAdd.Gesture.Value;
-        if (!WindowsVirtualKeyMap.TryMap(gesture.Key, out var virtualKey) ||
+        if (!TryMapRecordKey(gesture, out var virtualKey) ||
             !WindowsVirtualKeyMap.TryMap(cancelGesture.Key, out var cancelVirtualKey) ||
             !WindowsVirtualKeyMap.TryMap(quickAddGesture.Key, out var quickAddVirtualKey))
         {
@@ -209,7 +205,8 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
             return false;
         }
 
-        var conflict = ProbeConflict(gesture, virtualKey) ??
+        // A MODIFIER SET CANNOT BE PROBED: RegisterHotKey needs a key, and there is none for another app to hold.
+        var conflict = (virtualKey == 0 ? null : ProbeConflict(gesture, virtualKey)) ??
             ProbeConflict(cancelGesture, cancelVirtualKey) ??
             ProbeConflict(quickAddGesture, quickAddVirtualKey);
         if (conflict is not null)
@@ -291,10 +288,13 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
                 return CallNextHookEx(_hook, code, message, data);
             }
 
+            // THE MODIFIERS COME FROM THIS HOOK'S OWN EVENTS, not the keyboard state, which lags the hook in both
+            // directions and made a Ctrl+Win binding see nothing on a hold and two taps on one (HeldModifierKeys). Ref: #66.
+            var isKeyDown = IsKeyDown(message);
             var decision = _edgeTracker.Process(
                 keyboard.VirtualKey,
-                IsKeyDown(message),
-                ReadActiveModifiers());
+                isKeyDown,
+                _heldModifiers.Observe(keyboard.VirtualKey, isKeyDown, IsPressed));
             if (decision.Signal is not null)
             {
                 _signals.Writer.TryWrite(decision.Signal.Value);
@@ -371,6 +371,23 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
             new HotkeyBinding(virtualKey, gesture.Modifiers));
     }
 
+    /// <summary>The record binding's key, or 0 for a modifier set such as Ctrl+Win. Ref: #66.</summary>
+    /// <remarks>
+    /// A MODIFIER-ONLY BINDING HAS NO KEY, and the key map knows no empty key - so every Ctrl+Win binding was refused
+    /// here as invalid, at every launch, although the parser accepts it and the tracker implements it. The chosen
+    /// default could not start. 0 is the tracker's own name for a modifier set.
+    /// </remarks>
+    internal static bool TryMapRecordKey(HotkeyGesture gesture, out uint virtualKey)
+    {
+        if (string.IsNullOrEmpty(gesture.Key) && gesture.Modifiers != HotkeyModifiers.None)
+        {
+            virtualKey = 0;
+            return true;
+        }
+
+        return WindowsVirtualKeyMap.TryMap(gesture.Key ?? string.Empty, out virtualKey);
+    }
+
     private static AppError? ProbeConflict(HotkeyGesture gesture, uint virtualKey)
     {
         var id = Interlocked.Increment(ref _probeId);
@@ -386,32 +403,6 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
                 : AppErrorCode.HotkeyUnavailable,
             AppErrorStage.HotkeyConfiguration,
             CanRetry: true);
-    }
-
-    private static HotkeyModifiers ReadActiveModifiers()
-    {
-        var modifiers = HotkeyModifiers.None;
-        if (IsPressed(VirtualKeyControl))
-        {
-            modifiers |= HotkeyModifiers.Control;
-        }
-
-        if (IsPressed(VirtualKeyAlt))
-        {
-            modifiers |= HotkeyModifiers.Alt;
-        }
-
-        if (IsPressed(VirtualKeyShift))
-        {
-            modifiers |= HotkeyModifiers.Shift;
-        }
-
-        if (IsPressed(VirtualKeyLeftWindows) || IsPressed(VirtualKeyRightWindows))
-        {
-            modifiers |= HotkeyModifiers.Windows;
-        }
-
-        return modifiers;
     }
 
     private static bool IsPressed(uint virtualKey) => (GetAsyncKeyState((int)virtualKey) & 0x8000) != 0;
