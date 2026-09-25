@@ -80,7 +80,7 @@ public static class UserDataExportService
     /// <param name="profile">The portable profile, as "Export profile" builds it.</param>
     /// <param name="history">The history store; read with the person's own retention, as the History page reads it.</param>
     /// <param name="retentionDays">The history retention the load prunes by.</param>
-    /// <param name="recovery">The recovery store; an unreadable or missing copy is left out, never guessed at.</param>
+    /// <param name="recovery">The recovery store; no copy is left out; a copy that cannot be read fails the export.</param>
     /// <param name="destinationPath">The file the person chose.</param>
     /// <param name="now">The clock the history retention and the export stamp read.</param>
     public static async Task<UserDataExportResult> ExportAsync(
@@ -113,8 +113,25 @@ public static class UserDataExportService
                 Error: loaded.Error ?? new AppError(AppErrorCode.StorageUnavailable, AppErrorStage.ProfileExport, CanRetry: true));
         }
 
+        // ONLY "THERE IS NONE" LEAVES IT OUT. A recovery copy that exists and cannot be read - damaged,
+        // unavailable, protected to another Windows account - is the person's words, and an archive
+        // without it would look complete while missing them. So that fails the export, as an unreadable
+        // history does, and so does a Found that carries no record.
         var recovered = await recovery.LoadAsync(cancellationToken).ConfigureAwait(false);
-        var recoveredRecord = recovered.Status == RecoveryTextLoadStatus.Found ? recovered.Record : null;
+        RecoveryTextRecord? recoveredRecord;
+        switch (recovered)
+        {
+            case { Status: RecoveryTextLoadStatus.Missing }:
+                recoveredRecord = null;
+                break;
+            case { Status: RecoveryTextLoadStatus.Found, Record: { } record }:
+                recoveredRecord = record;
+                break;
+            default:
+                return new UserDataExportResult(
+                    false,
+                    Error: recovered.Error ?? new AppError(AppErrorCode.InvalidData, AppErrorStage.ProfileExport, CanRetry: false));
+        }
 
         var destination = Path.GetFullPath(destinationPath);
         var directory = Path.GetDirectoryName(destination);

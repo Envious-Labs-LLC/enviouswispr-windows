@@ -68,7 +68,7 @@ public sealed partial class MainWindow
             result.Succeeded ? "Your data was exported" : "Your data could not be exported",
             result.Succeeded
                 ? $"Settings, words, snippets, and {dictations} were saved. No API keys, models, diagnostic logs, or recordings are in the file."
-                : "No file was left at the place you chose. Check there is space and that you can save there, then try again.",
+                : "The export failed. Any file already at the place you chose was left unchanged. Check there is space and that you can save there, then try again.",
             result.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Error);
     }
 

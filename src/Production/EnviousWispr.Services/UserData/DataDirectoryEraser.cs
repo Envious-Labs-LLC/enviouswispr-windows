@@ -65,14 +65,15 @@ public static class DataDirectoryEraser
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(root);
         var fullRoot = Normalize(root);
-        if (!Directory.Exists(fullRoot))
+        switch (Classify(fullRoot))
         {
-            return new DataDeletionReport(Removed: 0, Remaining: 0, Refused: 0);
-        }
-
-        if (IsDriveRoot(fullRoot) || IsReparsePoint(fullRoot))
-        {
-            return new DataDeletionReport(Removed: 0, Remaining: CountRemaining(fullRoot, fullRoot, isRoot: true), Refused: 1);
+            case RootKind.Missing:
+                return new DataDeletionReport(Removed: 0, Remaining: 0, Refused: 0);
+            case RootKind.Refused:
+                // NOT WALKED, NOT EVEN TO COUNT. Counting through a link would read its target, and a
+                // refused root is one this app does not own the inside of. Refused alone makes the
+                // report incomplete.
+                return new DataDeletionReport(Removed: 0, Remaining: 0, Refused: 1);
         }
 
         var removed = 0;
@@ -100,6 +101,13 @@ public static class DataDirectoryEraser
     {
         ArgumentNullException.ThrowIfNull(leftover);
         var fullRoot = Normalize(root);
+        if (Classify(fullRoot) == RootKind.Refused)
+        {
+            // A ROOT ERASE REFUSED IS A ROOT THIS NEVER WRITES INTO EITHER: the note would land wherever
+            // the link points. The caller logs the refusal instead.
+            return;
+        }
+
         try
         {
             Directory.CreateDirectory(fullRoot);
@@ -119,7 +127,13 @@ public static class DataDirectoryEraser
     /// <summary>Reads and removes the note an incomplete erasure left, or null when there is none worth reading.</summary>
     public static DataDeletionLeftover? TakeLeftover(string root)
     {
-        var path = Path.Combine(Normalize(root), LeftoverFileName);
+        var fullRoot = Normalize(root);
+        if (Classify(fullRoot) != RootKind.PlainFolder)
+        {
+            return null;
+        }
+
+        var path = Path.Combine(fullRoot, LeftoverFileName);
         try
         {
             if (!File.Exists(path))
@@ -239,17 +253,41 @@ public static class DataDirectoryEraser
         }
     }
 
-    private static bool IsReparsePoint(string path)
+    /// <summary>True when the root is a plain folder or truly absent, the two cases Erase may act on or call empty.</summary>
+    public static bool CanErase(string root) => Classify(Normalize(root)) != RootKind.Refused;
+
+    /// <summary>What the root path is, read from the path's OWN attributes, which do not follow a link.</summary>
+    /// <remarks>
+    /// ONLY A PATH THAT IS NOT THERE AT ALL IS MISSING. `Directory.Exists` answers false for a file of
+    /// that name, and treating that as "nothing to delete" reported an erasure complete that had removed
+    /// nothing. Attributes are read from the path itself, never through a link, so a link (a dangling
+    /// junction included) is refused; so is a file, a drive root, and anything unreadable.
+    /// </remarks>
+    private static RootKind Classify(string fullRoot)
     {
+        if (IsDriveRoot(fullRoot))
+        {
+            return RootKind.Refused;
+        }
+
+        FileAttributes attributes;
         try
         {
-            return File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint);
+            attributes = File.GetAttributes(fullRoot);
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return RootKind.Missing;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SecurityException)
         {
             // NOT KNOWN TO BE A PLAIN FOLDER, SO NOT TREATED AS ONE.
-            return true;
+            return RootKind.Refused;
         }
+
+        return attributes.HasFlag(FileAttributes.Directory) && !attributes.HasFlag(FileAttributes.ReparsePoint)
+            ? RootKind.PlainFolder
+            : RootKind.Refused;
     }
 
     private static bool IsDriveRoot(string fullPath) =>
@@ -260,6 +298,13 @@ public static class DataDirectoryEraser
 
     private static string Normalize(string path) =>
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+
+    private enum RootKind
+    {
+        Missing,
+        PlainFolder,
+        Refused,
+    }
 
     private sealed record LeftoverDocument(int SchemaVersion, int Remaining, bool CredentialsRemaining);
 }

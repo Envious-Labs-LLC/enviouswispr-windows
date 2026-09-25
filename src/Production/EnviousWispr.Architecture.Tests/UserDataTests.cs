@@ -108,6 +108,36 @@ public sealed class UserDataTests
         Assert.Equal(settings.ToPortableProfile(), imported.Profile);
     }
 
+    /// <summary>Only "there is no recovery copy" leaves it out; a copy that cannot be read fails the export.</summary>
+    [Theory]
+    [InlineData(RecoveryTextLoadStatus.Invalid, false)]
+    [InlineData(RecoveryTextLoadStatus.Unavailable, false)]
+    [InlineData(RecoveryTextLoadStatus.Found, false)]
+    [InlineData(RecoveryTextLoadStatus.Missing, true)]
+    public async Task ARecoveryCopyThatCannotBeReadFailsTheExport(RecoveryTextLoadStatus status, bool succeeds)
+    {
+        // Found here carries NO record, which is a store contradicting itself, and is refused the same way.
+        using var temp = new TemporaryDirectory();
+        var outFolder = temp.Folder("out");
+        var destination = Path.Combine(outFolder, "my-data.zip");
+
+        var result = await UserDataExportService.ExportAsync(
+            JsonSettingsStoreTests.CreatePopulatedSettings().ToPortableProfile(),
+            new JsonHistoryStore(Path.Combine(temp.Folder("data"), "history.json")),
+            30,
+            new FixedRecovery(new RecoveryTextLoadResult(status)),
+            destination,
+            Now);
+
+        Assert.Equal(succeeds, result.Succeeded);
+        Assert.Equal(succeeds, File.Exists(destination));
+        Assert.Equal(succeeds ? 1 : 0, Directory.GetFiles(outFolder).Length);
+        if (succeeds)
+        {
+            Assert.DoesNotContain("recovered-dictation.json", ReadArchive(destination).Keys);
+        }
+    }
+
     [Fact]
     public void NoCredentialStoreIsReachableFromTheExport()
     {
@@ -234,9 +264,57 @@ public sealed class UserDataTests
         var report = DataDirectoryEraser.Erase(root);
 
         Assert.False(report.Complete);
-        Assert.Equal(1, report.Refused);
-        Assert.Equal(0, report.Removed);
+        Assert.Equal(new DataDeletionReport(Removed: 0, Remaining: 0, Refused: 1), report);
+        Assert.False(DataDirectoryEraser.CanErase(root));
         Assert.Equal("keep me", File.ReadAllText(precious));
+
+        // NOR IS THE NOTE WRITTEN THROUGH IT, OR READ AND REMOVED THROUGH IT. A note already behind the link
+        // (planted, as if written by someone else) is left exactly where it is.
+        DataDirectoryEraser.WriteLeftover(root, new DataDeletionLeftover(3, CredentialsRemaining: true));
+        Assert.Equal([precious], Directory.GetFiles(elsewhere, "*", SearchOption.AllDirectories));
+        var planted = WriteFile(elsewhere, DataDirectoryEraser.LeftoverFileName, """{"schemaVersion":1,"remaining":5,"credentialsRemaining":false}""");
+        Assert.Null(DataDirectoryEraser.TakeLeftover(root));
+        Assert.True(File.Exists(planted));
+    }
+
+    [Fact]
+    public void ADanglingJunctionRootIsRefusedNotMistakenForAMissingFolder()
+    {
+        // A junction whose target is gone is still a path that is there: a link, refused, never counted as a
+        // missing folder and so never reported as a complete erasure. (A root that is a FILE is the case
+        // Directory.Exists really does miss; the next test covers it.)
+        using var temp = new TemporaryDirectory();
+        var gone = temp.Folder("deleted-target");
+        var root = Path.Combine(temp.Path, "data");
+        CreateJunction(root, gone);
+        Directory.Delete(gone);
+        Assert.False(Directory.Exists(gone), "the dangling precondition landed: the target is gone");
+        Assert.True(File.GetAttributes(root).HasFlag(FileAttributes.ReparsePoint), "the link itself is still there");
+
+        var report = DataDirectoryEraser.Erase(root);
+
+        Assert.False(report.Complete);
+        Assert.Equal(new DataDeletionReport(Removed: 0, Remaining: 0, Refused: 1), report);
+        Assert.False(DataDirectoryEraser.CanErase(root));
+        DataDirectoryEraser.WriteLeftover(root, new DataDeletionLeftover(1, CredentialsRemaining: false));
+        Assert.False(Directory.Exists(gone), "the note did not recreate the link's target");
+        Assert.Null(DataDirectoryEraser.TakeLeftover(root));
+    }
+
+    [Fact]
+    public void ARootThatIsAFileIsRefusedAndLeftAsItWas()
+    {
+        using var temp = new TemporaryDirectory();
+        var root = WriteFile(temp.Path, "data", "not a folder");
+
+        var report = DataDirectoryEraser.Erase(root);
+
+        Assert.False(report.Complete);
+        Assert.Equal(new DataDeletionReport(Removed: 0, Remaining: 0, Refused: 1), report);
+        Assert.False(DataDirectoryEraser.CanErase(root));
+        DataDirectoryEraser.WriteLeftover(root, new DataDeletionLeftover(1, CredentialsRemaining: false));
+        Assert.Equal("not a folder", File.ReadAllText(root));
+        Assert.Null(DataDirectoryEraser.TakeLeftover(root));
     }
 
     [Fact]
@@ -357,10 +435,12 @@ public sealed class UserDataTests
         Assert.True(File.GetAttributes(link).HasFlag(FileAttributes.ReparsePoint), "the junction precondition landed");
     }
 
-    private sealed class MissingRecovery : IRecoveryTextStore
+    private sealed class MissingRecovery() : FixedRecovery(new RecoveryTextLoadResult(RecoveryTextLoadStatus.Missing));
+
+    private class FixedRecovery(RecoveryTextLoadResult answer) : IRecoveryTextStore
     {
         public Task<RecoveryTextLoadResult> LoadAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(new RecoveryTextLoadResult(RecoveryTextLoadStatus.Missing));
+            Task.FromResult(answer);
 
         public Task<bool> SaveAsync(RecoveryTextRecord record, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();

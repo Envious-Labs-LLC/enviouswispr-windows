@@ -102,6 +102,16 @@ public partial class App
         try
         {
             _credentialsRemaining = !DeleteStoredCredentials();
+            if (!DataDirectoryEraser.CanErase(_dataDirectory))
+            {
+                // A DATA FOLDER THAT IS A LINK, A FILE OR A DRIVE ROOT IS NEVER EMPTIED OR WRITTEN INTO, so no
+                // note can be left for the next launch. Said here instead, while the log is still open.
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.DataDeletionRefused,
+                    AppFailureCategory.AccessDenied));
+            }
+
             Volatile.Write(ref _dataDeletion, DeletionPending);
             _exitRequested = true;
             await PrepareForExitAsync().ConfigureAwait(true);
