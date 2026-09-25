@@ -59,6 +59,13 @@ public sealed class WindowsForegroundHistory : IDisposable
     {
         get
         {
+            // A hook that never installed, or one already removed, is not following anything: what it holds
+            // could be any age.
+            if (_hook == 0)
+            {
+                return null;
+            }
+
             var last = _last;
             return last is not null && IsWindow(last.Value.Value) ? last : null;
         }

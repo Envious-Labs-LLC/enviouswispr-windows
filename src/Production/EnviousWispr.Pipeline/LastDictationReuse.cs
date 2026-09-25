@@ -114,21 +114,28 @@ public sealed class LastDictationReuse
         return LastDictation.Pick(entries, _environment.Now());
     }
 
+    /// <param name="entryId">
+    /// The entry the person was shown - the menu's preview. When given, that entry and only that entry is reused, and
+    /// a deletion since the menu opened refuses rather than reaching for an older one. Null takes the newest.
+    /// </param>
     public Task<LastDictationReuseResult> PasteAsync(
         TargetWindowId? target,
         LastDictationSource source,
+        Guid? entryId = null,
         CancellationToken cancellationToken = default) =>
-        RunAsync(LastDictationAction.Paste, source, target, cancellationToken);
+        RunAsync(LastDictationAction.Paste, source, target, entryId, cancellationToken);
 
     public Task<LastDictationReuseResult> CopyAsync(
         LastDictationSource source,
+        Guid? entryId = null,
         CancellationToken cancellationToken = default) =>
-        RunAsync(LastDictationAction.Copy, source, target: null, cancellationToken);
+        RunAsync(LastDictationAction.Copy, source, target: null, entryId, cancellationToken);
 
     private async Task<LastDictationReuseResult> RunAsync(
         LastDictationAction action,
         LastDictationSource source,
         TargetWindowId? target,
+        Guid? entryId,
         CancellationToken cancellationToken)
     {
         LastDictationReuseResult Ended(LastDictationOutcome outcome, DeliveryResult? delivery = null) =>
@@ -162,7 +169,9 @@ public sealed class LastDictationReuse
             }
 
             var entries = await _environment.LoadHistory(cancellationToken).ConfigureAwait(false);
-            var entry = LastDictation.Pick(entries, _environment.Now());
+            var entry = entryId is { } shown
+                ? LastDictation.Find(entries, shown, _environment.Now())
+                : LastDictation.Pick(entries, _environment.Now());
             if (entry is null)
             {
                 return Ended(LastDictationOutcome.NothingToReuse);

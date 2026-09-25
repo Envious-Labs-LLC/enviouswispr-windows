@@ -96,6 +96,10 @@ public partial class App : Application, IAsyncDisposable
     private WindowsTrayIcon? _trayIcon;
     private WindowsForegroundHistory? _foregroundHistory;
     private LastDictationReuse? _lastDictation;
+    private int _lastDictationPreviewVersion;
+
+    /// <summary>The dictation the tray last named; written on the UI thread, where the tray reads it.</summary>
+    private Guid? _lastDictationPreviewEntry;
     private IReadOnlyList<CustomWordEntry> _customWords = [];
     // VOLATILE BECAUSE THE HOTKEY THREAD READS IT AND THE UI THREAD REPLACES IT. The record itself
     // is immutable and cannot tear, but the REFERENCE can be read stale, and one of its readers is
@@ -994,6 +998,7 @@ public partial class App : Application, IAsyncDisposable
         _foregroundHistory = new WindowsForegroundHistory();
         _trayIcon.PasteLastRequested += () => _ = ReuseLastDictationAsync(LastDictationAction.Paste);
         _trayIcon.CopyLastRequested += () => _ = ReuseLastDictationAsync(LastDictationAction.Copy);
+        _trayIcon.LastDictationPreviewRequested += RefreshLastDictationPreview;
         _trayIcon.SetStatus("ready");
     }
 
@@ -1374,7 +1379,7 @@ public partial class App : Application, IAsyncDisposable
             () => TextDeliveryOptions.Default,
             (window, cancellation) => WindowsForegroundTargetProvider.ReacquireAsync(
                 window,
-                TimeSpan.FromMilliseconds(1500),
+                TimeSpan.FromMilliseconds(1000),
                 cancellation)));
         RefreshLastDictationPreview();
         _sessionController = new PushToTalkSessionController(
@@ -1988,6 +1993,8 @@ public partial class App : Application, IAsyncDisposable
     private async Task ReuseLastDictationAsync(LastDictationAction action)
     {
         var target = action == LastDictationAction.Paste ? _foregroundHistory?.LastTarget : null;
+        // The entry the menu named, so a deletion since it opened refuses instead of reaching further back.
+        var shownEntry = _lastDictationPreviewEntry;
         if (Leaving || _lastDictation is not { } reuse ||
             _presentation is not { } presentation ||
             !presentation.TryEnter(out var lease))
@@ -2000,12 +2007,30 @@ public partial class App : Application, IAsyncDisposable
         {
             try
             {
-                result = action == LastDictationAction.Paste
-                    ? await reuse.PasteAsync(target, LastDictationSource.Menu, lease.Closing).ConfigureAwait(false)
-                    : await reuse.CopyAsync(LastDictationSource.Menu, lease.Closing).ConfigureAwait(false);
+                // THE SESSION IS HELD FOR THE REUSE, as the update check holds it: a key pressed while an old
+                // dictation is being pasted is answered Busy rather than starting a take whose delivery would
+                // race this one for the clipboard and the target. The checks inside the reuse stay - a
+                // recording can exist between session commands, which the hold alone cannot see.
+                using var hold = _sessionCoordinator?.TryHold();
+                result = hold is null
+                    ? new LastDictationReuseResult(action, LastDictationSource.Menu, LastDictationOutcome.DictationInProgress)
+                    : action == LastDictationAction.Paste
+                        ? await reuse.PasteAsync(target, LastDictationSource.Menu, shownEntry, lease.Closing).ConfigureAwait(false)
+                        : await reuse.CopyAsync(LastDictationSource.Menu, shownEntry, lease.Closing).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
             {
+                return;
+            }
+            catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+            {
+                // A history that cannot be read or pruned, or a delivery that threw: said on the pill and in the
+                // log by name, never left as a faulted task nobody observes. Never the words or the message.
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.LastDictationReuseFailed,
+                    AppFailureCategory.Recovery));
+                ShowLastDictationStatus(DictationStatus.Error("Your last dictation could not be reused"));
                 return;
             }
         }
@@ -2028,10 +2053,17 @@ public partial class App : Application, IAsyncDisposable
     }
 
     /// <summary>The reuse's sentence on the pill, queued to the window and checked when it runs.</summary>
+    /// <remarks>
+    /// NEVER OVER A LIVE DICTATION. The pill is also the recording indicator, and a reuse's sentence set while a
+    /// take records would tell the person it had stopped when it has not. So the sentence is shown only when
+    /// nothing is recording or queued at the moment it would be drawn; otherwise the log keeps the outcome.
+    /// </remarks>
     private void ShowLastDictationStatus(DictationStatus reuseStatus) =>
         _window?.DispatcherQueue.TryEnqueue(() =>
         {
-            if (!Leaving)
+            if (!Leaving &&
+                _sessionController?.CurrentSession is null &&
+                _sessionCoordinator is { IsProcessing: false, PendingCount: 0 })
             {
                 _window?.SetSessionStatus(reuseStatus);
             }
@@ -2068,24 +2100,39 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
+        // THE NEWEST READ WINS. A menu opening and a dictation finishing can start two reads at once, and the one
+        // that finishes last is not necessarily the one that started last.
+        var version = Interlocked.Increment(ref _lastDictationPreviewVersion);
         string? preview;
+        Guid? entryId;
         using (lease)
         {
             try
             {
                 var entry = await reuse.PeekAsync(lease.Closing).ConfigureAwait(false);
                 preview = entry is null ? null : LastDictation.Preview(entry.Text);
+                entryId = entry?.Id;
             }
             catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
             {
                 return;
             }
+            catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+            {
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.LastDictationReuseFailed,
+                    AppFailureCategory.Recovery));
+                preview = null;
+                entryId = null;
+            }
         }
 
         _window?.DispatcherQueue.TryEnqueue(() =>
         {
-            if (!Leaving)
+            if (!Leaving && version == Volatile.Read(ref _lastDictationPreviewVersion))
             {
+                _lastDictationPreviewEntry = entryId;
                 _trayIcon?.SetLastDictationPreview(preview);
             }
         });

@@ -137,6 +137,24 @@ public sealed class LastDictationReuseTests
         Assert.Equal(pressed, Assert.Single(delivery.Requests).Target);
     }
 
+    /// <summary>The menu names one dictation; if that one is deleted before the click, nothing older is pasted instead.</summary>
+    [Fact]
+    public async Task TheDictationTheMenuNamedIsTheOnlyOneReused()
+    {
+        var older = Entry("older words", minutesAgo: 10);
+        var shown = Entry("shown words", minutesAgo: 1);
+        var present = new RecordingDelivery(Delivered());
+        var deleted = new RecordingDelivery(Delivered());
+
+        var used = await Reuse(present, [shown, older]).PasteAsync(Editor, LastDictationSource.Menu, shown.Id);
+        var refused = await Reuse(deleted, [older]).PasteAsync(Editor, LastDictationSource.Menu, shown.Id);
+
+        Assert.Equal(LastDictationOutcome.Pasted, used.Outcome);
+        Assert.Equal("shown words", Assert.Single(present.Requests).Text.Text);
+        Assert.Equal(LastDictationOutcome.NothingToReuse, refused.Outcome);
+        Assert.Empty(deleted.Requests);
+    }
+
     [Fact]
     public async Task ARefusedPasteThatTheClipboardCaughtSaysSo()
     {

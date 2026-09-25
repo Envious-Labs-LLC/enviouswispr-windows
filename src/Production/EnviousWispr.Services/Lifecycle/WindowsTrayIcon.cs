@@ -45,6 +45,15 @@ public sealed class WindowsTrayIcon : IDisposable
         menu.Items.Add(_pasteLast);
         menu.Items.Add(_copyLast);
         menu.Items.Add(_lastPreview);
+        // READ AGAIN EVERY TIME THE MENU OPENS. History changes from places that never tell the tray - a
+        // deletion, a Keep, a retention expiry - and a preview that outlived its entry would name one dictation
+        // and paste another. The items wait, disabled, for the read.
+        menu.Opening += (_, _) =>
+        {
+            _pasteLast.Enabled = false;
+            _copyLast.Enabled = false;
+            LastDictationPreviewRequested?.Invoke();
+        };
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Open EnviousWispr", image: null, (_, _) => ShowWindowRequested?.Invoke());
         menu.Items.Add("Settings", image: null, (_, _) => OpenSettingsRequested?.Invoke());
@@ -86,6 +95,9 @@ public sealed class WindowsTrayIcon : IDisposable
     public event Action? PasteLastRequested;
 
     public event Action? CopyLastRequested;
+
+    /// <summary>The menu is opening; the app reads the history and answers with <see cref="SetLastDictationPreview"/>.</summary>
+    public event Action? LastDictationPreviewRequested;
 
     /// <summary>Names the dictation the two items would reuse, or disables them when there is none.</summary>
     /// <remarks>
