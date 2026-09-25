@@ -37,7 +37,9 @@ internal sealed class PolishModelSource : IPolishModelSource, IDisposable
             await using var client = new OllamaApiClient(ollamaEndpoint);
             var discovery = await client.DiscoverAsync(cancellationToken).ConfigureAwait(false);
             return new PolishModelDiscovery(
-                discovery.Health == OllamaHealth.Ready
+                // NO MODELS IS A LISTING THAT SUCCEEDED, with nothing in it: the picker may clear a model just
+                // removed. Only an Ollama that did not answer is not ready. Ref: #213 review.
+                discovery.Health is OllamaHealth.Ready or OllamaHealth.NoLocalModels
                     ? PolishModelDiscoveryStatus.Ready
                     : PolishModelDiscoveryStatus.OllamaNotReady,
                 discovery.LocalModels.Select(model => model.Id).ToArray());
