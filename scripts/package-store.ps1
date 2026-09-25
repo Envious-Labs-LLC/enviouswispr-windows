@@ -24,7 +24,12 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $repoRoot 'src\Production\EnviousWispr.App\EnviousWispr.App.csproj'
 $manifestSource = Join-Path $repoRoot 'src\Production\EnviousWispr.App\Package.appxmanifest'
+$placeholderName = 'EnviousLabsLLC.EnviousWispr'
 $placeholderPublisher = 'CN=EnviousLabsPlaceholder'
+
+function Test-PlaceholderIdentity($identity) {
+    return $identity.Name -eq $placeholderName -or $identity.Publisher -eq $placeholderPublisher
+}
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $repoRoot 'dist\windows\store'
@@ -32,9 +37,8 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 
 [xml]$sourceManifest = Get-Content -LiteralPath $manifestSource -Raw
-$sourcePublisher = $sourceManifest.Package.Identity.Publisher
-if ($ForStoreUpload -and $sourcePublisher -eq $placeholderPublisher) {
-    throw "Package.appxmanifest still carries the placeholder publisher ($placeholderPublisher). Commit the Identity Name and Publisher that Partner Center assigned before building a Store upload."
+if ($ForStoreUpload -and (Test-PlaceholderIdentity $sourceManifest.Package.Identity)) {
+    throw "Package.appxmanifest still carries a placeholder identity ($placeholderName, $placeholderPublisher). Commit the Identity Name and Publisher that Partner Center assigned before building a Store upload."
 }
 
 function Resolve-DotNet10 {
@@ -127,22 +131,29 @@ if ($duplicates.Count -gt 0) {
     throw "The Store package carries a path more than once: $($duplicates -join ', ')"
 }
 
-# A SELF-CONTAINED WORKER SAYS SO IN ITS OWN CONFIG. A framework-dependent one names a shared framework
-# the customer's PC does not have, and starts only on a developer's machine.
-$workerConfig = Get-Content -LiteralPath (Join-Path $publishDirectory 'EnviousWispr.RuntimeWorker.runtimeconfig.json') -Raw | ConvertFrom-Json
+# THE WORKER IS JUDGED FROM THE PACKAGE, NOT FROM THE PUBLISH FOLDER, for the same reason the payload
+# is: the two have already disagreed once. A self-contained worker says so in its own config (a
+# framework-dependent one names a shared framework the customer's PC does not have), and it must start
+# from the extracted payload with nothing but what the package carries.
+$extractedDirectory = Join-Path $scratchRoot 'extracted'
+[IO.Compression.ZipFile]::ExtractToDirectory($package.FullName, $extractedDirectory)
+$workerConfig = Get-Content -LiteralPath (Join-Path $extractedDirectory 'EnviousWispr.RuntimeWorker.runtimeconfig.json') -Raw | ConvertFrom-Json
 if ($null -eq $workerConfig.runtimeOptions.includedFrameworks) {
-    throw 'The runtime worker was published framework-dependent; the Store package must carry its own .NET.'
+    throw 'The packaged runtime worker is framework-dependent; the Store package must carry its own .NET.'
 }
 
-Write-Host 'Validating the self-contained runtime worker can launch...'
-& (Join-Path $publishDirectory 'EnviousWispr.RuntimeWorker.exe') 2>$null
+Write-Host 'Validating the packaged runtime worker can launch...'
+& (Join-Path $extractedDirectory 'EnviousWispr.RuntimeWorker.exe') 2>$null
 if ($LASTEXITCODE -ne 2) {
-    throw "The self-contained runtime worker could not launch (exit $LASTEXITCODE)."
+    throw "The packaged runtime worker could not launch (exit $LASTEXITCODE)."
 }
 
 $identity = $packagedManifest.Package.Identity
 if ($identity.Version -notmatch '^\d+\.\d+\.\d+\.0$') {
     throw "The package version $($identity.Version) must have a revision of 0; the Store assigns the revision."
+}
+if ($ForStoreUpload -and (Test-PlaceholderIdentity $identity)) {
+    throw "The built package carries a placeholder identity ($($identity.Name), $($identity.Publisher)); the Store would reject it at upload."
 }
 
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
@@ -152,6 +163,6 @@ Copy-Item -LiteralPath $package.FullName -Destination $destination -Force
 Write-Host "Store package: $destination"
 Write-Host "Identity: $($identity.Name) $($identity.Version) ($($identity.Publisher))"
 Write-Host ("Size: {0:N0} MB, {1} files" -f ($package.Length / 1MB), $entries.Count)
-if ($identity.Publisher -eq $placeholderPublisher) {
-    Write-Host 'TEST PACKAGE: the publisher is the placeholder, so this cannot be uploaded to the Store.'
+if (Test-PlaceholderIdentity $identity) {
+    Write-Host 'TEST PACKAGE: the identity is the placeholder, so this cannot be uploaded to the Store.'
 }
