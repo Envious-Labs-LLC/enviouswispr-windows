@@ -20,7 +20,11 @@ public static class WhisperRuntimeSelector
         var threads = Math.Clamp(hardware.PhysicalCoreCount > 0
             ? hardware.PhysicalCoreCount
             : Math.Max(1, hardware.LogicalProcessorCount / 2), 2, 8);
-        var cudaAvailable = hardware.Cuda.IsDriverAvailable && hardware.Cuda.DeviceCount > 0;
+        // A card without the files whisper.cpp loads (cuBLAS and cuBLASLt; see the probe) cannot run its
+        // CUDA build: the worker would start and fail to load its runtime (#163). Only THOSE files: asking
+        // for onnxruntime's set as well puts a working card on the processor for want of cuDNN (#99).
+        var cudaAvailable = hardware.Cuda.IsDriverAvailable && hardware.Cuda.DeviceCount > 0 &&
+            hardware.IsWhisperCudaDependencySetAvailable;
 
         if (preference == RuntimeProviderPreference.Cuda)
         {

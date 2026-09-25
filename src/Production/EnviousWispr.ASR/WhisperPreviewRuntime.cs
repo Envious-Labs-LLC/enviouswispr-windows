@@ -4,23 +4,16 @@ namespace EnviousWispr.ASR;
 
 /// <summary>Which processor Live Preview's engine runs on.</summary>
 /// <remarks>
-/// IT USED TO ASK ABOUT THE WRONG LIBRARY. Live Preview runs whisper.cpp, and the decision required
-/// `IsOnnxRuntimeCudaDependencySetAvailable` - an onnxruntime probe. onnxruntime is what PARAKEET
-/// uses; whisper.cpp ships its own CUDA build and neither knows nor cares whether onnxruntime's
-/// dependency set is present. So a machine whose graphics card works perfectly well for whisper.cpp
-/// was put on the processor because a different library's files were missing.
-///
-/// THE CONDITION IS NOW THE ONE `WhisperRuntimeSelector` ALREADY USES for the final Whisper engine -
-/// a driver and at least one device - so the preview and the final transcription agree about what
-/// this machine can do. Two answers to one question was the defect; there is now one answer.
+/// THE CARD COUNTS ONLY WITH THE FILES WHISPER.CPP LOADS, AND ONLY THOSE. A driver and a device are
+/// not enough: with no cuBLAS on the machine the preview worker starts on the card, fails to load its
+/// runtime, and the preview never appears (#163). And onnxruntime's files are not the question: they
+/// belong to PARAKEET, and requiring them put a card whisper.cpp could use on the processor for want
+/// of cuDNN, which it never loads (#99). `IsWhisperCudaDependencySetAvailable` is the one answer, and
+/// `WhisperRuntimeSelector` asks it too, so the preview and the final transcription agree.
 ///
 /// LIFTED OUT OF THE APP SO IT CAN BE TESTED AT ALL. It lived inline in a WinUI startup path that no
 /// test in this repository can reach, which is why a probe for the wrong runtime sat there
-/// unnoticed. Ref: #99.
-///
-/// THIS IS NOT A SPEED CLAIM ON THE DEVELOPMENT MACHINE. Both probes are true there, so the fix
-/// changes nothing locally and could not be measured by running it. What it changes is the machine
-/// where they disagree, and the tests below are that machine.
+/// unnoticed. Ref: #99, #163.
 /// </remarks>
 public static class WhisperPreviewRuntime
 {
@@ -34,7 +27,8 @@ public static class WhisperPreviewRuntime
         return !forceCpu &&
             hardware.Architecture == ProcessorArchitectureKind.X64 &&
             hardware.Cuda.IsDriverAvailable &&
-            hardware.Cuda.DeviceCount > 0
+            hardware.Cuda.DeviceCount > 0 &&
+            hardware.IsWhisperCudaDependencySetAvailable
                 ? RuntimeProviderKind.Cuda
                 : RuntimeProviderKind.Cpu;
     }
