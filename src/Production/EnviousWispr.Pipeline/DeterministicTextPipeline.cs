@@ -14,7 +14,8 @@ public sealed record DeterministicTextOptions(
     bool WordCorrectionEnabled,
     bool FillerRemovalEnabled,
     bool EmojiFormatterEnabled,
-    bool SpokenPunctuationEnabled)
+    bool SpokenPunctuationEnabled,
+    EnglishSpelling EnglishSpelling = EnglishSpelling.American)
 {
     public static DeterministicTextOptions From(DictationPreferences preferences)
     {
@@ -23,7 +24,8 @@ public sealed record DeterministicTextOptions(
             preferences.WordCorrectionEnabled,
             preferences.FillerRemovalEnabled,
             preferences.EmojiFormatterEnabled,
-            preferences.SpokenPunctuationEnabled);
+            preferences.SpokenPunctuationEnabled,
+            preferences.EnglishSpelling);
     }
 }
 
@@ -146,13 +148,31 @@ public sealed class DeterministicTextPipeline
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(deterministicResult);
         ArgumentNullException.ThrowIfNull(polishedText);
-        var step = _steps.Single(candidate => candidate.Stage == DeterministicTextStage.EmojiRestoration);
         var input = new DeterministicTextContext(
             request.Transcript,
             deterministicResult.DeterministicText,
             request.CustomWords,
             request.Options,
             polishedText);
+        // THE SPELLING FIRST, THEN THE EMOJI: the restorer aligns the polish with the deterministic text, and
+        // both are British by then. Ref: macOS #3124 runs the same two in the same order.
+        var spelling = _steps.SingleOrDefault(candidate => candidate.Stage == DeterministicTextStage.EnglishSpellingAfterPolish);
+        DeterministicStageReceipt? spellingReceipt = null;
+        var spellingDegraded = false;
+        if (spelling is not null && spelling.IsEnabled(input))
+        {
+            var spelled = await _executor.ExecuteAsync(
+                spelling,
+                input,
+                static (before, after) =>
+                    !string.Equals(before.PolishedText, after.PolishedText, StringComparison.Ordinal),
+                cancellationToken).ConfigureAwait(false);
+            input = spelled.Context;
+            spellingReceipt = spelled.Receipt;
+            spellingDegraded = spelled.IsDegraded;
+        }
+
+        var step = _steps.Single(candidate => candidate.Stage == DeterministicTextStage.EmojiRestoration);
         // INVALID RESTORATION MUST PRESERVE THE POLISH. A null context or null Text now fails just
         // like a main-loop stage, keeping the supplied polish instead of dereferencing invalid output.
         var execution = await _executor.ExecuteAsync(
@@ -162,12 +182,15 @@ public sealed class DeterministicTextPipeline
                 !string.Equals(before.PolishedText, after.PolishedText, StringComparison.Ordinal),
             cancellationToken).ConfigureAwait(false);
         var context = execution.Context;
-        var degraded = deterministicResult.IsDegraded || execution.IsDegraded;
+        var degraded = deterministicResult.IsDegraded || spellingDegraded || execution.IsDegraded;
         var receipt = execution.Receipt;
         var receipts = deterministicResult.Receipts
-            .Select(existing => existing.Stage == DeterministicTextStage.EmojiRestoration
-                ? receipt
-                : existing)
+            .Select(existing => existing.Stage switch
+            {
+                DeterministicTextStage.EmojiRestoration => receipt,
+                DeterministicTextStage.EnglishSpellingAfterPolish when spellingReceipt is not null => spellingReceipt,
+                _ => existing,
+            })
             .ToArray();
         return new DeterministicTextResult(
             new ProcessedText(request.Transcript.SessionId, context.PolishedText ?? polishedText),
@@ -202,6 +225,8 @@ public sealed class DeterministicTextPipeline
             new FillerStep(),
             new SpokenEmojiStep(emojiFormatter),
             new InverseTextNormalizationStep(),
+            new EnglishSpellingStep(BritishSpellingConverter.Shared, afterPolish: false),
+            new EnglishSpellingStep(BritishSpellingConverter.Shared, afterPolish: true),
             new EmojiRestorationStep(),
         ];
     }
@@ -294,6 +319,50 @@ public sealed class DeterministicTextPipeline
             {
                 PolishedText = EmojiRestorer.Restore(context.PolishedText!, context.Text).Text,
             };
+        }
+    }
+
+    /// <summary>American to British spelling - over the deterministic text, or over the polish. Ref: macOS #3124.</summary>
+    /// <remarks>
+    /// TWO INSTANCES, ONE RULE. Before polish it is the no-polish floor: polish off, skipped or failed still
+    /// delivers British spelling. After polish it keeps a model that writes "color" from undoing the choice, and
+    /// runs before the emoji restorer so that aligns two British texts. The person's own Custom Words are never
+    /// respelled - their replacement is their spelling. A table that failed to load stands the step down and the
+    /// take is delivered in American spelling: this is a limb, and the product without it is not a failure.
+    /// </remarks>
+    private sealed class EnglishSpellingStep(BritishSpellingConverter? converter, bool afterPolish) : IDeterministicTextStep
+    {
+        public DeterministicTextStage Stage => afterPolish
+            ? DeterministicTextStage.EnglishSpellingAfterPolish
+            : DeterministicTextStage.EnglishSpelling;
+
+        /// <summary>10,000 words convert in well under this; the macOS budget for them is 150 ms.</summary>
+        public TimeSpan Timeout => TimeSpan.FromMilliseconds(200);
+
+        /// <remarks>
+        /// A REPORTED LANGUAGE DECIDES; FOR AN ENGINE THAT REPORTS NONE, CHOOSING BRITISH IS THE STATEMENT. macOS offers
+        /// this as "English (UK)", a language lock: choosing it is saying "I dictate in English". Parakeet on Windows
+        /// cannot be locked and reports no language, so the same choice carries the same meaning here - its takes are
+        /// respelled whenever British is chosen, and the setting says so on screen, because the table shares "color"
+        /// and "favor" with Spanish and Portuguese. A text-level language guess was built and withdrawn in review: a
+        /// word list admits Spanish "has", Portuguese "for", French "but", and fails long English passages, and that
+        /// class of error has no last member. Whisper reports its language, so a Whisper take is respelled only when
+        /// it is English.
+        /// </remarks>
+        public bool IsEnabled(DeterministicTextContext context) =>
+            converter is not null &&
+            context.Options.EnglishSpelling == EnglishSpelling.British &&
+            IsEnglishDeterministicLanguage(context.Transcript) &&
+            (!afterPolish || context.PolishedText is not null);
+
+        public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var protectedWords = BritishSpellingConverter.ProtectedWords(
+                context.CustomWords.Select(entry => entry.Replacement));
+            return afterPolish
+                ? context with { PolishedText = converter!.Convert(context.PolishedText!, protectedWords).Text }
+                : context with { Text = converter!.Convert(context.Text, protectedWords).Text };
         }
     }
 

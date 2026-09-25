@@ -135,6 +135,21 @@
       "openRequirements": [
         "Approve the checked-in attribution and public-repository distribution decision."
       ]
+    },
+    {
+      "id": "british-spelling-table",
+      "artifactClass": "data",
+      "plannedPayload": "british-spelling.json (5,763 American-to-British forms, SHA-256 d615937cbae19406fee75583454875e7de41f2184da602414bcd7fe6012a3a63) embedded in EnviousWispr.PostProcessing, with varcon-LICENSE.txt beside the app",
+      "upstreamIdentity": "VarCon 2020.12.07, filtered by the macOS repository's generate-british-spelling.py",
+      "observedLicense": "LicenseRef-VarCon",
+      "sourceUrl": "https://wordlist.aspell.net/varcon/",
+      "sourceRevision": "2020.12.07 (tarball SHA-256 3b0720c5718008f37c02658a83d51d5598dd86531f0a2206d410c854006cb184)",
+      "shipDisposition": "pending-review",
+      "approvedBy": null,
+      "approvedAt": null,
+      "openRequirements": [
+        "Confirm the VarCon notice ships in every installed layout and approve public distribution."
+      ]
     }
   ]
 }

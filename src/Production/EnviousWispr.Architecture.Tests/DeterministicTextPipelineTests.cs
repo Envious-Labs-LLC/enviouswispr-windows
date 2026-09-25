@@ -118,6 +118,8 @@ public sealed class DeterministicTextPipelineTests
                 DeterministicTextStage.FillerAndFalseStarts,
                 DeterministicTextStage.SpokenEmoji,
                 DeterministicTextStage.InverseTextNormalization,
+                DeterministicTextStage.EnglishSpelling,
+                DeterministicTextStage.EnglishSpellingAfterPolish,
                 DeterministicTextStage.EmojiRestoration,
             ],
             result.Receipts.Select(receipt => receipt.Stage));

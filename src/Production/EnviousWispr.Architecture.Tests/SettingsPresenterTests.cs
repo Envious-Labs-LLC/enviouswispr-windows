@@ -192,6 +192,7 @@ public sealed class SettingsPresenterTests
         EmojiFormatter: true,
         SpokenPunctuation: false,
         WhisperLanguageIndex: 2,
+        EnglishSpellingIndex: 1,
         RecordingModeIndex: 1,
         EscapeRecovery: true,
         AutoStop: true,
@@ -237,6 +238,7 @@ public sealed class SettingsPresenterTests
                 FillerRemoval = inverted,
                 EmojiFormatter = !inverted,
                 SpokenPunctuation = inverted,
+                EnglishSpellingIndex = inverted ? 0 : 1,
                 EscapeRecovery = !inverted,
                 AutoStop = inverted,
                 HistoryEnabled = !inverted,
@@ -270,7 +272,8 @@ public sealed class SettingsPresenterTests
                         EscapeRecoveryEnabled: !inverted,
                         "Ctrl+Alt+W",
                         AutoStopEnabled: inverted,
-                        AutoStopSilenceSeconds: 3.5),
+                        AutoStopSilenceSeconds: 3.5,
+                        EnglishSpelling: inverted ? EnglishSpelling.American : EnglishSpelling.British),
                     new PolishPreferences(PolishProvider.Ollama, "llama3", "http://localhost:11434"),
                     new HistoryPreferences(!inverted, 45),
                     AppTheme.Dark,
@@ -309,6 +312,7 @@ public sealed class SettingsPresenterTests
             {
                 FinalEngineIndex = -1,
                 WhisperLanguageIndex = -1,
+                EnglishSpellingIndex = -1,
                 RecordingModeIndex = -1,
                 PolishProviderIndex = -1,
                 ThemeIndex = -1,
@@ -322,6 +326,7 @@ public sealed class SettingsPresenterTests
             var stored = (await store.LoadAsync()).Settings;
             Assert.Equal(FinalAsrEngine.Automatic, stored.Preferences.Dictation.FinalEngine);
             Assert.Equal((WhisperLanguagePreference)0, stored.Preferences.Dictation.WhisperLanguage);
+            Assert.Equal(EnglishSpelling.American, stored.Preferences.Dictation.EnglishSpelling);
             Assert.Equal((DictationRecordingMode)0, stored.Preferences.Dictation.RecordingMode);
             Assert.Equal(PolishProvider.None, stored.Preferences.Polish.Provider);
             Assert.Equal(AppTheme.System, stored.Preferences.Theme);

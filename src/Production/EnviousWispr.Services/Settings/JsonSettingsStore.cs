@@ -68,6 +68,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 12 => MigrateFromV12(json),
                 13 => MigrateFromV13(json),
                 14 => MigrateFromV14(json),
+                15 => MigrateFromV15(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -422,6 +423,20 @@ public sealed class JsonSettingsStore : ISettingsStore
     /// absent field is already correct. The step exists so the file is recorded as read at the new
     /// shape rather than refused.
     /// </remarks>
+    /// <summary>Takes a settings file written before English could be spelled the British way.</summary>
+    /// <remarks>
+    /// NOTHING IS REWRITTEN. Every take so far was delivered in American spelling, and the value an absent field
+    /// deserializes to - American - keeps doing exactly that. The step records that the file was read at the new
+    /// shape, so an older build refuses a newer file by its version rather than tripping on an unknown field.
+    /// </remarks>
+    private static AppSettings? MigrateFromV15(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+    }
+
     private static AppSettings? MigrateFromV14(string json)
     {
         var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);

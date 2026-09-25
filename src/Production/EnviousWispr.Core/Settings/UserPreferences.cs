@@ -59,6 +59,20 @@ public enum RecordingSoundPairing
     AirGlint,
 }
 
+/// <summary>Which spelling English dictation is delivered in. Ref: macOS #3124.</summary>
+/// <remarks>
+/// A PREFERENCE OF ITS OWN, NOT A LANGUAGE. The engines only ever receive "en" - Parakeet has no language input on
+/// Windows and whisper.cpp's language token carries no region - so British is applied to the words after
+/// recognition, wherever the take is English: Parakeet's always, and Whisper's when it is locked to or detects
+/// English. macOS folds the same choice into its language picker as "English (UK)"; Windows has no language picker
+/// for its default engine, so here it is a setting beside the other text features.
+/// </remarks>
+public enum EnglishSpelling
+{
+    American,
+    British,
+}
+
 public enum WhisperLanguagePreference
 {
     Automatic,
@@ -109,7 +123,8 @@ public sealed record DictationPreferences(
     bool EscapeRecoveryEnabled = false,
     string QuickAddGesture = "Ctrl+Alt+W",
     bool AutoStopEnabled = false,
-    double AutoStopSilenceSeconds = 2.0)
+    double AutoStopSilenceSeconds = 2.0,
+    EnglishSpelling EnglishSpelling = EnglishSpelling.American)
 {
     public static DictationPreferences Default { get; } = new(
         FinalAsrEngine.Automatic,

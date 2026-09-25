@@ -48,6 +48,7 @@ public static class AppSettingsValidator
         preferences.History is not null &&
         Enum.IsDefined(preferences.Dictation.FinalEngine) &&
         Enum.IsDefined(preferences.Dictation.WhisperLanguage) &&
+        Enum.IsDefined(preferences.Dictation.EnglishSpelling) &&
         Enum.IsDefined(preferences.Dictation.RecordingMode) &&
         HotkeyGestureParser.Parse(preferences.Dictation.PushToTalkGesture).Succeeded &&
         HotkeyGestureParser.Parse(preferences.Dictation.CancelGesture).Succeeded &&
