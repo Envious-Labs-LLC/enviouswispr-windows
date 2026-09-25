@@ -81,6 +81,7 @@ public sealed record GeneralSettingsInput(
     bool EmojiFormatter,
     bool SpokenPunctuation,
     int WhisperLanguageIndex,
+    int EnglishSpellingIndex,
     int RecordingModeIndex,
     bool EscapeRecovery,
     bool AutoStop,
@@ -295,7 +296,8 @@ public sealed class SettingsPresenter : IDisposable
             input.EscapeRecovery,
             quickAdd.Gesture!.Value.ToString(),
             input.AutoStop,
-            double.IsNaN(input.AutoStopSeconds) ? DictationPreferences.Default.AutoStopSilenceSeconds : input.AutoStopSeconds);
+            double.IsNaN(input.AutoStopSeconds) ? DictationPreferences.Default.AutoStopSilenceSeconds : input.AutoStopSeconds,
+            (EnglishSpelling)Math.Clamp(Chosen(input.EnglishSpellingIndex), 0, 1));
         var polish = new PolishPreferences(
             PolishProviderFromIndex(Chosen(input.PolishProviderIndex)),
             NullIfBlank(input.PolishModel),

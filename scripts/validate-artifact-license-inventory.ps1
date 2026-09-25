@@ -47,7 +47,8 @@ $requiredIds = @(
     'llama-server-windows',
     'nvidia-cuda-runtime',
     'nvidia-cudnn-runtime',
-    'minds14-public-uat-fixtures')
+    'minds14-public-uat-fixtures',
+    'british-spelling-table')
 $expectedEvidence = @{
     'parakeet-final-model' = @(
         'CC-BY-4.0',
@@ -73,6 +74,9 @@ $expectedEvidence = @{
     'minds14-public-uat-fixtures' = @(
         'CC-BY-4.0',
         'https://huggingface.co/datasets/PolyAI/minds14/tree/40ce77cb32a384e4d50a568e1ec39ac804019d33')
+    'british-spelling-table' = @(
+        'LicenseRef-VarCon',
+        'https://wordlist.aspell.net/varcon/')
 }
 $artifacts = @($inventory.artifacts)
 $artifactIdDifference = @(Compare-Object `
@@ -128,7 +132,7 @@ foreach ($artifact in $artifacts)
         throw "Artifact $($artifact.id) does not match its reviewed upstream evidence."
     }
 
-    if ($artifact.artifactClass -notin @('model', 'native-runtime', 'test-data'))
+    if ($artifact.artifactClass -notin @('model', 'native-runtime', 'test-data', 'data'))
     {
         throw "Artifact $($artifact.id) has an unsupported artifact class."
     }

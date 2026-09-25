@@ -5,5 +5,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Resources\emoji-dictionary.json" />
+    <EmbeddedResource Include="Resources\british-spelling.json" />
+    <None Include="Resources\varcon-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" Link="licenses\varcon-LICENSE.txt" />
   </ItemGroup>
 </Project>

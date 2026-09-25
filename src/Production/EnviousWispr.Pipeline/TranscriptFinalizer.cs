@@ -122,7 +122,9 @@ public sealed class TranscriptFinalizer
 
         _effects.EmitStageReceipts(processed.Receipts, emojiRestorationOnly: true);
         var restorationMilliseconds = processed.Receipts
-            .Where(receipt => receipt.Stage == DeterministicTextStage.EmojiRestoration)
+            .Where(receipt => receipt.Stage is
+                DeterministicTextStage.EnglishSpellingAfterPolish or
+                DeterministicTextStage.EmojiRestoration)
             .Sum(receipt => receipt.ElapsedMilliseconds);
         // THE SUMMARY IS LAST, BECAUSE IT IS THE ONLY LINE THAT CAN STILL BE WRONG. IsDegraded turns
         // true when restoration times out or fails, and the duration has to include the restoration

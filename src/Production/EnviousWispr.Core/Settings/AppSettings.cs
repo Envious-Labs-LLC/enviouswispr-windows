@@ -31,7 +31,7 @@ public sealed record AppSettings(
     /// </remarks>
     string? LanguageOfferHistory = null)
 {
-    public const int CurrentSchemaVersion = 15;
+    public const int CurrentSchemaVersion = 16;
 
     public static AppSettings Default { get; } = new(
         CurrentSchemaVersion,

@@ -230,6 +230,53 @@ public sealed class JsonSettingsStoreTests
         });
     }
 
+    /// <summary>A version-15 file, written before English spelling could be chosen, loads as American.</summary>
+    [Fact]
+    public async Task LoadMigratesPhaseFifteenSettingsAsAmericanSpelling()
+    {
+        await WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "settings.json");
+            var legacy = CreatePopulatedSettings() with { SchemaVersion = 15 };
+            var json = System.Text.Json.JsonSerializer.Serialize(
+                legacy,
+                JsonSettingsStore.SerializerOptions);
+            var root = JsonNode.Parse(json)!.AsObject();
+            Assert.True(root["preferences"]!["dictation"]!.AsObject().Remove("englishSpelling"));
+            await File.WriteAllTextAsync(path, root.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var result = await new JsonSettingsStore(path).LoadAsync();
+
+            Assert.Equal(SettingsLoadStatus.Migrated, result.Status);
+            Assert.Equal(15, result.SourceSchemaVersion);
+            Assert.Equal(AppSettings.CurrentSchemaVersion, result.Settings.SchemaVersion);
+            Assert.Equal(EnglishSpelling.American, result.Settings.Preferences.Dictation.EnglishSpelling);
+        });
+    }
+
+    /// <summary>British survives a save and a load at the current version.</summary>
+    [Fact]
+    public async Task BritishSpellingRoundTrips()
+    {
+        await WithTestDirectoryAsync(async directory =>
+        {
+            var store = new JsonSettingsStore(Path.Combine(directory, "settings.json"));
+            var settings = AppSettings.Default with
+            {
+                Preferences = AppSettings.Default.Preferences with
+                {
+                    Dictation = AppSettings.Default.Preferences.Dictation with { EnglishSpelling = EnglishSpelling.British },
+                },
+            };
+
+            await store.SaveAsync(settings);
+            var result = await store.LoadAsync();
+
+            Assert.Equal(SettingsLoadStatus.Loaded, result.Status);
+            Assert.Equal(EnglishSpelling.British, result.Settings.Preferences.Dictation.EnglishSpelling);
+        });
+    }
+
     /// <summary>
     /// A settings file written before the release-notes mark existed still loads, and gains it.
     /// </summary>

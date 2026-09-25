@@ -152,6 +152,29 @@ public sealed class PortableProfileServiceTests
         });
     }
 
+    /// <summary>A version-9 profile, exported before English spelling existed, imports as American.</summary>
+    [Fact]
+    public async Task ImportMigratesVersionNineProfileAsAmericanSpelling()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "profile.enviouswispr.json");
+            var current = JsonSettingsStoreTests.CreatePopulatedSettings().ToPortableProfile();
+            var json = JsonSerializer.Serialize(
+                current with { SchemaVersion = 9 },
+                JsonSettingsStore.SerializerOptions);
+            var root = JsonNode.Parse(json)!.AsObject();
+            Assert.True(root["preferences"]!["dictation"]!.AsObject().Remove("englishSpelling"));
+            await File.WriteAllTextAsync(path, root.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var result = await new JsonPortableProfileService().ImportAsync(path);
+
+            Assert.Equal(PortableProfileImportStatus.Imported, result.Status);
+            Assert.Equal(PortableProfile.CurrentSchemaVersion, result.Profile?.SchemaVersion);
+            Assert.Equal(EnglishSpelling.American, result.Profile?.Preferences.Dictation.EnglishSpelling);
+        });
+    }
+
     [Fact]
     public async Task ImportMigratesPhaseTwentyThreeProfileWithMacAppearanceDefaults()
     {
