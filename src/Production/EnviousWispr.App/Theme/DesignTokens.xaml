@@ -48,6 +48,9 @@
             <Color x:Key="BrandToggleOnColor">#00A366</Color>
             <SolidColorBrush x:Key="BrandToggleOnBrush" Color="#00A366" />
             <Color x:Key="BrandToggleOffColor">#9B8EB8</Color>
+            <!-- The resting off track: a filled track in the brand themes, one colour for fill and outline. -->
+            <StaticResource x:Key="BrandToggleOffFillColor" ResourceKey="BrandToggleOffColor" />
+            <StaticResource x:Key="BrandToggleOffStrokeColor" ResourceKey="BrandToggleOffColor" />
             <!-- THE OFF TRACK'S HOVER, PRESSED AND DISABLED LOOKS. WinUI's ToggleSwitch animates these six with LinearColorKeyFrame,
                  so they must be COLOURS. They were overridden as brushes in the window's resources, which WinUI ignored without a
                  word: a disabled off switch drew no track at all, only a grey dot (seen on Diagnostics, 2026-09-25). -->
@@ -157,6 +160,9 @@
             <Color x:Key="BrandToggleOnColor">#5CC99A</Color>
             <SolidColorBrush x:Key="BrandToggleOnBrush" Color="#5CC99A" />
             <Color x:Key="BrandToggleOffColor">#4A4360</Color>
+            <!-- The resting off track: a filled track in the brand themes, one colour for fill and outline. -->
+            <StaticResource x:Key="BrandToggleOffFillColor" ResourceKey="BrandToggleOffColor" />
+            <StaticResource x:Key="BrandToggleOffStrokeColor" ResourceKey="BrandToggleOffColor" />
             <!-- THE OFF TRACK'S HOVER, PRESSED AND DISABLED LOOKS. WinUI's ToggleSwitch animates these six with LinearColorKeyFrame,
                  so they must be COLOURS. They were overridden as brushes in the window's resources, which WinUI ignored without a
                  word: a disabled off switch drew no track at all, only a grey dot (seen on Diagnostics, 2026-09-25). -->
@@ -244,13 +250,18 @@
             <StaticResource x:Key="BrandToggleOnColor" ResourceKey="SystemColorHighlightColor" />
             <SolidColorBrush x:Key="BrandToggleOnBrush" Color="{ThemeResource SystemColorHighlightColor}" />
             <StaticResource x:Key="BrandToggleOffColor" ResourceKey="SystemColorGrayTextColor" />
+            <!-- AN OFF SWITCH IN HIGH CONTRAST IS AN OUTLINE, NOT A FILL. Filling the track with GrayText put the white
+                 off knob on a light grey pill it barely showed against (seen on Keybinds under High Contrast Black,
+                 2026-09-25). Windows draws its own off switch as an empty track outlined in the text colour. -->
+            <StaticResource x:Key="BrandToggleOffFillColor" ResourceKey="SystemColorWindowColor" />
+            <StaticResource x:Key="BrandToggleOffStrokeColor" ResourceKey="SystemColorWindowTextColor" />
             <!-- THE OFF TRACK'S HOVER, PRESSED AND DISABLED LOOKS. WinUI's ToggleSwitch animates these six with LinearColorKeyFrame,
                  so they must be COLOURS. They were overridden as brushes in the window's resources, which WinUI ignored without a
                  word: a disabled off switch drew no track at all, only a grey dot (seen on Diagnostics, 2026-09-25). -->
-            <StaticResource x:Key="ToggleSwitchFillOffPointerOver" ResourceKey="SystemColorGrayTextColor" />
-            <StaticResource x:Key="ToggleSwitchStrokeOffPointerOver" ResourceKey="SystemColorGrayTextColor" />
-            <StaticResource x:Key="ToggleSwitchFillOffPressed" ResourceKey="SystemColorGrayTextColor" />
-            <StaticResource x:Key="ToggleSwitchStrokeOffPressed" ResourceKey="SystemColorGrayTextColor" />
+            <StaticResource x:Key="ToggleSwitchFillOffPointerOver" ResourceKey="SystemColorWindowColor" />
+            <StaticResource x:Key="ToggleSwitchStrokeOffPointerOver" ResourceKey="SystemColorHighlightColor" />
+            <StaticResource x:Key="ToggleSwitchFillOffPressed" ResourceKey="SystemColorWindowColor" />
+            <StaticResource x:Key="ToggleSwitchStrokeOffPressed" ResourceKey="SystemColorHighlightColor" />
             <StaticResource x:Key="ToggleSwitchFillOffDisabled" ResourceKey="SystemColorWindowColor" />
             <StaticResource x:Key="ToggleSwitchStrokeOffDisabled" ResourceKey="SystemColorGrayTextColor" />
             <SolidColorBrush x:Key="BrandToggleOffBrush" Color="{ThemeResource SystemColorGrayTextColor}" />

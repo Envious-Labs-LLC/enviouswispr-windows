@@ -16,8 +16,8 @@
             <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.88" />
             <SolidColorBrush x:Key="ToggleSwitchStrokeOnPressed" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.76" />
             <SolidColorBrush x:Key="ToggleSwitchStrokeOnDisabled" Color="{ThemeResource BrandToggleOnColor}" Opacity="0.45" />
-            <SolidColorBrush x:Key="ToggleSwitchFillOff" Color="{ThemeResource BrandToggleOffColor}" />
-            <SolidColorBrush x:Key="ToggleSwitchStrokeOff" Color="{ThemeResource BrandToggleOffColor}" />
+            <SolidColorBrush x:Key="ToggleSwitchFillOff" Color="{ThemeResource BrandToggleOffFillColor}" />
+            <SolidColorBrush x:Key="ToggleSwitchStrokeOff" Color="{ThemeResource BrandToggleOffStrokeColor}" />
             <!-- The off track's hover, pressed and disabled looks are COLOURS in WinUI's template, so they live in the theme
                  dictionaries in Theme/DesignTokens.xaml, not here as brushes. -->
             <SolidColorBrush x:Key="ToggleSwitchContentForeground" Color="{ThemeResource BrandTextPrimaryColor}" />
