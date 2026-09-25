@@ -110,57 +110,6 @@ public sealed class BritishSpellingConverter
         return words;
     }
 
-    /// <summary>
-    /// Whether a text with no language reported for it reads as English: at least one English function word
-    /// for every twelve words, and at least one in all. Ref: Codex review of this port.
-    /// </summary>
-    /// <remarks>
-    /// PARAKEET REPORTS NO LANGUAGE, AND THE TABLE SHARES WORDS WITH SPANISH AND PORTUGUESE - "color", "favor",
-    /// "honor", "humor", "labor". Treating an unreported language as English turned "El color del centro" into
-    /// "El colour del centro". macOS never meets this: it converts only under a language lock to English, which its
-    /// engine takes; Windows' default engine has no lock to take. So an unreported language converts only when
-    /// the words themselves say English, and the list holds only words other European languages do not use as
-    /// words ("a", "in", "on", "no", "he", "me", "i" and "or" are all left out for that reason). It errs toward NOT
-    /// converting: a short take with none of these words stays American, which is the product without the
-    /// setting, not a wrong word.
-    /// </remarks>
-    public static bool LooksEnglish(string text)
-    {
-        ArgumentNullException.ThrowIfNull(text);
-        var words = 0;
-        var functionWords = 0;
-        var start = -1;
-        for (var index = 0; index <= text.Length; index++)
-        {
-            var inWord = index < text.Length && (IsAsciiLetter(text[index]) || (start >= 0 && text[index] is '\'' ));
-            if (inWord && start < 0)
-            {
-                start = index;
-            }
-            else if (!inWord && start >= 0)
-            {
-                words++;
-                if (EnglishFunctionWords.Contains(text[start..index].ToLowerInvariant()))
-                {
-                    functionWords++;
-                }
-
-                start = -1;
-            }
-        }
-
-        return functionWords >= Math.Max(1, words / 12);
-    }
-
-    private static readonly HashSet<string> EnglishFunctionWords = new(StringComparer.Ordinal)
-    {
-        "the", "and", "of", "to", "is", "are", "was", "were", "be", "been", "being", "it", "its", "it's",
-        "this", "that", "these", "those", "with", "for", "you", "your", "we", "our", "they", "their", "them",
-        "my", "have", "has", "had", "will", "would", "should", "could", "can", "not", "but", "from", "at",
-        "by", "about", "what", "which", "who", "when", "where", "how", "there", "here", "just", "if", "then",
-        "than", "also", "into", "over", "after", "before", "because", "please", "thanks", "i'm", "don't",
-    };
-
     /// <summary>Converts every eligible American spelling in <paramref name="text"/> to British.</summary>
     public Result Convert(
         string text,

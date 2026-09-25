@@ -143,20 +143,33 @@ public sealed class EnglishSpellingReceiptEmissionTests
     }
 }
 
-/// <summary>Parakeet reports no language; a Spanish take on it must not be respelled.</summary>
+/// <summary>A reported language decides; Parakeet reports none, and choosing British is the statement.</summary>
 public sealed class EnglishSpellingUnreportedLanguageTests
 {
+    /// <summary>Whisper said Spanish: nothing is respelled, whatever the setting.</summary>
     [Fact]
-    public async Task ASpanishTakeWithNoReportedLanguageKeepsItsWords()
+    public async Task AWhisperTakeReportedAsSpanishKeepsItsWords()
     {
         var result = await new DeterministicTextPipeline().ProcessAsync(new DeterministicTextRequest(
-            new Transcript(DictationSessionId.Create(), "El color del centro es favor", "parakeet"),
+            new Transcript(DictationSessionId.Create(), "El color del centro es un favor", "whisper", DetectedLanguage: "es"),
             [],
             new DeterministicTextOptions(true, false, false, false, EnglishSpelling.British)));
 
-        Assert.Equal("El color del centro es favor", result.Output.Text);
+        Assert.Equal("El color del centro es un favor", result.Output.Text);
         Assert.Equal(
             DeterministicStageStatus.Skipped,
             result.Receipts.Single(item => item.Stage == DeterministicTextStage.EnglishSpelling).Status);
+    }
+
+    /// <summary>A short Parakeet take with no English cue is respelled all the same: the choice said English.</summary>
+    [Fact]
+    public async Task AParakeetTakeIsRespelledOnTheChoiceAlone()
+    {
+        var result = await new DeterministicTextPipeline().ProcessAsync(new DeterministicTextRequest(
+            new Transcript(DictationSessionId.Create(), "gray color", "parakeet"),
+            [],
+            new DeterministicTextOptions(true, false, false, false, EnglishSpelling.British)));
+
+        Assert.Equal("grey colour", result.Output.Text);
     }
 }

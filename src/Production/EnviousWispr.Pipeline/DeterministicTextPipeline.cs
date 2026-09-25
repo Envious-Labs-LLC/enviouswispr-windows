@@ -340,18 +340,19 @@ public sealed class DeterministicTextPipeline
         public TimeSpan Timeout => TimeSpan.FromMilliseconds(200);
 
         /// <remarks>
-        /// A REPORTED LANGUAGE DECIDES; AN UNREPORTED ONE MUST READ AS ENGLISH. The other English-only stages
-        /// treat a Parakeet take - which reports no language - as English, and for numbers and emoji that is
-        /// harmless. Spelling is not: the table shares "color", "favor" and "honor" with Spanish and Portuguese.
-        /// So here an unreported language also has to pass <see cref="BritishSpellingConverter.LooksEnglish"/>
-        /// over the deterministic text, and a take that does not stays as it was said.
+        /// A REPORTED LANGUAGE DECIDES; FOR AN ENGINE THAT REPORTS NONE, CHOOSING BRITISH IS THE STATEMENT. macOS offers
+        /// this as "English (UK)", a language lock: choosing it is saying "I dictate in English". Parakeet on Windows
+        /// cannot be locked and reports no language, so the same choice carries the same meaning here - its takes are
+        /// respelled whenever British is chosen, and the setting says so on screen, because the table shares "color"
+        /// and "favor" with Spanish and Portuguese. A text-level language guess was built and withdrawn in review: a
+        /// word list admits Spanish "has", Portuguese "for", French "but", and fails long English passages, and that
+        /// class of error has no last member. Whisper reports its language, so a Whisper take is respelled only when
+        /// it is English.
         /// </remarks>
         public bool IsEnabled(DeterministicTextContext context) =>
             converter is not null &&
             context.Options.EnglishSpelling == EnglishSpelling.British &&
             IsEnglishDeterministicLanguage(context.Transcript) &&
-            (!string.IsNullOrWhiteSpace(context.Transcript.DetectedLanguage) ||
-                BritishSpellingConverter.LooksEnglish(context.Text)) &&
             (!afterPolish || context.PolishedText is not null);
 
         public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)

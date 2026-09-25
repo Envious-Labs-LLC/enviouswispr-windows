@@ -253,15 +253,4 @@ public sealed class BritishSpellingConverterUnicodeTests
         Assert.Equal("the colour", Converter.Convert("the color", words).Text);
     }
 
-    [Theory]
-    [InlineData("we moved the color printer to the center", true)]
-    [InlineData("please send it over", true)]
-    [InlineData("El color del centro", false)]
-    [InlineData("a cor do centro por favor", false)]
-    [InlineData("color", false)]
-    [InlineData("", false)]
-    public void AnUnreportedLanguageConvertsOnlyWhenItReadsAsEnglish(string text, bool english)
-    {
-        Assert.Equal(english, BritishSpellingConverter.LooksEnglish(text));
-    }
 }
