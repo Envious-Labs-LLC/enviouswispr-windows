@@ -15,8 +15,9 @@ namespace EnviousWispr.Services.Input;
 /// up, and the keyboard state does not say it is up. The stream alone would keep a key held forever after a release
 /// it never saw - a lock or a secure desktop takes the key-up - and a stuck Control would turn every later Ctrl tap
 /// into half a recording gesture. The state alone is the lag above. Together: the key moving now is its own edge,
-/// and every other key needs both. A key already down when the hook was installed reads as not held until it is
-/// pressed again, which costs one gesture at most.
+/// and every other key needs both. A key already down when the hook was installed reads as not held until this
+/// stream observes another down event for it. Use this reading for modifier-set gesture completion only;
+/// keyed shortcuts need the keyboard-state reading so pre-install modifiers still qualify their bindings.
 ///
 /// Owned by the hook, called only on the hook's own thread, so it takes no lock.
 /// </remarks>

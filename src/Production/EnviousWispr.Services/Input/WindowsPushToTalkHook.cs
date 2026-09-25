@@ -15,6 +15,11 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
     private const int WmSystemKeyDown = 0x0104;
     private const int WmSystemKeyUp = 0x0105;
     private const int ErrorHotkeyAlreadyRegistered = 1409;
+    private const uint VirtualKeyShift = 0x10;
+    private const uint VirtualKeyControl = 0x11;
+    private const uint VirtualKeyAlt = 0x12;
+    private const uint VirtualKeyLeftWindows = 0x5B;
+    private const uint VirtualKeyRightWindows = 0x5C;
     private const uint ModifierNoRepeat = 0x4000;
 
     private static int _probeId = 0x5100;
@@ -288,13 +293,18 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
                 return CallNextHookEx(_hook, code, message, data);
             }
 
-            // THE MODIFIERS COME FROM THIS HOOK'S OWN EVENTS, not the keyboard state, which lags the hook in both
-            // directions and made a Ctrl+Win binding see nothing on a hold and two taps on one (HeldModifierKeys). Ref: #66.
+            // TWO READINGS, EACH WHERE IT IS RIGHT. A modifier-set gesture (Ctrl+Win) needs this hook's own event edges:
+            // the keyboard state lags the key moving now, and the shell echoes a Control press when Win is let go, so
+            // the state made a hold see nothing and one tap count as two (HeldModifierKeys). Keyed shortcuts keep the
+            // keyboard state - it lags only for the key moving now, which for them is the ordinary key, and it still
+            // counts a modifier held since before this hook was installed. Ref: #66.
             var isKeyDown = IsKeyDown(message);
+            var gestureModifiers = _heldModifiers.Observe(keyboard.VirtualKey, isKeyDown, IsPressed);
             var decision = _edgeTracker.Process(
                 keyboard.VirtualKey,
                 isKeyDown,
-                _heldModifiers.Observe(keyboard.VirtualKey, isKeyDown, IsPressed));
+                ReadActiveModifiers(),
+                gestureModifiers);
             if (decision.Signal is not null)
             {
                 _signals.Writer.TryWrite(decision.Signal.Value);
@@ -403,6 +413,32 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
                 : AppErrorCode.HotkeyUnavailable,
             AppErrorStage.HotkeyConfiguration,
             CanRetry: true);
+    }
+
+    private static HotkeyModifiers ReadActiveModifiers()
+    {
+        var modifiers = HotkeyModifiers.None;
+        if (IsPressed(VirtualKeyControl))
+        {
+            modifiers |= HotkeyModifiers.Control;
+        }
+
+        if (IsPressed(VirtualKeyAlt))
+        {
+            modifiers |= HotkeyModifiers.Alt;
+        }
+
+        if (IsPressed(VirtualKeyShift))
+        {
+            modifiers |= HotkeyModifiers.Shift;
+        }
+
+        if (IsPressed(VirtualKeyLeftWindows) || IsPressed(VirtualKeyRightWindows))
+        {
+            modifiers |= HotkeyModifiers.Windows;
+        }
+
+        return modifiers;
     }
 
     private static bool IsPressed(uint virtualKey) => (GetAsyncKeyState((int)virtualKey) & 0x8000) != 0;

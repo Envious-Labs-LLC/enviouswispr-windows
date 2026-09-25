@@ -105,6 +105,34 @@ public sealed class HeldModifierKeysTests
         Assert.Null(tracker.NextDeadline);
     }
 
+    /// <summary>A modifier held since before the hook was installed still qualifies a keyed binding. Ref: #66 review.</summary>
+    /// <remarks>
+    /// THE HOOK'S OWN EVENTS NEVER SAW THAT CONTROL GO DOWN, so feeding them to every binding made Ctrl+F8 read as a
+    /// bare F8 and start a recording, and a Ctrl+Escape cancel fail to match. Keyed bindings read the keyboard state.
+    /// </remarks>
+    [Fact]
+    public void PreInstallControlStillQualifiesKeyedBindings()
+    {
+        var bareRecord = new HotkeyEdgeTracker(0x77, HotkeyModifiers.None);
+        Assert.False(Feed(bareRecord, new HeldModifierKeys(), 0x77, down: true, stateDown: [LeftControl]).Consume);
+
+        var controlRecord = new HotkeyEdgeTracker(0x77, HotkeyModifiers.Control);
+        var started = Feed(controlRecord, new HeldModifierKeys(), 0x77, down: true, stateDown: [LeftControl]);
+        Assert.True(started.Consume);
+        Assert.Equal(PushToTalkSignal.Pressed, started.Signal);
+
+        var controlCancel = new HotkeyEdgeTracker(
+            new HotkeyBinding(0x77, HotkeyModifiers.None),
+            new HotkeyBinding(0x1B, HotkeyModifiers.Control),
+            new HotkeyBinding('W', HotkeyModifiers.Control | HotkeyModifiers.Alt),
+            DictationRecordingMode.PushToTalk);
+        controlCancel.SetRecordingActive(true);
+
+        var cancelled = Feed(controlCancel, new HeldModifierKeys(), 0x1B, down: true, stateDown: [LeftControl]);
+        Assert.True(cancelled.Consume);
+        Assert.Equal(PushToTalkSignal.Cancelled, cancelled.Signal);
+    }
+
     /// <summary>The sequence traced on the machine: the state is one event behind throughout.</summary>
     private static void Tap(HotkeyEdgeTracker tracker, HeldModifierKeys held)
     {
@@ -124,9 +152,29 @@ public sealed class HeldModifierKeysTests
             new HotkeyBinding('W', HotkeyModifiers.Control | HotkeyModifiers.Alt),
             DictationRecordingMode.PushToTalk), new HeldModifierKeys());
 
+    /// <summary>What the hook passes: the keyboard state for keyed bindings, its own events for the gesture.</summary>
     private static HotkeyEdgeDecision Feed(
-        HotkeyEdgeTracker tracker, HeldModifierKeys held, uint key, bool down, uint[] stateDown) =>
-        tracker.Process(key, down, held.Observe(key, down, candidate => Array.IndexOf(stateDown, candidate) >= 0));
+        HotkeyEdgeTracker tracker, HeldModifierKeys held, uint key, bool down, uint[] stateDown)
+    {
+        var active = HotkeyModifiers.None;
+        foreach (var pressed in stateDown)
+        {
+            active |= pressed switch
+            {
+                0x10 or 0xA0 or 0xA1 => HotkeyModifiers.Shift,
+                0x11 or 0xA2 or 0xA3 => HotkeyModifiers.Control,
+                0x12 or 0xA4 or 0xA5 => HotkeyModifiers.Alt,
+                0x5B or 0x5C => HotkeyModifiers.Windows,
+                _ => HotkeyModifiers.None,
+            };
+        }
+
+        return tracker.Process(
+            key,
+            down,
+            active,
+            held.Observe(key, down, candidate => Array.IndexOf(stateDown, candidate) >= 0));
+    }
 
     private static PushToTalkSignal? TickPast(HotkeyEdgeTracker tracker, TimeSpan wait)
     {
