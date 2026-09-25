@@ -53,6 +53,10 @@ public static class AppSettingsValidator
         HotkeyGestureParser.Parse(preferences.Dictation.PushToTalkGesture).Succeeded &&
         HotkeyGestureParser.Parse(preferences.Dictation.CancelGesture).Succeeded &&
         HotkeyGestureParser.Parse(preferences.Dictation.QuickAddGesture).Succeeded &&
+        preferences.Dictation.PasteLastGesture is not null &&
+        preferences.Dictation.CopyLastGesture is not null &&
+        HotkeyGestureParser.ParseOneShot(preferences.Dictation.PasteLastGesture).Succeeded &&
+        HotkeyGestureParser.ParseOneShot(preferences.Dictation.CopyLastGesture).Succeeded &&
         HasDistinctDictationGestures(preferences.Dictation) &&
         Enum.IsDefined(preferences.Polish.Provider) &&
         (preferences.Polish.ModelId is null ||
@@ -79,10 +83,22 @@ public static class AppSettingsValidator
         var record = HotkeyGestureParser.Parse(preferences.PushToTalkGesture).Gesture;
         var cancel = HotkeyGestureParser.Parse(preferences.CancelGesture).Gesture;
         var quickAdd = HotkeyGestureParser.Parse(preferences.QuickAddGesture).Gesture;
-        return record is not null && cancel is not null && quickAdd is not null &&
-            record.Value != cancel.Value &&
-            record.Value != quickAdd.Value &&
-            cancel.Value != quickAdd.Value;
+        if (record is null || cancel is null || quickAdd is null)
+        {
+            return false;
+        }
+
+        // Every BOUND gesture differs from every other; an unset last-dictation shortcut clashes with nothing.
+        var bound = new List<HotkeyGesture> { record.Value, cancel.Value, quickAdd.Value };
+        foreach (var optional in new[] { preferences.PasteLastGesture, preferences.CopyLastGesture })
+        {
+            if (HotkeyGestureParser.ParseOptional(optional).Gesture is { } gesture)
+            {
+                bound.Add(gesture);
+            }
+        }
+
+        return bound.Distinct().Count() == bound.Count;
     }
 
     private static bool IsValid(ReusableUserData? userData) =>

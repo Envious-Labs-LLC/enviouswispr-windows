@@ -213,7 +213,9 @@ public sealed class SettingsPresenterTests
         DiagnosticRetentionDays: 30,
         ShareTelemetry: true,
         TelemetryAvailable: true,
-        MicrophoneId: "mic-2");
+        MicrophoneId: "mic-2",
+        PasteLastShortcut: "Alt+Shift+Z",
+        CopyLastShortcut: "Ctrl+Shift+F9");
 
     [Theory]
     [InlineData(false)]
@@ -239,6 +241,7 @@ public sealed class SettingsPresenterTests
                 EmojiFormatter = !inverted,
                 SpokenPunctuation = inverted,
                 EnglishSpellingIndex = inverted ? 0 : 1,
+                PasteLastShortcut = inverted ? "" : "Alt+Shift+Z",
                 EscapeRecovery = !inverted,
                 AutoStop = inverted,
                 HistoryEnabled = !inverted,
@@ -273,7 +276,9 @@ public sealed class SettingsPresenterTests
                         "Ctrl+Alt+W",
                         AutoStopEnabled: inverted,
                         AutoStopSilenceSeconds: 3.5,
-                        EnglishSpelling: inverted ? EnglishSpelling.American : EnglishSpelling.British),
+                        EnglishSpelling: inverted ? EnglishSpelling.American : EnglishSpelling.British,
+                        PasteLastGesture: inverted ? "" : "Alt+Shift+Z",
+                        CopyLastGesture: "Ctrl+Shift+F9"),
                     new PolishPreferences(PolishProvider.Ollama, "llama3", "http://localhost:11434"),
                     new HistoryPreferences(!inverted, 45),
                     AppTheme.Dark,

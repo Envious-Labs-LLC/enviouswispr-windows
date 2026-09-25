@@ -82,11 +82,25 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 7 => MigrateFromV7(json),
                 8 => MigrateFromV8(json),
                 9 => MigrateFromV9(json),
+                10 => MigrateFromV10(json),
                 PortableProfile.CurrentSchemaVersion => JsonSerializer.Deserialize<PortableProfile>(
                     json,
                     JsonSettingsStore.SerializerOptions),
                 _ => null,
             };
+            // As the settings load does: a profile from before the last-dictation shortcuts keeps its own keys
+            // rather than being refused over the new Alt+Shift+Z default. Ref: #206.
+            if (profile is not null && schemaVersion < 11)
+            {
+                profile = profile with
+                {
+                    Preferences = profile.Preferences with
+                    {
+                        Dictation = profile.Preferences.Dictation.WithoutClashingLastDictationShortcuts(),
+                    },
+                };
+            }
+
             var validationError = AppSettingsValidator.Validate(profile, AppErrorStage.ProfileImport);
             return validationError is null
                 ? new PortableProfileImportResult(PortableProfileImportStatus.Imported, profile)
@@ -235,6 +249,17 @@ public sealed class JsonPortableProfileService : IPortableProfileService
     /// THE VERSION MOVES SO AN OLDER BUILD REFUSES A NEWER PROFILE BY ITS NUMBER, not by tripping on the
     /// unknown `englishSpelling` member, which it would report as a damaged file.
     /// </remarks>
+    /// <summary>A profile exported before the last-dictation shortcuts: their defaults, settled by the caller.</summary>
+    private static PortableProfile? MigrateFromV10(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<PortableProfile>(
+            json,
+            JsonSettingsStore.SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = PortableProfile.CurrentSchemaVersion };
+    }
+
     private static PortableProfile? MigrateFromV9(string json)
     {
         var legacy = JsonSerializer.Deserialize<PortableProfile>(

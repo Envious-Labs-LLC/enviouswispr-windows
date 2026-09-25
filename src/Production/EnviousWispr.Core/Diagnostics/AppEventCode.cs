@@ -237,6 +237,9 @@ public enum AppEventCode
     /// <summary>The delivery wrote nothing and the clipboard did not catch the words.</summary>
     LastDictationReuseFailed,
 
+    /// <summary>A last-dictation shortcut could not listen: it clashes, is invalid, or another app holds it. The rest did.</summary>
+    LastDictationShortcutUnavailable,
+
     // TRANSCRIBE A FILE (#211): what happened to a file, never which file or what it said.
 
     /// <summary>A file transcription began.</summary>

@@ -55,6 +55,35 @@ public sealed record HotkeyGestureParseResult(
 
 public static class HotkeyGestureParser
 {
+    /// <summary>An optional shortcut: blank means none and is a success with no gesture. Ref: #206.</summary>
+    /// <remarks>
+    /// THE LAST-DICTATION SHORTCUTS MAY BE UNSET, the recording, cancel and Add-a-word keys may not. Blank is the
+    /// one extra answer; anything else written in the field is held to exactly the rules of <see cref="Parse"/>.
+    /// </remarks>
+    public static HotkeyGestureParseResult ParseOptional(string? value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? new HotkeyGestureParseResult(true)
+            : Parse(value);
+
+    /// <summary>An optional shortcut that fires once per press: blank, or a gesture with an ordinary key.</summary>
+    /// <remarks>
+    /// THE ONE RULE FOR THE LAST-DICTATION SHORTCUTS, read by the validator, the settings presenter and the hook alike,
+    /// so no two of them can accept different sets (validation-discipline: compare the values the UI can produce
+    /// against what storage accepts and runtime listens for). A modifier-only chord has no key-down of its own and a
+    /// lone sided modifier is the recording key's shape, so both are refused here. Ref: #206.
+    /// </remarks>
+    public static HotkeyGestureParseResult ParseOneShot(string? value)
+    {
+        var parsed = ParseOptional(value);
+        return parsed.Gesture is { } gesture && !IsOrdinaryKey(gesture.Key)
+            ? Failure()
+            : parsed;
+    }
+
+    private static bool IsOrdinaryKey(string key) =>
+        !string.IsNullOrEmpty(key) &&
+        key is not ("RightCtrl" or "LeftCtrl" or "RightShift" or "LeftShift" or "RightWin" or "LeftWin");
+
     public static HotkeyGestureParseResult Parse(string? value)
     {
         if (string.IsNullOrWhiteSpace(value) || value.Length > 64)
@@ -203,6 +232,31 @@ public enum PushToTalkSignal
     Released,
     Cancelled,
     QuickAdd,
+
+    /// <summary>The Paste Last Dictation shortcut went down. Not a session command. Ref: #206.</summary>
+    PasteLast,
+
+    /// <summary>The Copy Last Dictation shortcut went down. Not a session command.</summary>
+    CopyLast,
+}
+
+/// <summary>What became of an optional last-dictation shortcut when the hook was built. Ref: #206.</summary>
+public enum LastDictationShortcutState
+{
+    /// <summary>No shortcut is set.</summary>
+    Unset,
+
+    /// <summary>Listening.</summary>
+    Bound,
+
+    /// <summary>Not a gesture this shortcut can use: it does not parse, names no key, or names a lone modifier.</summary>
+    Invalid,
+
+    /// <summary>Another of the app's own shortcuts already uses it; that one keeps it.</summary>
+    Clashes,
+
+    /// <summary>Windows would not let it be registered - another application holds it.</summary>
+    Unavailable,
 }
 
 public sealed record PushToTalkSignalEvent(PushToTalkSignal Signal);

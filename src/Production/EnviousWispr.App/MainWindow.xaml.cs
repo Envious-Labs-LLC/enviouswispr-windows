@@ -288,7 +288,7 @@ public sealed partial class MainWindow : Window, IDisposable
         // A keybind field waiting for a keystroke must not let the system-wide hook act on it.
         // Focus is what the hook needs to know, so focus is what is reported - see
         // KeybindCaptureActiveChanged.
-        foreach (var box in new[] { HotkeyTextBox, CancelHotkeyTextBox, QuickAddHotkeyTextBox })
+        foreach (var box in new[] { HotkeyTextBox, CancelHotkeyTextBox, QuickAddHotkeyTextBox, PasteLastHotkeyTextBox, CopyLastHotkeyTextBox })
         {
             box.GotFocus += (_, _) => KeybindCaptureActiveChanged?.Invoke(true);
             box.LostFocus += (_, _) => KeybindCaptureActiveChanged?.Invoke(false);
@@ -1144,7 +1144,9 @@ public sealed partial class MainWindow : Window, IDisposable
             DiagnosticRetentionDaysBox.Value,
             ShareTelemetryToggle.IsOn,
             _telemetryAvailable,
-            (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id);
+            (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id,
+            PasteLastHotkeyTextBox.Text,
+            CopyLastHotkeyTextBox.Text);
 
         var outcome = await _session.Settings.SaveGeneralAsync(input).ConfigureAwait(true);
         switch (outcome.Status)
@@ -1155,6 +1157,8 @@ public sealed partial class MainWindow : Window, IDisposable
                 {
                     GeneralShortcutField.Cancel => CancelHotkeyTextBox,
                     GeneralShortcutField.QuickAdd => QuickAddHotkeyTextBox,
+                    GeneralShortcutField.PasteLast => PasteLastHotkeyTextBox,
+                    GeneralShortcutField.CopyLast => CopyLastHotkeyTextBox,
                     _ => HotkeyTextBox,
                 }).Focus(FocusState.Programmatic);
                 return;
@@ -2890,16 +2894,22 @@ public sealed partial class MainWindow : Window, IDisposable
     private void UpdateAutoStopAvailability() =>
         AutoStopSecondsBox.IsEnabled = AutoStopToggle.IsOn;
 
-    /// <summary>The three keybind fields, each with the name a person would call it.</summary>
-    /// <summary>The three shortcut fields with the roles the presenter's Save checks them under: the live warning and the refusal share one detector and one set of names.</summary>
+    /// <summary>The five shortcut fields with the roles the presenter's Save checks them under: the live warning and the refusal share one detector and one set of names.</summary>
     private (TextBox Box, string Role)[] KeybindFields()
     {
-        var roles = SettingsPresenter.ShortcutRoles(HotkeyTextBox.Text, CancelHotkeyTextBox.Text, QuickAddHotkeyTextBox.Text);
+        var roles = SettingsPresenter.ShortcutRoles(
+            HotkeyTextBox.Text,
+            CancelHotkeyTextBox.Text,
+            QuickAddHotkeyTextBox.Text,
+            PasteLastHotkeyTextBox.Text,
+            CopyLastHotkeyTextBox.Text);
         return
         [
             (HotkeyTextBox, roles[0].Role),
             (CancelHotkeyTextBox, roles[1].Role),
             (QuickAddHotkeyTextBox, roles[2].Role),
+            (PasteLastHotkeyTextBox, roles[3].Role),
+            (CopyLastHotkeyTextBox, roles[4].Role),
         ];
     }
 
@@ -2966,6 +2976,20 @@ public sealed partial class MainWindow : Window, IDisposable
         {
             _keybindModifierCandidate ??= SidedModifierName();
             e.Handled = true;
+            return;
+        }
+
+        // THE LAST-DICTATION SHORTCUTS CAN BE REMOVED, the others cannot: Backspace or Delete with nothing held empties
+        // one of those two fields, which Save stores as "no shortcut". Every other field captures the key as before.
+        // Ref: #206.
+        if (e.Key is VirtualKey.Back or VirtualKey.Delete &&
+            (ReferenceEquals(box, PasteLastHotkeyTextBox) || ReferenceEquals(box, CopyLastHotkeyTextBox)) &&
+            !IsHeld(VirtualKey.Control) && !IsHeld(VirtualKey.Menu) && !IsHeld(VirtualKey.Shift) &&
+            !IsHeld(VirtualKey.LeftWindows) && !IsHeld(VirtualKey.RightWindows))
+        {
+            _keybindModifierCandidate = null;
+            e.Handled = true;
+            box.Text = string.Empty;
             return;
         }
 
@@ -3485,6 +3509,8 @@ public sealed partial class MainWindow : Window, IDisposable
             CancelHotkeyTextBox.Text = preferences.Dictation.CancelGesture;
             EscapeRecoveryToggle.IsOn = preferences.Dictation.EscapeRecoveryEnabled;
             QuickAddHotkeyTextBox.Text = preferences.Dictation.QuickAddGesture;
+            PasteLastHotkeyTextBox.Text = preferences.Dictation.PasteLastGesture;
+            CopyLastHotkeyTextBox.Text = preferences.Dictation.CopyLastGesture;
             WordCorrectionToggle.IsOn = preferences.Dictation.WordCorrectionEnabled;
             FillerRemovalToggle.IsOn = preferences.Dictation.FillerRemovalEnabled;
             EmojiFormatterToggle.IsOn = preferences.Dictation.EmojiFormatterEnabled;
