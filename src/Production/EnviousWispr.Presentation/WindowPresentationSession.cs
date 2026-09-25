@@ -33,6 +33,7 @@ public sealed record WindowLaunch(
 /// <param name="Diagnostics">The diagnostic export; owned by the shell.</param>
 /// <param name="OpenMicrophoneTestCapture">Opens a capture for the microphone test: the production WASAPI capture in the app, a fake in a test.</param>
 /// <param name="OpenDeviceCatalog">Opens the device catalogue the microphone list reads; the session opens it once and owns it.</param>
+/// <param name="OllamaModels">The Ollama models block's host - the wire client and the launcher - or null where there is none.</param>
 public sealed record WindowPresentationParts(
     ISettingsStore SettingsStore,
     AppSettings Settings,
@@ -43,7 +44,8 @@ public sealed record WindowPresentationParts(
     IPortableProfileService Profiles,
     IDiagnosticExportService Diagnostics,
     Func<IMicrophoneTestCapture> OpenMicrophoneTestCapture,
-    Func<IAudioDeviceCatalog> OpenDeviceCatalog);
+    Func<IAudioDeviceCatalog> OpenDeviceCatalog,
+    IOllamaModelHost? OllamaModels = null);
 
 /// <summary>
 /// The window's presentation for the life of the window: one settings writer every presenter shares,
@@ -90,6 +92,7 @@ public sealed class WindowPresentationSession : IAsyncDisposable
         History = new HistoryPresenter(parts.HistoryStore, parts.RecoveryStore, () => Settings.Current.Preferences.History, clock, _admission);
         Provider = new ProviderSettingsPresenter(parts.ApiKeys, parts.PolishModels, _admission);
         MicrophoneTest = new MicrophoneTestController(parts.OpenMicrophoneTestCapture, clock, _admission);
+        Ollama = parts.OllamaModels is { } host ? new OllamaModelsPresenter(host, _admission) : null;
     }
 
     /// <summary>The one settings writer, and the General page's decisions.</summary>
@@ -104,6 +107,9 @@ public sealed class WindowPresentationSession : IAsyncDisposable
     public ProviderSettingsPresenter Provider { get; }
 
     public MicrophoneTestController MicrophoneTest { get; }
+
+    /// <summary>The AI Polish page's Ollama models block, or null when the shell supplied no host for it.</summary>
+    public OllamaModelsPresenter? Ollama { get; }
 
     /// <summary>Portable profile import and export: the shell's service, reachable through the session so the window takes one thing.</summary>
     public IPortableProfileService Profiles => _parts.Profiles;

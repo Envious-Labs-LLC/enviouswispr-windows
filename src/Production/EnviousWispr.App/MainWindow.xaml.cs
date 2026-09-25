@@ -12,6 +12,7 @@ using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Distribution;
 using EnviousWispr.Core.History;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Runtime;
@@ -3492,7 +3493,7 @@ public sealed partial class MainWindow : Window, IDisposable
             AutoStopSecondsBox.Value = preferences.Dictation.AutoStopSilenceSeconds;
             UpdateAutoStopAvailability();
             SelectChoice(PolishProviderChoices, PolishProviderIndex(preferences.Polish.Provider));
-            PolishModelTextBox.Text = preferences.Polish.ModelId ?? string.Empty;
+            PolishModelTextBox.Text = _polishModelSetByApp = preferences.Polish.ModelId ?? string.Empty;
             OllamaEndpointTextBox.Text = preferences.Polish.OllamaEndpoint ?? string.Empty;
             HistoryEnabledToggle.IsOn = preferences.History.IsEnabled;
             RetentionDaysBox.Value = preferences.History.RetentionDays;
@@ -3540,10 +3541,23 @@ public sealed partial class MainWindow : Window, IDisposable
             chooseDefault: false);
     }
 
+    /// <summary>
+    /// What the app itself last wrote into the model field: loaded, chosen as a default, or repaired. The field still
+    /// reading it means the person has not edited it, which is what lets a repair replace it. Ref: #213 review.
+    /// </summary>
+    private string _polishModelSetByApp = string.Empty;
+
+    /// <param name="ollamaChange">A download or removal just made on the Ollama models block, to repair the field against; null otherwise.</param>
     private async Task RefreshPolishModelChoicesAsync(
         PolishProvider provider,
-        bool chooseDefault)
+        bool chooseDefault,
+        OllamaModelChange? ollamaChange = null)
     {
+        if (ollamaChange is null)
+        {
+            ShowOllamaModels(provider);
+        }
+
         var isCloudProvider = IsCloudProvider(provider);
         OllamaEndpointTextBoxRow.Visibility = provider == PolishProvider.Ollama
             ? Visibility.Visible
@@ -3565,14 +3579,27 @@ public sealed partial class MainWindow : Window, IDisposable
         // against. A listing overtaken by a later refresh comes back as nothing, and the one that
         // came back is asked once more, here with no wait in between, whether it is still the
         // latest - a person can change provider between the answer and this thread.
-        var listing = await _session.Provider.ListModelsAsync(provider, NullIfBlank(OllamaEndpointTextBox.Text))
+        var endpoint = NullIfBlank(OllamaEndpointTextBox.Text);
+        var fieldBefore = PolishModelTextBox.Text;
+        var listing = await _session.Provider.ListModelsAsync(provider, endpoint)
             .ConfigureAwait(true);
         if (listing is null || _session.Closing || !_session.Provider.IsCurrent(listing.Ticket))
         {
             return;
         }
 
-        var choices = _session.Provider.Choose(listing, PolishModelTextBox.Text, chooseDefault);
+        // THE LISTING IS APPLIED ONLY IN THE CONTEXT IT WAS ASKED IN. The ticket catches a later listing; it cannot see a
+        // provider chosen or an endpoint edited meanwhile without one, and a field typed into while the listing was out
+        // is the person's - no default and no repair replaces it. Ref: #213 review.
+        if (PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)) != provider ||
+            (provider == PolishProvider.Ollama &&
+             !string.Equals(NullIfBlank(OllamaEndpointTextBox.Text), endpoint, StringComparison.Ordinal)))
+        {
+            return;
+        }
+
+        var editedMeanwhile = !string.Equals(PolishModelTextBox.Text, fieldBefore, StringComparison.Ordinal);
+        var choices = _session.Provider.Choose(listing, PolishModelTextBox.Text, chooseDefault && !editedMeanwhile);
 
         // All three model controls follow the PROVIDER, not just the two that used to. With the
         // provider set to None the picker and the refresh button were correctly disabled while
@@ -3586,10 +3613,31 @@ public sealed partial class MainWindow : Window, IDisposable
         PolishModelPicker.IsEnabled = providerUsesAModel && choices.Models.Count > 0;
         if (choices.ModelToApply is { } model)
         {
-            PolishModelTextBox.Text = model;
+            PolishModelTextBox.Text = _polishModelSetByApp = model;
         }
 
         PolishModelPicker.SelectedIndex = choices.SelectedIndex;
+
+        // REPAIRED ONLY FROM A LISTING THAT SUCCEEDED, and only where the change left the field naming nothing - an empty
+        // field after a download, or the model just removed. A model the person typed is theirs. Ref: #213.
+        if (ollamaChange is not null &&
+            !editedMeanwhile &&
+            choices.Discovery is { Status: PolishModelDiscoveryStatus.Ready } &&
+            OllamaModelsPresenter.RepairSelection(
+                choices.Models,
+                PolishModelTextBox.Text,
+                _polishModelSetByApp,
+                ollamaChange) is { } repaired)
+        {
+            PolishModelTextBox.Text = _polishModelSetByApp = repaired;
+            var repairedIndex = -1;
+            for (var i = 0; i < choices.Models.Count && repairedIndex < 0; i++)
+            {
+                repairedIndex = OllamaModelCatalog.SameModel(choices.Models[i], repaired) ? i : -1;
+            }
+
+            PolishModelPicker.SelectedIndex = repairedIndex;
+        }
         if (choices.Discovery is { } discovery)
         {
             SetLiveText(ApiKeyStatusText, ModelDiscoveryNotice(provider, discovery));

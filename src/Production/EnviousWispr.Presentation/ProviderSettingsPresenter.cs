@@ -266,7 +266,7 @@ public sealed class ProviderSettingsPresenter
         ArgumentNullException.ThrowIfNull(currentModelId);
         var models = listing.Models;
         var current = currentModelId.Trim();
-        var selectedIndex = IndexOf(models, current);
+        var selectedIndex = IndexOf(models, current, listing.Provider);
         string? modelToApply = null;
         if (chooseDefault && selectedIndex < 0 && models.Count > 0)
         {
@@ -275,7 +275,7 @@ public sealed class ProviderSettingsPresenter
             // Anything else - blank, or a model from another provider - takes the first choice.
             var shouldChoose = IsCloudProvider(listing.Provider)
                 ? !_models.ModelIdBelongsTo(current, listing.Provider)
-                : current.Length == 0 || !models.Contains(current, StringComparer.OrdinalIgnoreCase);
+                : current.Length == 0 || selectedIndex < 0;
             if (shouldChoose)
             {
                 modelToApply = models[0];
@@ -286,11 +286,17 @@ public sealed class ProviderSettingsPresenter
         return new PolishModelChoices(listing.Provider, models, selectedIndex, modelToApply, listing.Discovery);
     }
 
-    private static int IndexOf(IReadOnlyList<string> models, string current)
+    /// <summary>
+    /// Where the field's model sits in the choices. For Ollama, <c>foo</c> and <c>foo:latest</c> are one model, as
+    /// Ollama itself treats them: compared literally, a valid choice read as missing and was "repaired". Ref: #213.
+    /// </summary>
+    private static int IndexOf(IReadOnlyList<string> models, string current, PolishProvider provider)
     {
         for (var i = 0; i < models.Count; i++)
         {
-            if (string.Equals(models[i], current, StringComparison.OrdinalIgnoreCase))
+            if (provider == PolishProvider.Ollama
+                    ? Core.Polish.OllamaModelCatalog.SameModel(models[i], current)
+                    : string.Equals(models[i], current, StringComparison.OrdinalIgnoreCase))
             {
                 return i;
             }

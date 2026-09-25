@@ -25,22 +25,31 @@ public enum OllamaModelReadiness
     ServerUnhealthy,
 }
 
+/// <param name="SizeBytes">What Ollama reports the model occupies, when it says.</param>
+/// <param name="ParameterSize">Ollama's own label ("3.1B"), when it says.</param>
 public sealed record OllamaModelInfo(
     string Id,
-    bool? SupportsThinking);
+    bool? SupportsThinking,
+    long? SizeBytes = null,
+    string? ParameterSize = null);
 
+/// <param name="ConnectionRefused">
+/// Nothing is listening at the endpoint - as opposed to a server that is slow or answering wrongly. Only this one is
+/// grounds for offering to start Ollama: starting a second server beside a slow first one is how it gets killed.
+/// </param>
 public sealed record OllamaDiscoveryResult(
     OllamaHealth Health,
     IReadOnlyList<OllamaModelInfo> LocalModels,
     IReadOnlyList<string> RemoteModelIds,
-    AppError? Error = null);
+    AppError? Error = null,
+    bool ConnectionRefused = false);
 
 public sealed record OllamaModelReadinessResult(
     OllamaModelReadiness Readiness,
     OllamaModelInfo? Model = null,
     AppError? Error = null);
 
-public sealed class OllamaApiClient : IModelCatalog, IAsyncDisposable
+public sealed partial class OllamaApiClient : IModelCatalog, IAsyncDisposable
 {
     private static readonly TimeSpan DefaultReadinessTimeout = TimeSpan.FromSeconds(1);
 
@@ -57,8 +66,10 @@ public sealed class OllamaApiClient : IModelCatalog, IAsyncDisposable
         _ = OllamaEndpointPolicy.TryNormalize(endpoint, out _endpoint);
         _readinessTimeout = readinessTimeout ?? DefaultReadinessTimeout;
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(_readinessTimeout, TimeSpan.Zero);
+        // NO REDIRECTS: the endpoint is checked to be this PC, and a redirect would send the request wherever the
+        // answer pointed. A loopback Ollama never redirects. Ref: #213 review.
         _httpClient = messageHandler is null
-            ? new HttpClient()
+            ? new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
             : new HttpClient(messageHandler, disposeHandler: false);
         _httpClient.Timeout = Timeout.InfiniteTimeSpan;
     }
@@ -163,11 +174,14 @@ public sealed class OllamaApiClient : IModelCatalog, IAsyncDisposable
                 OllamaHealth.ServerUnavailable,
                 AppErrorCode.PolishTimedOut);
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException exception)
         {
             return DiscoveryFailure(
                 OllamaHealth.ServerUnavailable,
-                AppErrorCode.PolishProviderUnavailable);
+                AppErrorCode.PolishProviderUnavailable) with
+            {
+                ConnectionRefused = IsConnectionRefused(exception),
+            };
         }
         catch (Exception exception) when (exception is JsonException or IOException)
         {
@@ -281,7 +295,18 @@ public sealed class OllamaApiClient : IModelCatalog, IAsyncDisposable
                 string.Equals(capability, "completion", StringComparison.OrdinalIgnoreCase));
         }
 
-        model = new OllamaModelInfo(nameValue.GetString()!, thinks);
+        long? size = row.TryGetProperty("size", out var sizeValue) &&
+            sizeValue.ValueKind == JsonValueKind.Number &&
+            sizeValue.TryGetInt64(out var bytes) && bytes >= 0
+                ? bytes
+                : null;
+        string? parameters = row.TryGetProperty("details", out var details) &&
+            details.ValueKind == JsonValueKind.Object &&
+            details.TryGetProperty("parameter_size", out var parameterValue) &&
+            parameterValue.ValueKind == JsonValueKind.String
+                ? parameterValue.GetString()
+                : null;
+        model = new OllamaModelInfo(nameValue.GetString()!, thinks, size, parameters);
         return true;
     }
 
