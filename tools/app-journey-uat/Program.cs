@@ -410,19 +410,30 @@ if (failureMode == JourneyFailureMode.WorkerStartup)
 Directory.CreateDirectory(Path.Combine(uatDirectory, "no-preview-model"));
 var profileDirectory = Path.Combine(uatDirectory, "profile");
 Directory.CreateDirectory(profileDirectory);
+// THE HARNESS CHOOSES ITS OWN RECORDING KEY, AND IT IS F8, whatever a fresh install starts on. It presses the key
+// itself - SendKey, the synthetic hook, and the words a person is told to follow - and an ordinary key is the one it can
+// drive: a modifier set (Ctrl+Win, the product default since #66) completes on a gesture timer this harness has declared
+// undrivable. So every profile it writes pins F8, and a journey that presses the key always writes one.
+var journeyDefaults = AppSettings.Default with
+{
+    Preferences = AppSettings.Default.Preferences with
+    {
+        Dictation = AppSettings.Default.Preferences.Dictation with { PushToTalkGesture = "F8" },
+    },
+};
 if (livePreview || escapeRecovery || failureMode == JourneyFailureMode.MicrophoneUnavailable ||
     deterministicProfile != DeterministicJourneyProfile.None)
 {
     var deterministicFeaturesEnabled = deterministicProfile != DeterministicJourneyProfile.Disabled;
-    var journeySettings = AppSettings.Default with
+    var journeySettings = journeyDefaults with
     {
         HasCompletedOnboarding = true,
         PreferredMicrophoneId = audioRoute?.CaptureId,
-        Preferences = AppSettings.Default.Preferences with
+        Preferences = journeyDefaults.Preferences with
         {
             LivePreviewEnabled = livePreview,
             PillDesignWithWords = RecordingPillDesign.ReadingWell,
-            Dictation = AppSettings.Default.Preferences.Dictation with
+            Dictation = journeyDefaults.Preferences.Dictation with
             {
                 EscapeRecoveryEnabled = escapeRecovery,
                 WordCorrectionEnabled = deterministicFeaturesEnabled,
@@ -448,7 +459,14 @@ else if (audioRoute is not null)
     // pipeline did to the words. The silent journey must differ from the audible one by the endpoint
     // and nothing else.
     await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"))
-        .SaveAsync(AppSettings.Default with { PreferredMicrophoneId = audioRoute.CaptureId });
+        .SaveAsync(journeyDefaults with { PreferredMicrophoneId = audioRoute.CaptureId });
+}
+else if (liveMicrophone || syntheticHotkey)
+{
+    // A JOURNEY THAT PRESSES THE KEY ALWAYS HAS A PROFILE: without one the app would start on the product default and
+    // the harness would press a key nobody bound. Otherwise the default profile, as the silent journey above keeps.
+    await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"))
+        .SaveAsync(journeyDefaults);
 }
 
 var diagnosticPath = Path.Combine(profileDirectory, "diagnostics", "app.jsonl");
@@ -2553,9 +2571,9 @@ static SyntheticHotkeyEvidence DriveSyntheticHotkey(
 /// nothing was listening for and the FAIL was believed, on the one branch where a hotkey FAIL was most
 /// likely to be believed. The defect class is an instrument failure reported as a product verdict, and
 /// the design that stops it has THREE states, not two:
-///   absent    - no settings file in the isolated profile - resolves through the SAME default the app
-///               applies, DictationPreferences.Default, because a fresh profile really is running F8
-///               with nothing on disk, and refusing there would reject a valid configuration;
+///   absent    - resolves through DictationPreferences.Default.PushToTalkGesture;
+///               the current Ctrl+Win default is refused as undrivable below.
+///               Key-driven journeys therefore write an explicit F8 profile before launch;
 ///   valid     - a gesture the app's own parser accepts and its own key map can name - the binding;
 ///   malformed - anything else - REFUSED, because it says nothing about what the app is using.
 /// The parser and the key map are the app's own (WindowsVirtualKeyMap, through InternalsVisibleTo), so

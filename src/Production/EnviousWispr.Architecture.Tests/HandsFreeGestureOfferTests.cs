@@ -5,12 +5,10 @@ using EnviousWispr.Services.Input;
 namespace EnviousWispr.Architecture.Tests;
 
 /// <summary>
-/// The four gestures shipped, and on a fresh install nothing could reach them.
+/// The Right Ctrl offer restores modifier gestures after choosing an ordinary recording key.
 /// </summary>
 /// <remarks>
-/// HOLD, DOUBLE TAP, TAP AND TRIPLE TAP ARE ALL BUILT AND ALL TESTED, and every one needs a modifier
-/// binding. The shipped default is F8, so the policy that implements them is never constructed and
-/// three macOS features sit in the source unreachable from the product.
+/// Fresh installs use Ctrl+Win. Right Ctrl provides a one-handed alternative with the same gestures.
 /// </remarks>
 public sealed class HandsFreeGestureOfferTests
 {

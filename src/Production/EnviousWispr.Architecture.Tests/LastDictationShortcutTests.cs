@@ -47,7 +47,7 @@ public sealed class LastDictationShortcutTests
     }
 
     [Theory]
-    [InlineData("F8", "")]             // the recording key
+    [InlineData("Escape", "")]         // the cancel key (the recording key is Ctrl+Win, a set no one-shot can be)
     [InlineData("Ctrl+Alt+W", "")]     // Add-a-word
     [InlineData("Ctrl+Shift+F9", "Ctrl+Shift+F9")] // the two of them
     [InlineData("RightCtrl", "")]      // not a one-shot shape

@@ -79,7 +79,12 @@ public sealed class JsonSettingsStoreTests
             Assert.Equal(AppSettings.CurrentSchemaVersion, result.Settings.SchemaVersion);
             Assert.Equal(9, result.Settings.LaunchCount);
             Assert.True(result.Settings.HasCompletedOnboarding);
-            Assert.Equal(UserPreferences.Default, result.Settings.Preferences);
+            Assert.Equal(
+                UserPreferences.Default with
+                {
+                    Dictation = DictationPreferences.Default with { PushToTalkGesture = "F8" },
+                },
+                result.Settings.Preferences);
             Assert.Equal(ReusableUserData.Empty, result.Settings.UserData);
 
             var persisted = await store.ResetAsync(result.Settings);

@@ -167,9 +167,15 @@ public sealed record DictationPreferences(
         return this with { PasteLastGesture = paste, CopyLastGesture = copy };
     }
 
+    /// <remarks>
+    /// CTRL+WIN IS THE RECORDING KEY A FRESH INSTALL STARTS ON: founder decision 2026-09-05 (#66), matching what people
+    /// switching from other dictation apps already have in their fingers, and it unlocks the four gestures (hold, double
+    /// tap, tap, triple tap) that an ordinary key cannot. Only a fresh install gets it: a saved profile keeps the key it
+    /// has, so nobody's F8 changes under them. Verified through the real hook before it became the default (#226, #227).
+    /// </remarks>
     public static DictationPreferences Default { get; } = new(
         FinalAsrEngine.Automatic,
-        "F8",
+        "Ctrl+Win",
         WordCorrectionEnabled: true,
         FillerRemovalEnabled: true,
         EmojiFormatterEnabled: true,
