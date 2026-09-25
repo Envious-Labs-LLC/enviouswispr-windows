@@ -13,6 +13,12 @@ public enum DeterministicTextStage
     FillerAndFalseStarts,
     SpokenEmoji,
     InverseTextNormalization,
+
+    /// <summary>American to British spelling over the deterministic text, when British is chosen and the take is English.</summary>
+    EnglishSpelling,
+
+    /// <summary>The same over the polished text, so a model that writes "color" cannot undo the choice.</summary>
+    EnglishSpellingAfterPolish,
     EmojiRestoration,
 }
 

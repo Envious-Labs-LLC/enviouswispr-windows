@@ -1117,6 +1117,7 @@ public sealed partial class MainWindow : Window, IDisposable
             EmojiFormatterToggle.IsOn,
             SpokenPunctuationToggle.IsOn,
             WhisperLanguageComboBox.SelectedIndex,
+            EnglishSpellingComboBox.SelectedIndex,
             RecordingModeComboBox.SelectedIndex,
             EscapeRecoveryToggle.IsOn,
             AutoStopToggle.IsOn,
@@ -3472,6 +3473,7 @@ public sealed partial class MainWindow : Window, IDisposable
             var preferences = _settings.Preferences;
             SelectChoice(FinalEngineChoices, (int)preferences.Dictation.FinalEngine);
             WhisperLanguageComboBox.SelectedIndex = (int)preferences.Dictation.WhisperLanguage;
+            EnglishSpellingComboBox.SelectedIndex = (int)preferences.Dictation.EnglishSpelling;
             HotkeyTextBox.Text = preferences.Dictation.PushToTalkGesture;
             RecordingModeComboBox.SelectedIndex = (int)preferences.Dictation.RecordingMode;
             CancelHotkeyTextBox.Text = preferences.Dictation.CancelGesture;

@@ -264,7 +264,7 @@ public sealed class WindowPresentationSessionTests
     }
 
     private static GeneralSettingsInput General() => new(
-        "F8", "Escape", "Ctrl+Alt+W", 1, true, false, true, false, 2, 1, true, true, 3.5, 2, "llama3", "http://localhost:11434",
+        "F8", "Escape", "Ctrl+Alt+W", 1, true, false, true, false, 2, 0, 1, true, true, 3.5, 2, "llama3", "http://localhost:11434",
         true, 45, 2, true, 1, true, true, RecordingSoundPairing.AirGlint, true, true, 30, true, true, "mic-2");
 
     private sealed class World

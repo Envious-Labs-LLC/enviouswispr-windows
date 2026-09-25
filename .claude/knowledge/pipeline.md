@@ -10,10 +10,13 @@ The order is part of the product behavior and must not drift casually:
 4. Remove configured filler words and false starts.
 5. Convert spoken punctuation and spoken emoji commands.
 6. Apply deterministic inverse text normalization for numbers, dates, times, currency, email, and URLs.
-7. Optionally polish through EG-1, Ollama, or the selected cloud provider.
-8. Restore protected emoji and deterministic tokens that the model was not allowed to alter.
-9. Apply cursor-aware insertion repair when safe context is available.
-10. Deliver to the frozen target and record the local history result according to user settings.
+7. When English (UK) spelling is chosen and the take is English, respell American forms the British way
+   (`BritishSpellingConverter`, the macOS table). The person's own Custom Words keep their spelling.
+8. Optionally polish through EG-1, Ollama, or the selected cloud provider.
+9. Respell the POLISH the British way too, so a model cannot undo the choice, then restore protected emoji
+   and deterministic tokens that the model was not allowed to alter.
+10. Apply cursor-aware insertion repair when safe context is available.
+11. Deliver to the frozen target and record the local history result according to user settings.
 
 Every stage has a typed input, typed output, timeout or cancellation policy, and content-free diagnostic.
 On timeout the stage is asked to stop and the pipeline continues with the last valid text. If a stage's
