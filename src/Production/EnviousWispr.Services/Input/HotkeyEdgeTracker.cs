@@ -221,7 +221,14 @@ internal sealed class HotkeyEdgeTracker
 
             if (isKeyDown && _oneShotKeyPresses.TryGetValue(virtualKey, out var consumedDown))
             {
-                return new HotkeyEdgeDecision(Consume: consumedDown);
+                // THE REPEAT KEEPS ITS OWNER, AND A PENDING MODIFIER GESTURE STILL SEES IT: an ordinary key repeating
+                // while Right Ctrl or Ctrl+Win is held is what disqualifies that gesture, so it is still offered to
+                // it. Ref: #206 review round 2.
+                var gestureDecision =
+                    _recordGesture is not null && (!_capturingKeybind || IsAnythingInFlight())
+                        ? ProcessRecordGesture(virtualKey, isKeyDown, activeModifiers)
+                        : null;
+                return new HotkeyEdgeDecision(Consume: consumedDown, Signal: gestureDecision?.Signal);
             }
 
             var decision = ProcessCore(virtualKey, isKeyDown, activeModifiers);

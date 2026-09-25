@@ -2023,15 +2023,7 @@ public partial class App : Application, IAsyncDisposable
             // hold up the signal loop a recording key is waiting in, so it runs off it and is accepted only if the
             // same window is still the one in front.
             var pressedWindow = WindowsForegroundTargetProvider.ForegroundWindow();
-            _ = Task.Run(() =>
-            {
-                var captured = new WindowsForegroundTargetProvider().CaptureForegroundTarget();
-                var pressed = captured is { } target && pressedWindow is { } window &&
-                    target.Value == window.Value && target.ProcessId == window.ProcessId
-                        ? captured
-                        : null;
-                return ReuseLastDictationAsync(LastDictationAction.Paste, LastDictationSource.Shortcut, pressed);
-            });
+            _ = ReuseLastDictationAsync(LastDictationAction.Paste, LastDictationSource.Shortcut, pressedWindow);
             return;
         }
 
@@ -2197,6 +2189,26 @@ public partial class App : Application, IAsyncDisposable
                     ?? new SessionHoldAttempt(NoScope.Instance);
                 heldBy = attempt.HeldBy;
                 using var hold = attempt.Hold;
+
+                // THE FIELD IS NAMED ONLY ONCE THE SESSION IS HELD: named before, a quick dictation could start and
+                // finish while UI Automation answered, and this paste would then reuse THAT dictation. Held first,
+                // a later key is Busy until the paste is done. Accepted only for the window in front at the press.
+                // Ref: #206 review round 2.
+                if (hold is not null &&
+                    action == LastDictationAction.Paste &&
+                    source == LastDictationSource.Shortcut)
+                {
+                    var requestedWindow = target;
+                    var captured = await Task.Run(
+                        () => new WindowsForegroundTargetProvider().CaptureForegroundTarget(),
+                        lease.Closing).ConfigureAwait(false);
+                    target = captured is { } capturedTarget &&
+                        requestedWindow is { } window &&
+                        capturedTarget.Value == window.Value &&
+                        capturedTarget.ProcessId == window.ProcessId
+                            ? captured
+                            : null;
+                }
                 result = hold is null
                     ? new LastDictationReuseResult(
                         action,

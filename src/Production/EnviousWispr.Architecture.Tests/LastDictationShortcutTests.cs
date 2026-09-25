@@ -221,6 +221,31 @@ public sealed class LastDictationShortcutTests
         Assert.Equal(PushToTalkSignal.PasteLast, again.Signal);
     }
 
+    /// <summary>
+    /// Z held for Paste Last, then Right Ctrl held as the recording key: the repeating Z is ordinary typing under
+    /// Right Ctrl, so no recording starts after the hold threshold.
+    /// </summary>
+    [Fact]
+    public void ARepeatingOneShotKeyStillDisqualifiesAPendingModifierGesture()
+    {
+        const uint rightControl = 0xA3;
+        var tracker = new HotkeyEdgeTracker(
+            new HotkeyBinding(rightControl, HotkeyModifiers.None),
+            new HotkeyBinding(Escape, HotkeyModifiers.None),
+            new HotkeyBinding('W', HotkeyModifiers.Control | HotkeyModifiers.Alt),
+            DictationRecordingMode.PushToTalk,
+            typesCharacter: (_, _) => false,
+            pasteLast: new HotkeyBinding(LetterZ, AltShift));
+
+        tracker.Process(LetterZ, isKeyDown: true, AltShift);
+        tracker.Process(rightControl, isKeyDown: true, HotkeyModifiers.None);
+        tracker.Process(LetterZ, isKeyDown: true, HotkeyModifiers.Control);
+        Thread.Sleep(HotkeyGesturePolicy.ModifierHoldThreshold + TimeSpan.FromMilliseconds(60));
+        var afterThreshold = tracker.Tick();
+
+        Assert.NotEqual(PushToTalkSignal.Pressed, afterThreshold);
+    }
+
     /// <summary>A damaged version-16 file is refused as invalid, not thrown on by the migration.</summary>
     [Fact]
     public async Task ADamagedVersionSixteenFileIsInvalidNotAnException()
