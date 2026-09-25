@@ -38,3 +38,10 @@ jobs:
       - name: Validate portable build and contracts
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File scripts/validate.ps1
+
+      # THE STORE PACKAGE IS THE ONLY THING THAT SHIPS, so every change proves it still builds and that
+      # its payload is whole. The script checks the files inside the .msix, not the publish folder, and
+      # launches the packaged worker; a build that only passes unpackaged has shipped nothing. #42.
+      - name: Build and check the Store package
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/package-store.ps1 -OutputDirectory "$env:RUNNER_TEMP\store-package"
