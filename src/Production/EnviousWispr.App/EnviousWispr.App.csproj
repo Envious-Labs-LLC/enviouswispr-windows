@@ -37,6 +37,16 @@
     <GenerateTestArtifacts>false</GenerateTestArtifacts>
   </PropertyGroup>
 
+  <!--
+    A STORE PACKAGE MUST CARRY ITS OWN .NET. `dotnet build -p:EnviousWisprPackaged=true` produced a
+    package that started only because this PC has the .NET 10 runtime installed; a customer's PC does
+    not, and the worker inside it was missing besides. Only a self-contained publish makes a shippable
+    package, so anything else is refused here rather than discovered on a customer's machine.
+  -->
+  <Target Name="RefuseFrameworkDependentStorePackage" BeforeTargets="PrepareForBuild" Condition="'$(EnviousWisprPackaged)' == 'true' And '$(SelfContained)' != 'true'">
+    <Error Text="A Store package must be self-contained. Build it with scripts/package-store.ps1 (dotnet publish -r win-x64 --self-contained true -p:EnviousWisprPackaged=true)." />
+  </Target>
+
   <PropertyGroup Condition="'$(EnviousWisprPackaged)' != 'true'">
     <WindowsPackageType>None</WindowsPackageType>
     <EnableMsixTooling>false</EnableMsixTooling>
@@ -99,7 +109,25 @@
     <Copy SourceFiles="@(RuntimeWorkerPublishFiles)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="false" />
   </Target>
 
-  <Target Name="CopyUnpackagedWinUiResourcesForPublish" AfterTargets="Publish">
+  <!--
+    THE STORE PACKAGE IS BUILT FROM THE PUBLISH ITEM LIST, NOT FROM THE PUBLISH FOLDER. The two Copy
+    targets above put the worker into the folder AFTER Publish, which the MSIX payload never sees: the
+    package carried the worker's apphost, deps and runtimeconfig (the SDK adds those for any referenced
+    Exe) but not EnviousWispr.RuntimeWorker.dll, so every start failed and the app said "Local
+    transcription could not start". Adding the worker's files as publish items puts them in the package;
+    a file the SDK already listed is skipped so the payload never carries one path twice. Ref #42.
+  -->
+  <Target Name="AddRuntimeWorkerToStorePackage" AfterTargets="ComputeResolvedFilesToPublishList" Condition="'$(EnviousWisprPackaged)' == 'true'">
+    <ItemGroup>
+      <_StoreRuntimeWorkerFile Include="..\EnviousWispr.RuntimeWorker\bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\EnviousWispr.RuntimeWorker*" Exclude="..\EnviousWispr.RuntimeWorker\bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\*.pdb" />
+      <_StoreRuntimeWorkerMissing Include="@(_StoreRuntimeWorkerFile->'%(Filename)%(Extension)')" SourcePath="%(FullPath)" />
+      <_StoreRuntimeWorkerMissing Remove="@(ResolvedFileToPublish->'%(RelativePath)')" />
+      <ResolvedFileToPublish Include="@(_StoreRuntimeWorkerMissing->'%(SourcePath)')" RelativePath="%(Identity)" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+    <Error Condition="'@(_StoreRuntimeWorkerFile)' == ''" Text="The runtime worker was not built for $(RuntimeIdentifier); the Store package would ship without transcription." />
+  </Target>
+
+  <Target Name="CopyUnpackagedWinUiResourcesForPublish" AfterTargets="Publish" Condition="'$(EnviousWisprPackaged)' != 'true'">
     <ItemGroup>
       <UnpackagedWinUiResource Include="$(TargetDir)*.xbf" />
       <UnpackagedWinUiResource Include="$(TargetDir)$(AssemblyName).pri" />

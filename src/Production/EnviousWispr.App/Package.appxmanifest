@@ -5,9 +5,9 @@
 
   Identity/@Name and Identity/@Publisher below are PLACEHOLDERS until the founder reserves the name in
   Partner Center; the reservation assigns both, and a package whose identity does not match the
-  reservation is rejected at upload rather than at certification. `scripts/package-store.ps1` overrides
-  them from parameters so the real values never have to be committed here, and the packaging script
-  refuses to produce a Store upload while they are still the placeholders.
+  reservation is rejected at upload rather than at certification. Commit the assigned values here once
+  they exist; they are public in every Store package, so nothing is gained by keeping them out of the
+  tree. `scripts/package-store.ps1 -ForStoreUpload` refuses while the publisher is still the placeholder.
 
   Identity/@Version must be four parts with a revision of 0: the Store assigns the revision itself and
   rejects a package that sets one.
@@ -16,9 +16,9 @@
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
-  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
+  xmlns:virtualization="http://schemas.microsoft.com/appx/manifest/virtualization/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap desktop desktop6 rescap">
+  IgnorableNamespaces="uap desktop rescap">
 
   <Identity
     Name="EnviousLabsLLC.EnviousWispr"
@@ -30,6 +30,18 @@
     <PublisherDisplayName>Envious Labs LLC</PublisherDisplayName>
     <Logo>Assets\Store\StoreLogo.png</Logo>
     <Description>Private, on-device dictation for Windows. Your voice, instantly captured.</Description>
+    <!--
+      THE DATA-FOLDER EXCLUSION IS A PACKAGE PROPERTY, NOT AN EXTENSION. The Windows 11 per-directory form
+      lives in the virtualization namespace inside Properties (VirtualizationManifestSchema.xsd). An
+      Extension with Category="windows.fileSystemWriteVirtualization" is rejected by MakeAppx (C00CE169),
+      and the desktop6 form can only switch virtualization off for the whole package. Needs the
+      unvirtualizedResources capability below, and Windows 11 (the MinVersion already is).
+    -->
+    <virtualization:FileSystemWriteVirtualization>
+      <virtualization:ExcludedDirectories>
+        <virtualization:ExcludedDirectory>$(KnownFolder:LocalAppData)\Envious Labs\EnviousWispr</virtualization:ExcludedDirectory>
+      </virtualization:ExcludedDirectories>
+    </virtualization:FileSystemWriteVirtualization>
   </Properties>
 
   <Dependencies>
@@ -81,6 +93,12 @@
 
   <Capabilities>
     <!--
+      internetClient is a FOUNDATION capability, not a uap one: MakeAppx rejects the uap: form outright
+      (C00CE169, enumeration constraint). Model downloads, BYOK polish and the update check need it.
+    -->
+    <Capability Name="internetClient" />
+
+    <!--
       runFullTrust is what keeps this app the app it is: an ordinary medium-integrity desktop process,
       not an AppContainer. The global keyboard hook, clipboard-backed delivery into other applications,
       the out-of-process runtime worker, and loopback to a local Ollama all depend on it. It is a
@@ -90,7 +108,7 @@
 
     <!--
       THE USER'S DATA SURVIVES UNINSTALL, WHICH IS A PRODUCT PROMISE (product-contract.md). Without the
-      exclusion below, writes under the data directory are redirected into package-private storage and
+      exclusion in Properties above, writes under the data directory are redirected into package-private storage and
       Windows deletes them with the package: three gigabytes of models, the whole history, every setting.
       MSIX gives an app like this one no uninstall-time hook, so the choice cannot live in an uninstaller
       and lives in Settings instead - Export my data, and Delete all EnviousWispr data.
@@ -100,17 +118,7 @@
     -->
     <rescap:Capability Name="unvirtualizedResources" />
 
-    <uap:Capability Name="internetClient" />
     <DeviceCapability Name="microphone" />
   </Capabilities>
 
-  <Extensions>
-    <desktop6:Extension Category="windows.fileSystemWriteVirtualization">
-      <desktop6:FileSystemWriteVirtualization>
-        <desktop6:ExcludedDirectories>
-          <desktop6:ExcludedDirectory>$(KnownFolder:LocalAppData)\Envious Labs\EnviousWispr</desktop6:ExcludedDirectory>
-        </desktop6:ExcludedDirectories>
-      </desktop6:FileSystemWriteVirtualization>
-    </desktop6:Extension>
-  </Extensions>
 </Package>
