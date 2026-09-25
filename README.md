@@ -27,9 +27,6 @@ or its draft pull requests is approved for public distribution.
   accessibility, and localization foundations.
 - Self-contained Velopack founder, beta, and stable identities with isolated data and update channels.
 
-The product contracts are authoritative. Source code and tests prove implementation; dated notes record
-measurements and experiments but do not redefine the forward-looking product.
-
 ## Current measured evidence
 
 On 2026-08-26, one AC-powered Windows 11 25H2 NVIDIA desktop produced these production-path results:
@@ -62,10 +59,6 @@ gitignored pinned model packs, add `-IncludeLocalRuntime` for the real Parakeet,
 public-fixture journey gates. The journey's physical microphone and global-key boundary still requires a
 separate human pass; see [its UAT contract](tools/app-journey-uat/README.md).
 
-For the current unsigned founder installation, product-parity session, and exact installed-candidate microphone
-command, use the [founder-local daily-use guide](docs/founder-local-daily-use.md). The similarly named file under
-`notes/` is historical evidence for the preserved WPF proof.
-
 The production executable after a Release/x64 build is under:
 
 ```text
@@ -91,9 +84,8 @@ src/EnviousWispr/          preserved WPF/.NET 8 proof
 src/Production/            production WinUI app, modules, worker, and architecture tests
 tools/                     native and model-dependent Windows UAT tools
 scripts/                   canonical validation, packaging, compatibility, performance, and release gates
-.claude/knowledge/         forward-looking product and architecture contracts
-docs/                      durable operator, privacy, compatibility, and release documentation
-notes/                     dated measurements and experiment evidence
+docs/                      privacy, license, and release-compliance documentation
+spikes/                    early runtime spike scripts and clip metadata used by the ASR tests
 models/                    local model packs, ignored by Git
 ```
 
@@ -105,10 +97,7 @@ feeds, clean-machine install/update/rollback/uninstall, representative laptop an
 reviewed model/CUDA licenses, security and privacy review, private-beta daily use, and Saurabh's explicit
 approval for the exact release candidate. Pull requests are never merged automatically.
 
-Start with [CLAUDE.md](CLAUDE.md), the [product contract](.claude/knowledge/product-contract.md), and the
-[Windows master plan](docs/plans/windows-master-plan.md). Release operators should also read the
-[distribution runbook](docs/distribution/windows-release.md) and
-[public-release gate](docs/distribution/public-release.md).
+The release criteria are in the [public-release gate](docs/distribution/public-release.md).
 
 ## Security, privacy, support, and license
 
