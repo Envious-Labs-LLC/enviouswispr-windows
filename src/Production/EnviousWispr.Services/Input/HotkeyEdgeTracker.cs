@@ -210,13 +210,23 @@ internal sealed class HotkeyEdgeTracker
     /// the shortcut during a recording and end the recording while it is held, and a repeat fired the paste. Every
     /// other key is untouched by this wrapper.
     /// </remarks>
-    public HotkeyEdgeDecision Process(uint virtualKey, bool isKeyDown, HotkeyModifiers activeModifiers)
+    /// <param name="gestureModifiers">
+    /// The modifiers from the hook's own events (<c>HeldModifierKeys</c>), used ONLY to decide whether a modifier-set
+    /// binding such as Ctrl+Win is complete. Every keyed binding keeps <paramref name="activeModifiers"/>, the keyboard
+    /// state, which lags only for the key moving now and so is right for them - and which still counts a modifier held
+    /// since before the hook was installed. Null means the same reading for both. Ref: #66.
+    /// </param>
+    public HotkeyEdgeDecision Process(
+        uint virtualKey,
+        bool isKeyDown,
+        HotkeyModifiers activeModifiers,
+        HotkeyModifiers? gestureModifiers = null)
     {
         lock (_sync)
         {
             if (!OneShots().Any(oneShot => oneShot.Binding.VirtualKey == virtualKey))
             {
-                return ProcessCore(virtualKey, isKeyDown, activeModifiers);
+                return ProcessCore(virtualKey, isKeyDown, activeModifiers, gestureModifiers);
             }
 
             if (isKeyDown && _oneShotKeyPresses.TryGetValue(virtualKey, out var consumedDown))
@@ -226,12 +236,12 @@ internal sealed class HotkeyEdgeTracker
                 // it. Ref: #206 review round 2.
                 var gestureDecision =
                     _recordGesture is not null && (!_capturingKeybind || IsAnythingInFlight())
-                        ? ProcessRecordGesture(virtualKey, isKeyDown, activeModifiers)
+                        ? ProcessRecordGesture(virtualKey, isKeyDown, gestureModifiers ?? activeModifiers)
                         : null;
                 return new HotkeyEdgeDecision(Consume: consumedDown, Signal: gestureDecision?.Signal);
             }
 
-            var decision = ProcessCore(virtualKey, isKeyDown, activeModifiers);
+            var decision = ProcessCore(virtualKey, isKeyDown, activeModifiers, gestureModifiers);
             if (isKeyDown)
             {
                 _oneShotKeyPresses[virtualKey] = decision.Consume;
@@ -258,7 +268,11 @@ internal sealed class HotkeyEdgeTracker
     /// <summary>What each key a one-shot uses did on its first key-down: true if the app consumed it.</summary>
     private readonly Dictionary<uint, bool> _oneShotKeyPresses = new();
 
-    private HotkeyEdgeDecision ProcessCore(uint virtualKey, bool isKeyDown, HotkeyModifiers activeModifiers)
+    private HotkeyEdgeDecision ProcessCore(
+        uint virtualKey,
+        bool isKeyDown,
+        HotkeyModifiers activeModifiers,
+        HotkeyModifiers? gestureModifiers)
     {
         lock (_sync)
         {
@@ -269,7 +283,7 @@ internal sealed class HotkeyEdgeTracker
 
             if (_recordGesture is not null)
             {
-                var decision = ProcessRecordGesture(virtualKey, isKeyDown, activeModifiers);
+                var decision = ProcessRecordGesture(virtualKey, isKeyDown, gestureModifiers ?? activeModifiers);
                 if (decision is not null)
                 {
                     return decision.Value;
