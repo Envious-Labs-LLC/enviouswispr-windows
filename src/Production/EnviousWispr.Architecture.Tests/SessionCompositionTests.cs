@@ -199,6 +199,31 @@ public sealed class SessionCompositionTests
         Assert.Equal([true, false], world.RunState.Edges);
     }
 
+    /// <summary>A recording the watchdog ends tells the hook it is over, as a recording the key ends does. Ref: #86.</summary>
+    /// <remarks>
+    /// THE TIMEOUT ABORTS AND RESETS WITHOUT A TRANSITION PASSING THE EFFECTS, and the hook's flag was set only from
+    /// transitions - so after a timeout the hook went on believing a recording ran: Escape was swallowed in every
+    /// application, Quick Add and the last-dictation keys stood aside, and in Toggle mode the next tap sent a stop
+    /// for nothing. The flag now follows the controller's own session changes, which every ending passes through.
+    /// </remarks>
+    [Fact]
+    public async Task AWatchdogTimeoutTellsTheHookTheRecordingIsOver()
+    {
+        var clock = new Deterministic.ManualClock();
+        var world = ComposedSessionWorld.Create("hello world", clock);
+        world.Capture.Take = new float[16_000];
+
+        await world.SubmitAsync(PushToTalkSignal.Pressed);
+        Assert.Equal(DictationSessionState.Recording, world.Controller.CurrentSession?.State);
+        Assert.Equal([true], world.RecordingActive);
+        clock.Advance(RecordingLimits.WatchdogDuration());
+
+        await Eventually(() => world.Controller.CurrentSession is null, "the watchdog's timeout to reset the session");
+        await Eventually(() => world.Coordinator.PendingCount == 0, "the coordinator to drain");
+        Assert.Contains(world.View.Statuses, status => status.Text == "Recording timed out and was cancelled safely");
+        Assert.Equal([true, false], world.RecordingActive);
+    }
+
     [Fact]
     public async Task AutoStopAndWatchdogReachSameAdmissionQueue()
     {

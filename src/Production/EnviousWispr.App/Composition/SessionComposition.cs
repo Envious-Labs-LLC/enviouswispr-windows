@@ -83,9 +83,47 @@ public static class SessionComposition
             runtime.Persistence,
             parts.Resources,
             new SessionEffects(parts));
+        RecordingFlag.Follow(parts.Controller, parts.Shell.RecordingActive);
         // Built beside the controller so a press captures its target and delivery choice from the
         // same provider the controller would have asked, at the instant of the key, before the
         // queue's first hop.
         return new DictationSessionCoordinator(executor, parts.Controller.CaptureStartContext, parts.Clock);
+    }
+}
+
+/// <summary>Tells the hook whether a recording is running, read from the controller's own session changes. Ref: #86.</summary>
+/// <remarks>
+/// THE CONTROLLER IS THE ONE PLACE EVERY ENDING PASSES: a release, a cancel, a failed stop, and the watchdog's and the
+/// lifecycle recovery's abort all change its session and raise <see cref="PushToTalkSessionController.SessionChanged"/>.
+/// The flag used to be set from the transitions the executor recorded, and the two aborts record none, so after a
+/// timeout the hook swallowed Escape everywhere until the next recording. A reset raises nothing, and needs nothing:
+/// it only follows an ending, which already said false. Only a change is passed on, so the hook hears each edge once.
+/// </remarks>
+internal sealed class RecordingFlag
+{
+    private readonly Action<bool> _recordingActive;
+    private readonly Lock _sync = new();
+    private bool _active;
+
+    private RecordingFlag(Action<bool> recordingActive) => _recordingActive = recordingActive;
+
+    public static void Follow(PushToTalkSessionController controller, Action<bool> recordingActive)
+    {
+        var flag = new RecordingFlag(recordingActive);
+        controller.SessionChanged += (_, session) => flag.Set(session.State == DictationSessionState.Recording);
+    }
+
+    private void Set(bool active)
+    {
+        lock (_sync)
+        {
+            if (active == _active)
+            {
+                return;
+            }
+
+            _active = active;
+            _recordingActive(active);
+        }
     }
 }
