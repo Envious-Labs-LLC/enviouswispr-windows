@@ -2198,7 +2198,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private async void RemoveSnippetButton_Click(object sender, RoutedEventArgs e)
     {
-        if (SnippetList.SelectedItem is not SnippetEntry selected)
+        if (SnippetList.SelectedItem is not SnippetRow { Entry: var selected })
         {
             ShowMessage("Select a snippet first", "Choose the snippet you want to remove.", InfoBarSeverity.Informational);
             return;
@@ -3084,7 +3084,8 @@ public sealed partial class MainWindow : Window, IDisposable
             || RemoveWordButton is null
             || SelectAllWordsButton is null
             || WordSelectionCountText is null
-            || RemoveSnippetButton is null)
+            || RemoveSnippetButton is null
+            || ExportSnippetsButton is null)
         {
             return;
         }
@@ -3111,6 +3112,7 @@ public sealed partial class MainWindow : Window, IDisposable
         // Export needs words rather than a selection - it writes the whole list.
         ExportWordsButton.IsEnabled = _settings.UserData.CustomWords.Count > 0;
         RemoveSnippetButton.IsEnabled = SnippetList.SelectedItem is not null;
+        ExportSnippetsButton.IsEnabled = _settings.UserData.Snippets.Count > 0;
     }
 
     /// <summary>
@@ -3857,10 +3859,9 @@ public sealed partial class MainWindow : Window, IDisposable
         var customWords = _settings.UserData.CustomWords;
         var snippets = _settings.UserData.Snippets;
         DictionaryList.ItemsSource = customWords;
-        SnippetList.ItemsSource = snippets;
         RefreshSnippetKeywordViews(force: false);
         UpdateListAndEmptyStateVisibility(DictionaryList, DictionaryEmptyState, customWords.Count);
-        UpdateListAndEmptyStateVisibility(SnippetList, SnippetEmptyState, snippets.Count);
+        RefreshSnippetList(snippets);
         UpdateSelectionDependentButtons();
     }
 
