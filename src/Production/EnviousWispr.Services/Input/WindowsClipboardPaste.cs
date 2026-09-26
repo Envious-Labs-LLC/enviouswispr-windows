@@ -133,6 +133,12 @@ internal static class WindowsClipboardPaste
     /// <summary>How long an answer must hold still before it is read; the macOS fallback's own settle.</summary>
     private static readonly TimeSpan CopyAnswerSettle = TimeSpan.FromMilliseconds(20);
 
+    /// <summary>How often the clipboard is looked at while the app's answer is awaited.</summary>
+    private static readonly TimeSpan CopyAnswerPoll = TimeSpan.FromMilliseconds(5);
+
+    /// <summary>How long the target has to read the words after the paste keystroke, before the clipboard is given back.</summary>
+    private static readonly TimeSpan PasteSettle = TimeSpan.FromMilliseconds(200);
+
     private static string? ReadSelectionOnSta(
         Action<string> writeText,
         Func<bool> sendCopy,
@@ -210,7 +216,7 @@ internal static class WindowsClipboardPaste
                 return new CopyAnswer(CopyAnswerKind.None, 0);
             }
 
-            Thread.Sleep(5);
+            PumpingWait(CopyAnswerPoll);
             current = GetClipboardSequenceNumber();
         }
 
@@ -218,7 +224,7 @@ internal static class WindowsClipboardPaste
         var settleDeadline = started.Elapsed + CopyAnswerDeadline;
         while (true)
         {
-            Thread.Sleep(CopyAnswerSettle);
+            PumpingWait(CopyAnswerSettle);
             var next = GetClipboardSequenceNumber();
             if (GetClipboardOwner() != answeringOwner)
             {
@@ -318,10 +324,22 @@ internal static class WindowsClipboardPaste
         bool restoreClipboard,
         Func<TextDeliveryRefusalReason> preflight,
         Action<string> writeText,
+        CancellationToken cancellationToken) =>
+        PasteAsync(text, fallbackText, restoreClipboard, preflight, writeText, SendCtrlV, cancellationToken);
+
+    /// <summary>The paste with its writer and its paste keystroke named: a test answers the keystroke from a stand-in, as a target would, instead of sending one to whatever window is in front.</summary>
+    internal static Task<TextCommitResult> PasteAsync(
+        string text,
+        string fallbackText,
+        bool restoreClipboard,
+        Func<TextDeliveryRefusalReason> preflight,
+        Action<string> writeText,
+        Func<bool> sendPaste,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(preflight);
         ArgumentNullException.ThrowIfNull(writeText);
+        ArgumentNullException.ThrowIfNull(sendPaste);
         return RunStaAsync(
             () => PasteOnSta(
                 text,
@@ -329,6 +347,7 @@ internal static class WindowsClipboardPaste
                 restoreClipboard,
                 preflight,
                 writeText,
+                sendPaste,
                 cancellationToken),
             cancellationToken);
     }
@@ -339,6 +358,7 @@ internal static class WindowsClipboardPaste
         bool restoreClipboard,
         Func<TextDeliveryRefusalReason> preflight,
         Action<string> writeText,
+        Func<bool> sendPaste,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -420,7 +440,7 @@ internal static class WindowsClipboardPaste
                 ClipboardUncertain: uncertain);
         }
 
-        if (!SendCtrlV())
+        if (!sendPaste())
         {
             return new TextCommitResult(
                 TextDeliveryRoute.ClipboardOnly,
@@ -430,7 +450,11 @@ internal static class WindowsClipboardPaste
                 TextDeliveryRefusalReason.InputBlocked);
         }
 
-        Thread.Sleep(200);
+        // PUMPING, BECAUSE THIS THREAD OWNS THE CLIPBOARD HERE: the target's paste needs nothing from us (the words were
+        // flushed, so no format is rendered on request), but anybody who writes to the clipboard meanwhile - the person
+        // copying - sends us WM_DESTROYCLIPBOARD and waits for the answer. A sleep that does not pump holds their copy
+        // until it ends, and then the give-back below can see the clipboard still ours and restore over it (#247).
+        PumpingWait(PasteSettle);
         var (pastedRestored, pastedUncertain) = GiveBack(snapshot, ourSequence);
         return new TextCommitResult(
             TextDeliveryRoute.ClipboardPaste,
@@ -456,8 +480,57 @@ internal static class WindowsClipboardPaste
             return (false, false);
         }
 
-        var restored = TryRestoreClipboard(snapshot);
-        return (restored, !restored);
+        return RestoreWhileOurs(snapshot, ourSequence.Value);
+    }
+
+    /// <summary>Puts the snapshot back, retrying while the clipboard is held, and gives up the moment somebody else's write lands.</summary>
+    /// <remarks>
+    /// THE GUARD IS RE-READ BEFORE EVERY RETRY (#247). A restore that cannot open the clipboard is most often
+    /// waiting on somebody who is writing to it; a retry that did not look again would put the snapshot back
+    /// OVER that write - measured: the person's copy made just after Quick Add's answer was overwritten this
+    /// way. So after each failed try the sequence number is read again: moved by somebody else (the owner is not
+    /// this thread) is their clipboard now, left alone - declined, not uncertain; moved by our own failed try
+    /// is still ours, and the next try aims at it. Out of tries with the clipboard still ours is uncertain.
+    /// </remarks>
+    private static (bool Restored, bool Uncertain) RestoreWhileOurs(ClipboardSnapshot snapshot, uint ourSequence)
+    {
+        var expected = ourSequence;
+        for (var remaining = ClipboardWriteAttempts; ; remaining--)
+        {
+            try
+            {
+                if (snapshot.IsEmpty)
+                {
+                    ClearOnce();
+                }
+                else
+                {
+                    Clipboard.SetDataObject(snapshot.Data!, copy: true, retryTimes: 0, retryDelay: 0);
+                }
+
+                return (true, false);
+            }
+            catch (Exception exception) when (
+                exception is ExternalException or ThreadStateException or ArgumentException)
+            {
+                if (exception is not ExternalException || remaining <= 1)
+                {
+                    return (false, true);
+                }
+
+                PumpingWait(ClipboardRetryDelay);
+                var current = GetClipboardSequenceNumber();
+                if (current != expected)
+                {
+                    if (!ClipboardOwnedByThisThread())
+                    {
+                        return (false, false);
+                    }
+
+                    expected = current;
+                }
+            }
+        }
     }
 
     private static bool SendCtrlV()
@@ -506,8 +579,8 @@ internal static class WindowsClipboardPaste
     }
 
     /// <summary>The production writer: the text on the clipboard, flushed so it outlives this thread; throws what the clipboard refuses.</summary>
-    private static void SetClipboardTextOrThrow(string text) =>
-        Clipboard.SetDataObject(text, copy: true, retryTimes: 10, retryDelay: 50);
+    internal static void SetClipboardTextOrThrow(string text) =>
+        WithPumpingRetry(() => Clipboard.SetDataObject(text, copy: true, retryTimes: 0, retryDelay: 0));
 
     /// <summary>One write of a borrowing paste, and the sequence number that is ours after it.</summary>
     /// <remarks>
@@ -664,21 +737,65 @@ internal static class WindowsClipboardPaste
         }
     }
 
+    /// <summary>Waits on the clipboard thread WITHOUT stopping it from answering the messages other writers send it (#247).</summary>
+    /// <remarks>
+    /// THE CLIPBOARD'S OWNER IS SENT MESSAGES, AND THE SENDER WAITS FOR THE ANSWER. Whoever writes next calls
+    /// EmptyClipboard, which SendMessages WM_DESTROYCLIPBOARD to the owner's window - after any write of ours, the
+    /// OLE window of this thread - and does not return until it is handled. Thread.Sleep handles nothing: measured on
+    /// the real app, the target's answer to Quick Add's Copy took 1,044 ms, held behind our wait, and landed after
+    /// we had given up. Joining the current thread never completes, so it waits the full time, and on an STA thread
+    /// the runtime's wait is a COM modal wait (CoWaitForMultipleHandles) that dispatches sent messages and incoming
+    /// COM calls while it waits - documented for Thread.Join as "continues to perform standard COM and SendMessage
+    /// pumping". Every thread this class runs on is STA (<see cref="RunStaAsync{T}"/>).
+    /// </remarks>
+    private static void PumpingWait(TimeSpan duration) => Thread.CurrentThread.Join(duration);
+
+    /// <summary>WinForms' own retry count and a delay close to its own, spent in a pumping wait instead of its Thread.Sleep.</summary>
+    private const int ClipboardWriteAttempts = 11;
+
+    private static readonly TimeSpan ClipboardRetryDelay = TimeSpan.FromMilliseconds(50);
+
+    /// <summary>One clipboard write, retried while the clipboard is held, with the waits between tries pumping.</summary>
+    /// <remarks>
+    /// WINFORMS' RETRY SLEEPS WITHOUT PUMPING. The clipboard is most often held by a writer that is itself waiting
+    /// for this thread to answer WM_DESTROYCLIPBOARD, and a retry that does not answer can only run out. So each write
+    /// is asked of WinForms once (retryTimes 0: no sleep of its own) and retried here; the last failure is thrown.
+    /// </remarks>
+    private static void WithPumpingRetry(Action attempt)
+    {
+        for (var remaining = ClipboardWriteAttempts; ; remaining--)
+        {
+            try
+            {
+                attempt();
+                return;
+            }
+            catch (ExternalException) when (remaining > 1)
+            {
+                PumpingWait(ClipboardRetryDelay);
+            }
+        }
+    }
+
+    /// <summary>Empties the clipboard once, as <c>Clipboard.Clear</c> does (<c>OleSetClipboard(null)</c>) but without its sleeping retry.</summary>
+    private static void ClearOnce()
+    {
+        Application.OleRequired();
+        Marshal.ThrowExceptionForHR(OleSetClipboard(IntPtr.Zero));
+    }
+
+    /// <summary>Puts a snapshot back with no guard at all: for the tests' own desk-clipboard guard, which restores what it took whatever happened since. Every restore the app makes goes through the guarded give-back instead.</summary>
     internal static bool TryRestoreClipboard(ClipboardSnapshot snapshot)
     {
         try
         {
             if (snapshot.IsEmpty)
             {
-                Clipboard.Clear();
+                WithPumpingRetry(ClearOnce);
             }
             else
             {
-                Clipboard.SetDataObject(
-                    snapshot.Data!,
-                    copy: true,
-                    retryTimes: 10,
-                    retryDelay: 50);
+                WithPumpingRetry(() => Clipboard.SetDataObject(snapshot.Data!, copy: true, retryTimes: 0, retryDelay: 0));
             }
 
             return true;
@@ -786,6 +903,9 @@ internal static class WindowsClipboardPaste
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetClipboardOwner();
+
+    [DllImport("ole32.dll")]
+    private static extern int OleSetClipboard(IntPtr dataObject);
 
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);

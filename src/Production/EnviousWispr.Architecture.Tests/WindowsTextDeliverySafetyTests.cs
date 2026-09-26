@@ -981,8 +981,9 @@ public sealed class WindowsTextDeliverySafetyTests
     [ClipboardFact]
     public async Task QuickAddReadsTheAppsAnswerToItsCopyAndGivesTheClipboardBack()
     {
-        // #247: A STAND-IN APP ANSWERS THE COPY, on a thread of its own as another app would. Its answer is the
-        // selection, and the clipboard is put back to what the person had.
+        // #247: A STAND-IN APP ANSWERS THE COPY, on a thread of its own and AFTER THE COPY RETURNS, as another app does:
+        // its write sends WM_DESTROYCLIPBOARD to our thread, which owns the clipboard after its clearing write, so it
+        // lands only if our wait answers messages. Its answer is the selection, and the person's clipboard comes back.
         const string sentinel = "EnviousWispr sentinel copied before Quick Add";
         using var guard = ClipboardGuard.Capture();
         ClipboardGuard.SetText(sentinel);
@@ -990,11 +991,12 @@ public sealed class WindowsTextDeliverySafetyTests
 
         var selection = await WindowsClipboardPaste.TryReadSelectionAsync(
             RealWrite,
-            () => app.Write("selected word"),
+            () => app.StartWrite("selected word"),
             CancellationToken.None);
 
         Assert.Equal("selected word", selection);
         Assert.Equal(sentinel, ClipboardGuard.GetText());
+        Assert.True(app.AllLanded(), "the stand-in's answer landed");
     }
 
     [ClipboardFact]
@@ -1008,11 +1010,12 @@ public sealed class WindowsTextDeliverySafetyTests
 
         var selection = await WindowsClipboardPaste.TryReadSelectionAsync(
             RealWrite,
-            () => app.Write("selected word"),
+            () => app.StartWrite("selected word"),
             CancellationToken.None);
 
         Assert.Equal("selected word", selection);
         Assert.Null(ClipboardGuard.GetText());
+        Assert.True(app.AllLanded(), "the stand-in's answer landed");
     }
 
     [ClipboardFact]
@@ -1039,7 +1042,7 @@ public sealed class WindowsTextDeliverySafetyTests
         // #247: THE APP ANSWERS, AND THE PERSON COPIES IN ANOTHER APP A MOMENT LATER, before Quick Add has read
         // the answer. The person's copy has a different owner, so it is left alone: not read as the selection,
         // and not restored over. The person's copy is a plain Win32 write (no OLE flush) from a thread already
-        // running, so it lands a few milliseconds after the answer, well inside the 20 ms settle.
+        // running, so it lands a few milliseconds after the answer, inside the settle.
         const string sentinel = "EnviousWispr sentinel copied before Quick Add";
         const string meanwhile = "EnviousWispr text the person copied meanwhile";
         using var guard = ClipboardGuard.Capture();
@@ -1054,7 +1057,8 @@ public sealed class WindowsTextDeliverySafetyTests
                 return;
             }
 
-            // test-fixture-timer: the person's copy lands 5 ms after the answer, inside the 20 ms settle.
+            // test-fixture-timer: the person's copy lands 5 ms after the answer, inside the 20 ms settle that starts when
+            // the Copy returns with the answer already on the clipboard.
             var clock = System.Diagnostics.Stopwatch.StartNew();
             while (clock.Elapsed < TimeSpan.FromMilliseconds(5))
             {
@@ -1072,9 +1076,11 @@ public sealed class WindowsTextDeliverySafetyTests
             RealWrite,
             () =>
             {
-                var answered = app.Write("selected word");
-                go.Set();
-                return answered;
+                // THE ANSWER IS ON THE CLIPBOARD BEFORE THE COPY RETURNS, deliberately, unlike the asynchronous answers above:
+                // this test is about the owner check in the settle, and an answer Quick Add first sees late (a busy machine)
+                // would put the person's copy before the answer - the declared race - rather than inside the settle.
+                var started = app.StartWrite("selected word", afterWritten: go.Set);
+                return started && app.AllLanded();
             },
             CancellationToken.None);
         Assert.True(person.Join(TimeSpan.FromSeconds(10)));
@@ -1084,13 +1090,132 @@ public sealed class WindowsTextDeliverySafetyTests
         Assert.Null(selection);
     }
 
+    [ClipboardFact]
+    public async Task APersonsCopyJustAfterAPasteIsNotHeldUpOrRestoredOver()
+    {
+        // #247, THE PASTE PATH'S TWIN: the words are pasted (a stand-in answers the keystroke) and the person copies
+        // something at once, from a thread of their own. Their write sends WM_DESTROYCLIPBOARD to our thread, which
+        // owns the clipboard for the whole 200 ms settle. A settle that answers messages lets their copy land inside
+        // it, so the give-back sees a newer write and leaves it alone; a settle that does not holds their copy until
+        // the give-back has already decided the clipboard is still ours, and then restores over it.
+        const string sentinel = "EnviousWispr sentinel copied before the paste";
+        const string meanwhile = "EnviousWispr text the person copied just after the paste";
+        using var guard = ClipboardGuard.Capture();
+        ClipboardGuard.SetText(sentinel);
+        using var person = new ClipboardWriters();
+
+        var pasted = await WindowsClipboardPaste.PasteAsync(
+            "dictated words",
+            "dictated words ",
+            restoreClipboard: true,
+            static () => TextDeliveryRefusalReason.None,
+            WindowsClipboardPaste.SetClipboardTextOrThrow,
+            () => person.StartWrite(meanwhile),
+            CancellationToken.None);
+
+        Assert.True(person.AllLanded(), "the person's copy landed");
+        Assert.Equal(meanwhile, ClipboardGuard.GetText());
+        // NOT HELD UP: a settle that answers messages lets the copy through in milliseconds; one that does not holds it
+        // for the whole 200 ms. The bound sits between the two.
+        Assert.True(person.WriteMilliseconds.Single() < 120, $"the person's copy took {person.WriteMilliseconds.Single()} ms");
+        Assert.True(pasted.Delivered);
+        Assert.Equal(TextDeliveryRoute.ClipboardPaste, pasted.Route);
+        Assert.False(pasted.ClipboardRestored);
+        Assert.False(pasted.ClipboardUncertain);
+    }
+
+    [ClipboardFact]
+    public async Task AGiveBackThatFindsTheClipboardHeldNeverRestoresOverTheWriteThatWasHoldingIt()
+    {
+        // #247, THE RESTORE'S RETRY: right after the paste, somebody opens the clipboard and holds it past the 200 ms
+        // settle before emptying it. The give-back finds the clipboard still ours, cannot open it, and retries. Each
+        // retry must answer their WM_DESTROYCLIPBOARD (or their copy waits on us until we give up, and we report the
+        // clipboard uncertain) and must look again before trying: their copy has landed by then, it is theirs, and
+        // putting the snapshot back over it would destroy it.
+        const string sentinel = "EnviousWispr sentinel copied before the paste";
+        const string meanwhile = "EnviousWispr text the person copied while the paste settled";
+        using var guard = ClipboardGuard.Capture();
+        ClipboardGuard.SetText(sentinel);
+        using var opened = new ManualResetEventSlim();
+        var personWrote = false;
+        var person = new Thread(() => personWrote = RawClipboard.WriteText(meanwhile, opened, holdBeforeEmpty: TimeSpan.FromMilliseconds(250)))
+        {
+            IsBackground = true,
+        };
+
+        var pasted = await WindowsClipboardPaste.PasteAsync(
+            "dictated words",
+            "dictated words ",
+            restoreClipboard: true,
+            static () => TextDeliveryRefusalReason.None,
+            WindowsClipboardPaste.SetClipboardTextOrThrow,
+            () =>
+            {
+                person.Start();
+                return opened.Wait(TimeSpan.FromSeconds(10));
+            },
+            CancellationToken.None);
+        Assert.True(person.Join(TimeSpan.FromSeconds(10)));
+
+        Assert.True(personWrote, "the person's copy landed");
+        Assert.Equal(meanwhile, ClipboardGuard.GetText());
+        Assert.True(pasted.Delivered);
+        Assert.False(pasted.ClipboardRestored);
+        Assert.False(pasted.ClipboardUncertain);
+    }
+
+    [ClipboardFact]
+    public async Task ARefusedPastesFallbackWriteGetsThroughAWriterThatIsWaitingOnUs()
+    {
+        // #247, THE RETRY: the paste is refused while somebody has the clipboard open and is emptying it - which
+        // sends WM_DESTROYCLIPBOARD to our thread, the owner after the insertion write, and waits for the answer. Our
+        // fallback write cannot open the clipboard until they finish, and they cannot finish until we answer. A retry
+        // that waits answering messages lets them through and then lands the fallback; one that sleeps runs out.
+        const string sentinel = "EnviousWispr sentinel copied before the paste";
+        const string meanwhile = "EnviousWispr text the person copied during the refusal";
+        using var guard = ClipboardGuard.Capture();
+        ClipboardGuard.SetText(sentinel);
+        using var opened = new ManualResetEventSlim();
+        var personWrote = false;
+        var person = new Thread(() => personWrote = RawClipboard.WriteText(meanwhile, opened, holdBeforeEmpty: TimeSpan.FromMilliseconds(5)))
+        {
+            IsBackground = true,
+        };
+
+        var pasted = await WindowsClipboardPaste.PasteAsync(
+            "dictated words",
+            "dictated words ",
+            restoreClipboard: true,
+            () =>
+            {
+                person.Start();
+                return opened.Wait(TimeSpan.FromSeconds(10))
+                    ? TextDeliveryRefusalReason.TargetChanged
+                    : throw new TimeoutException("the person's writer never opened the clipboard");
+            },
+            WindowsClipboardPaste.SetClipboardTextOrThrow,
+            static () => throw new InvalidOperationException("a refused paste must not send the paste keystroke"),
+            CancellationToken.None);
+        Assert.True(person.Join(TimeSpan.FromSeconds(10)));
+
+        Assert.True(personWrote, "the person's copy landed");
+        Assert.Equal(TextDeliveryRoute.ClipboardOnly, pasted.Route);
+        Assert.True(pasted.ClipboardFallback);
+        Assert.Equal(TextDeliveryRefusalReason.TargetChanged, pasted.RefusalReason);
+        Assert.Equal("dictated words ", ClipboardGuard.GetText());
+    }
+
     /// <summary>A plain Win32 clipboard write, as a native app makes one: opened with no window, so it owns the clipboard through none.</summary>
     private static class RawClipboard
     {
         private const uint UnicodeText = 13;
         private const uint MoveableMemory = 0x0002;
 
-        public static bool WriteText(string text)
+        public static bool WriteText(string text) => WriteText(text, opened: null, holdBeforeEmpty: TimeSpan.Zero);
+
+        /// <param name="opened">Set once the clipboard is open and held, before it is emptied.</param>
+        /// <param name="holdBeforeEmpty">How long the clipboard is held open before it is emptied.</param>
+        public static bool WriteText(string text, ManualResetEventSlim? opened, TimeSpan holdBeforeEmpty)
         {
             var bytes = (text.Length + 1) * 2;
             var memory = GlobalAlloc(MoveableMemory, (UIntPtr)bytes);
@@ -1109,6 +1234,15 @@ public sealed class WindowsTextDeliverySafetyTests
                 {
                     try
                     {
+                        opened?.Set();
+                        // test-fixture-timer: the clipboard is held open this long before it is emptied, so the other
+                        // side is already trying to write when the empty asks it to answer.
+                        var held = System.Diagnostics.Stopwatch.StartNew();
+                        while (held.Elapsed < holdBeforeEmpty)
+                        {
+                            Thread.SpinWait(100);
+                        }
+
                         return EmptyClipboard() && SetClipboardData(UnicodeText, memory) != IntPtr.Zero;
                     }
                     finally
@@ -1145,8 +1279,8 @@ public sealed class WindowsTextDeliverySafetyTests
         private static extern bool GlobalUnlock(IntPtr memory);
     }
 
-    private static void RealWrite(string text) =>
-        System.Windows.Forms.Clipboard.SetDataObject(text, copy: true, retryTimes: 10, retryDelay: 50);
+    /// <summary>The production clipboard writer, so a test that writes through it exercises its retries too.</summary>
+    private static void RealWrite(string text) => WindowsClipboardPaste.SetClipboardTextOrThrow(text);
 
     /// <summary>A stand-in for another app: each write runs on a thread of its own that stays alive until disposed, so the clipboard's owner stays that thread's window as it would for a running app.</summary>
     private sealed class ClipboardWriters : IDisposable
@@ -1155,17 +1289,27 @@ public sealed class WindowsTextDeliverySafetyTests
         private readonly ManualResetEventSlim _release = new();
         private readonly List<Thread> _threads = [];
 
-        /// <summary>Writes the text from a new thread and returns once it is on the clipboard; true when it landed.</summary>
-        public bool Write(string text)
+        private readonly List<ManualResetEventSlim> _done = [];
+        private int _landed;
+        private readonly System.Collections.Concurrent.ConcurrentQueue<long> _writeMilliseconds = new();
+
+        /// <summary>How long each landed write took, start to finish; a write held up by a clipboard owner that is not answering takes as long as the owner is deaf.</summary>
+        public long[] WriteMilliseconds => [.. _writeMilliseconds];
+
+        /// <summary>Starts the write on a new thread and returns AT ONCE, as an app answering a keystroke does; true means it was started.</summary>
+        /// <param name="afterWritten">Called on the writer's thread once the text is on the clipboard.</param>
+        public bool StartWrite(string text, Action? afterWritten = null)
         {
-            var written = false;
-            using var done = new ManualResetEventSlim();
+            var done = new ManualResetEventSlim();
             var thread = new Thread(() =>
             {
                 try
                 {
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
                     System.Windows.Forms.Clipboard.SetDataObject(text, copy: true, retryTimes: 10, retryDelay: 50);
-                    written = true;
+                    Interlocked.Increment(ref _landed);
+                    _writeMilliseconds.Enqueue(clock.ElapsedMilliseconds);
+                    afterWritten?.Invoke();
                 }
                 catch (ExternalException)
                 {
@@ -1182,15 +1326,23 @@ public sealed class WindowsTextDeliverySafetyTests
             lock (_threads)
             {
                 _threads.Add(thread);
+                _done.Add(done);
             }
 
             thread.Start();
-            if (!done.Wait(Deadline))
+            return true;
+        }
+
+        /// <summary>Waits for every started write to finish, and says whether each one landed.</summary>
+        public bool AllLanded()
+        {
+            ManualResetEventSlim[] pending;
+            lock (_threads)
             {
-                throw new TimeoutException("The stand-in writer did not report within its deadline.");
+                pending = [.. _done];
             }
 
-            return written;
+            return pending.All(done => done.Wait(Deadline)) && Volatile.Read(ref _landed) == pending.Length;
         }
 
         public void Dispose()
