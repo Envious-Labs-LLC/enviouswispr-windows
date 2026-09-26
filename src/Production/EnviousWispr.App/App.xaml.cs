@@ -2343,10 +2343,21 @@ public partial class App : Application, IAsyncDisposable
             ErrorCode: result.Delivery is { } delivered ? DeliveryErrorCodes.For(delivered.RefusalReason) : null,
             DeliveryStage: result.Delivery?.Fault?.Stage,
             Fault: result.Delivery?.Fault?.Kind));
+        if (DeliveryClipboardDiagnostics.EntryFor(result.Delivery, DateTimeOffset.UtcNow) is { } clipboardEntry)
+        {
+            _logger.Write(clipboardEntry);
+        }
+
         // A REFUSAL FOR A HOLDER NAMES IT - a file being transcribed is not "busy with a dictation".
         if (heldBy is { } holder)
         {
             ShowSessionBusy(holder);
+        }
+        // A CLIPBOARD THAT COULD NOT BE GIVEN BACK IS SAID, in the dictation's own words (#242): a landed paste
+        // is otherwise silent here, and the person would never learn their clipboard now holds these words.
+        else if (result.Delivery is { ClipboardUncertain: true } clipboardNotRestored)
+        {
+            ShowLastDictationStatus(DeliveryStatusReport.For(clipboardNotRestored));
         }
         else if (LastDictationStatus(result.Outcome) is { } shown)
         {
@@ -2393,7 +2404,7 @@ public partial class App : Application, IAsyncDisposable
                         attempt.Refusal == SessionHoldRefusal.Dictation
                             ? AppEventCode.SavedDictationDeclinedDictationInProgress
                             : AppEventCode.SavedDictationDeclinedBusy));
-                    ShowSavedDictationPasteResult(action, outcome: null, attempt);
+                    ShowSavedDictationPasteResult(action, outcome: null, attempt, clipboardNotRestored: false);
                     return;
                 }
 
@@ -2415,7 +2426,7 @@ public partial class App : Application, IAsyncDisposable
                     DateTimeOffset.UtcNow,
                     AppEventCode.SavedDictationPasteFailed,
                     AppFailureCategory.Recovery));
-                ShowSavedDictationPasteResult(action, SavedDictationPasteOutcome.Failed, refusal: null);
+                ShowSavedDictationPasteResult(action, SavedDictationPasteOutcome.Failed, refusal: null, clipboardNotRestored: false);
                 return;
             }
         }
@@ -2431,21 +2442,31 @@ public partial class App : Application, IAsyncDisposable
             ErrorCode: result.Delivery is { } delivered ? DeliveryErrorCodes.For(delivered.RefusalReason) : null,
             DeliveryStage: result.Delivery?.Fault?.Stage,
             Fault: result.Delivery?.Fault?.Kind));
-        ShowSavedDictationPasteResult(action, result.Outcome, refusal: null);
+        if (DeliveryClipboardDiagnostics.EntryFor(result.Delivery, DateTimeOffset.UtcNow) is { } clipboardEntry)
+        {
+            _logger.Write(clipboardEntry);
+        }
+
+        ShowSavedDictationPasteResult(
+            action,
+            result.Outcome,
+            refusal: null,
+            clipboardNotRestored: result.Delivery is { ClipboardUncertain: true });
     }
 
     /// <summary>The paste's sentence in the window, and whether Home's Undo still stands, read now.</summary>
     private void ShowSavedDictationPasteResult(
         SavedDictationPasteAction action,
         SavedDictationPasteOutcome? outcome,
-        SessionHoldAttempt? refusal)
+        SessionHoldAttempt? refusal,
+        bool clipboardNotRestored)
     {
         var undoStanding = _sessionPersistence.UndoOffer is not null;
         _window?.DispatcherQueue.TryEnqueue(() =>
         {
             if (!Leaving)
             {
-                _window?.ShowSavedDictationPasteResult(action, outcome, refusal, undoStanding);
+                _window?.ShowSavedDictationPasteResult(action, outcome, refusal, undoStanding, clipboardNotRestored);
             }
         });
     }

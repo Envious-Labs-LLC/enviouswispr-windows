@@ -250,27 +250,36 @@ internal static class WindowsClipboardPaste
             // words are already on the clipboard and nothing has been pasted; the clipboard is put
             // back if it was ours to put back, and the exception goes out to be named - never
             // answered "clipboard unavailable", which would send somebody to the wrong place.
-            if (snapshot is not null && GetClipboardSequenceNumber() == ourSequence)
-            {
-                _ = TryRestoreClipboard(snapshot);
-            }
-
+            _ = GiveBack(snapshot, ourSequence);
             throw;
         }
 
         if (refusal != TextDeliveryRefusalReason.None)
         {
-            var fallbackAvailable = TrySetClipboardText(fallbackText);
+            if (TrySetClipboardText(fallbackText))
+            {
+                return new TextCommitResult(
+                    TextDeliveryRoute.ClipboardOnly,
+                    Delivered: false,
+                    ClipboardFallback: true,
+                    ClipboardRestored: false,
+                    refusal);
+            }
+
+            // A REFUSED PASTE WHOSE FALLBACK COULD NOT BE WRITTEN STILL GIVES THE CLIPBOARD BACK (#242).
+            // The insertion is on the clipboard, nothing was pasted, and the fallback that would have
+            // justified leaving words there never landed: the person would be left holding dictated
+            // text they were never told about. Put back under the same guard as every restore here -
+            // only while the sequence number is still ours, so a newer write (the person copying
+            // something meanwhile) is never destroyed to undo ours. A restore that fails says so.
+            var (restored, uncertain) = GiveBack(snapshot, ourSequence);
             return new TextCommitResult(
-                fallbackAvailable
-                    ? TextDeliveryRoute.ClipboardOnly
-                    : TextDeliveryRoute.None,
+                TextDeliveryRoute.None,
                 Delivered: false,
-                ClipboardFallback: fallbackAvailable,
-                ClipboardRestored: false,
-                fallbackAvailable
-                    ? refusal
-                    : TextDeliveryRefusalReason.ClipboardUnavailable);
+                ClipboardFallback: false,
+                ClipboardRestored: restored,
+                TextDeliveryRefusalReason.ClipboardUnavailable,
+                ClipboardUncertain: uncertain);
         }
 
         if (!SendCtrlV())
@@ -284,14 +293,33 @@ internal static class WindowsClipboardPaste
         }
 
         Thread.Sleep(200);
-        var restored = snapshot is not null &&
-            GetClipboardSequenceNumber() == ourSequence &&
-            TryRestoreClipboard(snapshot);
+        var (pastedRestored, pastedUncertain) = GiveBack(snapshot, ourSequence);
         return new TextCommitResult(
             TextDeliveryRoute.ClipboardPaste,
             Delivered: true,
             ClipboardFallback: false,
-            ClipboardRestored: restored);
+            ClipboardRestored: pastedRestored,
+            ClipboardUncertain: pastedUncertain);
+    }
+
+    /// <summary>Puts the snapshot back if the clipboard still holds our write; says whether it did, and whether a restore that was ours to make failed.</summary>
+    /// <remarks>
+    /// THREE ANSWERS, NOT TWO. Restored: the person has their clipboard back. Declined: the sequence
+    /// number moved past our write, so somebody wrote after us and their write is left alone - not
+    /// restored, and not uncertain either, because what is there is theirs. Failed: the clipboard was
+    /// still ours and the restore did not land, so it may hold the dictated words (or nothing) in
+    /// place of what the person had - uncertain, and the caller says so. No snapshot (the caller
+    /// asked for no restore) is neither.
+    /// </remarks>
+    private static (bool Restored, bool Uncertain) GiveBack(ClipboardSnapshot? snapshot, uint ourSequence)
+    {
+        if (snapshot is null || GetClipboardSequenceNumber() != ourSequence)
+        {
+            return (false, false);
+        }
+
+        var restored = TryRestoreClipboard(snapshot);
+        return (restored, !restored);
     }
 
     private static bool SendCtrlV()

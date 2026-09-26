@@ -1153,7 +1153,8 @@ public sealed partial class MainWindow : Window, IDisposable
         SavedDictationPasteAction action,
         SavedDictationPasteOutcome? outcome,
         SessionHoldAttempt? refusal,
-        bool undoStanding)
+        bool undoStanding,
+        bool clipboardNotRestored)
     {
         var undo = action == SavedDictationPasteAction.Undo;
         if (RecoveryCard.Visibility == Visibility.Visible && UndoRecoveryButton.Visibility == Visibility.Visible)
@@ -1173,6 +1174,29 @@ public sealed partial class MainWindow : Window, IDisposable
         if (refusal is not null)
         {
             ShowMessage("Not pasted", SavedDictationPasteRefusalSentence(refusal), InfoBarSeverity.Informational);
+            return;
+        }
+
+        // THE ONE LANDED PASTE THAT SAYS SOMETHING HERE (#242): the paste borrowed the clipboard and could not give
+        // it back, so it may now hold these words instead of what the person had copied. A paste that failed with
+        // the clipboard in that state says both.
+        if (clipboardNotRestored)
+        {
+            if (outcome == SavedDictationPasteOutcome.Pasted)
+            {
+                ShowMessage(
+                    "Pasted, but your clipboard could not be restored",
+                    "It may now hold this dictation instead of what you had copied.",
+                    InfoBarSeverity.Warning);
+            }
+            else
+            {
+                ShowMessage(
+                    "Your dictation could not be pasted",
+                    "Nothing was typed, and your clipboard could not be restored. Copy it from Home or History instead.",
+                    InfoBarSeverity.Error);
+            }
+
             return;
         }
 

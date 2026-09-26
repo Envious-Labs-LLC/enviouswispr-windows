@@ -734,6 +734,147 @@ public sealed class WindowsTextDeliverySafetyTests
         Assert.Null(delivery.RecoveryText);
     }
 
+    [ClipboardFact]
+    public async Task ARefusedPasteWhoseFallbackCannotBeWrittenGivesTheClipboardBack()
+    {
+        // #242, THE PRODUCTION PASTE ON THE REAL CLIPBOARD. The insertion goes on the clipboard, the
+        // preflight refuses, and the fallback write fails (a null payload is refused by the clipboard
+        // itself, before it is touched). Nothing was pasted and no fallback landed, so the person's
+        // clipboard is put back: the sentinel placed before the paste is there after it.
+        const string sentinel = "EnviousWispr sentinel copied before the paste";
+        using var guard = ClipboardGuard.Capture();
+        ClipboardGuard.SetText(sentinel);
+        string? duringPreflight = null;
+
+        var pasted = await WindowsClipboardPaste.PasteAsync(
+            "dictated words",
+            null!,
+            restoreClipboard: true,
+            () =>
+            {
+                duringPreflight = ClipboardGuard.GetText();
+                return TextDeliveryRefusalReason.TargetChanged;
+            },
+            CancellationToken.None);
+
+        Assert.Equal("dictated words", duringPreflight);
+        Assert.Equal(sentinel, ClipboardGuard.GetText());
+        Assert.Equal(TextDeliveryRoute.None, pasted.Route);
+        Assert.Equal(TextDeliveryRefusalReason.ClipboardUnavailable, pasted.RefusalReason);
+        Assert.False(pasted.Delivered);
+        Assert.False(pasted.ClipboardFallback);
+        Assert.True(pasted.ClipboardRestored);
+        Assert.False(pasted.ClipboardUncertain);
+    }
+
+    [ClipboardFact]
+    public async Task ARefusedPasteWhoseClipboardCannotBeRestoredSaysTheClipboardIsUncertain()
+    {
+        // #242: ANOTHER HOLDER HAS THE CLIPBOARD OPEN from the moment the preflight refuses until the paste
+        // has answered - the real way a fallback write fails. The restore fails the same way, and the
+        // result says the clipboard is uncertain rather than a plain failure: once the holder lets go it
+        // still holds the dictated words, not the sentinel the person had.
+        const string sentinel = "EnviousWispr sentinel copied before the paste";
+        using var guard = ClipboardGuard.Capture();
+        ClipboardGuard.SetText(sentinel);
+        using var holder = new ClipboardHolder();
+
+        var pasted = await WindowsClipboardPaste.PasteAsync(
+            "dictated words",
+            "dictated words ",
+            restoreClipboard: true,
+            () =>
+            {
+                holder.Open();
+                return TextDeliveryRefusalReason.TargetChanged;
+            },
+            CancellationToken.None);
+        holder.Dispose();
+
+        Assert.True(holder.Opened, "the clipboard was held open, so both writes met a held clipboard");
+        Assert.Equal(TextDeliveryRoute.None, pasted.Route);
+        Assert.Equal(TextDeliveryRefusalReason.ClipboardUnavailable, pasted.RefusalReason);
+        Assert.False(pasted.ClipboardFallback);
+        Assert.False(pasted.ClipboardRestored);
+        Assert.True(pasted.ClipboardUncertain);
+        Assert.Equal("dictated words", ClipboardGuard.GetText());
+    }
+
+    [ClipboardFact]
+    public async Task ARefusedPasteNeverOverwritesAClipboardThePersonChangedMeanwhile()
+    {
+        // #242, THE SEQUENCE-NUMBER GUARD: the person copies something while the paste is deciding. The
+        // fallback write then fails, and the give-back must not undo the person's copy to undo ours - the
+        // clipboard keeps what they copied, and that is neither a restore nor an uncertain clipboard.
+        const string sentinel = "EnviousWispr sentinel copied before the paste";
+        const string meanwhile = "EnviousWispr text the person copied meanwhile";
+        using var guard = ClipboardGuard.Capture();
+        ClipboardGuard.SetText(sentinel);
+
+        var pasted = await WindowsClipboardPaste.PasteAsync(
+            "dictated words",
+            null!,
+            restoreClipboard: true,
+            () =>
+            {
+                ClipboardGuard.SetText(meanwhile);
+                return TextDeliveryRefusalReason.TargetChanged;
+            },
+            CancellationToken.None);
+
+        Assert.Equal(meanwhile, ClipboardGuard.GetText());
+        Assert.Equal(TextDeliveryRefusalReason.ClipboardUnavailable, pasted.RefusalReason);
+        Assert.False(pasted.ClipboardRestored);
+        Assert.False(pasted.ClipboardUncertain);
+    }
+
+    /// <summary>Holds the clipboard open from a thread of its own, as another app would, until disposed.</summary>
+    private sealed class ClipboardHolder : IDisposable
+    {
+        private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
+        private readonly ManualResetEventSlim _opened = new();
+        private readonly ManualResetEventSlim _release = new();
+        private Thread? _thread;
+
+        public bool Opened { get; private set; }
+
+        /// <summary>Opens the clipboard on the holder's thread and returns once it is open (or could not be).</summary>
+        public void Open()
+        {
+            _thread = new Thread(() =>
+            {
+                Opened = OpenClipboard(IntPtr.Zero);
+                _opened.Set();
+                if (Opened)
+                {
+                    // deadline-fallback: released by Dispose; the deadline only bounds a test that never disposes.
+                    _release.Wait(Deadline);
+                    CloseClipboard();
+                }
+            })
+            {
+                IsBackground = true,
+            };
+            _thread.Start();
+            if (!_opened.Wait(Deadline))
+            {
+                throw new TimeoutException("The clipboard holder did not report within its deadline.");
+            }
+        }
+
+        public void Dispose()
+        {
+            _release.Set();
+            _thread?.Join(Deadline);
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool OpenClipboard(IntPtr newOwner);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool CloseClipboard();
+    }
+
     /// <summary>An adapter whose context is a standard field that cannot be written directly and whose commit is the production paste with the given preflight.</summary>
     private sealed class ProductionPastingAdapter(Func<TextDeliveryRefusalReason> preflight) : ITextTargetAdapter
     {

@@ -105,6 +105,12 @@ public enum AppEventCode
     TextDeliveryClipboardFallback,
     TextDeliveryRefused,
     TextDeliveryFailed,
+
+    /// <summary>A delivery borrowed the clipboard and could not give it back: it may hold the dictated words, or nothing, in place of what the person had (#242). Written beside the delivery's own line, by every caller.</summary>
+    TextDeliveryClipboardNotRestored,
+
+    /// <summary>A paste landed and the clipboard was left alone because something wrote to it after the paste did; that newer write was not undone.</summary>
+    TextDeliveryClipboardRestoreDeclined,
     DictationCancelled,
     DictationSessionFailed,
     DictationSessionRecovered,
