@@ -338,3 +338,33 @@ message counts, which this run does not aim at.
 dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
   -c Release -- --english-parakeet --synthetic-hotkey --onboarding-practice
 ```
+
+## Quick Add: the synthetic Copy, the clipboard, and the word it brings back
+
+`--quick-add` drives Add-a-word (Quick Add) on the real app for a target that publishes no selection, the case
+where Quick Add must fall back to a synthetic Copy. The controlled target runs in `quick-add-copy` mode: a
+surface with no text for UI Automation, so the app's selection policy can only choose the synthetic Copy, which
+answers each Copy it receives with the next public made-up word from `--copy-answers` and counts every Copy in its
+result file. The profile is onboarded and pins the Add-a-word key to F9, a single key the injector can drive; the
+harness presses it through the installed hook, twice:
+
+1. over a **sentinel** placed on the clipboard first;
+2. over an **empty** clipboard, because a restore that writes something back over nothing would pass a sentinel
+   check (validation-discipline: every save-and-restore harness tests an empty original).
+
+```powershell
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --quick-add
+```
+
+Each round's verdict is read from things the harness did not write: the round's Quick Add outcome in `app.jsonl`
+(`QuickAddPrepared`, not `QuickAddSelectionEmpty` or `QuickAddRefused`), the target's own count of the Copies it
+answered (so the word came through the synthetic Copy, not a direct read), the Dictionary page's "When I say"
+field read through UI Automation, and the clipboard after the app logged the outcome: the sentinel back, or
+nothing at all. Quick Add fills that page and stops; the word is stored only when "Add word" is pressed, so the
+harness presses it and reads the word back from the isolated profile's `settings.json` (`UserData.CustomWords`).
+The person's own clipboard is snapshotted before the run and put back after it, whatever the verdict. The result
+carries a `quickAdd` object per round, including `TargetCopyWriteMilliseconds`, how long the target's own
+clipboard write took: a write that took hundreds of milliseconds was held up by the app, not the target.
+
+This mode needs `--english-parakeet` (the runtime must become ready) and nothing else.
