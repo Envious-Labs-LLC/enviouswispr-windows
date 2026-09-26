@@ -828,6 +828,135 @@ public sealed class WindowsTextDeliverySafetyTests
         Assert.False(pasted.ClipboardUncertain);
     }
 
+    [ClipboardFact]
+    public async Task AnInsertionWriteThatEmptiedTheClipboardAndThenFailedGivesTheClipboardBack()
+    {
+        // #242: THE FIRST WRITE FAILS AFTER EMPTYING THE CLIPBOARD, as OleSetClipboard can (it empties before
+        // it offers a format) - here the real clipboard is really emptied on the paste's own thread, then the
+        // write throws. The empty is our own change, so the person's clipboard is put back.
+        const string sentinel = "EnviousWispr sentinel copied before the paste";
+        using var guard = ClipboardGuard.Capture();
+        ClipboardGuard.SetText(sentinel);
+
+        var pasted = await WindowsClipboardPaste.PasteAsync(
+            "dictated words",
+            "dictated words ",
+            restoreClipboard: true,
+            static () => TextDeliveryRefusalReason.None,
+            EmptyThenFailFor("dictated words"),
+            CancellationToken.None);
+
+        Assert.Equal(sentinel, ClipboardGuard.GetText());
+        Assert.Equal(TextDeliveryRoute.None, pasted.Route);
+        Assert.Equal(TextDeliveryRefusalReason.ClipboardUnavailable, pasted.RefusalReason);
+        Assert.False(pasted.Delivered);
+        Assert.True(pasted.ClipboardRestored);
+        Assert.False(pasted.ClipboardUncertain);
+    }
+
+    [ClipboardFact]
+    public async Task ARefusedPasteWhoseFallbackWriteEmptiedTheClipboardAndThenFailedGivesTheClipboardBack()
+    {
+        // #242: THE INSERTION LANDS, THE PREFLIGHT REFUSES, AND THE FALLBACK WRITE EMPTIES THE CLIPBOARD AND THEN
+        // FAILS. The sequence number moved past the insertion's by our own hand; that is still ours, so the
+        // person's clipboard is put back rather than left empty.
+        const string sentinel = "EnviousWispr sentinel copied before the paste";
+        using var guard = ClipboardGuard.Capture();
+        ClipboardGuard.SetText(sentinel);
+
+        var pasted = await WindowsClipboardPaste.PasteAsync(
+            "dictated words",
+            "dictated words ",
+            restoreClipboard: true,
+            static () => TextDeliveryRefusalReason.TargetChanged,
+            EmptyThenFailFor("dictated words "),
+            CancellationToken.None);
+
+        Assert.Equal(sentinel, ClipboardGuard.GetText());
+        Assert.Equal(TextDeliveryRefusalReason.ClipboardUnavailable, pasted.RefusalReason);
+        Assert.False(pasted.ClipboardFallback);
+        Assert.True(pasted.ClipboardRestored);
+        Assert.False(pasted.ClipboardUncertain);
+    }
+
+    [ClipboardFact]
+    public async Task AnInsertionWriteThatEmptiedTheClipboardAndCannotBeRestoredSaysTheClipboardIsUncertain()
+    {
+        // #242: THE SAME EMPTY-THEN-FAIL, with another holder taking the clipboard before the paste can put it
+        // back. The restore fails, and the result says the clipboard is uncertain - not a plain failure.
+        const string sentinel = "EnviousWispr sentinel copied before the paste";
+        using var guard = ClipboardGuard.Capture();
+        ClipboardGuard.SetText(sentinel);
+        using var holder = new ClipboardHolder();
+
+        var pasted = await WindowsClipboardPaste.PasteAsync(
+            "dictated words",
+            "dictated words ",
+            restoreClipboard: true,
+            static () => TextDeliveryRefusalReason.None,
+            text =>
+            {
+                System.Windows.Forms.Clipboard.Clear();
+                holder.Open();
+                Marshal.ThrowExceptionForHR(ClipboardCantClose); // what OleSetClipboard answers when it fails after emptying
+            },
+            CancellationToken.None);
+        holder.Dispose();
+
+        Assert.True(holder.Opened, "the clipboard was held open, so the restore met a held clipboard");
+        Assert.Equal(TextDeliveryRefusalReason.ClipboardUnavailable, pasted.RefusalReason);
+        Assert.False(pasted.ClipboardRestored);
+        Assert.True(pasted.ClipboardUncertain);
+        Assert.Null(ClipboardGuard.GetText());
+    }
+
+    [ClipboardFact]
+    public async Task AFailedWriteDuringWhichSomebodyElseCopiedLeavesTheirCopyAlone()
+    {
+        // #242, THE OWNER HALF OF THE GUARD: the insertion write fails having changed nothing itself, while
+        // somebody else (another thread, standing in for another app) copies. The sequence number moved, but
+        // not by our hand, so nothing is restored over their copy and nothing is uncertain.
+        const string sentinel = "EnviousWispr sentinel copied before the paste";
+        const string meanwhile = "EnviousWispr text the person copied meanwhile";
+        using var guard = ClipboardGuard.Capture();
+        ClipboardGuard.SetText(sentinel);
+
+        var pasted = await WindowsClipboardPaste.PasteAsync(
+            "dictated words",
+            "dictated words ",
+            restoreClipboard: true,
+            static () => TextDeliveryRefusalReason.None,
+            text =>
+            {
+                ClipboardGuard.SetText(meanwhile);
+                Marshal.ThrowExceptionForHR(ClipboardCantOpen);
+            },
+            CancellationToken.None);
+
+        Assert.Equal(meanwhile, ClipboardGuard.GetText());
+        Assert.Equal(TextDeliveryRefusalReason.ClipboardUnavailable, pasted.RefusalReason);
+        Assert.False(pasted.ClipboardRestored);
+        Assert.False(pasted.ClipboardUncertain);
+    }
+
+    /// <summary>CLIPBRD_E_CANT_OPEN: OleSetClipboard could not open the clipboard, before changing anything.</summary>
+    private const int ClipboardCantOpen = unchecked((int)0x800401D0);
+
+    /// <summary>CLIPBRD_E_CANT_CLOSE: OleSetClipboard failed after it had opened and emptied the clipboard.</summary>
+    private const int ClipboardCantClose = unchecked((int)0x800401D4);
+
+    /// <summary>A clipboard writer that, for the named payload only, really empties the clipboard on the calling thread and then fails; every other payload is written for real.</summary>
+    private static Action<string> EmptyThenFailFor(string failingPayload) => text =>
+    {
+        if (text == failingPayload)
+        {
+            System.Windows.Forms.Clipboard.Clear();
+            Marshal.ThrowExceptionForHR(ClipboardCantClose); // what OleSetClipboard answers when it fails after emptying
+        }
+
+        System.Windows.Forms.Clipboard.SetDataObject(text, copy: true, retryTimes: 10, retryDelay: 50);
+    };
+
     /// <summary>Holds the clipboard open from a thread of its own, as another app would, until disposed.</summary>
     private sealed class ClipboardHolder : IDisposable
     {

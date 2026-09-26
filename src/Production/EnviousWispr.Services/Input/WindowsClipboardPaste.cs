@@ -195,12 +195,31 @@ internal static class WindowsClipboardPaste
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(preflight);
+        return PasteAsync(text, fallbackText, restoreClipboard, preflight, SetClipboardTextOrThrow, cancellationToken);
+    }
+
+    /// <summary>The paste with its clipboard writer named: production passes <see cref="SetClipboardTextOrThrow"/>; a test passes a writer that fails the way the clipboard can, after changing it.</summary>
+    /// <remarks>
+    /// THE WRITER, NOT THE GUARD. What decides whether the clipboard is ours to put back - the sequence
+    /// number and the owner read after the write - is not a parameter; only the write that can fail is.
+    /// </remarks>
+    internal static Task<TextCommitResult> PasteAsync(
+        string text,
+        string fallbackText,
+        bool restoreClipboard,
+        Func<TextDeliveryRefusalReason> preflight,
+        Action<string> writeText,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(preflight);
+        ArgumentNullException.ThrowIfNull(writeText);
         return RunStaAsync(
             () => PasteOnSta(
                 text,
                 fallbackText,
                 restoreClipboard,
                 preflight,
+                writeText,
                 cancellationToken),
             cancellationToken);
     }
@@ -210,6 +229,7 @@ internal static class WindowsClipboardPaste
         string fallbackText,
         bool restoreClipboard,
         Func<TextDeliveryRefusalReason> preflight,
+        Action<string> writeText,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -228,17 +248,23 @@ internal static class WindowsClipboardPaste
             }
         }
 
-        if (!TrySetClipboardText(text))
+        var insertion = WriteClipboardText(text, writeText);
+        if (!insertion.Written)
         {
+            // A FAILED WRITE CAN STILL HAVE CHANGED THE CLIPBOARD (#242): the write empties it before it
+            // sets anything, and can fail after that. When the clipboard moved by our own hand it is
+            // ours to put back; otherwise nothing of ours is on it and nothing is restored.
+            var (writeRestored, writeUncertain) = GiveBack(snapshot, insertion.OwnedSequence);
             return new TextCommitResult(
                 TextDeliveryRoute.None,
                 Delivered: false,
                 ClipboardFallback: false,
-                ClipboardRestored: false,
-                TextDeliveryRefusalReason.ClipboardUnavailable);
+                ClipboardRestored: writeRestored,
+                TextDeliveryRefusalReason.ClipboardUnavailable,
+                ClipboardUncertain: writeUncertain);
         }
 
-        var ourSequence = GetClipboardSequenceNumber();
+        var ourSequence = insertion.OwnedSequence;
         TextDeliveryRefusalReason refusal;
         try
         {
@@ -256,7 +282,8 @@ internal static class WindowsClipboardPaste
 
         if (refusal != TextDeliveryRefusalReason.None)
         {
-            if (TrySetClipboardText(fallbackText))
+            var fallback = WriteClipboardText(fallbackText, writeText);
+            if (fallback.Written)
             {
                 return new TextCommitResult(
                     TextDeliveryRoute.ClipboardOnly,
@@ -272,7 +299,9 @@ internal static class WindowsClipboardPaste
             // text they were never told about. Put back under the same guard as every restore here -
             // only while the sequence number is still ours, so a newer write (the person copying
             // something meanwhile) is never destroyed to undo ours. A restore that fails says so.
-            var (restored, uncertain) = GiveBack(snapshot, ourSequence);
+            // "Ours" is the failed fallback's own change when it made one (it emptied the clipboard
+            // and then failed), and the insertion's otherwise.
+            var (restored, uncertain) = GiveBack(snapshot, fallback.OwnedSequence ?? ourSequence);
             return new TextCommitResult(
                 TextDeliveryRoute.None,
                 Delivered: false,
@@ -309,11 +338,11 @@ internal static class WindowsClipboardPaste
     /// restored, and not uncertain either, because what is there is theirs. Failed: the clipboard was
     /// still ours and the restore did not land, so it may hold the dictated words (or nothing) in
     /// place of what the person had - uncertain, and the caller says so. No snapshot (the caller
-    /// asked for no restore) is neither.
+    /// asked for no restore) is neither, and so is no sequence of ours (nothing of ours is on it).
     /// </remarks>
-    private static (bool Restored, bool Uncertain) GiveBack(ClipboardSnapshot? snapshot, uint ourSequence)
+    private static (bool Restored, bool Uncertain) GiveBack(ClipboardSnapshot? snapshot, uint? ourSequence)
     {
-        if (snapshot is null || GetClipboardSequenceNumber() != ourSequence)
+        if (snapshot is null || ourSequence is null || GetClipboardSequenceNumber() != ourSequence.Value)
         {
             return (false, false);
         }
@@ -357,7 +386,7 @@ internal static class WindowsClipboardPaste
     {
         try
         {
-            Clipboard.SetDataObject(text, copy: true, retryTimes: 10, retryDelay: 50);
+            SetClipboardTextOrThrow(text);
             return true;
         }
         catch (Exception exception) when (
@@ -366,6 +395,53 @@ internal static class WindowsClipboardPaste
             return false;
         }
     }
+
+    /// <summary>The production writer: the text on the clipboard, flushed so it outlives this thread; throws what the clipboard refuses.</summary>
+    private static void SetClipboardTextOrThrow(string text) =>
+        Clipboard.SetDataObject(text, copy: true, retryTimes: 10, retryDelay: 50);
+
+    /// <summary>One write of a borrowing paste, and the sequence number that is ours after it.</summary>
+    /// <remarks>
+    /// A FAILED WRITE IS NOT A WRITE THAT CHANGED NOTHING (#242). <c>SetDataObject</c> refuses a null
+    /// before it touches anything, and otherwise runs <c>OleSetClipboard</c> then <c>OleFlushClipboard</c>,
+    /// each retried. <c>OleSetClipboard</c> opens the clipboard, EMPTIES it, then offers each format and
+    /// closes it: a failure to open changes nothing, but a failure to offer a format or to close comes
+    /// after the empty. A flush that fails comes after a set that succeeded, so the clipboard already
+    /// holds our words. Either way the write reports failure with the person's clipboard already gone.
+    ///
+    /// SO "OURS" IS DECIDED BY WHO CHANGED IT, NOT BY WHETHER THE CALL SUCCEEDED. After a failure the
+    /// sequence number is ours only when it moved AND the clipboard's owner is this thread - the window
+    /// OLE opens the clipboard with belongs to the thread doing the write. A move made by anybody else
+    /// (the person copying, or another app writing while it held the clipboard we were waiting for) is
+    /// theirs, and nothing of ours is restored over it.
+    /// </remarks>
+    private static ClipboardWrite WriteClipboardText(string text, Action<string> writeText)
+    {
+        var before = GetClipboardSequenceNumber();
+        try
+        {
+            writeText(text);
+            return new ClipboardWrite(Written: true, OwnedSequence: GetClipboardSequenceNumber());
+        }
+        catch (Exception exception) when (
+            exception is ExternalException or ThreadStateException or ArgumentException)
+        {
+            var after = GetClipboardSequenceNumber();
+            return new ClipboardWrite(
+                Written: false,
+                OwnedSequence: after != before && ClipboardOwnedByThisThread() ? after : null);
+        }
+    }
+
+    private static bool ClipboardOwnedByThisThread()
+    {
+        var owner = GetClipboardOwner();
+        return owner != IntPtr.Zero &&
+            GetWindowThreadProcessId(owner, out _) == GetCurrentThreadId();
+    }
+
+    /// <param name="OwnedSequence">The clipboard's sequence number when what is on it is our own change; null when nothing of ours is on it.</param>
+    private readonly record struct ClipboardWrite(bool Written, uint? OwnedSequence);
 
     /// <summary>Every format on the clipboard, copied; null when any format cannot be copied, in which case nothing that borrows the clipboard may proceed.</summary>
     internal static ClipboardSnapshot? TrySnapshotClipboard()
@@ -598,4 +674,13 @@ internal static class WindowsClipboardPaste
 
     [DllImport("user32.dll")]
     private static extern uint GetClipboardSequenceNumber();
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetClipboardOwner();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
 }
