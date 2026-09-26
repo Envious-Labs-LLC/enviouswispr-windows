@@ -162,106 +162,214 @@
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
-                <ScrollViewer x:Name="OnboardingScroll" AutomationProperties.Name="Welcome to EnviousWispr" HorizontalScrollMode="Disabled">
-                <Grid x:Name="OnboardingContent" MaxWidth="{StaticResource BrandOnboardingContentMaxWidth}" Padding="{StaticResource BrandOnboardingContentPadding}" HorizontalAlignment="Center">
-                    <StackPanel Spacing="{StaticResource BrandSectionSpacing}">
+                <!--
+                    FIVE SCREENS IN ONE VIEW, IN THE macOS ORDER: welcome, setting up (the speech model, then
+                    the one Windows permission), ready, warming up, and a practice box. One header card
+                    carries every screen's title so the heading a screen reader lands on is always in the
+                    same place; each screen's content is a panel below it, and exactly one is visible. What
+                    moves the flow on is OnboardingFlow in Presentation, where the gates and every Windows
+                    difference are decided and tested.
+                -->
+                <ScrollViewer x:Name="OnboardingScroll" AutomationProperties.Name="EnviousWispr setup" HorizontalScrollMode="Disabled">
+                <!--
+                    ONE MEASURE FOR EVERY SCREEN, CENTRED. A capped element centred by its own alignment is
+                    only as wide as its content, so the column changed width from screen to screen - the
+                    welcome's long lines filled it and the warm-up's short ones did not - and the frame
+                    appeared to jump as the flow moved on. Capping a star column between two star gutters
+                    keeps the same width on every screen and still centres it, the way the settings pages
+                    cap theirs.
+                -->
+                <Grid x:Name="OnboardingContent" Padding="{StaticResource BrandOnboardingContentPadding}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="100*" MaxWidth="{StaticResource BrandOnboardingContentColumnMaxWidth}" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSectionSpacing}">
                         <Border Style="{StaticResource BrandHeaderCardStyle}">
                             <Grid ColumnSpacing="{StaticResource BrandOnboardingWideSpacing}">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                 <Image Width="{StaticResource BrandOnboardingMarkSize}" Height="{StaticResource BrandOnboardingMarkSize}" AutomationProperties.AccessibilityView="Raw" Source="Assets/Brand/EnviousWisprMark.svg" VerticalAlignment="Center" />
                                 <StackPanel Grid.Column="1" Spacing="{StaticResource BrandOnboardingTextSpacing}" VerticalAlignment="Center">
-                                    <TextBlock x:Uid="OnboardingTitle" Style="{StaticResource BrandPageTitleStyle}" Text="Your voice, instantly captured." />
-                                    <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Speak naturally in any Windows app. EnviousWispr transcribes locally, cleans the result, and delivers it back where you started. In apps Windows protects, it lands on your clipboard ready to paste." TextWrapping="Wrap" />
+                                    <TextBlock x:Name="OnboardingStepText" Style="{StaticResource BrandHelperStyle}" Text="Step 1 of 5" />
+                                    <TextBlock x:Name="OnboardingTitle" x:Uid="OnboardingTitle" AutomationProperties.HeadingLevel="Level1" Style="{StaticResource BrandPageTitleStyle}" Text="Your voice, instantly captured." TextWrapping="Wrap" />
+                                    <TextBlock x:Name="OnboardingSubtitle" Style="{StaticResource BrandBodyStyle}" Text="The privacy-first dictation app built for Windows." TextWrapping="Wrap" />
                                 </StackPanel>
                             </Grid>
                         </Border>
 
-                        <Border Style="{StaticResource BrandHeaderCardStyle}">
-                            <Grid ColumnSpacing="{StaticResource BrandOnboardingCardSpacing}">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <Border Width="{StaticResource BrandOnboardingIconTileSize}" Height="{StaticResource BrandOnboardingIconTileSize}" Style="{StaticResource BrandIconTileStyle}">
-                                    <FontIcon FontSize="{StaticResource BrandOnboardingIconGlyphSize}" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE72E;" />
-                                </Border>
-                                <StackPanel Grid.Column="1" Spacing="{StaticResource BrandOnboardingTextSpacing}">
-                                    <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Private by default" />
-                                    <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Audio and transcription stay on this PC. Optional cloud polish receives text only, goes directly to your chosen provider, and is off until you enable it." TextWrapping="Wrap" />
-                                    <!-- SAID AT THE FIRST RUN BECAUSE UNINSTALLING CANNOT SAY IT. The Store package has no uninstall hook and the data folder survives it (#42), so this is the one moment the app is sure to be heard before it matters. -->
-                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Uninstalling keeps your history and downloaded models. To remove them, use Delete all EnviousWispr data on the Backup page before you uninstall." TextWrapping="Wrap" />
-                                </StackPanel>
-                            </Grid>
-                        </Border>
+                        <InfoBar x:Name="OnboardingReliabilityInfoBar" IsClosable="False" IsOpen="False" Severity="Warning" />
 
-                        <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="How to dictate" />
-                        <Grid ColumnSpacing="{StaticResource BrandSectionSpacing}">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                            <Border MinHeight="{StaticResource BrandOnboardingStepCardMinHeight}" Style="{StaticResource BrandHeaderCardStyle}">
-                                <StackPanel Spacing="{StaticResource BrandOnboardingCardSpacing}">
+                        <!-- 1. WELCOME. macOS's four feature cards, in its order and words where they are true here. -->
+                        <StackPanel x:Name="OnboardingWelcomePanel" Spacing="{StaticResource BrandOnboardingCardSpacing}">
+                            <Border Style="{StaticResource BrandHeaderCardStyle}">
+                                <Grid ColumnSpacing="{StaticResource BrandOnboardingCardSpacing}">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                     <Border Width="{StaticResource BrandOnboardingIconTileSize}" Height="{StaticResource BrandOnboardingIconTileSize}" Style="{StaticResource BrandIconTileStyle}">
-                                        <FontIcon FontSize="{StaticResource BrandOnboardingIconGlyphSize}" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE8B0;" />
+                                        <FontIcon FontSize="{StaticResource BrandOnboardingIconGlyphSize}" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE72E;" />
                                     </Border>
-                                    <TextBlock Style="{StaticResource BrandBodyStyle}" Text="1. Put the cursor where your words should go." TextWrapping="Wrap" />
-                                </StackPanel>
+                                    <StackPanel Grid.Column="1" Spacing="{StaticResource BrandOnboardingTextSpacing}" VerticalAlignment="Center">
+                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="On-Device" />
+                                        <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Your voice never leaves your PC." TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Grid>
                             </Border>
-                            <Border Grid.Column="1" MinHeight="{StaticResource BrandOnboardingStepCardMinHeight}" Style="{StaticResource BrandHeaderCardStyle}">
-                                <StackPanel Spacing="{StaticResource BrandOnboardingCardSpacing}">
+                            <Border Style="{StaticResource BrandHeaderCardStyle}">
+                                <Grid ColumnSpacing="{StaticResource BrandOnboardingCardSpacing}">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                     <Border Width="{StaticResource BrandOnboardingIconTileSize}" Height="{StaticResource BrandOnboardingIconTileSize}" Style="{StaticResource BrandIconTileStyle}">
-                                        <FontIcon FontSize="{StaticResource BrandOnboardingIconGlyphSize}" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE720;" />
+                                        <FontIcon FontSize="{StaticResource BrandOnboardingIconGlyphSize}" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE709;" />
                                     </Border>
-                                    <TextBlock Style="{StaticResource BrandBodyStyle}" Text="2. Hold the configured key while you speak." TextWrapping="Wrap" />
-                                </StackPanel>
+                                    <StackPanel Grid.Column="1" Spacing="{StaticResource BrandOnboardingTextSpacing}" VerticalAlignment="Center">
+                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Offline-Ready" />
+                                        <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Works without internet." TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Grid>
                             </Border>
-                            <Border Grid.Column="2" MinHeight="{StaticResource BrandOnboardingStepCardMinHeight}" Style="{StaticResource BrandHeaderCardStyle}">
-                                <StackPanel Spacing="{StaticResource BrandOnboardingCardSpacing}">
+                            <Border Style="{StaticResource BrandHeaderCardStyle}">
+                                <Grid ColumnSpacing="{StaticResource BrandOnboardingCardSpacing}">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                     <Border Width="{StaticResource BrandOnboardingIconTileSize}" Height="{StaticResource BrandOnboardingIconTileSize}" Style="{StaticResource BrandIconTileStyle}">
-                                        <FontIcon FontSize="{StaticResource BrandOnboardingIconGlyphSize}" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE73E;" />
+                                        <FontIcon FontSize="{StaticResource BrandOnboardingIconGlyphSize}" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE945;" />
                                     </Border>
-                                    <TextBlock Style="{StaticResource BrandBodyStyle}" Text="3. Release to transcribe and insert. Press Escape to cancel safely." TextWrapping="Wrap" />
-                                </StackPanel>
+                                    <StackPanel Grid.Column="1" Spacing="{StaticResource BrandOnboardingTextSpacing}" VerticalAlignment="Center">
+                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Native Speed" />
+                                        <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Built for Windows, on your graphics card or processor." TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Grid>
                             </Border>
-                        </Grid>
+                            <Border Style="{StaticResource BrandHeaderCardStyle}">
+                                <Grid ColumnSpacing="{StaticResource BrandOnboardingCardSpacing}">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <Border Width="{StaticResource BrandOnboardingIconTileSize}" Height="{StaticResource BrandOnboardingIconTileSize}" Style="{StaticResource BrandIconTileStyle}">
+                                        <FontIcon FontSize="{StaticResource BrandOnboardingIconGlyphSize}" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE77B;" />
+                                    </Border>
+                                    <StackPanel Grid.Column="1" Spacing="{StaticResource BrandOnboardingTextSpacing}" VerticalAlignment="Center">
+                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Free &amp; Private" />
+                                        <!-- NOT macOS's "Anonymous analytics only": Windows shares nothing until the person turns sharing on. -->
+                                        <TextBlock Style="{StaticResource BrandBodyStyle}" Text="No account required. Anonymous usage data is shared only if you turn it on." TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                            <!-- SAID AT THE FIRST RUN BECAUSE UNINSTALLING CANNOT SAY IT. The Store package has no uninstall hook and the data folder survives it (#42), so this is the one moment the app is sure to be heard before it matters. -->
+                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Uninstalling keeps your history and downloaded models. To remove them, use Delete all EnviousWispr data on the Backup page before you uninstall." TextWrapping="Wrap" />
+                        </StackPanel>
 
-                        <Border Padding="{StaticResource BrandOnboardingCardPadding}" Style="{StaticResource BrandSectionCardStyle}">
-                            <StackPanel Spacing="{StaticResource BrandSectionSpacing}">
-                                <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Ready on this PC" />
-                                <TextBlock Style="{StaticResource BrandBodyStyle}" Text="These checks are honest snapshots. Missing models or permissions can be fixed later without blocking access to your data and settings." TextWrapping="Wrap" />
-                                <InfoBar x:Name="OnboardingReliabilityInfoBar" IsClosable="False" IsOpen="False" Severity="Warning" />
-                                <Grid ColumnSpacing="{StaticResource BrandSectionSpacing}">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <!-- 2a. SETTING UP: the speech model, which is the gate, and the recording key, which is reported. -->
+                        <StackPanel x:Name="OnboardingChecklistPanel" Spacing="{StaticResource BrandOnboardingCardSpacing}" Visibility="Collapsed">
+                            <Border Padding="{StaticResource BrandOnboardingCardPadding}" Style="{StaticResource BrandSectionCardStyle}">
+                                <StackPanel Spacing="{StaticResource BrandSectionSpacing}">
                                     <Grid ColumnSpacing="{StaticResource BrandOnboardingCardSpacing}">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                        <Border Width="{StaticResource BrandOnboardingIconTileSize}" Height="{StaticResource BrandOnboardingIconTileSize}" Style="{StaticResource BrandIconTileStyle}">
-                                            <FontIcon FontSize="{StaticResource BrandOnboardingIconGlyphSize}" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE720;" />
-                                        </Border>
+                                        <Grid Width="{StaticResource BrandOnboardingStatusSize}" Height="{StaticResource BrandOnboardingStatusSize}" VerticalAlignment="Top" AutomationProperties.AccessibilityView="Raw">
+                                            <TextBlock x:Name="OnboardingModelPendingMark" HorizontalAlignment="Center" Style="{StaticResource BrandRowLabelStyle}" Text="1" VerticalAlignment="Center" />
+                                            <ProgressRing x:Name="OnboardingModelWorkingMark" Foreground="{ThemeResource BrandAccentBrush}" IsActive="False" Visibility="Collapsed" />
+                                            <FontIcon x:Name="OnboardingModelDoneMark" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="&#xE73E;" Visibility="Collapsed" />
+                                            <FontIcon x:Name="OnboardingModelErrorMark" Foreground="{ThemeResource BrandErrorBrush}" Glyph="&#xE711;" Visibility="Collapsed" />
+                                        </Grid>
                                         <StackPanel Grid.Column="1" Spacing="{StaticResource BrandOnboardingTextSpacing}">
-                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Microphone" />
-                                            <TextBlock x:Name="OnboardingMicrophoneText" Style="{StaticResource BrandBodyStyle}" Text="Checking Windows audio devices…" TextWrapping="Wrap" /><Button x:Name="OnboardingMicrophonePrivacyButton" AutomationProperties.HelpText="Opens the Windows microphone privacy controls." Click="OpenMicrophonePrivacyButton_Click" Content="Open microphone privacy settings" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" TabIndex="10" Visibility="Collapsed" />
-                                        </StackPanel>
-                                    </Grid>
-                                    <Grid Grid.Column="1" ColumnSpacing="{StaticResource BrandOnboardingCardSpacing}">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                        <Border Width="{StaticResource BrandOnboardingIconTileSize}" Height="{StaticResource BrandOnboardingIconTileSize}" Style="{StaticResource BrandIconTileStyle}">
-                                            <FontIcon FontSize="{StaticResource BrandOnboardingIconGlyphSize}" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE9D9;" />
-                                        </Border>
-                                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandOnboardingTextSpacing}">
-                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Local transcription" />
-                                            <TextBlock x:Name="OnboardingModelText" Style="{StaticResource BrandBodyStyle}" Text="Checking installed model packs…" TextWrapping="Wrap" />
+                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Setting up speech model" />
+                                            <TextBlock x:Name="OnboardingModelText" Style="{StaticResource BrandBodyStyle}" Text="One-time setup" TextWrapping="Wrap" />
                                             <ProgressBar x:Name="OnboardingModelProgress" AutomationProperties.Name="Speech model download" Background="{ThemeResource BrandDividerBrush}" Foreground="{ThemeResource BrandAccentSolidBrush}" Maximum="100" Minimum="0" Visibility="Collapsed" />
-                                            <Button x:Name="OnboardingDownloadModelButton" AutomationProperties.HelpText="Downloads the speech model this build pins, checks every file against its published SHA-256, and activates it." Click="DownloadModelButton_Click" Content="Download speech model" HorizontalAlignment="Left" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
                                         </StackPanel>
                                     </Grid>
-                                    <Grid Grid.Column="2" ColumnSpacing="{StaticResource BrandOnboardingCardSpacing}">
+                                    <Grid ColumnSpacing="{StaticResource BrandOnboardingCardSpacing}">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                        <Border Width="{StaticResource BrandOnboardingIconTileSize}" Height="{StaticResource BrandOnboardingIconTileSize}" Style="{StaticResource BrandIconTileStyle}">
-                                            <FontIcon FontSize="{StaticResource BrandOnboardingIconGlyphSize}" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE765;" />
-                                        </Border>
+                                        <Grid Width="{StaticResource BrandOnboardingStatusSize}" Height="{StaticResource BrandOnboardingStatusSize}" VerticalAlignment="Top" AutomationProperties.AccessibilityView="Raw">
+                                            <TextBlock x:Name="OnboardingKeyPendingMark" HorizontalAlignment="Center" Style="{StaticResource BrandRowLabelStyle}" Text="2" VerticalAlignment="Center" />
+                                            <FontIcon x:Name="OnboardingKeyDoneMark" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="&#xE73E;" Visibility="Collapsed" />
+                                            <FontIcon x:Name="OnboardingKeyErrorMark" Foreground="{ThemeResource BrandErrorBrush}" Glyph="&#xE711;" Visibility="Collapsed" />
+                                        </Grid>
                                         <StackPanel Grid.Column="1" Spacing="{StaticResource BrandOnboardingTextSpacing}">
-                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Push-to-talk" />
-                                            <TextBlock x:Name="OnboardingHotkeyText" Style="{StaticResource BrandBodyStyle}" Text="Getting your keybinds ready…" TextWrapping="Wrap" />
+                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Setting your keybind" />
+                                            <TextBlock x:Name="OnboardingHotkeyText" Style="{StaticResource BrandBodyStyle}" Text="Getting your keybind ready…" TextWrapping="Wrap" />
                                         </StackPanel>
                                     </Grid>
+                                </StackPanel>
+                            </Border>
+                            <TextBlock x:Name="OnboardingSetupNote" AutomationProperties.LiveSetting="Assertive" Style="{StaticResource BrandBodyStyle}" TextWrapping="Wrap" Visibility="Collapsed" />
+                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingM}">
+                                <Button x:Name="OnboardingRetryButton" Click="OnboardingRetryButton_Click" Content="Retry" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
+                                <Button x:Name="OnboardingCancelSetupButton" AutomationProperties.HelpText="Pauses the speech model download. It resumes from where it stopped when you start it again." Click="OnboardingCancelSetupButton_Click" Content="Cancel" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- 2b. THE ONE PERMISSION. macOS asks for two; Windows has only the microphone switch. -->
+                        <StackPanel x:Name="OnboardingPermissionPanel" Spacing="{StaticResource BrandOnboardingCardSpacing}" Visibility="Collapsed">
+                            <Border Padding="{StaticResource BrandOnboardingCardPadding}" Style="{StaticResource BrandSectionCardStyle}">
+                                <Grid ColumnSpacing="{StaticResource BrandOnboardingCardSpacing}">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <Border Width="{StaticResource BrandOnboardingIconTileSize}" Height="{StaticResource BrandOnboardingIconTileSize}" Style="{StaticResource BrandIconTileStyle}" VerticalAlignment="Top">
+                                        <FontIcon FontSize="{StaticResource BrandOnboardingIconGlyphSize}" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE720;" />
+                                    </Border>
+                                    <StackPanel Grid.Column="1" Spacing="{StaticResource BrandOnboardingTextSpacing}">
+                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Microphone" />
+                                        <TextBlock Style="{StaticResource BrandBodyStyle}" Text="To hear your voice for transcription." TextWrapping="Wrap" />
+                                        <TextBlock x:Name="OnboardingMicrophoneText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" Text="Checking Windows audio devices…" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                        <StackPanel x:Name="OnboardingMicrophoneAllowedBadge" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" Visibility="Collapsed">
+                                            <FontIcon Foreground="{ThemeResource BrandSuccessBrush}" Glyph="&#xE73E;" AutomationProperties.AccessibilityView="Raw" />
+                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Allowed" />
+                                        </StackPanel>
+                                        <Button x:Name="OnboardingMicrophonePrivacyButton" AutomationProperties.HelpText="Opens the Windows microphone privacy page, where the switch for desktop apps is turned on." Click="OpenMicrophonePrivacyButton_Click" Content="Turn on" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
+                                    </StackPanel>
                                 </Grid>
-                                                            </StackPanel>
-                        </Border>
+                            </Border>
+                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Windows lets EnviousWispr paste into other apps without a separate permission, so this is the only one." TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <!-- 3. READY. The key the app is listening for, shown the way macOS shows its keycap. -->
+                        <StackPanel x:Name="OnboardingReadyPanel" Spacing="{StaticResource BrandOnboardingCardSpacing}" Visibility="Collapsed">
+                            <Border Padding="{StaticResource BrandOnboardingCardPadding}" Style="{StaticResource BrandSectionCardStyle}">
+                                <StackPanel HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingM}">
+                                    <Border x:Name="OnboardingKeycap" HorizontalAlignment="Center" Padding="{StaticResource BrandOnboardingKeycapPadding}" Background="{ThemeResource BrandAccentLightBrush}" BorderBrush="{ThemeResource BrandAccentBrush}" BorderThickness="1" CornerRadius="{StaticResource BrandSectionRadius}">
+                                        <TextBlock x:Name="OnboardingKeycapText" Foreground="{ThemeResource BrandAccentBrush}" HorizontalAlignment="Center" Style="{StaticResource BrandPageTitleStyle}" Text="Ctrl+Win" />
+                                    </Border>
+                                    <TextBlock x:Name="OnboardingKeyUsageText" HorizontalAlignment="Center" Style="{StaticResource BrandBodyStyle}" Text="Hold to dictate. Release to transcribe." TextAlignment="Center" TextWrapping="Wrap" />
+                                    <TextBlock x:Name="OnboardingHandsFreeText" HorizontalAlignment="Center" Foreground="{ThemeResource BrandAccentBrush}" Style="{StaticResource BrandBodyStyle}" Text="Double-press to go hands-free." TextAlignment="Center" TextWrapping="Wrap" />
+                                    <TextBlock HorizontalAlignment="Center" Style="{StaticResource BrandHelperStyle}" Text="Change it any time on the Keybinds page. A new key starts working the next time EnviousWispr opens." TextAlignment="Center" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                            <StackPanel HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingXs}">
+                                <TextBlock HorizontalAlignment="Center" Style="{StaticResource BrandRowLabelStyle}" Text="POWER USER?" />
+                                <TextBlock HorizontalAlignment="Center" Style="{StaticResource BrandHelperStyle}" Text="Change your AI model, keybind, and more in Settings." TextAlignment="Center" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- 4. WARMING UP. Opens only on an engine that says it is ready. -->
+                        <StackPanel x:Name="OnboardingWarmingPanel" Spacing="{StaticResource BrandOnboardingCardSpacing}" Visibility="Collapsed">
+                            <StackPanel x:Name="OnboardingWarmingActivity" HorizontalAlignment="Center" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                <ProgressRing x:Name="OnboardingWarmingRing" Foreground="{ThemeResource BrandAccentBrush}" IsActive="False" Width="{StaticResource BrandOnboardingStatusSize}" Height="{StaticResource BrandOnboardingStatusSize}" />
+                                <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Loading the speech model" VerticalAlignment="Center" />
+                            </StackPanel>
+                            <Border x:Name="OnboardingWarmingFailure" Padding="{StaticResource BrandOnboardingCardPadding}" Background="{ThemeResource BrandErrorSoftBrush}" CornerRadius="{StaticResource BrandSectionRadius}" Visibility="Collapsed">
+                                <StackPanel HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingM}">
+                                    <TextBlock x:Name="OnboardingWarmingFailureText" AutomationProperties.LiveSetting="Assertive" HorizontalAlignment="Center" Style="{StaticResource BrandBodyStyle}" TextAlignment="Center" TextWrapping="Wrap" />
+                                    <Button x:Name="OnboardingWarmingRetryButton" Click="OnboardingRetryButton_Click" Content="TRY AGAIN" HorizontalAlignment="Center" Style="{StaticResource BrandPrimaryButtonStyle}" />
+                                </StackPanel>
+                            </Border>
+                            <Border Padding="{StaticResource BrandOnboardingCardPadding}" Style="{StaticResource BrandSectionCardStyle}">
+                                <StackPanel Spacing="{StaticResource BrandSpacingM}">
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                        <Grid Width="{StaticResource BrandOnboardingStatusSize}" AutomationProperties.AccessibilityView="Raw"><FontIcon x:Name="OnboardingWarmMicMark" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="&#xE73E;" Visibility="Collapsed" /><FontIcon x:Name="OnboardingWarmMicPending" Foreground="{ThemeResource BrandTextTertiaryBrush}" Glyph="&#xEA3A;" /></Grid>
+                                        <TextBlock x:Name="OnboardingWarmMicText" Style="{StaticResource BrandBodyStyle}" Text="Microphone ready" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                        <Grid Width="{StaticResource BrandOnboardingStatusSize}" AutomationProperties.AccessibilityView="Raw"><FontIcon x:Name="OnboardingWarmKeyMark" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="&#xE73E;" Visibility="Collapsed" /><FontIcon x:Name="OnboardingWarmKeyPending" Foreground="{ThemeResource BrandTextTertiaryBrush}" Glyph="&#xEA3A;" /></Grid>
+                                        <TextBlock x:Name="OnboardingWarmKeyText" Style="{StaticResource BrandBodyStyle}" Text="Your shortcut is set" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                        <Grid Width="{StaticResource BrandOnboardingStatusSize}" AutomationProperties.AccessibilityView="Raw"><FontIcon x:Name="OnboardingWarmEngineMark" Foreground="{ThemeResource BrandSuccessBrush}" Glyph="&#xE73E;" Visibility="Collapsed" /><FontIcon x:Name="OnboardingWarmEnginePending" Foreground="{ThemeResource BrandTextTertiaryBrush}" Glyph="&#xEA3A;" /></Grid>
+                                        <TextBlock x:Name="OnboardingWarmEngineText" Style="{StaticResource BrandBodyStyle}" Text="Speech engine" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                            <TextBlock x:Name="OnboardingWarmingCaption" HorizontalAlignment="Center" Style="{StaticResource BrandHelperStyle}" Text="This usually takes a moment. Nothing else is needed from you." TextAlignment="Center" TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <!-- 5. PRACTICE. EnviousWispr's own text box, which ordinary delivery writes into like any other. -->
+                        <StackPanel x:Name="OnboardingPracticePanel" Spacing="{StaticResource BrandOnboardingCardSpacing}" Visibility="Collapsed">
+                            <TextBox x:Name="OnboardingPracticeBox" AcceptsReturn="True" AutomationProperties.Name="Your first dictation" MinHeight="{StaticResource BrandOnboardingPracticeBoxHeight}" TextChanged="OnboardingPracticeBox_TextChanged" TextWrapping="Wrap" />
+                            <TextBlock x:Name="OnboardingPracticeFootnote" HorizontalAlignment="Center" Style="{StaticResource BrandHelperStyle}" Text="Your recording indicator appears while you hold the key." TextAlignment="Center" TextWrapping="Wrap" />
+                            <Button x:Name="OnboardingPracticeMicrophoneButton" AutomationProperties.HelpText="Opens the Windows microphone privacy page, where the switch for desktop apps is turned on." Click="OpenMicrophonePrivacyButton_Click" Content="Turn on the microphone" HorizontalAlignment="Center" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" />
+                        </StackPanel>
                     </StackPanel>
                 </Grid>
                 </ScrollViewer>
@@ -270,14 +378,19 @@
                     LINED UP WITH THE CARDS. The scrolling content caps at 1040 and pads 40 a side,
                     so a card is 960 wide. Padding the Border and capping its child instead let the
                     button reach the full 1040 and hang 40 pixels past the cards on a wide window.
+
+                    THE PRIMARY ACTION IS PINNED, NOT SCROLLED: on a 768-pixel laptop a first-run
+                    screen whose only way forward is below the fold reads as a screen with no way
+                    forward. Its words change with the screen; its place does not.
                 -->
                 <Border x:Name="OnboardingFooter" Grid.Row="1" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="0,1,0,0">
                     <Grid MaxWidth="{StaticResource BrandOnboardingContentMaxWidth}" Padding="{StaticResource BrandOnboardingFooterPadding}">
                     <StackPanel Spacing="{StaticResource BrandSpacingS}">
-                        <Button x:Name="FinishOnboardingButton" x:Uid="FinishOnboardingButton" AccessKey="G" AutomationProperties.HelpText="Completes setup and opens the EnviousWispr home page. Press Control plus Enter from anywhere on this screen." Click="FinishOnboardingButton_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Style="{StaticResource BrandPrimaryButtonStyle}" Content="Get started" TabIndex="0">
+                        <Button x:Name="FinishOnboardingButton" AccessKey="G" AutomationProperties.HelpText="Moves to the next setup step. Press Control plus Enter from anywhere on this screen." Click="FinishOnboardingButton_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Style="{StaticResource BrandPrimaryButtonStyle}" Content="Get Started">
                             <Button.KeyboardAccelerators><KeyboardAccelerator Key="Enter" Modifiers="Control" /></Button.KeyboardAccelerators>
                         </Button>
-                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="You can change every choice later in Settings. No account is required." TextAlignment="Center" TextWrapping="Wrap" />
+                        <HyperlinkButton x:Name="OnboardingSkipButton" Click="OnboardingSkipButton_Click" Content="Skip this step" HorizontalAlignment="Center" Style="{StaticResource BrandHyperlinkButtonStyle}" Visibility="Collapsed" />
+                        <TextBlock x:Name="OnboardingFooterText" Style="{StaticResource BrandHelperStyle}" Text="You can change every choice later in Settings. No account is required." TextAlignment="Center" TextWrapping="Wrap" />
                     </StackPanel>
                     </Grid>
                 </Border>
@@ -678,7 +791,7 @@
                                 </StackPanel>
                             </Border>
                             <Border x:Name="ClipboardSection" Padding="20" Style="{StaticResource BrandSectionCardStyle}"><StackPanel Spacing="{StaticResource BrandSpacingM}"><StackPanel x:Name="ClipboardEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="ClipboardEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsClipboardNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Clipboard" /></StackPanel><TextBlock Text="EnviousWispr preserves the existing Windows clipboard before paste and restores it only if no person or other app changed it in the meantime. Unsafe and elevated targets receive a copy-only fallback instead of a blind paste." TextWrapping="Wrap" /><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8C8;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><StackPanel Background="{ThemeResource BrandHitTestBrush}" Spacing="{StaticResource BrandSpacingXs}" Tapped="SettingRow_Tapped"><TextBlock x:Name="CopyInsteadOfPasteToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Copy to the clipboard instead of pasting" TextWrapping="Wrap" /><ToggleSwitch AutomationProperties.LabeledBy="{x:Bind CopyInsteadOfPasteToggleLabel, Mode=OneTime}" HorizontalAlignment="Left" x:Name="CopyInsteadOfPasteToggle" Style="{StaticResource BrandToggleSwitchStyle}" /></StackPanel><TextBlock Style="{StaticResource BrandHelperStyle}" Text="Your words go to the clipboard and nothing is typed into the app you were in. Paste them yourself, wherever you want them." TextWrapping="Wrap" /></StackPanel></Grid></StackPanel></Border>
-                            <Border x:Name="DiagnosticsSection" AutomationProperties.Name="Privacy-safe diagnostics settings" Padding="20" Style="{StaticResource BrandSectionCardStyle}"><StackPanel Spacing="{StaticResource BrandSpacingM}"><StackPanel x:Name="PrivacysafediagnosticsEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="PrivacysafediagnosticsEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsDiagnosticsNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Privacy-safe diagnostics" /></StackPanel><TextBlock Text="Local diagnostics contain only timestamp, typed event and failure codes, bounded duration, approved provider or engine choice, a coarse hardware class, and which text-cleanup step ran and whether it changed anything. They never contain dictated text, audio, keys, clipboard contents, surrounding context, file paths, model IDs, or stable device identifiers." TextWrapping="Wrap" /><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xEC4A;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingS}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Speed check" /><TextBlock Style="{StaticResource BrandBodyStyle}" TextWrapping="Wrap" Text="Runs the text cleanup this PC does after every dictation, many times over, and reports how long it takes. No microphone and no network." /><Button x:Name="RunSpeedCheckButton" Click="RunSpeedCheckButton_Click" Content="Run speed check" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" /><TextBlock x:Name="SpeedCheckUnavailableText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" Visibility="Collapsed" Text="Paused while a dictation is in progress." /><TextBlock x:Name="SpeedCheckResultText" AutomationProperties.LiveSetting="Polite" Foreground="{ThemeResource BrandTextSecondaryBrush}" TextWrapping="Wrap" Visibility="Collapsed" /></StackPanel></Grid><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE9D9;" /><StackPanel Grid.Column="1" Background="{ThemeResource BrandHitTestBrush}" Spacing="{StaticResource BrandSpacingXs}" Tapped="SettingRow_Tapped"><TextBlock x:Name="LocalDiagnosticsToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Keep content-free diagnostics on this PC" TextWrapping="Wrap" /><ToggleSwitch AutomationProperties.LabeledBy="{x:Bind LocalDiagnosticsToggleLabel, Mode=OneTime}" HorizontalAlignment="Left" x:Name="LocalDiagnosticsToggle" Style="{StaticResource BrandToggleSwitchStyle}" /></StackPanel></Grid><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE823;" /><NumberBox x:Name="DiagnosticRetentionDaysBox" Grid.Column="1" Header="Delete local diagnostics after this many days" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" Minimum="1" Maximum="90" SpinButtonPlacementMode="Inline" /></Grid><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE968;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><StackPanel Background="{ThemeResource BrandHitTestBrush}" Spacing="{StaticResource BrandSpacingXs}" Tapped="SettingRow_Tapped"><TextBlock x:Name="ShareTelemetryToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Share anonymous operational diagnostics" TextWrapping="Wrap" /><ToggleSwitch AutomationProperties.LabeledBy="{x:Bind ShareTelemetryToggleLabel, Mode=OneTime}" HorizontalAlignment="Left" x:Name="ShareTelemetryToggle" AutomationProperties.HelpText="Off by default. When available and enabled, sends only the listed content-free operational fields directly to the configured Envious Labs telemetry endpoint." Style="{StaticResource BrandToggleSwitchStyle}" /></StackPanel><TextBlock x:Name="DiagnosticsStatusText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" /></StackPanel></Grid><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE896;" /><Button Grid.Column="1" Click="ExportDiagnosticsButton_Click" Content="Export privacy-safe diagnostics" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" /></Grid></StackPanel></Border>
+                            <Border x:Name="DiagnosticsSection" AutomationProperties.Name="Privacy-safe diagnostics settings" Padding="20" Style="{StaticResource BrandSectionCardStyle}"><StackPanel Spacing="{StaticResource BrandSpacingM}"><StackPanel x:Name="PrivacysafediagnosticsEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="PrivacysafediagnosticsEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsDiagnosticsNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Privacy-safe diagnostics" /></StackPanel><TextBlock Text="Local diagnostics contain only timestamp, typed event and failure codes, bounded duration, approved provider or engine choice, a coarse hardware class, and which text-cleanup step ran and whether it changed anything. They never contain dictated text, audio, keys, clipboard contents, surrounding context, file paths, model IDs, or stable device identifiers." TextWrapping="Wrap" /><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xEC4A;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingS}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Speed check" /><TextBlock Style="{StaticResource BrandBodyStyle}" TextWrapping="Wrap" Text="Runs the text cleanup this PC does after every dictation, many times over, and reports how long it takes. No microphone and no network." /><Button x:Name="RunSpeedCheckButton" Click="RunSpeedCheckButton_Click" Content="Run speed check" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" /><TextBlock x:Name="SpeedCheckUnavailableText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" Visibility="Collapsed" Text="Paused while a dictation is in progress." /><TextBlock x:Name="SpeedCheckResultText" AutomationProperties.LiveSetting="Polite" Foreground="{ThemeResource BrandTextSecondaryBrush}" TextWrapping="Wrap" Visibility="Collapsed" /></StackPanel></Grid><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE72C;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingS}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="First-run setup" /><TextBlock Style="{StaticResource BrandBodyStyle}" TextWrapping="Wrap" Text="Runs the first-run setup again, practice dictation included, without wiping anything. Unavailable while dictating." /><Button x:Name="RunSetupAgainButton" AutomationProperties.HelpText="Walks through first-run setup again from the welcome screen. Nothing you have saved is changed." Click="RunSetupAgainButton_Click" Content="Run setup again" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" /></StackPanel></Grid><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE9D9;" /><StackPanel Grid.Column="1" Background="{ThemeResource BrandHitTestBrush}" Spacing="{StaticResource BrandSpacingXs}" Tapped="SettingRow_Tapped"><TextBlock x:Name="LocalDiagnosticsToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Keep content-free diagnostics on this PC" TextWrapping="Wrap" /><ToggleSwitch AutomationProperties.LabeledBy="{x:Bind LocalDiagnosticsToggleLabel, Mode=OneTime}" HorizontalAlignment="Left" x:Name="LocalDiagnosticsToggle" Style="{StaticResource BrandToggleSwitchStyle}" /></StackPanel></Grid><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE823;" /><NumberBox x:Name="DiagnosticRetentionDaysBox" Grid.Column="1" Header="Delete local diagnostics after this many days" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" Minimum="1" Maximum="90" SpinButtonPlacementMode="Inline" /></Grid><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE968;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><StackPanel Background="{ThemeResource BrandHitTestBrush}" Spacing="{StaticResource BrandSpacingXs}" Tapped="SettingRow_Tapped"><TextBlock x:Name="ShareTelemetryToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Share anonymous operational diagnostics" TextWrapping="Wrap" /><ToggleSwitch AutomationProperties.LabeledBy="{x:Bind ShareTelemetryToggleLabel, Mode=OneTime}" HorizontalAlignment="Left" x:Name="ShareTelemetryToggle" AutomationProperties.HelpText="Off by default. When available and enabled, sends only the listed content-free operational fields directly to the configured Envious Labs telemetry endpoint." Style="{StaticResource BrandToggleSwitchStyle}" /></StackPanel><TextBlock x:Name="DiagnosticsStatusText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" /></StackPanel></Grid><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE896;" /><Button Grid.Column="1" Click="ExportDiagnosticsButton_Click" Content="Export privacy-safe diagnostics" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" /></Grid></StackPanel></Border>
                             <Border x:Name="PortableProfileSection" Padding="20" Style="{StaticResource BrandSectionCardStyle}"><StackPanel Spacing="{StaticResource BrandSpacingM}"><StackPanel x:Name="PortableprofileEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="PortableprofileEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsProfileNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Portable profile" /></StackPanel><TextBlock Text="Export or import settings, dictionary entries, and snippets. Machine-specific microphone choices, API keys, history, audio, and lifecycle state are never included." TextWrapping="Wrap" /><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8B5;" /><StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}"><Button Click="ExportProfileButton_Click" Content="Export profile" Style="{StaticResource BrandQuietButtonStyle}" /><Button Click="ImportProfileButton_Click" Content="Import profile" Style="{StaticResource BrandQuietButtonStyle}" /></StackPanel></Grid></StackPanel></Border>
                             <!--
                                 YOUR DATA OUTLIVES THE APP, SO THE CHOICE LIVES HERE. The data folder is excluded from

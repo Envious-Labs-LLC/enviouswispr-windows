@@ -94,6 +94,15 @@ public static class HotkeyGestureParser
             : parsed;
     }
 
+    /// <summary>Whether a recording key learns the four gestures: a modifier set, or one sided modifier on its own.</summary>
+    /// <remarks>
+    /// THE SAME SPLIT <see cref="ParseOneShot"/> MAKES, read from the same key list, so the Ready screen's
+    /// "double-press to go hands-free" and the hook's gesture route cannot disagree about which keys have it.
+    /// </remarks>
+    public static bool UnlocksGestures(HotkeyGesture gesture) =>
+        string.IsNullOrEmpty(gesture.Key) ||
+        (gesture.Modifiers == HotkeyModifiers.None && !IsOrdinaryKey(gesture.Key));
+
     private static bool IsOrdinaryKey(string key) =>
         !string.IsNullOrEmpty(key) &&
         key is not ("RightCtrl" or "LeftCtrl" or "RightShift" or "LeftShift" or "RightWin" or "LeftWin");

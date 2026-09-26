@@ -586,21 +586,14 @@ public sealed partial class MainWindow : Window, IDisposable
         await ReloadHistoryAsync().ConfigureAwait(true);
     }
 
-    public void SetHotkeyReady(
-        string gesture,
-        DictationRecordingMode recordingMode,
-        string cancelGesture,
-        string quickAddGesture)
+    public void SetHotkeyReady(string gesture, DictationRecordingMode recordingMode)
     {
-        var instruction = recordingMode == DictationRecordingMode.PushToTalk
-            ? $"Hold {gesture} while speaking; release to finish."
-            : $"Press {gesture} to start; press it again to finish.";
         // One shortcut phrase, used on screen and in the tray, so the two cannot drift apart.
         var shortcut = recordingMode == DictationRecordingMode.PushToTalk
             ? $"Hold {gesture}"
             : $"Toggle with {gesture}";
         HotkeyStatusText.Text = shortcut;
-        OnboardingHotkeyText.Text = $"{instruction} Cancel with {cancelGesture}. Add a selected word with {quickAddGesture}.";
+        ObserveRecordingKeyForOnboarding(gesture, recordingMode);
         SetLiveText(SessionStatusText, "Idle");
         // A full stop rather than a middle dot. The tray tooltip is a SENTENCE - it has no
         // layout to separate, and a screen reader either announces a middle dot literally or
@@ -611,7 +604,7 @@ public sealed partial class MainWindow : Window, IDisposable
     public void SetHotkeyUnavailable(string status)
     {
         HotkeyStatusText.Text = status;
-        OnboardingHotkeyText.Text = status;
+        ObserveRecordingKeyProblemForOnboarding(status);
         SetLiveText(SessionStatusText, "Unavailable");
         // AN ERROR FOR THE TRAY, WHICH IS THE ONLY PLACE IT SHOWS. The recording key not being
         // available means the app cannot be used at all, and unlike a pill the icon stays. It
@@ -648,8 +641,10 @@ public sealed partial class MainWindow : Window, IDisposable
         if (status.DescribesTranscriptionEngine)
         {
             EngineReadinessText.Text = sentence;
-            OnboardingModelText.Text = sentence;
+            _onboardingEngineSentence = sentence;
         }
+
+        ObserveStatusForOnboarding(status);
     }
 
     private void HandleRecordingSoundTransition(DictationOverlayState nextState)
@@ -779,6 +774,7 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     public void ReportDeliveryAndMaybeOfferLanguage(DictationStatus delivered, string? detectedLanguage)
     {
+        ObserveDeliveryForOnboarding(delivered);
         var offer = delivered.State == DictationOverlayState.Success
             ? _languageSuggestions.Observe(
                 detectedLanguage,
@@ -1044,7 +1040,7 @@ public sealed partial class MainWindow : Window, IDisposable
             FoundationInfoBar.Severity = InfoBarSeverity.Warning;
             SetOnboardingReliabilityNotice(
                 "Interrupted dictation recovered",
-                "Select Get started to review or copy the private recovery text. It will not be pasted automatically.");
+                "Finish setup, then review or copy the private recovery text on Home. It will not be pasted automatically.");
             return;
         }
 
@@ -1259,25 +1255,6 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         HistoryPasteRequested?.Invoke(selected.Id);
-    }
-
-    private async void FinishOnboardingButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_settings.HasCompletedOnboarding)
-        {
-            ShowOnboarding(show: false);
-            return;
-        }
-
-        if (await TrySaveAsync(
-                current => current with { HasCompletedOnboarding = true },
-                "Setup complete",
-                "Your choices were saved on this PC.").ConfigureAwait(true))
-        {
-            ShowOnboarding(show: false);
-            ProductNavigation.SelectedItem = HomeNavItem;
-            HomeNavItem.Focus(FocusState.Programmatic);
-        }
     }
 
     private void ProductNavigation_SelectionChanged(
@@ -2864,13 +2841,7 @@ public sealed partial class MainWindow : Window, IDisposable
         ModelDeliveryProgress.Value = presentation.Percent ?? 0;
         DownloadModelButton.Visibility = presentation.CanDownload ? Visibility.Visible : Visibility.Collapsed;
         CancelModelDownloadButton.Visibility = presentation.CanCancel ? Visibility.Visible : Visibility.Collapsed;
-        OnboardingDownloadModelButton.Visibility = DownloadModelButton.Visibility;
-        OnboardingModelProgress.Visibility = ModelDeliveryProgress.Visibility;
-        OnboardingModelProgress.Value = ModelDeliveryProgress.Value;
-        if (presentation.CanDownload || presentation.CanCancel || presentation.Percent is not null)
-        {
-            OnboardingModelText.Text = presentation.Text;
-        }
+        ObserveModelForOnboarding(presentation);
     }
 
     private async void ImportProfileButton_Click(object sender, RoutedEventArgs e)
@@ -2930,19 +2901,23 @@ public sealed partial class MainWindow : Window, IDisposable
             MicrophoneComboBox.SelectedItem = selected;
             var defaultDevice = devices.FirstOrDefault(device => device.IsDefault) ??
                 (devices.Count == 0 ? null : devices[0]);
-            ApplyMicrophoneReadiness(MicrophoneReadinessReport.For(
-                consent,
-                defaultDevice?.DisplayName));
+            ApplyMicrophoneReadiness(
+                MicrophoneReadinessReport.For(
+                    consent,
+                    defaultDevice?.DisplayName),
+                consent);
         }
         catch
         {
             _microphones = [new MicrophoneChoice(null, "Use the Windows default microphone")];
             MicrophoneComboBox.ItemsSource = _microphones;
             MicrophoneComboBox.SelectedIndex = 0;
-            ApplyMicrophoneReadiness(MicrophoneReadinessReport.For(
-                consent,
-                defaultDeviceName: null,
-                enumerationFailed: true));
+            ApplyMicrophoneReadiness(
+                MicrophoneReadinessReport.For(
+                    consent,
+                    defaultDeviceName: null,
+                    enumerationFailed: true),
+                consent);
         }
     }
 
@@ -2952,14 +2927,13 @@ public sealed partial class MainWindow : Window, IDisposable
     /// beside a working microphone is noise, and offering it beside a missing one sends somebody to
     /// a page that will tell them everything is fine.
     /// </remarks>
-    private void ApplyMicrophoneReadiness(MicrophoneReadiness readiness)
+    private void ApplyMicrophoneReadiness(MicrophoneReadiness readiness, MicrophoneConsent consent)
     {
         SetLiveText(MicrophoneReadinessText, readiness.Sentence);
-        OnboardingMicrophoneText.Text = readiness.Sentence;
         MicrophonePrivacyFixButton.Visibility = readiness.OffersPrivacySettings
             ? Visibility.Visible
             : Visibility.Collapsed;
-        OnboardingMicrophonePrivacyButton.Visibility = MicrophonePrivacyFixButton.Visibility;
+        ObserveMicrophoneForOnboarding(readiness, consent);
     }
 
     private void OnAudioDevicesChanged(object? sender, AudioDeviceChange change)
@@ -4400,10 +4374,17 @@ public sealed partial class MainWindow : Window, IDisposable
         ProductNavigation.Visibility = show ? Visibility.Collapsed : Visibility.Visible;
         if (show)
         {
+            // EVERY SHOWING IS A NEW VISIT FROM THE WELCOME: a first run, or "Run setup again" on Diagnostics.
+            BeginOnboardingVisit();
             FinishOnboardingButton.Focus(FocusState.Programmatic);
             OnboardingView.LayoutUpdated += FitWindowToOnboardingOnce;
         }
-        else if (_windowFitsOnboarding)
+        else
+        {
+            StopOnboardingTimers();
+        }
+
+        if (!show && _windowFitsOnboarding)
         {
             // THE RESIZE IS DELIBERATE AND HAPPENS ONCE, when setup finishes and the navigation
             // list the default height was measured for comes on screen. Leaving the window at

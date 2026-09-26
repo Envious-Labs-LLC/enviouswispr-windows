@@ -21,6 +21,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Windows.Automation;
 using System.Windows.Forms;
 
 const byte F8 = 0x77;
@@ -95,6 +96,14 @@ var syntheticHotkey = args.Any(argument => string.Equals(
 var quickTap = args.Any(argument => string.Equals(
     argument,
     "--quick-tap",
+    StringComparison.OrdinalIgnoreCase));
+// THE FIRST-RUN PRACTICE BOX IS THE TARGET, NOT THE CONTROLLED WINDOW. The profile is a first run's - onboarding
+// not done - with the harness's F8 pinned as every key-driven journey pins it; the harness walks the setup
+// screens through UI Automation to the practice box, presses the key through the installed hook, and takes
+// its verdict from the app's log and the box's own contents, then finishes setup and reads the stored flag.
+var onboardingPractice = args.Any(argument => string.Equals(
+    argument,
+    "--onboarding-practice",
     StringComparison.OrdinalIgnoreCase));
 var deterministicProfileArgument = ArgumentValue(args, "--deterministic-profile");
 var deterministicProfile = deterministicProfileArgument?.ToLowerInvariant() switch
@@ -266,6 +275,14 @@ if (languageChange &&
     throw new JourneyExpectationException(
         "--language-change runs the reviewed French Whisper fixture alone (Live Preview may be added): a "
             + "language change is judged on one take with nothing else configured.");
+}
+if (onboardingPractice && (!syntheticHotkey || quickTap || livePreview || languageChange || targetMode != "edit" ||
+    deterministicProfile != DeterministicJourneyProfile.None || polishProvider != PolishProvider.None))
+{
+    throw new JourneyExpectationException(
+        "--onboarding-practice needs --synthetic-hotkey and nothing else that changes the take: the practice box "
+            + "replaces the controlled target, and the one question is whether a first run's own box receives a "
+            + "real take.");
 }
 if (quickTap && !syntheticHotkey)
 {
@@ -590,7 +607,9 @@ try
     targetStart.ArgumentList.Add("--hold-focus-ms");
     // AN ACTION RUN LETS THE PERSON LEAVE. The target re-takes the foreground every 100 ms while it holds
     // focus, which would fight the click in EnviousWispr's window the action is about.
-    targetStart.ArgumentList.Add(escapeAction == EscapeRecoveryAction.None ? "30000" : "0");
+    // SO DOES A PRACTICE-BOX RUN: the take belongs in EnviousWispr's own window, and a target taking the
+    // foreground back every 100 ms would stage the practice box's missed-box case.
+    targetStart.ArgumentList.Add(escapeAction == EscapeRecoveryAction.None && !onboardingPractice ? "30000" : "0");
     targetStart.ArgumentList.Add("--result");
     targetStart.ArgumentList.Add(targetResultPath);
     targetStart.ArgumentList.Add("--expected-substring");
@@ -845,7 +864,22 @@ try
                 }
             }
 
-            if (syntheticHotkey)
+            if (syntheticHotkey && onboardingPractice)
+            {
+                try
+                {
+                    syntheticHotkeyEvidence = await DriveOnboardingPracticeAsync(
+                        app,
+                        diagnosticPath,
+                        profileDirectory,
+                        expectedSubstring);
+                }
+                finally
+                {
+                    exitEvent.Set();
+                }
+            }
+            else if (syntheticHotkey)
             {
                 syntheticHotkeyEvidence = DriveSyntheticHotkey(
                     diagnosticPath,
@@ -886,7 +920,12 @@ try
                 throw new JourneyExpectationException("The production journey did not complete within 60 seconds.");
             }
 
-            targetObserved = targetMode == "password"
+            targetObserved = onboardingPractice
+                // THE BOX IS THE TARGET: its words, read back through UI Automation, and the stored flag after
+                // FINISH SETUP. The controlled window was never aimed at and must have seen nothing.
+                ? syntheticHotkeyEvidence?.TargetObserved == true &&
+                    !WaitForExpectedTargetResult(targetResultPath, TimeSpan.FromMilliseconds(500))
+                : targetMode == "password"
                 // A PROTECTED FIELD NEVER SEES THE WORDS: what the journey observes is the app's
                 // refusal, with the reason, and the field still empty afterwards.
                 ? WaitForDiagnosticEvent(
@@ -1052,7 +1091,9 @@ try
             "Live Preview did not follow the language change without a relaunch: its passes said "
                 + $"recognitionLanguage=[{string.Join(',', previewRecognitionLanguages)}].");
     }
-    var deliveryRoute = failureMode == JourneyFailureMode.None && !escapeRecovery && !manualMicrophone
+    // NO ROUTE IS CLAIMED FOR THE PRACTICE BOX: the route is read from the controlled target's own message counts,
+    // and the box is read for its words alone. Its run proves the take arrived, not which of the three routes carried it.
+    var deliveryRoute = failureMode == JourneyFailureMode.None && !escapeRecovery && !manualMicrophone && !onboardingPractice
         ? RequireDeliveryRoute(targetMode, targetResultPath, diagnosticEvents, clipboardRestored)
         : null;
     if (livePreview && syntheticHotkey && quickTap)
@@ -1203,6 +1244,7 @@ try
             _ when virtualCable => "SyntheticF8-ReviewedFixturePlayback-VirtualCable-ProductionWasapi",
             _ when liveMicrophone => "SyntheticF8-ReviewedFixturePlayback-ProductionWasapi",
             _ when syntheticHotkey && quickTap => "SyntheticHotkeyQuickTap-InstalledGlobalHook-ReviewedFixtureAudioCapture",
+            _ when syntheticHotkey && onboardingPractice => "SyntheticHotkey-InstalledGlobalHook-ReviewedFixtureAudioCapture-FirstRunPracticeBox",
             _ when syntheticHotkey => "SyntheticHotkey-InstalledGlobalHook-ReviewedFixtureAudioCapture",
             _ => "NamedEvents-ReviewedFixtureAudioCapture",
         },
@@ -1220,7 +1262,9 @@ try
                 : liveMicrophone
                     ? $"{fixtureIdentity}-acoustic-playback"
                     : fixtureIdentity,
-        deliveryTarget = failureMode == JourneyFailureMode.TargetUnavailable
+        deliveryTarget = onboardingPractice
+            ? "EnviousWisprFirstRunPracticeBox"
+            : failureMode == JourneyFailureMode.TargetUnavailable
             ? "ControlledWinFormsEditClosedDuringRecording"
             : failureMode is JourneyFailureMode.MicrophoneUnavailable or JourneyFailureMode.WorkerStartup
                 ? "NotReached"
@@ -2862,6 +2906,186 @@ static SyntheticHotkeyEvidence DriveSyntheticHotkey(
         QuickTap: quickTap);
 }
 
+/// <summary>
+/// A first run's practice box, reached through the setup screens and dictated into through the installed hook.
+/// </summary>
+/// <remarks>
+/// THE SAME TAKE AS THE ORDINARY SYNTHETIC ONE, AIMED AT THE APP'S OWN BOX. The quiet window, the latency check and
+/// the log's delivery line are that take's; what differs is the oracle, which is the box's own contents read back
+/// through UI Automation - not the pill's sentence, and not the harness's account of its key - and then the
+/// stored completion flag after FINISH SETUP, read from the settings file the app wrote.
+///
+/// EVERY GATE IS PASSED THE WAY A PERSON PASSES IT. The checklist moves on only when the engine says ready, so the
+/// wait for the permission screen is the gate working; FINISH SETUP must be shut before the take and open after
+/// it, or the practice gate is decoration.
+/// </remarks>
+static async Task<SyntheticHotkeyEvidence> DriveOnboardingPracticeAsync(
+    Process app,
+    string diagnosticPath,
+    string profileDirectory,
+    string expectedSubstring)
+{
+    var quietWindow = TimeSpan.FromSeconds(2);
+    var holdAfterRecording = TimeSpan.FromMilliseconds(150);
+    var settingsPath = Path.Combine(profileDirectory, "settings.json");
+
+    // THE PRECONDITION LANDED OR THE RUN IS NOT A FIRST RUN: a profile saying setup is done opens the pages, and
+    // everything below would be read against the wrong screen.
+    if ((await new JsonSettingsStore(settingsPath).LoadAsync()).Settings.HasCompletedOnboarding)
+    {
+        throw JourneyExpectationException.Instrument(
+            "The staged profile already records setup as done, so this is not a first run.");
+    }
+
+    if (!WaitForDiagnosticEvent(diagnosticPath, "HotkeyReady/", TimeSpan.FromSeconds(10)))
+    {
+        throw new JourneyExpectationException(
+            "The app never reported HotkeyReady, so there is no installed hook to press a key for.");
+    }
+
+    var virtualKey = ResolveRecordingVirtualKey(profileDirectory);
+    var window = JourneyUi.FindMainWindow(app.Id, TimeSpan.FromSeconds(15));
+
+    static string TitleOf(AutomationElement window) =>
+        JourneyUi.WaitForElement(window, "OnboardingTitle", TimeSpan.FromSeconds(2))?.Current.Name ?? string.Empty;
+
+    static void PressPrimary(AutomationElement window, string expectedLabel)
+    {
+        var button = JourneyUi.WaitForEnabled(window, "FinishOnboardingButton", TimeSpan.FromSeconds(30))
+            ?? throw new JourneyExpectationException(
+                $"The setup button never became available on \"{TitleOf(window)}\".");
+        if (!string.Equals(button.Current.Name, expectedLabel, StringComparison.Ordinal))
+        {
+            throw new JourneyExpectationException(
+                $"The setup button reads \"{button.Current.Name}\" where \"{expectedLabel}\" was expected.");
+        }
+
+        ((InvokePattern)button.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+    }
+
+    static void WaitForTitle(AutomationElement window, string title, TimeSpan timeout)
+    {
+        var timer = Stopwatch.StartNew();
+        while (timer.Elapsed < timeout)
+        {
+            if (string.Equals(TitleOf(window), title, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            Thread.Sleep(200);
+        }
+
+        throw new JourneyExpectationException(
+            $"Setup never reached \"{title}\"; it shows \"{TitleOf(window)}\".");
+    }
+
+    WaitForTitle(window, "Your voice, instantly captured.", TimeSpan.FromSeconds(10));
+    PressPrimary(window, "Get Started");
+    WaitForTitle(window, "Almost there. Just one permission.", TimeSpan.FromSeconds(60));
+    PressPrimary(window, "Continue");
+    WaitForTitle(window, "Ready to Wispr!", TimeSpan.FromSeconds(10));
+    PressPrimary(window, "GET STARTED!");
+    WaitForTitle(window, "Time for your first dictation!", TimeSpan.FromSeconds(15));
+    var box = JourneyUi.WaitForElement(window, "OnboardingPracticeBox", TimeSpan.FromSeconds(5))
+        ?? throw new JourneyExpectationException("The practice screen has no practice box.");
+    if (JourneyUi.WaitForElement(window, "FinishOnboardingButton", TimeSpan.FromSeconds(2)) is not { Current.IsEnabled: false })
+    {
+        throw new JourneyExpectationException("FINISH SETUP was available before any take reached the box.");
+    }
+
+    // NEGATIVE HALF: nothing is pressed, so nothing may start.
+    Thread.Sleep(quietWindow);
+    if (ReadDiagnosticEvents(diagnosticPath).Any(value =>
+            value.StartsWith("DictationRecordingStarted/", StringComparison.Ordinal)))
+    {
+        throw new JourneyExpectationException(
+            "A recording started before any key was pressed, so DictationRecordingStarted is not "
+                + "exclusive to the press and this control cannot certify anything.");
+    }
+
+    BringToForeground(new nint(window.Current.NativeWindowHandle));
+    Thread.Sleep(250);
+    if (!box.Current.HasKeyboardFocus)
+    {
+        throw JourneyExpectationException.Instrument(
+            "The practice box does not hold keyboard focus, so a take now would stage the missed-box case.");
+    }
+
+    var pressed = Stopwatch.StartNew();
+    SendKey(virtualKey, keyDown: true);
+    var recordingStarted = WaitForDiagnosticEvent(diagnosticPath, "DictationRecordingStarted/", TimeSpan.FromSeconds(3));
+    var pressToRecording = pressed.Elapsed;
+    Thread.Sleep(holdAfterRecording);
+    SendKey(virtualKey, keyDown: false);
+    var heldFor = pressed.Elapsed;
+    if (!recordingStarted)
+    {
+        throw new JourneyExpectationException(
+            "The injected recording key did not start a recording within 3 seconds: the installed hook did not act on it.");
+    }
+
+    if (pressToRecording * 3 > quietWindow)
+    {
+        throw JourneyExpectationException.Instrument(
+            $"The quiet window ({quietWindow.TotalMilliseconds:F0} ms) is not comfortably longer than the "
+                + $"observed press-to-recording latency ({pressToRecording.TotalMilliseconds:F0} ms).");
+    }
+
+    if (!WaitForDiagnosticEvent(diagnosticPath, "TextDeliveryCompleted/", TimeSpan.FromSeconds(45)))
+    {
+        throw new JourneyExpectationException(
+            "The practice take did not reach TextDeliveryCompleted; "
+                + $"events={string.Join(',', ReadDiagnosticEvents(diagnosticPath))}.");
+    }
+
+    // THE BOX IS THE ORACLE, read back rather than assumed from the delivery line.
+    var timer = Stopwatch.StartNew();
+    var boxHasWords = false;
+    while (timer.Elapsed < TimeSpan.FromSeconds(5) && !boxHasWords)
+    {
+        boxHasWords = ((ValuePattern)box.GetCurrentPattern(ValuePattern.Pattern)).Current.Value
+            .Contains(expectedSubstring, StringComparison.OrdinalIgnoreCase);
+        if (!boxHasWords)
+        {
+            Thread.Sleep(200);
+        }
+    }
+
+    if (!boxHasWords)
+    {
+        return new SyntheticHotkeyEvidence(
+            $"0x{virtualKey:X2}",
+            (int)heldFor.TotalMilliseconds,
+            (int)quietWindow.TotalMilliseconds,
+            (int)pressToRecording.TotalMilliseconds,
+            TargetObserved: false,
+            QuickTap: false);
+    }
+
+    WaitForTitle(window, "That is it. You are set.", TimeSpan.FromSeconds(5));
+    PressPrimary(window, "FINISH SETUP");
+    var stored = false;
+    timer.Restart();
+    while (timer.Elapsed < TimeSpan.FromSeconds(5) && !stored)
+    {
+        stored = (await new JsonSettingsStore(settingsPath).LoadAsync()).Settings.HasCompletedOnboarding;
+        if (!stored)
+        {
+            await Task.Delay(200);
+        }
+    }
+
+    return new SyntheticHotkeyEvidence(
+        VirtualKey: $"0x{virtualKey:X2}",
+        HeldMilliseconds: (int)heldFor.TotalMilliseconds,
+        QuietWindowMilliseconds: (int)quietWindow.TotalMilliseconds,
+        PressToRecordingMilliseconds: (int)pressToRecording.TotalMilliseconds,
+        TargetObserved: stored,
+        QuickTap: false,
+        OnboardingCompletedStored: stored);
+}
+
 /// <summary>The key the app is listening for, or a refusal - never a guess.</summary>
 /// <remarks>
 /// PORTED FROM THE macOS HARNESS'S ptt_binding CONTRACT. On 2026-08-10 that harness pressed a key
@@ -3013,7 +3237,7 @@ static void RequireKnownArguments(string[] arguments)
     [
         "--live-microphone", "--manual-microphone", "--english-parakeet", "--live-preview",
         "--head-start", "--escape-recovery", "--synthesized-acoustic", "--synthetic-hotkey",
-        "--quick-tap", "--virtual-cable", "--language-change",
+        "--quick-tap", "--virtual-cable", "--language-change", "--onboarding-practice",
     ];
     string[] valuedFlags =
     [
@@ -3236,7 +3460,8 @@ internal sealed record SyntheticHotkeyEvidence(
     int QuietWindowMilliseconds,
     int PressToRecordingMilliseconds,
     bool TargetObserved,
-    bool QuickTap);
+    bool QuickTap,
+    bool? OnboardingCompletedStored = null);
 
 [StructLayout(LayoutKind.Sequential)]
 internal struct Input

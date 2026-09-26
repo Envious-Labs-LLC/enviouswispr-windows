@@ -36,7 +36,8 @@ public sealed record SessionShell(
     Action<CapturedAudio> ArchiveAudio,
     Action DetachCaptureObservers,
     Action ReleaseSession,
-    Action DisposeDeliveryRoute);
+    Action DisposeDeliveryRoute,
+    Action<bool>? DictationActivityChanged = null);
 
 /// <summary>Everything the session's production wiring is built from.</summary>
 /// <remarks>

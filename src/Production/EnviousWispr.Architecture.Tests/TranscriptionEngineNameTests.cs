@@ -929,8 +929,19 @@ public sealed partial class DesignSystemTokenTests
         var tail = core.Body!.Statements.SkipWhile(statement => statement is not TryStatementSyntax).Skip(1).ToArray();
         var afterTry = string.Join("\n", tail.Select(statement => statement.ToString().Split('\n')[0].Trim()));
         Assert.Equal(
-            "if (Leaving)\n_window?.SetModelDelivery(new(\"Download verified. Starting local transcription…\"));\nawait ReconfigureTranscriptionAsync().ConfigureAwait(true);\nif (Leaving)\nPresentGraphicsRuntime();\nawait PresentModelDeliveryAsync().ConfigureAwait(true);",
+            "if (Leaving)\n_window?.SetModelDelivery(new(\"Download verified. Starting local transcription…\", Stage: SpeechModelDelivery.Activating));\nawait ReconfigureTranscriptionAsync().ConfigureAwait(true);\nif (Leaving)\nPresentGraphicsRuntime();\nawait PresentModelDeliveryAsync().ConfigureAwait(true);",
             afterTry);
+
+        // THE FIRST-RUN RETRY IS THE SAME TRACKED TASK: one slot, refused while one runs, refused while a dictation holds
+        // the session, and the same Leaving check after every await that is not a delivery or a reconfiguration
+        // already carrying its own.
+        var retryRequest = DeclarationTextOf(delivery, "OnTranscriptionRetryRequested");
+        Assert.Contains("_modelDelivery = RetryTranscriptionAsync();", retryRequest, StringComparison.Ordinal);
+        Assert.Contains("_modelDelivery is { IsCompleted: false }", retryRequest, StringComparison.Ordinal);
+        var retry = deliveryTree.DescendantNodes().OfType<MethodDeclarationSyntax>().Single(method => method.Identifier.ValueText == "RetryTranscriptionAsync");
+        Assert.Equal(
+            "if (_sessionController?.CurrentSession is not null || _sessionCoordinator?.IsProcessing == true)\n_missingModelIds = await MissingModelIdsAsync(_settings.Preferences).ConfigureAwait(true);\nif (Leaving)\nif (_missingModelIds.Count > 0)\nawait ReconfigureTranscriptionAsync().ConfigureAwait(true);\nif (Leaving)\nPresentGraphicsRuntime();\nawait PresentModelDeliveryAsync().ConfigureAwait(true);",
+            string.Join("\n", retry.Body!.Statements.Select(statement => statement.ToString().Split('\n')[0].Trim())));
 
         // THE RECONFIGURATION BOTH DELIVERIES SHARE (a speech model, the graphics runtime) checks Leaving
         // before it tears an engine down and after the teardown, before it builds one.

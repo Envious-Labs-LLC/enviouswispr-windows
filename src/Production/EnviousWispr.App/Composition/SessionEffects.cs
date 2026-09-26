@@ -161,6 +161,22 @@ internal sealed class SessionEffects(SessionCompositionParts parts) : IDictation
     /// </remarks>
     public async Task RecordDictationEdgeAsync()
     {
+        // THE SAME EDGE, TOLD TO THE WINDOW. The first-run practice box needs to know when a take is over, and
+        // this is the one place every way a take can end passes; reading it off the pill's sentences would have
+        // ended the take at "Capture complete. Transcribing locally", which is quiet and mid-take. Told before
+        // the run-state write, and never allowed to throw into the command that holds the session.
+        try
+        {
+            parts.Shell.DictationActivityChanged?.Invoke(parts.Shell.AttachedSession() is not null);
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.UnhandledFailure,
+                AppFailureCategory.Unknown));
+        }
+
         if (parts.Shell.RunId() is not { } runId)
         {
             return;
