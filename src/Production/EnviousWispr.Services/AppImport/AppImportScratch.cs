@@ -8,11 +8,14 @@ namespace EnviousWispr.Services.AppImport;
 /// moment, so each deletion is retried briefly; if a file still cannot go, the folder stays behind, and the next
 /// launch's <see cref="SweepLeftovers()"/> removes it.
 ///
-/// NEVER A RECURSIVE DELETE. The sweep lists the parent's own <c>import-</c> folders and their numbered attempt
-/// folders, deletes each file it finds by name, then each emptied folder, and finally ASKS THE DISK whether
-/// anything it meant to remove is still there. It never follows a link out of the parent (a link is removed as the
-/// link, never walked), never touches an entry in the parent that it did not name, and never touches anything
-/// outside the parent.
+/// NAME FIRST, THEN ACT, AT EVERY LEVEL. Nothing is deleted or unlinked unless its NAME is one this reader makes:
+/// <c>import-</c> plus a 32-digit GUID in the parent, a numbered attempt folder inside that, and the copied database
+/// files inside an attempt. An entry of any other name is left exactly as it is, link or not, and makes the folder
+/// holding it count as not removed. A link with an owned name is removed as the link, never walked. Never a
+/// recursive delete: entries are deleted one by one and the disk is asked afterwards whether anything is left.
+///
+/// A LISTING THAT FAILS IS A FAILURE, NOT AN EMPTY FOLDER. A folder that cannot be read may hold a copy, so an
+/// access or I/O error while listing makes the removal or the sweep report that something may be left.
 /// </remarks>
 public static class AppImportScratch
 {
@@ -21,6 +24,10 @@ public static class AppImportScratch
     private const int DeleteAttempts = 5;
     private static readonly TimeSpan DeletePause = TimeSpan.FromMilliseconds(100);
 
+    /// <summary>The only file names a copy is ever written or indexed under (<see cref="WisprFlowDatabase"/>).</summary>
+    private static readonly HashSet<string> CopyFileNames =
+        new(["flow.sqlite", "flow.sqlite-wal", "flow.sqlite-shm", "flow.sqlite-journal"], StringComparer.OrdinalIgnoreCase);
+
     /// <summary>The one parent every scratch copy lives under: <c>%TEMP%\EnviousWispr-app-import</c>.</summary>
     public static string DefaultParent { get; } = Path.Combine(Path.GetTempPath(), "EnviousWispr-app-import");
 
@@ -28,91 +35,163 @@ public static class AppImportScratch
     internal static string NewFolder(string parent) =>
         Path.Combine(parent, FolderPrefix + Guid.NewGuid().ToString("N"));
 
-    /// <summary>Removes one scratch folder; true when nothing of it is left on disk.</summary>
+    /// <summary>Removes one scratch folder; true only when nothing of it is left on disk.</summary>
     internal static bool Remove(string scratch)
     {
-        if (!Directory.Exists(scratch))
+        if (!IsOwnedFolderName(Path.GetFileName(scratch)))
         {
-            return true;
+            return false;
         }
 
-        foreach (var attempt in SafeDirectories(scratch))
+        if (IsLink(scratch))
         {
-            foreach (var file in SafeFiles(attempt))
+            Retry(() => Directory.Delete(scratch, recursive: false));
+            return !Exists(scratch);
+        }
+
+        switch (Probe(scratch))
+        {
+            case Presence.Absent:
+                return true;
+            case Presence.Unknown:
+                return false;
+        }
+
+        if (List(scratch) is not { } attempts)
+        {
+            return false;
+        }
+
+        foreach (var attempt in attempts)
+        {
+            // Only a numbered attempt folder; anything else is not ours and stays, which keeps the folder too.
+            if (!IsAttemptName(Path.GetFileName(attempt)) || File.Exists(attempt))
             {
-                Retry(() => File.Delete(file));
+                continue;
+            }
+
+            if (IsLink(attempt))
+            {
+                Retry(() => Directory.Delete(attempt, recursive: false));
+                continue;
+            }
+
+            if (List(attempt) is not { } files)
+            {
+                return false;
+            }
+
+            foreach (var file in files)
+            {
+                if (CopyFileNames.Contains(Path.GetFileName(file)) && File.Exists(file))
+                {
+                    Retry(() => File.Delete(file));
+                }
             }
 
             Retry(() => Directory.Delete(attempt, recursive: false));
         }
 
-        foreach (var file in SafeFiles(scratch))
-        {
-            Retry(() => File.Delete(file));
-        }
-
         Retry(() => Directory.Delete(scratch, recursive: false));
-        return !Directory.Exists(scratch);
+        return !Exists(scratch);
     }
 
-    /// <summary>Removes every leftover scratch folder under <see cref="DefaultParent"/>; false when one could not be removed.</summary>
+    /// <summary>Removes every leftover scratch folder under <see cref="DefaultParent"/>; false when one may be left.</summary>
     public static bool SweepLeftovers() => SweepLeftovers(DefaultParent);
 
     internal static bool SweepLeftovers(string parent)
     {
-        if (!Directory.Exists(parent))
+        switch (Probe(parent))
         {
-            return true;
+            case Presence.Absent:
+                return true;
+            case Presence.Unknown:
+                return false;
+        }
+
+        if (List(parent) is not { } entries)
+        {
+            return false;
         }
 
         var clean = true;
-        foreach (var folder in SafeDirectories(parent))
+        foreach (var entry in entries)
         {
-            if (!Path.GetFileName(folder).StartsWith(FolderPrefix, StringComparison.Ordinal))
+            // FILTERED BY NAME BEFORE ANYTHING IS TOUCHED: a link or folder of any other name is not ours.
+            if (!IsOwnedFolderName(Path.GetFileName(entry)))
             {
                 continue;
             }
 
-            clean &= Remove(folder);
+            clean &= Remove(entry);
         }
 
         return clean;
     }
 
-    /// <summary>Child folders that are real folders; a link among them is removed as a link, never entered.</summary>
-    private static string[] SafeDirectories(string path)
+    /// <summary><c>import-</c> followed by exactly the 32 hex digits <see cref="NewFolder"/> writes.</summary>
+    internal static bool IsOwnedFolderName(string name) =>
+        name.StartsWith(FolderPrefix, StringComparison.Ordinal) &&
+        name.Length == FolderPrefix.Length + 32 &&
+        Guid.TryParseExact(name.AsSpan(FolderPrefix.Length), "N", out _);
+
+    private static bool IsAttemptName(string name) =>
+        name.Length is > 0 and <= 2 && name.All(char.IsAsciiDigit);
+
+    private static bool IsLink(string path)
     {
         try
         {
-            var result = new List<string>();
-            foreach (var child in Directory.EnumerateDirectories(path))
-            {
-                if (new DirectoryInfo(child).Attributes.HasFlag(FileAttributes.ReparsePoint))
-                {
-                    Retry(() => Directory.Delete(child, recursive: false));
-                    continue;
-                }
-
-                result.Add(child);
-            }
-
-            return [.. result];
+            var info = new DirectoryInfo(path);
+            return info.Exists && info.Attributes.HasFlag(FileAttributes.ReparsePoint);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            return [];
+            return false;
         }
     }
 
-    private static string[] SafeFiles(string path)
+    /// <summary>Whether anything is at the path. Asked so that it can say "could not tell", which counts as present.</summary>
+    /// <remarks>
+    /// NOT <c>Directory.Exists</c>, WHICH ANSWERS FALSE ON ANY ERROR: a folder the process may not look at would read
+    /// as removed, and a sweep that could not see a copy would report that there was none.
+    /// </remarks>
+    private static Presence Probe(string path)
     {
         try
         {
-            return Directory.GetFiles(path);
+            _ = File.GetAttributes(path);
+            return Presence.Present;
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return Presence.Absent;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            return [];
+            return Presence.Unknown;
+        }
+    }
+
+    private static bool Exists(string path) => Probe(path) != Presence.Absent;
+
+    private enum Presence
+    {
+        Absent,
+        Present,
+        Unknown,
+    }
+
+    /// <summary>Every entry in a folder, or null when the folder could not be listed.</summary>
+    private static string[]? List(string path)
+    {
+        try
+        {
+            return Directory.GetFileSystemEntries(path);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 

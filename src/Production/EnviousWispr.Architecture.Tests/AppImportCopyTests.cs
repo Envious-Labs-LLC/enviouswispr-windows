@@ -107,6 +107,62 @@ public sealed class AppImportCopyTests : IDisposable
     }
 
     [Fact]
+    public void ALinkInTheParentThatTheSweepDidNotNameSurvivesWithItsTarget()
+    {
+        var target = Path.Combine(_root, "link-target");
+        Directory.CreateDirectory(target);
+        File.WriteAllText(Path.Combine(target, "flow.sqlite"), "reached only through a link");
+        var link = Path.Combine(_parent, "keep-me");
+        Junction(link, target);
+        var owned = AppImportScratch.NewFolder(_parent);
+        Directory.CreateDirectory(Path.Combine(owned, "0"));
+        File.WriteAllText(Path.Combine(owned, "0", "flow.sqlite"), "a leftover copy");
+
+        var clean = AppImportScratch.SweepLeftovers(_parent);
+
+        Assert.True(clean);
+        Assert.False(Directory.Exists(owned));
+        Assert.True(new DirectoryInfo(link).Attributes.HasFlag(FileAttributes.ReparsePoint), "the unowned link was removed");
+        Assert.Equal("reached only through a link", File.ReadAllText(Path.Combine(target, "flow.sqlite")));
+        Assert.Equal(["keep-me"], Directory.GetFileSystemEntries(_parent).Select(Path.GetFileName));
+    }
+
+    [Theory]
+    [InlineData("import-")]
+    [InlineData("import-not-a-guid-at-all-but-thirty-two")]
+    [InlineData("import-0123456789abcdef0123456789abcdef0")]
+    [InlineData("Import-0123456789abcdef0123456789abcdef")]
+    public void OnlyTheExactNameTheReaderWritesIsOwned(string name) =>
+        Assert.False(AppImportScratch.IsOwnedFolderName(name));
+
+    [Fact]
+    public void TheNameTheReaderWritesIsOwned() =>
+        Assert.True(AppImportScratch.IsOwnedFolderName(Path.GetFileName(AppImportScratch.NewFolder(_parent))));
+
+    [Fact]
+    public void AParentThatCannotBeListedIsAFailureNotAClean()
+    {
+        var owned = AppImportScratch.NewFolder(_parent);
+        Directory.CreateDirectory(Path.Combine(owned, "0"));
+        File.WriteAllText(Path.Combine(owned, "0", "flow.sqlite"), "a leftover copy");
+        var user = System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value;
+        Icacls($"\"{_parent}\" /deny *{user}:(RD)");
+        try
+        {
+            // THE PRECONDITION IS ASSERTED: without a real denial this would test an ordinary readable folder.
+            Assert.Throws<UnauthorizedAccessException>(() => Directory.GetFileSystemEntries(_parent));
+
+            Assert.False(AppImportScratch.SweepLeftovers(_parent));
+        }
+        finally
+        {
+            Icacls($"\"{_parent}\" /remove:d *{user}");
+        }
+
+        Assert.NotEmpty(Directory.GetFileSystemEntries(_parent)); // restored, and the copy it could not see is still there
+    }
+
+    [Fact]
     public void ASweepWithNoParentFolderIsClean() =>
         Assert.True(AppImportScratch.SweepLeftovers(Path.Combine(_root, "never-made")));
 
@@ -136,6 +192,17 @@ public sealed class AppImportCopyTests : IDisposable
             "CREATE TABLE Dictionary (id TEXT PRIMARY KEY, phrase TEXT NOT NULL);" +
             "INSERT INTO Dictionary VALUES ('1', 'alpha'); INSERT INTO Dictionary VALUES ('2', 'beta');");
         return path;
+    }
+
+    private static void Icacls(string arguments)
+    {
+        using var run = Process.Start(new ProcessStartInfo("icacls.exe", arguments)
+        {
+            CreateNoWindow = true,
+            UseShellExecute = false,
+        })!;
+        run.WaitForExit();
+        Assert.Equal(0, run.ExitCode);
     }
 
     private static void Junction(string link, string target)
