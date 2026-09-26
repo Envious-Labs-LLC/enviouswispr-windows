@@ -25,6 +25,12 @@ internal static class Program
         var resultPath = ValidateResultPath(ArgumentValue(args, "--result"));
         var expectedSubstring = ArgumentValue(args, "--expected-substring");
         var forbiddenSubstring = ArgumentValue(args, "--forbidden-substring");
+        var copyAnswers = ArgumentValue(args, "--copy-answers")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [];
+        if (copyAnswers.Any(answer => answer.Length > 64 || !answer.All(char.IsAsciiLetter)))
+        {
+            throw new ArgumentException("A copy answer must be one plain ASCII word.");
+        }
+
         if (expectedSubstring is { Length: > 100 } ||
             expectedSubstring?.Any(char.IsControl) == true ||
             forbiddenSubstring is { Length: > 100 } ||
@@ -39,7 +45,8 @@ internal static class Program
             holdFocus,
             resultPath,
             expectedSubstring,
-            forbiddenSubstring);
+            forbiddenSubstring,
+            copyAnswers);
         Application.Run(form);
         if (form.SelfTestVerdict is { } verdict)
         {
@@ -60,7 +67,8 @@ internal static class Program
         int holdFocus,
         string? resultPath,
         string? expectedSubstring,
-        string? forbiddenSubstring)
+        string? forbiddenSubstring,
+        string[] copyAnswers)
     {
         var caretAtStart = mode == "caret-start";
         var form = new TargetForm
@@ -75,7 +83,62 @@ internal static class Program
         };
 
         Control focusTarget;
-        if (mode == "game")
+        if (mode == "quick-add-copy")
+        {
+            // A SURFACE THAT PUBLISHES NO SELECTION AND ANSWERS COPY, as a terminal or a custom-drawn editor
+            // does. UI Automation finds no text here, so Quick Add's policy can only choose the synthetic Copy;
+            // the Copy is answered with the next public word from --copy-answers, written to the clipboard by
+            // this window's own thread, and every Copy that arrives is counted in the result.
+            var surface = new SelectableSurface
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.FromArgb(10, 14, 22),
+                AccessibleName = "Selection surface that publishes no text",
+            };
+            surface.Controls.Add(new Label
+            {
+                AutoSize = true,
+                Text = "Controlled Quick Add target: answers Copy with a public word",
+                Font = new Font(SystemFonts.DefaultFont.FontFamily, 18),
+                ForeColor = Color.White,
+                Location = new Point(40, 40),
+            });
+            form.Controls.Add(surface);
+            focusTarget = surface;
+            var copyRequests = 0;
+            var answered = new List<string>();
+            var answerMilliseconds = new List<long>();
+            void PublishCopies()
+            {
+                if (resultPath is not null)
+                {
+                    File.WriteAllText(resultPath, JsonSerializer.Serialize(new { copyRequests, answered, answerMilliseconds }));
+                }
+            }
+
+            form.KeyPreview = true;
+            form.KeyDown += (_, e) =>
+            {
+                if (e.Control && e.KeyCode == Keys.C)
+                {
+                    var answer = copyRequests < copyAnswers.Length ? copyAnswers[copyRequests] : null;
+                    copyRequests++;
+                    if (answer is not null)
+                    {
+                        var writing = System.Diagnostics.Stopwatch.StartNew();
+                        Clipboard.SetDataObject(answer, copy: true, retryTimes: 10, retryDelay: 50);
+                        answered.Add(answer);
+                        answerMilliseconds.Add(writing.ElapsedMilliseconds);
+                    }
+
+                    PublishCopies();
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                }
+            };
+            PublishCopies();
+        }
+        else if (mode == "game")
         {
             form.FormBorderStyle = FormBorderStyle.None;
             form.WindowState = FormWindowState.Maximized;
@@ -363,6 +426,16 @@ internal static class Program
             characterCount = text.Length,
         });
         File.WriteAllText(path, result);
+    }
+
+    /// <summary>A plain surface that can hold keyboard focus and exposes no text to UI Automation.</summary>
+    private sealed class SelectableSurface : Control
+    {
+        public SelectableSurface()
+        {
+            SetStyle(ControlStyles.Selectable, true);
+            TabStop = true;
+        }
     }
 
     /// <summary>The target window: a form that answers a settle request from the journey harness.</summary>

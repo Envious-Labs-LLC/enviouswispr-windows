@@ -25,6 +25,11 @@ using System.Windows.Automation;
 using System.Windows.Forms;
 
 const byte F8 = 0x77;
+const byte F9 = 0x78;
+const string QuickAddJourneyKeyName = "F9";
+// PUBLIC, MADE-UP WORDS the controlled target answers its first and second Copy with: nothing dictated, nothing personal.
+const string QuickAddFirstWord = "quokkaform";
+const string QuickAddSecondWord = "zebrastrand";
 const string SnippetJourneyKeyword = "joint";
 const string SnippetJourneyExpansion = "SNIPPETCHECK";
 const int DefaultAcousticPlaybackGain = 2;
@@ -104,6 +109,15 @@ var quickTap = args.Any(argument => string.Equals(
 var onboardingPractice = args.Any(argument => string.Equals(
     argument,
     "--onboarding-practice",
+    StringComparison.OrdinalIgnoreCase));
+// QUICK ADD'S SYNTHETIC COPY ON THE REAL APP (#247). The controlled target is a surface that publishes no selection and
+// answers Copy with a public word, so the policy can only choose the synthetic Copy; the Add-a-word key is pressed through
+// the installed hook, twice - once over a sentinel on the clipboard and once over an empty one - and the verdict is read
+// from the app's log, the target's own count of the Copies it answered, the word in the Dictionary page's field, the
+// clipboard afterwards, and the word stored in the isolated profile once "Add word" is pressed.
+var quickAdd = args.Any(argument => string.Equals(
+    argument,
+    "--quick-add",
     StringComparison.OrdinalIgnoreCase));
 var deterministicProfileArgument = ArgumentValue(args, "--deterministic-profile");
 var deterministicProfile = deterministicProfileArgument?.ToLowerInvariant() switch
@@ -283,6 +297,15 @@ if (onboardingPractice && (!syntheticHotkey || quickTap || livePreview || langua
         "--onboarding-practice needs --synthetic-hotkey and nothing else that changes the take: the practice box "
             + "replaces the controlled target, and the one question is whether a first run's own box receives a "
             + "real take.");
+}
+if (quickAdd &&
+    (!englishParakeet || syntheticHotkey || quickTap || onboardingPractice || liveMicrophone || livePreview || headStart ||
+     escapeRecovery || languageChange || targetMode != "edit" || failureMode != JourneyFailureMode.None ||
+     polishProvider != PolishProvider.None || deterministicProfile != DeterministicJourneyProfile.None))
+{
+    throw new JourneyExpectationException(
+        "--quick-add needs --english-parakeet and nothing else: it presses the Add-a-word key, not the recording key, "
+            + "and its one question is what Quick Add's synthetic Copy does to the selection and the clipboard.");
 }
 if (quickTap && !syntheticHotkey)
 {
@@ -476,7 +499,21 @@ var journeyDefaults = AppSettings.Default with
         Dictation = AppSettings.Default.Preferences.Dictation with { PushToTalkGesture = "F8" },
     },
 };
-if (languageChange)
+if (quickAdd)
+{
+    // ONBOARDED, SO QUICK ADD OPENS THE DICTIONARY PAGE; THE ADD-A-WORD KEY PINNED TO F9, a single key the injector can
+    // drive, as F8 is pinned for the recording key. Nothing else differs from the default profile.
+    await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"))
+        .SaveAsync(journeyDefaults with
+        {
+            HasCompletedOnboarding = true,
+            Preferences = journeyDefaults.Preferences with
+            {
+                Dictation = journeyDefaults.Preferences.Dictation with { QuickAddGesture = QuickAddJourneyKeyName },
+            },
+        });
+}
+else if (languageChange)
 {
     // ONBOARDED, SO THE WINDOW OPENS ON ITS PAGES; WHISPER, SO THE PICKER IS THE ONE THAT COUNTS; AUTOMATIC,
     // SO THE CHANGE TO FRENCH IS A CHANGE. Everything else is the default profile.
@@ -603,7 +640,12 @@ try
         UseShellExecute = false,
     };
     targetStart.ArgumentList.Add("--mode");
-    targetStart.ArgumentList.Add(manualMicrophone ? "manual-microphone" : targetMode);
+    targetStart.ArgumentList.Add(quickAdd ? "quick-add-copy" : manualMicrophone ? "manual-microphone" : targetMode);
+    if (quickAdd)
+    {
+        targetStart.ArgumentList.Add("--copy-answers");
+        targetStart.ArgumentList.Add($"{QuickAddFirstWord},{QuickAddSecondWord}");
+    }
     targetStart.ArgumentList.Add("--hold-focus-ms");
     // AN ACTION RUN LETS THE PERSON LEAVE. The target re-takes the foreground every 100 ms while it holds
     // focus, which would fight the click in EnviousWispr's window the action is about.
@@ -685,7 +727,7 @@ try
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_START_EVENT"] = startEventName;
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_COMPLETE_EVENT"] = completeEventName;
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_EXIT_AFTER_COMPLETION"] = "1";
-        if (syntheticHotkey || escapeAction != EscapeRecoveryAction.None)
+        if (syntheticHotkey || quickAdd || escapeAction != EscapeRecoveryAction.None)
         {
             // START is never signalled in the synthetic mode; the harness ends the run through this event
             // once the log and the target have spoken, and the app's own exit-after-completion does the
@@ -781,6 +823,61 @@ try
                 $"The production journey started {ownedPolishWorkerIds.Length} owned local-polish workers; " +
                 $"expected {expectedPolishWorkerCount}.");
         }
+    }
+
+    if (quickAdd)
+    {
+        // THE PERSON'S OWN CLIPBOARD IS TAKEN FIRST AND PUT BACK LAST, by the guard, whatever the verdict.
+        clipboardGuard = ClipboardGuard.CaptureOrThrow();
+        QuickAddEvidence quickAddEvidence;
+        try
+        {
+            quickAddEvidence = DriveQuickAdd(app, target, diagnosticPath, targetResultPath, profileDirectory);
+        }
+        finally
+        {
+            exitEvent.Set();
+        }
+
+        journeyCompleted = completeEvent.WaitOne(TimeSpan.FromSeconds(60));
+        appExitedCleanly = app.WaitForExit(15_000);
+        if (!journeyCompleted || !appExitedCleanly || app.ExitCode != 0)
+        {
+            throw new JourneyExpectationException(
+                $"The app did not leave cleanly after Quick Add (completed={journeyCompleted}, exited={appExitedCleanly}); " +
+                $"events={string.Join(',', ReadDiagnosticEvents(diagnosticPath))}.");
+        }
+
+        strayWorkerCount = ChildProcessIds(app.Id, "EnviousWispr.RuntimeWorker")
+            .Where(IsProcessRunning)
+            .Count(processId => !pinnedWorkers.Any(worker => worker.Id == processId && StillAlive(worker)));
+        ownedWorkerCount = ownedWorkerIds.Count(IsProcessRunning);
+        if (strayWorkerCount != 0 || ownedWorkerCount != 0)
+        {
+            throw new JourneyExpectationException("The app left a runtime worker running after Quick Add.");
+        }
+
+        timer.Stop();
+        Console.WriteLine(JsonSerializer.Serialize(new
+        {
+            passed = true,
+            journey = "QuickAddSyntheticCopy",
+            shellReady,
+            runtimeReady,
+            quickAdd = quickAddEvidence,
+            appExitedCleanly,
+            ownedWorkerStartedCount = ownedWorkerIds.Length,
+            ownedWorkerCount,
+            strayWorkerCount,
+            elapsedMilliseconds = timer.ElapsedMilliseconds,
+            appVersion,
+            appSha256,
+            appSource,
+            windowsVersion = Environment.OSVersion.Version.ToString(),
+            inputKind = "SyntheticQuickAddKey-InstalledGlobalHook",
+            deliveryTarget = "ControlledSurfacePublishingNoSelectionAnsweringCopy",
+        }));
+        return 0;
     }
 
     if (failureMode == JourneyFailureMode.WorkerStartup)
@@ -2719,6 +2816,224 @@ static byte[] RepeatPcm(byte[] pcmBytes, int sampleRate, int repetitions)
 /// is a value somebody will read as "the OS said it worked". A count mismatch is an instrument failure
 /// and is reported as one; success is only ever established from app.jsonl afterwards.
 /// </remarks>
+/// <summary>Quick Add's synthetic Copy on the real app, twice: over a sentinel on the clipboard, then over an empty one; then the word is added and read from the profile.</summary>
+/// <remarks>
+/// EVERY VERDICT IS READ FROM SOMETHING THE HARNESS DID NOT WRITE: the app's log (a Quick Add outcome per press), the
+/// target's own count of the Copies it answered (so the selection came through the synthetic Copy, not a direct read),
+/// the Dictionary page's "When I say" field through UI Automation, the clipboard after the app has finished with it,
+/// and the settings file in the isolated profile after "Add word" is pressed.
+///
+/// THE EMPTY ORIGINAL IS ITS OWN ROUND. A restore that wrote something back - our clearing write, the app's answer -
+/// over a clipboard that held nothing would pass a check that only looks for a sentinel.
+/// </remarks>
+static QuickAddEvidence DriveQuickAdd(
+    Process app,
+    Process target,
+    string diagnosticPath,
+    string targetResultPath,
+    string profileDirectory)
+{
+    if (!WaitForDiagnosticEvent(diagnosticPath, "HotkeyReady/", TimeSpan.FromSeconds(10)))
+    {
+        throw new JourneyExpectationException(
+            "The app never reported HotkeyReady, so there is no installed hook to press the Add-a-word key for.");
+    }
+
+    var sentinel = $"EnviousWispr Quick Add sentinel {Guid.NewGuid():N}";
+    var overSentinel = RunQuickAddRound(1, QuickAddFirstWord, sentinel, app, target, diagnosticPath, targetResultPath);
+    var overEmpty = RunQuickAddRound(2, QuickAddSecondWord, null, app, target, diagnosticPath, targetResultPath);
+
+    // THE WORD LANDS WHERE QUICK ADD PUTS IT ONLY WHEN THE PERSON ADDS IT: Quick Add fills the Dictionary page's two
+    // fields and stops. "Add word" is pressed through its own pattern, and the profile is read back from disk.
+    QuickAddPageDriver.PressAddWord(app.Id);
+    var stored = WaitForStoredCustomWord(profileDirectory, QuickAddSecondWord, TimeSpan.FromSeconds(10));
+    var evidence = new QuickAddEvidence(overSentinel, overEmpty, stored);
+    if (!overSentinel.Passed || !overEmpty.Passed || !stored)
+    {
+        throw new JourneyExpectationException(
+            "Quick Add's synthetic Copy did not do what it must: " + JsonSerializer.Serialize(evidence) +
+            $"; events={string.Join(',', ReadDiagnosticEvents(diagnosticPath))}.");
+    }
+
+    return evidence;
+}
+
+static QuickAddRound RunQuickAddRound(
+    int round,
+    string word,
+    string? sentinel,
+    Process app,
+    Process target,
+    string diagnosticPath,
+    string targetResultPath)
+{
+    // THE PRECONDITION IS READ BACK, not assumed: a sentinel that never landed, or a clipboard that did not empty, would
+    // turn the restore check into a check of nothing.
+    if (sentinel is null)
+    {
+        ClipboardGuard.Clear();
+        if (ClipboardGuard.FormatCount() != 0)
+        {
+            throw JourneyExpectationException.Instrument("The clipboard could not be emptied before the empty-original round.");
+        }
+    }
+    else
+    {
+        ClipboardGuard.PlaceText(sentinel);
+        if (!string.Equals(ClipboardGuard.ReadText(), sentinel, StringComparison.Ordinal))
+        {
+            throw JourneyExpectationException.Instrument("The sentinel did not land on the clipboard before the Quick Add round.");
+        }
+    }
+
+    // THE TARGET MUST BE IN FRONT when the key goes down: Quick Add reads the foreground window, and its Copy goes there.
+    // A MINIMISE AND RESTORE TAKES THE FOREGROUND WHERE SetForegroundWindow ALONE CANNOT (uat-testing.md, measured
+    // 2026-09-25): a window the app just opened, or a service window, can hold it against a plain request.
+    BringToForeground(target.MainWindowHandle);
+    var focusClock = Stopwatch.StartNew();
+    var restored = false;
+    while (NativeMethods.GetForegroundWindow() != target.MainWindowHandle)
+    {
+        if (focusClock.Elapsed > TimeSpan.FromSeconds(3))
+        {
+            var holder = NativeMethods.GetForegroundWindow();
+            _ = NativeMethods.GetWindowThreadProcessId(holder, out var holderProcess);
+            throw JourneyExpectationException.Instrument(
+                $"The controlled Quick Add target could not be brought in front for round {round}; the foreground "
+                    + $"belongs to process {holderProcess} ({ProcessNameOrUnknown((int)holderProcess)}).");
+        }
+
+        if (!restored && focusClock.Elapsed > TimeSpan.FromSeconds(1))
+        {
+            const int minimise = 6;
+            const int restore = 9;
+            _ = NativeMethods.ShowWindow(target.MainWindowHandle, minimise);
+            Thread.Sleep(150);
+            _ = NativeMethods.ShowWindow(target.MainWindowHandle, restore);
+            restored = true;
+        }
+
+        Thread.Sleep(50);
+        BringToForeground(target.MainWindowHandle);
+    }
+
+    SendKey(F9, keyDown: true);
+    SendKey(F9, keyDown: false);
+
+    // THE APP'S OWN ENDING FOR THIS PRESS: the round-th Quick Add outcome, whichever of the three it is.
+    string[] outcomes = ["QuickAddPrepared", "QuickAddSelectionEmpty", "QuickAddRefused"];
+    var outcomeClock = Stopwatch.StartNew();
+    string[] quickAddEvents = [];
+    while (outcomeClock.Elapsed < TimeSpan.FromSeconds(10))
+    {
+        quickAddEvents = ReadDiagnosticEvents(diagnosticPath)
+            .Select(value => value.Split('/')[0])
+            .Where(value => outcomes.Contains(value, StringComparer.Ordinal))
+            .ToArray();
+        if (quickAddEvents.Length >= round)
+        {
+            break;
+        }
+
+        Thread.Sleep(100);
+    }
+
+    if (quickAddEvents.Length < round)
+    {
+        throw new JourneyExpectationException(
+            $"Quick Add round {round} logged no outcome within 10 seconds; events={string.Join(',', ReadDiagnosticEvents(diagnosticPath))}.");
+    }
+
+    var outcomeEvent = quickAddEvents[round - 1];
+    // READ AFTER THE OUTCOME IS LOGGED: the app logs it only once the selection read has returned, restore included.
+    var clipboardText = ClipboardGuard.ReadText();
+    var clipboardFormats = ClipboardGuard.FormatCount();
+    var copiesAnswered = ReadCopiesAnswered(targetResultPath);
+    var answerMilliseconds = ReadCopyAnswerMilliseconds(targetResultPath);
+    var fieldHeldWord = QuickAddPageDriver.WaitForSpokenForm(app.Id, word, TimeSpan.FromSeconds(10));
+    var clipboardGivenBack = sentinel is null
+        ? clipboardFormats == 0
+        : string.Equals(clipboardText, sentinel, StringComparison.Ordinal);
+    return new QuickAddRound(
+        round,
+        sentinel is null ? "Empty" : "Sentinel",
+        outcomeEvent,
+        copiesAnswered,
+        fieldHeldWord,
+        clipboardGivenBack,
+        ClipboardHeldSelection: string.Equals(clipboardText, word, StringComparison.Ordinal),
+        TargetCopyWriteMilliseconds: answerMilliseconds);
+}
+
+/// <summary>A process's name for a message, or "unknown" when it has gone or cannot be read.</summary>
+static string ProcessNameOrUnknown(int processId)
+{
+    try
+    {
+        using var process = Process.GetProcessById(processId);
+        return process.ProcessName;
+    }
+    catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+    {
+        return "unknown";
+    }
+}
+
+/// <summary>How many Copies the controlled target has answered, from its own result file; -1 when it cannot be read.</summary>
+static int ReadCopiesAnswered(string targetResultPath)
+{
+    try
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(targetResultPath));
+        return document.RootElement.GetProperty("copyRequests").GetInt32();
+    }
+    catch (Exception exception) when (exception is IOException or JsonException or KeyNotFoundException)
+    {
+        return -1;
+    }
+}
+
+/// <summary>How long each of the target's Copy answers took to write, in its own words; empty when it cannot be read.</summary>
+static long[] ReadCopyAnswerMilliseconds(string targetResultPath)
+{
+    try
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(targetResultPath));
+        return document.RootElement.GetProperty("answerMilliseconds").EnumerateArray().Select(value => value.GetInt64()).ToArray();
+    }
+    catch (Exception exception) when (exception is IOException or JsonException or KeyNotFoundException)
+    {
+        return [];
+    }
+}
+
+/// <summary>True once the profile's settings file holds the word as a custom word, spoken and written the same.</summary>
+static bool WaitForStoredCustomWord(string profileDirectory, string word, TimeSpan timeout)
+{
+    var clock = Stopwatch.StartNew();
+    var store = new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"));
+    while (clock.Elapsed < timeout)
+    {
+        try
+        {
+            var loaded = store.LoadAsync().GetAwaiter().GetResult();
+            if (loaded.Settings.UserData.CustomWords.Any(entry =>
+                    string.Equals(entry.SpokenForm, word, StringComparison.Ordinal) &&
+                    string.Equals(entry.Replacement, word, StringComparison.Ordinal)))
+            {
+                return true;
+            }
+        }
+        catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
+        {
+        }
+
+        Thread.Sleep(200);
+    }
+
+    return false;
+}
+
 static void SendKey(byte virtualKey, bool keyDown)
 {
     if (Marshal.SizeOf<Input>() != 40)
@@ -3237,7 +3552,7 @@ static void RequireKnownArguments(string[] arguments)
     [
         "--live-microphone", "--manual-microphone", "--english-parakeet", "--live-preview",
         "--head-start", "--escape-recovery", "--synthesized-acoustic", "--synthetic-hotkey",
-        "--quick-tap", "--virtual-cable", "--language-change", "--onboarding-practice",
+        "--quick-tap", "--virtual-cable", "--language-change", "--onboarding-practice", "--quick-add",
     ];
     string[] valuedFlags =
     [
@@ -3532,6 +3847,10 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ShowWindow(nint window, int command);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool SetForegroundWindow(nint window);
 
     [DllImport("user32.dll")]
@@ -3564,6 +3883,21 @@ internal enum EscapeRecoveryAction
 }
 
 /// <summary>What one Undo or Paste press did, from the target, the log and History. Never the words.</summary>
+internal sealed record QuickAddRound(
+    int Round,
+    string ClipboardBefore,
+    string OutcomeEvent,
+    int CopiesAnsweredByTarget,
+    bool FieldHeldWord,
+    bool ClipboardGivenBack,
+    bool ClipboardHeldSelection,
+    long[] TargetCopyWriteMilliseconds)
+{
+    public bool Passed => OutcomeEvent == "QuickAddPrepared" && CopiesAnsweredByTarget == Round && FieldHeldWord && ClipboardGivenBack;
+}
+
+internal sealed record QuickAddEvidence(QuickAddRound OverSentinel, QuickAddRound OverEmptyClipboard, bool WordStoredInProfile);
+
 internal sealed record EscapeActionEvidence(
     string Action,
     bool TargetWasInFrontBeforeClick,
@@ -3646,6 +3980,16 @@ internal sealed class ClipboardGuard : IDisposable
 
     /// <summary>The clipboard's text right now, or null when it holds none.</summary>
     internal static string? ReadText() => RunSta(() => Clipboard.ContainsText() ? Clipboard.GetText() : null);
+
+    /// <summary>Empties the clipboard: the empty original a restore must give back empty.</summary>
+    internal static void Clear() => RunSta(() =>
+    {
+        Clipboard.Clear();
+        return true;
+    });
+
+    /// <summary>How many formats the clipboard holds right now; 0 when it is empty.</summary>
+    internal static int FormatCount() => RunSta(() => Clipboard.GetDataObject()?.GetFormats(autoConvert: false).Length ?? 0);
 
     public void Dispose()
     {
