@@ -30,7 +30,9 @@ public static class ExportFileWriter
         var full = Path.GetFullPath(destination);
         var folder = Path.GetDirectoryName(full)
             ?? throw new IOException("The export destination has no folder.");
-        var temporary = Path.Combine(folder, $".{Path.GetFileName(full)}.{Guid.NewGuid():N}.tmp");
+        // A SHORT FIXED NAME, NOT THE DESTINATION'S NAME PLUS A SUFFIX: a chosen name near the 255-character limit
+        // on one path component would otherwise make the temporary's name too long, and the export would fail.
+        var temporary = Path.Combine(folder, $".ew-export-{Guid.NewGuid():N}.tmp");
         try
         {
             await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))

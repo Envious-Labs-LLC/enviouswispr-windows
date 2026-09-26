@@ -42,6 +42,20 @@ public sealed class ExportFileWriterTests : IDisposable
     }
 
     [Fact]
+    public async Task ADestinationNameNearTheLengthLimitStillExports()
+    {
+        // 245 characters plus ".json" is a 250-character file name: legal, and five short of the component limit.
+        var name = new string('s', 245) + ".json";
+        Assert.Equal(250, name.Length);
+        var chosen = Path.Combine(_root, name);
+
+        await ExportFileWriter.WriteReplacingAsync(chosen, "{\"version\":1}");
+
+        Assert.Equal("{\"version\":1}", await File.ReadAllTextAsync(chosen));
+        Assert.Equal([name], Names());
+    }
+
+    [Fact]
     public async Task AFailedReplaceLeavesNoTemporaryBehind()
     {
         // A FOLDER AT THE CHOSEN NAME: the temporary is written, then the move onto a directory fails.
