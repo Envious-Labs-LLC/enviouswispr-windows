@@ -138,7 +138,8 @@ public sealed record PrivacySafeDiagnosticRecord(
     DeliveryStage? DeliveryStage = null,
     DeliveryFaultKind? Fault = null,
     DiagnosticRecognitionLanguage? RecognitionLanguage = null,
-    DiagnosticSnippetImport? SnippetImport = null)
+    DiagnosticSnippetImport? SnippetImport = null,
+    DiagnosticWordImport? WordImport = null)
 {
     public const long MaximumElapsedMilliseconds = 86_400_000;
 
@@ -177,6 +178,8 @@ public sealed record PrivacySafeDiagnosticRecord(
                 : null,
             // A SNIPPET IMPORT AS COUNTS AND CATEGORIES, never a trigger or a snippet's text; dropped whole when any
             // member is out of range rather than trimmed into something that looks true.
-            entry.SnippetImport is { } snippetImport && snippetImport.IsWithinBounds() ? snippetImport : null);
+            entry.SnippetImport is { } snippetImport && snippetImport.IsWithinBounds() ? snippetImport : null,
+            // A WORD IMPORT FROM ANOTHER APP, the same way: counts and categories, never a word or a spelling.
+            entry.WordImport is { } wordImport && wordImport.IsWithinBounds() ? wordImport : null);
     }
 }

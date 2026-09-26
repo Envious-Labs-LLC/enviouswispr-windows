@@ -53,6 +53,29 @@ public sealed class VocabularyImportController
         return ImportAsync(pack.Words);
     }
 
+    /// <summary>Adds a reviewed import from another app if the list is still the one reviewed; otherwise writes nothing.</summary>
+    /// <remarks>
+    /// THE SAME PLAN AS A PASTED LIST (<see cref="CustomWordImport.Plan"/>), DECIDED INSIDE THE SAME GATE; what differs is
+    /// that the person reviewed it first, so a list that moved during the review is refused rather than merged into
+    /// (<see cref="CustomWordAppImport.Commit"/>). A refusal hands the writer back the settings it was given, and the
+    /// writer does not save a value it already holds. Conflicts are still offered afterwards through
+    /// <see cref="ReplaceConflictsAsync"/>.
+    /// </remarks>
+    public Task<SettingsSaveResult<WordImportCommitOutcome>> CommitFromAppAsync(
+        IReadOnlyList<CustomWordEntry> baseline,
+        IReadOnlyList<CustomWordEntry> entries)
+    {
+        ArgumentNullException.ThrowIfNull(baseline);
+        ArgumentNullException.ThrowIfNull(entries);
+        var baselineCopy = baseline.ToArray();
+        var entriesCopy = entries.ToArray();
+        return _vocabulary.ChangeAsync(data =>
+        {
+            var (next, outcome) = CustomWordAppImport.Commit(data.CustomWords, baselineCopy, entriesCopy);
+            return (next is null ? data : data.WithCustomWords(next), outcome);
+        });
+    }
+
     /// <summary>Takes the list's version of the words the person corrects differently.</summary>
     /// <remarks>
     /// MERGED INSIDE THE GATE, against the words that are there when it happens. Merging outside built

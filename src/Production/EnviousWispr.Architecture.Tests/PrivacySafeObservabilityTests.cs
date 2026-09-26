@@ -321,13 +321,15 @@ public sealed class PrivacySafeObservabilityTests
             Fault: DeliveryFaultKind.ObjectDisposed,
             RecognitionLanguage: DiagnosticRecognitionLanguage.French,
             SnippetImport: new DiagnosticSnippetImport(
-                DiagnosticSnippetImportSource.WisprFlow, DiagnosticSnippetImportOutcome.Completed, null, 5, 3, 1, 1, 0, 9));
+                DiagnosticSnippetImportSource.WisprFlow, DiagnosticSnippetImportOutcome.Completed, null, 5, 3, 1, 1, 0, 9),
+            WordImport: new DiagnosticWordImport(
+                DiagnosticWordImportSource.Handy, DiagnosticWordImportOutcome.Completed, null, 6, 3, 1, 1, 1, 2));
 
         var populated = typeof(PrivacySafeDiagnosticRecord)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(property => property.Name != "EqualityContract")
             .ToArray();
-        Assert.Equal(16, populated.Length);
+        Assert.Equal(17, populated.Length);
 
         var line = LocalDiagnosticLine.From(record, Guid.NewGuid());
         foreach (var property in populated)
