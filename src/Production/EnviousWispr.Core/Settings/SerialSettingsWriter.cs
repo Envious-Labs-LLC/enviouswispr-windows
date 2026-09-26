@@ -112,8 +112,15 @@ public sealed class SerialSettingsWriter : IDisposable
         try
         {
             var (next, value) = change(_current);
-            await _store.SaveAsync(next, cancellationToken).ConfigureAwait(false);
-            _current = next;
+
+            // THE VERY VALUE IT ALREADY HOLDS IS NOT WRITTEN. A change that decided to change nothing - a refused
+            // snippet, an import whose list moved under its review - returns the settings it was handed, and
+            // saving them would rewrite the file for nothing and could fail a refusal with a storage error.
+            if (!ReferenceEquals(next, _current))
+            {
+                await _store.SaveAsync(next, cancellationToken).ConfigureAwait(false);
+                _current = next;
+            }
             return new SettingsUpdateOutcome<T>(null, value);
         }
         catch (Exception exception) when (

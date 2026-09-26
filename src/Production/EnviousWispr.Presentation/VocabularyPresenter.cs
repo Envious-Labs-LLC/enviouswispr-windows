@@ -131,8 +131,10 @@ public sealed class VocabularyPresenter
         ArgumentNullException.ThrowIfNull(change);
         return _settings.SaveAsync(current =>
         {
+            // THE SAME DATA BACK IS NO CHANGE, and the settings go back unchanged, which the writer does not save:
+            // a refused snippet or import leaves the file alone rather than rewriting it with what it holds.
             var (data, value) = change(current.UserData);
-            return (current with { UserData = data }, value);
+            return (ReferenceEquals(data, current.UserData) ? current : current with { UserData = data }, value);
         });
     }
 }

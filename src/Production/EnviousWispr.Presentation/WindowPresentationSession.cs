@@ -87,6 +87,7 @@ public sealed class WindowPresentationSession : IAsyncDisposable
         Settings = new SettingsPresenter(parts.SettingsStore, parts.Settings);
         Vocabulary = new VocabularyPresenter(Settings);
         VocabularyImport = new VocabularyImportController(Vocabulary);
+        SnippetImport = new SnippetImportController(Vocabulary);
         // THE HISTORY PAGE READS THE PREFERENCES AS LAST WRITTEN, from the shared writer, so a
         // retention saved a moment ago is the retention the next load prunes by.
         History = new HistoryPresenter(parts.HistoryStore, parts.RecoveryStore, () => Settings.Current.Preferences.History, clock, _admission);
@@ -101,6 +102,9 @@ public sealed class WindowPresentationSession : IAsyncDisposable
     public VocabularyPresenter Vocabulary { get; }
 
     public VocabularyImportController VocabularyImport { get; }
+
+    /// <summary>The reviewed snippet import's one write, through the same writer as every other change.</summary>
+    public SnippetImportController SnippetImport { get; }
 
     public HistoryPresenter History { get; }
 

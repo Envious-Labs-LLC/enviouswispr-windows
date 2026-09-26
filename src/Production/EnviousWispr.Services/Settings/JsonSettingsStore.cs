@@ -29,7 +29,9 @@ public sealed class JsonSettingsStore : ISettingsStore
     {
         if (!File.Exists(_settingsPath))
         {
-            return new SettingsLoadResult(AppSettings.Default, SettingsLoadStatus.Missing);
+            // THE ONE PLACE A FRESH INSTALL IS KNOWN: no file has ever been written here. It gets the example
+            // snippets; every other status below starts from the plain defaults (SnippetStarters).
+            return new SettingsLoadResult(AppSettings.FreshInstall, SettingsLoadStatus.Missing);
         }
 
         try
