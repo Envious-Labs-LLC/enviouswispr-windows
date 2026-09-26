@@ -958,6 +958,254 @@ public sealed class WindowsTextDeliverySafetyTests
     };
 
     /// <summary>Holds the clipboard open from a thread of its own, as another app would, until disposed.</summary>
+    [ClipboardFact]
+    public async Task QuickAddsClearingWriteThatEmptiedTheClipboardAndThenFailedGivesTheClipboardBack()
+    {
+        // #247: THE CLEARING WRITE BEFORE THE COPY EMPTIES THE CLIPBOARD AND THEN FAILS, as OleSetClipboard can.
+        // The empty is our own change, so the person's clipboard is put back, and no Copy is sent.
+        const string sentinel = "EnviousWispr sentinel copied before Quick Add";
+        using var guard = ClipboardGuard.Capture();
+        ClipboardGuard.SetText(sentinel);
+        var copySent = false;
+
+        var selection = await WindowsClipboardPaste.TryReadSelectionAsync(
+            EmptyThenFailFor(string.Empty),
+            () => copySent = true,
+            CancellationToken.None);
+
+        Assert.Equal(sentinel, ClipboardGuard.GetText());
+        Assert.Null(selection);
+        Assert.False(copySent);
+    }
+
+    [ClipboardFact]
+    public async Task QuickAddReadsTheAppsAnswerToItsCopyAndGivesTheClipboardBack()
+    {
+        // #247: A STAND-IN APP ANSWERS THE COPY, on a thread of its own as another app would. Its answer is the
+        // selection, and the clipboard is put back to what the person had.
+        const string sentinel = "EnviousWispr sentinel copied before Quick Add";
+        using var guard = ClipboardGuard.Capture();
+        ClipboardGuard.SetText(sentinel);
+        using var app = new ClipboardWriters();
+
+        var selection = await WindowsClipboardPaste.TryReadSelectionAsync(
+            RealWrite,
+            () => app.Write("selected word"),
+            CancellationToken.None);
+
+        Assert.Equal("selected word", selection);
+        Assert.Equal(sentinel, ClipboardGuard.GetText());
+    }
+
+    [ClipboardFact]
+    public async Task QuickAddGivesBackAnEmptyClipboardEmpty()
+    {
+        // #247: THE EMPTY ORIGINAL. A clipboard that held nothing holds nothing after Quick Add read the answer.
+        using var guard = ClipboardGuard.Capture();
+        ClipboardGuard.Clear();
+        Assert.Null(ClipboardGuard.GetText());
+        using var app = new ClipboardWriters();
+
+        var selection = await WindowsClipboardPaste.TryReadSelectionAsync(
+            RealWrite,
+            () => app.Write("selected word"),
+            CancellationToken.None);
+
+        Assert.Equal("selected word", selection);
+        Assert.Null(ClipboardGuard.GetText());
+    }
+
+    [ClipboardFact]
+    public async Task QuickAddWithNoAnswerToItsCopyGivesTheClipboardBack()
+    {
+        // #247: THE APP IGNORES THE COPY. After the wait, our clearing write is still what is on the clipboard,
+        // which is ours to replace, so the person's clipboard comes back and nothing is read.
+        const string sentinel = "EnviousWispr sentinel copied before Quick Add";
+        using var guard = ClipboardGuard.Capture();
+        ClipboardGuard.SetText(sentinel);
+
+        var selection = await WindowsClipboardPaste.TryReadSelectionAsync(
+            RealWrite,
+            static () => true,
+            CancellationToken.None);
+
+        Assert.Equal(sentinel, ClipboardGuard.GetText());
+        Assert.Null(selection);
+    }
+
+    [ClipboardFact]
+    public async Task APersonsCopyWhileQuickAddWaitsForTheAnswerToSettleSurvives()
+    {
+        // #247: THE APP ANSWERS, AND THE PERSON COPIES IN ANOTHER APP A MOMENT LATER, before Quick Add has read
+        // the answer. The person's copy has a different owner, so it is left alone: not read as the selection,
+        // and not restored over. The person's copy is a plain Win32 write (no OLE flush) from a thread already
+        // running, so it lands a few milliseconds after the answer, well inside the 20 ms settle.
+        const string sentinel = "EnviousWispr sentinel copied before Quick Add";
+        const string meanwhile = "EnviousWispr text the person copied meanwhile";
+        using var guard = ClipboardGuard.Capture();
+        ClipboardGuard.SetText(sentinel);
+        using var app = new ClipboardWriters();
+        using var go = new ManualResetEventSlim();
+        var personWrote = false;
+        var person = new Thread(() =>
+        {
+            if (!go.Wait(TimeSpan.FromSeconds(10)))
+            {
+                return;
+            }
+
+            // test-fixture-timer: the person's copy lands 5 ms after the answer, inside the 20 ms settle.
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (clock.Elapsed < TimeSpan.FromMilliseconds(5))
+            {
+                Thread.SpinWait(100);
+            }
+
+            personWrote = RawClipboard.WriteText(meanwhile);
+        })
+        {
+            IsBackground = true,
+        };
+        person.Start();
+
+        var selection = await WindowsClipboardPaste.TryReadSelectionAsync(
+            RealWrite,
+            () =>
+            {
+                var answered = app.Write("selected word");
+                go.Set();
+                return answered;
+            },
+            CancellationToken.None);
+        Assert.True(person.Join(TimeSpan.FromSeconds(10)));
+
+        Assert.True(personWrote, "the person's copy landed");
+        Assert.Equal(meanwhile, ClipboardGuard.GetText());
+        Assert.Null(selection);
+    }
+
+    /// <summary>A plain Win32 clipboard write, as a native app makes one: opened with no window, so it owns the clipboard through none.</summary>
+    private static class RawClipboard
+    {
+        private const uint UnicodeText = 13;
+        private const uint MoveableMemory = 0x0002;
+
+        public static bool WriteText(string text)
+        {
+            var bytes = (text.Length + 1) * 2;
+            var memory = GlobalAlloc(MoveableMemory, (UIntPtr)bytes);
+            if (memory == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            var target = GlobalLock(memory);
+            Marshal.Copy(text.ToCharArray(), 0, target, text.Length);
+            Marshal.WriteInt16(target, text.Length * 2, 0);
+            GlobalUnlock(memory);
+            for (var attempt = 0; attempt < 50; attempt++)
+            {
+                if (OpenClipboard(IntPtr.Zero))
+                {
+                    try
+                    {
+                        return EmptyClipboard() && SetClipboardData(UnicodeText, memory) != IntPtr.Zero;
+                    }
+                    finally
+                    {
+                        CloseClipboard();
+                    }
+                }
+
+                Thread.SpinWait(1000);
+            }
+
+            return false;
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool OpenClipboard(IntPtr newOwner);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool CloseClipboard();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool EmptyClipboard();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr SetClipboardData(uint format, IntPtr memory);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GlobalLock(IntPtr memory);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GlobalUnlock(IntPtr memory);
+    }
+
+    private static void RealWrite(string text) =>
+        System.Windows.Forms.Clipboard.SetDataObject(text, copy: true, retryTimes: 10, retryDelay: 50);
+
+    /// <summary>A stand-in for another app: each write runs on a thread of its own that stays alive until disposed, so the clipboard's owner stays that thread's window as it would for a running app.</summary>
+    private sealed class ClipboardWriters : IDisposable
+    {
+        private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
+        private readonly ManualResetEventSlim _release = new();
+        private readonly List<Thread> _threads = [];
+
+        /// <summary>Writes the text from a new thread and returns once it is on the clipboard; true when it landed.</summary>
+        public bool Write(string text)
+        {
+            var written = false;
+            using var done = new ManualResetEventSlim();
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    System.Windows.Forms.Clipboard.SetDataObject(text, copy: true, retryTimes: 10, retryDelay: 50);
+                    written = true;
+                }
+                catch (ExternalException)
+                {
+                }
+
+                done.Set();
+                // deadline-fallback: released by Dispose; the deadline only bounds a test that never disposes.
+                _release.Wait(Deadline);
+            })
+            {
+                IsBackground = true,
+            };
+            thread.SetApartmentState(ApartmentState.STA);
+            lock (_threads)
+            {
+                _threads.Add(thread);
+            }
+
+            thread.Start();
+            if (!done.Wait(Deadline))
+            {
+                throw new TimeoutException("The stand-in writer did not report within its deadline.");
+            }
+
+            return written;
+        }
+
+        public void Dispose()
+        {
+            _release.Set();
+            lock (_threads)
+            {
+                foreach (var thread in _threads)
+                {
+                    thread.Join(Deadline);
+                }
+            }
+        }
+    }
+
     private sealed class ClipboardHolder : IDisposable
     {
         private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
@@ -1048,6 +1296,12 @@ public sealed class WindowsTextDeliverySafetyTests
         public static void SetText(string text) => OnSta(() =>
         {
             System.Windows.Forms.Clipboard.SetText(text);
+            return true;
+        });
+
+        public static void Clear() => OnSta(static () =>
+        {
+            System.Windows.Forms.Clipboard.Clear();
             return true;
         });
 

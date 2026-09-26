@@ -1,5 +1,6 @@
 using EnviousWispr.Core.Dictation;
 using System.Collections.Specialized;
+using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
@@ -83,26 +84,59 @@ internal static class WindowsClipboardPaste
     /// text. Quick Add otherwise tells the user to select something and try again, which they
     /// cannot act on, because they DID select something and the app simply did not say so.
     ///
-    /// THE RESTORE IS GUARDED THE SAME WAY THE PASTE PATH GUARDS ITS OWN. The clipboard is only put
-    /// back if the sequence number still matches what our Copy produced. If something else wrote to
-    /// the clipboard in between - another app, the user, a paste - restoring would destroy THEIR
-    /// write to undo ours, which is worse than leaving the borrowed content in place.
+    /// THE RESTORE REPLACES ONLY WHAT THIS READ PUT THERE (#247): our own clearing write, or the
+    /// target app's answer to our Copy. Anything newer - the person copying, another app writing -
+    /// is left alone, because restoring would destroy THEIR write to undo ours.
+    ///
+    /// HOW THE APP'S ANSWER IS TOLD APART FROM A NEWER WRITE. The answer is the first change after our
+    /// clearing write, taken once it has held still for a moment, and only while every change in it
+    /// came from the clipboard owner that made the first one: an app writing its copy owns the
+    /// clipboard through the same window for every format it offers, and the person copying in
+    /// another app changes the owner. A change of owner is somebody else's write: nothing is read
+    /// from it and nothing is restored over it. The race accepted: a write by somebody else that
+    /// lands BEFORE the app answers (in the milliseconds between our Copy and its reply) is taken for
+    /// the answer and restored over, as macOS accepts (catalog: macos.quickadd.writer-identity-limit);
+    /// and two writers that both own the clipboard through no window are indistinguishable.
     ///
     /// A FAILED COPY LEAVES THE CLIPBOARD RESTORED AND RETURNS NOTHING. Every exit below either
-    /// restores or never wrote, so there is no path where the user is left holding the selection we
-    /// took and no word to show for it.
+    /// restores what is ours, or never wrote, or leaves a newer write alone; a clearing write that
+    /// emptied the clipboard and then failed is ours and is put back.
     ///
     /// Returns null when the selection could not be read for any reason. The caller cannot tell
     /// WHY, deliberately: every reason has the same remedy, which is to tell the user to try again,
     /// and a caller branching on the reason would be inventing distinctions it cannot act on.
     /// </remarks>
     public static Task<string?> TryReadSelectionAsync(CancellationToken cancellationToken) =>
-        RunStaAsync<string?>(
-            () => ReadSelectionOnSta(cancellationToken),
+        TryReadSelectionAsync(SetClipboardTextOrThrow, SendCtrlC, cancellationToken);
+
+    /// <summary>The selection read with its clipboard writer and its Copy named: production passes the real ones; a test passes a writer that fails after changing the clipboard, and a Copy answered by a stand-in app.</summary>
+    /// <remarks>
+    /// THE WRITER AND THE KEYSTROKE, NOT THE GUARD. What decides whether the clipboard is ours to put
+    /// back - the sequence number and the owner - is read here, never passed in.
+    /// </remarks>
+    internal static Task<string?> TryReadSelectionAsync(
+        Action<string> writeText,
+        Func<bool> sendCopy,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(writeText);
+        ArgumentNullException.ThrowIfNull(sendCopy);
+        return RunStaAsync<string?>(
+            () => ReadSelectionOnSta(writeText, sendCopy, cancellationToken),
             onUnexpectedFailure: static _ => null,
             cancellationToken);
+    }
 
-    private static string? ReadSelectionOnSta(CancellationToken cancellationToken)
+    /// <summary>How long the app has to start answering the Copy; the macOS fallback's own wait.</summary>
+    private static readonly TimeSpan CopyAnswerDeadline = TimeSpan.FromMilliseconds(400);
+
+    /// <summary>How long an answer must hold still before it is read; the macOS fallback's own settle.</summary>
+    private static readonly TimeSpan CopyAnswerSettle = TimeSpan.FromMilliseconds(20);
+
+    private static string? ReadSelectionOnSta(
+        Action<string> writeText,
+        Func<bool> sendCopy,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -117,30 +151,105 @@ internal static class WindowsClipboardPaste
         // Emptied rather than left as it was, so a Copy that silently does nothing - a focused app
         // with no selection at all - cannot hand back whatever the user had copied earlier as if it
         // were their selection. That is the plausible-value trap: the read would succeed and return
-        // something entirely unrelated.
-        if (!TrySetClipboardText(string.Empty))
+        // something entirely unrelated. A clearing write that fails can already have emptied the
+        // clipboard; when it did so by our hand it is ours, and the clipboard is put back.
+        var cleared = WriteClipboardText(string.Empty, writeText);
+        if (!cleared.Written)
+        {
+            _ = GiveBack(snapshot, cleared.OwnedSequence);
+            return null;
+        }
+
+        var ourClear = cleared.OwnedSequence;
+        if (!sendCopy())
+        {
+            _ = GiveBack(snapshot, ourClear);
+            return null;
+        }
+
+        var answer = AwaitCopyAnswer(ourClear!.Value);
+        switch (answer.Kind)
+        {
+            case CopyAnswerKind.None:
+                // The app did not answer: the clipboard still holds our clearing write, or has moved
+                // since, and only the first is ours to put back.
+                _ = GiveBack(snapshot, ourClear);
+                return null;
+
+            case CopyAnswerKind.Unsettled:
+                _ = GiveBack(snapshot, answer.Sequence);
+                return null;
+
+            case CopyAnswerKind.SomebodyElse:
+                // A write by another owner: not the selection, and not ours to undo.
+                return null;
+        }
+
+        var selection = TryGetClipboardText();
+
+        // READ AND RESTORED ONLY WHILE IT IS STILL THE ANSWER. A write that lands during the read is
+        // the person's: what was read may be theirs, so it is not used, and the restore declines.
+        if (GetClipboardSequenceNumber() != answer.Sequence)
         {
             return null;
         }
 
-        var beforeCopy = GetClipboardSequenceNumber();
-        if (!SendCtrlC())
-        {
-            TryRestoreClipboard(snapshot);
-            return null;
-        }
-
-        // The same settle the paste path uses. The Copy is asynchronous from our side: the app has
-        // to receive the keystroke, act on it, and write to the clipboard.
-        Thread.Sleep(200);
-
-        var selection = GetClipboardSequenceNumber() != beforeCopy
-            ? TryGetClipboardText()
-            : null;
-
-        TryRestoreClipboard(snapshot);
+        _ = GiveBack(snapshot, answer.Sequence);
         return string.IsNullOrWhiteSpace(selection) ? null : selection;
     }
+
+    /// <summary>Waits for the app's answer to the Copy: the first change after our clearing write, once it holds still, while one owner made all of it.</summary>
+    private static CopyAnswer AwaitCopyAnswer(uint ourClear)
+    {
+        var started = Stopwatch.StartNew();
+        var current = GetClipboardSequenceNumber();
+        while (current == ourClear)
+        {
+            if (started.Elapsed >= CopyAnswerDeadline)
+            {
+                return new CopyAnswer(CopyAnswerKind.None, 0);
+            }
+
+            Thread.Sleep(5);
+            current = GetClipboardSequenceNumber();
+        }
+
+        var answeringOwner = GetClipboardOwner();
+        var settleDeadline = started.Elapsed + CopyAnswerDeadline;
+        while (true)
+        {
+            Thread.Sleep(CopyAnswerSettle);
+            var next = GetClipboardSequenceNumber();
+            if (GetClipboardOwner() != answeringOwner)
+            {
+                return new CopyAnswer(CopyAnswerKind.SomebodyElse, next);
+            }
+
+            if (next == current)
+            {
+                return new CopyAnswer(CopyAnswerKind.Answered, current);
+            }
+
+            if (started.Elapsed >= settleDeadline)
+            {
+                // Still moving under the same owner: the app never finished, so nothing is read, and
+                // its half-written answer is ours to replace while it stays the last write.
+                return new CopyAnswer(CopyAnswerKind.Unsettled, next);
+            }
+
+            current = next;
+        }
+    }
+
+    private enum CopyAnswerKind
+    {
+        None,
+        Answered,
+        Unsettled,
+        SomebodyElse,
+    }
+
+    private readonly record struct CopyAnswer(CopyAnswerKind Kind, uint Sequence);
 
     /// <summary>The clipboard's plain text, read WITHOUT CHANGING THE CLIPBOARD; null when it holds none or cannot be read.</summary>
     /// <remarks>
