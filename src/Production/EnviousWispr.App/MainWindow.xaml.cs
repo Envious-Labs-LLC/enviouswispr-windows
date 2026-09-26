@@ -2632,7 +2632,8 @@ public sealed partial class MainWindow : Window, IDisposable
 
         try
         {
-            await File.WriteAllTextAsync(
+            // A NEW FILE PUT AT THE CHOSEN NAME, never a write through it (ExportFileWriter).
+            await EnviousWispr.Services.UserData.ExportFileWriter.WriteReplacingAsync(
                 file.Path,
                 CustomWordImport.Write(_settings.UserData.CustomWords)).ConfigureAwait(true);
         }

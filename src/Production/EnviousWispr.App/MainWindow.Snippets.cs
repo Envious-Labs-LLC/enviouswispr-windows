@@ -141,7 +141,8 @@ public sealed partial class MainWindow
         var text = SnippetsTransferDocument.Write(latest.Snippets, latest.SnippetKeyword, DateTimeOffset.UtcNow, Guid.NewGuid);
         try
         {
-            await File.WriteAllTextAsync(file.Path, text, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false)).ConfigureAwait(true);
+            // A NEW FILE PUT AT THE CHOSEN NAME, never a write through it (ExportFileWriter).
+            await ExportFileWriter.WriteReplacingAsync(file.Path, text).ConfigureAwait(true);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
