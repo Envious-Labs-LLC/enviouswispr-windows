@@ -9,6 +9,12 @@ public static class AppSettingsValidator
     public const int MaximumSnippets = 1_000;
     public const int MaximumSnippetKeywordLength = 64;
 
+    /// <summary>The longest trigger the store keeps; the page's box and snippet import refuse longer.</summary>
+    public const int MaximumSnippetTriggerLength = 128;
+
+    /// <summary>The longest snippet text the store keeps; the page's box and snippet import refuse longer.</summary>
+    public const int MaximumSnippetBodyLength = 10_000;
+
     public static AppError? Validate(AppSettings? settings, AppErrorStage stage)
     {
         if (settings is null ||
@@ -127,7 +133,7 @@ public static class AppSettingsValidator
         userData.Snippets.All(entry =>
             entry is not null &&
             !string.IsNullOrWhiteSpace(entry.Name) &&
-            entry.Name.Length <= 128 &&
+            entry.Name.Length <= MaximumSnippetTriggerLength &&
             entry.Body is not null &&
-            entry.Body.Length <= 10_000);
+            entry.Body.Length <= MaximumSnippetBodyLength);
 }

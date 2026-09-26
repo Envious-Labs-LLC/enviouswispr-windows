@@ -42,6 +42,17 @@ public sealed record AppSettings(
         PreferredMicrophoneId: null,
         Observability: ObservabilityPreferences.Default);
 
+    /// <summary>What a person with no settings file at all starts on: the defaults plus the six example snippets.</summary>
+    /// <remarks>
+    /// ONLY FOR A PROFILE THAT HAS NEVER EXISTED. The store returns this for a missing file and nothing else; an
+    /// unreadable, newer, migrated or reset file starts from <see cref="Default"/>, so an example is never added to
+    /// a list a person already had (<see cref="SnippetStarters"/>).
+    /// </remarks>
+    public static AppSettings FreshInstall { get; } = Default with
+    {
+        UserData = ReusableUserData.Empty.WithSnippets(SnippetStarters.All),
+    };
+
     public PortableProfile ToPortableProfile() => new(
         PortableProfile.CurrentSchemaVersion,
         Preferences,

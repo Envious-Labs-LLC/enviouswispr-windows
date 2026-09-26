@@ -25,7 +25,7 @@ deterministic result.
 
 Local diagnostics contain only sealed enums, bounded durations, timestamps, coarse engine/hardware classes,
 typed failure/error categories, which deterministic text-cleanup step a record is about, whether that step
-completed or was skipped, and one boolean saying whether it altered the text. They cannot carry transcript,
+completed or was skipped, one boolean saying whether it altered the text, and the counts and fixed outcome of a snippet import (never a trigger or a snippet's text). They cannot carry transcript,
 audio, keys, clipboard, surrounding text, paths, model IDs, account names, device names/IDs, exception
 messages, or stack traces. The step name and its status are fixed enum members and the alteration flag is a
 single bit, so none of the three can carry a word that was said, and the flag says only THAT text changed.

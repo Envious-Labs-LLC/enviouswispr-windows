@@ -343,7 +343,8 @@ public partial class App : Application, IAsyncDisposable
                 _logger.TelemetryAvailable,
                 _releaseIdentity,
                 _updateService.IsStoreInstalled,
-                _updateService.InstalledVersion));
+                _updateService.InstalledVersion,
+                _dataDirectory));
         _window.SettingsChanged += OnSettingsChanged;
         _window.SessionStatusChanged += OnSessionStatusChanged;
         _window.AudioDevicesChanged += OnAudioDevicesChanged;
@@ -351,6 +352,7 @@ public partial class App : Application, IAsyncDisposable
         _window.RecoveryUndoRequested += OnRecoveryUndoRequested;
         _window.HistoryPasteRequested += OnHistoryPasteRequested;
         _window.DiagnosticsExportCompleted += OnDiagnosticsExportCompleted;
+        _window.SnippetImportReported += OnSnippetImportReported;
         _window.UpdateCheckRequested += OnUpdateCheckRequested;
         _window.UpdateApplyRequested += OnUpdateApplyRequested;
         _window.ModelDownloadRequested += OnModelDownloadRequested;
@@ -581,6 +583,7 @@ public partial class App : Application, IAsyncDisposable
             window.RecoveryUndoRequested -= OnRecoveryUndoRequested;
             window.HistoryPasteRequested -= OnHistoryPasteRequested;
             window.DiagnosticsExportCompleted -= OnDiagnosticsExportCompleted;
+            window.SnippetImportReported -= OnSnippetImportReported;
             window.UpdateCheckRequested -= OnUpdateCheckRequested;
             window.UpdateApplyRequested -= OnUpdateApplyRequested;
             window.ModelDownloadRequested -= OnModelDownloadRequested;
@@ -907,6 +910,16 @@ public partial class App : Application, IAsyncDisposable
                     : AppEventCode.TelemetryConsentDisabled));
         }
     }
+
+    /// <summary>One snippet import attempt, logged as counts and categories (macOS <c>SnippetImportReporter</c>).</summary>
+    private void OnSnippetImportReported(DiagnosticSnippetImport report) =>
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.SnippetsImported,
+            report.Outcome != DiagnosticSnippetImportOutcome.Failed ? AppFailureCategory.None
+                : report.Failure == SnippetImportFailure.WriteFailed ? AppFailureCategory.StorageUnavailable
+                : AppFailureCategory.InvalidData,
+            SnippetImport: report));
 
     private void OnDiagnosticsExportCompleted(bool succeeded, int recordCount)
     {

@@ -138,6 +138,7 @@ public enum AppEventCode
     RuntimeSelectionObserved,
     DiagnosticsExported,
     DiagnosticsExportFailed,
+
     TelemetryConsentEnabled,
     TelemetryConsentDisabled,
     /// <summary>
@@ -350,4 +351,7 @@ public enum AppEventCode
     DataDeletionIncomplete,
 
     UnhandledFailure,
+
+    /// <summary>A snippet import attempt ended; the counts ride in <see cref="AppLogEntry.SnippetImport"/>.</summary>
+    SnippetsImported,
 }
