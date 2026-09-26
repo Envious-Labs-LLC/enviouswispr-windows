@@ -19,6 +19,13 @@ public static class DeliveryStatusReport
     /// <summary>Turns a delivery into the sentence shown on the pill.</summary>
     public static DictationStatus For(DeliveryResult result) => result switch
     {
+        // A CLIPBOARD THAT COULD NOT BE GIVEN BACK IS SAID FIRST (#242): the paste borrowed it, the restore
+        // failed, and it may now hold these words instead of what the person had copied. Every other arm
+        // would read as a clean finish. A newer write left alone is not this - that clipboard is theirs.
+        { Delivered: true, ClipboardUncertain: true } =>
+            DictationStatus.Warning("Pasted, but your clipboard could not be restored"),
+        { ClipboardUncertain: true } =>
+            DictationStatus.Warning("Clipboard unavailable and could not be restored. Text is held safely in memory"),
         { Delivered: true, Route: TextDeliveryRoute.UiAutomationValue } =>
             DictationStatus.Success("Inserted safely in the app you started in"),
 

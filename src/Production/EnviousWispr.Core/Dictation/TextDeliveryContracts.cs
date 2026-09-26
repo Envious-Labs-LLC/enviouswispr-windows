@@ -226,14 +226,22 @@ public sealed record TextCommitRequest(
     TextDeliveryOptions Options,
     TextDeliveryRefusalReason ForcedRefusalReason = TextDeliveryRefusalReason.None);
 
+/// <param name="ClipboardRestored">The person's clipboard was put back after the paste borrowed it.</param>
+/// <param name="ClipboardUncertain">
+/// The paste borrowed the clipboard, it was still ours to give back, and the restore failed: it may hold
+/// the dictated words, or nothing, in place of what the person had. False when the restore landed, when
+/// a newer write was left alone (not ours to undo), and when nothing was borrowed.
+/// </param>
 public sealed record TextCommitResult(
     TextDeliveryRoute Route,
     bool Delivered,
     bool ClipboardFallback,
     bool ClipboardRestored,
-    TextDeliveryRefusalReason RefusalReason = TextDeliveryRefusalReason.None);
+    TextDeliveryRefusalReason RefusalReason = TextDeliveryRefusalReason.None,
+    bool ClipboardUncertain = false);
 
 /// <param name="Fault">The defect that stopped the delivery, for <see cref="TextDeliveryRefusalReason.DeliveryFaulted"/> and <see cref="TextDeliveryRefusalReason.DeliveryDisposed"/>; null otherwise.</param>
+/// <param name="ClipboardUncertain">Carried from <see cref="TextCommitResult.ClipboardUncertain"/>: the clipboard could not be given back, and the person is told.</param>
 public sealed record DeliveryResult(
     DictationSessionId SessionId,
     bool Delivered,
@@ -242,7 +250,8 @@ public sealed record DeliveryResult(
     TextDeliveryRefusalReason RefusalReason = TextDeliveryRefusalReason.None,
     CursorRepairDisposition RepairDisposition = CursorRepairDisposition.FallbackPayload,
     bool ClipboardRestored = false,
-    DeliveryFault? Fault = null);
+    DeliveryFault? Fault = null,
+    bool ClipboardUncertain = false);
 
 public interface ITextTargetAdapter
 {

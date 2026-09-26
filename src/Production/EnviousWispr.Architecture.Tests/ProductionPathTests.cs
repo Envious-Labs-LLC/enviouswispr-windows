@@ -176,6 +176,31 @@ public sealed class ProductionPathTests
     }
 
     [Fact]
+    public async Task ADeliveredPasteThatCouldNotGiveTheClipboardBackIsLoggedAndSaidNotFinishedClean()
+    {
+        // #242, THROUGH THE PRODUCTION EFFECTS: the words landed, so the delivery line is still
+        // TextDeliveryCompleted, and beside it the log names the clipboard that was not given back and the
+        // pill says it - where a paste with ClipboardRestored false used to read as a clean finish.
+        var world = ComposedSessionWorld.Create("hello world");
+        world.Delivery.Answer = new DeliveryResult(
+            default,
+            Delivered: true,
+            ClipboardFallback: false,
+            TextDeliveryRoute.ClipboardPaste,
+            ClipboardRestored: false,
+            ClipboardUncertain: true);
+        await world.PressAsync();
+
+        var released = await world.Coordinator.SubmitAsync(PushToTalkSignal.Released).WaitAsync(Patience);
+
+        Assert.Equal(SessionCommandDisposition.Applied, released.Disposition);
+        Assert.Contains(world.Log.Entries, entry => entry.Event == AppEventCode.TextDeliveryCompleted);
+        var clipboard = Assert.Single(world.Log.Entries, entry => entry.Event == AppEventCode.TextDeliveryClipboardNotRestored);
+        Assert.Equal(AppFailureCategory.TextDelivery, clipboard.Failure);
+        Assert.Equal("Pasted, but your clipboard could not be restored", Assert.Single(world.View.Deliveries).Delivered.Text);
+    }
+
+    [Fact]
     public async Task AdmissionUsesInjectedResourceProbe()
     {
         // THE MACHINE THE SESSION ASKS IS THE ONE IT WAS COMPOSED WITH (plan-2 step 15). The shell

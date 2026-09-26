@@ -71,6 +71,7 @@ emit(JsonSerializer.Serialize(new
     result.Delivered,
     result.ClipboardFallback,
     result.ClipboardRestored,
+    result.ClipboardUncertain,
     refusal = result.RefusalReason.ToString(),
     repair = result.RepairDisposition.ToString(),
     recoveryHeldInMemory = delivery.RecoveryText is not null,

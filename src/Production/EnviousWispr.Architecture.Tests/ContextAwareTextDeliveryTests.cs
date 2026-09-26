@@ -119,6 +119,71 @@ public sealed class ContextAwareTextDeliveryTests
     }
 
     [Theory]
+    [InlineData(true, true, false, "Pasted, but your clipboard could not be restored")]
+    [InlineData(true, false, false, "Pasted safely")]
+    [InlineData(true, false, true, "Pasted safely and restored your clipboard")]
+    [InlineData(false, true, false, "Clipboard unavailable and could not be restored. Text is held safely in memory")]
+    [InlineData(false, false, false, "Clipboard unavailable. Text is held safely in memory")]
+    public async Task AClipboardThePasteCouldNotGiveBackTravelsToTheDeliveryAndIsSaidPlainly(
+        bool delivered,
+        bool uncertain,
+        bool restored,
+        string expectedSentence)
+    {
+        // #242: THE COMMIT'S WORD THAT THE CLIPBOARD WAS NOT GIVEN BACK REACHES THE CALLER, and the sentence
+        // the person reads says so instead of reading as a clean finish. A declined restore (a newer write
+        // left alone) is still "Pasted safely": that clipboard belongs to whoever wrote it.
+        var adapter = new FakeTargetAdapter(
+            AvailableContext(left: "", right: ""),
+            commitResult: new TextCommitResult(
+                delivered ? TextDeliveryRoute.ClipboardPaste : TextDeliveryRoute.None,
+                Delivered: delivered,
+                ClipboardFallback: false,
+                ClipboardRestored: restored,
+                delivered ? TextDeliveryRefusalReason.None : TextDeliveryRefusalReason.ClipboardUnavailable,
+                ClipboardUncertain: uncertain));
+        var delivery = new ContextAwareTextDelivery(adapter);
+
+        var result = await delivery.DeliverAsync(Request("borrowed"));
+
+        Assert.Equal(delivered, result.Delivered);
+        Assert.Equal(uncertain, result.ClipboardUncertain);
+        Assert.Equal(restored, result.ClipboardRestored);
+        Assert.Equal(expectedSentence, DeliveryStatusReport.For(result).Text);
+    }
+
+    [Theory]
+    [InlineData(true, TextDeliveryRoute.ClipboardPaste, true, false, null)]
+    [InlineData(true, TextDeliveryRoute.ClipboardPaste, false, true, "TextDeliveryClipboardNotRestored")]
+    [InlineData(true, TextDeliveryRoute.ClipboardPaste, false, false, "TextDeliveryClipboardRestoreDeclined")]
+    [InlineData(false, TextDeliveryRoute.None, false, true, "TextDeliveryClipboardNotRestored")]
+    [InlineData(false, TextDeliveryRoute.None, false, false, null)]
+    [InlineData(true, TextDeliveryRoute.UiAutomationValue, false, false, null)]
+    [InlineData(true, TextDeliveryRoute.ClipboardOnly, false, false, null)]
+    public void EveryCallerOfADeliveryLogsAClipboardThatWasNotGivenBack(
+        bool delivered,
+        TextDeliveryRoute route,
+        bool restored,
+        bool uncertain,
+        string? expectedEvent)
+    {
+        // THE LINE A DICTATION, PASTE LAST DICTATION, UNDO AND HISTORY'S PASTE ALL WRITE BESIDE THEIR OWN (#242).
+        // A failed give-back is a delivery failure; a declined one is named and is not; a direct write and a
+        // requested copy never borrowed the clipboard and say nothing.
+        var entry = DeliveryClipboardDiagnostics.EntryFor(
+            new DeliveryResult(SessionId, delivered, ClipboardFallback: false, route, ClipboardRestored: restored, ClipboardUncertain: uncertain),
+            DateTimeOffset.UnixEpoch);
+
+        Assert.Equal(expectedEvent, entry?.Event.ToString());
+        if (entry is not null)
+        {
+            Assert.Equal(
+                uncertain ? EnviousWispr.Core.Diagnostics.AppFailureCategory.TextDelivery : EnviousWispr.Core.Diagnostics.AppFailureCategory.None,
+                entry.Failure);
+        }
+    }
+
+    [Theory]
     [InlineData(DeliveryStage.Copy)]
     [InlineData(DeliveryStage.ContextCapture)]
     [InlineData(DeliveryStage.Commit)]

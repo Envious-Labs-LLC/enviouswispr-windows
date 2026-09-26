@@ -252,6 +252,28 @@ public static class LastDictationDiagnostics
     };
 }
 
+/// <summary>The log's second line for a delivery whose borrowed clipboard was not given back; null when there is nothing to say.</summary>
+/// <remarks>
+/// SHARED BY EVERY CALLER OF A DELIVERY (#242): a dictation, Paste Last Dictation, Escape Recovery Undo
+/// and History's Paste each write it beside their own line, so a paste that landed with the clipboard left
+/// holding the words is never logged as a clean finish. A restore that failed is a failure; a restore
+/// declined because something wrote after the paste is not, and is logged under its own name.
+/// </remarks>
+public static class DeliveryClipboardDiagnostics
+{
+    public static EnviousWispr.Core.Diagnostics.AppLogEntry? EntryFor(DeliveryResult? delivery, DateTimeOffset at) => delivery switch
+    {
+        { ClipboardUncertain: true } => new(
+            at,
+            EnviousWispr.Core.Diagnostics.AppEventCode.TextDeliveryClipboardNotRestored,
+            EnviousWispr.Core.Diagnostics.AppFailureCategory.TextDelivery),
+        { Delivered: true, Route: TextDeliveryRoute.ClipboardPaste, ClipboardRestored: false } => new(
+            at,
+            EnviousWispr.Core.Diagnostics.AppEventCode.TextDeliveryClipboardRestoreDeclined),
+        _ => null,
+    };
+}
+
 /// <summary>The log's error code for each way a delivery did not land, shared by a dictation and a reuse.</summary>
 /// <remarks>
 /// EACH WAY THE WORDS DID NOT LAND KEEPS ITS NAME IN THE LOG (plan-2 step 13): an accessibility failure

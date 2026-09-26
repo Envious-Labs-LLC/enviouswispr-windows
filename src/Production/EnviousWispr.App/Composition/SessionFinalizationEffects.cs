@@ -97,6 +97,10 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts) 
             // exception's kind, both fixed enums; never its type name or message.
             DeliveryStage: delivery.Fault?.Stage,
             Fault: delivery.Fault?.Kind));
+        if (DeliveryClipboardDiagnostics.EntryFor(delivery, DateTimeOffset.UtcNow) is { } clipboard)
+        {
+            _logger.Write(clipboard);
+        }
     }
 
     public void ReportDelivery(DeliveryResult delivery, string? language) =>
