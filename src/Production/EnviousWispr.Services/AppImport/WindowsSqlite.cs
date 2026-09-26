@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace EnviousWispr.Services.Snippets;
+namespace EnviousWispr.Services.AppImport;
 
 /// <summary>The few SQLite calls a read of another app's database needs, through the SQLite Windows itself ships.</summary>
 /// <remarks>
@@ -11,7 +11,7 @@ namespace EnviousWispr.Services.Snippets;
 ///
 /// A TYPE THAT DRIFTS IS A REFUSAL, NOT A CONVERSION. SQLite columns are dynamically typed, so a changed schema can
 /// hand back an integer where text belongs; converting it silently would turn a malformed source into plausible
-/// snippets (macOS <c>SmartImportSQLiteReader</c>, strict column reads). Every read below throws
+/// words or snippets (macOS <c>SmartImportSQLiteReader</c>, strict column reads). Every read below throws
 /// <see cref="SqliteReadException"/> on a type it did not ask for.
 /// </remarks>
 internal static class WindowsSqlite

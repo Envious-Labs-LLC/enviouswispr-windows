@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using EnviousWispr.Core.Settings;
+using EnviousWispr.Services.AppImport;
 using EnviousWispr.Services.Snippets;
 
 namespace EnviousWispr.Architecture.Tests;

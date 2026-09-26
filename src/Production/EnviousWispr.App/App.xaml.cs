@@ -353,6 +353,7 @@ public partial class App : Application, IAsyncDisposable
         _window.HistoryPasteRequested += OnHistoryPasteRequested;
         _window.DiagnosticsExportCompleted += OnDiagnosticsExportCompleted;
         _window.SnippetImportReported += OnSnippetImportReported;
+        _window.WordImportReported += OnWordImportReported;
         _window.UpdateCheckRequested += OnUpdateCheckRequested;
         _window.UpdateApplyRequested += OnUpdateApplyRequested;
         _window.ModelDownloadRequested += OnModelDownloadRequested;
@@ -584,6 +585,7 @@ public partial class App : Application, IAsyncDisposable
             window.HistoryPasteRequested -= OnHistoryPasteRequested;
             window.DiagnosticsExportCompleted -= OnDiagnosticsExportCompleted;
             window.SnippetImportReported -= OnSnippetImportReported;
+            window.WordImportReported -= OnWordImportReported;
             window.UpdateCheckRequested -= OnUpdateCheckRequested;
             window.UpdateApplyRequested -= OnUpdateApplyRequested;
             window.ModelDownloadRequested -= OnModelDownloadRequested;
@@ -920,6 +922,16 @@ public partial class App : Application, IAsyncDisposable
                 : report.Failure == SnippetImportFailure.WriteFailed ? AppFailureCategory.StorageUnavailable
                 : AppFailureCategory.InvalidData,
             SnippetImport: report));
+
+    /// <summary>One word import from another app, logged as counts and categories, never a word.</summary>
+    private void OnWordImportReported(DiagnosticWordImport report) =>
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.WordsImportedFromApp,
+            report.Outcome != DiagnosticWordImportOutcome.Failed ? AppFailureCategory.None
+                : report.Failure == WordImportFailure.WriteFailed ? AppFailureCategory.StorageUnavailable
+                : AppFailureCategory.InvalidData,
+            WordImport: report));
 
     private void OnDiagnosticsExportCompleted(bool succeeded, int recordCount)
     {

@@ -2608,7 +2608,7 @@ public sealed partial class MainWindow : Window, IDisposable
         return CommitVocabularyAsync(
             _session.VocabularyImport.ReplaceConflictsAsync(replacements),
             "Corrections replaced",
-            $"{replacements.Count} {word} now match the list you imported.");
+            $"{replacements.Count} {word} now {(replacements.Count == 1 ? "matches" : "match")} the list you imported.");
     }
 
     /// <summary>A button a message can carry, and what pressing it applies.</summary>

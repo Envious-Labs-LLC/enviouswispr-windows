@@ -77,6 +77,8 @@ public static class CustomWordImport
 {
     private static readonly char[] Separators = [',', '\t', '='];
 
+    private static readonly char[] LineBreaks = ['\r', '\n'];
+
     /// <summary>Longest a spoken form or replacement may be before the line is refused.</summary>
     /// <remarks>
     /// A pasted document with no separators would otherwise become one enormous "word". The limit
@@ -104,10 +106,7 @@ public static class CustomWordImport
             return new CustomWordImportPlan([]);
         }
 
-        var known = existing.ToDictionary(
-            entry => entry.SpokenForm,
-            entry => entry,
-            StringComparer.OrdinalIgnoreCase);
+        var known = Index(existing);
 
         // Spoken forms already claimed by an EARLIER line of this same import. Without this, a file
         // listing one word twice adds it twice, and the list gains a duplicate the user never typed.
@@ -292,20 +291,85 @@ public static class CustomWordImport
             return new ImportedWordLine(lineNumber, raw, null, ImportedWordOutcome.Unreadable);
         }
 
-        var entry = new CustomWordEntry(spoken, replacement, strictness);
-        if (TryFindExisting(spoken, known, claimed, out var current))
+        return Classify(new CustomWordEntry(spoken, replacement, strictness), lineNumber, raw, known, claimed);
+    }
+
+    /// <summary>Plans words another app already holds as pairs, by exactly the rules a pasted line meets.</summary>
+    /// <param name="incoming">The pairs, in the source's order. A pair that could not survive a round trip through
+    /// <see cref="Write"/> is refused as unreadable rather than stored, as a pasted line would be.</param>
+    /// <param name="existing">Words the user already has, so collisions can be reported.</param>
+    /// <remarks>
+    /// ONE CLASSIFICATION, TWO WAYS IN. A word read out of another app's store is not text, so it does not go through
+    /// the line parser - a comma inside it would split it - but WHAT HAPPENS to it (added, already had, corrected
+    /// differently, listed twice) is decided by the same code a pasted line reaches, so the two cannot drift. A field
+    /// holding a separator or a line break is refused here for the reason <see cref="Write"/> gives: the list must
+    /// export and import back unchanged, and refusing on the way in is the half a person can see.
+    /// </remarks>
+    public static CustomWordImportPlan Plan(
+        IReadOnlyList<CustomWordEntry> incoming,
+        IReadOnlyList<CustomWordEntry> existing)
+    {
+        ArgumentNullException.ThrowIfNull(incoming);
+        ArgumentNullException.ThrowIfNull(existing);
+        var known = Index(existing);
+        var claimed = new Dictionary<string, CustomWordEntry>(StringComparer.OrdinalIgnoreCase);
+        var lines = new List<ImportedWordLine>(incoming.Count);
+        for (var index = 0; index < incoming.Count; index++)
+        {
+            var entry = incoming[index];
+            var spoken = entry.SpokenForm.Trim();
+            var replacement = entry.Replacement.Trim();
+            lines.Add(IsStorableField(spoken) && IsStorableField(replacement) && Enum.IsDefined(entry.Strictness)
+                ? Classify(new CustomWordEntry(spoken, replacement, entry.Strictness), index + 1, spoken, known, claimed)
+                : new ImportedWordLine(index + 1, spoken, null, ImportedWordOutcome.Unreadable));
+        }
+
+        return new CustomWordImportPlan(lines);
+    }
+
+    /// <summary>The words already there, by spoken form; the LAST row claiming a spoken form is the one that counts.</summary>
+    /// <remarks>
+    /// A LIST CAN HOLD TWO ROWS FOR ONE SPOKEN FORM - a profile or settings file written elsewhere is not deduplicated on
+    /// load - and building this with a dictionary constructor threw on exactly that list, from inside the settings gate.
+    /// Last wins because that is the row the corrector uses (<c>CustomWordCorrector.Correct</c>, ordinary rows).
+    /// </remarks>
+    private static Dictionary<string, CustomWordEntry> Index(IReadOnlyList<CustomWordEntry> existing)
+    {
+        var known = new Dictionary<string, CustomWordEntry>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in existing)
+        {
+            known[entry.SpokenForm] = entry;
+        }
+
+        return known;
+    }
+
+    private static bool IsStorableField(string value) =>
+        value.Length > 0 &&
+        value.Length <= MaximumFieldLength &&
+        value.IndexOfAny(Separators) < 0 &&
+        value.IndexOfAny(LineBreaks) < 0;
+
+    private static ImportedWordLine Classify(
+        CustomWordEntry entry,
+        int lineNumber,
+        string raw,
+        Dictionary<string, CustomWordEntry> known,
+        Dictionary<string, CustomWordEntry> claimed)
+    {
+        if (TryFindExisting(entry.SpokenForm, known, claimed, out var current))
         {
             return new ImportedWordLine(
                 lineNumber,
                 raw,
                 entry,
-                string.Equals(current.Replacement, replacement, StringComparison.Ordinal)
-                    && current.Strictness == strictness
+                string.Equals(current.Replacement, entry.Replacement, StringComparison.Ordinal)
+                    && current.Strictness == entry.Strictness
                     ? ImportedWordOutcome.AlreadyPresent
                     : ImportedWordOutcome.Conflict);
         }
 
-        claimed[spoken] = entry;
+        claimed[entry.SpokenForm] = entry;
         return new ImportedWordLine(lineNumber, raw, entry, ImportedWordOutcome.Added);
     }
 

@@ -354,4 +354,7 @@ public enum AppEventCode
 
     /// <summary>A snippet import attempt ended; the counts ride in <see cref="AppLogEntry.SnippetImport"/>.</summary>
     SnippetsImported,
+
+    /// <summary>A word import from another app ended; the counts ride in <see cref="AppLogEntry.WordImport"/>.</summary>
+    WordsImportedFromApp,
 }
