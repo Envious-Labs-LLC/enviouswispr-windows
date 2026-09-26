@@ -261,6 +261,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var releaseIdentity = launch.ReleaseIdentity;
         _storeInstalled = launch.StoreInstalled;
         var installedVersion = launch.InstalledVersion;
+        _dataDirectory = launch.DataDirectory;
 
         InitializeComponent();
 
@@ -2624,7 +2625,7 @@ public sealed partial class MainWindow : Window, IDisposable
         picker.FileTypeChoices.Add("Word list", [".csv"]);
         WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
         var file = await picker.PickSaveFileAsync();
-        if (file is null)
+        if (file is null || RefuseExportIntoDataFolder(file.Path))
         {
             return;
         }

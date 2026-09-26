@@ -212,7 +212,7 @@ public static class SnippetLineListParser
             candidates.Add(new SnippetImportCandidate(trigger, expansion));
             if (candidates.Count > limit)
             {
-                throw new SnippetImportException(SnippetImportMessages.TooManySnippets(limit));
+                throw new SnippetImportException(SnippetImportFailure.TooMany, SnippetImportMessages.TooManySnippets(limit));
             }
         }
 
@@ -348,7 +348,7 @@ public static class SnippetCsvParser
                     }
                     else
                     {
-                        throw new SnippetImportException(SnippetImportMessages.MalformedCsv(recordStartLine));
+                        throw new SnippetImportException(SnippetImportFailure.Malformed, SnippetImportMessages.MalformedCsv(recordStartLine));
                     }
 
                     break;
@@ -357,7 +357,7 @@ public static class SnippetCsvParser
 
         if (state == State.Quoted)
         {
-            throw new SnippetImportException(SnippetImportMessages.MalformedCsv(recordStartLine));
+            throw new SnippetImportException(SnippetImportFailure.Malformed, SnippetImportMessages.MalformedCsv(recordStartLine));
         }
 
         // A final terminator already ended the last record; anything else still open is one.
@@ -407,7 +407,7 @@ public static class SnippetCsvParser
             candidates.Add(new SnippetImportCandidate(trigger, expansion));
             if (candidates.Count > limit)
             {
-                throw new SnippetImportException(SnippetImportMessages.TooManySnippets(limit));
+                throw new SnippetImportException(SnippetImportFailure.TooMany, SnippetImportMessages.TooManySnippets(limit));
             }
         }
 
@@ -499,7 +499,7 @@ public static class SnippetPasteImport
         ArgumentNullException.ThrowIfNull(text);
         if (Encoding.UTF8.GetByteCount(text) > SnippetImportLimits.MaximumImportFileBytes)
         {
-            throw new SnippetImportException(SnippetImportMessages.TooLarge);
+            throw new SnippetImportException(SnippetImportFailure.TooLarge, SnippetImportMessages.TooLarge);
         }
 
         var sniff = Sniff(text);
@@ -562,15 +562,15 @@ public static class SnippetFileImport
         var ext = extension.ToLowerInvariant();
         if (!Extensions.Contains(ext))
         {
-            throw new SnippetImportException(SnippetImportMessages.UnsupportedType(ext.Length == 0 ? "those" : ext));
+            throw new SnippetImportException(SnippetImportFailure.UnsupportedType, SnippetImportMessages.UnsupportedType(ext.Length == 0 ? "those" : ext));
         }
 
         if (bytes.Length > MaximumBytes(ext))
         {
-            throw new SnippetImportException(SnippetImportMessages.TooLarge);
+            throw new SnippetImportException(SnippetImportFailure.TooLarge, SnippetImportMessages.TooLarge);
         }
 
-        var text = Decode(bytes) ?? throw new SnippetImportException(SnippetImportMessages.Unreadable);
+        var text = Decode(bytes) ?? throw new SnippetImportException(SnippetImportFailure.Unreadable, SnippetImportMessages.Unreadable);
         var limit = SnippetImportLimits.MaximumCandidates;
         var batch = ext switch
         {

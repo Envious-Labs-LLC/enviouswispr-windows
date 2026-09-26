@@ -319,13 +319,15 @@ public sealed class PrivacySafeObservabilityTests
             RuntimeSelection: DiagnosticRuntimeSelectionReason.ProcessorSelectedAfterGpuFailedToStart,
             DeliveryStage: DeliveryStage.Commit,
             Fault: DeliveryFaultKind.ObjectDisposed,
-            RecognitionLanguage: DiagnosticRecognitionLanguage.French);
+            RecognitionLanguage: DiagnosticRecognitionLanguage.French,
+            SnippetImport: new DiagnosticSnippetImport(
+                DiagnosticSnippetImportSource.WisprFlow, DiagnosticSnippetImportOutcome.Completed, null, 5, 3, 1, 1, 0, 9));
 
         var populated = typeof(PrivacySafeDiagnosticRecord)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(property => property.Name != "EqualityContract")
             .ToArray();
-        Assert.Equal(15, populated.Length);
+        Assert.Equal(16, populated.Length);
 
         var line = LocalDiagnosticLine.From(record, Guid.NewGuid());
         foreach (var property in populated)

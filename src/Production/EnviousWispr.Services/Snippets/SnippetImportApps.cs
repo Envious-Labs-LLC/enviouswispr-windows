@@ -89,7 +89,7 @@ public sealed class WisprFlowSnippetApp : ISnippetImportApp
     {
         if (!IsInstalled)
         {
-            throw new SnippetImportException(SnippetImportMessages.AppNotFound(DisplayName));
+            throw new SnippetImportException(SnippetImportFailure.AppNotFound, SnippetImportMessages.AppNotFound(DisplayName));
         }
 
         var scratch = Path.Combine(Path.GetTempPath(), "ew-snippet-import-" + Guid.NewGuid().ToString("N"));
@@ -114,7 +114,7 @@ public sealed class WisprFlowSnippetApp : ISnippetImportApp
             }
             catch (Exception exception) when (exception is SqliteReadException or DllNotFoundException or EntryPointNotFoundException)
             {
-                throw new SnippetImportException(SnippetImportMessages.AppUnreadable(DisplayName));
+                throw new SnippetImportException(SnippetImportFailure.AppStoreUnreadable, SnippetImportMessages.AppUnreadable(DisplayName));
             }
 
             // THE SCANNED COUNT, survivors plus exclusions: a store of 5,001 rows filtered down to one must not look
@@ -122,6 +122,7 @@ public sealed class WisprFlowSnippetApp : ISnippetImportApp
             if (rows.Count + excluded > SnippetImportLimits.MaximumSourceEntries)
             {
                 throw new SnippetImportException(
+                    SnippetImportFailure.TooMany,
                     SnippetImportMessages.TooManySourceEntries(DisplayName, SnippetImportLimits.MaximumSourceEntries));
             }
 
@@ -189,7 +190,7 @@ public sealed class WisprFlowSnippetApp : ISnippetImportApp
             }
         }
 
-        throw new SnippetImportException(SnippetImportMessages.AppUnreadable(DisplayName));
+        throw new SnippetImportException(SnippetImportFailure.AppStoreUnreadable, SnippetImportMessages.AppUnreadable(DisplayName));
     }
 
     /// <summary>Every monitored part's identity, or null when the source cannot be copied safely right now.</summary>

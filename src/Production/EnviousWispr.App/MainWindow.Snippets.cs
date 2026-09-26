@@ -1,4 +1,6 @@
+using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Settings;
+using EnviousWispr.Services.UserData;
 using EnviousWispr.Services.Snippets;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -49,6 +51,33 @@ public sealed class SnippetRow
 /// </remarks>
 public sealed partial class MainWindow
 {
+    /// <summary>The folder that holds the settings file; no export may write into it.</summary>
+    private readonly string _dataDirectory;
+
+    /// <summary>One snippet import attempt ended: counts and categories only, for the app's diagnostic log.</summary>
+    public event Action<DiagnosticSnippetImport>? SnippetImportReported;
+
+    /// <summary>
+    /// True, and the person told, when an export was pointed into the app's own data folder. Nothing is written.
+    /// </summary>
+    /// <remarks>
+    /// SHARED BY EVERY LIST EXPORT ON THE WINDOW (snippets and words), because each writes a file the person names,
+    /// and a list saved over the settings file erases the settings (macOS refuses its live store the same way).
+    /// </remarks>
+    private bool RefuseExportIntoDataFolder(string destination)
+    {
+        if (!ExportDestinationGuard.IsInsideDataDirectory(destination, _dataDirectory))
+        {
+            return false;
+        }
+
+        ShowMessage(
+            "Choose another place",
+            "That is inside EnviousWispr's own data folder, where your settings are kept. Saving there could erase them, so nothing was saved. Pick somewhere else, such as Documents.",
+            InfoBarSeverity.Warning);
+        return true;
+    }
+
     private const string PasteHint =
         "One per line: the trigger, then =, then the text. A tab, an arrow, or a comma work too. For text on several lines, paste exported JSON or CSV, or type \\n where a line should break.";
 
@@ -98,6 +127,11 @@ public sealed partial class MainWindow
         WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
         var file = await picker.PickSaveFileAsync();
         if (file is null)
+        {
+            return;
+        }
+
+        if (RefuseExportIntoDataFolder(file.Path))
         {
             return;
         }
@@ -240,7 +274,7 @@ public sealed partial class MainWindow
         }
 
         var path = file.Path;
-        await LoadAndReviewAsync(() =>
+        await LoadAndReviewAsync(DiagnosticSnippetImport.SourceFor(Path.GetExtension(path)), () =>
         {
             var extension = Path.GetExtension(path);
             var ceiling = SnippetFileImport.MaximumBytes(extension);
@@ -256,7 +290,7 @@ public sealed partial class MainWindow
                 {
                     if (buffer.Length + read > ceiling)
                     {
-                        throw new SnippetImportException(SnippetImportMessages.TooLarge);
+                        throw new SnippetImportException(SnippetImportFailure.TooLarge, SnippetImportMessages.TooLarge);
                     }
 
                     buffer.Write(chunk, 0, read);
@@ -266,7 +300,7 @@ public sealed partial class MainWindow
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                throw new SnippetImportException(SnippetImportMessages.Unreadable);
+                throw new SnippetImportException(SnippetImportFailure.Unreadable, SnippetImportMessages.Unreadable);
             }
 
             return SnippetFileImport.Read(extension, bytes);
@@ -315,14 +349,14 @@ public sealed partial class MainWindow
         await dialog.ShowAsync().AsTask().ConfigureAwait(true);
         if (chosen is { } source)
         {
-            await LoadAndReviewAsync(() => source.Load().Validated()).ConfigureAwait(true);
+            await LoadAndReviewAsync(DiagnosticSnippetImport.SourceFor(source.Id), () => source.Load().Validated()).ConfigureAwait(true);
         }
     }
 
     // ---- Load, review, commit -----------------------------------------------------------------------------
 
     /// <summary>Loads a source off the window thread; a refusal becomes the Mac's failure result, an empty source its own.</summary>
-    private async Task LoadAndReviewAsync(Func<SnippetImportBatch> load)
+    private async Task LoadAndReviewAsync(DiagnosticSnippetImportSource source, Func<SnippetImportBatch> load)
     {
         SnippetImportBatch batch;
         try
@@ -331,6 +365,7 @@ public sealed partial class MainWindow
         }
         catch (SnippetImportException refusal)
         {
+            SnippetImportReported?.Invoke(new DiagnosticSnippetImport(source, DiagnosticSnippetImportOutcome.Failed, refusal.Failure));
             ShowMessage("Import didn't finish", refusal.Message, InfoBarSeverity.Error);
             return;
         }
@@ -341,9 +376,14 @@ public sealed partial class MainWindow
     /// <summary>The review, the one write, and the result - again, rebuilt, when the list moved during the review.</summary>
     private async Task ReviewSnippetImportAsync(SnippetImportBatch batch)
     {
+        var source = DiagnosticSnippetImport.SourceFor(batch.SourceId);
         if (batch.Candidates.Count == 0)
         {
             var excluded = batch.ExcludedCount;
+            SnippetImportReported?.Invoke(new DiagnosticSnippetImport(
+                source,
+                excluded > 0 ? DiagnosticSnippetImportOutcome.NothingCompatible : DiagnosticSnippetImportOutcome.NothingFound,
+                Excluded: excluded));
             ShowMessage(
                 excluded > 0 ? "Nothing compatible" : "Nothing to import",
                 excluded > 0 ? SnippetImportCopy.NothingCompatible(excluded) : SnippetImportCopy.NothingFound,
@@ -365,11 +405,26 @@ public sealed partial class MainWindow
             var result = await CommitVocabularyAsync(_session.SnippetImport.CommitAsync(baseline, approved)).ConfigureAwait(true);
             if (!result.Saved)
             {
+                SnippetImportReported?.Invoke(DiagnosticSnippetImport.ForReview(
+                    source, DiagnosticSnippetImportOutcome.Failed, batch.ExcludedCount, rows, added: 0, SnippetImportFailure.WriteFailed));
                 return;
             }
 
             RefreshReusableUserDataViews();
             var outcome = result.Value;
+            SnippetImportReported?.Invoke(DiagnosticSnippetImport.ForReview(
+                source,
+                outcome.Kind switch
+                {
+                    SnippetImportCommitKind.Committed => DiagnosticSnippetImportOutcome.Completed,
+                    SnippetImportCommitKind.NothingApproved => DiagnosticSnippetImportOutcome.NothingApproved,
+                    SnippetImportCommitKind.Stale => DiagnosticSnippetImportOutcome.Stale,
+                    _ => DiagnosticSnippetImportOutcome.Failed,
+                },
+                batch.ExcludedCount,
+                rows,
+                outcome.Added,
+                outcome.Failure));
             switch (outcome.Kind)
             {
                 case SnippetImportCommitKind.Committed:

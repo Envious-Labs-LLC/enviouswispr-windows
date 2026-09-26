@@ -66,7 +66,8 @@ public sealed record SnippetImportCommitOutcome(
     SnippetImportCommitKind Kind,
     int Added,
     IReadOnlyList<SnippetEntry> Current,
-    string? Message = null);
+    string? Message = null,
+    SnippetImportFailure? Failure = null);
 
 /// <summary>The review and the one atomic write, ported from macOS <c>SnippetImportRowBuilder</c> and <c>SnippetsManager.importSnippets</c>.</summary>
 public static class SnippetImportReview
@@ -148,13 +149,17 @@ public static class SnippetImportReview
             var entry = new SnippetEntry(candidate.Trigger.Trim(), candidate.Expansion);
             var key = SnippetText.CollisionKey(entry.Name);
             string? refusal = null;
+            var failure = SnippetImportFailure.UnusableEntry;
             if (key is null || string.IsNullOrWhiteSpace(entry.Body))
             {
                 refusal = SnippetImportMessages.UnusableTrigger(entry.Name);
             }
             else if (owners.TryGetValue(key, out var owner))
             {
+                // The review offered this row as new against the same list, so reaching here means the review and
+                // the commit disagree: macOS files exactly this shape as its one app-owned error.
                 refusal = $"You already have a snippet for those words: \"{owner}\". Nothing was imported.";
+                failure = SnippetImportFailure.InvariantViolation;
             }
             else if (entry.Name.Length > AppSettingsValidator.MaximumSnippetTriggerLength ||
                 entry.Body.Length > AppSettingsValidator.MaximumSnippetBodyLength)
@@ -164,7 +169,7 @@ public static class SnippetImportReview
 
             if (refusal is not null)
             {
-                return (null, new SnippetImportCommitOutcome(SnippetImportCommitKind.Refused, 0, current, refusal));
+                return (null, new SnippetImportCommitOutcome(SnippetImportCommitKind.Refused, 0, current, refusal, failure));
             }
 
             owners[key!] = entry.Name;
@@ -174,7 +179,8 @@ public static class SnippetImportReview
         if (current.Count + accepted.Count > AppSettingsValidator.MaximumSnippets)
         {
             return (null, new SnippetImportCommitOutcome(
-                SnippetImportCommitKind.Refused, 0, current, SnippetImportMessages.WouldExceedStore(AppSettingsValidator.MaximumSnippets)));
+                SnippetImportCommitKind.Refused, 0, current, SnippetImportMessages.WouldExceedStore(AppSettingsValidator.MaximumSnippets),
+                SnippetImportFailure.TooMany));
         }
 
         var next = current

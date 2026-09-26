@@ -54,13 +54,33 @@ public static class SnippetImportLimits
     public const int MaximumStoredCharacters = 4_000_000;
 }
 
-/// <summary>Why a snippet import could not go ahead. The message is the sentence the person reads.</summary>
+/// <summary>Why an import failed, as a closed category the diagnostic log can carry (macOS <c>SnippetImportTelemetryFailure</c>).</summary>
+public enum SnippetImportFailure
+{
+    UnsupportedType,
+    TooLarge,
+    Unreadable,
+    NotOurs,
+    NewerVersion,
+    Malformed,
+    TooMany,
+    UnusableEntry,
+    AppNotFound,
+    AppStoreUnreadable,
+    WriteFailed,
+    InvariantViolation,
+}
+
+/// <summary>Why a snippet import could not go ahead. The message is the sentence the person reads; the failure is what the log keeps.</summary>
 public sealed class SnippetImportException : Exception
 {
-    public SnippetImportException(string message)
+    public SnippetImportException(SnippetImportFailure failure, string message)
         : base(message)
     {
+        Failure = failure;
     }
+
+    public SnippetImportFailure Failure { get; }
 }
 
 /// <summary>What one source produced: its candidates, which source it was, and what it left out.</summary>
@@ -85,7 +105,7 @@ public sealed record SnippetImportBatch(
     {
         if (Candidates.Count > SnippetImportLimits.MaximumCandidates)
         {
-            throw new SnippetImportException(SnippetImportMessages.TooManySnippets(SnippetImportLimits.MaximumCandidates));
+            throw new SnippetImportException(SnippetImportFailure.TooMany, SnippetImportMessages.TooManySnippets(SnippetImportLimits.MaximumCandidates));
         }
 
         var surface = 0L;
@@ -95,31 +115,32 @@ public sealed record SnippetImportBatch(
             var candidate = raw with { Trigger = raw.Trigger.Trim() };
             if (candidate.Trigger.Length > SnippetImportLimits.MaximumTriggerLength)
             {
-                throw new SnippetImportException(SnippetImportMessages.TriggerTooLong(SnippetImportLimits.MaximumTriggerLength));
+                throw new SnippetImportException(SnippetImportFailure.UnusableEntry, SnippetImportMessages.TriggerTooLong(SnippetImportLimits.MaximumTriggerLength));
             }
 
             // A trigger must have spoken words (the rule the page applies), and it must be storable text.
             if (SnippetText.CollisionKey(candidate.Trigger) is null ||
                 !SnippetImportTextPolicy.IsAcceptableStoredValue(candidate.Trigger))
             {
-                throw new SnippetImportException(SnippetImportMessages.UnusableTrigger(candidate.Trigger));
+                throw new SnippetImportException(SnippetImportFailure.UnusableEntry, SnippetImportMessages.UnusableTrigger(candidate.Trigger));
             }
 
             if (candidate.Expansion.Length > SnippetImportLimits.MaximumExpansionLength)
             {
                 throw new SnippetImportException(
+                    SnippetImportFailure.UnusableEntry,
                     SnippetImportMessages.ExpansionTooLong(candidate.Trigger, SnippetImportLimits.MaximumExpansionLength));
             }
 
             if (!SnippetImportTextPolicy.IsAcceptableMultilineStoredValue(candidate.Expansion))
             {
-                throw new SnippetImportException(SnippetImportMessages.UnusableExpansion(candidate.Trigger));
+                throw new SnippetImportException(SnippetImportFailure.UnusableEntry, SnippetImportMessages.UnusableExpansion(candidate.Trigger));
             }
 
             surface += candidate.Trigger.Length + candidate.Expansion.Length;
             if (surface > SnippetImportLimits.MaximumStoredCharacters)
             {
-                throw new SnippetImportException(SnippetImportMessages.TooMuchText(SnippetImportLimits.MaximumStoredCharacters));
+                throw new SnippetImportException(SnippetImportFailure.TooLarge, SnippetImportMessages.TooMuchText(SnippetImportLimits.MaximumStoredCharacters));
             }
 
             stored.Add(candidate);

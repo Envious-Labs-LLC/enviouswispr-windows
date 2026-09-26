@@ -15,12 +15,14 @@ namespace EnviousWispr.Presentation;
 /// <param name="ReleaseIdentity">The product name and channel this build carries.</param>
 /// <param name="StoreInstalled">Whether this copy was installed from the Microsoft Store, and so can check it for updates.</param>
 /// <param name="InstalledVersion">The installed package's version, or null for a copy without package identity.</param>
+/// <param name="DataDirectory">The folder that holds the settings file and every other private store; exports refuse to write into it.</param>
 public sealed record WindowLaunch(
     SettingsLoadStatus SettingsLoadStatus,
     bool TelemetryAvailable,
     ReleaseIdentity ReleaseIdentity,
     bool StoreInstalled,
-    string? InstalledVersion);
+    string? InstalledVersion,
+    string DataDirectory);
 
 /// <summary>The services the shell hands the window's presentation session: stores it does not own, and the factories for what the session opens itself.</summary>
 /// <param name="SettingsStore">The settings file; the session's one writer sits over it.</param>

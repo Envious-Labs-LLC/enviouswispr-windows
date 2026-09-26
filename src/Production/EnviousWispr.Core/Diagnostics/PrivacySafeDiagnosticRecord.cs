@@ -137,7 +137,8 @@ public sealed record PrivacySafeDiagnosticRecord(
     DiagnosticRuntimeSelectionReason? RuntimeSelection = null,
     DeliveryStage? DeliveryStage = null,
     DeliveryFaultKind? Fault = null,
-    DiagnosticRecognitionLanguage? RecognitionLanguage = null)
+    DiagnosticRecognitionLanguage? RecognitionLanguage = null,
+    DiagnosticSnippetImport? SnippetImport = null)
 {
     public const long MaximumElapsedMilliseconds = 86_400_000;
 
@@ -173,6 +174,9 @@ public sealed record PrivacySafeDiagnosticRecord(
             // THE PICKER'S CHOICE AS A CATEGORY (#241): one of six fixed members, never a code string.
             entry.RecognitionLanguage is { } recognitionLanguage && Enum.IsDefined(recognitionLanguage)
                 ? recognitionLanguage
-                : null);
+                : null,
+            // A SNIPPET IMPORT AS COUNTS AND CATEGORIES, never a trigger or a snippet's text; dropped whole when any
+            // member is out of range rather than trimmed into something that looks true.
+            entry.SnippetImport is { } snippetImport && snippetImport.IsWithinBounds() ? snippetImport : null);
     }
 }

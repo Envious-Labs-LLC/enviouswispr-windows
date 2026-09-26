@@ -102,7 +102,7 @@ public sealed record SnippetsTransferDocument(int Version, string Keyword, IRead
         }
         catch (JsonException)
         {
-            throw new SnippetImportException(SnippetImportMessages.Damaged);
+            throw new SnippetImportException(SnippetImportFailure.Malformed, SnippetImportMessages.Damaged);
         }
 
         using (document)
@@ -110,7 +110,7 @@ public sealed record SnippetsTransferDocument(int Version, string Keyword, IRead
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("snippets", out var snippets))
             {
-                throw new SnippetImportException(SnippetImportMessages.NotOurFile);
+                throw new SnippetImportException(SnippetImportFailure.NotOurs, SnippetImportMessages.NotOurFile);
             }
 
             if (!root.TryGetProperty("version", out var versionElement) ||
@@ -118,22 +118,22 @@ public sealed record SnippetsTransferDocument(int Version, string Keyword, IRead
                 !versionElement.TryGetInt32(out var version) ||
                 snippets.ValueKind != JsonValueKind.Array)
             {
-                throw new SnippetImportException(SnippetImportMessages.Damaged);
+                throw new SnippetImportException(SnippetImportFailure.Malformed, SnippetImportMessages.Damaged);
             }
 
             if (version < 1)
             {
-                throw new SnippetImportException(SnippetImportMessages.Damaged);
+                throw new SnippetImportException(SnippetImportFailure.Malformed, SnippetImportMessages.Damaged);
             }
 
             if (version > CurrentVersion)
             {
-                throw new SnippetImportException(SnippetImportMessages.UnsupportedVersion(version));
+                throw new SnippetImportException(SnippetImportFailure.NewerVersion, SnippetImportMessages.UnsupportedVersion(version));
             }
 
             if (!root.TryGetProperty("keyword", out var keywordElement) || keywordElement.ValueKind != JsonValueKind.String)
             {
-                throw new SnippetImportException(SnippetImportMessages.Damaged);
+                throw new SnippetImportException(SnippetImportFailure.Malformed, SnippetImportMessages.Damaged);
             }
 
             var read = new List<SnippetImportCandidate>();
@@ -146,7 +146,7 @@ public sealed record SnippetsTransferDocument(int Version, string Keyword, IRead
                     !TryString(entry, "id", out var id) || !Guid.TryParseExact(id, "D", out _) ||
                     !entry.TryGetProperty("createdAt", out var created) || created.ValueKind != JsonValueKind.Number)
                 {
-                    throw new SnippetImportException(SnippetImportMessages.Damaged);
+                    throw new SnippetImportException(SnippetImportFailure.Malformed, SnippetImportMessages.Damaged);
                 }
 
                 read.Add(new SnippetImportCandidate(trigger, expansion));
