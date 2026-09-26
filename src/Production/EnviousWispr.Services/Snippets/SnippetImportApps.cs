@@ -160,10 +160,12 @@ public sealed class WisprFlowSnippetApp : ISnippetImportApp
             }
 
             var directory = Path.Combine(scratch, attempt.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            Directory.CreateDirectory(directory);
             var copy = Path.Combine(directory, "flow.sqlite");
             try
             {
+                // INSIDE THE GUARD: a temp folder Windows will not create is an unreadable attempt, never an
+                // exception escaping to the page.
+                Directory.CreateDirectory(directory);
                 long total = 0;
                 foreach (var suffix in CopiedSuffixes)
                 {
