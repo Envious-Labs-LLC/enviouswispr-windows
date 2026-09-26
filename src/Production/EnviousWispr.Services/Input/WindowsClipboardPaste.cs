@@ -760,9 +760,16 @@ internal static class WindowsClipboardPaste
     /// WINFORMS' RETRY SLEEPS WITHOUT PUMPING. The clipboard is most often held by a writer that is itself waiting
     /// for this thread to answer WM_DESTROYCLIPBOARD, and a retry that does not answer can only run out. So each write
     /// is asked of WinForms once (retryTimes 0: no sleep of its own) and retried here; the last failure is thrown.
+    ///
+    /// A RETRY NEVER WRITES OVER A NEWER WRITE BY SOMEBODY ELSE. The pumping wait is exactly what lets the writer we
+    /// were waiting on finish, so by the next try their copy may be on the clipboard; trying again would replace it.
+    /// Before each retry the sequence number is read again: moved, and the owner is not this thread, means somebody
+    /// else wrote - the retries stop and the failure is thrown, so the caller's own give-back and decline apply and
+    /// their copy is left alone. Moved by our own failed try (the owner is this thread) is still ours to retry.
     /// </remarks>
     private static void WithPumpingRetry(Action attempt)
     {
+        var expected = GetClipboardSequenceNumber();
         for (var remaining = ClipboardWriteAttempts; ; remaining--)
         {
             try
@@ -773,6 +780,16 @@ internal static class WindowsClipboardPaste
             catch (ExternalException) when (remaining > 1)
             {
                 PumpingWait(ClipboardRetryDelay);
+                var current = GetClipboardSequenceNumber();
+                if (current != expected)
+                {
+                    if (!ClipboardOwnedByThisThread())
+                    {
+                        throw;
+                    }
+
+                    expected = current;
+                }
             }
         }
     }

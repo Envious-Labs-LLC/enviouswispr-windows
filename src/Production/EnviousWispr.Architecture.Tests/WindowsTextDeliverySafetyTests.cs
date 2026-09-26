@@ -1165,19 +1165,27 @@ public sealed class WindowsTextDeliverySafetyTests
     }
 
     [ClipboardFact]
-    public async Task ARefusedPastesFallbackWriteGetsThroughAWriterThatIsWaitingOnUs()
+    public async Task ARefusedPastesFallbackNeverWritesOverAWriterItWasWaitingOn()
     {
         // #247, THE RETRY: the paste is refused while somebody has the clipboard open and is emptying it - which
         // sends WM_DESTROYCLIPBOARD to our thread, the owner after the insertion write, and waits for the answer. Our
-        // fallback write cannot open the clipboard until they finish, and they cannot finish until we answer. A retry
-        // that waits answering messages lets them through and then lands the fallback; one that sleeps runs out.
+        // fallback write cannot open the clipboard until they finish. The retry's wait answers them, so their copy
+        // lands at once (a sleeping retry holds it for its whole run); and the retry then finds a newer write by
+        // somebody else and stops rather than put the fallback over it. Their copy stays, and nothing is restored
+        // over it: the words are held, not on the clipboard.
         const string sentinel = "EnviousWispr sentinel copied before the paste";
         const string meanwhile = "EnviousWispr text the person copied during the refusal";
         using var guard = ClipboardGuard.Capture();
         ClipboardGuard.SetText(sentinel);
         using var opened = new ManualResetEventSlim();
         var personWrote = false;
-        var person = new Thread(() => personWrote = RawClipboard.WriteText(meanwhile, opened, holdBeforeEmpty: TimeSpan.FromMilliseconds(5)))
+        long personMilliseconds = -1;
+        var person = new Thread(() =>
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            personWrote = RawClipboard.WriteText(meanwhile, opened, holdBeforeEmpty: TimeSpan.FromMilliseconds(5));
+            personMilliseconds = clock.ElapsedMilliseconds;
+        })
         {
             IsBackground = true,
         };
@@ -1199,10 +1207,53 @@ public sealed class WindowsTextDeliverySafetyTests
         Assert.True(person.Join(TimeSpan.FromSeconds(10)));
 
         Assert.True(personWrote, "the person's copy landed");
-        Assert.Equal(TextDeliveryRoute.ClipboardOnly, pasted.Route);
-        Assert.True(pasted.ClipboardFallback);
-        Assert.Equal(TextDeliveryRefusalReason.TargetChanged, pasted.RefusalReason);
-        Assert.Equal("dictated words ", ClipboardGuard.GetText());
+        Assert.Equal(meanwhile, ClipboardGuard.GetText());
+        Assert.True(personMilliseconds < 200, $"the person's copy took {personMilliseconds} ms: held behind our retries");
+        Assert.Equal(TextDeliveryRoute.None, pasted.Route);
+        Assert.False(pasted.ClipboardFallback);
+        Assert.Equal(TextDeliveryRefusalReason.ClipboardUnavailable, pasted.RefusalReason);
+        Assert.False(pasted.ClipboardRestored);
+        Assert.False(pasted.ClipboardUncertain);
+    }
+
+    [ClipboardFact]
+    public void AWriteRetryStopsAtAWriteThatLandedBetweenItsTries()
+    {
+        // #247, THE WRITER ITSELF: somebody holds the clipboard open, so our first try fails; while we wait between
+        // tries they write. The next try would put our text over theirs, so the writer stops and says it failed.
+        const string sentinel = "EnviousWispr sentinel copied before the write";
+        const string meanwhile = "EnviousWispr text another app wrote between our tries";
+        using var guard = ClipboardGuard.Capture();
+        ClipboardGuard.SetText(sentinel);
+        using var opened = new ManualResetEventSlim();
+        var personWrote = false;
+        var person = new Thread(() => personWrote = RawClipboard.WriteText(meanwhile, opened, holdBeforeEmpty: TimeSpan.FromMilliseconds(20)))
+        {
+            IsBackground = true,
+        };
+        person.Start();
+        Assert.True(opened.Wait(TimeSpan.FromSeconds(10)), "the other writer opened the clipboard");
+
+        Exception? failure = null;
+        var ours = new Thread(() =>
+        {
+            try
+            {
+                WindowsClipboardPaste.SetClipboardTextOrThrow("EnviousWispr words that must not replace theirs");
+            }
+            catch (ExternalException exception)
+            {
+                failure = exception;
+            }
+        });
+        ours.SetApartmentState(ApartmentState.STA);
+        ours.Start();
+        Assert.True(ours.Join(TimeSpan.FromSeconds(10)));
+        Assert.True(person.Join(TimeSpan.FromSeconds(10)));
+
+        Assert.True(personWrote, "the other writer's copy landed");
+        Assert.Equal(meanwhile, ClipboardGuard.GetText());
+        Assert.NotNull(failure);
     }
 
     /// <summary>A plain Win32 clipboard write, as a native app makes one: opened with no window, so it owns the clipboard through none.</summary>
