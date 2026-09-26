@@ -357,4 +357,10 @@ public enum AppEventCode
 
     /// <summary>A word import from another app ended; the counts ride in <see cref="AppLogEntry.WordImport"/>.</summary>
     WordsImportedFromApp,
+
+    /// <summary>
+    /// The launch sweep could not remove a private copy an earlier import from another app left in the temp folder
+    /// (a scanner or indexer still held it). A fixed category only: never a path, a file name or a word.
+    /// </summary>
+    AppImportCopyLeftBehind,
 }

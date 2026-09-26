@@ -393,6 +393,11 @@ public partial class App : Application, IAsyncDisposable
         // finally below, so it belongs to the launch's one tracked task, which the exit already joins before
         // it disposes the logger this writes to. It takes milliseconds and never throws.
         var cleanupWarmUp = Task.Run(WarmDeterministicStages);
+
+        // A PRIVATE COPY OF ANOTHER APP'S WORDS NEVER OUTLIVES ONE LAUNCH. A read removes its copy at once, but a
+        // scanner holding the file can stop that; the next launch sweeps the one folder those copies live in, off the
+        // UI thread, and says only THAT something was left, never what.
+        var importScratchSweep = Task.Run(SweepAppImportCopies);
         try
         {
             await CompleteStartupCoreAsync(settings, runStart, window).ConfigureAwait(true);
@@ -407,6 +412,7 @@ public partial class App : Application, IAsyncDisposable
         finally
         {
             await cleanupWarmUp.ConfigureAwait(true);
+            await importScratchSweep.ConfigureAwait(true);
         }
     }
 
@@ -922,6 +928,15 @@ public partial class App : Application, IAsyncDisposable
                 : report.Failure == SnippetImportFailure.WriteFailed ? AppFailureCategory.StorageUnavailable
                 : AppFailureCategory.InvalidData,
             SnippetImport: report));
+
+    private void SweepAppImportCopies()
+    {
+        if (!EnviousWispr.Services.AppImport.AppImportScratch.SweepLeftovers())
+        {
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow, AppEventCode.AppImportCopyLeftBehind, AppFailureCategory.StorageUnavailable));
+        }
+    }
 
     /// <summary>One word import from another app, logged as counts and categories, never a word.</summary>
     private void OnWordImportReported(DiagnosticWordImport report) =>
