@@ -1,6 +1,10 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using EnviousWispr.Services.AppImport;
+using Microsoft.Win32.SafeHandles;
 
 namespace EnviousWispr.Architecture.Tests;
 
@@ -139,27 +143,58 @@ public sealed class AppImportCopyTests : IDisposable
     public void TheNameTheReaderWritesIsOwned() =>
         Assert.True(AppImportScratch.IsOwnedFolderName(Path.GetFileName(AppImportScratch.NewFolder(_parent))));
 
-    [Fact]
-    public void AParentThatCannotBeListedIsAFailureNotAClean()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AParentThatCannotBeListedIsAFailureNotAClean(bool callbackThrows)
     {
         var owned = AppImportScratch.NewFolder(_parent);
         Directory.CreateDirectory(Path.Combine(owned, "0"));
-        File.WriteAllText(Path.Combine(owned, "0", "flow.sqlite"), "a leftover copy");
-        var user = System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value;
+        var copy = Path.Combine(owned, "0", "flow.sqlite");
+        File.WriteAllText(copy, "a leftover copy");
+        using var caller = WindowsIdentity.GetCurrent();
+        var user = caller.User!.Value;
         Icacls($"\"{_parent}\" /deny *{user}:(RD)");
         try
         {
-            // THE PRECONDITION IS ASSERTED: without a real denial this would test an ordinary readable folder.
-            Assert.Throws<UnauthorizedAccessException>(() => Directory.GetFileSystemEntries(_parent));
+            var deniedBeforeScope = DirectoryListingIsDenied(_parent);
+            var assertionsRan = false;
+            var callbackFailure = new InvalidOperationException("Deliberate permission-probe callback failure.");
 
-            Assert.False(AppImportScratch.SweepLeftovers(_parent));
+            void VerifyDeniedParent()
+            {
+                // Metadata is readable: the sweep must reach its LIST failure, not its earlier Unknown probe.
+                _ = File.GetAttributes(_parent);
+                // The denial is still proved, even when the runner normally bypasses ACLs for backup.
+                Assert.Throws<UnauthorizedAccessException>(() => Directory.GetFileSystemEntries(_parent));
+                Assert.False(AppImportScratch.SweepLeftovers(_parent));
+                assertionsRan = true;
+                if (callbackThrows)
+                {
+                    throw callbackFailure;
+                }
+            }
+
+            if (callbackThrows)
+            {
+                var caught = Assert.Throws<InvalidOperationException>(() => WithoutFilePrivileges(VerifyDeniedParent));
+                Assert.Same(callbackFailure, caught);
+            }
+            else
+            {
+                WithoutFilePrivileges(VerifyDeniedParent);
+            }
+
+            Assert.True(assertionsRan);
+            Assert.Equal(deniedBeforeScope, DirectoryListingIsDenied(_parent));
         }
         finally
         {
             Icacls($"\"{_parent}\" /remove:d *{user}");
         }
 
-        Assert.NotEmpty(Directory.GetFileSystemEntries(_parent)); // restored, and the copy it could not see is still there
+        Assert.True(File.Exists(copy));
+        Assert.Equal("a leftover copy", File.ReadAllText(copy));
     }
 
     [Fact]
@@ -192,6 +227,61 @@ public sealed class AppImportCopyTests : IDisposable
             "CREATE TABLE Dictionary (id TEXT PRIMARY KEY, phrase TEXT NOT NULL);" +
             "INSERT INTO Dictionary VALUES ('1', 'alpha'); INSERT INTO Dictionary VALUES ('2', 'beta');");
         return path;
+    }
+
+    private static bool DirectoryListingIsDenied(string directory)
+    {
+        try
+        {
+            _ = Directory.GetFileSystemEntries(directory);
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true;
+        }
+    }
+
+    private static void WithoutFilePrivileges(Action assertions)
+    {
+        // SSH can enable SeBackupPrivilege, making an explicit listing deny ineffective. Restrict a COPY,
+        // not the shared process token: parallel tests retain their caller, and RunImpersonated restores this
+        // synchronous callback's context on return or throw. SIDs stay the same; traversal stays enabled.
+        using var caller = WindowsIdentity.GetCurrent(
+            TokenAccessLevels.Query | TokenAccessLevels.Duplicate | TokenAccessLevels.Impersonate);
+        const uint disableMaxPrivilege = 0x1;
+        var created = NativeMethods.CreateRestrictedToken(
+            caller.AccessToken, disableMaxPrivilege,
+            0, IntPtr.Zero, 0, IntPtr.Zero, 0, IntPtr.Zero, out var restricted);
+        var error = Marshal.GetLastWin32Error();
+        using (restricted)
+        {
+            if (!created)
+            {
+                throw new Win32Exception(error);
+            }
+
+            // An invalid handle means "run as the original caller" to RunImpersonated, so it is not a scope.
+            if (restricted.IsInvalid)
+            {
+                throw new InvalidOperationException("The permission-probe token was invalid.");
+            }
+
+            WindowsIdentity.RunImpersonated(restricted, assertions);
+        }
+    }
+
+    private static class NativeMethods
+    {
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool CreateRestrictedToken(
+            SafeAccessTokenHandle existingToken, uint flags,
+            uint disableSidCount, IntPtr sidsToDisable,
+            uint deletePrivilegeCount, IntPtr privilegesToDelete,
+            uint restrictedSidCount, IntPtr sidsToRestrict,
+            out SafeAccessTokenHandle newToken);
     }
 
     private static void Icacls(string arguments)
