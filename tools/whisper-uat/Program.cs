@@ -287,7 +287,11 @@ static async Task<IReadOnlyList<LanguageSwitchResult>> RunLanguageSwitchAsync(
             sameTimer.ElapsedMilliseconds,
             Passed: afterSwitch.RecognitionLanguage == requested &&
                 again.RecognitionLanguage == requested &&
-                string.Equals(afterSwitch.DetectedLanguage, expectedDetected, StringComparison.OrdinalIgnoreCase)));
+                string.Equals(afterSwitch.DetectedLanguage, expectedDetected, StringComparison.OrdinalIgnoreCase),
+            AfterSwitchEngineId: afterSwitch.EngineId,
+            AfterSwitchUsedFallback: afterSwitch.UsedFallback,
+            SameLanguageEngineId: again.EngineId,
+            SameLanguageUsedFallback: again.UsedFallback));
     }
 
     // A TAKE THAT NAMES NO LANGUAGE RUNS IN THE LOAD-TIME ONE, never in the previous take's. The engine was
@@ -303,7 +307,9 @@ static async Task<IReadOnlyList<LanguageSwitchResult>> RunLanguageSwitchAsync(
         0,
         0,
         Passed: omitted.RecognitionLanguage == "auto" &&
-            string.Equals(omitted.DetectedLanguage, "fr", StringComparison.OrdinalIgnoreCase)));
+            string.Equals(omitted.DetectedLanguage, "fr", StringComparison.OrdinalIgnoreCase),
+        AfterSwitchEngineId: omitted.EngineId,
+        AfterSwitchUsedFallback: omitted.UsedFallback));
 
     return results;
 }
@@ -336,7 +342,9 @@ static async Task<LanguageResult> MeasureLanguageAsync(
         actual.Length,
         editDistance,
         wordErrorRate,
-        Passed: detected && wordErrorRate <= 0.35);
+        Passed: detected && wordErrorRate <= 0.35,
+        ReportedEngineId: transcript.EngineId,
+        UsedFallback: transcript.UsedFallback);
 }
 
 static IReadOnlyList<LanguageCorpusSummary> SummarizeLanguageResults(
@@ -355,7 +363,12 @@ static IReadOnlyList<LanguageCorpusSummary> SummarizeLanguageResults(
                 EditDistance: editDistance,
                 AggregateWordErrorRate: referenceWords == 0
                     ? 0
-                    : editDistance / (double)referenceWords);
+                    : editDistance / (double)referenceWords,
+                // The worker reports fallback separately from accuracy. A failed start has no
+                // transcript and stays unknown; neither a good sentence nor null proves primary execution.
+                ReportedPrimaryRows: group.Count(result => result.UsedFallback is false),
+                FallbackRows: group.Count(result => result.UsedFallback is true),
+                UnknownExecutionRows: group.Count(result => result.UsedFallback is null));
         })
         .OrderBy(result => result.ExpectedLanguage, StringComparer.Ordinal)
         .ToArray();
@@ -682,7 +695,11 @@ internal sealed record LanguageSwitchResult(
     string? DetectedLanguage,
     long AfterSwitchMilliseconds,
     long SameLanguageMilliseconds,
-    bool Passed);
+    bool Passed,
+    string? AfterSwitchEngineId = null,
+    bool? AfterSwitchUsedFallback = null,
+    string? SameLanguageEngineId = null,
+    bool? SameLanguageUsedFallback = null);
 
 internal sealed record MultilingualFixture(int Row, float[] Samples, string ExpectedText);
 
@@ -713,7 +730,9 @@ internal sealed record LanguageResult(
     int ActualWordCount,
     int EditDistance,
     double WordErrorRate,
-    bool Passed);
+    bool Passed,
+    string? ReportedEngineId = null,
+    bool? UsedFallback = null);
 
 internal sealed record LanguageCorpusSummary(
     string ExpectedLanguage,
@@ -722,4 +741,7 @@ internal sealed record LanguageCorpusSummary(
     int LanguageDetectedRows,
     int ReferenceWordCount,
     int EditDistance,
-    double AggregateWordErrorRate);
+    double AggregateWordErrorRate,
+    int ReportedPrimaryRows,
+    int FallbackRows,
+    int UnknownExecutionRows);
