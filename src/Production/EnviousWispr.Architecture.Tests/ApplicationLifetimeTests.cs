@@ -782,6 +782,8 @@ public sealed class ApplicationLifetimeTests
     /// <summary>A command the executor holds until released; the coordinator around it is the production one.</summary>
     private sealed class HeldExecutor : ISessionCommandExecutor
     {
+        public bool HasRetainedCleanup => false;
+        public Task<bool> JoinRetainedCleanupAsync() => Task.FromResult(true);
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int TearDowns { get; private set; }

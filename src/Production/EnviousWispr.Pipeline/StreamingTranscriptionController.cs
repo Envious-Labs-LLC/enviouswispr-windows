@@ -285,6 +285,40 @@ public sealed class StreamingTranscriptionController
         }
     }
 
+    // Joins only the stop already owned; never escalates or creates another cleanup operation.
+    internal async Task<StopOutcome> JoinOwnedStopAsync()
+    {
+        StreamingWork? work;
+        Task? stop;
+        lock (_ownership)
+        {
+            work = _work;
+            if (work is null) return StopOutcome.Completed;
+            stop = work.Stop;
+            if (stop is null) return StopOutcome.StillRunning;
+        }
+        try
+        {
+            await stop.ConfigureAwait(false);
+            return StopOutcome.Completed;
+        }
+        finally
+        {
+            if (stop.IsCompleted)
+            {
+                lock (_ownership)
+                {
+                    if (ReferenceEquals(_work, work))
+                    {
+                        _work = null;
+                        work.Scheduling.Dispose();
+                        work.Request.Dispose();
+                    }
+                }
+            }
+        }
+    }
+
     private void RequestCancellation(StreamingWork work)
     {
         lock (_ownership)

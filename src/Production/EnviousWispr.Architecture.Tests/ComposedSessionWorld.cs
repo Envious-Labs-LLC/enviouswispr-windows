@@ -445,6 +445,13 @@ internal sealed class FakeEngine(string spoken) : ITranscriptionEngine
 
     /// <summary>Held until released, whatever the token says: a worker that does not answer a cancel.</summary>
     public bool HoldIgnoringCancel { get; set; }
+    public bool HoldRequestCallback { get; set; }
+    public TaskCompletionSource RequestCancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource CallbackEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource ReleaseCallback { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public List<CapturedAudio> Requests { get; } = [];
+    public List<CancellationToken> Tokens { get; } = [];
+    public Queue<string> Words { get; } = new();
 
     public TaskCompletionSource AllowExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -468,6 +475,17 @@ internal sealed class FakeEngine(string spoken) : ITranscriptionEngine
     public async Task<Transcript> TranscribeAsync(CapturedAudio audio, CancellationToken cancellationToken = default)
     {
         Calls++;
+        Requests.Add(audio);
+        Tokens.Add(cancellationToken);
+        var registration = cancellationToken.Register(() =>
+        {
+            RequestCancellationObserved.TrySetResult();
+            if (HoldRequestCallback)
+            {
+                CallbackEntered.TrySetResult();
+                ReleaseCallback.Task.GetAwaiter().GetResult();
+            }
+        });
         Token = cancellationToken;
         OnEntered?.Invoke();
         Entered.TrySetResult();
@@ -480,8 +498,9 @@ internal sealed class FakeEngine(string spoken) : ITranscriptionEngine
             await _released.Task.WaitAsync(cancellationToken);
         }
 
+        registration.Unregister();
         BeforeReturning?.Invoke();
-        return new Transcript(audio.SessionId, spoken, EngineId, DetectedLanguage: "en");
+        return new Transcript(audio.SessionId, Words.TryDequeue(out var next) ? next : spoken, EngineId, DetectedLanguage: "en");
     }
 }
 
@@ -693,6 +712,8 @@ internal sealed class FakeAudioCapture : IAudioCapture, IAudioSnapshotSource
     public bool IsCapturing { get; private set; }
 
     public bool HoldStart { get; set; }
+    public bool ReturnTake { get; set; }
+    public int StartCount { get; private set; }
 
     public TaskCompletionSource StartEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -700,6 +721,7 @@ internal sealed class FakeAudioCapture : IAudioCapture, IAudioSnapshotSource
 
     public async Task<AudioOperationResult> StartAsync(AudioCaptureRequest request, CancellationToken cancellationToken = default)
     {
+        StartCount++;
         _sessionId = request.SessionId;
         StartEntered.TrySetResult();
         if (HoldStart)
@@ -715,7 +737,7 @@ internal sealed class FakeAudioCapture : IAudioCapture, IAudioSnapshotSource
     {
         IsCapturing = false;
         Stopped.TrySetResult();
-        return Task.FromResult(new CapturedAudio(_sessionId, OneSample, SampleRate: 16_000, Channels: 1));
+        return Task.FromResult(new CapturedAudio(_sessionId, ReturnTake ? Take : OneSample, SampleRate: 16_000, Channels: 1));
     }
 
     /// <summary>Completed when a recording was stopped: its audio handed on.</summary>
@@ -757,5 +779,54 @@ internal sealed class TemporaryDirectory : IDisposable
         {
             Directory.Delete(Path, recursive: true);
         }
+    }
+}
+
+// A controllable timer leaf that can hold actual Task.Delay cancellation/disposal callbacks.
+internal sealed class OwnershipClock : TimeProvider
+{
+    private readonly Deterministic.ManualClock _inner = new();
+    private readonly object _gate = new();
+    private readonly Dictionary<TimeSpan, Deterministic.Milestone> _registered = [];
+    public TimeSpan? HoldDisposeFor { get; set; }
+    public TaskCompletionSource DisposeEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource ReleaseDispose { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public override long TimestampFrequency => _inner.TimestampFrequency;
+    public override long GetTimestamp() => _inner.GetTimestamp();
+    public override DateTimeOffset GetUtcNow() => _inner.GetUtcNow();
+    public void Advance(TimeSpan duration) => _inner.Advance(duration);
+    public Task WhenRegistered(TimeSpan due, int count = 1)
+    {
+        lock (_gate)
+        {
+            if (!_registered.TryGetValue(due, out var signal)) _registered[due] = signal = new();
+            return signal.WhenAtLeast(count);
+        }
+    }
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+    {
+        var timer = new HoldingTimer(this, _inner.CreateTimer(callback, state, dueTime, period), dueTime);
+        lock (_gate)
+        {
+            if (!_registered.TryGetValue(dueTime, out var signal)) _registered[dueTime] = signal = new();
+            signal.Increment();
+        }
+        return timer;
+    }
+    private sealed class HoldingTimer(OwnershipClock clock, ITimer inner, TimeSpan due) : ITimer
+    {
+        private int _disposed;
+        public bool Change(TimeSpan dueTime, TimeSpan period) => inner.Change(dueTime, period);
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            inner.Dispose();
+            if (clock.HoldDisposeFor == due)
+            {
+                clock.DisposeEntered.TrySetResult();
+                clock.ReleaseDispose.Task.GetAwaiter().GetResult();
+            }
+        }
+        public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
     }
 }

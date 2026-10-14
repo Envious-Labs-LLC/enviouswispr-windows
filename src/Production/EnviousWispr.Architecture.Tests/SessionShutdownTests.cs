@@ -23,6 +23,212 @@ public sealed class SessionShutdownTests
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(10);
 
     [Fact]
+    public async Task OrdinaryAppRouteDrainsTheIssuedPrefixAndTranscribesOnlyItsTail()
+    {
+        var clock = new OwnershipClock();
+        var world = ComposedSessionWorld.Create("words", clock);
+        world.Capture.Take = FakeAudioCapture.Script((false, 200), (true, 3000), (false, 1200), (true, 500));
+        world.Capture.ReturnTake = true;
+        world.Engine.HoldIgnoringCancel = true;
+        world.Engine.Words.Enqueue("prefix");
+        world.Engine.Words.Enqueue("tail");
+        await world.PressAsync();
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        await world.Engine.Entered.Task.WaitAsync(Patience);
+        var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await Task.WhenAny(clock.WhenRegistered(TimeSpan.FromSeconds(1)), world.Engine.RequestCancellationObserved.Task).WaitAsync(Patience);
+        Assert.False(world.Engine.Tokens[0].IsCancellationRequested);
+        world.Engine.AllowExit.SetResult();
+        Assert.Equal(SessionCommandDisposition.Applied, (await release.WaitAsync(Patience)).Disposition);
+        Assert.Equal(2, world.Engine.Calls);
+        Assert.Equal(world.Capture.Take.Length - world.Engine.Requests[0].Samples.Length, world.Engine.Requests[1].Samples.Length);
+        Assert.Contains("prefix tail", Assert.Single(world.Delivery.Requests).Text.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(EnviousWispr.Core.Diagnostics.AppEventCode.StreamingHeadStartUsed, world.Log.Events);
+        Assert.False(world.Coordinator.IsProcessing);
+        Assert.True((await world.Coordinator.ShutdownAsync(Patience)).Clean);
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, false)]
+    public async Task RetainedRealAppWorkKeepsOriginalSlotUntilLateCompletion(bool close, bool fault, bool cancelProcessing)
+    {
+        var clock = new OwnershipClock();
+        var world = ComposedSessionWorld.Create("words", clock);
+        world.Capture.Take = FakeAudioCapture.Script((false, 200), (true, 3000), (false, 1200), (true, 500));
+        world.Capture.ReturnTake = true;
+        world.Engine.HoldIgnoringCancel = true;
+        await world.PressAsync();
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        await world.Engine.Entered.Task.WaitAsync(Patience);
+        var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await clock.WhenRegistered(TimeSpan.FromSeconds(1)).WaitAsync(Patience);
+        if (cancelProcessing) world.Coordinator.CancelProcessing();
+        clock.Advance(TimeSpan.FromSeconds(6));
+        Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
+        AssertRetained(world);
+        Assert.Equal(SessionCommandDisposition.Busy, (await world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed)).Disposition);
+        Assert.Equal(1, world.Capture.StartCount);
+        Assert.Empty(world.Delivery.Requests);
+        Assert.Equal(1, world.Engine.Calls);
+        Assert.False(world.Capture.Disposed);
+        if (close) world.Coordinator.Close();
+        if (fault) world.Engine.BeforeReturning = () => throw new InvalidOperationException("late worker failure");
+        world.Engine.AllowExit.SetResult();
+        await world.Coordinator.RetainedSlotCompletion!.WaitAsync(Patience);
+        Assert.Null(world.Controller.CurrentSession);
+        Assert.False(world.Coordinator.IsProcessing);
+        Assert.Equal(0, world.Coordinator.PendingCount);
+        Assert.Empty(world.Delivery.Requests);
+        if (close)
+            Assert.Equal(SessionCommandDisposition.Stopping, (await world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed)).Disposition);
+        else
+        {
+            using var hold = world.Coordinator.TryHold(SessionHolder.FileTranscription).Hold;
+            Assert.NotNull(hold);
+        }
+        Assert.True((await world.Coordinator.ShutdownAsync(Patience)).Clean);
+    }
+
+    [Fact]
+    public async Task HeldRequestCallbackRemainsOwnedAfterItsLoopEnds()
+    {
+        var clock = new OwnershipClock();
+        var world = ComposedSessionWorld.Create("words", clock);
+        world.Capture.Take = FakeAudioCapture.Script((true, 3000), (false, 1200), (true, 500));
+        world.Engine.HoldIgnoringCancel = true;
+        world.Engine.HoldRequestCallback = true;
+        await world.PressAsync();
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        await world.Engine.Entered.Task.WaitAsync(Patience);
+        var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await clock.WhenRegistered(TimeSpan.FromSeconds(1)).WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(6));
+        await world.Engine.CallbackEntered.Task.WaitAsync(Patience);
+        Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
+        world.Engine.AllowExit.SetResult();
+        await world.Runtime.Streaming.Loop!.WaitAsync(Patience);
+        AssertRetained(world);
+        Assert.False(world.Capture.Disposed);
+        _ = world.Engine.Tokens[0].WaitHandle;
+        world.Engine.ReleaseCallback.SetResult();
+        await world.Coordinator.RetainedSlotCompletion!.WaitAsync(Patience);
+        Assert.Null(world.Controller.CurrentSession);
+        Assert.True((await world.Coordinator.ShutdownAsync(Patience)).Clean);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RealTimerCancellationCallbacksCannotBypassSharedBudget(bool watchdog)
+    {
+        var clock = new OwnershipClock();
+        var world = ComposedSessionWorld.Create("words", clock);
+        if (!watchdog) world.Dictation = world.Dictation with
+        {
+            RecordingMode = EnviousWispr.Core.Settings.DictationRecordingMode.Toggle,
+            AutoStopEnabled = true,
+        };
+        await world.PressAsync();
+        clock.HoldDisposeFor = watchdog ? TimeSpan.FromMinutes(5) : TimeSpan.FromMilliseconds(250);
+        var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await clock.DisposeEntered.Task.WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(6));
+        Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
+        AssertRetained(world);
+        Assert.Equal(0, world.Engine.Calls);
+        Assert.False(world.Capture.Disposed);
+        if (watchdog) Assert.True(world.Capture.IsCapturing); // Preserved until the original watchdog invocation ends.
+        clock.ReleaseDispose.SetResult();
+        await world.Coordinator.RetainedSlotCompletion!.WaitAsync(Patience);
+        Assert.Null(world.Controller.CurrentSession);
+        Assert.True((await world.Coordinator.ShutdownAsync(Patience)).Clean);
+    }
+
+    [Fact]
+    public async Task ShutdownDuringRetainedWorkIsUncleanAndCannotDisposeDependencies()
+    {
+        var clock = new OwnershipClock();
+        var world = ComposedSessionWorld.Create("words", clock);
+        world.Capture.Take = FakeAudioCapture.Script((true, 3000), (false, 1200), (true, 500));
+        world.Engine.HoldIgnoringCancel = true;
+        await world.PressAsync();
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        await world.Engine.Entered.Task.WaitAsync(Patience);
+        var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await clock.WhenRegistered(TimeSpan.FromSeconds(1)).WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(6));
+        await release.WaitAsync(Patience);
+        var shutdown = await world.Coordinator.ShutdownAsync(TimeSpan.Zero);
+        Assert.False(shutdown.Clean);
+        Assert.True(shutdown.CommandOutstanding);
+        Assert.Null(shutdown.Teardown);
+        await world.Coordinator.DisposeAsync();
+        Assert.False(world.Capture.Disposed);
+        Assert.Equal(0, world.TearDowns);
+        world.Engine.AllowExit.SetResult();
+        await world.Coordinator.RetainedSlotCompletion!.WaitAsync(Patience);
+        Assert.Equal(SessionCommandDisposition.Stopping, (await world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed)).Disposition);
+    }
+
+    [Fact]
+    public async Task FailedSerializedAbortKeepsUnsafeSlotAndRefusesDisposal()
+    {
+        var clock = new OwnershipClock();
+        var world = ComposedSessionWorld.Create("words", clock);
+        world.Capture.Take = FakeAudioCapture.Script((true, 3000), (false, 1200), (true, 500));
+        world.Engine.HoldIgnoringCancel = true;
+        await world.PressAsync();
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        await world.Engine.Entered.Task.WaitAsync(Patience);
+        var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await clock.WhenRegistered(TimeSpan.FromSeconds(1)).WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(6));
+        await release.WaitAsync(Patience);
+        var aborts = 0;
+        world.Controller.SessionChanged += (_, session) =>
+        {
+            if (session.State == DictationSessionState.Failed)
+            {
+                Interlocked.Increment(ref aborts);
+                throw new InvalidOperationException("abort observer failed");
+            }
+        };
+        var stop = world.Coordinator.StopAsync(Patience);
+        world.Engine.AllowExit.SetResult();
+        Assert.False(await stop.WaitAsync(Patience));
+        Assert.Equal(1, aborts);
+        Assert.True(world.Coordinator.IsProcessing);
+        Assert.Equal(1, world.Coordinator.PendingCount);
+        Assert.False(world.Coordinator.IsIdle);
+        Assert.False(world.Coordinator.RetainedSlotCompletion!.IsCompleted);
+        Assert.NotNull(world.Controller.CurrentSession);
+        var report = await world.Coordinator.ShutdownAsync(TimeSpan.Zero);
+        Assert.False(report.Clean);
+        Assert.True(report.CommandOutstanding);
+        Assert.Null(report.Teardown);
+        await world.Coordinator.DisposeAsync();
+        Assert.False(world.Capture.Disposed);
+        Assert.Equal(0, world.TearDowns);
+    }
+
+    private static void AssertRetained(ComposedSessionWorld world)
+    {
+        Assert.NotNull(world.Controller.CurrentSession);
+        Assert.True(world.Coordinator.IsProcessing);
+        Assert.True(world.Coordinator.PendingCount > 0);
+        foreach (var holder in Enum.GetValues<SessionHolder>())
+            Assert.Equal(SessionHoldRefusal.Dictation, world.Coordinator.TryHold(holder).Refusal);
+        // These are the actual off-hold guards at Quick Add/download/retry entry points.
+        Assert.True(world.Controller.CurrentSession is not null);
+        Assert.True(world.Controller.CurrentSession is not null || world.Coordinator.IsProcessing);
+        Assert.Equal(SelectionAcquisition.Refuse, SelectionAcquisitionPolicy.Decide(true, null,
+            world.Controller.CurrentSession is not null, world.Coordinator.IsProcessing));
+    }
+
+    [Fact]
     public async Task QuittingDuringATranscriptionWaitsForItKeepsTheWordsAndThenClosesTheMicrophone()
     {
         // THE APP IS LEAVING, AND A DELIVERY NOT YET ISSUED IS NOT ISSUED. The transcription is
