@@ -75,10 +75,8 @@ public sealed class ProductionPathTests
         Assert.Equal("hello world", world.Delivery.Requests.Single().Text.Text);
         Assert.False(world.Runtime.Preview.IsRunning);
 
-        // A WORKER NOT SEEN GONE AFTER TWO KILLS ENDS THE DICTATION AS A FAILED SESSION: the final
-        // engine is never reached, nothing is delivered, the preview's failure and the runtime's
-        // error are on the log, the status says the session was reset safely, and the preview stays
-        // owned - the next stop asks again.
+        // A worker not seen gone remains owned: no final transcription or delivery, no claim of
+        // safe recovery, and no disposal or admission of another session while cleanup is unsafe.
         var stubborn = ComposedSessionWorld.Create("not transcribed");
         stubborn.LivePreviewEnabled = true;
         stubborn.PreviewEngine.RefuseStop = true;
@@ -91,10 +89,21 @@ public sealed class ProductionPathTests
         Assert.Equal(0, stubborn.Engine.Calls);
         Assert.Empty(stubborn.Delivery.Requests);
         Assert.Contains(AppEventCode.LivePreviewFailed, stubborn.Log.Events);
-        Assert.Contains(AppEventCode.DictationSessionRecovered, stubborn.Log.Events);
+        Assert.DoesNotContain(AppEventCode.DictationSessionRecovered, stubborn.Log.Events);
         Assert.DoesNotContain(AppEventCode.LivePreviewAborted, stubborn.Log.Events);
-        Assert.Contains(stubborn.View.Statuses, status => status.Text.Contains("reset safely", StringComparison.Ordinal));
-        Assert.Null(stubborn.Controller.CurrentSession);
+        Assert.DoesNotContain(stubborn.View.Statuses, status => status.Text.Contains("reset safely", StringComparison.Ordinal));
+        Assert.False(await stubborn.Coordinator.StopAsync(Patience).WaitAsync(Patience));
+        Assert.NotNull(stubborn.Controller.CurrentSession);
+        Assert.True(stubborn.Coordinator.IsProcessing);
+        Assert.Equal(1, stubborn.Coordinator.PendingCount);
+        Assert.False(stubborn.Coordinator.IsIdle);
+        var report = await stubborn.Coordinator.ShutdownAsync(TimeSpan.Zero);
+        Assert.False(report.Clean);
+        Assert.True(report.CommandOutstanding);
+        Assert.Null(report.Teardown);
+        await stubborn.Coordinator.DisposeAsync();
+        Assert.False(stubborn.Capture.Disposed);
+        Assert.Equal(0, stubborn.TearDowns);
         Assert.True(stubborn.Runtime.Preview.IsRunning, "a worker not seen gone is still owned");
     }
 
