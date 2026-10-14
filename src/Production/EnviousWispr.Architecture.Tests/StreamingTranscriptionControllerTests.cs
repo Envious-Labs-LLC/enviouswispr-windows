@@ -475,6 +475,43 @@ public sealed class StreamingTranscriptionControllerTests
         Assert.False(world.Controller.IsRunning);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EscapingLoopFaultJoinsHeldCallbackBeforeRelease(bool callbackCompletesBeforeDeadline)
+    {
+        var world = await HeldWorld();
+        world.Engine.HoldCancellationCallback = true;
+        world.Engine.IgnoreCancellation = true;
+        world.Engine.ThrowOnTranscribe = new InvalidOperationException("engine fault");
+        world.Log.ThrowOnceOnAbandonment = true;
+        var registered = world.Clock.Registered;
+        var stop = world.Controller.StopAsync(TimeSpan.FromSeconds(1));
+        await world.Engine.CallbackEntered.Task.WaitAsync(Patience);
+        world.Engine.AllowExit.SetResult();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => world.Controller.Loop!.WaitAsync(Patience));
+        Assert.True(world.Controller.IsRunning);
+        _ = world.Engine.Token.WaitHandle;
+        world.Controller.Start(DictationSessionId.Create());
+        await Assert.ThrowsAsync<TranscriptionEngineException>(() => world.Controller.TranscribeUsingAnyHeadStartAsync(
+            world.Engine, new CapturedAudio(world.Session, world.Audio.Samples, SampleRate, 1), CancellationToken.None));
+        if (callbackCompletesBeforeDeadline)
+        {
+            world.Engine.ReleaseCallback.SetResult();
+            await Assert.ThrowsAsync<InvalidOperationException>(() => stop.WaitAsync(Patience));
+        }
+        else
+        {
+            await world.Clock.WhenRegistered(registered + 1).WaitAsync(Patience);
+            world.Clock.Advance(TimeSpan.FromSeconds(1));
+            Assert.Equal(StopOutcome.StillRunning, await stop.WaitAsync(Patience));
+            Assert.True(world.Controller.IsRunning);
+            world.Engine.ReleaseCallback.SetResult();
+            await Assert.ThrowsAsync<InvalidOperationException>(() => world.Controller.StopAsync().WaitAsync(Patience));
+        }
+        Assert.False(world.Controller.IsRunning);
+    }
+
     private static async Task<World> HeldWorld()
     {
         var world = World.Build();
@@ -657,6 +694,8 @@ public sealed class StreamingTranscriptionControllerTests
         private readonly object _lock = new();
         private readonly List<(AppLogEntry Entry, Guid? Dictation)> _lines = [];
 
+        public bool ThrowOnceOnAbandonment { get; set; }
+
         public AppLogEntry[] Entries
         {
             get
@@ -686,6 +725,11 @@ public sealed class StreamingTranscriptionControllerTests
             lock (_lock)
             {
                 _lines.Add((entry, DictationScope.Current));
+                if (ThrowOnceOnAbandonment && entry.Event == AppEventCode.StreamingAbandoned)
+                {
+                    ThrowOnceOnAbandonment = false;
+                    throw new InvalidOperationException("failure reporter fault");
+                }
             }
         }
     }

@@ -262,14 +262,24 @@ public sealed class StreamingTranscriptionController
         }
         finally
         {
-            lock (_ownership)
+            if (stop.IsCompleted)
             {
-                if (stop.IsCompleted && ReferenceEquals(_work, work))
+                try
                 {
-                    // FinishStop includes callbacks and registrations, not just the loop.
-                    _work = null;
-                    work.Scheduling.Dispose();
-                    work.Request.Dispose();
+                    // Completion may race a timed-out wait. Observe the actual ending before release.
+                    await stop.ConfigureAwait(false);
+                }
+                finally
+                {
+                    lock (_ownership)
+                    {
+                        if (ReferenceEquals(_work, work))
+                        {
+                            _work = null;
+                            work.Scheduling.Dispose();
+                            work.Request.Dispose();
+                        }
+                    }
                 }
             }
         }
@@ -289,34 +299,43 @@ public sealed class StreamingTranscriptionController
     private async Task FinishStopAsync(StreamingWork work, Task schedulingCancellation,
         bool ordinary, CancellationToken processingToken)
     {
-        if (ordinary)
+        try
         {
-            await using var registration = processingToken.Register(() => RequestCancellation(work));
+            if (ordinary)
+            {
+                await using var registration = processingToken.Register(() => RequestCancellation(work));
+                try
+                {
+                    await work.Loop.WaitAsync(TimeSpan.FromSeconds(1), _clock, processingToken).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    RequestCancellation(work);
+                }
+                catch (OperationCanceledException)
+                {
+                    if (!work.Loop.IsCompleted) RequestCancellation(work);
+                }
+            }
+        }
+        finally
+        {
             try
             {
-                await work.Loop.WaitAsync(TimeSpan.FromSeconds(1), _clock, processingToken).ConfigureAwait(false);
+                await work.Loop.ConfigureAwait(false);
             }
-            catch (TimeoutException)
+            finally
             {
-                RequestCancellation(work);
-            }
-            catch (OperationCanceledException)
-            {
-                // The wait can lose a race with loop completion. Either way, still join all cleanup.
-                if (!work.Loop.IsCompleted) RequestCancellation(work);
+                // An escaping loop fault still joins its callbacks before stop completion.
+                Task requestCancellation;
+                lock (_ownership)
+                {
+                    work.CleanupClosed = true;
+                    requestCancellation = work.RequestCancellation ?? Task.CompletedTask;
+                }
+                await Task.WhenAll(schedulingCancellation, requestCancellation).ConfigureAwait(false);
             }
         }
-
-        // Cancellation callbacks may still be using request resources after the loop ends.
-        // No second stop owner is created when an abort escalates an ordinary drain.
-        await work.Loop.ConfigureAwait(false);
-        Task requestCancellation;
-        lock (_ownership)
-        {
-            work.CleanupClosed = true;
-            requestCancellation = work.RequestCancellation ?? Task.CompletedTask;
-        }
-        await Task.WhenAll(schedulingCancellation, requestCancellation).ConfigureAwait(false);
     }
 
     /// <summary>
