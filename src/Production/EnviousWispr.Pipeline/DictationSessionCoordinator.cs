@@ -839,6 +839,8 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
                 if (!await JoinRetainedAsync().ConfigureAwait(false)) return false;
             }
             if (running) Interlocked.Decrement(ref _running);
+            if (published)
+                NoteRecording(queued.Command, new SessionCommandResult(SessionCommandDisposition.Failed));
             Undo(queued.Command);
             ReleaseGate(ref holdingGate);
             if (!published) queued.Completion.TrySetException(exception);
@@ -859,7 +861,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         // would otherwise be marked as having waited behind a press whose work and gate ownership had
         // both already ended, and the journey that reads that mark would certify an overlap that never
         // happened. Undercounting in the other direction only makes that journey say "not proven".
-        NoteRecording(queued.Command, result);
+        NoteRecording(queued.Command, published ? new SessionCommandResult(SessionCommandDisposition.Failed) : result);
         Undo(queued.Command);
         ReleaseGate(ref holdingGate);
         if (!published) queued.Completion.TrySetResult(result);

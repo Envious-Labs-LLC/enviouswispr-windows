@@ -214,6 +214,42 @@ public sealed class SessionShutdownTests
         Assert.Equal(0, world.TearDowns);
     }
 
+    [Theory]
+    [InlineData(false, 0)]
+    [InlineData(true, 0)]
+    [InlineData(true, 3)]
+    public async Task PreviewAbortUsesSharedRemainderAndRetainsWholeInvocation(bool synchronous, int spentSeconds)
+    {
+        var clock = new OwnershipClock();
+        var world = ComposedSessionWorld.Create("words", clock);
+        world.LivePreviewEnabled = true;
+        world.PreviewEngine.RefuseStop = true;
+        world.PreviewEngine.HoldAbort = !synchronous;
+        world.PreviewEngine.HoldAbortSynchronously = synchronous;
+        await world.PressAsync();
+        if (spentSeconds > 0) clock.HoldDisposeFor = TimeSpan.FromMinutes(5);
+        var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        if (spentSeconds > 0)
+        {
+            await clock.DisposeEntered.Task.WaitAsync(Patience);
+            clock.Advance(TimeSpan.FromSeconds(spentSeconds));
+            clock.ReleaseDispose.SetResult();
+        }
+        await world.PreviewEngine.AbortEntered.Task.WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(6 - spentSeconds));
+        Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
+        AssertRetained(world);
+        Assert.Equal(1, world.PreviewEngine.Aborts);
+        Assert.Equal(0, world.Engine.Calls);
+        Assert.False(world.Capture.Disposed);
+        world.PreviewEngine.ReleaseAbort.SetResult();
+        await world.Coordinator.RetainedSlotCompletion!.WaitAsync(Patience);
+        Assert.Equal(1, world.PreviewEngine.Aborts);
+        Assert.Null(world.Controller.CurrentSession);
+        Assert.False(world.Coordinator.IsProcessing);
+        Assert.True((await world.Coordinator.ShutdownAsync(Patience)).Clean);
+    }
+
     private static void AssertRetained(ComposedSessionWorld world)
     {
         Assert.NotNull(world.Controller.CurrentSession);

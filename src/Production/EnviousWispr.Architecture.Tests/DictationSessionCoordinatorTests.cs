@@ -23,8 +23,17 @@ public sealed class DictationSessionCoordinatorTests
     public async Task PublishedExecutorExceptionRetainsOriginalSlotUntilCleanupEnds(bool close)
     {
         var cleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var executor = new BarrierExecutor { ThrowOn = PushToTalkSignal.Released, RetainedWork = cleanup.Task };
+        var executor = new BarrierExecutor
+        {
+            ThrowOn = PushToTalkSignal.Released,
+            Answer = new SessionCommandResult(SessionCommandDisposition.Applied, DictationSessionSnapshot.Start(DateTimeOffset.UtcNow)),
+        };
         await using var coordinator = new DictationSessionCoordinator(executor);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        executor.RetainedWork = cleanup.Task;
         var command = coordinator.SubmitAsync(PushToTalkSignal.Released);
         await executor.Started(PushToTalkSignal.Released).WaitAsync(Patience);
         executor.Finish(PushToTalkSignal.Released);
@@ -43,8 +52,11 @@ public sealed class DictationSessionCoordinatorTests
         if (close) Assert.Equal(SessionHoldRefusal.Closed, coordinator.TryHold(SessionHolder.FileTranscription).Refusal);
         else
         {
-            using var hold = coordinator.TryHold(SessionHolder.FileTranscription).Hold;
-            Assert.NotNull(hold);
+            foreach (var holder in Enum.GetValues<SessionHolder>())
+            {
+                using var hold = coordinator.TryHold(holder).Hold;
+                Assert.NotNull(hold);
+            }
         }
     }
 

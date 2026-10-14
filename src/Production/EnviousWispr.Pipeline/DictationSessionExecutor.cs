@@ -191,6 +191,13 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         return operation.Result;
     }
 
+    private async Task<StopOutcome> ObservePreviewAbortAsync()
+    {
+        var operation = Task.Run(() => _background.AbortPreviewAsync(PreviewAbortDeadline));
+        await ObserveOwnedTaskAsync(operation).ConfigureAwait(false);
+        return await operation.ConfigureAwait(false);
+    }
+
     private void RetainCleanup(AppError failure, SessionFailureKind kind)
     {
         _retainedFailure = failure;
@@ -806,8 +813,8 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             throw new RetainedStopException();
         }
         if (stopped.Preview == StopOutcome.StillRunning &&
-            await _background.AbortPreviewAsync(PreviewAbortDeadline).ConfigureAwait(false) == StopOutcome.StillRunning &&
-            await _background.AbortPreviewAsync(PreviewAbortDeadline).ConfigureAwait(false) == StopOutcome.StillRunning)
+            await ObservePreviewAbortAsync().ConfigureAwait(false) == StopOutcome.StillRunning &&
+            await ObservePreviewAbortAsync().ConfigureAwait(false) == StopOutcome.StillRunning)
         {
             _effects.RecordPreviewStillRunning();
             throw new PreviewNotRetiredException();

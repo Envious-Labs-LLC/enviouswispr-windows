@@ -358,15 +358,23 @@ internal sealed class FakePreviewEngine : IAbortableLivePreviewEngine
             : new RuntimeWorkerResult(true, RuntimeWorkerState.Stopped);
     }
 
-    public Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline)
+    public bool HoldAbort { get; set; }
+    public bool HoldAbortSynchronously { get; set; }
+    public TaskCompletionSource AbortEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource ReleaseAbort { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public async Task<RuntimeWorkerAbortResult> AbortAsync(TimeSpan deadline)
     {
         Aborts++;
+        AbortEntered.TrySetResult();
+        if (HoldAbortSynchronously) ReleaseAbort.Task.GetAwaiter().GetResult();
+        if (HoldAbort) await ReleaseAbort.Task;
         if (AbortOutcome == RuntimeWorkerAbortOutcome.Exited)
         {
             RefuseStop = false;
         }
 
-        return Task.FromResult(new RuntimeWorkerAbortResult(AbortOutcome, 4242));
+        return new RuntimeWorkerAbortResult(AbortOutcome, 4242);
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
