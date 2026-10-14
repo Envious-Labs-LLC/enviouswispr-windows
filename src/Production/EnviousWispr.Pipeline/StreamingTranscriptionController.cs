@@ -60,8 +60,19 @@ public sealed class StreamingTranscriptionController
     private readonly TimeProvider _clock;
     private readonly UatRuntimePhaseJournal? _phaseJournal;
     private readonly StreamingTranscriptAccumulator _streamed = new();
-    private CancellationTokenSource? _cancellation;
-    private Task? _loop;
+    private readonly object _ownership = new();
+    private StreamingWork? _work;
+
+    private sealed class StreamingWork
+    {
+        public CancellationTokenSource Scheduling { get; } = new();
+        public CancellationTokenSource Request { get; } = new();
+        public Task Loop { get; set; } = Task.CompletedTask;
+        public bool AdmissionClosed { get; set; }
+        public bool CleanupClosed { get; set; }
+        public Task? Stop { get; set; }
+        public Task? RequestCancellation { get; set; }
+    }
     private int _streamedThroughSample;
     private bool _usable;
 
@@ -78,51 +89,47 @@ public sealed class StreamingTranscriptionController
     }
 
     /// <summary>Whether a streaming loop has been started and not yet stopped.</summary>
-    public bool IsRunning => _loop is not null;
+    public bool IsRunning { get { lock (_ownership) return _work is not null; } }
 
     /// <summary>The loop, so a test can wait for one that ends on its own rather than poll for it.</summary>
-    internal Task? Loop => _loop;
+    internal Task? Loop { get { lock (_ownership) return _work?.Loop; } }
 
     /// <summary>Forgets the last take and, unless streaming stands down, starts committing this one.</summary>
     public void Start(DictationSessionId sessionId)
     {
-        // REFUSED WHILE THE LAST LOOP IS STILL OWNED. A loop a bounded stop left inside the engine
-        // still holds the accumulator and would append its late segment to the next recording's;
-        // that recording runs without a head start, and the next stop joins what is left.
-        if (_loop is not null)
+        lock (_ownership)
         {
-            _logger.Write(new AppLogEntry(
-                _clock.GetUtcNow(),
-                AppEventCode.StreamingAbandoned,
-                AppFailureCategory.RuntimeWorker,
-                ErrorCode: AppErrorCode.RuntimeResourceBusy));
+            // An unfinished stop owns the buffer even when its loop has ended.
+            if (_work is not null)
+            {
+                _logger.Write(new AppLogEntry(_clock.GetUtcNow(), AppEventCode.StreamingAbandoned,
+                    AppFailureCategory.RuntimeWorker, ErrorCode: AppErrorCode.RuntimeResourceBusy));
+                return;
+            }
+
+            _streamed.Clear();
+            _streamedThroughSample = 0;
             _usable = false;
-            return;
+            if (_effects.LivePreviewEnabled || _effects.Engine is not { } engine ||
+                _effects.Audio is not { } snapshots)
+            {
+                return;
+            }
+
+            _usable = true;
+            var work = new StreamingWork();
+            _work = work;
+            work.Loop = RunAsync(snapshots, engine, sessionId, work);
         }
-
-        _streamed.Clear();
-        _streamedThroughSample = 0;
-        _usable = false;
-
-        if (_effects.LivePreviewEnabled ||
-            _effects.Engine is not { } engine ||
-            _effects.Audio is not { } snapshots)
-        {
-            return;
-        }
-
-        _usable = true;
-        var cancellation = new CancellationTokenSource();
-        _cancellation = cancellation;
-        _loop = RunAsync(snapshots, engine, sessionId, cancellation.Token);
     }
 
     private async Task RunAsync(
         IAudioSnapshotSource snapshots,
         ITranscriptionEngine engine,
         DictationSessionId sessionId,
-        CancellationToken cancellationToken)
+        StreamingWork work)
     {
+        var cancellationToken = work.Scheduling.Token;
         // Every flow that serves a dictation opens the scope for itself. Inheriting one would in
         // fact work here - a child async flow keeps the AsyncLocal value it captured even after the
         // caller disposes its own scope - and that is exactly why this does not rely on it: the
@@ -164,9 +171,17 @@ public sealed class StreamingTranscriptionController
                 var slice = snapshot.Samples.Slice(
                     range.StartSample,
                     range.EndSample - range.StartSample);
-                var transcript = await engine.TranscribeAsync(
-                    new CapturedAudio(sessionId, slice, snapshot.SampleRate, snapshot.Channels),
-                    cancellationToken).ConfigureAwait(false);
+                Task<Transcript> request;
+                lock (_ownership)
+                {
+                    // Selection alone is not admission: stop and issue share this boundary.
+                    if (work.AdmissionClosed) break;
+                    request = engine.TranscribeAsync(
+                        new CapturedAudio(sessionId, slice, snapshot.SampleRate, snapshot.Channels),
+                        work.Request.Token);
+                }
+                var transcript = await request.ConfigureAwait(false);
+                work.Request.Token.ThrowIfCancellationRequested();
 
                 _streamed.Append(transcript.Text);
                 _streamedThroughSample = range.EndSample;
@@ -204,35 +219,104 @@ public sealed class StreamingTranscriptionController
         }
     }
 
-    /// <summary>Ends the loop and waits for it, however long that takes; what it committed stays usable.</summary>
+    /// <summary>Cancels active speech work and joins the same owned stop.</summary>
     public Task<StopOutcome> StopAsync() => StopAsync(deadline: null);
 
-    /// <summary>Ends the loop and waits up to the deadline; a loop still running past it stays owned.</summary>
-    public async Task<StopOutcome> StopAsync(TimeSpan? deadline)
+    /// <summary>Cancels active speech work; unfinished callbacks and work remain owned.</summary>
+    public Task<StopOutcome> StopAsync(TimeSpan? deadline) => StopOwnedAsync(deadline, ordinary: false, CancellationToken.None);
+
+    /// <summary>
+    /// Stops admission, allowing issued speech work one second of patience before cancellation.
+    /// Patience is policy, not a hardware guarantee. The supplied budget bounds observation of the
+    /// whole owned stop; cancellation of that observation never means the speech work has ended.
+    /// </summary>
+    public Task<StopOutcome> CompleteOrdinaryAsync(TimeSpan cleanupBudget, CancellationToken processingToken)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(cleanupBudget, TimeSpan.Zero);
+        return StopOwnedAsync(cleanupBudget, ordinary: true, processingToken);
+    }
+
+    private async Task<StopOutcome> StopOwnedAsync(TimeSpan? deadline, bool ordinary, CancellationToken processingToken)
+    {
+        if (deadline is { } limit) ArgumentOutOfRangeException.ThrowIfLessThan(limit, TimeSpan.Zero);
         _phaseJournal?.Record(UatRuntimePhase.StopEntered, DictationScope.Current);
-        var cancellation = _cancellation;
-        var loop = _loop;
-        if (cancellation is null)
+        StreamingWork work;
+        Task stop;
+        lock (_ownership)
         {
-            return StopOutcome.Completed;
+            if (_work is not { } current) return StopOutcome.Completed;
+            work = current;
+            if (!ordinary) RequestCancellation(work);
+            if (work.Stop is null)
+            {
+                work.AdmissionClosed = true;
+                var schedulingCancellation = work.Scheduling.CancelAsync();
+                work.Stop = FinishStopAsync(work, schedulingCancellation, ordinary, processingToken);
+            }
+            stop = work.Stop;
         }
 
-        var cancellationTask = cancellation.CancelAsync();
-        _phaseJournal?.Record(UatRuntimePhase.CancellationRequested, DictationScope.Current);
-        await cancellationTask.ConfigureAwait(false);
-        if (loop is not null &&
-            await BoundedJoin.JoinAsync(loop, deadline, _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
+        try
         {
-            // STILL RUNNING, STILL OWNED: the loop is inside the engine with a token source it still
-            // reads; both stay in their fields for the next stop to join.
-            return StopOutcome.StillRunning;
+            return await BoundedJoin.JoinAsync(stop, deadline, _clock).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_ownership)
+            {
+                if (stop.IsCompleted && ReferenceEquals(_work, work))
+                {
+                    // FinishStop includes callbacks and registrations, not just the loop.
+                    _work = null;
+                    work.Scheduling.Dispose();
+                    work.Request.Dispose();
+                }
+            }
+        }
+    }
+
+    private void RequestCancellation(StreamingWork work)
+    {
+        lock (_ownership)
+        {
+            if (work.CleanupClosed || work.RequestCancellation is not null) return;
+            work.AdmissionClosed = true;
+            work.RequestCancellation = work.Request.CancelAsync();
+            _phaseJournal?.Record(UatRuntimePhase.CancellationRequested, DictationScope.Current);
+        }
+    }
+
+    private async Task FinishStopAsync(StreamingWork work, Task schedulingCancellation,
+        bool ordinary, CancellationToken processingToken)
+    {
+        if (ordinary)
+        {
+            await using var registration = processingToken.Register(() => RequestCancellation(work));
+            try
+            {
+                await work.Loop.WaitAsync(TimeSpan.FromSeconds(1), _clock, processingToken).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                RequestCancellation(work);
+            }
+            catch (OperationCanceledException)
+            {
+                // The wait can lose a race with loop completion. Either way, still join all cleanup.
+                if (!work.Loop.IsCompleted) RequestCancellation(work);
+            }
         }
 
-        _cancellation = null;
-        _loop = null;
-        cancellation.Dispose();
-        return StopOutcome.Completed;
+        // Cancellation callbacks may still be using request resources after the loop ends.
+        // No second stop owner is created when an abort escalates an ordinary drain.
+        await work.Loop.ConfigureAwait(false);
+        Task requestCancellation;
+        lock (_ownership)
+        {
+            work.CleanupClosed = true;
+            requestCancellation = work.RequestCancellation ?? Task.CompletedTask;
+        }
+        await Task.WhenAll(schedulingCancellation, requestCancellation).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -259,6 +343,14 @@ public sealed class StreamingTranscriptionController
     {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(audio);
+        lock (_ownership)
+        {
+            if (_work is not null)
+            {
+                throw new TranscriptionEngineException(new AppError(AppErrorCode.RuntimeResourceBusy,
+                    AppErrorStage.RuntimeWorker, CanRetry: true));
+            }
+        }
         // The runner that calls this has opened the dictation's scope already; opened again here
         // because the line this writes belongs to the audio's dictation whoever the caller is.
         using var dictation = DictationScope.Begin(audio.SessionId.Value);

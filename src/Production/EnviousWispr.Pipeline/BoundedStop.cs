@@ -122,6 +122,14 @@ public static class BoundedJoin
         }
         catch (TimeoutException)
         {
+            // A timeout thrown by the owned work is a fault, not unfinished work. Re-observe
+            // completion if the wait's deadline raced it; preserve cancellation-as-completion.
+            if (work.IsCompleted)
+            {
+                try { await work.ConfigureAwait(false); }
+                catch (OperationCanceledException) { }
+                return StopOutcome.Completed;
+            }
             return StopOutcome.StillRunning;
         }
     }
