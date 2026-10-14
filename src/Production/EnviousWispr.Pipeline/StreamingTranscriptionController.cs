@@ -58,13 +58,15 @@ public sealed class StreamingTranscriptionController
     private readonly IStreamingTranscriptionEffects _effects;
     private readonly IAppLogger _logger;
     private readonly TimeProvider _clock;
+    private readonly UatRuntimePhaseJournal? _phaseJournal;
     private readonly StreamingTranscriptAccumulator _streamed = new();
     private CancellationTokenSource? _cancellation;
     private Task? _loop;
     private int _streamedThroughSample;
     private bool _usable;
 
-    public StreamingTranscriptionController(IStreamingTranscriptionEffects effects, IAppLogger logger, TimeProvider clock)
+    public StreamingTranscriptionController(IStreamingTranscriptionEffects effects, IAppLogger logger, TimeProvider clock,
+        UatRuntimePhaseJournal? phaseJournal = null)
     {
         ArgumentNullException.ThrowIfNull(effects);
         ArgumentNullException.ThrowIfNull(logger);
@@ -72,6 +74,7 @@ public sealed class StreamingTranscriptionController
         _effects = effects;
         _logger = logger;
         _clock = clock;
+        _phaseJournal = phaseJournal ?? UatRuntimePhaseJournal.FromEnvironment();
     }
 
     /// <summary>Whether a streaming loop has been started and not yet stopped.</summary>
@@ -207,6 +210,7 @@ public sealed class StreamingTranscriptionController
     /// <summary>Ends the loop and waits up to the deadline; a loop still running past it stays owned.</summary>
     public async Task<StopOutcome> StopAsync(TimeSpan? deadline)
     {
+        _phaseJournal?.Record(UatRuntimePhase.StopEntered, DictationScope.Current);
         var cancellation = _cancellation;
         var loop = _loop;
         if (cancellation is null)
@@ -214,7 +218,9 @@ public sealed class StreamingTranscriptionController
             return StopOutcome.Completed;
         }
 
-        await cancellation.CancelAsync().ConfigureAwait(false);
+        var cancellationTask = cancellation.CancelAsync();
+        _phaseJournal?.Record(UatRuntimePhase.CancellationRequested, DictationScope.Current);
+        await cancellationTask.ConfigureAwait(false);
         if (loop is not null &&
             await BoundedJoin.JoinAsync(loop, deadline, _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
         {

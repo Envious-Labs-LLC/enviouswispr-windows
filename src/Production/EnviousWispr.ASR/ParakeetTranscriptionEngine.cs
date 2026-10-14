@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Runtime;
 using Microsoft.ML.OnnxRuntime;
@@ -134,6 +135,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
         try
         {
             var samples = audio.Samples.ToArray();
+            using var preprocessorPhase = UatRuntimePhaseJournal.BeginNativeCall(UatNativeOperation.Preprocessor);
             using var preprocessorResult = _preprocessor.Run(
                 [
                     NamedOnnxValue.CreateFromTensor(
@@ -145,10 +147,12 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                 ],
                 PreprocessorOutputs,
                 runOptions);
+            preprocessorPhase.Returned();
             cancellationToken.ThrowIfCancellationRequested();
 
             var features = preprocessorResult[0].AsEnumerable<float>().ToArray();
             var featureLength = preprocessorResult[1].AsEnumerable<long>().Single();
+            using var encoderPhase = UatRuntimePhaseJournal.BeginNativeCall(UatNativeOperation.Encoder);
             using var encoderResult = _encoder.Run(
                 [
                     NamedOnnxValue.CreateFromTensor(
@@ -160,6 +164,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                 ],
                 EncoderOutputs,
                 runOptions);
+            encoderPhase.Returned();
             cancellationToken.ThrowIfCancellationRequested();
 
             var encoded = TransposeEncoderOutput(encoderResult[0].AsEnumerable<float>().ToArray());
@@ -222,6 +227,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
             cancellationToken.ThrowIfCancellationRequested();
             Array.Copy(encoded, frame * _encoderDimension, encoderFrame, 0, _encoderDimension);
             target[0] = decoded.Count == 0 ? _vocabulary.BlankIndex : decoded[^1].Id;
+            using var decoderPhase = UatRuntimePhaseJournal.BeginNativeCall(UatNativeOperation.Decoder);
             using var result = _decoder.Run(
                 [
                     NamedOnnxValue.CreateFromTensor(
@@ -246,6 +252,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                 ],
                 DecoderOutputs,
                 runOptions);
+            decoderPhase.Returned();
 
             var output = result[0].AsEnumerable<float>().ToArray();
             var token = IndexOfMaximum(output.AsSpan(0, _vocabulary.Size));

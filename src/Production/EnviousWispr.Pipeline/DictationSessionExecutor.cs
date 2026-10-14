@@ -649,6 +649,10 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         using var dictation = DictationScope.Begin(sessionId.Value);
         var processing = new CancellationTokenSource(_processingDeadline, _clock);
         Volatile.Write(ref _processing, processing);
+        if (!recoveryOnly && preserving is null && !Volatile.Read(ref _closed))
+        {
+            UatRuntimePhaseJournal.RecordSession(UatRuntimePhase.OrdinaryReleaseEntered, sessionId.Value);
+        }
         var stopped = await _background.StopAsync().ConfigureAwait(false);
         if (stopped.Preview == StopOutcome.StillRunning &&
             await _background.AbortPreviewAsync(PreviewAbortDeadline).ConfigureAwait(false) == StopOutcome.StillRunning &&
