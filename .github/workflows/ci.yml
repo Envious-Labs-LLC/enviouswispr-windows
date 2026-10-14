@@ -1,15 +1,21 @@
 name: ci
 
 on:
-  push:
-    branches: [main, "rig/*", "codex/*"]
   pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -27,7 +33,7 @@ jobs:
           $hits = @(git log --format='%h %B' "origin/${{ github.base_ref }}..HEAD" | Select-String -Pattern '^\s*(Co-Authored-By:\s*Claude|Claude-Session:|\W{0,3}\s*Generated with \[?Claude Code)')
           if ($hits.Count -gt 0) { "AI attribution found:"; $hits; exit 1 }
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: |
             8.0.x
@@ -35,9 +41,9 @@ jobs:
 
       # Canonical parity with local validation. Model runtime tests remain
       # excluded because their packs are gitignored and machine-local by design.
-      - name: Validate portable build and contracts
+      - name: Validate portable Release build and contracts
         shell: powershell
-        run: powershell -ExecutionPolicy Bypass -File scripts/validate.ps1
+        run: powershell -ExecutionPolicy Bypass -File scripts/validate.ps1 -Configuration Release
 
       # THE STORE PACKAGE IS THE ONLY THING THAT SHIPS, so every change proves it still builds and that
       # its payload is whole. The script checks the files inside the .msix, not the publish folder, and

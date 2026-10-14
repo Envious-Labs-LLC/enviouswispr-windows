@@ -1,32 +1,23 @@
-## Summary
+## Outcome
 
-What changed and what user outcome does it support?
+What changed, why, and which issue does this complete or advance?
 
-Closes #
+## Local proof
 
-## Evidence
+- [ ] Full local Debug validation: `powershell -ExecutionPolicy Bypass -File scripts/validate.ps1 -Configuration Debug`
+- [ ] Local review is clear; applicable findings are resolved
 
-- Current behavior before this change:
-- Source or measurement used:
-- Important assumptions:
+Commands, revision and observed results:
 
-## Validation
+## Pull-request gate
 
-- [ ] `powershell -ExecutionPolicy Bypass -File scripts/validate.ps1`
-- [ ] Task-specific tests listed below
-- [ ] Native Windows user path completed, or exact unobserved condition stated below
+- [ ] This PR's `build-and-test` passed the full Release portable gate and Store-package check
+- [ ] Review is clear before squash auto-merge is armed
 
-Commands and observed results:
+## Relevant behavior and risks
 
-## Safety check
+For product changes, name the native Windows user path observed, failure/fallback evidence and any unobserved conditions. Workflow-only changes cite the modified workflow run instead of dictation UAT. Model-dependent validation uses `-Configuration Release -IncludeLocalRuntime`.
 
-- [ ] No secret, model weight, user content, private path, or transcript was committed
-- [ ] Failure and cancellation preserve the last valid result
-- [ ] Logs and telemetry remain content-free
-- [ ] Hardware and model changes include a safe fallback
+- [ ] No secrets, model weights, dictated content or private machine paths were committed
 
-## UAT and remaining risk
-
-Native path observed:
-
-Not observed or still at risk:
+Remaining risks or deliberate validation gaps:

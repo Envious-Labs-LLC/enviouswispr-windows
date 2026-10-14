@@ -1,8 +1,15 @@
 param(
-    [switch]$IncludeLocalRuntime
+    [switch]$IncludeLocalRuntime,
+    [ValidateSet("Debug", "Release")]
+    [string]$Configuration = "Release"
 )
 
 $ErrorActionPreference = "Stop"
+
+# The real-model harnesses resolve Release artifacts themselves. Debug is portable-only.
+if ($IncludeLocalRuntime -and $Configuration -eq "Debug") {
+    throw "Debug supports portable validation only. Use -Configuration Release -IncludeLocalRuntime for model-dependent validation."
+}
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
 Write-Host "Validating public-release repository compliance..."
@@ -150,7 +157,7 @@ function Invoke-DotNetTest {
         [string[]]$ExtraArguments = @()
     )
 
-    $common = @("test", $Project, "-c", "Release", "--nologo") + $ExtraArguments
+    $common = @("test", $Project, "-c", $Configuration, "--nologo") + $ExtraArguments
     # ASSIGNED FIRST, THEN BRANCHED. A pipeline reports its LAST command's status, so testing
     # $LASTEXITCODE after piping the output anywhere would report the pipe.
     #
@@ -223,64 +230,64 @@ try {
     Write-Host "Using .NET 8 SDK from $dotnet8Exe for the preserved proof"
     Write-Host "Using .NET 10 SDK from $dotnet10Exe for production"
 
-    Write-Host "Building EnviousWispr app (Release)..."
-    Invoke-DotNet -Executable $dotnet8Exe -Arguments @("build", "src/EnviousWispr/EnviousWispr.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building EnviousWispr app ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet8Exe -Arguments @("build", "src/EnviousWispr/EnviousWispr.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building smoke harness (Release)..."
-    Invoke-DotNet -Executable $dotnet8Exe -Arguments @("build", "src/EnviousWispr.Smoke/EnviousWispr.Smoke.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building smoke harness ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet8Exe -Arguments @("build", "src/EnviousWispr.Smoke/EnviousWispr.Smoke.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building production WinUI app and module graph (Release, x64)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "src/Production/EnviousWispr.App/EnviousWispr.App.csproj", "-c", "Release", "--nologo", "-p:Platform=x64")
+    Write-Host "Building production WinUI app and module graph ($Configuration, x64)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "src/Production/EnviousWispr.App/EnviousWispr.App.csproj", "-c", $Configuration, "--nologo", "-p:Platform=x64")
 
     Write-Host "Validating the WinUI-bundled runtime worker can launch..."
-    $bundledWorker = Join-Path $repoRoot "src\Production\EnviousWispr.App\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\EnviousWispr.RuntimeWorker.exe"
+    $bundledWorker = Join-Path $repoRoot "src\Production\EnviousWispr.App\bin\x64\$Configuration\net10.0-windows10.0.26100.0\win-x64\EnviousWispr.RuntimeWorker.exe"
     & $bundledWorker 2>$null
     if ($LASTEXITCODE -ne 2) {
         throw "The WinUI-bundled runtime worker could not launch (exit $LASTEXITCODE)."
     }
 
-    Write-Host "Building native audio UAT harness (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/audio-uat/EnviousWispr.Audio.Uat.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building native audio UAT harness ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/audio-uat/EnviousWispr.Audio.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building native hotkey UAT harness (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/hotkey-uat/EnviousWispr.Hotkey.Uat.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building native hotkey UAT harness ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/hotkey-uat/EnviousWispr.Hotkey.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building native context and delivery UAT harness (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/delivery-uat/EnviousWispr.Delivery.Uat.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building native context and delivery UAT harness ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/delivery-uat/EnviousWispr.Delivery.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building controlled delivery target UAT harness (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/delivery-target-uat/EnviousWispr.Delivery.Target.Uat.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building controlled delivery target UAT harness ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/delivery-target-uat/EnviousWispr.Delivery.Target.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building limited-token delivery launcher UAT harness (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/limited-launch-uat/EnviousWispr.LimitedLaunch.Uat.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building limited-token delivery launcher UAT harness ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/limited-launch-uat/EnviousWispr.LimitedLaunch.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building local polish UAT harness (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/polish-uat/EnviousWispr.Polish.Uat.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building local polish UAT harness ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/polish-uat/EnviousWispr.Polish.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building opt-in cloud polish UAT harness (Release; no provider call)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/cloud-polish-uat/EnviousWispr.CloudPolish.Uat.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building opt-in cloud polish UAT harness ($Configuration; no provider call)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/cloud-polish-uat/EnviousWispr.CloudPolish.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building local Ollama UAT harness (Release; no model pull)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/ollama-uat/EnviousWispr.Ollama.Uat.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building local Ollama UAT harness ($Configuration; no model pull)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/ollama-uat/EnviousWispr.Ollama.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building native runtime UAT harness (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/runtime-uat/EnviousWispr.Runtime.Uat.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building native runtime UAT harness ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/runtime-uat/EnviousWispr.Runtime.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building signed model-delivery UAT harness (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/model-delivery-uat/EnviousWispr.ModelDelivery.Uat.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building signed model-delivery UAT harness ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/model-delivery-uat/EnviousWispr.ModelDelivery.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building the model-manifest authoring tool (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/model-manifest/EnviousWispr.ModelManifest.Tool.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building the model-manifest authoring tool ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/model-manifest/EnviousWispr.ModelManifest.Tool.csproj", "-c", $Configuration, "--nologo")
 
     # VERIFY EVERY BUNDLED MANIFEST FROM SOURCE, not only through the embedded copy the tests read.
     # A manifest edited by hand without its digest recomputed would otherwise be found by a user.
     Get-ChildItem -Path "models/manifests" -Filter "*.json" | ForEach-Object {
         Write-Host "Verifying bundled manifest $($_.Name)..."
-        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--no-build", "-c", "Release", "--project", "tools/model-manifest/EnviousWispr.ModelManifest.Tool.csproj", "--", "verify", $_.FullName)
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--no-build", "-c", $Configuration, "--project", "tools/model-manifest/EnviousWispr.ModelManifest.Tool.csproj", "--", "verify", $_.FullName)
     }
 
-    Write-Host "Building privacy-safe observability UAT harness (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/observability-uat/EnviousWispr.Observability.Uat.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building privacy-safe observability UAT harness ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/observability-uat/EnviousWispr.Observability.Uat.csproj", "-c", $Configuration, "--nologo")
 
     # RUN, NOT MERELY BUILD, AND IN BOTH LANES. This harness proves the hardest promise the product
     # makes - that no dictated content crosses the network - and it was compiled by this gate and
@@ -288,58 +295,58 @@ try {
     # It needs no model, no microphone and no GPU: it stands up a loopback listener and reads back a
     # file, so there is no reason for it to sit behind -IncludeLocalRuntime.
     Write-Host "Running the privacy-safe observability acceptance..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/observability-uat/EnviousWispr.Observability.Uat.csproj", "-c", "Release", "--no-build")
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/observability-uat/EnviousWispr.Observability.Uat.csproj", "-c", $Configuration, "--no-build")
 
-    Write-Host "Building privacy-safe compatibility UAT harness (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/compatibility-uat/EnviousWispr.Compatibility.Uat.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building privacy-safe compatibility UAT harness ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/compatibility-uat/EnviousWispr.Compatibility.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building privacy-safe performance UAT harness (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/performance-uat/EnviousWispr.Performance.Uat.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building privacy-safe performance UAT harness ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/performance-uat/EnviousWispr.Performance.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building native ASR UAT harness (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/asr-uat/EnviousWispr.Asr.Uat.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building native ASR UAT harness ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/asr-uat/EnviousWispr.Asr.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building native Whisper UAT harness (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/whisper-uat/EnviousWispr.Whisper.Uat.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building native Whisper UAT harness ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/whisper-uat/EnviousWispr.Whisper.Uat.csproj", "-c", $Configuration, "--nologo")
 
     # BUILT BY THE GATE THOUGH THE GATE CANNOT RUN IT. It needs a model pack and long recordings that
     # are not in the repository, so it is a measuring instrument rather than a check. Compiling it here
     # is what stops it rotting into something that cannot be pointed at the next question.
-    Write-Host "Building live-preview cost spike (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/asr-incremental-spike/EnviousWispr.Asr.Incremental.Spike.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building live-preview cost spike ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/asr-incremental-spike/EnviousWispr.Asr.Incremental.Spike.csproj", "-c", $Configuration, "--nologo")
 
     # THE PREVIEW MODEL BENCH (#127), compiled for the same reason: it runs against the product's own runtime worker
     # and model packs, so a change there that it no longer builds against is found here, not the next time a model
     # has to be chosen.
-    Write-Host "Building live-preview model bench (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/preview-model-bench/EnviousWispr.Preview.Model.Bench.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building live-preview model bench ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/preview-model-bench/EnviousWispr.Preview.Model.Bench.csproj", "-c", $Configuration, "--nologo")
 
     # THE STAGE BUDGET BENCH (#239), compiled for the same reason: the cleanup stages' deadlines are set from
     # what it prints, so it must still build against the stages the next time one of them changes.
-    Write-Host "Building deterministic stage budget bench (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/stage-budget-bench/EnviousWispr.StageBudget.Bench.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building deterministic stage budget bench ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/stage-budget-bench/EnviousWispr.StageBudget.Bench.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building production WinUI end-to-end journey UAT harness (Release)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", "Release", "--nologo")
+    Write-Host "Building production WinUI end-to-end journey UAT harness ($Configuration)..."
+    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", $Configuration, "--nologo")
 
     if ($IncludeLocalRuntime) {
         Write-Host "Running contract and local model runtime tests..."
         Invoke-DotNetTest -Executable $dotnet8Exe -Project "src/EnviousWispr.Tests/EnviousWispr.Tests.csproj"
         Write-Host "Running production CPU and CUDA ASR acceptance..."
-        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/asr-uat/EnviousWispr.Asr.Uat.csproj", "-c", "Release", "--no-build")
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/asr-uat/EnviousWispr.Asr.Uat.csproj", "-c", $Configuration, "--no-build")
         Write-Host "Running production CPU and CUDA Whisper acceptance..."
-        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/whisper-uat/EnviousWispr.Whisper.Uat.csproj", "-c", "Release", "--no-build")
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/whisper-uat/EnviousWispr.Whisper.Uat.csproj", "-c", $Configuration, "--no-build")
         Write-Host "Running the production WinUI public-fixture journey..."
-        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", "Release", "--no-build")
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", $Configuration, "--no-build")
         Write-Host "Running the production WinUI English Parakeet journey..."
-        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", "Release", "--no-build", "--", "--english-parakeet")
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", $Configuration, "--no-build", "--", "--english-parakeet")
         # ARMS THE HEAD-START CHECK, WHICH IS THE POINT OF ADDING IT. The streaming head start polls
         # every 500 ms and every other journey holds a recording for a fraction of that, so nothing
         # here had ever reached the first poll: the feature was abandoned 511 ms into every recording
         # from the day it shipped and the gate stayed green throughout. A guard nobody runs is not a
         # guard, so this costs the four seconds it takes to hold a recording long enough to matter.
         Write-Host "Running the streaming head-start journey..."
-        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", "Release", "--no-build", "--", "--english-parakeet", "--head-start")
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", $Configuration, "--no-build", "--", "--english-parakeet", "--head-start")
     }
     else {
         Write-Host "Running portable contract tests..."
