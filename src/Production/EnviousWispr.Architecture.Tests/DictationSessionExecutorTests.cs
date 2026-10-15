@@ -89,7 +89,7 @@ public sealed class DictationSessionExecutorTests
         await executor.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
 
         Assert.Equal(
-            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "Background:AbortPreview:3s", "Finalize:recoveryOnly=False", "RecordDictationEdge"],
+            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "ShowTransitionStatus:FinalizeReady", "Background:Stop", "Background:AbortPreview:3s", "Finalize:recoveryOnly=False", "RecordDictationEdge"],
             effects.Trace);
 
         // A KILL NOT SEEN THROUGH IS ASKED FOR ONCE MORE - the second attempt kills again and watches
@@ -105,7 +105,7 @@ public sealed class DictationSessionExecutorTests
         await slow.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
 
         Assert.Equal(
-            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "Background:AbortPreview:3s", "Background:AbortPreview:3s", "Finalize:recoveryOnly=False", "RecordDictationEdge"],
+            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "ShowTransitionStatus:FinalizeReady", "Background:Stop", "Background:AbortPreview:3s", "Background:AbortPreview:3s", "Finalize:recoveryOnly=False", "RecordDictationEdge"],
             slowEffects.Trace);
     }
 
@@ -131,12 +131,12 @@ public sealed class DictationSessionExecutorTests
         Assert.Null(controller.CurrentSession);
         Assert.Equal(
             [
-                "Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop",
+                "Background:StopWatchdog", "RecordTransition:FinalizeReady", "ShowTransitionStatus:FinalizeReady", "Background:Stop",
                 "Background:AbortPreview:3s", "Background:AbortPreview:3s", "RecordPreviewStillRunning",
                 "Background:StopWatchdog", "Background:Stop",
                 "RecordSessionRecovered:RuntimeResourceBusy", "ShowPendingRecovery", "ShowSessionRecovered:Failed", "RecordDictationEdge",
             ],
-            effects.Trace);
+            effects.Trace.Where(entry => !entry.StartsWith("Background:Stop:", StringComparison.Ordinal)).ToArray());
         Assert.Equal(1, capture.StopCount);
     }
 
@@ -154,7 +154,7 @@ public sealed class DictationSessionExecutorTests
         Assert.Equal(1, capture.StopCount);
         Assert.Equal(0, capture.CancelCount);
         Assert.Equal(
-            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "Finalize:recoveryOnly=False", "RecordDictationEdge"],
+            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "ShowTransitionStatus:FinalizeReady", "Background:Stop", "Finalize:recoveryOnly=False", "RecordDictationEdge"],
             effects.Trace);
         Assert.Single(finalization.Finalized);
         Assert.Equal([0.2f], finalization.Finalized[0].Samples.ToArray());
@@ -176,7 +176,7 @@ public sealed class DictationSessionExecutorTests
         Assert.Equal(0, capture.CancelCount);
         Assert.Equal(
             ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "Finalize:recoveryOnly=True", "RecordDictationEdge"],
-            effects.Trace);
+            effects.Trace.Where(entry => !entry.StartsWith("Background:Stop:", StringComparison.Ordinal)).ToArray());
     }
 
     [Fact]
@@ -225,7 +225,7 @@ public sealed class DictationSessionExecutorTests
         Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
         Assert.Equal(
             ["RecordSessionFailure", "Background:StopWatchdog", "Background:Stop", "RecordSessionRecovered:InvalidTransition", "ShowPendingRecovery", "ShowSessionRecovered:Failed", "RecordDictationEdge"],
-            effects.Trace);
+            effects.Trace.Where(entry => !entry.StartsWith("Background:Stop:", StringComparison.Ordinal)).ToArray());
     }
 
     [Fact]
@@ -239,7 +239,7 @@ public sealed class DictationSessionExecutorTests
         Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
         Assert.Equal(
             ["Background:StopWatchdog", "Background:Stop", "RecordSessionRecovered:SessionTimedOut", "ShowPendingRecovery", "ShowSessionRecovered:TimedOut", "RecordDictationEdge"],
-            effects.Trace);
+            effects.Trace.Where(entry => !entry.StartsWith("Background:Stop:", StringComparison.Ordinal)).ToArray());
     }
 
     [Fact]
@@ -305,8 +305,8 @@ public sealed class DictationSessionExecutorTests
         // released, then the edge - exactly as the shell always did it. Lock/suspend and shutdown cancel
         // that deadline from their own callbacks and must still find it during the recovery.
         Assert.Equal(
-            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "Finalize:recoveryOnly=False", "RecordSessionFailure", "Background:StopWatchdog", "Background:Stop", "RecordSessionRecovered:InvalidTransition", "ShowPendingRecovery", "ShowSessionRecovered:Failed", "RecordDictationEdge"],
-            effects.Trace);
+            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "ShowTransitionStatus:FinalizeReady", "Background:Stop", "Finalize:recoveryOnly=False", "RecordSessionFailure", "Background:StopWatchdog", "Background:Stop", "RecordSessionRecovered:InvalidTransition", "ShowPendingRecovery", "ShowSessionRecovered:Failed", "RecordDictationEdge"],
+            effects.Trace.Where(entry => !entry.StartsWith("Background:Stop:", StringComparison.Ordinal)).ToArray());
         Assert.True(effects.DeadlineArmedDuringRecovery, "recovery ran after the deadline had already been released");
     }
 
@@ -330,7 +330,7 @@ public sealed class DictationSessionExecutorTests
         // shown after the loops have stopped and before transcription, where it always was.
         Assert.Equal(
             ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "ShowInterruptionPreserving:SessionLocked", "Finalize:recoveryOnly=False", "RecordDictationEdge"],
-            effects.Trace);
+            effects.Trace.Where(entry => !entry.StartsWith("Background:Stop:", StringComparison.Ordinal)).ToArray());
         Assert.Single(finalization.Finalized);
     }
 
@@ -394,7 +394,7 @@ public sealed class DictationSessionExecutorTests
 
         Assert.Equal(SessionCommandDisposition.Applied, result.Disposition);
         Assert.Equal(1, capture.StopCount);
-        Assert.Equal(["Background:StopWatchdog", "Background:Stop", "RecordSessionRecovered:Cancelled", "ShowPendingRecovery", "ShowSessionRecovered:Interrupted", "RecordDictationEdge"], effects.Trace);
+        Assert.Equal(["Background:StopWatchdog", "Background:Stop", "RecordSessionRecovered:Cancelled", "ShowPendingRecovery", "ShowSessionRecovered:Interrupted", "RecordDictationEdge"], effects.Trace.Where(entry => !entry.StartsWith("Background:Stop:", StringComparison.Ordinal)).ToArray());
     }
 
     [Fact]
@@ -609,39 +609,40 @@ public sealed class DictationSessionExecutorTests
         Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
         Assert.Equal(
             ["RecordTransition:Started", "RecordingSettings", "Background:Start", "RecordSessionFailure", "Background:StopWatchdog", "Background:Stop", "RecordSessionRecovered:InvalidTransition", "ShowPendingRecovery", "ShowSessionRecovered:Failed", "RecordDictationEdge"],
-            effects.Trace);
+            effects.Trace.Where(entry => !entry.StartsWith("Background:Stop:", StringComparison.Ordinal)).ToArray());
     }
 
     [Fact]
     public async Task TheProcessingDeadlineIsArmedBeforeTheBackgroundStopAndCoversIt()
     {
-        // THE DEADLINE COUNTS THE STOPS. A preview worker that takes long to stop eats into the three
-        // minutes the finalisation has, as it always did: the deadline is armed and published before
-        // the stops, and a finalisation asked for after the deadline passed is handed a token that
-        // is already cancelled, and recovered as a timeout.
         var clock = new Deterministic.ManualClock();
-        var (executor, _, effects, _, world) = BuildWithFinalization(processingDeadline: TimeSpan.FromMinutes(3), clock: clock);
-        var finalization = world.Finalization;
+        var (executor, _, _, _, world) = BuildWithFinalization(processingDeadline: TimeSpan.FromMinutes(3), clock: clock);
         await executor.ExecuteAsync(Press(), CancellationToken.None);
-        effects.Trace.Clear();
-        TracingBackgroundWork.Instance!.HoldStop = true;
-
+        var background = TracingBackgroundWork.Instance!;
+        background.HoldStop = true;
         var release = executor.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
-        await TracingBackgroundWork.Instance.StopEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.True(executor.IsProcessing, "the deadline is armed before the background work is stopped");
-        await clock.WhenRegistered(1).WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.Equal(TimeSpan.FromMinutes(3), clock.NextDue);
+        await background.StopEntered.Task.WaitAsync(Patience);
+        Assert.True(executor.IsProcessing);
+        clock.Advance(TimeSpan.FromSeconds(6));
+        Assert.False(release.IsCompleted);
+        Assert.False(executor.HasRetainedCleanup);
+        var registered = clock.Registered;
         clock.Advance(TimeSpan.FromMinutes(3));
-        TracingBackgroundWork.Instance.AllowStopExit.SetResult();
-
-        var result = await release.WaitAsync(TimeSpan.FromSeconds(10));
-
-        Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
-        Assert.True(finalization.Token!.Value.IsCancellationRequested, "the finalisation was handed the deadline that had already passed");
-        Assert.Equal(
-            ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "Finalize:recoveryOnly=False", "Background:StopWatchdog", "Background:Stop", "RecordSessionRecovered:SessionTimedOut", "ShowPendingRecovery", "ShowSessionRecovered:TimedOut", "RecordDictationEdge"],
-            effects.Trace);
-        Assert.False(executor.IsProcessing, "the deadline is released after the recovery");
+        await background.OrdinaryCancellation.Task.WaitAsync(Patience);
+        await clock.WhenRegistered(registered + 1).WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
+        Assert.True(executor.HasRetainedCleanup);
+        Assert.True(executor.IsProcessing);
+        var teardown = await executor.TearDownAsync(TimeSpan.Zero);
+        Assert.Null(teardown.Disposal);
+        Assert.False(teardown.Background.Completed);
+        Assert.Null(world.Finalization.Token); // Final ASR is never issued beside unfinished background work.
+        var join = executor.JoinRetainedCleanupAsync();
+        Assert.False(join.IsCompleted);
+        background.AllowStopExit.SetResult();
+        Assert.True(await join.WaitAsync(Patience));
+        Assert.False(executor.IsProcessing);
     }
 
     [Fact]
@@ -664,7 +665,7 @@ public sealed class DictationSessionExecutorTests
         var result = await release.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
-        Assert.True(finalization.Token!.Value.IsCancellationRequested);
+        Assert.Null(finalization.Token);
         Assert.Contains("RecordSessionRecovered:SessionTimedOut", effects.Trace);
         Assert.Contains("ShowSessionRecovered:TimedOut", effects.Trace);
     }
@@ -754,7 +755,7 @@ public sealed class DictationSessionExecutorTests
         Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
         Assert.Equal(
             ["Background:StopWatchdog", "RecordTransition:FinalizeReady", "Background:Stop", "ShowInterruptionPreserving:SessionLocked", "Finalize:recoveryOnly=False", "RecordInterruptionFailure", "Background:StopWatchdog", "Background:Stop", "RecordSessionRecovered:InvalidTransition", "ShowPendingRecovery", "ShowSessionRecovered:InterruptionFailed", "RecordDictationEdge"],
-            effects.Trace);
+            effects.Trace.Where(entry => !entry.StartsWith("Background:Stop:", StringComparison.Ordinal)).ToArray());
         Assert.True(effects.DeadlineArmedDuringRecovery, "recovery ran after the deadline had already been released");
     }
 
@@ -796,6 +797,81 @@ public sealed class DictationSessionExecutorTests
         Assert.Equal(DictationSessionState.Recording, controller.CurrentSession?.State);
         Assert.Equal(1, capture.CancelCount);
         Assert.Equal(["RecordDictationEdge"], effects.Trace);
+    }
+
+    [Fact]
+    public async Task OrdinaryDrainAndRunnerShareTheOriginalProcessingDeadline()
+    {
+        var clock = new Deterministic.ManualClock();
+        var (executor, _, _, _, world) = BuildWithFinalization(clock: clock);
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        var background = TracingBackgroundWork.Instance!; background.HoldStop = true;
+        world.Finalization.Hold = true;
+        var release = executor.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
+        try
+        {
+            await background.StopEntered.Task.WaitAsync(Patience);
+            clock.Advance(TimeSpan.FromSeconds(120));
+            Assert.False(release.IsCompleted); Assert.False(background.OrdinaryToken.IsCancellationRequested);
+            background.AllowStopExit.TrySetResult();
+            await world.Finalization.Entered.Task.WaitAsync(Patience);
+            Assert.Equal(background.OrdinaryToken, world.Finalization.Token);
+            clock.Advance(TimeSpan.FromSeconds(59));
+            Assert.False(world.Finalization.Token!.Value.IsCancellationRequested);
+            clock.Advance(TimeSpan.FromSeconds(1));
+            Assert.True(world.Finalization.Token.Value.IsCancellationRequested);
+            Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
+        }
+        finally { background.AllowStopExit.TrySetResult(); world.Finalization.AllowExit.TrySetResult(); await release.WaitAsync(Patience); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CancelledOriginalTokenNeverAdmitsTheRunnerAfterDrain(bool expire)
+    {
+        var clock = new Deterministic.ManualClock();
+        var (executor, _, _, _, world) = BuildWithFinalization(clock: clock);
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        var background = TracingBackgroundWork.Instance!;
+        background.AfterOrdinary = () => { if (expire) clock.Advance(TimeSpan.FromMinutes(3)); else executor.CancelProcessing(); };
+        var result = await executor.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None).WaitAsync(Patience);
+        Assert.Equal(SessionCommandDisposition.Failed, result.Disposition);
+        Assert.Empty(world.Finalization.Finalized); Assert.Null(world.Finalization.Token);
+    }
+
+    [Fact]
+    public async Task CleanupStartNotifiesOuterObserverAcrossSynchronousPrefixAndOldPhaseStaysClosed()
+    {
+        var clock = new OwnershipClock();
+        var (executor, _, _, _, world) = BuildWithFinalization(clock: clock);
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        var background = TracingBackgroundWork.Instance!; background.BlockOrdinaryCleanupPrefix = true;
+        var release = executor.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None);
+        Func<TimeSpan>? old = null;
+        try
+        {
+            await background.PrefixEntered.Task.WaitAsync(Patience);
+            old = background.OrdinaryCleanup!;
+            Assert.Equal(2, background.ConcurrentCleanupReadings!.Length);
+            Assert.All(background.ConcurrentCleanupReadings, value => Assert.Equal(TimeSpan.FromSeconds(5), value));
+            await clock.WhenRegistered(TimeSpan.FromSeconds(5)).WaitAsync(Patience);
+            clock.Advance(TimeSpan.FromSeconds(5));
+            Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
+            Assert.True(executor.HasRetainedCleanup); Assert.True(executor.IsProcessing);
+            Assert.False(background.OrdinaryToken.IsCancellationRequested);
+            Assert.Null(world.Finalization.Token); Assert.Equal(TimeSpan.Zero, old());
+        }
+        finally
+        {
+            background.ReleasePrefix.TrySetResult(); await release.WaitAsync(Patience);
+            Assert.True(await executor.JoinRetainedCleanupAsync().WaitAsync(Patience));
+        }
+        Assert.Equal(TimeSpan.Zero, old!());
+        background.BlockOrdinaryCleanupPrefix = false;
+        await executor.ExecuteAsync(Press(), CancellationToken.None);
+        await executor.ExecuteAsync(new SessionCommand(PushToTalkSignal.Released), CancellationToken.None).WaitAsync(Patience);
+        Assert.Equal(TimeSpan.Zero, old());
     }
 
     private static SessionCommand Interruption(SystemLifecycleTransition transition) => new(
@@ -1083,6 +1159,33 @@ public sealed class DictationSessionExecutorTests
 
             return UnboundedStopReport;
         }
+
+        public CancellationToken OrdinaryToken { get; private set; }
+        public Func<TimeSpan>? OrdinaryCleanup { get; private set; }
+        public Action? AfterOrdinary { get; set; }
+        public bool BlockOrdinaryCleanupPrefix { get; set; }
+        public TimeSpan[]? ConcurrentCleanupReadings { get; private set; }
+        public TaskCompletionSource OrdinaryCancellation { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource PrefixEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleasePrefix { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task<BackgroundStopReport> CompleteOrdinaryAsync(Func<TimeSpan> cleanupRemaining, CancellationToken processingToken)
+        {
+            OrdinaryToken = processingToken; OrdinaryCleanup = cleanupRemaining;
+            processingToken.Register(() => OrdinaryCancellation.TrySetResult());
+            if (BlockOrdinaryCleanupPrefix)
+            {
+                ConcurrentCleanupReadings = Task.WhenAll(Task.Run(cleanupRemaining), Task.Run(cleanupRemaining))
+                    .WaitAsync(Patience, CancellationToken.None).GetAwaiter().GetResult();
+                PrefixEntered.TrySetResult();
+                ReleasePrefix.Task.WaitAsync(Patience, CancellationToken.None).GetAwaiter().GetResult();
+            }
+            return Complete();
+            async Task<BackgroundStopReport> Complete()
+            {
+                var report = await StopAsync(); AfterOrdinary?.Invoke(); return report;
+            }
+        }
+        public Task<BackgroundStopReport> JoinStoppedAsync(Action observeFailure) => StopAsync();
 
         public Task<StopOutcome> AbortPreviewAsync(TimeSpan deadline)
         {
