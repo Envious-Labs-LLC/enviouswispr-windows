@@ -22,6 +22,38 @@ public sealed class ProductionPathTests
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(10);
 
     [Fact]
+    public async Task OrdinaryActiveSpeechDeliversOnceThroughProductionComposition()
+    {
+        var clock = new OwnershipClock();
+        var world = ComposedSessionWorld.Create("words", clock);
+        world.Capture.Take = FakeAudioCapture.Script((false, 200), (true, 3000), (false, 1200), (true, 500));
+        world.Capture.ReturnTake = true; world.Engine.Hold = true;
+        world.Engine.Words.Enqueue("finished prefix"); world.Engine.Words.Enqueue("tail");
+        await world.PressAsync(); clock.Advance(TimeSpan.FromMilliseconds(500));
+        await world.Engine.Entered.Task.WaitAsync(Patience);
+        var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        try
+        {
+            await world.Capture.Stopped.Task.WaitAsync(Patience);
+            await clock.WhenRegistered(TimeSpan.FromMinutes(3)).WaitAsync(Patience);
+            Assert.Equal("Capture complete. Transcribing locally", world.View.Statuses.Last().Text);
+            Assert.False(release.IsCompleted); Assert.Single(world.Engine.Requests);
+            Assert.False(world.Engine.Tokens[0].IsCancellationRequested); Assert.Empty(world.Delivery.Requests);
+            world.Engine.Hold = false; world.Engine.Release();
+            Assert.Equal(SessionCommandDisposition.Applied, (await release.WaitAsync(Patience)).Disposition);
+            Assert.Equal(2, world.Engine.Calls);
+            Assert.Single(world.Delivery.Requests); Assert.Single(world.HistoryStore.Added);
+            Assert.Contains("finished prefix", world.Delivery.Requests[0].Text.Text, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("tail", world.Delivery.Requests[0].Text.Text, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            world.Engine.Hold = false; world.Engine.Release(); await release.WaitAsync(Patience);
+            await world.Coordinator.ShutdownAsync(Patience).WaitAsync(Patience);
+        }
+    }
+
+    [Fact]
     public async Task ExitDuringAsrUsesProductionCancellation()
     {
         // THE SHELL'S EXIT POLICY, THROUGH THE PRODUCTION PATH. The engine is inside a transcription;

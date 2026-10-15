@@ -29,7 +29,7 @@ public interface ISessionBackgroundWork
     /// <summary>The recording is over: stop streaming, the auto-stop and the preview, in that order, each waited for without limit. The watchdog is stopped separately, first. A preview whose engine refused its stop is still reported.</summary>
     Task<BackgroundStopReport> StopAsync();
 
-    Task<BackgroundStopReport> CompleteOrdinaryAsync(TimeSpan cleanupBudget, CancellationToken processingToken);
+    Task<BackgroundStopReport> CompleteOrdinaryAsync(Func<TimeSpan> cleanupRemaining, CancellationToken processingToken);
 
     /// <summary>Joins already-stopped owners in the original command slot; no new streaming stop.</summary>
     Task<BackgroundStopReport> JoinStoppedAsync(Action observeFailure);
@@ -108,12 +108,12 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
         return new BackgroundStopReport(streaming, autoStop, preview);
     }
 
-    public async Task<BackgroundStopReport> CompleteOrdinaryAsync(TimeSpan cleanupBudget, CancellationToken processingToken)
+    public async Task<BackgroundStopReport> CompleteOrdinaryAsync(Func<TimeSpan> cleanupRemaining, CancellationToken processingToken)
     {
-        var budget = new StopBudget(cleanupBudget, _clock);
-        var streaming = await _streaming.CompleteOrdinaryAsync(budget.Left, processingToken).ConfigureAwait(false);
-        var autoStop = await _autoStop.StopAsync(budget.Left).ConfigureAwait(false);
-        var preview = await _preview.StopAsync(budget.Left).ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(cleanupRemaining);
+        var streaming = await _streaming.CompleteOrdinaryAsync(cleanupRemaining, processingToken).ConfigureAwait(false);
+        var autoStop = await _autoStop.StopAsync(cleanupRemaining()).ConfigureAwait(false);
+        var preview = await _preview.StopAsync(cleanupRemaining()).ConfigureAwait(false);
         return new BackgroundStopReport(streaming, autoStop, preview);
     }
 

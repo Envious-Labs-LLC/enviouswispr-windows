@@ -298,7 +298,9 @@ public sealed class StreamingTranscriptionControllerTests
     public async Task OrdinaryReleaseDrainsIssuedRequestWithoutCancellingAndUsesExactTail()
     {
         var world = await HeldWorld();
-        var stop = world.Controller.CompleteOrdinaryAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+        var stop = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), CancellationToken.None);
+        world.Clock.Advance(TimeSpan.FromSeconds(6));
+        Assert.False(stop.IsCompleted);
         Assert.False(world.Engine.Token.IsCancellationRequested);
         world.Engine.NextText = "finished prefix";
         world.Engine.AllowExit.SetResult();
@@ -316,16 +318,16 @@ public sealed class StreamingTranscriptionControllerTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ExpiredPatienceOrProcessingCancellationRetainsStubbornWork(bool cancelProcessing)
+    public async Task ProcessingExpiryOrExplicitCancellationRetainsStubbornWork(bool cancelProcessing)
     {
         var world = await HeldWorld();
-        using var processing = new CancellationTokenSource();
+        using var processing = new CancellationTokenSource(TimeSpan.FromSeconds(10), world.Clock);
         var registered = world.Clock.Registered;
-        var stop = world.Controller.CompleteOrdinaryAsync(TimeSpan.FromSeconds(5), processing.Token);
-        await world.Clock.WhenRegistered(registered + 2).WaitAsync(Patience);
+        var stop = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), processing.Token);
         if (cancelProcessing) processing.Cancel();
-        else world.Clock.Advance(TimeSpan.FromSeconds(1));
+        else await Task.Run(() => world.Clock.Advance(TimeSpan.FromSeconds(10))).WaitAsync(Patience);
         await world.Engine.CancellationObserved.Task.WaitAsync(Patience);
+        await world.Clock.WhenRegistered(registered + 1).WaitAsync(Patience);
         world.Clock.Advance(TimeSpan.FromSeconds(5));
         Assert.Equal(StopOutcome.StillRunning, await stop.WaitAsync(Patience));
         Assert.True(world.Controller.IsRunning);
@@ -343,8 +345,8 @@ public sealed class StreamingTranscriptionControllerTests
     public async Task RepeatedDrainAndAbortShareOwnershipAndEscalateOnce()
     {
         var world = await HeldWorld();
-        var drain = world.Controller.CompleteOrdinaryAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
-        var repeated = world.Controller.CompleteOrdinaryAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+        var drain = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), CancellationToken.None);
+        var repeated = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), CancellationToken.None);
         var abort = world.Controller.StopAsync();
         var duplicate = world.Controller.StopAsync();
         await world.Engine.CancellationObserved.Task.WaitAsync(Patience);
@@ -387,7 +389,7 @@ public sealed class StreamingTranscriptionControllerTests
         var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         world.Audio.BeforeReturn = () =>
         {
-            stop = world.Controller.CompleteOrdinaryAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+            stop = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), CancellationToken.None);
             closed.SetResult();
         };
         world.Controller.Start(world.Session);
@@ -401,17 +403,17 @@ public sealed class StreamingTranscriptionControllerTests
     public async Task DrainOnIdlePreviewOrCompletedLoopIsSafe()
     {
         var world = World.Build();
-        Assert.Equal(StopOutcome.Completed, await world.Controller.CompleteOrdinaryAsync(TimeSpan.Zero, CancellationToken.None));
+        Assert.Equal(StopOutcome.Completed, await world.Controller.CompleteOrdinaryAsync(() => TimeSpan.Zero, CancellationToken.None));
         world.Effects.LivePreviewEnabled = true;
         world.Controller.Start(world.Session);
-        Assert.Equal(StopOutcome.Completed, await world.Controller.CompleteOrdinaryAsync(TimeSpan.Zero, CancellationToken.None));
+        Assert.Equal(StopOutcome.Completed, await world.Controller.CompleteOrdinaryAsync(() => TimeSpan.Zero, CancellationToken.None));
         world.Effects.LivePreviewEnabled = false;
         world.Audio.Samples = Build((true, 3000), (false, 1200), (true, 500));
         world.Engine.ThrowOnTranscribe = new InvalidOperationException("failed segment");
         world.Controller.Start(world.Session);
         world.Clock.Advance(Poll);
         await world.Controller.Loop!.WaitAsync(Patience);
-        Assert.Equal(StopOutcome.Completed, await world.Controller.CompleteOrdinaryAsync(TimeSpan.Zero, CancellationToken.None));
+        Assert.Equal(StopOutcome.Completed, await world.Controller.CompleteOrdinaryAsync(() => TimeSpan.Zero, CancellationToken.None));
         Assert.False(world.Controller.IsRunning);
     }
 
@@ -429,7 +431,7 @@ public sealed class StreamingTranscriptionControllerTests
         world.Engine.ThrowOnTranscribe = new InvalidOperationException("late failure");
         world.Clock.Advance(Poll);
         await world.Engine.WhenTranscribed(2).WaitAsync(Patience);
-        var drain = world.Controller.CompleteOrdinaryAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+        var drain = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), CancellationToken.None);
         world.Engine.AllowExit.SetResult();
         Assert.Equal(StopOutcome.Completed, await drain.WaitAsync(Patience));
         world.Engine.HoldTranscriptions = false;
@@ -510,6 +512,86 @@ public sealed class StreamingTranscriptionControllerTests
             await Assert.ThrowsAsync<InvalidOperationException>(() => world.Controller.StopAsync().WaitAsync(Patience));
         }
         Assert.False(world.Controller.IsRunning);
+    }
+
+    [Fact]
+    public async Task RepeatedOrdinaryCannotReplaceTheFirstTokenOrCleanupPhase()
+    {
+        var world = await HeldWorld();
+        using var first = new CancellationTokenSource();
+        using var second = new CancellationTokenSource();
+        second.Cancel();
+        var stop = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), first.Token);
+        var repeated = world.Controller.CompleteOrdinaryAsync(
+            () => throw new InvalidOperationException("replacement phase used"), second.Token);
+        try
+        {
+            world.Clock.Advance(TimeSpan.FromSeconds(6));
+            Assert.False(stop.IsCompleted);
+            Assert.False(repeated.IsCompleted);
+            Assert.False(world.Engine.Token.IsCancellationRequested);
+            world.Engine.AllowExit.TrySetResult();
+            Assert.All(await Task.WhenAll(stop, repeated).WaitAsync(Patience), x => Assert.Equal(StopOutcome.Completed, x));
+        }
+        finally { world.Engine.AllowExit.TrySetResult(); await world.Controller.StopAsync().WaitAsync(Patience); }
+    }
+
+    [Fact]
+    public async Task AbortFirstCannotBeRevivedByOrdinaryCompletion()
+    {
+        var world = await HeldWorld();
+        var abort = world.Controller.StopAsync();
+        var ordinary = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), CancellationToken.None);
+        try
+        {
+            await world.Engine.CancellationObserved.Task.WaitAsync(Patience);
+            Assert.True(world.Engine.Token.IsCancellationRequested);
+            Assert.False(ordinary.IsCompleted);
+            world.Engine.AllowExit.TrySetResult();
+            Assert.All(await Task.WhenAll(abort, ordinary).WaitAsync(Patience), x => Assert.Equal(StopOutcome.Completed, x));
+            Assert.Single(world.Engine.Requests);
+        }
+        finally { world.Engine.AllowExit.TrySetResult(); await world.Controller.StopAsync().WaitAsync(Patience); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OrdinaryCancellationOwnsDispatchAndCallbackUntilActualQuiescence(bool alreadyCancelled)
+    {
+        var world = await HeldWorld();
+        world.Engine.HoldCancellationCallback = true;
+        using var processing = new CancellationTokenSource();
+        if (alreadyCancelled) processing.Cancel();
+        var registered = world.Clock.Registered;
+        var stop = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), processing.Token);
+        Task cancel = Task.Run(() => processing.Cancel());
+        try
+        {
+            await cancel.WaitAsync(Patience);
+            await world.Engine.CallbackEntered.Task.WaitAsync(Patience);
+            world.Engine.AllowExit.TrySetResult();
+            await world.Controller.Loop!.WaitAsync(Patience);
+            await world.Clock.WhenRegistered(registered + 1).WaitAsync(Patience);
+            await Task.Run(() => world.Clock.Advance(TimeSpan.FromSeconds(5))).WaitAsync(Patience);
+            Assert.Equal(StopOutcome.StillRunning, await stop.WaitAsync(Patience));
+            Assert.True(world.Controller.IsRunning);
+            _ = world.Engine.Token.WaitHandle;
+            await Assert.ThrowsAsync<TranscriptionEngineException>(() => world.Controller.TranscribeUsingAnyHeadStartAsync(
+                world.Engine, new CapturedAudio(world.Session, world.Audio.Samples, SampleRate, 1), CancellationToken.None));
+        }
+        finally
+        {
+            world.Engine.AllowExit.TrySetResult(); world.Engine.ReleaseCallback.TrySetResult();
+            await cancel.WaitAsync(Patience); await world.Controller.StopAsync().WaitAsync(Patience);
+        }
+        Assert.False(world.Controller.IsRunning);
+    }
+
+    private static Func<TimeSpan> CleanupAllowance(TimeProvider clock)
+    {
+        var budget = new Lazy<StopBudget>(() => new StopBudget(TimeSpan.FromSeconds(5), clock));
+        return () => budget.Value.Left;
     }
 
     private static async Task<World> HeldWorld()
@@ -654,7 +736,7 @@ public sealed class StreamingTranscriptionControllerTests
                     if (HoldCancellationCallback)
                     {
                         CallbackEntered.TrySetResult();
-                        ReleaseCallback.Task.GetAwaiter().GetResult();
+                        ReleaseCallback.Task.WaitAsync(Patience).GetAwaiter().GetResult();
                     }
                     if (ThrowInCallback) throw new InvalidOperationException("callback failure");
                 });

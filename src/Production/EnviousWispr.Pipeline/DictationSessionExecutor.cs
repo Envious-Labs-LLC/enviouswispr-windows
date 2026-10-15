@@ -141,7 +141,8 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     private CancellationTokenSource? _processing;
     private bool _escapeRecoveryForSession;
     private bool _closed;
-    private StopBudget? _cleanupBudget;
+    private readonly object _cleanupOwnership = new();
+    private CleanupPhase? _cleanupPhase;
     private readonly List<Task> _ownedStops = [];
     private readonly List<CancellationTokenSource> _retainedProcessing = [];
     private bool _retainedCleanup;
@@ -155,7 +156,50 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
 
     public bool HasRetainedCleanup => Volatile.Read(ref _retainedCleanup);
 
-    private StopBudget CleanupBudget => _cleanupBudget ??= new StopBudget(CleanupAllowance, _clock);
+    // A callback captures this phase, never a replaceable executor field. Starting cleanup also
+    // wakes the outer observer, so a synchronous next-owner prefix cannot hide its deadline.
+    private sealed class CleanupPhase(object ownership, TimeProvider clock)
+    {
+        private StopBudget? _budget;
+        private bool _closed;
+        private readonly TaskCompletionSource<StopBudget> _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task<StopBudget> Started => _started.Task;
+        public TimeSpan Remaining()
+        {
+            lock (ownership)
+            {
+                if (_closed) return TimeSpan.Zero;
+                if (_budget is null)
+                {
+                    _budget = new StopBudget(CleanupAllowance, clock);
+                    _started.TrySetResult(_budget);
+                }
+                return _budget.Left;
+            }
+        }
+        // Called only under the same ownership lock as initialization and phase replacement.
+        public void Close() => _closed = true;
+    }
+
+    private CleanupPhase CurrentCleanupPhase
+    {
+        get { lock (_cleanupOwnership) return _cleanupPhase ??= new CleanupPhase(_cleanupOwnership, _clock); }
+    }
+    private TimeSpan CleanupRemaining => CurrentCleanupPhase.Remaining();
+    private void EndCleanupPhase()
+    {
+        lock (_cleanupOwnership) { _cleanupPhase?.Close(); _cleanupPhase = null; }
+    }
+    private CleanupPhase BeginOrdinaryCleanupPhase()
+    {
+        lock (_cleanupOwnership)
+        {
+            if (_ownedStops.Count != 0 || HasRetainedCleanup)
+                throw new InvalidOperationException("Previous cleanup remains owned.");
+            _cleanupPhase?.Close();
+            return _cleanupPhase = new CleanupPhase(_cleanupOwnership, _clock);
+        }
+    }
 
     private async Task ObserveOwnedStopAsync(Func<Task> invocation)
     {
@@ -164,13 +208,31 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         await ObserveOwnedTaskAsync(operation).ConfigureAwait(false);
     }
 
-    private async Task ObserveOwnedTaskAsync(Task operation)
+    private async Task ObserveOwnedTaskAsync(Task operation, CleanupPhase? ordinaryPhase = null, CancellationToken processingToken = default)
     {
         _ownedStops.Add(operation);
         try
         {
-            if (await BoundedJoin.JoinAsync(operation, CleanupBudget.Left, _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
-                throw new RetainedStopException();
+            if (ordinaryPhase is null)
+            {
+                if (await BoundedJoin.JoinAsync(operation, CleanupRemaining, _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
+                    throw new RetainedStopException();
+            }
+            else
+            {
+                var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                using var registration = processingToken.Register(static state => ((TaskCompletionSource)state!).TrySetResult(), cancelled);
+                while (!operation.IsCompleted)
+                {
+                    if (processingToken.IsCancellationRequested || ordinaryPhase.Started.IsCompleted)
+                    {
+                        if (await BoundedJoin.JoinAsync(operation, ordinaryPhase.Remaining(), _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
+                            throw new RetainedStopException();
+                        break;
+                    }
+                    await Task.WhenAny(operation, cancelled.Task, ordinaryPhase.Started).ConfigureAwait(false);
+                }
+            }
             await operation.ConfigureAwait(false);
         }
         finally
@@ -183,11 +245,11 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         }
     }
 
-    private async Task<BackgroundStopReport> ObserveBackgroundStopAsync(Func<Task<BackgroundStopReport>> invocation)
+    private async Task<BackgroundStopReport> ObserveBackgroundStopAsync(Func<Task<BackgroundStopReport>> invocation, CleanupPhase? ordinaryPhase = null, CancellationToken processingToken = default)
     {
         _backgroundStopStarted = true;
         var operation = Task.Run(invocation);
-        await ObserveOwnedTaskAsync(operation).ConfigureAwait(false);
+        await ObserveOwnedTaskAsync(operation, ordinaryPhase, processingToken).ConfigureAwait(false);
         return operation.Result;
     }
 
@@ -230,7 +292,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             _retainedProcessing.Clear();
             GC.KeepAlive(_ownedAudio);
             _ownedAudio = null;
-            _cleanupBudget = null;
+            EndCleanupPhase();
             _backgroundStopStarted = false;
             Volatile.Write(ref _retainedCleanup, false);
             return true;
@@ -448,7 +510,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
 
             if (_controller.CurrentSession.State == DictationSessionState.Recording)
             {
-                _ = CleanupBudget;
+                _ = CleanupRemaining;
                 await ObserveOwnedStopAsync(_background.StopWatchdogAsync).ConfigureAwait(false);
                 var result = await _controller.ReleaseAsync(CancellationToken.None).ConfigureAwait(false);
                 RecordTransition(result);
@@ -536,7 +598,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         try
         {
             await ObserveOwnedStopAsync(_background.StopWatchdogAsync).ConfigureAwait(false);
-            var stopped = await ObserveBackgroundStopAsync(() => _background.StopAsync(CleanupBudget.Left)).ConfigureAwait(false);
+            var stopped = await ObserveBackgroundStopAsync(() => _background.StopAsync(CleanupRemaining)).ConfigureAwait(false);
             if (!stopped.Completed)
             {
                 RetainCleanup(failure, kind);
@@ -659,7 +721,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             }
             else
             {
-                _ = CleanupBudget;
+                _ = CleanupRemaining;
                 await ObserveOwnedStopAsync(_background.StopWatchdogAsync).ConfigureAwait(false);
             }
 
@@ -700,6 +762,10 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                 result.Session is not null &&
                 result.Audio is not null)
             {
+                // Useful speech work may still be processing after capture ended. Reuse the
+                // existing capture-complete status instead of leaving the recording pill active.
+                if (!recoverCancelledRecording && !Volatile.Read(ref _closed))
+                    _effects.ShowTransitionStatus(result);
                 await FinalizeAsync(result.Session.Id, result.Audio, recoverCancelledRecording, preserving: null)
                     .ConfigureAwait(false);
                 return new SessionCommandResult(SessionCommandDisposition.Applied, result.Session);
@@ -796,17 +862,18 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     {
         using var dictation = DictationScope.Begin(sessionId.Value);
         _ownedAudio = audio;
-        _ = CleanupBudget;
+        var ordinary = !recoveryOnly && preserving is null && !Volatile.Read(ref _closed);
+        var ordinaryPhase = ordinary ? BeginOrdinaryCleanupPhase() : null;
+        if (!ordinary) _ = CleanupRemaining;
         var processing = new CancellationTokenSource(_processingDeadline, _clock);
         Volatile.Write(ref _processing, processing);
         if (!recoveryOnly && preserving is null && !Volatile.Read(ref _closed))
         {
             UatRuntimePhaseJournal.RecordSession(UatRuntimePhase.OrdinaryReleaseEntered, sessionId.Value);
         }
-        var ordinary = !recoveryOnly && preserving is null && !Volatile.Read(ref _closed);
-        var stopped = await ObserveBackgroundStopAsync(() => ordinary
-            ? _background.CompleteOrdinaryAsync(CleanupBudget.Left, processing.Token)
-            : _background.StopAsync(CleanupBudget.Left)).ConfigureAwait(false);
+        var stopped = await ObserveBackgroundStopAsync(() => ordinaryPhase is not null
+            ? _background.CompleteOrdinaryAsync(ordinaryPhase.Remaining, processing.Token)
+            : _background.StopAsync(CleanupRemaining), ordinaryPhase, processing.Token).ConfigureAwait(false);
         if (stopped.Streaming == StopOutcome.StillRunning || stopped.AutoStop == StopOutcome.StillRunning)
         {
             RetainCleanup(new AppError(AppErrorCode.RuntimeResourceBusy, AppErrorStage.RuntimeResource, CanRetry: true), SessionFailureKind.Failed);
@@ -830,6 +897,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         _escapeRecoveryForSession = false;
         // A FINALISATION THAT STARTS AFTER ADMISSION CLOSED KEEPS ITS WORDS: the app is leaving, and
         // a paste into whatever is in front is not the place for them. The recovery copy is.
+        processing.Token.ThrowIfCancellationRequested();
         await _finalization.RunAsync(sessionId, audio, recoveryOnly || Volatile.Read(ref _closed), processing.Token).ConfigureAwait(false);
     }
 
@@ -844,7 +912,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         }
         if (!HasRetainedCleanup)
         {
-            _cleanupBudget = null;
+            EndCleanupPhase();
             _backgroundStopStarted = false;
             GC.KeepAlive(_ownedAudio);
             _ownedAudio = null;

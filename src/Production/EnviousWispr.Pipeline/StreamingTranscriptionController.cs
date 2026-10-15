@@ -72,6 +72,10 @@ public sealed class StreamingTranscriptionController
         public bool CleanupClosed { get; set; }
         public Task? Stop { get; set; }
         public Task? RequestCancellation { get; set; }
+        public required Lazy<Task> CancellationDispatch { get; set; }
+        public bool OrdinaryStop { get; set; }
+        public CancellationToken ProcessingToken { get; set; }
+        public Func<TimeSpan>? CleanupRemaining { get; set; }
     }
     private int _streamedThroughSample;
     private bool _usable;
@@ -117,7 +121,13 @@ public sealed class StreamingTranscriptionController
             }
 
             _usable = true;
-            var work = new StreamingWork();
+            StreamingWork work = null!;
+            work = new StreamingWork
+            {
+                // The processing callback only schedules this owned dispatch. It never waits on
+                // the ownership lock or on native cancellation callbacks on the cancelling thread.
+                CancellationDispatch = new Lazy<Task>(() => Task.Run(() => RequestCancellation(work))),
+            };
             _work = work;
             work.Loop = RunAsync(snapshots, engine, sessionId, work);
         }
@@ -226,17 +236,17 @@ public sealed class StreamingTranscriptionController
     public Task<StopOutcome> StopAsync(TimeSpan? deadline) => StopOwnedAsync(deadline, ordinary: false, CancellationToken.None);
 
     /// <summary>
-    /// Stops admission, allowing issued speech work one second of patience before cancellation.
-    /// Patience is policy, not a hardware guarantee. The supplied budget bounds observation of the
-    /// whole owned stop; cancellation of that observation never means the speech work has ended.
+    /// Stops admission while issued speech work finishes under the original processing deadline.
+    /// Only cancellation or post-processing cleanup starts the shared cleanup allowance. An expired
+    /// observation never means that native work or its cancellation callbacks have ended.
     /// </summary>
-    public Task<StopOutcome> CompleteOrdinaryAsync(TimeSpan cleanupBudget, CancellationToken processingToken)
+    public Task<StopOutcome> CompleteOrdinaryAsync(Func<TimeSpan> cleanupRemaining, CancellationToken processingToken)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(cleanupBudget, TimeSpan.Zero);
-        return StopOwnedAsync(cleanupBudget, ordinary: true, processingToken);
+        ArgumentNullException.ThrowIfNull(cleanupRemaining);
+        return StopOwnedAsync(null, ordinary: true, processingToken, cleanupRemaining);
     }
 
-    private async Task<StopOutcome> StopOwnedAsync(TimeSpan? deadline, bool ordinary, CancellationToken processingToken)
+    private async Task<StopOutcome> StopOwnedAsync(TimeSpan? deadline, bool ordinary, CancellationToken processingToken, Func<TimeSpan>? cleanupRemaining = null)
     {
         if (deadline is { } limit) ArgumentOutOfRangeException.ThrowIfLessThan(limit, TimeSpan.Zero);
         _phaseJournal?.Record(UatRuntimePhase.StopEntered, DictationScope.Current);
@@ -250,6 +260,9 @@ public sealed class StreamingTranscriptionController
             if (work.Stop is null)
             {
                 work.AdmissionClosed = true;
+                work.OrdinaryStop = ordinary;
+                work.ProcessingToken = processingToken;
+                work.CleanupRemaining = cleanupRemaining;
                 var schedulingCancellation = work.Scheduling.CancelAsync();
                 work.Stop = FinishStopAsync(work, schedulingCancellation, ordinary, processingToken);
             }
@@ -258,7 +271,20 @@ public sealed class StreamingTranscriptionController
 
         try
         {
-            return await BoundedJoin.JoinAsync(stop, deadline, _clock).ConfigureAwait(false);
+            if (ordinary && work.OrdinaryStop)
+            {
+                try
+                {
+                    await stop.WaitAsync(work.ProcessingToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (work.ProcessingToken.IsCancellationRequested)
+                {
+                    return await BoundedJoin.JoinAsync(stop, work.CleanupRemaining!(), _clock).ConfigureAwait(false);
+                }
+                return StopOutcome.Completed;
+            }
+            // An abort that won the first-stop boundary cannot be revived by an ordinary caller.
+            return await BoundedJoin.JoinAsync(stop, ordinary ? cleanupRemaining!() : deadline, _clock).ConfigureAwait(false);
         }
         finally
         {
@@ -337,18 +363,15 @@ public sealed class StreamingTranscriptionController
         {
             if (ordinary)
             {
-                await using var registration = processingToken.Register(() => RequestCancellation(work));
+                await using var registration = processingToken.Register(
+                    static state => { _ = ((Lazy<Task>)state!).Value; }, work.CancellationDispatch);
                 try
                 {
-                    await work.Loop.WaitAsync(TimeSpan.FromSeconds(1), _clock, processingToken).ConfigureAwait(false);
+                    await work.Loop.WaitAsync(processingToken).ConfigureAwait(false);
                 }
-                catch (TimeoutException)
+                catch (OperationCanceledException) when (processingToken.IsCancellationRequested)
                 {
-                    RequestCancellation(work);
-                }
-                catch (OperationCanceledException)
-                {
-                    if (!work.Loop.IsCompleted) RequestCancellation(work);
+                    _ = work.CancellationDispatch.Value;
                 }
             }
         }
@@ -361,13 +384,23 @@ public sealed class StreamingTranscriptionController
             finally
             {
                 // An escaping loop fault still joins its callbacks before stop completion.
-                Task requestCancellation;
-                lock (_ownership)
+                try
                 {
-                    work.CleanupClosed = true;
-                    requestCancellation = work.RequestCancellation ?? Task.CompletedTask;
+                    // The processing registration is already disposed. No dispatch can appear
+                    // after this join, and a queued dispatch must finish before CTS disposal.
+                    if (work.CancellationDispatch.IsValueCreated)
+                        await work.CancellationDispatch.Value.ConfigureAwait(false);
                 }
-                await Task.WhenAll(schedulingCancellation, requestCancellation).ConfigureAwait(false);
+                finally
+                {
+                    Task requestCancellation;
+                    lock (_ownership)
+                    {
+                        work.CleanupClosed = true;
+                        requestCancellation = work.RequestCancellation ?? Task.CompletedTask;
+                    }
+                    await Task.WhenAll(schedulingCancellation, requestCancellation).ConfigureAwait(false);
+                }
             }
         }
     }

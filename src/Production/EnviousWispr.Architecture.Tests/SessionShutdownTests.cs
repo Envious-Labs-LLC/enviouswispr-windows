@@ -36,7 +36,9 @@ public sealed class SessionShutdownTests
         clock.Advance(TimeSpan.FromMilliseconds(500));
         await world.Engine.Entered.Task.WaitAsync(Patience);
         var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
-        await Task.WhenAny(clock.WhenRegistered(TimeSpan.FromSeconds(1)), world.Engine.RequestCancellationObserved.Task).WaitAsync(Patience);
+        await clock.WhenRegistered(TimeSpan.FromMinutes(3)).WaitAsync(Patience);
+        clock.Advance(TimeSpan.FromSeconds(6));
+        Assert.False(release.IsCompleted);
         Assert.False(world.Engine.Tokens[0].IsCancellationRequested);
         world.Engine.AllowExit.SetResult();
         Assert.Equal(SessionCommandDisposition.Applied, (await release.WaitAsync(Patience)).Disposition);
@@ -64,9 +66,7 @@ public sealed class SessionShutdownTests
         clock.Advance(TimeSpan.FromMilliseconds(500));
         await world.Engine.Entered.Task.WaitAsync(Patience);
         var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
-        await clock.WhenRegistered(TimeSpan.FromSeconds(1)).WaitAsync(Patience);
-        if (cancelProcessing) world.Coordinator.CancelProcessing();
-        clock.Advance(TimeSpan.FromSeconds(6));
+        await EnterProcessingCleanup(world, clock, cancelProcessing);
         Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
         AssertRetained(world);
         Assert.Equal(SessionCommandDisposition.Busy, (await world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed)).Disposition);
@@ -104,8 +104,7 @@ public sealed class SessionShutdownTests
         clock.Advance(TimeSpan.FromMilliseconds(500));
         await world.Engine.Entered.Task.WaitAsync(Patience);
         var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
-        await clock.WhenRegistered(TimeSpan.FromSeconds(1)).WaitAsync(Patience);
-        clock.Advance(TimeSpan.FromSeconds(6));
+        await EnterProcessingCleanup(world, clock, cancelProcessing: false);
         await world.Engine.CallbackEntered.Task.WaitAsync(Patience);
         Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
         world.Engine.AllowExit.SetResult();
@@ -158,8 +157,7 @@ public sealed class SessionShutdownTests
         clock.Advance(TimeSpan.FromMilliseconds(500));
         await world.Engine.Entered.Task.WaitAsync(Patience);
         var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
-        await clock.WhenRegistered(TimeSpan.FromSeconds(1)).WaitAsync(Patience);
-        clock.Advance(TimeSpan.FromSeconds(6));
+        await EnterProcessingCleanup(world, clock, cancelProcessing: false);
         await release.WaitAsync(Patience);
         var shutdown = await world.Coordinator.ShutdownAsync(TimeSpan.Zero);
         Assert.False(shutdown.Clean);
@@ -184,8 +182,7 @@ public sealed class SessionShutdownTests
         clock.Advance(TimeSpan.FromMilliseconds(500));
         await world.Engine.Entered.Task.WaitAsync(Patience);
         var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
-        await clock.WhenRegistered(TimeSpan.FromSeconds(1)).WaitAsync(Patience);
-        clock.Advance(TimeSpan.FromSeconds(6));
+        await EnterProcessingCleanup(world, clock, cancelProcessing: false);
         await release.WaitAsync(Patience);
         var aborts = 0;
         world.Controller.SessionChanged += (_, session) =>
@@ -218,7 +215,7 @@ public sealed class SessionShutdownTests
     [InlineData(false, 0)]
     [InlineData(true, 0)]
     [InlineData(true, 3)]
-    public async Task PreviewAbortUsesSharedRemainderAndRetainsWholeInvocation(bool synchronous, int spentSeconds)
+    public async Task PreviewAbortUsesPostDrainCleanupPhaseAndRetainsWholeInvocation(bool synchronous, int spentSeconds)
     {
         var clock = new OwnershipClock();
         var world = ComposedSessionWorld.Create("words", clock);
@@ -236,7 +233,9 @@ public sealed class SessionShutdownTests
             clock.ReleaseDispose.SetResult();
         }
         await world.PreviewEngine.AbortEntered.Task.WaitAsync(Patience);
-        clock.Advance(TimeSpan.FromSeconds(6 - spentSeconds));
+        // Watchdog cleanup finished before ordinary processing began. Its elapsed time
+        // cannot consume or refresh the distinct post-drain cleanup phase.
+        clock.Advance(TimeSpan.FromSeconds(6));
         Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
         AssertRetained(world);
         Assert.Equal(1, world.PreviewEngine.Aborts);
@@ -248,6 +247,16 @@ public sealed class SessionShutdownTests
         Assert.Null(world.Controller.CurrentSession);
         Assert.False(world.Coordinator.IsProcessing);
         Assert.True((await world.Coordinator.ShutdownAsync(Patience)).Clean);
+    }
+
+    private static async Task EnterProcessingCleanup(ComposedSessionWorld world, OwnershipClock clock, bool cancelProcessing)
+    {
+        await clock.WhenRegistered(TimeSpan.FromMinutes(3)).WaitAsync(Patience);
+        if (cancelProcessing) world.Coordinator.CancelProcessing();
+        else await Task.Run(() => clock.Advance(TimeSpan.FromMinutes(3))).WaitAsync(Patience);
+        await world.Engine.RequestCancellationObserved.Task.WaitAsync(Patience);
+        await clock.WhenRegistered(TimeSpan.FromSeconds(5)).WaitAsync(Patience);
+        await Task.Run(() => clock.Advance(TimeSpan.FromSeconds(6))).WaitAsync(Patience);
     }
 
     private static void AssertRetained(ComposedSessionWorld world)
@@ -333,7 +342,7 @@ public sealed class SessionShutdownTests
         // closed from the moment the shutdown began - and the teardown runs under the session once
         // it is over; the shutdown is clean. Crossed on the manual clock: the budget's timer is
         // registered, the engine let go before it is advanced.
-        var clock = new Deterministic.ManualClock();
+        var clock = new OwnershipClock();
         var world = ComposedSessionWorld.Create("hello world", clock);
         await world.PressAsync();
         world.Engine.Hold = true;
@@ -341,10 +350,9 @@ public sealed class SessionShutdownTests
         await world.Engine.Entered.Task.WaitAsync(Patience);
 
         var budget = TimeSpan.FromSeconds(10);
-        var registered = clock.Registered;
         var shutdown = world.Coordinator.ShutdownAsync(budget);
-        await clock.WhenRegistered(registered + 1).WaitAsync(Patience);
-        Assert.Equal(budget, clock.NextDue);
+        // Wait for this shutdown's timer, independently of other owners' earlier timers.
+        await clock.WhenRegistered(budget).WaitAsync(Patience);
         Assert.False(shutdown.IsCompleted);
         Assert.Equal(0, world.TearDowns);
         world.Engine.Release();
