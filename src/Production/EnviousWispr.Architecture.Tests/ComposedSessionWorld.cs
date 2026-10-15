@@ -367,7 +367,7 @@ internal sealed class FakePreviewEngine : IAbortableLivePreviewEngine
     {
         Aborts++;
         AbortEntered.TrySetResult();
-        if (HoldAbortSynchronously) ReleaseAbort.Task.GetAwaiter().GetResult();
+        if (HoldAbortSynchronously) ReleaseAbort.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
         if (HoldAbort) await ReleaseAbort.Task;
         if (AbortOutcome == RuntimeWorkerAbortOutcome.Exited)
         {
@@ -491,7 +491,7 @@ internal sealed class FakeEngine(string spoken) : ITranscriptionEngine
             if (HoldRequestCallback)
             {
                 CallbackEntered.TrySetResult();
-                ReleaseCallback.Task.GetAwaiter().GetResult();
+                ReleaseCallback.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
             }
         });
         Token = cancellationToken;
@@ -803,6 +803,13 @@ internal sealed class OwnershipClock : TimeProvider
     public override long GetTimestamp() => _inner.GetTimestamp();
     public override DateTimeOffset GetUtcNow() => _inner.GetUtcNow();
     public void Advance(TimeSpan duration) => _inner.Advance(duration);
+    public int Registrations(TimeSpan due)
+    {
+        lock (_gate)
+        {
+            return _registered.TryGetValue(due, out var signal) ? signal.Count : 0;
+        }
+    }
     public Task WhenRegistered(TimeSpan due, int count = 1)
     {
         lock (_gate)
@@ -832,7 +839,7 @@ internal sealed class OwnershipClock : TimeProvider
             if (clock.HoldDisposeFor == due)
             {
                 clock.DisposeEntered.TrySetResult();
-                clock.ReleaseDispose.Task.GetAwaiter().GetResult();
+                clock.ReleaseDispose.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
             }
         }
         public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }

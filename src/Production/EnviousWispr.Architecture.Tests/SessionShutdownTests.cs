@@ -104,18 +104,36 @@ public sealed class SessionShutdownTests
         clock.Advance(TimeSpan.FromMilliseconds(500));
         await world.Engine.Entered.Task.WaitAsync(Patience);
         var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
-        await EnterProcessingCleanup(world, clock, cancelProcessing: false);
-        await world.Engine.CallbackEntered.Task.WaitAsync(Patience);
-        Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
-        world.Engine.AllowExit.SetResult();
-        await world.Runtime.Streaming.Loop!.WaitAsync(Patience);
-        AssertRetained(world);
-        Assert.False(world.Capture.Disposed);
-        _ = world.Engine.Tokens[0].WaitHandle;
-        world.Engine.ReleaseCallback.SetResult();
-        await world.Coordinator.RetainedSlotCompletion!.WaitAsync(Patience);
-        Assert.Null(world.Controller.CurrentSession);
-        Assert.True((await world.Coordinator.ShutdownAsync(Patience)).Clean);
+        Exception? primary = null;
+        try
+        {
+            await EnterProcessingCleanup(world, clock, cancelProcessing: false);
+            await world.Engine.CallbackEntered.Task.WaitAsync(Patience);
+            Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
+            world.Engine.AllowExit.SetResult();
+            await world.Runtime.Streaming.Loop!.WaitAsync(Patience);
+            AssertRetained(world);
+            Assert.False(world.Capture.Disposed);
+            _ = world.Engine.Tokens[0].WaitHandle;
+            world.Engine.ReleaseCallback.SetResult();
+            await world.Coordinator.RetainedSlotCompletion!.WaitAsync(Patience);
+            Assert.Null(world.Controller.CurrentSession);
+            Assert.True((await world.Coordinator.ShutdownAsync(Patience)).Clean);
+        }
+        catch (Exception error) { primary = error; throw; }
+        finally
+        {
+            world.Engine.ReleaseCallback.TrySetResult(); world.Engine.AllowExit.TrySetResult();
+            await CleanupPreservingPrimary(primary, async () =>
+            {
+                world.Coordinator.CancelProcessing();
+                await release.WaitAsync(Patience);
+                if (world.Coordinator.RetainedSlotCompletion is { } retained)
+                    await retained.WaitAsync(Patience);
+                await world.Coordinator.ShutdownAsync(Patience).WaitAsync(Patience);
+            });
+        }
+
     }
 
     [Theory]
@@ -133,17 +151,35 @@ public sealed class SessionShutdownTests
         await world.PressAsync();
         clock.HoldDisposeFor = watchdog ? TimeSpan.FromMinutes(5) : TimeSpan.FromMilliseconds(250);
         var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
-        await clock.DisposeEntered.Task.WaitAsync(Patience);
-        clock.Advance(TimeSpan.FromSeconds(6));
-        Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
-        AssertRetained(world);
-        Assert.Equal(0, world.Engine.Calls);
-        Assert.False(world.Capture.Disposed);
-        if (watchdog) Assert.True(world.Capture.IsCapturing); // Preserved until the original watchdog invocation ends.
-        clock.ReleaseDispose.SetResult();
-        await world.Coordinator.RetainedSlotCompletion!.WaitAsync(Patience);
-        Assert.Null(world.Controller.CurrentSession);
-        Assert.True((await world.Coordinator.ShutdownAsync(Patience)).Clean);
+        Exception? primary = null;
+        try
+        {
+            await clock.DisposeEntered.Task.WaitAsync(Patience);
+            clock.Advance(TimeSpan.FromSeconds(6));
+            Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
+            AssertRetained(world);
+            Assert.Equal(0, world.Engine.Calls);
+            Assert.False(world.Capture.Disposed);
+            if (watchdog) Assert.True(world.Capture.IsCapturing); // Preserved until the original watchdog invocation ends.
+            clock.ReleaseDispose.SetResult();
+            await world.Coordinator.RetainedSlotCompletion!.WaitAsync(Patience);
+            Assert.Null(world.Controller.CurrentSession);
+            Assert.True((await world.Coordinator.ShutdownAsync(Patience)).Clean);
+        }
+        catch (Exception error) { primary = error; throw; }
+        finally
+        {
+            clock.ReleaseDispose.TrySetResult();
+            await CleanupPreservingPrimary(primary, async () =>
+            {
+                world.Coordinator.CancelProcessing();
+                await release.WaitAsync(Patience);
+                if (world.Coordinator.RetainedSlotCompletion is { } retained)
+                    await retained.WaitAsync(Patience);
+                await world.Coordinator.ShutdownAsync(Patience).WaitAsync(Patience);
+            });
+        }
+
     }
 
     [Fact]
@@ -226,36 +262,66 @@ public sealed class SessionShutdownTests
         await world.PressAsync();
         if (spentSeconds > 0) clock.HoldDisposeFor = TimeSpan.FromMinutes(5);
         var release = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
-        if (spentSeconds > 0)
+        Exception? primary = null;
+        try
         {
-            await clock.DisposeEntered.Task.WaitAsync(Patience);
-            clock.Advance(TimeSpan.FromSeconds(spentSeconds));
-            clock.ReleaseDispose.SetResult();
+            if (spentSeconds > 0)
+            {
+                await clock.DisposeEntered.Task.WaitAsync(Patience);
+                clock.Advance(TimeSpan.FromSeconds(spentSeconds));
+                clock.ReleaseDispose.SetResult();
+            }
+            await world.PreviewEngine.AbortEntered.Task.WaitAsync(Patience);
+            // Watchdog cleanup finished before ordinary processing began. Its elapsed time
+            // cannot consume or refresh the distinct post-drain cleanup phase.
+            clock.Advance(TimeSpan.FromSeconds(6));
+            Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
+            AssertRetained(world);
+            Assert.Equal(1, world.PreviewEngine.Aborts);
+            Assert.Equal(0, world.Engine.Calls);
+            Assert.False(world.Capture.Disposed);
+            world.PreviewEngine.ReleaseAbort.SetResult();
+            await world.Coordinator.RetainedSlotCompletion!.WaitAsync(Patience);
+            Assert.Equal(1, world.PreviewEngine.Aborts);
+            Assert.Null(world.Controller.CurrentSession);
+            Assert.False(world.Coordinator.IsProcessing);
+            Assert.True((await world.Coordinator.ShutdownAsync(Patience)).Clean);
         }
-        await world.PreviewEngine.AbortEntered.Task.WaitAsync(Patience);
-        // Watchdog cleanup finished before ordinary processing began. Its elapsed time
-        // cannot consume or refresh the distinct post-drain cleanup phase.
-        clock.Advance(TimeSpan.FromSeconds(6));
-        Assert.Equal(SessionCommandDisposition.Failed, (await release.WaitAsync(Patience)).Disposition);
-        AssertRetained(world);
-        Assert.Equal(1, world.PreviewEngine.Aborts);
-        Assert.Equal(0, world.Engine.Calls);
-        Assert.False(world.Capture.Disposed);
-        world.PreviewEngine.ReleaseAbort.SetResult();
-        await world.Coordinator.RetainedSlotCompletion!.WaitAsync(Patience);
-        Assert.Equal(1, world.PreviewEngine.Aborts);
-        Assert.Null(world.Controller.CurrentSession);
-        Assert.False(world.Coordinator.IsProcessing);
-        Assert.True((await world.Coordinator.ShutdownAsync(Patience)).Clean);
+        catch (Exception error) { primary = error; throw; }
+        finally
+        {
+            clock.ReleaseDispose.TrySetResult(); world.PreviewEngine.ReleaseAbort.TrySetResult();
+            await CleanupPreservingPrimary(primary, async () =>
+            {
+                world.Coordinator.CancelProcessing();
+                await release.WaitAsync(Patience);
+                if (world.Coordinator.RetainedSlotCompletion is { } retained)
+                    await retained.WaitAsync(Patience);
+                await world.Coordinator.ShutdownAsync(Patience).WaitAsync(Patience);
+            });
+        }
+
+    }
+
+    private static async Task CleanupPreservingPrimary(Exception? primary, Func<Task> cleanup)
+    {
+        try { await cleanup(); }
+        catch (Exception error) when (primary is not null)
+        {
+            Console.Error.WriteLine("TestCleanupFailedAfterPrimary:" + error.GetType().FullName);
+            primary.Data["CleanupFailure"] = error;
+        }
     }
 
     private static async Task EnterProcessingCleanup(ComposedSessionWorld world, OwnershipClock clock, bool cancelProcessing)
     {
         await clock.WhenRegistered(TimeSpan.FromMinutes(3)).WaitAsync(Patience);
+        var allowance = TimeSpan.FromSeconds(5);
+        var before = clock.Registrations(allowance);
         if (cancelProcessing) world.Coordinator.CancelProcessing();
         else await Task.Run(() => clock.Advance(TimeSpan.FromMinutes(3))).WaitAsync(Patience);
         await world.Engine.RequestCancellationObserved.Task.WaitAsync(Patience);
-        await clock.WhenRegistered(TimeSpan.FromSeconds(5)).WaitAsync(Patience);
+        await clock.WhenRegistered(allowance, before + 1).WaitAsync(Patience);
         await Task.Run(() => clock.Advance(TimeSpan.FromSeconds(6))).WaitAsync(Patience);
     }
 
