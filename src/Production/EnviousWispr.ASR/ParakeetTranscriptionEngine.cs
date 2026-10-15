@@ -13,6 +13,11 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
     public const string ModelId = ParakeetModelIds.Final;
     public const int RequiredSampleRate = 16_000;
 
+    // The bundled nemo128 preprocessor reflects 256 samples on each side. Reflection needs
+    // more input samples than that pad; this is not a minimum duration for recognizing speech.
+    // The artifact digest is pinned by ParakeetInputContractTests so an update revisits this rule.
+    internal const int MinimumPreprocessorInputSamples = 257;
+
     private static readonly string[] PreprocessorOutputs = ["features", "features_lens"];
     private static readonly string[] EncoderOutputs = ["outputs", "encoded_lengths"];
     private static readonly string[] DecoderOutputs = ["outputs", "output_states_1", "output_states_2"];
@@ -109,6 +114,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
             return new Transcript(audio.SessionId, string.Empty, EngineId, []);
         }
 
+        ValidateInputLength(audio.Samples.Length, cancellationToken);
         await _transcriptionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -120,6 +126,21 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
         finally
         {
             _transcriptionGate.Release();
+        }
+    }
+
+    internal static void ValidateInputLength(int sampleCount, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentOutOfRangeException.ThrowIfNegative(sampleCount);
+        if (sampleCount is > 0 and < MinimumPreprocessorInputSamples)
+        {
+            // The same input cannot be retried. A streaming caller may instead submit the whole
+            // recording. No native work has been admitted when this particular error is returned.
+            throw new TranscriptionEngineException(new AppError(
+                AppErrorCode.TranscriptionInputTooShort,
+                AppErrorStage.FinalAsr,
+                CanRetry: false));
         }
     }
 

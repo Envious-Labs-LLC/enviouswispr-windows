@@ -59,6 +59,9 @@ public enum AppErrorCode
     DeliveryCancelled,
     DeliveryDisposed,
     DeliveryFaulted,
+
+    // Append new values so existing worker and diagnostic values keep their identities.
+    TranscriptionInputTooShort,
 }
 
 public enum AppErrorStage

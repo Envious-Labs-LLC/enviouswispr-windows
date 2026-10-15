@@ -55,6 +55,39 @@ public sealed class FallbackTranscriptionEngineTests
     }
 
     [Fact]
+    public async Task ShortInputDoesNotActivateCpuFallbackOrChangeTheNextRequestProvider()
+    {
+        var refused = false;
+        var fallbackCreated = false;
+        var primary = new StubEngine("primary", (audio, token) =>
+        {
+            if (!refused)
+            {
+                refused = true;
+                ParakeetTranscriptionEngine.ValidateInputLength(audio.Samples.Length, token);
+            }
+
+            return Task.FromResult(new Transcript(audio.SessionId, "primary result", "primary"));
+        });
+        using var engine = new FallbackTranscriptionEngine(primary, () =>
+        {
+            fallbackCreated = true;
+            return new StubEngine("fallback", (audio, _) =>
+                Task.FromResult(new Transcript(audio.SessionId, "fallback result", "fallback")));
+        });
+
+        var failure = await Assert.ThrowsAsync<TranscriptionEngineException>(() => engine.TranscribeAsync(Audio()));
+        var result = await engine.TranscribeAsync(new CapturedAudio(
+            DictationSessionId.Create(), new float[512], 16_000, 1));
+
+        Assert.Equal(AppErrorCode.TranscriptionInputTooShort, failure.Error.Code);
+        Assert.False(fallbackCreated);
+        Assert.False(result.UsedFallback);
+        Assert.Equal("primary", result.EngineId);
+        Assert.Equal(2, primary.Calls);
+    }
+
+    [Fact]
     public void FactoryFallsBackWhenCudaCannotInitialize()
     {
         var createdProviders = new List<RuntimeProviderKind>();

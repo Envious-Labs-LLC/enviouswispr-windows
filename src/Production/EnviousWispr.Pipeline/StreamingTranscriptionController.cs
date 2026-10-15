@@ -271,7 +271,34 @@ public sealed class StreamingTranscriptionController
         {
             Samples = audio.Samples[_streamedThroughSample..],
         };
-        var tail = await engine.TranscribeAsync(tailAudio, cancellationToken).ConfigureAwait(false);
+        Transcript tail;
+        try
+        {
+            tail = await engine.TranscribeAsync(tailAudio, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TranscriptionEngineException exception) when (
+            exception.Error.Code == AppErrorCode.TranscriptionInputTooShort &&
+            exception.Error.Stage == AppErrorStage.FinalAsr)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (IsRunning)
+            {
+                // An unfinished stop still owns the loop; it may admit or finish engine work.
+                // This refusal must not start another request while that ownership remains.
+                throw;
+            }
+
+            // This precise error is emitted before native admission. Other errors do not promise
+            // that the runtime is safe to reuse, so they never enter this recovery path.
+            _usable = false;
+            _logger.Write(new AppLogEntry(
+                _clock.GetUtcNow(),
+                AppEventCode.StreamingAbandoned,
+                AppFailureCategories.For(exception.Error),
+                ErrorCode: exception.Error.Code));
+            cancellationToken.ThrowIfCancellationRequested();
+            return await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+        }
 
         var joined = new StreamingTranscriptAccumulator();
         joined.Append(headStart);
