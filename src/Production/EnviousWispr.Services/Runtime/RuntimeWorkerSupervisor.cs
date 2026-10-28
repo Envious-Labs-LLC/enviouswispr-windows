@@ -1,4 +1,5 @@
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Runtime;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -10,6 +11,7 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
 {
     private const int ProtocolVersion = 1;
 
+    private readonly UatRuntimePhaseJournal? _phaseJournal;
     private readonly string _workerExecutable;
     private readonly string[] _workerArguments;
     private readonly int _maximumRestarts;
@@ -28,7 +30,8 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         string workerExecutable,
         IEnumerable<string>? workerArguments = null,
         int maximumRestarts = 1,
-        ProcessPriorityClass? processPriority = null)
+        ProcessPriorityClass? processPriority = null,
+        UatRuntimePhaseJournal? phaseJournal = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workerExecutable);
         ArgumentOutOfRangeException.ThrowIfNegative(maximumRestarts);
@@ -36,6 +39,7 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         _workerArguments = workerArguments?.ToArray() ?? [];
         _maximumRestarts = maximumRestarts;
         _processPriority = processPriority;
+        _phaseJournal = phaseJournal ?? UatRuntimePhaseJournal.FromEnvironment();
     }
 
     /// <summary>The worker's state; Aborted once an abort has run, whatever a request in flight writes after it.</summary>
@@ -230,6 +234,7 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             }
 
             generation.Owner = "abort";
+            RecordGeneration(UatRuntimePhase.RetirementRequested, generation, process);
             // ONE DEADLINE FOR THE WHOLE ABORT: what the wait for ownership used comes off the kill's.
             var remaining = deadline - Stopwatch.GetElapsedTime(started);
             var exited = await KillAndObserveAsync(
@@ -396,6 +401,12 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             startInfo.ArgumentList.Add(argument);
         }
 
+        if (_phaseJournal is not null)
+        {
+            generation.DiagnosticId = Guid.NewGuid();
+            foreach (var entry in _phaseJournal.ChildEnvironment(generation.DiagnosticId.Value))
+                startInfo.Environment[entry.Key] = entry.Value;
+        }
         var process = new Process { StartInfo = startInfo };
         try
         {
@@ -529,11 +540,21 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
 
         var requestId = Guid.NewGuid();
         var request = new RuntimeWorkerRequest(ProtocolVersion, requestId, command, transcription);
+        var observedGeneration = Volatile.Read(ref _generation);
+        if (!ReferenceEquals(observedGeneration?.Process, process)) observedGeneration = null;
+        UatRequestIdentity? identity = null;
+        if (_phaseJournal is not null && observedGeneration?.DiagnosticId is not null && transcription is not null)
+        {
+            identity = new UatRequestIdentity(transcription.SessionId, requestId);
+            Volatile.Write(ref observedGeneration.LastTranscription, identity);
+        }
         try
         {
             await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request))
                 .ConfigureAwait(false);
             await process.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
+            if (identity is not null && observedGeneration is not null)
+                RecordGeneration(UatRuntimePhase.ParentRequestIssued, observedGeneration, process, identity);
             var line = await process.StandardOutput.ReadLineAsync(cancellationToken)
                 .AsTask()
                 .WaitAsync(timeout, cancellationToken)
@@ -544,11 +565,18 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             }
 
             var response = JsonSerializer.Deserialize<RuntimeWorkerResponse>(line);
-            return response is not null &&
-                response.ProtocolVersion == ProtocolVersion &&
-                response.RequestId == requestId
-                ? response
-                : null;
+            var validated = response is not null &&
+                response.ProtocolVersion == ProtocolVersion && response.RequestId == requestId;
+            if (validated && identity is not null && observedGeneration is not null)
+                RecordGeneration(ConsumptionPhase(response!, identity.SessionId),
+                    observedGeneration, process, identity);
+            return validated ? response : null;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            if (identity is not null && observedGeneration is not null)
+                RecordGeneration(UatRuntimePhase.CallerCancellationObserved, observedGeneration, process, identity);
+            throw;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -591,6 +619,7 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             }
 
             generation.Owner = "stop";
+            RecordGeneration(UatRuntimePhase.RetirementRequested, generation, process);
             if (IsAlive(process))
             {
                 await TryRequestShutdownAsync(process).ConfigureAwait(false);
@@ -649,6 +678,18 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
     /// <summary>The generation's exit was observed: the handle is closed, once, and the end published.</summary>
     private void End(WorkerGeneration generation, Process process)
     {
+        if (_phaseJournal is not null)
+        {
+            try
+            {
+                if (process.HasExited)
+                    RecordGeneration(UatRuntimePhase.WorkerExitObserved, generation, process, exitCode: process.ExitCode);
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
+            {
+                // No observed exit facts, no exit marker. Disposal behavior remains the existing owner's.
+            }
+        }
         process.Dispose();
         Interlocked.Increment(ref _handlesClosed);
         generation.Ended.TrySetResult(true);
@@ -748,6 +789,20 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             AppErrorStage.RuntimeWorker,
             CanRetry: true));
 
+    internal static UatRuntimePhase ConsumptionPhase(RuntimeWorkerResponse response, Guid expectedSessionId) =>
+        response.Status == "complete" && response.Transcript is { } transcript && transcript.SessionId == expectedSessionId
+            ? UatRuntimePhase.ResponseConsumed : UatRuntimePhase.ResponseFailureConsumed;
+
+    private void RecordGeneration(UatRuntimePhase phase, WorkerGeneration generation, Process process,
+        UatRequestIdentity? identity = null, int? exitCode = null)
+    {
+        if (_phaseJournal is null || generation.DiagnosticId is not { } id) return;
+        identity ??= Volatile.Read(ref generation.LastTranscription);
+        _phaseJournal.Record(phase, identity?.SessionId, identity?.RequestId, id, TryReadId(process), exitCode);
+    }
+
+    private sealed record UatRequestIdentity(Guid SessionId, Guid RequestId);
+
     /// <summary>One worker's lifetime: from the start that creates it to the exit that is observed, whoever observes it.</summary>
     /// <remarks>
     /// OWNERSHIP IS A SEMAPHORE, THE END IS A PROMISE. Whoever holds the ownership - a stop, a
@@ -757,6 +812,8 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
     /// </remarks>
     private sealed class WorkerGeneration
     {
+        public Guid? DiagnosticId { get; set; }
+        public UatRequestIdentity? LastTranscription;
         private Process? _process;
 
         public Process? Process

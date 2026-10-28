@@ -140,6 +140,11 @@ public interface ISessionCommandExecutor
 {
     Task<SessionCommandResult> ExecuteAsync(SessionCommand command, CancellationToken stoppingToken);
 
+    bool HasRetainedCleanup { get; }
+
+    /// <summary>Runs retained cleanup in the original command slot; false means unsafe reuse.</summary>
+    Task<bool> JoinRetainedCleanupAsync();
+
     /// <summary>
     /// A queued interruption has waited longer than it may behind the command that was running when
     /// Windows locked. Runs outside the session, while that command is still running, as the shell's
@@ -244,6 +249,9 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     private bool _closed;
     /// <summary>How many commands the executor is inside right now: one, or none. Read by the shutdown's report.</summary>
     private int _running;
+    // Completion observation only: the original RunAsync slot remains the cleanup owner.
+    private TaskCompletionSource? _retainedSlotReleased;
+    internal Task? RetainedSlotCompletion => Volatile.Read(ref _retainedSlotReleased)?.Task;
     private TaskCompletionSource? _noHolds;
     private Task<ShutdownReport>? _shutdown;
 
@@ -686,7 +694,8 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         // flight owns a microphone or a transcription and finishes on its own terms; what must not
         // happen is a consumer parked on the shared gate forever after the shell has moved on.
         await _stopping.CancelAsync().ConfigureAwait(false);
-        return await OutstandingWorkFinishedAsync(timeout).ConfigureAwait(false) && !Volatile.Read(ref _expiryFaulted);
+        return await OutstandingWorkFinishedAsync(timeout).ConfigureAwait(false) && !Volatile.Read(ref _expiryFaulted) &&
+            Volatile.Read(ref _running) == 0;
     }
 
     /// <summary>
@@ -717,7 +726,8 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         // or gate release into an ObjectDisposedException inside the loop, and disposing the gate under
         // an update check still downloading would throw when that check gave its hold back. A stranded
         // pair is a few bytes, and an unclean stop has already been reported by StopAsync.
-        if (await StopAsync(TimeSpan.Zero).ConfigureAwait(false) && !Volatile.Read(ref _expiryFaulted))
+        if (await StopAsync(TimeSpan.Zero).ConfigureAwait(false) && !Volatile.Read(ref _expiryFaulted) &&
+            Volatile.Read(ref _running) == 0 && Volatile.Read(ref _pendingOrRunning) == 0)
         {
             _stopping.Dispose();
             lock (_admission)
@@ -739,15 +749,28 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         {
             while (reader.TryRead(out var queued))
             {
-                await RunAsync(queued).ConfigureAwait(false);
+                if (!await RunAsync(queued).ConfigureAwait(false))
+                {
+                    // Cleanup closed admission and retained the unsafe slot. Queued callers still
+                    // need an outcome, without running against or releasing that slot.
+                    while (reader.TryRead(out var refused))
+                    {
+                        Undo(refused.Command);
+                        refused.Completion.TrySetResult(new SessionCommandResult(
+                            SessionCommandDisposition.Stopping, WasQueued: refused.WaitedInQueue));
+                    }
+                    return;
+                }
             }
         }
     }
 
-    private async Task RunAsync(QueuedCommand queued)
+    private async Task<bool> RunAsync(QueuedCommand queued)
     {
         SessionCommandResult result;
         var holdingGate = queued.GateReserved;
+        var running = false;
+        var published = false;
         try
         {
             var waited = false;
@@ -793,16 +816,15 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             if (committed)
             {
                 Interlocked.Increment(ref _running);
-                try
+                running = true;
+                var executed = await _executor.ExecuteAsync(queued.Command, _stopping.Token).ConfigureAwait(false);
+                result = executed with { WasQueued = executed.WasQueued || waited || queued.WaitedInQueue };
+                if (_executor.HasRetainedCleanup)
                 {
-                    var executed = await _executor
-                        .ExecuteAsync(queued.Command, _stopping.Token)
-                        .ConfigureAwait(false);
-                    result = executed with { WasQueued = executed.WasQueued || waited || queued.WaitedInQueue };
-                }
-                finally
-                {
-                    Interlocked.Decrement(ref _running);
+                    _retainedSlotReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    queued.Completion.TrySetResult(result);
+                    published = true;
+                    if (!await JoinRetainedAsync().ConfigureAwait(false)) return false;
                 }
             }
             else if (queued.Expired)
@@ -820,23 +842,56 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         }
         catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
         {
-            // THE EXECUTOR OWNS ITS OWN RECOVERY; this is the last line of defence for a consumer loop
-            // that must outlive any single command. Admission is reopened BEFORE the submitter is told,
-            // so a retry that runs on the fault's continuation finds the queue open rather than Busy.
+            if (_executor.HasRetainedCleanup)
+            {
+                _retainedSlotReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                queued.Completion.TrySetException(exception);
+                published = true;
+                if (!await JoinRetainedAsync().ConfigureAwait(false)) return false;
+            }
+            if (running) Interlocked.Decrement(ref _running);
+            if (published)
+                NoteRecording(queued.Command, new SessionCommandResult(SessionCommandDisposition.Failed));
             Undo(queued.Command);
             ReleaseGate(ref holdingGate);
-            queued.Completion.TrySetException(exception);
-            return;
+            if (!published) queued.Completion.TrySetException(exception);
+            else _retainedSlotReleased?.TrySetResult();
+            return true;
         }
+
+        if (!published && _executor.HasRetainedCleanup)
+        {
+            _retainedSlotReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            queued.Completion.TrySetResult(result);
+            published = true;
+            if (!await JoinRetainedAsync().ConfigureAwait(false)) return false;
+        }
+        if (running) Interlocked.Decrement(ref _running);
 
         // THE COUNT COMES DOWN BEFORE THE GATE GOES UP. A terminal admitted in the gap between the two
         // would otherwise be marked as having waited behind a press whose work and gate ownership had
         // both already ended, and the journey that reads that mark would certify an overlap that never
         // happened. Undercounting in the other direction only makes that journey say "not proven".
-        NoteRecording(queued.Command, result);
+        NoteRecording(queued.Command, published ? new SessionCommandResult(SessionCommandDisposition.Failed) : result);
         Undo(queued.Command);
         ReleaseGate(ref holdingGate);
-        queued.Completion.TrySetResult(result);
+        if (!published) queued.Completion.TrySetResult(result);
+        else _retainedSlotReleased?.TrySetResult();
+        return true;
+    }
+
+    private async Task<bool> JoinRetainedAsync()
+    {
+        try
+        {
+            if (await _executor.JoinRetainedCleanupAsync().ConfigureAwait(false)) return true;
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            // Observed cleanup fault; keep the original gate/counters, and stop consuming commands.
+        }
+        Close();
+        return false;
     }
 
     private void ReleaseGate(ref bool holdingGate)

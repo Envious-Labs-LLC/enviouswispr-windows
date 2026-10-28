@@ -29,6 +29,11 @@ public interface ISessionBackgroundWork
     /// <summary>The recording is over: stop streaming, the auto-stop and the preview, in that order, each waited for without limit. The watchdog is stopped separately, first. A preview whose engine refused its stop is still reported.</summary>
     Task<BackgroundStopReport> StopAsync();
 
+    Task<BackgroundStopReport> CompleteOrdinaryAsync(Func<TimeSpan> cleanupRemaining, CancellationToken processingToken);
+
+    /// <summary>Joins already-stopped owners in the original command slot; no new streaming stop.</summary>
+    Task<BackgroundStopReport> JoinStoppedAsync(Action observeFailure);
+
     /// <summary>The preview's worker ended by force, for a release its stop refused; what was seen inside the deadline is what is reported.</summary>
     Task<StopOutcome> AbortPreviewAsync(TimeSpan deadline);
 
@@ -98,6 +103,29 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
     public async Task<BackgroundStopReport> StopAsync()
     {
         var streaming = await _streaming.StopAsync().ConfigureAwait(false);
+        var autoStop = await _autoStop.StopAsync().ConfigureAwait(false);
+        var preview = await _preview.StopAsync().ConfigureAwait(false);
+        return new BackgroundStopReport(streaming, autoStop, preview);
+    }
+
+    public async Task<BackgroundStopReport> CompleteOrdinaryAsync(Func<TimeSpan> cleanupRemaining, CancellationToken processingToken)
+    {
+        ArgumentNullException.ThrowIfNull(cleanupRemaining);
+        var streaming = await _streaming.CompleteOrdinaryAsync(cleanupRemaining, processingToken).ConfigureAwait(false);
+        var autoStop = await _autoStop.StopAsync(cleanupRemaining()).ConfigureAwait(false);
+        var preview = await _preview.StopAsync(cleanupRemaining()).ConfigureAwait(false);
+        return new BackgroundStopReport(streaming, autoStop, preview);
+    }
+
+    public async Task<BackgroundStopReport> JoinStoppedAsync(Action observeFailure)
+    {
+        StopOutcome streaming;
+        try { streaming = await _streaming.JoinOwnedStopAsync().ConfigureAwait(false); }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException) && !_streaming.IsRunning)
+        {
+            observeFailure();
+            streaming = StopOutcome.Completed;
+        }
         var autoStop = await _autoStop.StopAsync().ConfigureAwait(false);
         var preview = await _preview.StopAsync().ConfigureAwait(false);
         return new BackgroundStopReport(streaming, autoStop, preview);

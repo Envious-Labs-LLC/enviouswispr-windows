@@ -73,15 +73,17 @@ public sealed class StreamingShortTailTests
     public async Task AnOwnedLoopPreventsRecoveryEvenWhenNoNativeRequestIsCurrentlyActive()
     {
         var world = await World.ReadyAsync(stop: false);
-        var expected = Short();
-        world.Engine.Responses.Enqueue((_, _) => throw expected);
         try
         {
             var actual = await Assert.ThrowsAsync<TranscriptionEngineException>(() =>
                 world.Controller.TranscribeUsingAnyHeadStartAsync(world.Engine, world.Whole, CancellationToken.None));
-            Assert.Same(expected, actual);
+            Assert.Equal(AppErrorCode.RuntimeResourceBusy, actual.Error.Code);
+            Assert.Equal(AppErrorStage.RuntimeWorker, actual.Error.Stage);
+            Assert.True(actual.Error.CanRetry);
             Assert.True(world.Controller.IsRunning);
-            Assert.Equal(2, world.Engine.Requests.Count);
+            Assert.Equal(world.PrefixLength, Assert.Single(world.Engine.Requests).Samples.Length);
+            Assert.DoesNotContain(world.Log.Entries, entry => entry.Event is
+                AppEventCode.StreamingAbandoned or AppEventCode.StreamingHeadStartUsed);
         }
         finally
         {
