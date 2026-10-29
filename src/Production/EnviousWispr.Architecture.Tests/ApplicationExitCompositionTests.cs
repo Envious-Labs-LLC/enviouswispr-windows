@@ -126,6 +126,7 @@ public sealed class ApplicationExitCompositionTests
         Assert.True(report.Retained);
         Assert.True(report.Escalated);
         Assert.Equal(0, world.TearDowns);
+        Assert.Equal(0, exit.ShellClosingCalls);
         Assert.False(world.Capture.Disposed);
         // The quiescence joins are still issued and observed - the warm-up finished at once - and
         // nothing is disposed behind them.
@@ -141,6 +142,7 @@ public sealed class ApplicationExitCompositionTests
         public required PresentationAdmission Admission { get; init; }
         public required RecordingTerminator Terminator { get; init; }
         public List<string> Ran { get; } = [];
+        public int ShellClosingCalls { get; private set; }
 
         public static Exit Compose(ComposedSessionWorld world, Deterministic.ManualClock clock)
         {
@@ -156,7 +158,7 @@ public sealed class ApplicationExitCompositionTests
             var parts = new LifetimeParts(
                 CloseAdmission: world.Coordinator.Close,
                 DrainPresentation: admission.CloseAsync,
-                ShellClosing: () => { },
+                ShellClosing: () => exit!.ShellClosingCalls++,
                 AbortPolishRuntime: () => { },
                 CancelProcessing: world.Coordinator.CancelProcessing,
                 ReleaseInputs: [],

@@ -8,6 +8,8 @@ using EnviousWispr.Core.History;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Presentation;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace EnviousWispr.Architecture.Tests;
 
@@ -21,6 +23,61 @@ namespace EnviousWispr.Architecture.Tests;
 public sealed class WindowPresentationSessionTests
 {
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(10);
+
+    [Fact]
+    public async Task QueuedWindowEffectsAreRefusedByTheProductionPresentationDrain()
+    {
+        var world = World.Create(new HeldStore());
+        Action? pending = null;
+        var rendered = false;
+        Assert.True(world.Session.TryPost(callback => { pending = callback; return true; }, () => rendered = true));
+        Assert.Equal(0, world.Session.Outstanding);
+        await world.Session.DisposeAsync().AsTask().WaitAsync(Patience);
+        Assert.NotNull(pending);
+        pending();
+        Assert.False(rendered);
+        Assert.False(world.Session.TryPost(_ => throw new InvalidOperationException("closed dispatcher"), () => { }));
+    }
+
+    [Fact]
+    public void SessionAndRuntimeViewsUseTheWindowLifetimeBridge()
+    {
+        // A SOURCE WIRING CHECK ONLY. Native Windows proof is still required for the WinUI sinks.
+        var shell = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+        var runtime = shell.IndexOf("private sealed class WindowRuntimeView(", StringComparison.Ordinal);
+        var session = shell.IndexOf("private sealed class WindowSessionView(", StringComparison.Ordinal);
+        var end = shell.IndexOf("private void DetachCaptureObservers()", session, StringComparison.Ordinal);
+        Assert.True(runtime >= 0 && session > runtime && end > session);
+        var views = shell[runtime..end];
+        Assert.DoesNotContain("app._window", views, StringComparison.Ordinal);
+        Assert.DoesNotContain("DispatcherQueue", views, StringComparison.Ordinal);
+        Assert.Contains("presentation.TryPost(", shell, StringComparison.Ordinal);
+        Assert.Contains("ReferenceEquals(_window, window)", shell, StringComparison.Ordinal);
+        Assert.Contains("PostToLiveWindow(window => window.SetDictationActive(active))", shell, StringComparison.Ordinal);
+        Assert.Contains("PostToLiveWindow(_ => _trayIcon?.SetLastDictationShortcuts(", shell, StringComparison.Ordinal);
+        var syntax = CSharpSyntaxTree.ParseText(shell).GetRoot();
+        foreach (var view in syntax.DescendantNodes().OfType<ClassDeclarationSyntax>()
+            .Where(type => type.Identifier.ValueText is "WindowRuntimeView" or "WindowSessionView"))
+        {
+            foreach (var method in view.Members.OfType<MethodDeclarationSyntax>())
+            {
+                var call = Assert.IsType<InvocationExpressionSyntax>(method.ExpressionBody?.Expression);
+                var expected = method.Identifier.ValueText switch
+                {
+                    "ShowMainWindow" => "app.ShowMainWindow",
+                    "ShowSessionBusy" => "app.ShowSessionBusy",
+                    _ => "app.PostToLiveWindow",
+                };
+                Assert.Equal(expected, call.Expression.ToString());
+            }
+        }
+
+        foreach (var name in new[] { "OnSystemLifecycleTransitioned", "ProbeOllamaRuntimeAsync", "ConfigurePushToTalk" })
+        {
+            var method = Assert.Single(syntax.DescendantNodes().OfType<MethodDeclarationSyntax>(), member => member.Identifier.ValueText == name);
+            Assert.Contains(method.DescendantNodes().OfType<InvocationExpressionSyntax>(), call => call.Expression.ToString() == "PostToLiveWindow");
+        }
+    }
 
     [Fact]
     public async Task ComposedPresentersShareOneSettingsWriter()

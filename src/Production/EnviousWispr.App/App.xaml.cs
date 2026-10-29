@@ -872,8 +872,8 @@ public partial class App : Application, IAsyncDisposable
         }
         else
         {
-            _window?.DispatcherQueue.TryEnqueue(() =>
-                _window?.SetSessionStatus(DictationStatus.Quiet("Windows resumed. EnviousWispr is ready")));
+            PostToLiveWindow(window =>
+                window.SetSessionStatus(DictationStatus.Quiet("Windows resumed. EnviousWispr is ready")));
         }
     }
 
@@ -1575,7 +1575,7 @@ public partial class App : Application, IAsyncDisposable
                 ReleaseSession: ReleaseSession,
                 DisposeDeliveryRoute: DisposeDeliveryRoute,
                 DictationActivityChanged: active =>
-                    _window?.DispatcherQueue.TryEnqueue(() => _window?.SetDictationActive(active))),
+                    PostToLiveWindow(window => window.SetDictationActive(active))),
             TimeProvider.System));
         _pushToTalkHook.Signalled += OnPushToTalkSignalled;
         // A saved keybind builds a NEW hook, which starts armed and knows nothing about a capture
@@ -1607,7 +1607,7 @@ public partial class App : Application, IAsyncDisposable
 
         var pasteShortcut = _pushToTalkHook.PasteLastGesture?.ToString();
         var copyShortcut = _pushToTalkHook.CopyLastGesture?.ToString();
-        _window?.DispatcherQueue.TryEnqueue(() => _trayIcon?.SetLastDictationShortcuts(pasteShortcut, copyShortcut));
+        PostToLiveWindow(_ => _trayIcon?.SetLastDictationShortcuts(pasteShortcut, copyShortcut));
     }
 
     /// <summary>Drives the meters from a synthetic ramp, with no microphone in the loop.</summary>
@@ -1787,11 +1787,11 @@ public partial class App : Application, IAsyncDisposable
             timer.ElapsedMilliseconds,
             DiagnosticProviderIds.FromProviderId(provider.ProviderId),
             health.Error?.Code));
-        _window?.DispatcherQueue.TryEnqueue(() =>
+        PostToLiveWindow(window =>
         {
             if (health.Health != OllamaHealth.Ready)
             {
-                _window?.SetSessionStatus(OllamaHealthStatus(health.Health));
+                window.SetSessionStatus(OllamaHealthStatus(health.Health));
             }
         });
     }
@@ -2792,6 +2792,28 @@ public partial class App : Application, IAsyncDisposable
     /// <summary>Whether the exit has begun, as a queued callback should read it: the flags, or the presentation's closure.</summary>
     private bool Leaving => _exitRequested || _disposed || _presentation is { Closing: true };
 
+    /// <summary>Posts window effects only while this window's presentation is still admitted.</summary>
+    private void PostToLiveWindow(Action<MainWindow> update)
+    {
+        if (Leaving || _window is not { } window || _presentation is not { } presentation)
+        {
+            return;
+        }
+
+        // A TERMINAL SESSION STATUS CAN ARRIVE AFTER THE OVERLAY CLOSED. Queue acceptance says
+        // nothing about that lifetime: take the existing presentation lease at the draw, so a late
+        // callback is refused and a running one finishes before ShutdownProductWindows closes it.
+        presentation.TryPost(
+            callback => window.DispatcherQueue.TryEnqueue(() => callback()),
+            () =>
+            {
+                if (!Leaving && ReferenceEquals(_window, window))
+                {
+                    update(window);
+                }
+            });
+    }
+
     private static bool TryCreatePublicFixtureAudioCapture(
         out PublicFixtureAudioCapture? capture)
     {
@@ -3031,30 +3053,27 @@ public partial class App : Application, IAsyncDisposable
     private sealed class WindowRuntimeView(App app) : IRuntimeView
     {
         public void ShowPreview(LivePreviewFrame? frame) =>
-            app._window?.DispatcherQueue.TryEnqueue(() =>
+            app.PostToLiveWindow(window =>
             {
                 // ASKED AT THE DRAW. A frame queued before the preview closed is drawn after; the
                 // frame knows its screen is gone and the clear that closed it is left standing.
                 if (frame is null || frame.IsCurrent())
                 {
-                    app._window?.SetLivePreview(frame?.Text);
+                    window.SetLivePreview(frame?.Text);
                 }
             });
 
         public void ShowRecoveredText(RecoveryTextLoadResult result, bool undoOffered) =>
-            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetRecoveredText(result, undoOffered));
+            app.PostToLiveWindow(window => window.SetRecoveredText(result, undoOffered));
 
         public void ClearRecoveredText() =>
-            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.ClearRecoveredText());
+            app.PostToLiveWindow(window => window.ClearRecoveredText());
 
         public void NotifyHistoryChanged() =>
-            app._window?.DispatcherQueue.TryEnqueue(() =>
+            app.PostToLiveWindow(window =>
             {
                 app.RefreshLastDictationPreview();
-                if (app._window is not null)
-                {
-                    _ = app._window.NotifyHistoryChangedAsync();
-                }
+                _ = window.NotifyHistoryChangedAsync();
             });
 
         public void ShowMainWindow() => app.ShowMainWindow(openSettings: false);
@@ -3066,16 +3085,16 @@ public partial class App : Application, IAsyncDisposable
     private sealed class WindowSessionView(App app) : ISessionView
     {
         public void ShowStatus(DictationStatus status) =>
-            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetSessionStatus(status));
+            app.PostToLiveWindow(window => window.SetSessionStatus(status));
 
         public void ShowNotice(string title, string message, bool isError = false) =>
-            app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetReliabilityNotice(title, message, isError));
+            app.PostToLiveWindow(window => window.SetReliabilityNotice(title, message, isError));
 
         public void ShowMainWindow() => app.ShowMainWindow(openSettings: false);
 
         public void ReportDelivery(DictationStatus delivered, string? detectedLanguage) =>
-            app._window?.DispatcherQueue.TryEnqueue(() =>
-                app._window?.ReportDeliveryAndMaybeOfferLanguage(delivered, detectedLanguage));
+            app.PostToLiveWindow(window =>
+                window.ReportDeliveryAndMaybeOfferLanguage(delivered, detectedLanguage));
     }
 
     // THE SHELL'S THREE PARTS OF THE SESSION'S DISPOSAL, one operation each. The executor's teardown
