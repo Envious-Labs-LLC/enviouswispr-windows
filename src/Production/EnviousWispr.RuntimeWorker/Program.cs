@@ -4,6 +4,7 @@ using System.IO.MemoryMappedFiles;
 using System.Text.Json;
 using EnviousWispr.ASR;
 using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
@@ -33,6 +34,7 @@ catch (ArgumentException)
     return 3;
 }
 
+var phaseJournal = UatRuntimePhaseJournal.FromEnvironment(parentProcessId);
 TranscriptionEngineCreation? engineCreation;
 try
 {
@@ -110,8 +112,20 @@ using (engineCreation?.Engine as IDisposable)
                         UsedFallback: false,
                         // ECHOED, so a test can read which language the request carried.
                         RecognitionLanguage: transcription.Language))
-                : await TranscribeAsync(request, engineCreation);
-            await WriteResponseAsync(response);
+                : await TranscribeAsync(request, engineCreation, phaseJournal);
+            try
+            {
+                await WriteResponseAsync(response);
+            }
+            catch (Exception exception) when (exception is IOException or ObjectDisposedException or InvalidOperationException)
+            {
+                if (!testTranscribeStub)
+                    phaseJournal?.Record(UatRuntimePhase.ResponsePublicationFailed, request.Transcription?.SessionId, request.RequestId);
+                throw;
+            }
+            if (!testTranscribeStub && engineCreation is not null && request.Transcription is { SampleCount: > 0 } published)
+                phaseJournal?.Record(response.Status == "complete" ? UatRuntimePhase.ResponsePublished : UatRuntimePhase.ResponseFailedPublished,
+                    published.SessionId, request.RequestId);
             continue;
         }
 
@@ -284,7 +298,8 @@ static TranscriptionEngineCreation OnTheProcessor(ITranscriptionEngine engine) =
 
 static async Task<RuntimeWorkerResponse> TranscribeAsync(
     RuntimeWorkerRequest request,
-    TranscriptionEngineCreation? engineCreation)
+    TranscriptionEngineCreation? engineCreation,
+    UatRuntimePhaseJournal? phaseJournal)
 {
     if (engineCreation is null || request.Transcription is not { SampleCount: > 0 } transcription)
     {
@@ -303,6 +318,8 @@ static async Task<RuntimeWorkerResponse> TranscribeAsync(
             MemoryMappedFileAccess.Read);
         view.ReadArray(0, samples, 0, samples.Length);
         var sessionId = new DictationSessionId(transcription.SessionId);
+        using var requestPhase = phaseJournal?.BeginRequest(sessionId.Value, request.RequestId);
+        phaseJournal?.Record(UatRuntimePhase.RealRequestAdmitted, sessionId.Value, request.RequestId);
         var audio = new CapturedAudio(
             sessionId,
             samples,

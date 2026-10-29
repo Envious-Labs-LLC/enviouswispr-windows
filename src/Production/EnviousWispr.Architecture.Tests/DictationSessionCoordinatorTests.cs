@@ -17,6 +17,49 @@ public sealed class DictationSessionCoordinatorTests
 {
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(10);
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PublishedExecutorExceptionRetainsOriginalSlotUntilCleanupEnds(bool close)
+    {
+        var cleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var executor = new BarrierExecutor
+        {
+            ThrowOn = PushToTalkSignal.Released,
+            Answer = new SessionCommandResult(SessionCommandDisposition.Applied, DictationSessionSnapshot.Start(DateTimeOffset.UtcNow)),
+        };
+        await using var coordinator = new DictationSessionCoordinator(executor);
+        var press = coordinator.SubmitAsync(PushToTalkSignal.Pressed);
+        await executor.Started(PushToTalkSignal.Pressed).WaitAsync(Patience);
+        executor.Finish(PushToTalkSignal.Pressed);
+        await press.WaitAsync(Patience);
+        executor.RetainedWork = cleanup.Task;
+        var command = coordinator.SubmitAsync(PushToTalkSignal.Released);
+        await executor.Started(PushToTalkSignal.Released).WaitAsync(Patience);
+        executor.Finish(PushToTalkSignal.Released);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => command.WaitAsync(Patience));
+        Assert.Equal(1, coordinator.PendingCount);
+        Assert.False(coordinator.IsIdle);
+        foreach (var holder in Enum.GetValues<SessionHolder>())
+            Assert.Equal(SessionHoldRefusal.Dictation, coordinator.TryHold(holder).Refusal);
+        Assert.Equal(SessionCommandDisposition.Busy, (await coordinator.SubmitAsync(PushToTalkSignal.Pressed)).Disposition);
+        if (close) coordinator.Close();
+        cleanup.SetResult();
+        await coordinator.RetainedSlotCompletion!.WaitAsync(Patience);
+        Assert.Equal(1, executor.RetainedJoins);
+        Assert.Equal(0, coordinator.PendingCount);
+        Assert.True(coordinator.IsIdle);
+        if (close) Assert.Equal(SessionHoldRefusal.Closed, coordinator.TryHold(SessionHolder.FileTranscription).Refusal);
+        else
+        {
+            foreach (var holder in Enum.GetValues<SessionHolder>())
+            {
+                using var hold = coordinator.TryHold(holder).Hold;
+                Assert.NotNull(hold);
+            }
+        }
+    }
+
     [Fact]
     public async Task ReleaseDuringPressStartupIsKeptAndRunsOnceAfterThePress()
     {
@@ -1388,6 +1431,8 @@ public sealed class DictationSessionCoordinatorTests
     /// <summary>The shell's signal switch, without the shell: press, release, cancel onto the real controller.</summary>
     private sealed class ControllerExecutor(PushToTalkSessionController controller) : ISessionCommandExecutor
     {
+        public bool HasRetainedCleanup => false;
+        public Task<bool> JoinRetainedCleanupAsync() => Task.FromResult(true);
         public List<SessionTransitionResult> Transitions { get; } = [];
 
         /// <summary>Completed when the executor is entered, before it touches the controller.</summary>
@@ -1487,6 +1532,16 @@ public sealed class DictationSessionCoordinatorTests
     /// </summary>
     private sealed class BarrierExecutor : ISessionCommandExecutor
     {
+        public Task? RetainedWork { get; set; }
+        public int RetainedJoins { get; private set; }
+        public bool HasRetainedCleanup => RetainedWork is not null;
+        public async Task<bool> JoinRetainedCleanupAsync()
+        {
+            RetainedJoins++;
+            await RetainedWork!;
+            RetainedWork = null;
+            return true;
+        }
         private readonly object _lock = new();
         private readonly Dictionary<(PushToTalkSignal, int), TaskCompletionSource> _started = new();
         private readonly Dictionary<(PushToTalkSignal, int), TaskCompletionSource> _finish = new();
