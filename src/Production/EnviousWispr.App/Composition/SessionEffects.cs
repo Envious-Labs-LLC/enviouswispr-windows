@@ -215,6 +215,10 @@ internal sealed class SessionEffects(SessionCompositionParts parts) : IDictation
         _view.ShowStatus(DictationStatus.Distress(
             "Windows interrupted the active dictation; recovery is still pending"));
 
+    public void ShowCleanupPending() =>
+        _view.ShowStatus(DictationStatus.Warning(
+            "Waiting for dictation work to finish before recovery"));
+
     public void DetachCaptureObservers() => parts.Shell.DetachCaptureObservers();
 
     public void ReleaseSession() => parts.Shell.ReleaseSession();

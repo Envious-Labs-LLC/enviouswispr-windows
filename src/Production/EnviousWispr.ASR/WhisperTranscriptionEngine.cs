@@ -1,5 +1,6 @@
 using System.Text;
 using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Runtime;
 using Whisper.net;
@@ -140,6 +141,7 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
             var text = new StringBuilder();
             var timings = new List<TranscriptTokenTiming>();
             string? detectedLanguage = null;
+            using var processorPhase = UatRuntimePhaseJournal.BeginNativeCall(UatNativeOperation.WhisperProcessor);
             await foreach (var segment in _processor.ProcessAsync(audio.Samples, cancellationToken)
                 .ConfigureAwait(false))
             {
@@ -151,6 +153,7 @@ public sealed class WhisperTranscriptionEngine : ILanguageSelectableTranscriptio
                 AddTimings(timings, segment, audio.Duration());
             }
 
+            processorPhase.Returned();
             return new Transcript(
                 audio.SessionId,
                 text.ToString().Trim(),

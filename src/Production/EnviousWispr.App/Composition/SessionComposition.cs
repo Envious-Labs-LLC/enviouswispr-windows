@@ -83,7 +83,8 @@ public static class SessionComposition
             runner,
             runtime.Persistence,
             parts.Resources,
-            new SessionEffects(parts));
+            new SessionEffects(parts),
+            clock: parts.Clock);
         RecordingFlag.Follow(parts.Controller, parts.Shell.RecordingActive);
         // Built beside the controller so a press captures its target and delivery choice from the
         // same provider the controller would have asked, at the instant of the key, before the

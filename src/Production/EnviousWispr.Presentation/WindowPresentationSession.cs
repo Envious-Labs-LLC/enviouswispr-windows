@@ -156,6 +156,9 @@ public sealed class WindowPresentationSession : IAsyncDisposable
     /// </summary>
     public bool TryEnter([NotNullWhen(true)] out PresentationAdmission.Lease? lease) => _admission.TryEnter(out lease);
 
+    /// <summary>Queues window work through the drain's gate; admission is checked again when it runs.</summary>
+    public bool TryPost(Func<Action, bool> enqueue, Action render) => _admission.TryPost(enqueue, render);
+
     /// <summary>How many presentation operations are inside the gate right now.</summary>
     public int Outstanding => _admission.Outstanding;
 

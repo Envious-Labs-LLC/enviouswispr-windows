@@ -197,9 +197,24 @@ function Invoke-DotNetTest {
     $ErrorActionPreference = 'Continue'
     try {
         $listed = & $Executable @($common + @("--no-build", "--list-tests")) 2>&1
+        $discoveryExitCode = $LASTEXITCODE
     }
     finally {
         $ErrorActionPreference = $previousPreference
+    }
+
+    # DISCOVERY IS ANOTHER NATIVE PROCESS, WITH ITS OWN FAILURE. A post-run testhost crashed in
+    # PortableSymbolReader after all tests finished; counting its missing names hid that primary
+    # failure behind "no tests". Emit its captured stdout/stderr and classify it before counting.
+    # This reports the failure truthfully; it does not repair the underlying native crash.
+    $listed | ForEach-Object { Write-Host $_ }
+    $discoveryAborted = @($listed | Select-String -Pattern 'Test host process crashed|The active test run was aborted|Testhost process exited with error')
+    if ($discoveryAborted.Count -gt 0) {
+        throw ("Test discovery was ABORTED, so it cannot establish the assembly's test count: " +
+            ($discoveryAborted[0].ToString().Trim()))
+    }
+    if ($discoveryExitCode -ne 0) {
+        throw "Test discovery for $Project failed with exit code $discoveryExitCode"
     }
     $discovered = @($listed | Select-String -Pattern '^\s{4}\S').Count
     $reported = 0

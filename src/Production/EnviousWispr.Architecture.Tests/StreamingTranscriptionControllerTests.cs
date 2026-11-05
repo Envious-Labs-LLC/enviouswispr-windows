@@ -294,6 +294,317 @@ public sealed class StreamingTranscriptionControllerTests
         Assert.Equal("new words", transcript.Text);
     }
 
+    [Fact]
+    public async Task OrdinaryReleaseDrainsIssuedRequestWithoutCancellingAndUsesExactTail()
+    {
+        var world = await HeldWorld();
+        var stop = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), CancellationToken.None);
+        world.Clock.Advance(TimeSpan.FromSeconds(6));
+        Assert.False(stop.IsCompleted);
+        Assert.False(world.Engine.Token.IsCancellationRequested);
+        world.Engine.NextText = "finished prefix";
+        world.Engine.AllowExit.SetResult();
+        Assert.Equal(StopOutcome.Completed, await stop.WaitAsync(Patience));
+        Assert.Single(world.Engine.Requests);
+        Assert.False(world.Engine.Token.IsCancellationRequested);
+        world.Engine.HoldTranscriptions = false;
+        world.Engine.NextText = "tail";
+        var result = await world.Controller.TranscribeUsingAnyHeadStartAsync(world.Engine,
+            new CapturedAudio(world.Session, world.Audio.Samples, SampleRate, 1), CancellationToken.None);
+        Assert.Equal("finished prefix tail", result.Text);
+        Assert.Equal(world.Engine.Requests[0].Length, world.Engine.Requests[1].From);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ProcessingExpiryOrExplicitCancellationRetainsStubbornWork(bool cancelProcessing)
+    {
+        var world = await HeldWorld();
+        using var processing = new CancellationTokenSource(TimeSpan.FromSeconds(10), world.Clock);
+        var registered = world.Clock.Registered;
+        var stop = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), processing.Token);
+        if (cancelProcessing) processing.Cancel();
+        else await Task.Run(() => world.Clock.Advance(TimeSpan.FromSeconds(10))).WaitAsync(Patience);
+        await world.Engine.CancellationObserved.Task.WaitAsync(Patience);
+        await world.Clock.WhenRegistered(registered + 1).WaitAsync(Patience);
+        world.Clock.Advance(TimeSpan.FromSeconds(5));
+        Assert.Equal(StopOutcome.StillRunning, await stop.WaitAsync(Patience));
+        Assert.True(world.Controller.IsRunning);
+        _ = world.Engine.Token.WaitHandle;
+        await Assert.ThrowsAsync<TranscriptionEngineException>(() => world.Controller.TranscribeUsingAnyHeadStartAsync(
+            world.Engine, new CapturedAudio(world.Session, world.Audio.Samples, SampleRate, 1), CancellationToken.None));
+        world.Controller.Start(DictationSessionId.Create());
+        Assert.Single(world.Engine.Requests);
+        world.Engine.AllowExit.SetResult();
+        Assert.Equal(StopOutcome.Completed, await world.Controller.StopAsync().WaitAsync(Patience));
+        Assert.False(world.Controller.IsRunning);
+    }
+
+    [Fact]
+    public async Task RepeatedDrainAndAbortShareOwnershipAndEscalateOnce()
+    {
+        var world = await HeldWorld();
+        var drain = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), CancellationToken.None);
+        var repeated = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), CancellationToken.None);
+        var abort = world.Controller.StopAsync();
+        var duplicate = world.Controller.StopAsync();
+        await world.Engine.CancellationObserved.Task.WaitAsync(Patience);
+        Assert.All(new[] { drain, repeated, abort, duplicate }, task => Assert.False(task.IsCompleted));
+        world.Engine.AllowExit.SetResult();
+        Assert.All(await Task.WhenAll(drain, repeated, abort, duplicate).WaitAsync(Patience),
+            outcome => Assert.Equal(StopOutcome.Completed, outcome));
+        Assert.False(world.Controller.IsRunning);
+        Assert.Single(world.Engine.Requests);
+    }
+
+    [Fact]
+    public async Task CompletedLoopCannotReleaseAnUnfinishedCancellationCallback()
+    {
+        var world = await HeldWorld();
+        world.Engine.HoldCancellationCallback = true;
+        var registered = world.Clock.Registered;
+        var stop = world.Controller.StopAsync(TimeSpan.FromSeconds(1));
+        await world.Engine.CallbackEntered.Task.WaitAsync(Patience);
+        world.Engine.AllowExit.SetResult();
+        await world.Controller.Loop!.WaitAsync(Patience);
+        await world.Clock.WhenRegistered(registered + 1).WaitAsync(Patience);
+        world.Clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(StopOutcome.StillRunning, await stop.WaitAsync(Patience));
+        Assert.True(world.Controller.IsRunning);
+        world.Controller.Start(DictationSessionId.Create());
+        await Assert.ThrowsAsync<TranscriptionEngineException>(() => world.Controller.TranscribeUsingAnyHeadStartAsync(
+            world.Engine, new CapturedAudio(world.Session, world.Audio.Samples, SampleRate, 1), CancellationToken.None));
+        world.Engine.ReleaseCallback.SetResult();
+        Assert.Equal(StopOutcome.Completed, await world.Controller.StopAsync().WaitAsync(Patience));
+        Assert.False(world.Controller.IsRunning);
+    }
+
+    [Fact]
+    public async Task StopBetweenSnapshotAndIssueClosesAdmission()
+    {
+        var world = World.Build();
+        world.Audio.Samples = Build((false, 200), (true, 3000), (false, 1200), (true, 500));
+        Task<StopOutcome>? stop = null;
+        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        world.Audio.BeforeReturn = () =>
+        {
+            stop = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), CancellationToken.None);
+            closed.SetResult();
+        };
+        world.Controller.Start(world.Session);
+        world.Clock.Advance(Poll);
+        await closed.Task.WaitAsync(Patience);
+        Assert.Equal(StopOutcome.Completed, await stop!.WaitAsync(Patience));
+        Assert.Empty(world.Engine.Requests);
+    }
+
+    [Fact]
+    public async Task DrainOnIdlePreviewOrCompletedLoopIsSafe()
+    {
+        var world = World.Build();
+        Assert.Equal(StopOutcome.Completed, await world.Controller.CompleteOrdinaryAsync(() => TimeSpan.Zero, CancellationToken.None));
+        world.Effects.LivePreviewEnabled = true;
+        world.Controller.Start(world.Session);
+        Assert.Equal(StopOutcome.Completed, await world.Controller.CompleteOrdinaryAsync(() => TimeSpan.Zero, CancellationToken.None));
+        world.Effects.LivePreviewEnabled = false;
+        world.Audio.Samples = Build((true, 3000), (false, 1200), (true, 500));
+        world.Engine.ThrowOnTranscribe = new InvalidOperationException("failed segment");
+        world.Controller.Start(world.Session);
+        world.Clock.Advance(Poll);
+        await world.Controller.Loop!.WaitAsync(Patience);
+        Assert.Equal(StopOutcome.Completed, await world.Controller.CompleteOrdinaryAsync(() => TimeSpan.Zero, CancellationToken.None));
+        Assert.False(world.Controller.IsRunning);
+    }
+
+    [Fact]
+    public async Task FailedDrainAfterAnEarlierCommitFallsBackToWholeAudio()
+    {
+        var world = World.Build();
+        world.Audio.Samples = Build((false, 200), (true, 3000), (false, 1200), (true, 500));
+        world.Engine.NextText = "prefix";
+        world.Controller.Start(world.Session);
+        world.Clock.Advance(Poll);
+        await world.Clock.WhenRegistered(2).WaitAsync(Patience);
+        world.Audio.Samples = Build((false, 200), (true, 3000), (false, 1200), (true, 3000), (false, 1200), (true, 500));
+        world.Engine.HoldTranscriptions = true;
+        world.Engine.ThrowOnTranscribe = new InvalidOperationException("late failure");
+        world.Clock.Advance(Poll);
+        await world.Engine.WhenTranscribed(2).WaitAsync(Patience);
+        var drain = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), CancellationToken.None);
+        world.Engine.AllowExit.SetResult();
+        Assert.Equal(StopOutcome.Completed, await drain.WaitAsync(Patience));
+        world.Engine.HoldTranscriptions = false;
+        world.Engine.ThrowOnTranscribe = null;
+        world.Engine.NextText = "whole take";
+        var result = await world.Controller.TranscribeUsingAnyHeadStartAsync(world.Engine,
+            new CapturedAudio(world.Session, world.Audio.Samples, SampleRate, 1), CancellationToken.None);
+        Assert.Equal("whole take", result.Text);
+        Assert.Equal(0, world.Engine.Requests.Last().From);
+        Assert.Contains(AppEventCode.StreamingAbandoned, world.Log.Codes);
+    }
+
+    [Fact]
+    public async Task LateFaultIsObservedBeforeOwnershipCanReleaseAndAnotherTakeReset()
+    {
+        var world = await HeldWorld();
+        world.Engine.IgnoreCancellation = true;
+        world.Engine.ThrowOnTranscribe = new InvalidOperationException("late failure");
+        Assert.Equal(StopOutcome.StillRunning, await world.Controller.StopAsync(TimeSpan.Zero));
+        world.Controller.Start(DictationSessionId.Create());
+        Assert.True(world.Controller.IsRunning);
+        world.Engine.AllowExit.SetResult();
+        Assert.Equal(StopOutcome.Completed, await world.Controller.StopAsync().WaitAsync(Patience));
+        Assert.Contains(AppEventCode.StreamingAbandoned, world.Log.Codes);
+        world.Effects.Engine = null;
+        world.Controller.Start(DictationSessionId.Create());
+        Assert.False(world.Controller.IsRunning);
+    }
+
+    [Fact]
+    public async Task FaultedCancellationCallbackRemainsOwnedUntilObserved()
+    {
+        var world = await HeldWorld();
+        world.Engine.HoldCancellationCallback = true;
+        world.Engine.ThrowInCallback = true;
+        var abort = world.Controller.StopAsync();
+        await world.Engine.CallbackEntered.Task.WaitAsync(Patience);
+        world.Engine.AllowExit.SetResult();
+        await world.Controller.Loop!.WaitAsync(Patience);
+        Assert.True(world.Controller.IsRunning);
+        world.Engine.ReleaseCallback.SetResult();
+        await Assert.ThrowsAsync<AggregateException>(() => abort.WaitAsync(Patience));
+        Assert.False(world.Controller.IsRunning);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EscapingLoopFaultJoinsHeldCallbackBeforeRelease(bool callbackCompletesBeforeDeadline)
+    {
+        var world = await HeldWorld();
+        world.Engine.HoldCancellationCallback = true;
+        world.Engine.IgnoreCancellation = true;
+        world.Engine.ThrowOnTranscribe = new InvalidOperationException("engine fault");
+        world.Log.ThrowOnceOnAbandonment = true;
+        var registered = world.Clock.Registered;
+        var stop = world.Controller.StopAsync(TimeSpan.FromSeconds(1));
+        await world.Engine.CallbackEntered.Task.WaitAsync(Patience);
+        world.Engine.AllowExit.SetResult();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => world.Controller.Loop!.WaitAsync(Patience));
+        Assert.True(world.Controller.IsRunning);
+        _ = world.Engine.Token.WaitHandle;
+        world.Controller.Start(DictationSessionId.Create());
+        await Assert.ThrowsAsync<TranscriptionEngineException>(() => world.Controller.TranscribeUsingAnyHeadStartAsync(
+            world.Engine, new CapturedAudio(world.Session, world.Audio.Samples, SampleRate, 1), CancellationToken.None));
+        if (callbackCompletesBeforeDeadline)
+        {
+            world.Engine.ReleaseCallback.SetResult();
+            await Assert.ThrowsAsync<InvalidOperationException>(() => stop.WaitAsync(Patience));
+        }
+        else
+        {
+            await world.Clock.WhenRegistered(registered + 1).WaitAsync(Patience);
+            world.Clock.Advance(TimeSpan.FromSeconds(1));
+            Assert.Equal(StopOutcome.StillRunning, await stop.WaitAsync(Patience));
+            Assert.True(world.Controller.IsRunning);
+            world.Engine.ReleaseCallback.SetResult();
+            await Assert.ThrowsAsync<InvalidOperationException>(() => world.Controller.StopAsync().WaitAsync(Patience));
+        }
+        Assert.False(world.Controller.IsRunning);
+    }
+
+    [Fact]
+    public async Task RepeatedOrdinaryCannotReplaceTheFirstTokenOrCleanupPhase()
+    {
+        var world = await HeldWorld();
+        using var first = new CancellationTokenSource();
+        using var second = new CancellationTokenSource();
+        second.Cancel();
+        var stop = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), first.Token);
+        var repeated = world.Controller.CompleteOrdinaryAsync(
+            () => throw new InvalidOperationException("replacement phase used"), second.Token);
+        try
+        {
+            world.Clock.Advance(TimeSpan.FromSeconds(6));
+            Assert.False(stop.IsCompleted);
+            Assert.False(repeated.IsCompleted);
+            Assert.False(world.Engine.Token.IsCancellationRequested);
+            world.Engine.AllowExit.TrySetResult();
+            Assert.All(await Task.WhenAll(stop, repeated).WaitAsync(Patience), x => Assert.Equal(StopOutcome.Completed, x));
+        }
+        finally { world.Engine.AllowExit.TrySetResult(); await world.Controller.StopAsync().WaitAsync(Patience); }
+    }
+
+    [Fact]
+    public async Task AbortFirstCannotBeRevivedByOrdinaryCompletion()
+    {
+        var world = await HeldWorld();
+        var abort = world.Controller.StopAsync();
+        var ordinary = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), CancellationToken.None);
+        try
+        {
+            await world.Engine.CancellationObserved.Task.WaitAsync(Patience);
+            Assert.True(world.Engine.Token.IsCancellationRequested);
+            Assert.False(ordinary.IsCompleted);
+            world.Engine.AllowExit.TrySetResult();
+            Assert.All(await Task.WhenAll(abort, ordinary).WaitAsync(Patience), x => Assert.Equal(StopOutcome.Completed, x));
+            Assert.Single(world.Engine.Requests);
+        }
+        finally { world.Engine.AllowExit.TrySetResult(); await world.Controller.StopAsync().WaitAsync(Patience); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OrdinaryCancellationOwnsDispatchAndCallbackUntilActualQuiescence(bool alreadyCancelled)
+    {
+        var world = await HeldWorld();
+        world.Engine.HoldCancellationCallback = true;
+        using var processing = new CancellationTokenSource();
+        if (alreadyCancelled) processing.Cancel();
+        var registered = world.Clock.Registered;
+        var stop = world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), processing.Token);
+        Task cancel = Task.Run(() => processing.Cancel());
+        try
+        {
+            await cancel.WaitAsync(Patience);
+            await world.Engine.CallbackEntered.Task.WaitAsync(Patience);
+            world.Engine.AllowExit.TrySetResult();
+            await world.Controller.Loop!.WaitAsync(Patience);
+            await world.Clock.WhenRegistered(registered + 1).WaitAsync(Patience);
+            await Task.Run(() => world.Clock.Advance(TimeSpan.FromSeconds(5))).WaitAsync(Patience);
+            Assert.Equal(StopOutcome.StillRunning, await stop.WaitAsync(Patience));
+            Assert.True(world.Controller.IsRunning);
+            _ = world.Engine.Token.WaitHandle;
+            await Assert.ThrowsAsync<TranscriptionEngineException>(() => world.Controller.TranscribeUsingAnyHeadStartAsync(
+                world.Engine, new CapturedAudio(world.Session, world.Audio.Samples, SampleRate, 1), CancellationToken.None));
+        }
+        finally
+        {
+            world.Engine.AllowExit.TrySetResult(); world.Engine.ReleaseCallback.TrySetResult();
+            await cancel.WaitAsync(Patience); await world.Controller.StopAsync().WaitAsync(Patience);
+        }
+        Assert.False(world.Controller.IsRunning);
+    }
+
+    private static Func<TimeSpan> CleanupAllowance(TimeProvider clock)
+    {
+        var budget = new Lazy<StopBudget>(() => new StopBudget(TimeSpan.FromSeconds(5), clock));
+        return () => budget.Value.Left;
+    }
+
+    private static async Task<World> HeldWorld()
+    {
+        var world = World.Build();
+        world.Audio.Samples = Build((false, 200), (true, 3000), (false, 1200), (true, 500));
+        world.Engine.HoldTranscriptions = true;
+        world.Controller.Start(world.Session);
+        world.Clock.Advance(Poll);
+        await world.Engine.WhenTranscribed(1).WaitAsync(Patience);
+        return world;
+    }
+
     private static float[] Build(params (bool IsSpeech, int Milliseconds)[] parts)
     {
         var samples = new float[parts.Sum(part => SampleRate * part.Milliseconds / 1000)];
@@ -358,6 +669,7 @@ public sealed class StreamingTranscriptionControllerTests
         public DictationSessionId Session { get; set; }
         public float[] Samples { get; set; } = [];
         public TimeSpan LastWindow { get; private set; }
+        public Action? BeforeReturn { get; set; }
 
         public Task WhenSampled(int count) => _sampled.WhenAtLeast(count);
 
@@ -366,6 +678,7 @@ public sealed class StreamingTranscriptionControllerTests
             LastWindow = maximumDuration;
             var snapshot = new AudioSnapshot(Session, Samples, SampleRate, 1);
             _sampled.Increment();
+            BeforeReturn?.Invoke();
             return snapshot;
         }
     }
@@ -381,6 +694,12 @@ public sealed class StreamingTranscriptionControllerTests
         public string NextText { get; set; } = "";
         public Exception? ThrowOnTranscribe { get; set; }
         public bool HoldTranscriptions { get; set; }
+        public CancellationToken Token { get; private set; }
+        public bool HoldCancellationCallback { get; set; }
+        public bool IgnoreCancellation { get; set; }
+        public bool ThrowInCallback { get; set; }
+        public TaskCompletionSource CallbackEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseCallback { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource CancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource AllowExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -405,16 +724,29 @@ public sealed class StreamingTranscriptionControllerTests
                 _requests.Add((Offset(audio.Samples), audio.Samples.Length));
             }
 
+            Token = cancellationToken;
             _transcribed.Increment();
             if (HoldTranscriptions)
             {
                 var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                using var registration = cancellationToken.Register(() => cancelled.TrySetResult());
+                var registration = cancellationToken.Register(() =>
+                {
+                    cancelled.TrySetResult();
+                    CancellationObserved.TrySetResult();
+                    if (HoldCancellationCallback)
+                    {
+                        CallbackEntered.TrySetResult();
+                        ReleaseCallback.Task.WaitAsync(Patience).GetAwaiter().GetResult();
+                    }
+                    if (ThrowInCallback) throw new InvalidOperationException("callback failure");
+                });
                 await Task.WhenAny(AllowExit.Task, cancelled.Task);
-                if (cancellationToken.IsCancellationRequested)
+                if (IgnoreCancellation) await AllowExit.Task;
+                if (cancellationToken.IsCancellationRequested && !IgnoreCancellation)
                 {
                     CancellationObserved.TrySetResult();
                     await AllowExit.Task;
+                    registration.Unregister();
                     throw new OperationCanceledException(cancellationToken);
                 }
             }
@@ -443,6 +775,8 @@ public sealed class StreamingTranscriptionControllerTests
     {
         private readonly object _lock = new();
         private readonly List<(AppLogEntry Entry, Guid? Dictation)> _lines = [];
+
+        public bool ThrowOnceOnAbandonment { get; set; }
 
         public AppLogEntry[] Entries
         {
@@ -473,6 +807,11 @@ public sealed class StreamingTranscriptionControllerTests
             lock (_lock)
             {
                 _lines.Add((entry, DictationScope.Current));
+                if (ThrowOnceOnAbandonment && entry.Event == AppEventCode.StreamingAbandoned)
+                {
+                    ThrowOnceOnAbandonment = false;
+                    throw new InvalidOperationException("failure reporter fault");
+                }
             }
         }
     }

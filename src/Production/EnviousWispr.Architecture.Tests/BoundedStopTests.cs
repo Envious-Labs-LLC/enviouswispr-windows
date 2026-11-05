@@ -26,6 +26,16 @@ namespace EnviousWispr.Architecture.Tests;
 /// </remarks>
 public sealed class BoundedStopTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task OwnedTimeoutFaultIsObservedRatherThanReportedAsStillRunning(int seconds)
+    {
+        var work = Task.FromException(new TimeoutException("owned callback failed"));
+        await Assert.ThrowsAsync<TimeoutException>(() => BoundedJoin.JoinAsync(work,
+            TimeSpan.FromSeconds(seconds), TimeProvider.System));
+    }
+
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(10);
 
     [Fact]

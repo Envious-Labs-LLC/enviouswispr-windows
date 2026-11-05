@@ -1917,7 +1917,7 @@ public sealed partial class DesignSystemTokenTests
             private sealed class WindowSessionView(App app) : ISessionView
             {
                 public void ShowStatus(DictationStatus status) =>
-                    app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetSessionStatus(status));
+                    app.PostToLiveWindow(window => window.SetSessionStatus(status));
             }
             """;
         const string rewritten = """
@@ -1926,7 +1926,7 @@ public sealed partial class DesignSystemTokenTests
                 public void ShowStatus(DictationStatus status)
                 {
                     status = DictationStatus.Quiet("replacement");
-                    app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetSessionStatus(status));
+                    app.PostToLiveWindow(window => window.SetSessionStatus(status));
                 }
             }
             """;
@@ -1934,17 +1934,17 @@ public sealed partial class DesignSystemTokenTests
             private sealed class WindowSessionView(App app) : ISessionView
             {
                 public void ShowStatus(DictationStatus status) =>
-                    app._window?.DispatcherQueue.TryEnqueue(() => app._window?.SetSessionStatus(status with { Text = "x" }));
+                    app.PostToLiveWindow(window => window.SetSessionStatus(status with { Text = "x" }));
             }
             """;
         const string tupleReassigned = """
             private sealed class WindowSessionView(App app) : ISessionView
             {
                 public void ShowStatus(DictationStatus status) =>
-                    app._window?.DispatcherQueue.TryEnqueue(() =>
+                    app.PostToLiveWindow(window =>
                     {
                         (status, _) = (status with { Text = "x" }, 0);
-                        app._window?.SetSessionStatus(status);
+                        window.SetSessionStatus(status);
                     });
             }
             """;
@@ -1952,7 +1952,7 @@ public sealed partial class DesignSystemTokenTests
             private sealed class WindowSessionView(App app) : ISessionView
             {
                 public void ShowStatus(DictationStatus status) =>
-                    app._window?.DispatcherQueue.TryEnqueue(() => app.RewriteAndSetSessionStatus(status));
+                    app.PostToLiveWindow(window => app.RewriteAndSetSessionStatus(status));
             }
             """;
         const string notDispatched = """
@@ -1991,7 +1991,7 @@ public sealed partial class DesignSystemTokenTests
         }
 
         // THE WHOLE PERMITTED SHAPE, NOT A LIST OF FORBIDDEN ONES: one expression, which is one
-        // dispatch to the window's queue, whose one argument is a lambda of no parameters whose body
+        // dispatch through the lifetime bridge, whose one argument names the live window and whose body
         // is one expression, which is the window's SetSessionStatus handed the parameter as it
         // arrived. Anything else - a block anywhere, a helper named like the window's method, a
         // transformed argument, a second statement - is not that shape.
@@ -2002,21 +2002,20 @@ public sealed partial class DesignSystemTokenTests
 
         var parameter = forwarder.ParameterList.Parameters.Single().Identifier.ValueText;
         var (dispatch, dispatcher) = Call(forwarder.ExpressionBody.Expression);
-        if (dispatch is null || dispatcher != "app._window?.DispatcherQueue.TryEnqueue")
+        if (dispatch is null || dispatcher != "app.PostToLiveWindow")
         {
-            return $"The forwarder is not one dispatch to the window's queue ('{dispatcher}').";
+            return $"The forwarder is not one dispatch through the window lifetime bridge ('{dispatcher}').";
         }
 
         if (dispatch.ArgumentList.Arguments.Count != 1 ||
-            dispatch.ArgumentList.Arguments[0].Expression is not ParenthesizedLambdaExpressionSyntax lambda ||
-            lambda.ParameterList.Parameters.Count != 0 ||
+            dispatch.ArgumentList.Arguments[0].Expression is not SimpleLambdaExpressionSyntax lambda ||
             lambda.ExpressionBody is null)
         {
             return "The dispatched work is not one expression.";
         }
 
         var (handOn, target) = Call(lambda.ExpressionBody);
-        if (handOn is null || target != "app._window?.SetSessionStatus")
+        if (handOn is null || target != lambda.Parameter.Identifier.ValueText + ".SetSessionStatus")
         {
             return $"The dispatched work calls '{target}' rather than the window's SetSessionStatus.";
         }

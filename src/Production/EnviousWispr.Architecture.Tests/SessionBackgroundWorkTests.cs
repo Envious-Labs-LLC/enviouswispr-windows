@@ -161,6 +161,31 @@ public sealed class SessionBackgroundWorkTests
         await world.DisposeAsync();
     }
 
+    [Fact]
+    public async Task UsefulOrdinaryDrainDoesNotSpendTheSharedCleanupAllowance()
+    {
+        var world = World.Build(); var session = DictationSessionId.Create();
+        world.Audio.Speak(session); world.Transcriber.Hold = true;
+        using var processing = new CancellationTokenSource();
+        var budget = new Lazy<StopBudget>(() => new StopBudget(TimeSpan.FromSeconds(5), world.Clock));
+        try
+        {
+            await world.Work.StartAsync(session, new RecordingBackgroundSettings(TimeSpan.FromMinutes(3), world.Preferences));
+            await world.Engine.StartStarted.Task.WaitAsync(Patience);
+            world.Clock.Advance(TimeSpan.FromMilliseconds(500));
+            await world.Transcriber.Entered.Task.WaitAsync(Patience);
+            await world.Work.StopWatchdogAsync().WaitAsync(Patience);
+            var ordinary = world.Work.CompleteOrdinaryAsync(() => budget.Value.Left, processing.Token);
+            world.Clock.Advance(TimeSpan.FromSeconds(6));
+            Assert.False(ordinary.IsCompleted); Assert.False(budget.IsValueCreated);
+            world.Transcriber.AllowExit.TrySetResult();
+            Assert.True((await ordinary.WaitAsync(Patience)).Completed);
+            Assert.True(budget.IsValueCreated);
+            Assert.Equal(TimeSpan.FromSeconds(5), budget.Value.Left);
+        }
+        finally { await world.DisposeAsync().WaitAsync(Patience); }
+    }
+
     private sealed class World
     {
         public required SessionBackgroundWork Work { get; init; }

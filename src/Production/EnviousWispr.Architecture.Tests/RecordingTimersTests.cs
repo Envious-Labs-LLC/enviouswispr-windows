@@ -264,6 +264,8 @@ public sealed class RecordingTimersTests
 
     private sealed class HeldExecutor : ISessionCommandExecutor
     {
+        public bool HasRetainedCleanup => false;
+        public Task<bool> JoinRetainedCleanupAsync() => Task.FromResult(true);
         private readonly object _lock = new();
         private readonly List<PushToTalkSignal> _seen = [];
 

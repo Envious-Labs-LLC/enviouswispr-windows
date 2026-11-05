@@ -83,6 +83,7 @@ public sealed class ApplicationLifetimeTests
         Assert.Equal(["presentation drain"], report.Outstanding);
         Assert.Null(report.Session);
         Assert.Equal(0, executor.TearDowns);
+        Assert.Equal(0, world.ShellClosingCalls);
         Assert.True(report.Retained);
         Assert.True(report.Escalated);
         Assert.Equal(0, world.CompleteRunCalls);
@@ -90,6 +91,51 @@ public sealed class ApplicationLifetimeTests
         Assert.Contains(AppEventCode.ApplicationShutdownUnclean, world.Log.Events);
         Assert.Same(report, world.Terminator.Report);
         world.Drain.SetResult();
+        await world.Drain.Task.WaitAsync(Patience);
+        Assert.Equal(0, world.ShellClosingCalls);
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(0, true)]
+    [InlineData(1, false)]
+    [InlineData(1, true)]
+    [InlineData(2, false)]
+    [InlineData(2, true)]
+    public async Task AFailedOrCancelledPresentationDrainRetainsWindowsAndDependencies(int failure, bool withSession)
+    {
+        var clock = new Deterministic.ManualClock();
+        var executor = new HeldExecutor();
+        await using var coordinator = new DictationSessionCoordinator(executor, clock: clock);
+        var world = World.Create(clock, withSession ? coordinator : null);
+        world.Drain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (failure == 2)
+        {
+            world.DrainThrows = true;
+        }
+        else if (failure == 1)
+        {
+            world.Drain.SetCanceled();
+        }
+        else
+        {
+            world.Drain.SetException(new InvalidOperationException("presentation drain failed"));
+        }
+
+        var report = await world.Lifetime.ExitAsync().WaitAsync(Patience);
+        Assert.Equal(ExitOutcome.Unclean, report.Outcome);
+        Assert.Equal(["presentation drain"], report.Failed);
+        Assert.Empty(report.Outstanding);
+        Assert.Null(report.Session);
+        Assert.Equal(0, executor.TearDowns);
+        Assert.Equal(0, world.ShellClosingCalls);
+        Assert.Equal(1, world.PolishAborts);
+        Assert.True(report.Retained);
+        Assert.True(report.Escalated);
+        Assert.False(report.RunCompleted);
+        Assert.Equal(0, world.CompleteRunCalls);
+        Assert.Equal(["inputs", "warm-up", "heartbeat"], world.Ran);
+        Assert.Same(report, world.Terminator.Report);
     }
 
     [Fact]
@@ -667,6 +713,7 @@ public sealed class ApplicationLifetimeTests
         public Action? ShellClosingBlocks { get; set; }
         /// <summary>When set, the presentation drain does not finish until it is completed.</summary>
         public TaskCompletionSource? Drain { get; set; }
+        public bool DrainThrows { get; set; }
         /// <summary>When set, the polish warm-up does not finish until it is completed.</summary>
         public TaskCompletionSource? Warmup { get; set; }
         /// <summary>When set, the first dependency's disposal does not finish until it is completed.</summary>
@@ -689,6 +736,11 @@ public sealed class ApplicationLifetimeTests
                     world!.DrainCalls++;
                     world.Prepared.Add("presentation drain");
                     world.Entered("presentation drain");
+                    if (world.DrainThrows)
+                    {
+                        throw new InvalidOperationException("presentation drain threw before returning a task");
+                    }
+
                     return world.Drain?.Task ?? Task.CompletedTask;
                 },
                 ShellClosing: () =>
@@ -782,6 +834,8 @@ public sealed class ApplicationLifetimeTests
     /// <summary>A command the executor holds until released; the coordinator around it is the production one.</summary>
     private sealed class HeldExecutor : ISessionCommandExecutor
     {
+        public bool HasRetainedCleanup => false;
+        public Task<bool> JoinRetainedCleanupAsync() => Task.FromResult(true);
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int TearDowns { get; private set; }

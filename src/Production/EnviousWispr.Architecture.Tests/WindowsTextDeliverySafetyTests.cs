@@ -1225,18 +1225,23 @@ public sealed class WindowsTextDeliverySafetyTests
         const string meanwhile = "EnviousWispr text another app wrote between our tries";
         using var guard = ClipboardGuard.Capture();
         ClipboardGuard.SetText(sentinel);
-        using var opened = new ManualResetEventSlim();
+        var opened = new ManualResetEventSlim();
+        var firstFailure = new ManualResetEventSlim();
         var personWrote = false;
-        var person = new Thread(() => personWrote = RawClipboard.WriteText(meanwhile, opened, holdBeforeEmpty: TimeSpan.FromMilliseconds(20)))
+        var person = new Thread(() => personWrote = RawClipboard.WriteText(
+            meanwhile, opened, TimeSpan.Zero, beforeEmpty: firstFailure))
         {
             IsBackground = true,
         };
-        person.Start();
-        Assert.True(opened.Wait(TimeSpan.FromSeconds(10)), "the other writer opened the clipboard");
 
         Exception? failure = null;
+        var unrelatedReleased = false;
         var ours = new Thread(() =>
         {
+            // The observer must ignore an unrelated failure on this same thread.
+            try { Marshal.ThrowExceptionForHR(unchecked((int)0x80004005)); }
+            catch (ExternalException) { }
+            unrelatedReleased = firstFailure.IsSet;
             try
             {
                 WindowsClipboardPaste.SetClipboardTextOrThrow("EnviousWispr words that must not replace theirs");
@@ -1247,13 +1252,75 @@ public sealed class WindowsTextDeliverySafetyTests
             }
         });
         ours.SetApartmentState(ApartmentState.STA);
-        ours.Start();
-        Assert.True(ours.Join(TimeSpan.FromSeconds(10)));
-        Assert.True(person.Join(TimeSpan.FromSeconds(10)));
+        void ObserveFailure(object? sender, System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs args)
+        {
+            if (Environment.CurrentManagedThreadId == ours.ManagedThreadId &&
+                args.Exception is ExternalException &&
+                new System.Diagnostics.StackTrace().GetFrames().Any(frame =>
+                    frame.GetMethod() is { Name: "WithPumpingRetry" } method &&
+                    method.DeclaringType == typeof(WindowsClipboardPaste)))
+            {
+                firstFailure.Set();
+            }
+        }
+
+        var personStarted = false;
+        var oursStarted = false;
+        var oursJoined = false;
+        var personJoined = false;
+        Exception? primaryFailure = null;
+        AppDomain.CurrentDomain.FirstChanceException += ObserveFailure;
+        try
+        {
+            person.Start();
+            personStarted = true;
+            Assert.True(opened.Wait(TimeSpan.FromSeconds(10)), "the other writer opened the clipboard");
+            ours.Start();
+            oursStarted = true;
+            Assert.True(ours.Join(TimeSpan.FromSeconds(10)));
+            Assert.True(person.Join(TimeSpan.FromSeconds(10)));
+            Assert.False(unrelatedReleased);
+            Assert.True(firstFailure.IsSet, "the production clipboard write actually failed before the competing write");
+        }
+        catch (Exception exception)
+        {
+            primaryFailure = exception;
+        }
+        finally
+        {
+            AppDomain.CurrentDomain.FirstChanceException -= ObserveFailure;
+            firstFailure.Set();
+            oursJoined = !oursStarted || ours.Join(TimeSpan.FromSeconds(10));
+            personJoined = !personStarted || person.Join(TimeSpan.FromSeconds(10));
+        }
+        if (oursJoined && personJoined)
+        {
+            opened.Dispose();
+            firstFailure.Dispose();
+        }
+        Assert.True(oursJoined && personJoined, "Clipboard test threads finished before gate disposal.");
+        if (primaryFailure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(primaryFailure).Throw();
 
         Assert.True(personWrote, "the other writer's copy landed");
         Assert.Equal(meanwhile, ClipboardGuard.GetText());
         Assert.NotNull(failure);
+    }
+
+    [ClipboardFact]
+    public void ACompetingWriterWithoutTheFailureSignalTimesOutWithoutWriting()
+    {
+        const string sentinel = "EnviousWispr clipboard handshake control";
+        using var guard = ClipboardGuard.Capture();
+        ClipboardGuard.SetText(sentinel);
+        using var opened = new ManualResetEventSlim();
+        using var absentFailure = new ManualResetEventSlim();
+
+        Assert.False(RawClipboard.WriteText("must not be written", opened, TimeSpan.Zero,
+            absentFailure, TimeSpan.FromMilliseconds(20)));
+        Assert.True(opened.IsSet);
+        Assert.False(absentFailure.IsSet);
+        Assert.Equal(sentinel, ClipboardGuard.GetText());
     }
 
     /// <summary>A plain Win32 clipboard write, as a native app makes one: opened with no window, so it owns the clipboard through none.</summary>
@@ -1266,7 +1333,8 @@ public sealed class WindowsTextDeliverySafetyTests
 
         /// <param name="opened">Set once the clipboard is open and held, before it is emptied.</param>
         /// <param name="holdBeforeEmpty">How long the clipboard is held open before it is emptied.</param>
-        public static bool WriteText(string text, ManualResetEventSlim? opened, TimeSpan holdBeforeEmpty)
+        public static bool WriteText(string text, ManualResetEventSlim? opened, TimeSpan holdBeforeEmpty,
+            ManualResetEventSlim? beforeEmpty = null, TimeSpan? beforeEmptyTimeout = null)
         {
             var bytes = (text.Length + 1) * 2;
             var memory = GlobalAlloc(MoveableMemory, (UIntPtr)bytes);
@@ -1286,6 +1354,12 @@ public sealed class WindowsTextDeliverySafetyTests
                     try
                     {
                         opened?.Set();
+                        // deadline-fallback: the subject's actual first write failure releases this gate.
+                        if (beforeEmpty is not null && !beforeEmpty.Wait(beforeEmptyTimeout ?? TimeSpan.FromSeconds(10)))
+                        {
+                            GlobalFree(memory);
+                            return false;
+                        }
                         // test-fixture-timer: the clipboard is held open this long before it is emptied, so the other
                         // side is already trying to write when the empty asks it to answer.
                         var held = System.Diagnostics.Stopwatch.StartNew();
@@ -1322,6 +1396,9 @@ public sealed class WindowsTextDeliverySafetyTests
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GlobalFree(IntPtr memory);
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern IntPtr GlobalLock(IntPtr memory);
