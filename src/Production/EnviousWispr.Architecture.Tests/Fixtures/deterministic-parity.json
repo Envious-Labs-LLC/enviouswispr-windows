@@ -166,8 +166,8 @@
   {
     "name": "mixed phone",
     "category": "phone",
-    "input": "call me at 203 nine five four eight eight seven nine",
-    "expected": "call me at 203-954-8879",
+    "input": "call me at 212 five five five zero one four seven",
+    "expected": "call me at 212-555-0147",
     "language": "en",
     "engineId": "whisper",
     "customWords": [],
