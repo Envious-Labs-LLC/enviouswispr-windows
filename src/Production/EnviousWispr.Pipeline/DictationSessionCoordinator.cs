@@ -508,7 +508,10 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             waiter = _noHolds ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
-        var finished = await Task.WhenAny(waiter.Task, Task.Delay(timeout, _clock)).ConfigureAwait(false);
+        using var delayCancellation = new CancellationTokenSource();
+        var finished = await Task.WhenAny(waiter.Task, Task.Delay(timeout, _clock, delayCancellation.Token))
+            .ConfigureAwait(false);
+        await delayCancellation.CancelAsync().ConfigureAwait(false);
         return ReferenceEquals(finished, waiter.Task);
     }
 
@@ -706,7 +709,10 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         }
 
         var work = Task.WhenAll([_consumer, .. expiries]);
-        var finished = await Task.WhenAny(work, Task.Delay(timeout, _clock)).ConfigureAwait(false);
+        using var delayCancellation = new CancellationTokenSource();
+        var finished = await Task.WhenAny(work, Task.Delay(timeout, _clock, delayCancellation.Token))
+            .ConfigureAwait(false);
+        await delayCancellation.CancelAsync().ConfigureAwait(false);
         return ReferenceEquals(finished, work);
     }
 
