@@ -1247,8 +1247,7 @@ public partial class App : Application, IAsyncDisposable
             _modelDownload?.Cancel();
             _graphicsRuntimeDownload?.Cancel();
         },
-        ReleaseInputs:
-        [
+        ReleaseInputs: (LifetimeStep[])[
             LifetimeStep.Of("lifecycle monitor", () =>
             {
                 if (_lifecycleMonitor is { } monitor)
@@ -1269,8 +1268,7 @@ public partial class App : Application, IAsyncDisposable
             }),
         ],
         ShutDownSession: _sessionCoordinator is { } coordinator ? budget => coordinator.ShutdownAsync(budget) : null,
-        Quiesce:
-        [
+        Quiesce: (LifetimeStep[])[
             // THE LAUNCH AND A MODEL DELIVERY BORROW WHAT THE EXIT DISPOSES - the recovery store, the
             // engines they build or replace - so each is one tracked task, cancelled by the exit
             // policy above and joined here; one that outlives the budget keeps everything and
@@ -1332,8 +1330,7 @@ public partial class App : Application, IAsyncDisposable
                 cancellation?.Dispose();
             }),
         ],
-        DisposeSessionDependencies:
-        [
+        DisposeSessionDependencies: (LifetimeStep[])[
             // THE SESSION ITSELF IS NOT HERE: the controller, its capture and the delivery route are
             // disposed by the executor's teardown under the session's shutdown, in its order, and a
             // shell that never composed a coordinator never built them either.
@@ -1369,8 +1366,7 @@ public partial class App : Application, IAsyncDisposable
             LifetimeStep.Of("history store", _historyStore.Dispose),
             LifetimeStep.Of("recovery store", _recoveryTextStore.Dispose),
         ],
-        DisposeShell:
-        [
+        DisposeShell: (LifetimeStep[])[
             // THE PRESENTATION SESSION: the drain first (the settings write in flight is kept), then
             // the writer's gate and the device catalogue - the one owner of what the window used to
             // build. Closed again by a later call it is a no-op.

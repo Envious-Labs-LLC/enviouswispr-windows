@@ -505,8 +505,8 @@ public sealed class ApplicationLifetime
         var inside = Volatile.Read(ref _current) ?? "exit";
         var report = new ExitReport(
             ExitOutcome.Unclean,
-            [inside],
-            [],
+            (string[])[inside],
+            (string[])[],
             Session: null,
             Retained: true,
             RunCompleted: false,
