@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Settings;
+using EnviousWispr.Services.Lifecycle;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -129,7 +130,12 @@ public sealed partial class DictationOverlayWindow : Window
             // sized for the first, which is the exact bug this subscription is here to prevent.
             ApplyScale(root.RasterizationScale);
         };
-        AppWindow.IsShownInSwitchers = false;
+        // Windows 11 25H2 (26200.10075) with Windows App SDK 2.4.0 can throw E_NOTIMPL from
+        // SetShownInSwitchers, so fall back to Win32 WS_EX_TOOLWINDOW to keep the overlay out of
+        // Alt+Tab and the taskbar without crashing startup.
+        _ = WindowsToolWindowStyle.HideFromTaskSwitchers(
+            () => AppWindow.IsShownInSwitchers = false,
+            windowHandle);
         if (AppWindow.Presenter is OverlappedPresenter presenter)
         {
             presenter.IsAlwaysOnTop = true;
