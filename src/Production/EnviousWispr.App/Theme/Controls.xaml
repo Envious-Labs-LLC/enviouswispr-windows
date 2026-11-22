@@ -34,6 +34,64 @@
         <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
         <Setter Property="Foreground" Value="{ThemeResource BrandAccentBrush}" />
     </Style>
+    <Style x:Key="BrandDestructiveButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="Background" Value="{ThemeResource BrandErrorSoftBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandErrorBrush}" />
+        <Setter Property="CornerRadius" Value="{ThemeResource BrandSectionRadius}" />
+        <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandErrorBrush}" />
+        <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandErrorBrush}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <ContentPresenter
+                        x:Name="ContentPresenter"
+                        Padding="{TemplateBinding Padding}"
+                        HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                        VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                        AutomationProperties.AccessibilityView="Raw"
+                        Background="{TemplateBinding Background}"
+                        BackgroundSizing="{TemplateBinding BackgroundSizing}"
+                        BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="{TemplateBinding BorderThickness}"
+                        Content="{TemplateBinding Content}"
+                        ContentTemplate="{TemplateBinding ContentTemplate}"
+                        ContentTransitions="{TemplateBinding ContentTransitions}"
+                        CornerRadius="{TemplateBinding CornerRadius}"
+                        Foreground="{TemplateBinding Foreground}">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <VisualState.Setters>
+                                        <Setter Target="ContentPresenter.Background" Value="{ThemeResource BrandErrorSoftBrush}" />
+                                        <Setter Target="ContentPresenter.BorderBrush" Value="{ThemeResource BrandErrorBrush}" />
+                                        <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource BrandErrorBrush}" />
+                                        <Setter Target="ContentPresenter.Opacity" Value="0.88" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <VisualState.Setters>
+                                        <Setter Target="ContentPresenter.Background" Value="{ThemeResource BrandErrorSoftBrush}" />
+                                        <Setter Target="ContentPresenter.BorderBrush" Value="{ThemeResource BrandErrorBrush}" />
+                                        <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource BrandErrorBrush}" />
+                                        <Setter Target="ContentPresenter.Opacity" Value="0.76" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Disabled">
+                                    <VisualState.Setters>
+                                        <Setter Target="ContentPresenter.Background" Value="{ThemeResource BrandCardBgBrush}" />
+                                        <Setter Target="ContentPresenter.BorderBrush" Value="{ThemeResource BrandDividerBrush}" />
+                                        <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource BrandTextTertiaryBrush}" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                    </ContentPresenter>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
     <Style x:Key="BrandHyperlinkButtonStyle" TargetType="HyperlinkButton" BasedOn="{StaticResource DefaultHyperlinkButtonStyle}">
         <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
         <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
@@ -120,7 +178,8 @@
                                 <VisualState x:Name="Disabled">
                                     <VisualState.Setters>
                                         <Setter Target="CardBorder.Opacity" Value="0.55" />
-                                        <!-- A dimmed card wearing a filled check badge says "this is
+                                        <Setter Target="CardBorder.BorderBrush" Value="{ThemeResource BrandDividerBrush}" />
+                                        <!-- A dimmed card wearing a filled check badge or active selection ring says "this is
                                              your choice" while everything else about it says "this
                                              does not apply right now". On the Live Preview page both
                                              pill groups are shown at once and only one is in use, so
@@ -135,6 +194,7 @@
                                              and this did nothing. Measured on the running app: both
                                              badges still showed. Opacity is touched by no other
                                              group, so there is nothing to race. -->
+                                        <Setter Target="SelectionBorder.Opacity" Value="0" />
                                         <Setter Target="CheckBadge.Opacity" Value="0" />
                                     </VisualState.Setters>
                                 </VisualState>
@@ -144,12 +204,14 @@
                                     <VisualState.Setters>
                                         <Setter Target="CardBorder.BorderBrush" Value="{ThemeResource BrandDividerBrush}" />
                                         <Setter Target="SelectionBorder.Opacity" Value="0" />
+                                        <Setter Target="SelectionBorder.Visibility" Value="Collapsed" />
                                         <Setter Target="CheckBadge.Visibility" Value="Collapsed" />
                                     </VisualState.Setters>
                                 </VisualState>
                                 <VisualState x:Name="Checked">
                                     <VisualState.Setters>
                                         <Setter Target="CardBorder.BorderBrush" Value="{ThemeResource BrandAccentBrush}" />
+                                        <Setter Target="SelectionBorder.Visibility" Value="Visible" />
                                         <Setter Target="CheckBadge.Visibility" Value="Visible" />
                                     </VisualState.Setters>
                                     <!--
@@ -216,7 +278,7 @@
                             BorderThickness="2"
                             CornerRadius="{ThemeResource BrandSectionRadius}"
                             IsHitTestVisible="False"
-                            Opacity="0" />
+                            Visibility="Collapsed" />
                         <Border
                             x:Name="InteractionBorder"
                             BorderBrush="{ThemeResource BrandAccentBrush}"

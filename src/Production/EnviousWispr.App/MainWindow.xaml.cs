@@ -1307,8 +1307,8 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private void HandsFreeGestureButton_Click(object sender, RoutedEventArgs e)
     {
-        HotkeyTextBox.Text = HandsFreeRecordBinding.Suggested;
         HotkeyTextBox.Focus(FocusState.Programmatic);
+        HotkeyTextBox.Text = HandsFreeRecordBinding.Suggested;
     }
 
     /// <summary>The Save button: the controls read into values, the presenter asked, the outcome drawn.</summary>
@@ -1986,7 +1986,9 @@ public sealed partial class MainWindow : Window, IDisposable
     /// watching.
     /// </remarks>
     private void ResetMatchStrictness() =>
-        WordStrictnessComboBox.SelectedValue = MatchStrictness.Default;
+        WordStrictnessComboBox.SelectedItem = WordStrictnessComboBox.Items
+            .OfType<ComboBoxItem>()
+            .First(item => item.Tag is MatchStrictness.Default);
 
     /// <summary>Selects every word, or clears the selection when they are all already chosen.</summary>
     /// <remarks>
@@ -2360,6 +2362,7 @@ public sealed partial class MainWindow : Window, IDisposable
             Title = "Delete all dictation history?",
             Content = "This permanently removes every locally saved transcript. Settings, dictionary entries, and snippets are not affected.",
             PrimaryButtonText = "Delete all",
+            PrimaryButtonStyle = Application.Current.Resources["BrandDestructiveButtonStyle"] as Style,
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
         };
@@ -2959,6 +2962,10 @@ public sealed partial class MainWindow : Window, IDisposable
         MicrophonePrivacyFixButton.Visibility = readiness.OffersPrivacySettings
             ? Visibility.Visible
             : Visibility.Collapsed;
+        SetLiveText(PermissionsMicrophoneText, readiness.Sentence);
+        var allowed = consent == MicrophoneConsent.Allowed;
+        PermissionsMicrophoneAllowedBadge.Visibility = allowed ? Visibility.Visible : Visibility.Collapsed;
+        PermissionsMicrophoneAttentionBadge.Visibility = allowed ? Visibility.Collapsed : Visibility.Visible;
         ObserveMicrophoneForOnboarding(readiness, consent);
     }
 
@@ -3297,6 +3304,12 @@ public sealed partial class MainWindow : Window, IDisposable
             KeybindConflictText,
             HotkeyConflictDetector.Describe(clashes),
             clashes.Count == 0 ? Visibility.Collapsed : Visibility.Visible);
+        HandsFreeGestureButton.Visibility = string.Equals(
+            HotkeyTextBox.Text.Trim(),
+            HandsFreeRecordBinding.Suggested,
+            StringComparison.OrdinalIgnoreCase)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
     }
 
     private void HotkeyBoxKeyDown(object sender, KeyRoutedEventArgs e)
@@ -4003,6 +4016,10 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         var isCloudProvider = IsCloudProvider(provider);
+        var usesAModel = ProviderSettingsPresenter.UsesAModel(provider);
+        var modelRowsVisibility = usesAModel ? Visibility.Visible : Visibility.Collapsed;
+        PolishModelPickerRow.Visibility = modelRowsVisibility;
+        PolishModelTextBoxRow.Visibility = modelRowsVisibility;
         OllamaEndpointTextBoxRow.Visibility = provider == PolishProvider.Ollama
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -4054,6 +4071,9 @@ public sealed partial class MainWindow : Window, IDisposable
         RefreshPolishModelsButton.IsEnabled = providerUsesAModel;
         PolishModelTextBox.IsEnabled = providerUsesAModel;
         PolishModelPicker.ItemsSource = choices.Models;
+        PolishModelPicker.PlaceholderText = choices.Models.Count > 0
+            ? "Choose an available model"
+            : "No models listed";
         PolishModelPicker.IsEnabled = providerUsesAModel && choices.Models.Count > 0;
         if (choices.ModelToApply is { } model)
         {
@@ -4702,7 +4722,7 @@ public sealed partial class MainWindow : Window, IDisposable
         {
             "help-permissions" => (
                 "Permissions",
-                "The microphone and accessibility access EnviousWispr needs."),
+                "The microphone access EnviousWispr needs."),
             "help-updates" => (
                 "Check for Updates",
                 "Whether a newer EnviousWispr is available, and how to install it."),
