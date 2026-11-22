@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using EnviousWispr.Core.Dictation;
 
 namespace EnviousWispr.Pipeline;
@@ -8,6 +7,16 @@ internal sealed class DeterministicStageExecutor
     private readonly object _gate = new();
     private readonly Dictionary<IDeterministicTextStep, Task<DeterministicTextContext>> _invocations =
         new(ReferenceEqualityComparer.Instance);
+    private readonly TimeProvider _timeProvider;
+    private readonly TaskScheduler _taskScheduler;
+
+    internal DeterministicStageExecutor(
+        TimeProvider? timeProvider = null,
+        TaskScheduler? taskScheduler = null)
+    {
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _taskScheduler = taskScheduler ?? TaskScheduler.Default;
+    }
 
     internal readonly record struct Result(
         DeterministicTextContext Context,
@@ -37,8 +46,9 @@ internal sealed class DeterministicStageExecutor
         var context = input;
         var status = DeterministicStageStatus.Completed;
         var changed = false;
-        var stopwatch = Stopwatch.StartNew();
-        CancellationTokenSource deadline;
+        var startedAt = _timeProvider.GetTimestamp();
+        CancellationTokenSource? timeout = null;
+        CancellationTokenSource? deadline = null;
         Task<DeterministicTextContext> invocation;
         lock (_gate)
         {
@@ -47,20 +57,26 @@ internal sealed class DeterministicStageExecutor
                 return new Result(
                     input,
                     new DeterministicStageReceipt(
-                        step.Stage, DeterministicStageStatus.Busy, false, stopwatch.ElapsedMilliseconds),
+                        step.Stage, DeterministicStageStatus.Busy, false, ElapsedMilliseconds(startedAt)),
                     true);
             }
 
-            deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             try
             {
-                deadline.CancelAfter(step.Timeout);
-                invocation = Task.Run(() => step.Process(input, deadline.Token), deadline.Token);
+                timeout = new CancellationTokenSource(step.Timeout, _timeProvider);
+                deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+                var token = deadline.Token;
+                invocation = Task.Factory.StartNew(
+                    () => step.Process(input, token),
+                    token,
+                    TaskCreationOptions.DenyChildAttach,
+                    _taskScheduler);
             }
             catch
             {
                 // Nothing was scheduled, so nothing will ever run the disposal below.
-                deadline.Dispose();
+                deadline?.Dispose();
+                timeout?.Dispose();
                 throw;
             }
 
@@ -84,7 +100,7 @@ internal sealed class DeterministicStageExecutor
             cancellationToken.ThrowIfCancellationRequested();
             throw;
         }
-        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
             context = input;
             status = DeterministicStageStatus.TimedOut;
@@ -119,15 +135,18 @@ internal sealed class DeterministicStageExecutor
                 }
 
                 deadline.Dispose();
+                timeout.Dispose();
             }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
 
         // THE WHOLE ATTEMPT COUNTS. Both callers include validation and fallback handling in the
         // elapsed time, so a failed result cannot exclude the work needed to recover from it.
-        stopwatch.Stop();
         return new Result(
             context,
-            new DeterministicStageReceipt(step.Stage, status, changed, stopwatch.ElapsedMilliseconds),
+            new DeterministicStageReceipt(step.Stage, status, changed, ElapsedMilliseconds(startedAt)),
             status != DeterministicStageStatus.Completed);
     }
+
+    private long ElapsedMilliseconds(long startedAt) =>
+        (long)_timeProvider.GetElapsedTime(startedAt).TotalMilliseconds;
 }
