@@ -518,6 +518,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private bool _isUpdatingStartupRegistration;
     private bool _startupOperationInProgress;
+    private int _startupOperationGeneration;
 
     /// <summary>Raised when the user asks for a speed check.</summary>
     public event Action? SpeedCheckRequested;
@@ -694,8 +695,9 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
+        var generation = _startupOperationGeneration;
         var startup = await loadStartup().ConfigureAwait(true);
-        if (_session.Closing || _startupOperationInProgress)
+        if (_session.Closing || _startupOperationInProgress || generation != _startupOperationGeneration)
         {
             return;
         }
@@ -3602,6 +3604,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public void SetStartupRegistrationInProgress()
     {
+        _startupOperationGeneration++;
         _startupOperationInProgress = true;
         StartAtLoginToggle.IsEnabled = false;
         SetLiveText(StartAtLoginStatusText, "Updating Windows startup settings…");
@@ -3610,6 +3613,7 @@ public sealed partial class MainWindow : Window, IDisposable
     public void SetStartupRegistration(StartupRegistrationResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
+        _startupOperationGeneration++;
         _startupOperationInProgress = false;
         _isUpdatingStartupRegistration = true;
         try

@@ -329,10 +329,22 @@ if (syntheticHotkey &&
 }
 if (polishProvider == PolishProvider.EgOne)
 {
-    RequireAbsoluteFileArgument(
-        egOneServerExecutable,
-        "--eg1-server must identify an existing fully qualified llama-server.exe.",
-        expectedFileName: "llama-server.exe");
+    if (packaged)
+    {
+        if (egOneServerExecutable is not null)
+        {
+            throw new JourneyExpectationException(
+                "--packaged --polish eg-1 always tests the package's bundled runtime\\llama-server.exe and rejects --eg1-server.");
+        }
+    }
+    else
+    {
+        RequireAbsoluteFileArgument(
+            egOneServerExecutable,
+            "--eg1-server must identify an existing fully qualified llama-server.exe.",
+            expectedFileName: "llama-server.exe");
+    }
+
     RequireAbsoluteFileArgument(
         egOneModelFile,
         "--eg1-model must identify an existing fully qualified GGUF model.",
@@ -511,7 +523,7 @@ var profileDirectory = packaged
 Directory.CreateDirectory(profileDirectory);
 if (packaged)
 {
-    RequirePackagedLayoutManifest(appExecutable);
+    RequirePackagedLayoutManifest(appExecutable, repositoryRoot);
 }
 // THE HARNESS CHOOSES ITS OWN RECORDING KEY, AND IT IS F8, whatever a fresh install starts on. It presses the key
 // itself - SendKey, the synthetic hook, and the words a person is told to follow - and an ordinary key is the one it can
@@ -724,7 +736,15 @@ try
     appStart.Environment["ENVIOUSWISPR_POLISH_PROVIDER"] = polishProvider.ToString();
     if (polishProvider == PolishProvider.EgOne)
     {
-        appStart.Environment["ENVIOUSWISPR_EG1_SERVER_EXE"] = egOneServerExecutable!;
+        if (packaged)
+        {
+            appStart.Environment.Remove("ENVIOUSWISPR_EG1_SERVER_EXE");
+        }
+        else
+        {
+            appStart.Environment["ENVIOUSWISPR_EG1_SERVER_EXE"] = egOneServerExecutable!;
+        }
+
         appStart.Environment["ENVIOUSWISPR_EG1_MODEL_PATH"] = egOneModelFile!;
         appStart.Environment.Remove("ENVIOUSWISPR_EG1_GPU_LAYERS");
     }
@@ -826,15 +846,6 @@ try
             $"expected {expectedWorkerCount}.");
     }
 
-    if (packaged)
-    {
-        packagedEvidence = VerifyPackagedProcessesAndStorage(
-            app,
-            ownedWorkerIds,
-            profileDirectory,
-            runId);
-    }
-
     if (IsLocalPolishProvider(polishProvider))
     {
         var polishReady = WaitForPolishRuntimeReady(
@@ -858,6 +869,15 @@ try
                 $"The production journey started {ownedPolishWorkerIds.Length} owned local-polish workers; " +
                 $"expected {expectedPolishWorkerCount}.");
         }
+    }
+
+    if (packaged)
+    {
+        packagedEvidence = VerifyPackagedProcessesAndStorage(
+            app,
+            [.. ownedWorkerIds, .. ownedPolishWorkerIds],
+            profileDirectory,
+            runId);
     }
 
     if (quickAdd)
@@ -3558,36 +3578,64 @@ static void RemovePackagedUatProfileDirectory(string path, string unvirtualizedR
 
 static string ResolveRegisteredPackagedAppExecutable(string repoRoot)
 {
-    var expectedIdentityName = ReadManifestIdentityName(repoRoot);
+    var (expectedName, expectedPublisher, expectedVersion) = ReadManifestIdentity(repoRoot);
+    var matches = new List<(string FullName, string ExecutablePath)>();
+    var conflictingByName = new List<string>();
     try
     {
         var packageManager = new Windows.Management.Deployment.PackageManager();
         foreach (var package in packageManager.FindPackagesForUser(string.Empty))
         {
-            if (!string.Equals(package.Id.Name, expectedIdentityName, StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(package.Id.Name, "EnviousLabsLLC.EnviousWispr", StringComparison.OrdinalIgnoreCase))
+            var nameMatches = string.Equals(package.Id.Name, expectedName, StringComparison.OrdinalIgnoreCase);
+            if (!nameMatches)
             {
+                continue;
+            }
+
+            var publisherMatches = string.Equals(package.Id.Publisher, expectedPublisher, StringComparison.Ordinal);
+            var packageVersion = $"{package.Id.Version.Major}.{package.Id.Version.Minor}.{package.Id.Version.Build}.{package.Id.Version.Revision}";
+            var versionMatches = string.Equals(packageVersion, expectedVersion, StringComparison.Ordinal);
+            if (!publisherMatches || !versionMatches)
+            {
+                conflictingByName.Add($"{package.Id.FullName} ({package.Id.Publisher})");
                 continue;
             }
 
             var candidate = Path.Combine(package.InstalledLocation.Path, "EnviousWispr.App.exe");
             if (File.Exists(candidate))
             {
-                return candidate;
+                matches.Add((package.Id.FullName, candidate));
             }
         }
     }
     catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
     {
         throw JourneyExpectationException.Instrument(
-            $"--packaged could not query Windows PackageManager for {expectedIdentityName} ({exception.Message}).");
+            $"--packaged could not query Windows PackageManager for {expectedName} ({exception.Message}).");
+    }
+
+    if (conflictingByName.Count > 0)
+    {
+        throw new JourneyExpectationException(
+            $"Conflicting MSIX packages are registered for {expectedName} that do not match the repository manifest's publisher/version ({expectedPublisher}, {expectedVersion}): {string.Join(", ", conflictingByName)}. Remove stale registrations first.");
+    }
+
+    if (matches.Count > 1)
+    {
+        throw new JourneyExpectationException(
+            $"Multiple MSIX packages matched {expectedName} ({expectedPublisher}, {expectedVersion}): {string.Join(", ", matches.Select(item => item.FullName))}. Remove duplicate registrations first.");
+    }
+
+    if (matches.Count == 1)
+    {
+        return matches[0].ExecutablePath;
     }
 
     throw JourneyExpectationException.Instrument(
-        $"--packaged requires the EnviousWispr MSIX package ({expectedIdentityName}) to be registered on this PC, or --app-executable pointing to a registered layout.");
+        $"--packaged requires the EnviousWispr MSIX package ({expectedName} {expectedVersion}, {expectedPublisher}) to be registered on this PC, or --app-executable pointing to a registered layout.");
 }
 
-static string ReadManifestIdentityName(string repoRoot)
+static (string Name, string Publisher, string Version) ReadManifestIdentity(string repoRoot)
 {
     var manifestPath = Path.Combine(
         repoRoot,
@@ -3597,25 +3645,53 @@ static string ReadManifestIdentityName(string repoRoot)
         "Package.appxmanifest");
     if (!File.Exists(manifestPath))
     {
-        return "EnviousLabsLLC.EnviousWispr";
+        throw new JourneyExpectationException(
+            $"Could not find Package.appxmanifest at {manifestPath}.");
     }
 
-    const string marker = "<Identity Name=\"";
     var content = File.ReadAllText(manifestPath);
-    var start = content.IndexOf(marker, StringComparison.Ordinal);
+    var name = ReadXmlAttribute(content, "<Identity", "Name");
+    var publisher = ReadXmlAttribute(content, "<Identity", "Publisher");
+    var version = ReadXmlAttribute(content, "<Identity", "Version");
+    if (string.IsNullOrWhiteSpace(name) ||
+        string.IsNullOrWhiteSpace(publisher) ||
+        string.IsNullOrWhiteSpace(version))
+    {
+        throw new JourneyExpectationException(
+            "Package.appxmanifest is missing Identity Name, Publisher, or Version.");
+    }
+
+    return (name, publisher, version);
+}
+
+static string? ReadXmlAttribute(string xml, string elementPrefix, string attributeName)
+{
+    var elementStart = xml.IndexOf(elementPrefix, StringComparison.Ordinal);
+    if (elementStart < 0)
+    {
+        return null;
+    }
+
+    var elementEnd = xml.IndexOf('>', elementStart);
+    if (elementEnd < 0)
+    {
+        return null;
+    }
+
+    var element = xml[elementStart..elementEnd];
+    var marker = $"{attributeName}=\"";
+    var start = element.IndexOf(marker, StringComparison.Ordinal);
     if (start < 0)
     {
-        return "EnviousLabsLLC.EnviousWispr";
+        return null;
     }
 
     start += marker.Length;
-    var end = content.IndexOf('"', start);
-    return end > start
-        ? content[start..end]
-        : "EnviousLabsLLC.EnviousWispr";
+    var end = element.IndexOf('"', start);
+    return end > start ? element[start..end] : null;
 }
 
-static void RequirePackagedLayoutManifest(string appExecutablePath)
+static void RequirePackagedLayoutManifest(string appExecutablePath, string repoRoot)
 {
     var directory = Path.GetDirectoryName(appExecutablePath)!;
     var manifestPath = Path.Combine(directory, "AppxManifest.xml");
@@ -3626,6 +3702,18 @@ static void RequirePackagedLayoutManifest(string appExecutablePath)
     }
 
     var xml = File.ReadAllText(manifestPath);
+    var (expectedName, expectedPublisher, expectedVersion) = ReadManifestIdentity(repoRoot);
+    var layoutName = ReadXmlAttribute(xml, "<Identity", "Name");
+    var layoutPublisher = ReadXmlAttribute(xml, "<Identity", "Publisher");
+    var layoutVersion = ReadXmlAttribute(xml, "<Identity", "Version");
+    if (!string.Equals(layoutName, expectedName, StringComparison.OrdinalIgnoreCase) ||
+        !string.Equals(layoutPublisher, expectedPublisher, StringComparison.Ordinal) ||
+        !string.Equals(layoutVersion, expectedVersion, StringComparison.Ordinal))
+    {
+        throw new JourneyExpectationException(
+            $"The packaged AppxManifest.xml identity ({layoutName} {layoutVersion}, {layoutPublisher}) does not match the repository Package.appxmanifest ({expectedName} {expectedVersion}, {expectedPublisher}).");
+    }
+
     if (!xml.Contains("TaskId=\"EnviousWisprStartup\"", StringComparison.Ordinal) ||
         !xml.Contains("Enabled=\"false\"", StringComparison.Ordinal))
     {
