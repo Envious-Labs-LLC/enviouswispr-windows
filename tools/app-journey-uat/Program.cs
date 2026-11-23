@@ -3609,6 +3609,13 @@ static void RequirePackagedLayoutManifest(string appExecutablePath)
         throw new JourneyExpectationException(
             "The packaged AppxManifest.xml does not declare the unvirtualizedResources exclusion for $(KnownFolder:LocalAppData)\\Envious Labs\\EnviousWispr.");
     }
+
+    var bundledLlamaServer = Path.Combine(directory, "runtime", "llama-server.exe");
+    if (!File.Exists(bundledLlamaServer))
+    {
+        throw new JourneyExpectationException(
+            "--packaged requires runtime\\llama-server.exe inside the registered package layout (Store policy 10.2.2).");
+    }
 }
 
 static PackagedJourneyEvidence VerifyPackagedProcessesAndStorage(

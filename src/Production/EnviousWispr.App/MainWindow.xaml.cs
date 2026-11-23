@@ -517,6 +517,7 @@ public sealed partial class MainWindow : Window, IDisposable
     public Func<Task<StartupRegistrationResult>>? LoadStartupRegistration { get; set; }
 
     private bool _isUpdatingStartupRegistration;
+    private bool _startupOperationInProgress;
 
     /// <summary>Raised when the user asks for a speed check.</summary>
     public event Action? SpeedCheckRequested;
@@ -664,10 +665,14 @@ public sealed partial class MainWindow : Window, IDisposable
         if (args.WindowActivationState == WindowActivationState.Deactivated)
         {
             ForgetKeybindChord();
+            return;
         }
 
-        if (_initialFocusAssigned || args.WindowActivationState == WindowActivationState.Deactivated)
+        if (_initialFocusAssigned)
         {
+            // When the user returns from Windows Settings (ms-settings:startupapps) or Task Manager, re-read the
+            // startup registration so a DisabledByUser toggle turned back on outside the app refreshes immediately.
+            _ = LoadStartupRegistrationAsync();
             return;
         }
 
@@ -684,13 +689,13 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private async Task LoadStartupRegistrationAsync()
     {
-        if (LoadStartupRegistration is not { } loadStartup)
+        if (_startupOperationInProgress || LoadStartupRegistration is not { } loadStartup)
         {
             return;
         }
 
         var startup = await loadStartup().ConfigureAwait(true);
-        if (_session.Closing)
+        if (_session.Closing || _startupOperationInProgress)
         {
             return;
         }
@@ -3597,6 +3602,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public void SetStartupRegistrationInProgress()
     {
+        _startupOperationInProgress = true;
         StartAtLoginToggle.IsEnabled = false;
         SetLiveText(StartAtLoginStatusText, "Updating Windows startup settings…");
     }
@@ -3604,6 +3610,7 @@ public sealed partial class MainWindow : Window, IDisposable
     public void SetStartupRegistration(StartupRegistrationResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
+        _startupOperationInProgress = false;
         _isUpdatingStartupRegistration = true;
         try
         {

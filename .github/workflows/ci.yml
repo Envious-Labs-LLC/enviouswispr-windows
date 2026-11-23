@@ -121,4 +121,4 @@ jobs:
       - name: Build and check the Store package
         if: steps.changes.outputs.needs_build == 'true' && steps.changes.outputs.needs_store_package == 'true'
         shell: powershell
-        run: powershell -ExecutionPolicy Bypass -File scripts/package-store.ps1 -OutputDirectory "$env:RUNNER_TEMP\store-package"
+        run: powershell -ExecutionPolicy Bypass -File scripts/package-store.ps1 -CiPayloadCheckOnly
