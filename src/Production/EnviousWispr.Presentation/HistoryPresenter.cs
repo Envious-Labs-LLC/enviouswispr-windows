@@ -26,6 +26,14 @@ public enum HistorySummary
     Closing,
 }
 
+/// <summary>Which kind of history entries to display: All, live Dictation, or Transcribe a File.</summary>
+public enum HistoryKindFilter
+{
+    All,
+    Dictation,
+    TranscribeFile,
+}
+
 /// <summary>What the history page shows after a load: the rows, and the one line about them.</summary>
 public sealed record HistoryView(HistoryLoadStatus Status, IReadOnlyList<DictationHistoryEntry> Entries, HistorySummary Summary)
 {
@@ -149,14 +157,36 @@ public sealed class HistoryPresenter
     }
 
     /// <summary>The rows whose text contains the query, or all of them for a blank query.</summary>
-    public static IReadOnlyList<DictationHistoryEntry> Filter(IReadOnlyList<DictationHistoryEntry> entries, string query)
+    public static IReadOnlyList<DictationHistoryEntry> Filter(IReadOnlyList<DictationHistoryEntry> entries, string query) =>
+        Filter(entries, query, HistoryKindFilter.All);
+
+    /// <summary>The rows matching the text query and kind filter.</summary>
+    public static IReadOnlyList<DictationHistoryEntry> Filter(
+        IReadOnlyList<DictationHistoryEntry> entries,
+        string query,
+        HistoryKindFilter kind)
     {
         ArgumentNullException.ThrowIfNull(entries);
         ArgumentNullException.ThrowIfNull(query);
+        var matchingKind = kind switch
+        {
+            HistoryKindFilter.Dictation => entries.Where(e => !IsFileTranscription(e)),
+            HistoryKindFilter.TranscribeFile => entries.Where(IsFileTranscription),
+            _ => entries,
+        };
+
         var trimmed = query.Trim();
         return trimmed.Length == 0
-            ? entries
-            : entries.Where(entry => entry.Text.Contains(trimmed, StringComparison.CurrentCultureIgnoreCase)).ToArray();
+            ? matchingKind.ToArray()
+            : matchingKind.Where(entry => entry.Text.Contains(trimmed, StringComparison.CurrentCultureIgnoreCase)).ToArray();
+    }
+
+    /// <summary>Whether a history entry was produced by Transcribe a File.</summary>
+    public static bool IsFileTranscription(DictationHistoryEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        return entry.EngineId.Contains("file", StringComparison.OrdinalIgnoreCase) ||
+               entry.EngineId.Contains("transcribe", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Removes one dictation. A refusal leaves the rows as they were.</summary>

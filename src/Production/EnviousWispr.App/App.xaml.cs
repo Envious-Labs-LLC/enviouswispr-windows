@@ -361,6 +361,7 @@ public partial class App : Application, IAsyncDisposable
         _window.TranscriptionRetryRequested += OnTranscriptionRetryRequested;
         _window.GraphicsRuntimeDownloadRequested += OnGraphicsRuntimeDownloadRequested;
         _window.GraphicsRuntimeDownloadCancelRequested += OnGraphicsRuntimeDownloadCancelRequested;
+        _window.ManualDictationToggleRequested += OnManualDictationToggleRequested;
         _window.KeybindCaptureActiveChanged += OnKeybindCaptureActiveChanged;
         _window.TranscribeFile = TranscribeFileAsync;
         _window.ExportUserData = ExportUserDataAsync;
@@ -599,6 +600,7 @@ public partial class App : Application, IAsyncDisposable
             window.TranscriptionRetryRequested -= OnTranscriptionRetryRequested;
             window.GraphicsRuntimeDownloadRequested -= OnGraphicsRuntimeDownloadRequested;
             window.GraphicsRuntimeDownloadCancelRequested -= OnGraphicsRuntimeDownloadCancelRequested;
+            window.ManualDictationToggleRequested -= OnManualDictationToggleRequested;
             window.KeybindCaptureActiveChanged -= OnKeybindCaptureActiveChanged;
             window.SpeedCheckRequested -= OnSpeedCheckRequested;
             window.MishearingSuggestionsRequested -= OnMishearingSuggestionsRequested;
@@ -2187,6 +2189,27 @@ public partial class App : Application, IAsyncDisposable
         }
 
         _ = _runtime.SubmitAsync(args.Signal);
+    }
+
+    private async void OnManualDictationToggleRequested()
+    {
+        try
+        {
+            var isRecording = _sessionController?.CurrentSession?.State ==
+                EnviousWispr.Core.Sessions.DictationSessionState.Recording;
+            var signal = isRecording ? PushToTalkSignal.Released : PushToTalkSignal.Pressed;
+            if (_runtime is not null)
+            {
+                await _runtime.SubmitAsync(signal).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
+        {
+            _logger?.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.UnhandledFailure,
+                Failure: AppFailureCategory.Unknown));
+        }
     }
 
     /// <summary>Transcribes a chosen audio file for the Transcribe a File page. Ref: #211, macOS #2648.</summary>

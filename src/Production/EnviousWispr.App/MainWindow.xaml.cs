@@ -180,6 +180,68 @@ public sealed partial class MainWindow : Window, IDisposable
         new("Bottom", "Shows the recording pill at the bottom of the active display."),
     ];
 
+    private sealed record SearchableSettingItem(string DisplayName, string PageTag, string? TabKey = null, string? Keywords = null)
+    {
+        public override string ToString() => DisplayName;
+    }
+
+    private static readonly SearchableSettingItem[] SearchableSettings =
+    [
+        new("Transcription Engine", "settings-dictation", "engine", "model whisper parakeet speed english language spelling"),
+        new("Microphone & Input", "settings-dictation", "microphone", "mic audio device source readiness test"),
+        new("Live Preview", "settings-dictation", "live-preview", "overlay text preview words on screen"),
+        new("Recording Pill", "settings-dictation", "pill", "position design capsule reading rail overlay"),
+        new("Sounds", "settings-dictation", "sounds", "chime audio cue feedback volume"),
+        new("Clipboard & Paste", "settings-dictation", "clipboard", "copy paste direct insert"),
+        new("Keybinds", "settings-keybinds", null, "shortcut hotkey push to talk toggle cancel hold"),
+        new("Transcribe a File", "settings-transcribe-file", null, "audio recording file wav mp3 m4a dropzone"),
+        new("AI Polish", "settings-ai-polish", null, "rewrite grammar fix format eg-1 ollama openai llm"),
+        new("Dictionary", "dictionary", "your-words", "custom words vocabulary spellings jargon replacements"),
+        new("Vocabulary Packs", "dictionary", "packs", "medical legal tech terminology packs"),
+        new("Learn From", "dictionary", "learn-from", "import analyze documents"),
+        new("Quick Add Words", "dictionary", "quick-add", "shortcut add word"),
+        new("Snippets", "snippets", null, "text expansion templates boilerplates phrases"),
+        new("Appearance & Theme", "settings-app", "appearance", "light dark system theme high contrast"),
+        new("Permissions", "settings-app", "permissions", "microphone accessibility input monitoring privacy"),
+        new("Privacy & History", "settings-app", "privacy", "retention days safe held local dictations delete"),
+        new("Backup & Profile", "settings-app", "backup", "export import portable profile reset data your data"),
+        new("Updates & Licenses", "settings-app", "updates-licenses", "version release notes third party licenses"),
+        new("Diagnostics", "settings-diagnostics", null, "logs telemetry troubleshooting reports"),
+        new("History", "history", null, "diary transcripts search dictations"),
+        new("Help & Documentation", "help", null, "guide support faq readme"),
+        new("What's New", "whats-new", null, "release notes updates changelog features"),
+    ];
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822:Mark members as static", Justification = "XAML event handler")]
+    private void SidebarSearchBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+    {
+        if (args.Reason == AutoSuggestionBoxTextChangeReason.UserInput)
+        {
+            var query = sender.Text.Trim();
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                sender.ItemsSource = null;
+            }
+            else
+            {
+                var matches = SearchableSettings
+                    .Where(item => item.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase)
+                                   || (item.Keywords?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false))
+                    .ToList();
+                sender.ItemsSource = matches.Count > 0 ? matches : new List<string> { "No matching settings found" };
+            }
+        }
+    }
+
+    private void SidebarSearchBox_SuggestionChosen(AutoSuggestBox sender, AutoSuggestBoxSuggestionChosenEventArgs args)
+    {
+        if (args.SelectedItem is SearchableSettingItem item)
+        {
+            OpenPage(item.PageTag, item.TabKey);
+            sender.Text = string.Empty;
+        }
+    }
+
     /// <summary>Every settings write this window makes, and the answer when one is refused.</summary>
     /// <remarks>
     /// THE RULES LIVE OUTSIDE THE WINDOW SO THEY CAN BE PROVEN. Two saves overlapping, a storage
@@ -309,7 +371,12 @@ public sealed partial class MainWindow : Window, IDisposable
         foreach (var box in new[] { HotkeyTextBox, CancelHotkeyTextBox, QuickAddHotkeyTextBox, PasteLastHotkeyTextBox, CopyLastHotkeyTextBox })
         {
             box.GotFocus += (_, _) => { ForgetKeybindChord(); KeybindCaptureActiveChanged?.Invoke(true); };
-            box.LostFocus += (_, _) => { ForgetKeybindChord(); KeybindCaptureActiveChanged?.Invoke(false); };
+            box.LostFocus += (_, _) =>
+            {
+                ForgetKeybindChord();
+                KeybindCaptureActiveChanged?.Invoke(false);
+                _ = TriggerAutoSaveAsync();
+            };
         }
 
         // Subscribed HERE rather than with a KeyDown="" attribute in the markup, and the
@@ -363,8 +430,9 @@ public sealed partial class MainWindow : Window, IDisposable
         _languageSuggestions = new LanguageLockSuggester(settings.LanguageOfferHistory);
         ApplyTheme(settings.Preferences.Theme);
         ApplySettingsToControls();
+        WireSettingsAutoSave();
         ShowOnboarding(!settings.HasCompletedOnboarding);
-        ProductNavigation.SelectedItem = HomeNavItem;
+        ProductNavigation.SelectedItem = HistoryNavItem;
         BuildInfoText.Text = $"{releaseIdentity.DisplayName} {Assembly.GetExecutingAssembly().GetName().Version} · {releaseIdentity.ChannelName}";
         WhatsNewBuildInfoText.Text = BuildInfoText.Text;
 
@@ -555,7 +623,7 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         if (_settings.HasCompletedOnboarding)
         {
-            HomeNavItem.Focus(FocusState.Programmatic);
+            HistoryNavItem.Focus(FocusState.Programmatic);
         }
         else
         {
@@ -629,6 +697,14 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         _currentOverlayState = overlayState;
+        if (RecordToolbarButtonText is not null)
+        {
+            RecordToolbarButtonText.Text = overlayState == DictationOverlayState.Recording ? "Stop" : "Record";
+        }
+        if (RecordToolbarButtonIcon is not null)
+        {
+            RecordToolbarButtonIcon.Glyph = overlayState == DictationOverlayState.Recording ? "\uE71A" : "\uE720";
+        }
         PreviewRecordingSoundButton.IsEnabled = overlayState != DictationOverlayState.Recording;
         SetSpeedCheckAvailability(overlayState != DictationOverlayState.Recording);
         _overlayWindow.ShowState(status);
@@ -934,14 +1010,63 @@ public sealed partial class MainWindow : Window, IDisposable
                 + "settings to set it there."));
     }
 
+    public event Action? ManualDictationToggleRequested;
+
+    private void RecordToolbarButton_Click(object sender, RoutedEventArgs e) =>
+        ManualDictationToggleRequested?.Invoke();
+
+    private void WhatsNewToolbarButton_Click(object sender, RoutedEventArgs e) =>
+        OpenPage("whats-new");
+
+    private async void FeedbackToolbarButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await Windows.System.Launcher.LaunchUriAsync(new Uri("https://github.com/Envious-Labs-LLC/enviouswispr-windows/issues"));
+        }
+        catch
+        {
+            // Launcher best-effort
+        }
+    }
+
+    private static (string PageTag, string? TabKey) ResolvePageAndTab(string tag) => tag switch
+    {
+        "settings-transcription" => ("settings-dictation", "engine"),
+        "settings-microphone" => ("settings-dictation", "microphone"),
+        "settings-live-preview" => ("settings-dictation", "live-preview"),
+        "settings-pill" => ("settings-dictation", "pill"),
+        "settings-sounds" => ("settings-dictation", "sounds"),
+        "settings-clipboard" => ("settings-dictation", "clipboard"),
+        "settings-appearance" => ("settings-app", "appearance"),
+        "settings-permissions" or "help-permissions" => ("settings-app", "permissions"),
+        "settings-privacy" or "settings-history" => ("settings-app", "privacy"),
+        "settings-profile" or "settings-backup" => ("settings-app", "backup"),
+        "settings-updates" or "settings-licenses" or "help-updates" or "help-licenses" => ("settings-app", "updates-licenses"),
+        _ => (tag, null),
+    };
+
     /// <summary>Brings the window forward and shows one page by its tag.</summary>
-    public void OpenPage(string tag)
+    public void OpenPage(string tag) => OpenPage(tag, null);
+
+    public void OpenPage(string tag, string? tabKey)
     {
         AppWindow.Show();
         Activate();
         ShowOnboarding(show: false);
+
+        var (resolvedTag, resolvedTab) = ResolvePageAndTab(tag);
+        var targetTab = tabKey ?? resolvedTab;
+
+        if (resolvedTag == "whats-new")
+        {
+            ProductNavigation.SelectedItem = null;
+            ShowPage("whats-new");
+            return;
+        }
+
         var row = NavigationRows()
-            .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), tag, StringComparison.Ordinal));
+            .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), resolvedTag, StringComparison.Ordinal));
         if (row is null)
         {
             // A SILENT RETURN HERE IS A BUTTON THAT DOES NOTHING. The user pressed something,
@@ -955,23 +1080,27 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        // Selecting the row raises SelectionChanged, which is the one path that shows a page.
-        // Calling ShowPage as well would leave the sidebar and the content able to disagree.
-        ProductNavigation.SelectedItem = row;
+        _pendingTabKey = targetTab;
+        if (ReferenceEquals(ProductNavigation.SelectedItem, row))
+        {
+            ShowPage(resolvedTag, targetTab);
+        }
+        else
+        {
+            ProductNavigation.SelectedItem = row;
+        }
     }
 
     public void OpenSettings()
     {
         ShowOnboarding(show: false);
-        ProductNavigation.SelectedItem = AppearanceNavItem;
-        ShowPage("settings-appearance");
+        OpenPage("settings-dictation");
     }
 
     public void OpenQuickAdd(string? selection, string? message)
     {
         ShowOnboarding(show: false);
-        ProductNavigation.SelectedItem = DictionaryNavItem;
-        ShowPage("dictionary");
+        OpenPage("dictionary", "quick-add");
         if (!string.IsNullOrWhiteSpace(selection))
         {
             SpokenFormBox.Text = selection;
@@ -1282,12 +1411,16 @@ public sealed partial class MainWindow : Window, IDisposable
         HistoryPasteRequested?.Invoke(selected.Id);
     }
 
+    private string? _pendingTabKey;
+
     private void ProductNavigation_SelectionChanged(
         NavigationView sender,
         NavigationViewSelectionChangedEventArgs args)
     {
         var tag = (args.SelectedItemContainer as NavigationViewItem)?.Tag?.ToString() ?? "home";
-        ShowPage(tag);
+        var tabKey = _pendingTabKey;
+        _pendingTabKey = null;
+        ShowPage(tag, tabKey);
     }
 
     private void OpenHistoryButton_Click(object sender, RoutedEventArgs e)
@@ -1311,16 +1444,14 @@ public sealed partial class MainWindow : Window, IDisposable
         HotkeyTextBox.Text = HandsFreeRecordBinding.Suggested;
     }
 
-    /// <summary>The Save button: the controls read into values, the presenter asked, the outcome drawn.</summary>
-    /// <remarks>
-    /// VALUES IN, AN OUTCOME OUT (plan-2 step 11). What the shortcuts must parse to, which fields may
-    /// not share a gesture, what an empty number means, how an index becomes an engine, how much is
-    /// replaced by a save - all of that is SettingsPresenter.SaveGeneralAsync and its tests. What stays
-    /// here is reading the controls on the UI thread before any wait, putting the focus in the field
-    /// the presenter names, showing its message, and applying the theme it returns.
-    /// </remarks>
-    private async void SaveSettingsButton_Click(object sender, RoutedEventArgs e)
+    /// <summary>Auto-saves settings changes quietly whenever a control is updated.</summary>
+    private async Task TriggerAutoSaveAsync()
     {
+        if (_isApplyingSettings)
+        {
+            return;
+        }
+
         // RAW, INCLUDING "NOTHING SELECTED": the indices go across as -1 when no choice is selected
         // and the sound pairing as null when none is, so what a missing choice means is the
         // presenter's decision too, not this handler's.
@@ -1383,9 +1514,59 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         PublishSettings();
-        ApplySettingsToControls();
-        ShowMessage(GeneralSaveOutcome.SavedTitle, GeneralSaveOutcome.SavedMessage, InfoBarSeverity.Success);
-        ApplyTheme(outcome.Theme!.Value);
+        if (outcome.Theme.HasValue)
+        {
+            ApplyTheme(outcome.Theme.Value);
+        }
+    }
+
+    private void WireSettingsAutoSave()
+    {
+        WordCorrectionToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        FillerRemovalToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        EmojiFormatterToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        SpokenPunctuationToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        EscapeRecoveryToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        HistoryEnabledToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        LivePreviewToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        PlayRecordingSoundsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        CopyInsteadOfPasteToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        LocalDiagnosticsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        ShareTelemetryToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+
+        WhisperLanguageComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
+        EnglishSpellingComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
+        RecordingModeComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
+        RecordingSoundComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
+        MicrophoneComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
+
+        AutoStopSecondsBox.ValueChanged += (_, _) => _ = TriggerAutoSaveAsync();
+        RetentionDaysBox.ValueChanged += (_, _) => _ = TriggerAutoSaveAsync();
+        DiagnosticRetentionDaysBox.ValueChanged += (_, _) => _ = TriggerAutoSaveAsync();
+
+        foreach (var choice in FinalEngineChoices)
+        {
+            choice.PropertyChanged += (s, e) =>
+            {
+                if (e.PropertyName == nameof(SelectableChoiceOption.IsSelected) && ((SelectableChoiceOption)s!).IsSelected)
+                {
+                    _ = TriggerAutoSaveAsync();
+                    UpdateHistoryStatusCards();
+                }
+            };
+        }
+
+        foreach (var choice in PolishProviderChoices)
+        {
+            choice.PropertyChanged += (s, e) =>
+            {
+                if (e.PropertyName == nameof(SelectableChoiceOption.IsSelected) && ((SelectableChoiceOption)s!).IsSelected)
+                {
+                    _ = TriggerAutoSaveAsync();
+                    UpdateHistoryStatusCards();
+                }
+            };
+        }
     }
 
     /// <summary>Applies a theme the moment it is chosen, and keeps it.</summary>
@@ -3050,15 +3231,57 @@ public sealed partial class MainWindow : Window, IDisposable
         };
     }
 
+    private HistoryKindFilter _historyKindFilter = HistoryKindFilter.All;
+
+    private void HistoryFilterButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not string tag)
+        {
+            return;
+        }
+
+        _historyKindFilter = tag switch
+        {
+            "Dictation" => HistoryKindFilter.Dictation,
+            "TranscribeFile" => HistoryKindFilter.TranscribeFile,
+            _ => HistoryKindFilter.All,
+        };
+
+        HistoryFilterAllButton.Style = (Style)Application.Current.Resources[_historyKindFilter == HistoryKindFilter.All ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+        HistoryFilterDictationButton.Style = (Style)Application.Current.Resources[_historyKindFilter == HistoryKindFilter.Dictation ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+        HistoryFilterTranscribeButton.Style = (Style)Application.Current.Resources[_historyKindFilter == HistoryKindFilter.TranscribeFile ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+
+        RefreshHistoryView();
+    }
+
     private void RefreshHistoryView()
     {
         var query = HistorySearchBox.Text.Trim();
-        var visibleHistory = HistoryPresenter.Filter(_history, query)
+        var visibleHistory = HistoryPresenter.Filter(_history, query, _historyKindFilter)
             .Select(entry => new HistoryItemViewModel(entry))
             .ToArray();
         HistoryList.ItemsSource = visibleHistory;
         UpdateHistoryListVisibility(query, visibleHistory.Length);
         UpdateSelectionDependentButtons();
+        UpdateHistoryStatusCards();
+    }
+
+    private void UpdateHistoryStatusCards()
+    {
+        if (HistoryEngineStatusText is not null && _settings is not null)
+        {
+            var engineIndex = (int)_settings.Preferences.Dictation.FinalEngine;
+            HistoryEngineStatusText.Text = engineIndex >= 0 && engineIndex < FinalEngineChoices.Length
+                ? FinalEngineChoices[engineIndex].Name
+                : "Automatic";
+        }
+        if (HistoryPolishStatusText is not null && _settings is not null)
+        {
+            var providerIndex = PolishProviderIndex(_settings.Preferences.Polish.Provider);
+            HistoryPolishStatusText.Text = providerIndex > 0 && providerIndex < PolishProviderChoices.Length
+                ? PolishProviderChoices[providerIndex].Name
+                : "Off";
+        }
     }
 
     /// <summary>
@@ -3106,9 +3329,32 @@ public sealed partial class MainWindow : Window, IDisposable
         DeleteHistoryButton.IsEnabled = historySelected;
         ClearHistoryButton.IsEnabled = _history.Count > 0;
 
+        if (HistoryList.SelectedItem is HistoryItemViewModel selectedHistory)
+        {
+            HistoryDetailEmptyState.Visibility = Visibility.Collapsed;
+            HistoryDetailContent.Visibility = Visibility.Visible;
+            HistoryDetailTimestampText.Text = selectedHistory.CreatedDisplay;
+            HistoryDetailMetadataText.Text = selectedHistory.Details;
+            HistoryDetailTextBox.Text = selectedHistory.Text;
+            KeepHistoryButton.Visibility = selectedHistory.IsTemporary ? Visibility.Visible : Visibility.Collapsed;
+        }
+        else
+        {
+            HistoryDetailEmptyState.Visibility = Visibility.Visible;
+            HistoryDetailContent.Visibility = Visibility.Collapsed;
+            HistoryDetailTimestampText.Text = string.Empty;
+            HistoryDetailMetadataText.Text = string.Empty;
+            HistoryDetailTextBox.Text = string.Empty;
+            KeepHistoryButton.Visibility = Visibility.Collapsed;
+            if (_settings is not null)
+            {
+                HistoryDetailReadyHotkeyText.Text = _settings.Preferences.Dictation.PushToTalkGesture;
+            }
+        }
+
         var selectedWords = DictionaryList.SelectedItems.Count;
         RemoveWordButton.IsEnabled = selectedWords > 0;
-        SelectAllWordsButton.IsEnabled = _settings.UserData.CustomWords.Count > 0;
+        SelectAllWordsButton.IsEnabled = (_settings?.UserData.CustomWords.Count ?? 0) > 0;
 
         // THE COUNT IS SHOWN ONLY WHILE MORE THAN ONE IS CHOSEN. With one row selected the row
         // itself is the answer and a line reading "1 selected" is noise; with fifteen it is the
@@ -3119,9 +3365,9 @@ public sealed partial class MainWindow : Window, IDisposable
             selectedWords > 1 ? Visibility.Visible : Visibility.Collapsed);
 
         // Export needs words rather than a selection - it writes the whole list.
-        ExportWordsButton.IsEnabled = _settings.UserData.CustomWords.Count > 0;
+        ExportWordsButton.IsEnabled = (_settings?.UserData.CustomWords.Count ?? 0) > 0;
         RemoveSnippetButton.IsEnabled = SnippetList.SelectedItem is not null;
-        ExportSnippetsButton.IsEnabled = _settings.UserData.Snippets.Count > 0;
+        ExportSnippetsButton.IsEnabled = (_settings?.UserData.Snippets.Count ?? 0) > 0;
     }
 
     /// <summary>
@@ -3235,8 +3481,11 @@ public sealed partial class MainWindow : Window, IDisposable
     /// Disabled rather than hidden. A control that vanishes leaves the user wondering whether they
     /// imagined it; a disabled one with the switch beside it says what turns it back on.
     /// </remarks>
-    private void AutoStopToggle_Toggled(object sender, RoutedEventArgs e) =>
+    private void AutoStopToggle_Toggled(object sender, RoutedEventArgs e)
+    {
         UpdateAutoStopAvailability();
+        _ = TriggerAutoSaveAsync();
+    }
 
     private void UpdateAutoStopAvailability() =>
         AutoStopSecondsBox.IsEnabled = AutoStopToggle.IsOn;
@@ -3943,6 +4192,7 @@ public sealed partial class MainWindow : Window, IDisposable
             PasteLastHotkeyTextBox.Text = preferences.Dictation.PasteLastGesture;
             CopyLastHotkeyTextBox.Text = preferences.Dictation.CopyLastGesture;
             WordCorrectionToggle.IsOn = preferences.Dictation.WordCorrectionEnabled;
+            DictionaryEnabledToggle.IsOn = preferences.Dictation.WordCorrectionEnabled;
             FillerRemovalToggle.IsOn = preferences.Dictation.FillerRemovalEnabled;
             EmojiFormatterToggle.IsOn = preferences.Dictation.EmojiFormatterEnabled;
             SpokenPunctuationToggle.IsOn = preferences.Dictation.SpokenPunctuationEnabled;
@@ -3985,6 +4235,7 @@ public sealed partial class MainWindow : Window, IDisposable
                     ? "Anonymous sharing is off until you explicitly enable and save it. Local exports and uploads contain only the typed fields listed here."
                     : "No telemetry upload channel is configured in this development build. Local content-free diagnostics can still be retained, exported, or disabled.");
             RefreshReusableUserDataViews();
+            UpdateHistoryStatusCards();
         }
         finally
         {
@@ -4326,7 +4577,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
         WhatsNewBadge.Visibility = unread ? Visibility.Visible : Visibility.Collapsed;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(
-            WhatsNewNavItem,
+            WhatsNewToolbarButton,
             unread ? "New release notes you have not read" : string.Empty);
 
         // ItemStatus IS READ WHEN SOMEBODY REACHES THE ITEM, WHICH IS NOT THE SAME AS BEING TOLD.
@@ -4336,8 +4587,8 @@ public sealed partial class MainWindow : Window, IDisposable
         //
         // CurrentThenMostRecent, so a mark that appears and clears quickly does not queue two
         // sentences that arrive after both are out of date.
-        var peer = FrameworkElementAutomationPeer.FromElement(WhatsNewNavItem)
-            ?? FrameworkElementAutomationPeer.CreatePeerForElement(WhatsNewNavItem);
+        var peer = FrameworkElementAutomationPeer.FromElement(WhatsNewToolbarButton)
+            ?? FrameworkElementAutomationPeer.CreatePeerForElement(WhatsNewToolbarButton);
         peer?.RaiseNotificationEvent(
             AutomationNotificationKind.Other,
             AutomationNotificationProcessing.CurrentThenMostRecent,
@@ -4481,48 +4732,47 @@ public sealed partial class MainWindow : Window, IDisposable
         AppWindow.Resize(new SizeInt32(AppWindow.Size.Width, (int)Math.Round(height)));
     }
 
-    private void ShowPage(string tag)
+    private void ShowPage(string tag) => ShowPage(tag, null);
+
+    private void ShowPage(string tag, string? tabKey)
     {
-        // A confirmation belongs to the page that produced it. Measured on the running app:
-        // "Snippet removed" was still displayed minutes later across Clipboard, History, All
-        // Settings and Keybinds, where it reads as a message about the page you are now looking
-        // at rather than the one you left.
         OperationInfoBar.IsOpen = false;
 
-        var settingsPage = tag.StartsWith("settings-", StringComparison.Ordinal);
-        var helpPage = tag == "help" || tag.StartsWith("help-", StringComparison.Ordinal);
-        HomePage.Visibility = tag == "home" ? Visibility.Visible : Visibility.Collapsed;
-        HistoryPage.Visibility = tag == "history" ? Visibility.Visible : Visibility.Collapsed;
-        if (tag == "history")
+        var (resolvedTag, resolvedTab) = ResolvePageAndTab(tag);
+        var targetTab = tabKey ?? resolvedTab;
+
+        var settingsPage = resolvedTag.StartsWith("settings-", StringComparison.Ordinal);
+        var helpPage = resolvedTag == "help" || resolvedTag.StartsWith("help-", StringComparison.Ordinal);
+        HomePage.Visibility = resolvedTag == "home" ? Visibility.Visible : Visibility.Collapsed;
+        HistoryPage.Visibility = resolvedTag == "history" ? Visibility.Visible : Visibility.Collapsed;
+        if (resolvedTag == "history")
         {
             AnnounceHistoryOnPageShown();
         }
-        WhatsNewPage.Visibility = tag == "whats-new" ? Visibility.Visible : Visibility.Collapsed;
-        if (tag == "whats-new")
+        WhatsNewPage.Visibility = resolvedTag == "whats-new" ? Visibility.Visible : Visibility.Collapsed;
+        if (resolvedTag == "whats-new")
         {
             _ = MarkReleaseNotesSeenAsync();
         }
-        DictionaryPage.Visibility = tag == "dictionary" ? Visibility.Visible : Visibility.Collapsed;
-        SnippetsPage.Visibility = tag == "snippets" ? Visibility.Visible : Visibility.Collapsed;
+        DictionaryPage.Visibility = resolvedTag == "dictionary" ? Visibility.Visible : Visibility.Collapsed;
+        if (resolvedTag == "dictionary" && !string.IsNullOrWhiteSpace(targetTab))
+        {
+            SelectDictionaryTab(targetTab);
+        }
+        SnippetsPage.Visibility = resolvedTag == "snippets" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = settingsPage ? Visibility.Visible : Visibility.Collapsed;
-        // The pinned action bar belongs to the settings page and appears with it. Set on the
-        // same line as the page it serves, so the two cannot drift apart.
-        SaveSettingsBar.Visibility = SettingsPage.Visibility;
         HelpPage.Visibility = helpPage ? Visibility.Visible : Visibility.Collapsed;
 
         if (settingsPage)
         {
-            ConfigureSettingsPage(tag);
+            ConfigureSettingsPage(resolvedTag, targetTab);
         }
         else if (helpPage)
         {
-            ConfigureHelpPage(tag);
+            ConfigureHelpPage(resolvedTag);
             ScrollPageToTop(HelpPage);
         }
 
-        // Whichever page is now visible is the one that arrived. Reading it back from the pages
-        // themselves rather than re-deriving it from the tag means a page added later cannot be
-        // left out of the animation while still being reachable from the sidebar.
         foreach (var page in Pages())
         {
             if (page.Visibility == Visibility.Visible)
@@ -4546,26 +4796,17 @@ public sealed partial class MainWindow : Window, IDisposable
     ];
 
     /// <summary>The glyph a page header shows, read from that page's own sidebar row.</summary>
-    /// <remarks>
-    /// ONE ICON PER DESTINATION, AND THE SIDEBAR OWNS IT. Page headers used to carry their own
-    /// copy of the glyph, so every icon change was two edits and people remembered one. Five
-    /// pages drifted, and two of them drifted onto another page's icon: Backup showed
-    /// Clipboard's, and Dictation history showed History's. Reading the header off the row makes
-    /// the pair unable to disagree, which is a different thing from making them agree today.
-    /// </remarks>
     private string NavigationGlyphFor(string tag)
     {
+        var (pageTag, _) = ResolvePageAndTab(tag);
         foreach (var row in NavigationRows())
         {
-            if (row.Tag as string == tag && row.Icon is FontIcon icon)
+            if (string.Equals(row.Tag as string, pageTag, StringComparison.Ordinal) && row.Icon is FontIcon icon)
             {
                 return icon.Glyph;
             }
         }
 
-        // A page tag with no sidebar row is an authoring mistake, and the test suite refuses the
-        // build before it can ship. The app still navigates rather than throwing in the user's
-        // face, and an empty tile is the visible tell.
         return string.Empty;
     }
 
@@ -4575,75 +4816,61 @@ public sealed partial class MainWindow : Window, IDisposable
             .Concat(ProductNavigation.FooterMenuItems)
             .OfType<NavigationViewItem>();
 
-    private void ConfigureSettingsPage(string tag)
+    private void ConfigureSettingsPage(string tag) => ConfigureSettingsPage(tag, null);
+
+    private void ConfigureSettingsPage(string tag, string? tabKey)
     {
+        if (tag == "settings-dictation")
+        {
+            DictationTabStrip.Visibility = Visibility.Visible;
+            AppTabStrip.Visibility = Visibility.Collapsed;
+            SelectDictationTab(tabKey ?? "engine");
+            return;
+        }
+
+        if (tag == "settings-app")
+        {
+            DictationTabStrip.Visibility = Visibility.Collapsed;
+            AppTabStrip.Visibility = Visibility.Visible;
+            SelectAppTab(tabKey ?? "appearance");
+            return;
+        }
+
+        DictationTabStrip.Visibility = Visibility.Collapsed;
+        AppTabStrip.Visibility = Visibility.Collapsed;
+
         var (title, description, section) = tag switch
         {
-            "settings-appearance" => (
-                "Appearance",
-                "The theme, and where the recording pill appears while you dictate.",
-                (FrameworkElement?)AppearanceSection),
-            "settings-transcription" => (
-                "Transcription",
-                "The speech engine that turns your voice into text.",
+            "settings-dictation" => (
+                "Dictation",
+                "The speech engine and input devices that turn your voice into text.",
                 (FrameworkElement?)TranscriptionEngineSection),
-            "settings-transcribe-file" => (
-                "Transcribe a File",
-                "Turn a recording into text, on this PC, with the same engine and clean-up as your dictation.",
-                (FrameworkElement?)TranscribeFileSection),
-            "settings-live-preview" => (
-                "Live Preview",
-                "See your words on screen while you are still speaking, and choose how the recording pill looks.",
-                (FrameworkElement?)LivePreviewSection),
-            "settings-microphone" => (
-                "Microphone",
-                "Choose your input source and readiness behavior.",
-                (FrameworkElement?)MicrophoneSection),
-            "settings-sounds" => (
-                "Sounds",
-                "Play a short sound when recording starts and stops.",
-                (FrameworkElement?)SoundSection),
+            "settings-app" => (
+                "App Settings",
+                "Appearance, theme, permissions, and app preferences.",
+                (FrameworkElement?)AppearanceSection),
             "settings-keybinds" => (
                 "Keybinds",
                 "Set the keybinds that start, stop, and cancel dictation.",
                 (FrameworkElement?)KeybindsSection),
+            "settings-transcribe-file" => (
+                "Transcribe a File",
+                "Turn a recording into text, on this PC, with the same engine and clean-up as your dictation.",
+                (FrameworkElement?)TranscribeFileSection),
             "settings-ai-polish" => (
                 "AI Polish",
                 "Clean up and rewrite your dictation with AI.",
                 (FrameworkElement?)AiPolishSection),
-            "settings-history" => (
-                "Dictation history",
-                "Whether your dictations are saved on this PC, and for how long.",
-                (FrameworkElement?)HistorySettingsSection),
             "settings-diagnostics" => (
                 "Diagnostics",
                 "What EnviousWispr records about how it is running, and what it never records.",
                 (FrameworkElement?)DiagnosticsSection),
-            "settings-profile" => (
-                "Backup",
-                "Move your settings, words, and snippets to another PC, or keep a copy of everything and remove it all.",
-                (FrameworkElement?)PortableProfileSection),
-            "settings-clipboard" => (
-                "Clipboard",
-                "How your transcript reaches the clipboard and the app you're in.",
-                (FrameworkElement?)ClipboardSection),
-            // An unrecognised tag lands on a REAL section rather than showing all of them. The
-            // old default returned null, which the loop below read as "show everything" - so a
-            // typo in a tag rendered the aggregate page that no longer exists.
             _ => (
-                "Appearance",
-                "The theme, and where the recording pill appears while you dictate.",
+                "App Settings",
+                "Appearance, theme, permissions, and app preferences.",
                 (FrameworkElement?)AppearanceSection),
         };
 
-        // THE PAGES WHOSE SETTINGS ARE READ WHEN A RECORDING STARTS, and only those. A banner on a
-        // page whose settings take effect immediately would be a lie, and a lie about this is worse
-        // than silence: it tells somebody to stop and start a recording for no reason.
-        //
-        // Keybinds holds auto-stop and Escape Recovery; Live Preview holds the preview switch;
-        // Clipboard holds whether the words are pasted or copied. All are read at the press and held
-        // for that recording - App.xaml.cs reads them in StartAutoStopWatch, the Started transition,
-        // StartLivePreviewAsync, and the delivery options the session controller asks for.
         FrozenPerRecordingBanner.Visibility =
             tag is "settings-keybinds" or "settings-live-preview" or "settings-clipboard"
             ? Visibility.Visible
@@ -4652,16 +4879,11 @@ public sealed partial class MainWindow : Window, IDisposable
 
         SettingsPageTitle.Text = title;
         SettingsPageDescription.Text = description;
-        // An unrecognised tag lands on the Appearance page above, so it wears Appearance's icon.
         SettingsPageGlyph.Glyph = NavigationGlyphFor(tag) is { Length: > 0 } settingsGlyph
             ? settingsGlyph
-            : NavigationGlyphFor("settings-appearance");
+            : NavigationGlyphFor("settings-dictation");
 
-        // No "show everything" branch any more. Every tag resolves to exactly one section, so the
-        // aggregate page cannot be reached by any route rather than merely being unlinked.
         var showTranscriptionCompanion = tag == "settings-transcription";
-        // Backup carries Your data beside the profile: export and deletion are about the same data the
-        // profile moves, and the page is where a person looks for what happens to it. Ref: #42.
         var showBackupCompanion = tag == "settings-profile";
         foreach (var candidate in SettingsSections())
         {
@@ -4678,57 +4900,190 @@ public sealed partial class MainWindow : Window, IDisposable
             .ToArray();
         CollapseEyebrowThatRepeatsTheTitle(SettingsSections(), visible, title);
 
-        // A page with nothing to change should not offer to save it. Clipboard is one paragraph
-        // explaining fixed behaviour - there are no clipboard preferences in AppSettings at all -
-        // so the button sat under it promising an action it could not perform on anything visible.
-        // Asked of the SECTIONS rather than of a list of tags kept here, so a prose-only section
-        // added later is handled without anyone remembering this rule.
-        SaveSettingsButton.Visibility = visible.Any(ContainsAnEditableControl)
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-
         ScrollPageToTop(SettingsPage);
     }
 
-    /// <summary>
-    /// True when <paramref name="element"/> contains a control the user can actually change.
-    /// </summary>
-    /// <remarks>
-    /// Walks the LOGICAL tree - panels, borders, content controls - rather than the visual tree,
-    /// because the visual tree of a collapsed section is not realised and would report every
-    /// hidden section as empty, which is the answer that happens to look right.
-    /// </remarks>
-    private static bool ContainsAnEditableControl(DependencyObject element)
+    private void DictationTab_Click(object sender, RoutedEventArgs e)
     {
-        if (element is ToggleSwitch or ComboBox or RadioButtons or RadioButton
-            or TextBox or PasswordBox or NumberBox or CheckBox or Slider)
+        if (sender is Button btn && btn.Tag is string tag)
         {
-            return true;
+            SelectDictationTab(tag);
+        }
+    }
+
+    private void SelectDictationTab(string tabKey)
+    {
+        DictationTabEngine.Style = (Style)Application.Current.Resources[tabKey == "engine" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+        DictationTabMicrophone.Style = (Style)Application.Current.Resources[tabKey == "microphone" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+        DictationTabLivePreview.Style = (Style)Application.Current.Resources[tabKey == "live-preview" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+        DictationTabPill.Style = (Style)Application.Current.Resources[tabKey == "pill" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+        DictationTabSounds.Style = (Style)Application.Current.Resources[tabKey == "sounds" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+        DictationTabClipboard.Style = (Style)Application.Current.Resources[tabKey == "clipboard" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+
+        ShowSettingsSectionForDictationTab(tabKey);
+    }
+
+    private void ShowSettingsSectionForDictationTab(string tabKey)
+    {
+        var (title, description, section, companion) = tabKey switch
+        {
+            "microphone" => ("Microphone", "Choose your input source and readiness behavior.", (FrameworkElement?)MicrophoneSection, (FrameworkElement?)null),
+            "live-preview" => ("Live Preview", "See your words on screen while you are still speaking, and choose how the recording pill looks.", (FrameworkElement?)LivePreviewSection, (FrameworkElement?)null),
+            "pill" => ("Recording Pill", "Choose where and how the recording pill appears while you dictate.", (FrameworkElement?)AppearanceSection, (FrameworkElement?)null),
+            "sounds" => ("Sounds", "Play a short sound when recording starts and stops.", (FrameworkElement?)SoundSection, (FrameworkElement?)null),
+            "clipboard" => ("Clipboard", "How your transcript reaches the clipboard and the app you're in.", (FrameworkElement?)ClipboardSection, (FrameworkElement?)null),
+            _ => ("Transcription", "The speech engine that turns your voice into text.", (FrameworkElement?)TranscriptionEngineSection, (FrameworkElement?)DeterministicCleanupSection),
+        };
+
+        SettingsPageTitle.Text = title;
+        SettingsPageDescription.Text = description;
+        SettingsPageGlyph.Glyph = NavigationGlyphFor("settings-dictation");
+
+        FrozenPerRecordingBanner.Visibility = tabKey is "live-preview" or "clipboard" ? Visibility.Visible : Visibility.Collapsed;
+        FrozenPerRecordingText.Text = FrozenPerRecordingCopy;
+
+        foreach (var candidate in SettingsSections())
+        {
+            candidate.Visibility = ReferenceEquals(candidate, section) || ReferenceEquals(candidate, companion)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         }
 
-        return element switch
+        var visible = SettingsSections().Where(candidate => candidate.Visibility == Visibility.Visible).ToArray();
+        CollapseEyebrowThatRepeatsTheTitle(SettingsSections(), visible, title);
+        ScrollPageToTop(SettingsPage);
+    }
+
+    private void AppTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && btn.Tag is string tag)
         {
-            Panel panel => panel.Children.Any(ContainsAnEditableControl),
-            Border border => border.Child is not null && ContainsAnEditableControl(border.Child),
-            ContentControl content => content.Content is DependencyObject child
-                && ContainsAnEditableControl(child),
-            _ => false,
+            SelectAppTab(tag);
+        }
+    }
+
+    private void SelectAppTab(string tabKey)
+    {
+        AppTabAppearance.Style = (Style)Application.Current.Resources[tabKey == "appearance" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+        AppTabPermissions.Style = (Style)Application.Current.Resources[tabKey == "permissions" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+        AppTabPrivacy.Style = (Style)Application.Current.Resources[tabKey == "privacy" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+        AppTabBackup.Style = (Style)Application.Current.Resources[tabKey == "backup" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+        AppTabUpdatesLicenses.Style = (Style)Application.Current.Resources[tabKey == "updates-licenses" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+
+        ShowSettingsSectionForAppTab(tabKey);
+    }
+
+    private void ShowSettingsSectionForAppTab(string tabKey)
+    {
+        var (title, description, section, companion) = tabKey switch
+        {
+            "permissions" => ("Permissions and privacy", "Audio, local models, dictionaries, snippets, and history stay on this PC.", (FrameworkElement?)PermissionsSection, (FrameworkElement?)null),
+            "privacy" => ("Dictation history", "Whether your dictations are saved on this PC, and for how long.", (FrameworkElement?)HistorySettingsSection, (FrameworkElement?)null),
+            "backup" => ("Backup", "Move your settings, words, and snippets to another PC, or keep a copy of everything and remove it all.", (FrameworkElement?)PortableProfileSection, (FrameworkElement?)YourDataSection),
+            "updates-licenses" => ("Updates & Licenses", "App updates and open source notices.", (FrameworkElement?)UpdatesSection, (FrameworkElement?)LicensesSection),
+            _ => ("Appearance", "The theme, and where the recording pill appears while you dictate.", (FrameworkElement?)AppearanceSection, (FrameworkElement?)null),
         };
+
+        SettingsPageTitle.Text = title;
+        SettingsPageDescription.Text = description;
+        SettingsPageGlyph.Glyph = NavigationGlyphFor("settings-app");
+
+        FrozenPerRecordingBanner.Visibility = Visibility.Collapsed;
+
+        foreach (var candidate in SettingsSections())
+        {
+            candidate.Visibility = ReferenceEquals(candidate, section) || ReferenceEquals(candidate, companion)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+
+        var visible = SettingsSections().Where(candidate => candidate.Visibility == Visibility.Visible).ToArray();
+        CollapseEyebrowThatRepeatsTheTitle(SettingsSections(), visible, title);
+        ScrollPageToTop(SettingsPage);
+    }
+
+    private void DictionaryTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && btn.Tag is string tag)
+        {
+            SelectDictionaryTab(tag);
+        }
+    }
+
+    private void SelectDictionaryTab(string tabKey)
+    {
+        DictTabYourWords.Style = (Style)Application.Current.Resources[tabKey == "your-words" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+        DictTabPacks.Style = (Style)Application.Current.Resources[tabKey == "packs" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+        DictTabLearnFrom.Style = (Style)Application.Current.Resources[tabKey == "learn-from" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+        DictTabQuickAdd.Style = (Style)Application.Current.Resources[tabKey == "quick-add" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+
+        DictPanelYourWords.Visibility = tabKey == "your-words" ? Visibility.Visible : Visibility.Collapsed;
+        DictPanelPacks.Visibility = tabKey == "packs" ? Visibility.Visible : Visibility.Collapsed;
+        DictPanelLearnFrom.Visibility = tabKey == "learn-from" ? Visibility.Visible : Visibility.Collapsed;
+        DictPanelQuickAdd.Visibility = tabKey == "quick-add" ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private string _wordFilterCategory = "all";
+
+    private void WordFilterChip_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && btn.Tag is string tag)
+        {
+            _wordFilterCategory = tag;
+            WordFilterAllChip.Style = (Style)Application.Current.Resources[tag == "all" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+            WordFilterCustomChip.Style = (Style)Application.Current.Resources[tag == "custom" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+            WordFilterPacksChip.Style = (Style)Application.Current.Resources[tag == "packs" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+            RefreshDictionaryView();
+        }
+    }
+
+    private void DictionarySearchBox_TextChanged(object sender, TextChangedEventArgs e) =>
+        RefreshDictionaryView();
+
+    private void RefreshDictionaryView()
+    {
+        var allWords = _settings?.UserData?.CustomWords ?? (IReadOnlyList<CustomWordEntry>)Array.Empty<CustomWordEntry>();
+        var query = DictionarySearchBox?.Text?.Trim() ?? string.Empty;
+        var filtered = allWords.AsEnumerable();
+
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            filtered = filtered.Where(w => w.SpokenForm.Contains(query, StringComparison.OrdinalIgnoreCase)
+                                        || w.Replacement.Contains(query, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var list = filtered.ToList();
+        if (DictionaryList is not null)
+        {
+            DictionaryList.ItemsSource = list;
+            UpdateListAndEmptyStateVisibility(DictionaryList, DictionaryEmptyState, list.Count);
+        }
+        if (WordCountText is not null)
+        {
+            WordCountText.Text = $"{list.Count} word{(list.Count == 1 ? string.Empty : "s")}";
+        }
+        UpdateSelectionDependentButtons();
+    }
+
+    private async void DictionaryEnabledToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_isApplyingSettings || _settings is null || WordCorrectionToggle is null)
+        {
+            return;
+        }
+
+        var isEnabled = DictionaryEnabledToggle.IsOn;
+        WordCorrectionToggle.IsOn = isEnabled;
+        await TriggerAutoSaveAsync().ConfigureAwait(true);
     }
 
     private void ConfigureHelpPage(string tag)
     {
         var (title, description) = tag switch
         {
-            "help-permissions" => (
-                "Permissions",
-                "The microphone access EnviousWispr needs."),
-            "help-updates" => (
-                "Check for Updates",
-                "Whether a newer EnviousWispr is available, and how to install it."),
-            "help-licenses" => (
-                "Open Source Licenses",
-                "EnviousWispr is GPLv3 open source. The license and third-party notices."),
+            "help" => (
+                "Help and privacy",
+                "Find keyboard guidance, privacy details, updates, and licenses."),
             _ => (
                 "Help and privacy",
                 "Find keyboard guidance, privacy details, updates, and licenses."),
@@ -4740,9 +5095,6 @@ public sealed partial class MainWindow : Window, IDisposable
             ? helpGlyph
             : NavigationGlyphFor("help");
 
-        // Show only the section the user asked for. Setting the header alone left three sidebar
-        // rows rendering all five sections, so "Permissions" opened onto a keyboard guide and the
-        // sidebar promised three destinations while delivering one.
         var section = HelpSectionFor(tag);
         var showAll = section is null;
         foreach (var candidate in HelpSections())
@@ -4761,10 +5113,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private Border[] HelpSections() =>
     [
         KeyboardGuideSection,
-        PermissionsSection,
         LanguageSupportSection,
-        UpdatesSection,
-        LicensesSection,
     ];
 
     private Border[] SettingsSections() =>
@@ -4783,6 +5132,9 @@ public sealed partial class MainWindow : Window, IDisposable
         DiagnosticsSection,
         PortableProfileSection,
         YourDataSection,
+        PermissionsSection,
+        UpdatesSection,
+        LicensesSection,
     ];
 
     private Border? HelpSectionFor(string tag) => tag switch
@@ -5173,6 +5525,7 @@ public sealed partial class MainWindow : Window, IDisposable
             Id = entry.Id;
             Text = entry.Text;
             CreatedDisplay = entry.CreatedAt.ToLocalTime().ToString("f", CultureInfo.CurrentCulture);
+            IsTemporary = entry.ExpiresAt is not null;
             var retention = entry.ExpiresAt is null
                 ? string.Empty
                 : $" · Escape Recovery expires {entry.ExpiresAt.Value.ToLocalTime():g} unless kept";
@@ -5186,6 +5539,8 @@ public sealed partial class MainWindow : Window, IDisposable
         public string CreatedDisplay { get; }
 
         public string Details { get; }
+
+        public bool IsTemporary { get; }
 
         /// <summary>
         /// What a screen reader announces for this row.

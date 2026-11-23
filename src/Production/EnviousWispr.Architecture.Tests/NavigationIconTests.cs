@@ -83,8 +83,8 @@ public sealed class NavigationIconTests
                 .Select(match => match.Groups[1].Value))
             .ToArray();
 
-        Assert.True(answered.Length >= 14,
-            $"Only {answered.Length} page tags were parsed. Eleven settings tags and three help tags are " +
+        Assert.True(answered.Length >= 7,
+            $"Only {answered.Length} page tags were parsed. Seven grouped settings/help tags are " +
             "expected, so a lower number means the sweep is reading less than the app.");
 
         var orphans = answered.Where(tag => !tags.Contains(tag)).Distinct().ToArray();
@@ -156,6 +156,15 @@ public sealed class NavigationIconTests
                 Regex.Match(match.Value, "Content=\"(?<label>[^\"]*)\"").Groups["label"].Value,
                 match.Groups["glyph"].Value.ToUpperInvariant()))
             .ToList();
+
+        var toolbar = Regex.Matches(
+                markup,
+                "<Button\\b[^>]*?AutomationProperties\\.Name=\"(?<label>[^\"]+)\"[^>]*>\\s*<StackPanel[^>]*>\\s*<FontIcon\\b[^>]*?Glyph=\"&#x(?<glyph>[0-9A-Fa-f]{4});\"")
+            .Select(match => new NavigationRow(
+                "toolbar",
+                match.Groups["label"].Value,
+                match.Groups["glyph"].Value.ToUpperInvariant()));
+        rows.AddRange(toolbar);
 
         Assert.All(rows, row => Assert.False(string.IsNullOrEmpty(row.Label), $"Sidebar row '{row.Tag}' parsed with no label."));
         return rows;
