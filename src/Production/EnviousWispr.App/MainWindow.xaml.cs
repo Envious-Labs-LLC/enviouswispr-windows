@@ -5067,7 +5067,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private async void DictionaryEnabledToggle_Toggled(object sender, RoutedEventArgs e)
     {
-        if (_isApplyingSettings || _settings is null)
+        if (_isApplyingSettings || _settings is null || WordCorrectionToggle is null)
         {
             return;
         }

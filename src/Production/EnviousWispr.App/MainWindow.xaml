@@ -728,7 +728,7 @@
                                     <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><TextBlock Style="{StaticResource BrandPageTitleStyle}" Text="Your Words" /><TextBlock Style="{StaticResource BrandBodyStyle}" Text="Custom terms and vocabulary the app uses to recognize what you say." TextWrapping="Wrap" /></StackPanel>
                                     <StackPanel Grid.Column="2" Background="{ThemeResource BrandHitTestBrush}" Spacing="{StaticResource BrandSpacingXs}" Tapped="SettingRow_Tapped" VerticalAlignment="Center">
                                         <TextBlock x:Name="DictionaryEnabledToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Enable Dictionary" TextWrapping="Wrap" />
-                                        <ToggleSwitch x:Name="DictionaryEnabledToggle" AutomationProperties.LabeledBy="{x:Bind DictionaryEnabledToggleLabel, Mode=OneTime}" IsOn="True" Toggled="DictionaryEnabledToggle_Toggled" Style="{StaticResource BrandToggleSwitchStyle}" HorizontalAlignment="Left" />
+                                        <ToggleSwitch x:Name="DictionaryEnabledToggle" AutomationProperties.LabeledBy="{x:Bind DictionaryEnabledToggleLabel, Mode=OneTime}" Toggled="DictionaryEnabledToggle_Toggled" Style="{StaticResource BrandToggleSwitchStyle}" HorizontalAlignment="Left" />
                                     </StackPanel>
                                 </Grid>
                             </Border>
