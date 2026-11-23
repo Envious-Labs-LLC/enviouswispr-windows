@@ -47,7 +47,8 @@ public sealed record WindowPresentationParts(
     IDiagnosticExportService Diagnostics,
     Func<IMicrophoneTestCapture> OpenMicrophoneTestCapture,
     Func<IAudioDeviceCatalog> OpenDeviceCatalog,
-    IOllamaModelHost? OllamaModels = null);
+    IOllamaModelHost? OllamaModels = null,
+    IHistoryRepolishService? RepolishService = null);
 
 /// <summary>
 /// The window's presentation for the life of the window: one settings writer every presenter shares,
@@ -92,7 +93,13 @@ public sealed class WindowPresentationSession : IAsyncDisposable
         SnippetImport = new SnippetImportController(Vocabulary);
         // THE HISTORY PAGE READS THE PREFERENCES AS LAST WRITTEN, from the shared writer, so a
         // retention saved a moment ago is the retention the next load prunes by.
-        History = new HistoryPresenter(parts.HistoryStore, parts.RecoveryStore, () => Settings.Current.Preferences.History, clock, _admission);
+        History = new HistoryPresenter(
+            parts.HistoryStore,
+            parts.RecoveryStore,
+            () => Settings.Current.Preferences.History,
+            clock,
+            _admission,
+            parts.RepolishService);
         Provider = new ProviderSettingsPresenter(parts.ApiKeys, parts.PolishModels, _admission);
         MicrophoneTest = new MicrophoneTestController(parts.OpenMicrophoneTestCapture, clock, _admission);
         Ollama = parts.OllamaModels is { } host ? new OllamaModelsPresenter(host, _admission) : null;

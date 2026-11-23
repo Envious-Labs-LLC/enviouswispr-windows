@@ -13,7 +13,8 @@ namespace EnviousWispr.Pipeline;
 public sealed record PolishSetup(
     IPolishProvider Provider,
     bool UsesLocalRuntime,
-    RuntimeResourceKind Resource);
+    RuntimeResourceKind Resource,
+    string? ModelId = null);
 
 /// <summary>The content-free lines a polish attempt writes, owned by whoever owns the log.</summary>
 public interface IPolishAttemptEffects

@@ -210,15 +210,91 @@ public sealed class HistoryPresenterTests
         Assert.Empty(HistoryPresenter.Filter(rows, "nothing"));
     }
 
+    [Fact]
+    public async Task ARepolishThatWorkedShowsReloadedRowsAndFiresHistoryChanged()
+    {
+        var row = Entry("spoken words");
+        var repolishedEntry = row with { Text = "polished words", WasPolished = true, OriginalText = "spoken words" };
+        var repolish = new FakeRepolishService((id, _) => HistoryRepolishResult.Success(repolishedEntry));
+        var (presenter, history, _, _) = Build(repolish);
+        history.Rows.Add(row);
+
+        var changedFired = false;
+        presenter.HistoryChanged += () => changedFired = true;
+
+        var result = await presenter.RepolishAsync(row.Id);
+
+        Assert.True(result.Succeeded);
+        Assert.True(changedFired);
+        Assert.NotNull(result.View);
+        Assert.Equal(HistorySummary.Saved, result.View.Summary);
+        Assert.Equal(1, history.Loads);
+    }
+
+    [Fact]
+    public async Task ARefusedRepolishLeavesViewNullAndPreservesRows()
+    {
+        var row = Entry("spoken words");
+        var repolish = new FakeRepolishService((_, _) => HistoryRepolishResult.Refused());
+        var (presenter, history, _, _) = Build(repolish);
+        history.Rows.Add(row);
+
+        var changedFired = false;
+        presenter.HistoryChanged += () => changedFired = true;
+
+        var result = await presenter.RepolishAsync(row.Id);
+
+        Assert.False(result.Succeeded);
+        Assert.False(changedFired);
+        Assert.Null(result.View);
+        Assert.Equal(0, history.Loads);
+        Assert.Single(history.Rows);
+    }
+
+    [Fact]
+    public async Task RepolishWhileClosingRefusesCleanly()
+    {
+        var admission = new PresentationAdmission();
+        var repolish = new FakeRepolishService((_, _) => HistoryRepolishResult.Success(Entry("never")));
+        var (presenter, history, _, _) = Build(repolish, admission);
+        history.Rows.Add(Entry("spoken"));
+
+        await admission.CloseAsync();
+
+        var result = await presenter.RepolishAsync(Guid.NewGuid());
+
+        Assert.True(result.Closing);
+        Assert.False(result.Succeeded);
+        Assert.Null(result.View);
+        Assert.Equal(0, history.Loads);
+    }
+
+    private sealed class FakeRepolishService(Func<Guid, bool, HistoryRepolishResult> answer) : IHistoryRepolishService
+    {
+        public Task<HistoryRepolishResult> RepolishAsync(Guid entryId, bool copyToClipboard = false, CancellationToken cancellationToken = default) =>
+            Task.FromResult(answer(entryId, copyToClipboard));
+
+        public Task<HistoryRepolishResult> RepolishAsync(DictationHistoryEntry entry, bool copyToClipboard = false, CancellationToken cancellationToken = default) =>
+            Task.FromResult(answer(entry.Id, copyToClipboard));
+    }
+
     private static DictationHistoryEntry Entry(string text) =>
         new(Guid.NewGuid(), Now, text, "whisper", WasPolished: false, WasDelivered: true);
 
-    private static (HistoryPresenter Presenter, FakeHistoryStore History, FakeRecoveryStore Recovery, PreferenceSource Preferences) Build()
+    private static (HistoryPresenter Presenter, FakeHistoryStore History, FakeRecoveryStore Recovery, PreferenceSource Preferences) Build(
+        IHistoryRepolishService? repolish = null,
+        PresentationAdmission? admission = null)
     {
         var history = new FakeHistoryStore();
         var recovery = new FakeRecoveryStore();
         var preferences = new PreferenceSource();
-        var presenter = new HistoryPresenter(history, recovery, () => preferences.Current, new FrozenClock(Now));
+        var presenter = new HistoryPresenter(
+            history,
+            recovery,
+            () => preferences.Current,
+            new FrozenClock(Now),
+            admission,
+            repolish);
         return (presenter, history, recovery, preferences);
     }
 
@@ -253,8 +329,56 @@ public sealed class HistoryPresenterTests
             return Task.FromResult(new HistoryLoadResult([.. Rows], Status));
         }
 
+        public Task<DictationHistoryEntry?> GetAsync(Guid id, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Rows.FirstOrDefault(entry => entry.Id == id));
+
         public Task<HistoryOperationResult> AddAsync(DictationHistoryEntry entry, int retentionDays, DateTimeOffset now, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+
+        public Task<HistoryRepolishUpdateResult> UpdateRepolishedAsync(
+            Guid id,
+            string expectedCurrentText,
+            string newText,
+            bool wasPolished,
+            string? providerId,
+            string? modelId,
+            CancellationToken cancellationToken = default)
+        {
+            Changes++;
+            if (RefuseChanges)
+            {
+                return Task.FromResult(HistoryRepolishUpdateResult.Failed());
+            }
+
+            var index = Rows.FindIndex(row => row.Id == id);
+            if (index < 0)
+            {
+                return Task.FromResult(HistoryRepolishUpdateResult.NotFound());
+            }
+
+            var existing = Rows[index];
+            if (existing.ExpiresAt is { } expires && expires <= Now)
+            {
+                return Task.FromResult(HistoryRepolishUpdateResult.Expired());
+            }
+
+            if (!string.Equals(existing.Text, expectedCurrentText, StringComparison.Ordinal))
+            {
+                return Task.FromResult(HistoryRepolishUpdateResult.Stale());
+            }
+
+            var updated = existing with
+            {
+                Text = newText,
+                WasPolished = wasPolished,
+                OriginalText = existing.OriginalText ?? existing.Text,
+                PolishProviderId = providerId,
+                PolishModelId = modelId,
+            };
+
+            Rows[index] = updated;
+            return Task.FromResult(HistoryRepolishUpdateResult.Updated(updated));
+        }
 
         public Task<HistoryOperationResult> DeleteAsync(Guid id, CancellationToken cancellationToken = default) =>
             Change(() => Rows.RemoveAll(row => row.Id == id));

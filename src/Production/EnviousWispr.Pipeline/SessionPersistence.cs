@@ -276,7 +276,14 @@ public sealed class SessionPersistence : ISessionRecoveryState
     /// THE ID IS RETURNED SO AN ESCAPE RECOVERY CAN OFFER UNDO ONLY FOR WORDS THAT ARE DURABLY SAVED.
     /// macOS never offers a restore for a take that was not written; null here means there is none.
     /// </remarks>
-    public async Task<Guid?> SaveHistoryAsync(Transcript transcript, string text, HistoryWriteIntent intent)
+    public async Task<Guid?> SaveHistoryAsync(
+        Transcript transcript,
+        string text,
+        HistoryWriteIntent intent,
+        string? originalText = null,
+        string? languageCode = null,
+        string? polishProviderId = null,
+        string? polishModelId = null)
     {
         ArgumentNullException.ThrowIfNull(transcript);
         ArgumentNullException.ThrowIfNull(intent);
@@ -295,7 +302,11 @@ public sealed class SessionPersistence : ISessionRecoveryState
             transcript.EngineId,
             intent.WasPolished,
             intent.WasDelivered,
-            intent.ExpiresAt);
+            intent.ExpiresAt,
+            originalText: originalText ?? (intent.WasPolished ? null : text),
+            languageCode: languageCode ?? DeliveryLanguagePolicy.For(transcript),
+            polishProviderId: polishProviderId,
+            polishModelId: polishModelId);
         var result = await _history.AddAsync(
             entry,
             preferences.RetentionDays,
