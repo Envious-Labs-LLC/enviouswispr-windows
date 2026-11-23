@@ -61,6 +61,8 @@ public sealed class StreamingTranscriptionController
     private readonly StreamingTranscriptAccumulator _streamed = new();
     private CancellationTokenSource? _cancellation;
     private Task? _loop;
+    private DictationSessionId? _sessionId;
+    private Transcript? _lastCommittedTranscript;
     private int _streamedThroughSample;
     private bool _usable;
 
@@ -98,7 +100,9 @@ public sealed class StreamingTranscriptionController
         }
 
         _streamed.Clear();
+        _lastCommittedTranscript = null;
         _streamedThroughSample = 0;
+        _sessionId = sessionId;
         _usable = false;
 
         if (_effects.LivePreviewEnabled ||
@@ -169,6 +173,9 @@ public sealed class StreamingTranscriptionController
                 if (!isSegmentEmpty)
                 {
                     _streamed.Append(transcript.Text);
+                    _lastCommittedTranscript = _lastCommittedTranscript is { UsedFallback: true } prior && !transcript.UsedFallback
+                        ? transcript with { UsedFallback = true, DegradedError = prior.DegradedError }
+                        : transcript;
                 }
 
                 _streamedThroughSample = range.EndSample;
@@ -247,7 +254,8 @@ public sealed class StreamingTranscriptionController
     /// IT FALLS BACK TO THE WHOLE RECORDING ON ANY DOUBT, and the conditions are checked here
     /// rather than trusted from the loop. No head start, a failure flag, or a tail that would be
     /// longer than the audio all mean transcribe everything, exactly as before streaming existed.
-    /// Half a dictation is worse than a slow one, and this is the last place to refuse.
+    /// Only when the final tail or whole-recording request itself fails without caller cancellation
+    /// does it preserve already-committed words as a degraded fallback rather than losing everything.
     ///
     /// THE TAIL'S ENGINE ID AND LANGUAGE ARE THE ONES REPORTED, because they came from the same
     /// engine on the same audio and the committed pieces cannot disagree about them. The token
@@ -263,15 +271,30 @@ public sealed class StreamingTranscriptionController
         // The runner that calls this has opened the dictation's scope already; opened again here
         // because the line this writes belongs to the audio's dictation whoever the caller is.
         using var dictation = DictationScope.Begin(audio.SessionId.Value);
-        var headStart = _streamed.ToString();
+        var sameSession = _sessionId == audio.SessionId;
+        var headStart = sameSession ? _streamed.ToString() : string.Empty;
         var usable = _usable &&
+            sameSession &&
             _streamedThroughSample > 0 &&
             _streamedThroughSample < audio.Samples.Length &&
             !string.IsNullOrWhiteSpace(headStart);
 
         if (!usable)
         {
-            return await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception) when (cancellationToken.IsCancellationRequested)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                throw;
+            }
+            catch (Exception exception) when (
+                CanPreserveCommittedHeadStart(audio, headStart, sameSession, exception, cancellationToken))
+            {
+                return PreserveCommittedHeadStart(audio.SessionId, headStart, engine.EngineId, exception);
+            }
         }
 
         var tailAudio = audio with
@@ -283,11 +306,15 @@ public sealed class StreamingTranscriptionController
         {
             tail = await engine.TranscribeAsync(tailAudio, cancellationToken).ConfigureAwait(false);
         }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            throw;
+        }
         catch (TranscriptionEngineException exception) when (
             exception.Error.Code == AppErrorCode.TranscriptionInputTooShort &&
             exception.Error.Stage == AppErrorStage.FinalAsr)
         {
-            cancellationToken.ThrowIfCancellationRequested();
             if (IsRunning)
             {
                 // An unfinished stop still owns the loop; it may admit or finish engine work.
@@ -304,7 +331,25 @@ public sealed class StreamingTranscriptionController
                 AppFailureCategories.For(exception.Error),
                 ErrorCode: exception.Error.Code));
             cancellationToken.ThrowIfCancellationRequested();
-            return await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception) when (cancellationToken.IsCancellationRequested)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                throw;
+            }
+            catch (Exception wholeException) when (
+                CanPreserveCommittedHeadStart(audio, headStart, sameSession, wholeException, cancellationToken))
+            {
+                return PreserveCommittedHeadStart(audio.SessionId, headStart, engine.EngineId, wholeException);
+            }
+        }
+        catch (Exception exception) when (
+            CanPreserveCommittedHeadStart(audio, headStart, sameSession, exception, cancellationToken))
+        {
+            return PreserveCommittedHeadStart(audio.SessionId, headStart, engine.EngineId, exception);
         }
 
         var joined = new StreamingTranscriptAccumulator();
@@ -315,6 +360,51 @@ public sealed class StreamingTranscriptionController
             _clock.GetUtcNow(),
             AppEventCode.StreamingHeadStartUsed));
 
-        return tail with { Text = joined.ToString() };
+        var usedFallback = tail.UsedFallback || (_lastCommittedTranscript?.UsedFallback ?? false);
+        var degradedError = tail.DegradedError ?? _lastCommittedTranscript?.DegradedError;
+        return tail with
+        {
+            Text = joined.ToString(),
+            UsedFallback = usedFallback,
+            DegradedError = degradedError,
+        };
+    }
+
+    private bool CanPreserveCommittedHeadStart(
+        CapturedAudio audio,
+        string headStart,
+        bool sameSession,
+        Exception exception,
+        CancellationToken cancellationToken) =>
+        exception is not (OperationCanceledException or StackOverflowException or OutOfMemoryException) &&
+        !cancellationToken.IsCancellationRequested &&
+        audio.Outcome != AudioCaptureOutcome.Cancelled &&
+        !IsRunning &&
+        sameSession &&
+        _streamedThroughSample > 0 &&
+        !string.IsNullOrWhiteSpace(headStart);
+
+    private Transcript PreserveCommittedHeadStart(
+        DictationSessionId sessionId,
+        string headStart,
+        string fallbackEngineId,
+        Exception exception)
+    {
+        _usable = false;
+        var error = (exception as TranscriptionEngineException)?.Error;
+        _logger.Write(new AppLogEntry(
+            _clock.GetUtcNow(),
+            AppEventCode.StreamingHeadStartPreserved,
+            error is null ? AppFailureCategory.Unknown : AppFailureCategories.For(error),
+            ErrorCode: error?.Code));
+        return new Transcript(
+            sessionId,
+            headStart,
+            _lastCommittedTranscript?.EngineId ?? fallbackEngineId,
+            TokenTimings: [],
+            UsedFallback: true,
+            DegradedError: error,
+            DetectedLanguage: _lastCommittedTranscript?.DetectedLanguage,
+            RecognitionLanguage: _lastCommittedTranscript?.RecognitionLanguage);
     }
 }

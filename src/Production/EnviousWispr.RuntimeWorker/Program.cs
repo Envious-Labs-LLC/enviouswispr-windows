@@ -209,7 +209,9 @@ static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments
         : new ParakeetEngineOptions(
             modelDirectory,
             RuntimeProviderKind.Cpu,
-            ParakeetModelPack.Quantized,
+            ParakeetTranscriptionEngine.HasQuantizedModelPack(modelDirectory)
+                ? ParakeetModelPack.Quantized
+                : modelPack,
             fallbackThreads,
             InterOpThreads: 1,
             maximumTokensPerStep);

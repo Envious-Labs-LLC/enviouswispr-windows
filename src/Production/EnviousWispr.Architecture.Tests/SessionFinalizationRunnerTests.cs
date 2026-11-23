@@ -156,6 +156,29 @@ public sealed class SessionFinalizationRunnerTests
     }
 
     [Fact]
+    public async Task CommittedStreamingSpeechIsDeliveredAndSavedWhenFinalTailFails()
+    {
+        var world = await World.RecordingFinishedWithCommittedStreamingTailFailureAsync(
+            committedText: "um committed streaming sentence",
+            tailFailure: new AppError(AppErrorCode.TranscriptionFailed, AppErrorStage.FinalAsr, CanRetry: true));
+
+        var report = await world.RunAsync();
+
+        Assert.Equal(FinalizationOutcome.Delivered, report.Outcome);
+        Assert.NotNull(report.Transcript);
+        Assert.True(report.Transcript.UsedFallback);
+        Assert.Equal(AppErrorCode.TranscriptionFailed, report.Transcript.DegradedError?.Code);
+        Assert.Equal("committed streaming sentence", Assert.Single(world.Delivery.Requests).Text.Text);
+        var entry = Assert.Single(world.History.Added);
+        Assert.Equal("committed streaming sentence", entry.Text);
+        Assert.True(entry.WasDelivered);
+        Assert.False(world.Persistence.HasPendingRecovery);
+        Assert.Contains("SaveRecovery:committed streaming sentence", world.Trace);
+        Assert.Contains("Deliver:committed streaming sentence", world.Trace);
+        Assert.DoesNotContain(world.Trace, item => item.StartsWith("RecordTranscriptionFailed:", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task AClipboardFallbackCountsAsDeliveredForRecoveryButNotForHistory()
     {
         var world = await World.RecordingFinishedAsync("hello world");
@@ -392,6 +415,75 @@ public sealed class SessionFinalizationRunnerTests
             };
         }
 
+        public static async Task<World> RecordingFinishedWithCommittedStreamingTailFailureAsync(
+            string committedText,
+            AppError tailFailure)
+        {
+            var prefix = new float[70_400];
+            Array.Fill(prefix, 0.2f, 3_200, 48_000);
+            var whole = new float[prefix.Length + 10_080];
+            prefix.CopyTo(whole, 0);
+            Array.Fill(whole, 0.2f, prefix.Length, 10_080);
+
+            var capture = new FakeAudioCapture(whole);
+            var controller = new PushToTalkSessionController(capture, new FakeTargetProvider(101), minimumHoldDuration: TimeSpan.Zero);
+            var started = await controller.PressAsync();
+            var sessionId = started.Session!.Id;
+
+            var effects = new FakeEffects();
+            var engine = new FakeEngine(committedText);
+            var delivery = new FakeDelivery { Trace = effects.Trace };
+            effects.Engine = engine;
+            effects.DeliveryRoute = delivery;
+            var history = new FakeHistoryStore();
+            var persistence = new SessionPersistence(
+                new FakeRecoveryStore(),
+                history,
+                new NullLogger(),
+                new FrozenClock(Now),
+                () => HistoryPreferences.Default,
+                effects);
+            effects.Persistence = persistence;
+            var finalizer = new TranscriptFinalizer(
+                PatientPipeline.Create(),
+                new PolishExecutor(new FakeAdmission(), effects, () => []),
+                effects,
+                new SnippetExpansionStage(
+                    new SnippetExpander(),
+                    new FrozenClock(Now),
+                    () => System.Globalization.CultureInfo.InvariantCulture,
+                    _ => Task.FromResult<string?>(null),
+                    TimeSpan.FromSeconds(30)));
+
+            var streamingClock = new Deterministic.ManualClock();
+            var streaming = new StreamingTranscriptionController(
+                new LiveStreaming(engine, new FixedSnapshot(sessionId, prefix)),
+                new NullLogger(),
+                streamingClock);
+            streaming.Start(sessionId);
+            streamingClock.Advance(TimeSpan.FromMilliseconds(500));
+            await streamingClock.WhenRegistered(2).WaitAsync(TimeSpan.FromSeconds(10));
+            await streaming.StopAsync();
+
+            var released = await controller.ReleaseAsync();
+            Assert.Equal(SessionTransitionKind.FinalizeReady, released.Kind);
+            engine.Failure = tailFailure;
+
+            var runner = new SessionFinalizationRunner(controller, finalizer, persistence, streaming, effects, new FrozenClock(Now));
+            return new World
+            {
+                Controller = controller,
+                Runner = runner,
+                Persistence = persistence,
+                Effects = effects,
+                Engine = engine,
+                Delivery = delivery,
+                History = history,
+                Audio = released.Audio!,
+                SessionId = sessionId,
+            };
+        }
+
         public Func<FinalizationOptions>? OptionsOverride { get; set; }
 
         public Task<FinalizationReport> RunAsync(bool recoveryOnly = false)
@@ -600,6 +692,20 @@ public sealed class SessionFinalizationRunnerTests
         public IAudioSnapshotSource? Audio => null;
     }
 
+    private sealed class LiveStreaming(ITranscriptionEngine engine, IAudioSnapshotSource audio) : IStreamingTranscriptionEffects
+    {
+        public bool LivePreviewEnabled => false;
+
+        public ITranscriptionEngine? Engine => engine;
+
+        public IAudioSnapshotSource? Audio => audio;
+    }
+
+    private sealed class FixedSnapshot(DictationSessionId sessionId, float[] samples) : IAudioSnapshotSource
+    {
+        public AudioSnapshot? GetSnapshot(TimeSpan maximumDuration) => new(sessionId, samples, 16_000, 1);
+    }
+
     private sealed class NullLogger : IAppLogger
     {
         public void Write(AppLogEntry entry)
@@ -617,9 +723,10 @@ public sealed class SessionFinalizationRunnerTests
         public TargetWindowId? CaptureForegroundTarget() => new TargetWindowId(window);
     }
 
-    private sealed class FakeAudioCapture : IAudioCapture
+    private sealed class FakeAudioCapture(float[]? samples = null) : IAudioCapture
     {
         private static readonly float[] OneSample = [0.2f];
+        private readonly float[] _samples = samples ?? OneSample;
         private DictationSessionId _sessionId;
 
         public event EventHandler<AudioLevel>? LevelChanged
@@ -640,7 +747,7 @@ public sealed class SessionFinalizationRunnerTests
         public Task<CapturedAudio> StopAsync(CancellationToken cancellationToken = default)
         {
             IsCapturing = false;
-            return Task.FromResult(new CapturedAudio(_sessionId, OneSample, SampleRate: 16_000, Channels: 1));
+            return Task.FromResult(new CapturedAudio(_sessionId, _samples, SampleRate: 16_000, Channels: 1));
         }
 
         public Task<AudioOperationResult> CancelAsync(CancellationToken cancellationToken = default)

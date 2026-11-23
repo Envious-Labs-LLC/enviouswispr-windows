@@ -1292,6 +1292,9 @@ try
         streamingHeadStartUsed = diagnosticEvents.Any(value => value.StartsWith(
             "StreamingHeadStartUsed/",
             StringComparison.Ordinal)),
+        streamingHeadStartPreserved = diagnosticEvents.Any(value => value.StartsWith(
+            "StreamingHeadStartPreserved/",
+            StringComparison.Ordinal)),
         streamingAbandoned = diagnosticEvents.Any(value => value.StartsWith(
             "StreamingAbandoned/",
             StringComparison.Ordinal)),
@@ -2050,11 +2053,13 @@ static void RequireHeadStartJourneyEvents(IReadOnlyList<string> events)
             "The head-start journey never recorded, so nothing about the head start was exercised.");
     }
 
-    if (events.Any(value => value.StartsWith("StreamingAbandoned/", StringComparison.Ordinal)))
+    if (events.Any(value => value.StartsWith("StreamingAbandoned/", StringComparison.Ordinal)) ||
+        events.Any(value => value.StartsWith("StreamingHeadStartPreserved/", StringComparison.Ordinal)))
     {
         throw new JourneyExpectationException(
-            "The streaming head start was abandoned on a clean fixture run. Giving up is correct on "
-                + "a real failure, so read the abandoned record's error code: it names what failed.");
+            "The streaming head start degraded or was abandoned on a clean fixture run. Giving up or "
+                + "preserving only the committed head start is correct on a real failure, so read the "
+                + "record's error code: it names what failed.");
     }
 }
 

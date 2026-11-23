@@ -35,6 +35,26 @@ public sealed class ParakeetRuntimeSelectorTests
         Assert.Equal(1, result.InterOpThreads);
     }
 
+    [Theory]
+    [InlineData(RuntimeProviderPreference.Automatic, RuntimeSelectionReason.TunedCpuUniversalFallback)]
+    [InlineData(RuntimeProviderPreference.Cpu, RuntimeSelectionReason.ManualProviderAccepted)]
+    public void CpuSelectionUsesFullPrecisionPackWhenQuantizedPackIsMissing(
+        RuntimeProviderPreference preference,
+        RuntimeSelectionReason expectedReason)
+    {
+        var result = ParakeetRuntimeSelector.Select(
+            Snapshot(cuda: false, GraphicsVendor.Intel),
+            new ParakeetModelInventory(Int8Complete: false, Fp32Complete: true),
+            preference);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(RuntimeProviderKind.Cpu, result.Provider);
+        Assert.Equal(ParakeetModelPack.FullPrecision, result.ModelPack);
+        Assert.Equal(expectedReason, result.Reason);
+        Assert.Equal(8, result.IntraOpThreads);
+        Assert.Equal(1, result.InterOpThreads);
+    }
+
     [Fact]
     public void AutomaticFallsBackToCpuWhenCudaDependencySetIsIncomplete()
     {

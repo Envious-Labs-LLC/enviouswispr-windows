@@ -56,9 +56,12 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts) 
                     ? AppEventCode.DictationTranscriptionEmpty
                     : AppEventCode.DictationTranscriptionCompleted,
             transcript.UsedFallback
-                ? AppFailureCategories.For(transcript.DegradedError)
+                ? transcript.DegradedError is null
+                    ? AppFailureCategory.Unknown
+                    : AppFailureCategories.For(transcript.DegradedError)
                 : AppFailureCategory.None,
             elapsedMilliseconds,
+            ErrorCode: transcript.UsedFallback ? transcript.DegradedError?.Code : null,
             RecognitionLanguage: DiagnosticRecognitionLanguages.From(transcript.RecognitionLanguage)));
 
     public void RecordTranscriptionFailed(AppError? failure, long elapsedMilliseconds) =>
@@ -146,7 +149,10 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts) 
                         : DictationStatus.Success(
                             $"Transcribed and polished directly with {cloudProvider}")
                 : transcript is { UsedFallback: true }
-                    ? DictationStatus.Success("Transcribed and cleaned locally with CPU fallback")
+                    ? DictationStatus.Success(
+                        transcript.DegradedError?.Code is AppErrorCode.RuntimeProviderUnavailable or AppErrorCode.RuntimeProviderIncompatible
+                            ? "Transcribed and cleaned locally with CPU fallback"
+                            : "Transcribed and cleaned locally with a safe fallback")
                     : DictationStatus.Success("Transcribed and cleaned locally");
         _view.ShowStatus(status);
     }
