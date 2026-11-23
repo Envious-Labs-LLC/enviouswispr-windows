@@ -82,6 +82,25 @@ public sealed class RecordingAppearanceCatalogTests
     }
 
     [Fact]
+    public void RecordingChimeWaveformGeneratesDeterministicNormalizedEnvelopes()
+    {
+        var assetDirectory = Path.Combine(
+            AppContext.BaseDirectory,
+            RecordingSoundAssetCatalog.RelativeDirectory);
+
+        foreach (var pairing in Enum.GetValues<RecordingSoundPairing>())
+        {
+            var heights = RecordingChimeWaveform.GetBarHeights(pairing, assetDirectory);
+            Assert.Equal(RecordingChimeWaveform.BarCount, heights.Count);
+            Assert.All(heights, h => Assert.InRange(h, 0.0, 1.0));
+            Assert.True(heights.Any(h => h > 0.5), $"Pairing {pairing} should have distinct peaks");
+
+            var heightsAgain = RecordingChimeWaveform.GetBarHeights(pairing, assetDirectory);
+            Assert.Equal(heights, heightsAgain);
+        }
+    }
+
+    [Fact]
     public void SoundCoordinatorPlaysExactlyOneMatchingPairPerRecording()
     {
         var played = new List<(RecordingSoundPairing Pairing, RecordingSoundMoment Moment)>();

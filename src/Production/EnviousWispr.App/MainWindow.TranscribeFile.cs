@@ -1,6 +1,7 @@
 using EnviousWispr.Pipeline;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage.Pickers;
 
@@ -21,7 +22,7 @@ public sealed partial class MainWindow
 
     private async void TranscribeFileChooseButton_Click(object sender, RoutedEventArgs e)
     {
-        if (TranscribeFile is not { } transcribe || _transcribeFileRun is not null)
+        if (TranscribeFile is not { } || _transcribeFileRun is not null)
         {
             ShowMessage("Not ready yet", "Transcription is still starting. Try again in a moment.", InfoBarSeverity.Informational);
             return;
@@ -40,6 +41,59 @@ public sealed partial class MainWindow
             return;
         }
 
+        await StartFileTranscriptionAsync(file.Path).ConfigureAwait(true);
+    }
+
+    private void TranscribeFileDropZone_DragOver(object sender, DragEventArgs e)
+    {
+        if (e.DataView.Contains(StandardDataFormats.StorageItems))
+        {
+            e.AcceptedOperation = DataPackageOperation.Copy;
+            e.DragUIOverride.Caption = "Drop audio file to transcribe";
+            e.DragUIOverride.IsCaptionVisible = true;
+            e.DragUIOverride.IsContentVisible = true;
+        }
+        else
+        {
+            e.AcceptedOperation = DataPackageOperation.None;
+        }
+    }
+
+    private async void TranscribeFileDropZone_Drop(object sender, DragEventArgs e)
+    {
+        if (!e.DataView.Contains(StandardDataFormats.StorageItems))
+        {
+            return;
+        }
+
+        var items = await e.DataView.GetStorageItemsAsync();
+        if (items.Count == 0)
+        {
+            return;
+        }
+
+        if (items[0] is Windows.Storage.StorageFile file)
+        {
+            var ext = System.IO.Path.GetExtension(file.Path).ToLowerInvariant();
+            var supported = new[] { ".wav", ".mp3", ".m4a", ".aac", ".wma", ".flac" };
+            if (!supported.Contains(ext))
+            {
+                ShowMessage("Unsupported file type", $"'{ext}' is not a supported audio format. Choose WAV, MP3, M4A, AAC, WMA, or FLAC.", InfoBarSeverity.Warning);
+                return;
+            }
+
+            await StartFileTranscriptionAsync(file.Path).ConfigureAwait(true);
+        }
+    }
+
+    private async Task StartFileTranscriptionAsync(string filePath)
+    {
+        if (TranscribeFile is not { } transcribe || _transcribeFileRun is not null)
+        {
+            ShowMessage("Not ready yet", "Transcription is still starting. Try again in a moment.", InfoBarSeverity.Informational);
+            return;
+        }
+
         using var run = new CancellationTokenSource();
         _transcribeFileRun = run;
         TranscribeFileChooseButton.IsEnabled = false;
@@ -47,10 +101,11 @@ public sealed partial class MainWindow
         TranscribeFileProgress.Value = 0;
         TranscribeFileProgress.IsIndeterminate = true;
         TranscribeFileProgress.Visibility = Visibility.Visible;
+        SetTranscribeFileStep(2);
         ShowTranscribeFileStatus("Reading the file...");
         try
         {
-            var result = await transcribe(file.Path, new Progress<FileTranscriptionProgress>(ShowTranscribeFileProgress), run.Token)
+            var result = await transcribe(filePath, new Progress<FileTranscriptionProgress>(ShowTranscribeFileProgress), run.Token)
                 .ConfigureAwait(true);
             ShowTranscribeFileResult(result);
         }
@@ -66,6 +121,7 @@ public sealed partial class MainWindow
     private void TranscribeFileCancelButton_Click(object sender, RoutedEventArgs e)
     {
         _transcribeFileRun?.Cancel();
+        SetTranscribeFileStep(1);
         ShowTranscribeFileStatus("Stopping after the piece in progress...");
     }
 
@@ -80,8 +136,21 @@ public sealed partial class MainWindow
 
         if (progress.AudioTotal is { TotalSeconds: > 0 } total)
         {
+            var fraction = Math.Clamp(progress.AudioDone / total, 0, 1);
             TranscribeFileProgress.IsIndeterminate = false;
-            TranscribeFileProgress.Value = Math.Clamp(progress.AudioDone / total, 0, 1);
+            TranscribeFileProgress.Value = fraction;
+            if (fraction >= 0.9)
+            {
+                SetTranscribeFileStep(5);
+            }
+            else if (fraction >= 0.5)
+            {
+                SetTranscribeFileStep(3);
+            }
+            else
+            {
+                SetTranscribeFileStep(2);
+            }
             ShowTranscribeFileStatus($"Transcribed {Minutes(progress.AudioDone)} of {Minutes(total)}");
         }
         else
@@ -95,8 +164,18 @@ public sealed partial class MainWindow
         // A START THAT WAS REFUSED CHANGES NOTHING ELSE ON THE PAGE: the words from the last file stay where they were.
         if (result.Outcome == FileTranscriptionOutcome.Refused)
         {
+            SetTranscribeFileStep(1);
             ShowTranscribeFileStatus(RefusalSentence(result.Refusal));
             return;
+        }
+
+        if (result.Outcome == FileTranscriptionOutcome.Completed)
+        {
+            SetTranscribeFileStep(6);
+        }
+        else
+        {
+            SetTranscribeFileStep(1);
         }
 
         var (status, showText) = result.Outcome switch
@@ -112,6 +191,64 @@ public sealed partial class MainWindow
         ShowTranscribeFileStatus(status);
         TranscribeFileResultText.Text = showText ? result.Text : string.Empty;
         TranscribeFileResultPanel.Visibility = showText ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void SetTranscribeFileStep(int step)
+    {
+        if (TranscribeStep1Badge is null)
+        {
+            return;
+        }
+
+        var accentSolidBrush = (Brush)Application.Current.Resources["BrandAccentSolidBrush"];
+        var accentBrush = (Brush)Application.Current.Resources["BrandAccentBrush"];
+        var onAccentBrush = (Brush)Application.Current.Resources["BrandOnAccentBrush"];
+        var dividerBrush = (Brush)Application.Current.Resources["BrandDividerBrush"];
+        var tertiaryBrush = (Brush)Application.Current.Resources["BrandTextTertiaryBrush"];
+        var successBrush = (Brush)Application.Current.Resources["BrandSuccessBrush"];
+        var secondaryBrush = (Brush)Application.Current.Resources["BrandTextSecondaryBrush"];
+
+        var steps = new (Border? Badge, TextBlock? Num, TextBlock? Label)[]
+        {
+            (TranscribeStep1Badge, TranscribeStep1Num, TranscribeStep1Label),
+            (TranscribeStep2Badge, TranscribeStep2Num, TranscribeStep2Label),
+            (TranscribeStep3Badge, TranscribeStep3Num, TranscribeStep3Label),
+            (TranscribeStep4Badge, TranscribeStep4Num, TranscribeStep4Label),
+            (TranscribeStep5Badge, TranscribeStep5Num, TranscribeStep5Label),
+            (TranscribeStep6Badge, TranscribeStep6Num, TranscribeStep6Label),
+        };
+
+        for (var i = 0; i < steps.Length; i++)
+        {
+            var (badge, num, label) = steps[i];
+            if (badge is null || num is null || label is null)
+            {
+                continue;
+            }
+
+            var stepNum = i + 1;
+            if (stepNum == step)
+            {
+                badge.Background = accentSolidBrush;
+                num.Foreground = onAccentBrush;
+                label.Foreground = accentBrush;
+                label.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+            }
+            else if (stepNum < step)
+            {
+                badge.Background = successBrush;
+                num.Foreground = onAccentBrush;
+                label.Foreground = secondaryBrush;
+                label.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
+            }
+            else
+            {
+                badge.Background = dividerBrush;
+                num.Foreground = tertiaryBrush;
+                label.Foreground = tertiaryBrush;
+                label.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
+            }
+        }
     }
 
     /// <summary>Why a file could not start, in macOS's words where macOS has them. Ref: #211.</summary>

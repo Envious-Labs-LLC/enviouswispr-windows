@@ -703,6 +703,8 @@
                                                 <TextBox x:Name="HistoryDetailTextBox" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontSize="16" FontFamily="Segoe UI Variable Text, Segoe UI" BorderThickness="0" Margin="0,0,0,16" />
                                             </ScrollViewer>
                                             <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" HorizontalAlignment="Right">
+                                                <ProgressRing x:Name="RepolishHistoryProgress" IsActive="False" Visibility="Collapsed" Width="16" Height="16" VerticalAlignment="Center" />
+                                                <Button x:Name="RepolishHistoryButton" Click="RepolishHistoryButton_Click" Content="Re-polish" Style="{StaticResource BrandQuietButtonStyle}" />
                                                 <Button x:Name="CopyHistoryButton" Click="CopyHistoryButton_Click" Content="Copy" Style="{StaticResource BrandQuietButtonStyle}" />
                                                 <Button x:Name="PasteHistoryButton" AutomationProperties.AutomationId="PasteHistoryButton" AutomationProperties.HelpText="Pastes the selected dictation into the app you were using before EnviousWispr." Click="PasteHistoryButton_Click" Content="Paste" Style="{StaticResource BrandPrimaryButtonStyle}" />
                                                 <Button x:Name="KeepHistoryButton" Click="KeepHistoryButton_Click" Content="Keep" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" />
@@ -992,23 +994,179 @@
                             </Border>
                             <Border x:Name="KeybindsSection" Padding="20" Style="{StaticResource BrandSectionCardStyle}">
                                 <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                    <StackPanel x:Name="KeybindsEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="KeybindsEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsKeybindsNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Keybinds" /></StackPanel>
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE765;" /><ComboBox x:Name="RecordingModeComboBox" ItemTemplate="{StaticResource BrandTrimmedChoiceTemplate}" Grid.Column="1" Header="Recording mode" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" HorizontalAlignment="Stretch"><x:String>Push to Talk: hold to record, release to stop</x:String><x:String>Toggle: press once to start, press again to stop</x:String></ComboBox></Grid><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE916;" /><StackPanel Grid.Column="1" Background="{ThemeResource BrandHitTestBrush}" Spacing="{StaticResource BrandSpacingXs}" Tapped="SettingRow_Tapped"><TextBlock x:Name="AutoStopToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Stop recording when I stop speaking" TextWrapping="Wrap" /><ToggleSwitch AutomationProperties.LabeledBy="{x:Bind AutoStopToggleLabel, Mode=OneTime}" HorizontalAlignment="Left" x:Name="AutoStopToggle" AutomationProperties.HelpText="Only applies in Toggle mode. EnviousWispr never ends a recording you are holding a key for, and never before you have said anything." Style="{StaticResource BrandToggleSwitchStyle}" Toggled="AutoStopToggle_Toggled" /></StackPanel></Grid><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE823;" /><NumberBox x:Name="AutoStopSecondsBox" Grid.Column="1" AutomationProperties.HelpText="How long a pause has to last before the recording ends. Shorter than 1.5 seconds is treated as 1.5, because ordinary speech contains longer pauses than that." Header="Seconds of silence before stopping" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" HorizontalAlignment="Stretch" LargeChange="1" Maximum="30" Minimum="1.5" SmallChange="0.5" SpinButtonPlacementMode="Inline" ValidationMode="InvalidInputOverwritten" /></Grid>
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE765;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><TextBox x:Name="HotkeyTextBox" IsReadOnly="True" TextChanged="HotkeyBoxTextChanged" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" Header="Recording keybind" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" MaxLength="64" PlaceholderText="Ctrl+Win" /><TextBlock x:Name="HandsFreeHelperText" Style="{StaticResource BrandHelperStyle}" Text="Bind a modifier, or two held together such as Ctrl+Win, and the key learns four gestures: hold to talk, tap twice to record hands-free, tap once to stop, tap three times to throw it away. Holding waits a moment first, so shortcuts still work." TextWrapping="Wrap" /><Button x:Name="HandsFreeGestureButton" Click="HandsFreeGestureButton_Click" Content="Use Right Ctrl" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" AutomationProperties.HelpText="Sets the recording keybind to the right Control key, which unlocks the hands-free gestures." /></StackPanel></Grid>
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE711;" /><TextBox x:Name="CancelHotkeyTextBox" IsReadOnly="True" TextChanged="HotkeyBoxTextChanged" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" Grid.Column="1" Header="Cancel keybind" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" MaxLength="64" PlaceholderText="Escape" /></Grid>
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE72E;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><StackPanel Background="{ThemeResource BrandHitTestBrush}" Spacing="{StaticResource BrandSpacingXs}" Tapped="SettingRow_Tapped"><TextBlock x:Name="EscapeRecoveryToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Escape Recovery" TextWrapping="Wrap" /><ToggleSwitch AutomationProperties.LabeledBy="{x:Bind EscapeRecoveryToggleLabel, Mode=OneTime}" HorizontalAlignment="Left" x:Name="EscapeRecoveryToggle" Style="{StaticResource BrandToggleSwitchStyle}" /></StackPanel><TextBlock Style="{StaticResource BrandHelperStyle}" Text="When enabled, the cancel key finishes transcription and polishing instead of discarding the recording." TextWrapping="Wrap" /></StackPanel></Grid>
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE710;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><TextBox x:Name="QuickAddHotkeyTextBox" IsReadOnly="True" TextChanged="HotkeyBoxTextChanged" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" Header="Add-a-word keybind" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" MaxLength="64" PlaceholderText="Ctrl+Alt+W" /><TextBlock Style="{StaticResource BrandHelperStyle}" Text="Select a misheard word anywhere, then press the Add-a-word shortcut to bring it into Your Words. Terminal windows do not expose their selection." TextWrapping="Wrap" /></StackPanel></Grid>
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE77F;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><TextBox x:Name="PasteLastHotkeyTextBox" IsReadOnly="True" TextChanged="HotkeyBoxTextChanged" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" Header="Paste last dictation keybind" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" MaxLength="64" PlaceholderText="None" /><TextBlock Style="{StaticResource BrandHelperStyle}" Text="Puts your last dictation where the cursor is, in the app you are in. Press Backspace in the field to remove the shortcut." TextWrapping="Wrap" /></StackPanel></Grid>
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8C8;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><TextBox x:Name="CopyLastHotkeyTextBox" IsReadOnly="True" TextChanged="HotkeyBoxTextChanged" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" Header="Copy last dictation keybind" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" MaxLength="64" PlaceholderText="None" /><TextBlock Style="{StaticResource BrandHelperStyle}" Text="Puts your last dictation on the clipboard. Also in the tray menu. Press Backspace in the field to remove the shortcut." TextWrapping="Wrap" /></StackPanel></Grid>
+                                    <StackPanel x:Name="KeybindsEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                        <FontIcon x:Name="KeybindsEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsKeybindsNavGlyph.Glyph, Mode=OneTime}" />
+                                        <TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Keybinds" />
+                                    </StackPanel>
+                                    <!-- Recording Mode Row: Push to Talk | Toggle segmented pill picker -->
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE765;" />
+                                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Recording mode" />
+                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Hold to talk, or press once to start and again to stop." TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <Border Grid.Column="2" CornerRadius="18" Background="{ThemeResource BrandAccentLightBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="3" VerticalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                                <Button x:Name="PushToTalkSegmentButton" Click="PushToTalkSegmentButton_Click" Content="Push to Talk" Style="{StaticResource BrandQuietButtonStyle}" CornerRadius="14" Padding="12,4,12,4" />
+                                                <Button x:Name="ToggleSegmentButton" Click="ToggleSegmentButton_Click" Content="Toggle" Style="{StaticResource BrandQuietButtonStyle}" CornerRadius="14" Padding="12,4,12,4" />
+                                            </StackPanel>
+                                        </Border>
+                                    </Grid>
+                                    <!-- Stop recording on silence (Toggle mode only) -->
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE916;" />
+                                        <StackPanel Grid.Column="1" Background="{ThemeResource BrandHitTestBrush}" Spacing="{StaticResource BrandSpacingXs}" Tapped="SettingRow_Tapped">
+                                            <TextBlock x:Name="AutoStopToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Stop recording when I stop speaking" TextWrapping="Wrap" />
+                                            <ToggleSwitch AutomationProperties.LabeledBy="{x:Bind AutoStopToggleLabel, Mode=OneTime}" HorizontalAlignment="Left" x:Name="AutoStopToggle" AutomationProperties.HelpText="Only applies in Toggle mode. EnviousWispr never ends a recording you are holding a key for, and never before you have said anything." Style="{StaticResource BrandToggleSwitchStyle}" Toggled="AutoStopToggle_Toggled" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE823;" />
+                                        <NumberBox x:Name="AutoStopSecondsBox" Grid.Column="1" AutomationProperties.HelpText="How long a pause has to last before the recording ends. Shorter than 1.5 seconds is treated as 1.5, because ordinary speech contains longer pauses than that." Header="Seconds of silence before stopping" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" HorizontalAlignment="Stretch" LargeChange="1" Maximum="30" Minimum="1.5" SmallChange="0.5" SpinButtonPlacementMode="Inline" ValidationMode="InvalidInputOverwritten" />
+                                    </Grid>
+                                    <!-- Start / stop recording shortcut -->
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE720;" />
+                                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Start / stop recording" />
+                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Click Change to choose the keys you use." TextWrapping="Wrap" />
+                                            <TextBlock x:Name="HandsFreeHelperText" Style="{StaticResource BrandHelperStyle}" Text="Bind a modifier, or two held together such as Ctrl+Win, and the key learns four gestures: hold to talk, tap twice to record hands-free, tap once to stop, tap three times to throw it away. Holding waits a moment first, so shortcuts still work." TextWrapping="Wrap" />
+                                            <Button x:Name="HandsFreeGestureButton" Click="HandsFreeGestureButton_Click" Content="Use Right Ctrl" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" AutomationProperties.HelpText="Sets the recording keybind to the right Control key, which unlocks the hands-free gestures." Margin="0,4,0,0" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                            <TextBox x:Name="HotkeyTextBox" IsReadOnly="True" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" TextChanged="HotkeyBoxTextChanged" MaxLength="64" PlaceholderText="Ctrl+Win" Width="100" TextAlignment="Center" CornerRadius="14" Padding="8,4,8,4" FontSize="14" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandControlBorderBrush}" BorderThickness="1" />
+                                            <Button x:Name="ChangeHotkeyButton" Click="ChangeHotkeyButton_Click" Tag="Hotkey" Content="Change" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <!-- Cancel recording shortcut -->
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE711;" />
+                                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Cancel recording" />
+                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Cancels the current recording." TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                            <TextBox x:Name="CancelHotkeyTextBox" IsReadOnly="True" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" TextChanged="HotkeyBoxTextChanged" MaxLength="64" PlaceholderText="Escape" Width="100" TextAlignment="Center" CornerRadius="14" Padding="8,4,8,4" FontSize="14" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandControlBorderBrush}" BorderThickness="1" />
+                                            <Button x:Name="ChangeCancelHotkeyButton" Click="ChangeHotkeyButton_Click" Tag="CancelHotkey" Content="Change" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <!-- Escape Recovery toggle -->
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE72E;" />
+                                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}">
+                                            <StackPanel Background="{ThemeResource BrandHitTestBrush}" Spacing="{StaticResource BrandSpacingXs}" Tapped="SettingRow_Tapped">
+                                                <TextBlock x:Name="EscapeRecoveryToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Escape Recovery" TextWrapping="Wrap" />
+                                                <ToggleSwitch AutomationProperties.LabeledBy="{x:Bind EscapeRecoveryToggleLabel, Mode=OneTime}" HorizontalAlignment="Left" x:Name="EscapeRecoveryToggle" Style="{StaticResource BrandToggleSwitchStyle}" />
+                                            </StackPanel>
+                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="When enabled, the cancel key finishes transcription and polishing instead of discarding the recording." TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <!-- Add selected word to Dictionary -->
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE710;" />
+                                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Add selected word to Dictionary" />
+                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Select a misheard word anywhere, then press these keys." TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                            <TextBox x:Name="QuickAddHotkeyTextBox" IsReadOnly="True" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" TextChanged="HotkeyBoxTextChanged" MaxLength="64" PlaceholderText="Ctrl+Alt+W" Width="100" TextAlignment="Center" CornerRadius="14" Padding="8,4,8,4" FontSize="14" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandControlBorderBrush}" BorderThickness="1" />
+                                            <Button x:Name="ChangeQuickAddHotkeyButton" Click="ChangeHotkeyButton_Click" Tag="QuickAdd" Content="Change" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <!-- Paste last dictation -->
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE77F;" />
+                                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Paste last dictation" />
+                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Pastes your last dictation." TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                            <TextBox x:Name="PasteLastHotkeyTextBox" IsReadOnly="True" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" TextChanged="HotkeyBoxTextChanged" MaxLength="64" PlaceholderText="None" Width="100" TextAlignment="Center" CornerRadius="14" Padding="8,4,8,4" FontSize="14" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandControlBorderBrush}" BorderThickness="1" />
+                                            <Button x:Name="ChangePasteLastHotkeyButton" Click="ChangeHotkeyButton_Click" Tag="PasteLast" Content="Change" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <!-- Copy last dictation -->
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8C8;" />
+                                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Copy last dictation" />
+                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Copies your last dictation." TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                            <TextBox x:Name="CopyLastHotkeyTextBox" IsReadOnly="True" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" TextChanged="HotkeyBoxTextChanged" MaxLength="64" PlaceholderText="None" Width="100" TextAlignment="Center" CornerRadius="14" Padding="8,4,8,4" FontSize="14" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandControlBorderBrush}" BorderThickness="1" />
+                                            <Button x:Name="ChangeCopyLastHotkeyButton" Click="ChangeHotkeyButton_Click" Tag="CopyLast" Content="Change" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Grid>
                                     <TextBlock x:Name="KeybindConflictText" AutomationProperties.LiveSetting="Assertive" Foreground="{ThemeResource BrandErrorBrush}" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" Visibility="Collapsed" />
                                 </StackPanel>
                             </Border>
                             <Border x:Name="SoundSection" Padding="20" Style="{StaticResource BrandSectionCardStyle}">
                                 <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                    <StackPanel x:Name="SoundsEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="SoundsEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsSoundsNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Sounds" /></StackPanel>
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE767;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><StackPanel Background="{ThemeResource BrandHitTestBrush}" Spacing="{StaticResource BrandSpacingXs}" Tapped="SettingRow_Tapped"><TextBlock x:Name="PlayRecordingSoundsToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Play recording sounds" TextWrapping="Wrap" /><ToggleSwitch AutomationProperties.LabeledBy="{x:Bind PlayRecordingSoundsToggleLabel, Mode=OneTime}" x:Name="PlayRecordingSoundsToggle" HorizontalAlignment="Left" Style="{StaticResource BrandToggleSwitchStyle}" /></StackPanel><TextBlock Style="{StaticResource BrandHelperStyle}" Text="Plays a short sound when recording starts and stops. People nearby may hear it." TextWrapping="Wrap" /></StackPanel></Grid>
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE189;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><ComboBox x:Name="RecordingSoundComboBox" ItemTemplate="{StaticResource BrandTrimmedDisplayNameTemplate}" Header="Sound pairing" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" HorizontalAlignment="Stretch" SelectionChanged="RecordingSoundComboBox_SelectionChanged" /><TextBlock x:Name="RecordingSoundDescriptionText" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" /></StackPanel></Grid>
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE768;" /><Button x:Name="PreviewRecordingSoundButton" Grid.Column="1" AutomationProperties.HelpText="Plays the selected recording start and stop sound without changing the master toggle." Click="PreviewRecordingSoundButton_Click" Content="Preview selected sound" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" /></Grid>
+                                    <StackPanel x:Name="SoundsEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                        <FontIcon x:Name="SoundsEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsSoundsNavGlyph.Glyph, Mode=OneTime}" />
+                                        <TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Sounds" />
+                                    </StackPanel>
+                                    <!-- Play recording sounds toggle card -->
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE767;" />
+                                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}">
+                                            <StackPanel Background="{ThemeResource BrandHitTestBrush}" Spacing="{StaticResource BrandSpacingXs}" Tapped="SettingRow_Tapped">
+                                                <TextBlock x:Name="PlayRecordingSoundsToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Play recording sounds" TextWrapping="Wrap" />
+                                                <ToggleSwitch AutomationProperties.LabeledBy="{x:Bind PlayRecordingSoundsToggleLabel, Mode=OneTime}" x:Name="PlayRecordingSoundsToggle" HorizontalAlignment="Left" Style="{StaticResource BrandToggleSwitchStyle}" />
+                                            </StackPanel>
+                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Plays a short sound when recording starts and stops. People nearby may hear it." TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Hear this chime without changing your choice." />
+                                    <!-- 2-column grid of 12 chime cards -->
+                                    <Grid x:Name="ChimesGrid" ColumnSpacing="{StaticResource BrandSpacingM}" RowSpacing="{StaticResource BrandSpacingM}" HorizontalAlignment="Stretch">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                    </Grid>
                                 </StackPanel>
                             </Border>
                             <Border x:Name="DeterministicCleanupSection" Padding="20" Style="{StaticResource BrandSectionCardStyle}">
@@ -1023,22 +1181,290 @@
                             </Border>
                             <Border x:Name="TranscribeFileSection" Padding="20" Style="{StaticResource BrandSectionCardStyle}">
                                 <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                    <StackPanel x:Name="TranscribeafileEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="TranscribeafileEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsTranscribeFileNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Transcribe a File" /></StackPanel>
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8E5;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingS}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Choose an audio file" TextWrapping="Wrap" /><TextBlock Style="{StaticResource BrandHelperStyle}" Text="WAV, MP3, M4A, WMA or FLAC. It is transcribed on this PC with your Transcription settings and cleaned up like a dictation. While a file is being transcribed, dictation waits: press your key again once it finishes or you stop it." TextWrapping="Wrap" /><StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}"><Button x:Name="TranscribeFileChooseButton" Click="TranscribeFileChooseButton_Click" Content="Choose a file..." Style="{StaticResource BrandQuietButtonStyle}" /><Button x:Name="TranscribeFileCancelButton" Click="TranscribeFileCancelButton_Click" Content="Stop" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" /></StackPanel><ProgressBar x:Name="TranscribeFileProgress" Maximum="1" Visibility="Collapsed" /><TextBlock x:Name="TranscribeFileStatusText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" Visibility="Collapsed" /></StackPanel></Grid>
-                                    <StackPanel x:Name="TranscribeFileResultPanel" Spacing="{StaticResource BrandSpacingS}" Visibility="Collapsed"><ScrollViewer MaxHeight="360" VerticalScrollBarVisibility="Auto"><TextBlock x:Name="TranscribeFileResultText" AutomationProperties.Name="Transcript" IsTextSelectionEnabled="True" Style="{StaticResource BrandBodyStyle}" TextWrapping="Wrap" /></ScrollViewer><StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}"><Button x:Name="TranscribeFileCopyButton" Click="TranscribeFileCopyButton_Click" Content="Copy" Style="{StaticResource BrandQuietButtonStyle}" /><Button x:Name="TranscribeFileSaveButton" Click="TranscribeFileSaveButton_Click" Content="Save as text..." Style="{StaticResource BrandQuietButtonStyle}" /></StackPanel></StackPanel>
+                                    <StackPanel x:Name="TranscribeafileEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                        <FontIcon x:Name="TranscribeafileEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsTranscribeFileNavGlyph.Glyph, Mode=OneTime}" />
+                                        <TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Transcribe a File" />
+                                    </StackPanel>
+                                    <!-- 6-step progress strip -->
+                                    <Border x:Name="TranscribeFileStepStrip" Padding="12,8" Margin="0,0,0,4" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="0,0,0,1">
+                                        <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel x:Name="TranscribeStep1" Grid.Column="0" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" HorizontalAlignment="Center">
+                                                <Border x:Name="TranscribeStep1Badge" Width="20" Height="20" CornerRadius="10" Background="{ThemeResource BrandAccentSolidBrush}">
+                                                    <TextBlock x:Name="TranscribeStep1Num" Text="1" FontSize="14" FontWeight="Bold" Foreground="{ThemeResource BrandOnAccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <TextBlock x:Name="TranscribeStep1Label" Text="Upload" Style="{StaticResource BrandRowLabelStyle}" Foreground="{ThemeResource BrandAccentBrush}" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                            <StackPanel x:Name="TranscribeStep2" Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" HorizontalAlignment="Center">
+                                                <Border x:Name="TranscribeStep2Badge" Width="20" Height="20" CornerRadius="10" Background="{ThemeResource BrandDividerBrush}">
+                                                    <TextBlock x:Name="TranscribeStep2Num" Text="2" FontSize="14" FontWeight="Bold" Foreground="{ThemeResource BrandTextTertiaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <TextBlock x:Name="TranscribeStep2Label" Text="Transcription" Style="{StaticResource BrandHelperStyle}" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                            <StackPanel x:Name="TranscribeStep3" Grid.Column="2" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" HorizontalAlignment="Center">
+                                                <Border x:Name="TranscribeStep3Badge" Width="20" Height="20" CornerRadius="10" Background="{ThemeResource BrandDividerBrush}">
+                                                    <TextBlock x:Name="TranscribeStep3Num" Text="3" FontSize="14" FontWeight="Bold" Foreground="{ThemeResource BrandTextTertiaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <TextBlock x:Name="TranscribeStep3Label" Text="Polish" Style="{StaticResource BrandHelperStyle}" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                            <StackPanel x:Name="TranscribeStep4" Grid.Column="3" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" HorizontalAlignment="Center">
+                                                <Border x:Name="TranscribeStep4Badge" Width="20" Height="20" CornerRadius="10" Background="{ThemeResource BrandDividerBrush}">
+                                                    <TextBlock x:Name="TranscribeStep4Num" Text="4" FontSize="14" FontWeight="Bold" Foreground="{ThemeResource BrandTextTertiaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <TextBlock x:Name="TranscribeStep4Label" Text="Review" Style="{StaticResource BrandHelperStyle}" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                            <StackPanel x:Name="TranscribeStep5" Grid.Column="4" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" HorizontalAlignment="Center">
+                                                <Border x:Name="TranscribeStep5Badge" Width="20" Height="20" CornerRadius="10" Background="{ThemeResource BrandDividerBrush}">
+                                                    <TextBlock x:Name="TranscribeStep5Num" Text="5" FontSize="14" FontWeight="Bold" Foreground="{ThemeResource BrandTextTertiaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <TextBlock x:Name="TranscribeStep5Label" Text="Working" Style="{StaticResource BrandHelperStyle}" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                            <StackPanel x:Name="TranscribeStep6" Grid.Column="5" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" HorizontalAlignment="Center">
+                                                <Border x:Name="TranscribeStep6Badge" Width="20" Height="20" CornerRadius="10" Background="{ThemeResource BrandDividerBrush}">
+                                                    <TextBlock x:Name="TranscribeStep6Num" Text="6" FontSize="14" FontWeight="Bold" Foreground="{ThemeResource BrandTextTertiaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <TextBlock x:Name="TranscribeStep6Label" Text="Done" Style="{StaticResource BrandHelperStyle}" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                    <!-- Dashed Drag-and-Drop Zone -->
+                                    <Border x:Name="TranscribeFileDropZone" AllowDrop="True" DragOver="TranscribeFileDropZone_DragOver" Drop="TranscribeFileDropZone_Drop" BorderBrush="{ThemeResource BrandControlBorderBrush}" BorderThickness="2" CornerRadius="{ThemeResource BrandSectionRadius}" Background="{ThemeResource BrandPageBgBrush}" Padding="32,24" HorizontalAlignment="Stretch">
+                                        <StackPanel Spacing="{StaticResource BrandSpacingS}" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <Border Width="48" Height="48" CornerRadius="12" Background="{ThemeResource BrandAccentLightBrush}" HorizontalAlignment="Center">
+                                                <FontIcon Glyph="&#xE898;" Foreground="{ThemeResource BrandAccentBrush}" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            </Border>
+                                            <Button x:Name="TranscribeFileChooseButton" Click="TranscribeFileChooseButton_Click" Content="Choose a file" Style="{StaticResource BrandPrimaryButtonStyle}" HorizontalAlignment="Center" Padding="20,8,20,8" Margin="0,8,0,0" />
+                                            <TextBlock Text="or drag and drop here" Style="{StaticResource BrandHelperStyle}" HorizontalAlignment="Center" />
+                                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" HorizontalAlignment="Center" Margin="0,4,0,0">
+                                                <TextBlock Text="Supported formats" Style="{StaticResource BrandHelperStyle}" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                                <Border CornerRadius="10" Background="{ThemeResource BrandSidebarBgBrush}" Padding="6,2,6,2"><TextBlock Text="WAV" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" /></Border>
+                                                <Border CornerRadius="10" Background="{ThemeResource BrandSidebarBgBrush}" Padding="6,2,6,2"><TextBlock Text="MP3" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" /></Border>
+                                                <Border CornerRadius="10" Background="{ThemeResource BrandSidebarBgBrush}" Padding="6,2,6,2"><TextBlock Text="M4A" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" /></Border>
+                                                <Border CornerRadius="10" Background="{ThemeResource BrandSidebarBgBrush}" Padding="6,2,6,2"><TextBlock Text="WMA" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" /></Border>
+                                                <Border CornerRadius="10" Background="{ThemeResource BrandSidebarBgBrush}" Padding="6,2,6,2"><TextBlock Text="FLAC" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" /></Border>
+                                            </StackPanel>
+                                            <ProgressBar x:Name="TranscribeFileProgress" Maximum="1" Visibility="Collapsed" Width="260" Margin="0,8,0,0" HorizontalAlignment="Center" />
+                                            <TextBlock x:Name="TranscribeFileStatusText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" HorizontalAlignment="Center" Visibility="Collapsed" />
+                                            <Button x:Name="TranscribeFileCancelButton" Click="TranscribeFileCancelButton_Click" Content="Stop" Style="{StaticResource BrandQuietButtonStyle}" HorizontalAlignment="Center" Visibility="Collapsed" Margin="0,6,0,0" />
+                                        </StackPanel>
+                                    </Border>
+                                    <!-- Result panel -->
+                                    <StackPanel x:Name="TranscribeFileResultPanel" Spacing="{StaticResource BrandSpacingS}" Visibility="Collapsed">
+                                        <ScrollViewer MaxHeight="360" VerticalScrollBarVisibility="Auto">
+                                            <TextBlock x:Name="TranscribeFileResultText" AutomationProperties.Name="Transcript" IsTextSelectionEnabled="True" Style="{StaticResource BrandBodyStyle}" TextWrapping="Wrap" />
+                                        </ScrollViewer>
+                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                            <Button x:Name="TranscribeFileCopyButton" Click="TranscribeFileCopyButton_Click" Content="Copy" Style="{StaticResource BrandQuietButtonStyle}" />
+                                            <Button x:Name="TranscribeFileSaveButton" Click="TranscribeFileSaveButton_Click" Content="Save as text..." Style="{StaticResource BrandQuietButtonStyle}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <!-- 2x2 grid of 4 privacy/feature tiles -->
+                                    <Border BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="{ThemeResource BrandSectionRadius}" Background="{ThemeResource BrandCardBgBrush}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+                                            <!-- Tile 1: Voice stays here -->
+                                            <Border Grid.Row="0" Grid.Column="0" Padding="16,14" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="0,0,1,1">
+                                                <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                    <Border Width="36" Height="36" CornerRadius="8" Style="{StaticResource BrandIconTileStyle}">
+                                                        <FontIcon FontSize="16" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE72E;" />
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Your voice stays here" />
+                                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Audio never leaves this PC." TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                            <!-- Tile 2: Local transcription -->
+                                            <Border Grid.Row="0" Grid.Column="1" Padding="16,14" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="0,0,0,1">
+                                                <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                    <Border Width="36" Height="36" CornerRadius="8" Style="{StaticResource BrandIconTileStyle}">
+                                                        <FontIcon FontSize="16" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE945;" />
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Local transcription" />
+                                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Fast, on-device transcription." TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                            <!-- Tile 3: Optional AI polish -->
+                                            <Border Grid.Row="1" Grid.Column="0" Padding="16,14" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="0,0,1,0">
+                                                <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                    <Border Width="36" Height="36" CornerRadius="8" Style="{StaticResource BrandIconTileStyle}">
+                                                        <FontIcon FontSize="16" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE70F;" />
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Optional AI polish" />
+                                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="On device, or your own cloud key." TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                            <!-- Tile 4: Original kept -->
+                                            <Border Grid.Row="1" Grid.Column="1" Padding="16,14">
+                                                <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                    <Border Width="36" Height="36" CornerRadius="8" Style="{StaticResource BrandIconTileStyle}">
+                                                        <FontIcon FontSize="16" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xEA18;" />
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Original kept" />
+                                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Never overwritten." TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+                                    <!-- Secure. Private. Local. caption -->
+                                    <Border CornerRadius="{ThemeResource BrandSectionRadius}" Background="{ThemeResource BrandAccentLightBrush}" Padding="16,12">
+                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                            <FontIcon Glyph="&#xE730;" Foreground="{ThemeResource BrandSuccessBrush}" FontSize="16" VerticalAlignment="Center" />
+                                            <TextBlock Text="Secure. Private. Local." Foreground="{ThemeResource BrandSuccessBrush}" FontWeight="SemiBold" Style="{StaticResource BrandRowLabelStyle}" VerticalAlignment="Center" />
+                                            <TextBlock Text="Your audio and text both stay on this PC." Foreground="{ThemeResource BrandTextSecondaryBrush}" Style="{StaticResource BrandHelperStyle}" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Border>
                                 </StackPanel>
                             </Border>
                             <Border x:Name="AiPolishSection" Padding="20" Style="{StaticResource BrandSectionCardStyle}">
                                 <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                    <StackPanel x:Name="AIpolishEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="AIpolishEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsAiPolishNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="AI polish" /></StackPanel>
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE70F;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Provider" TextWrapping="Wrap" /><ItemsControl x:Name="PolishProviderComboBox" HorizontalAlignment="Stretch" TabFocusNavigation="Once"><ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="{StaticResource BrandSpacingS}" /></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate><RadioButton GroupName="PillPolishProvider" Checked="PolishProviderCardChecked" Style="{StaticResource BrandSelectableCardStyle}" IsChecked="{Binding IsSelected, Mode=TwoWay}" ContentTemplate="{StaticResource BrandSelectableChoiceTemplate}" Content="{Binding}" /></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></Grid>
-                                    <Grid x:Name="PolishModelPickerRow" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8B7;" /><ComboBox x:Name="PolishModelPicker" Grid.Column="1" AutomationProperties.HelpText="Lists the bundled EG-1 choice, locally installed Ollama chat models, or compatible models discovered from the selected direct-cloud account." Header="Available models" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" HorizontalAlignment="Stretch" PlaceholderText="No models listed" SelectionChanged="PolishModelPicker_SelectionChanged" /></Grid>
-                                    <Grid x:Name="RefreshPolishModelsButtonRow" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE72C;" /><Button x:Name="RefreshPolishModelsButton" Grid.Column="1" AutomationProperties.HelpText="Refreshes local Ollama models or fetches the selected provider's model catalog without sending transcript text." Click="RefreshPolishModelsButton_Click" Content="Refresh available models" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" /></Grid>
-                                    <Grid x:Name="PolishModelTextBoxRow" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8B7;" /><TextBox x:Name="PolishModelTextBox" Grid.Column="1" Header="Model ID (selected above or enter a custom compatible ID)" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" MaxLength="256" /></Grid>
-                                    <Grid x:Name="OllamaEndpointTextBoxRow" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE968;" /><TextBox x:Name="OllamaEndpointTextBox" Grid.Column="1" Header="Ollama endpoint on this PC" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" MaxLength="2048" PlaceholderText="http://127.0.0.1:11434" /></Grid>
-                                    <Grid x:Name="OllamaModelsRow" ColumnSpacing="{StaticResource BrandSpacingM}" Visibility="Collapsed"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE896;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingS}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Ollama models" TextWrapping="Wrap" /><TextBlock x:Name="OllamaSetupText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandBodyStyle}" TextWrapping="Wrap" /><StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}"><Button x:Name="OllamaSetupActionButton" Click="OllamaSetupActionButton_Click" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" /><Button x:Name="OllamaCheckAgainButton" AutomationProperties.HelpText="Looks at Ollama again and refreshes the list of models." Click="OllamaCheckAgainButton_Click" Content="Check again" Style="{StaticResource BrandQuietButtonStyle}" /></StackPanel><TextBlock x:Name="OllamaNoticeText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" Visibility="Collapsed" /><TextBlock x:Name="OllamaCaveatText" Style="{StaticResource BrandHelperStyle}" Text="No local model handled other languages well in our tests. Downloads need an internet connection, and Ollama keeps models where other apps on this PC can use them too." TextWrapping="Wrap" Visibility="Collapsed" /><ItemsControl x:Name="OllamaModelList" AutomationProperties.Name="Ollama models" HorizontalAlignment="Stretch"><ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="{StaticResource BrandSpacingM}" /></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" AutomationProperties.AccessibilityView="Raw" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="{Binding Glyph}" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding Name}" TextWrapping="Wrap" /><TextBlock Foreground="{ThemeResource BrandSuccessBrush}" Style="{StaticResource BrandHelperStyle}" Text="{Binding VerdictLabel}" Visibility="{Binding RecommendedVisibility}" /><TextBlock Foreground="{ThemeResource BrandWarningBrush}" Style="{StaticResource BrandHelperStyle}" Text="{Binding VerdictLabel}" Visibility="{Binding MixedVisibility}" /><TextBlock Foreground="{ThemeResource BrandErrorBrush}" Style="{StaticResource BrandHelperStyle}" Text="{Binding VerdictLabel}" Visibility="{Binding CautionVisibility}" /><TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding VerdictLabel}" Visibility="{Binding UntestedVisibility}" /></StackPanel><TextBlock Style="{StaticResource BrandBodyStyle}" Text="{Binding Note}" TextWrapping="Wrap" Visibility="{Binding NoteVisibility}" /><TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding Detail}" TextWrapping="Wrap" /><ProgressBar IsIndeterminate="{Binding Indeterminate}" Maximum="100" Value="{Binding Percent}" Visibility="{Binding ProgressVisibility}" /><TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding ProgressText}" TextWrapping="Wrap" Visibility="{Binding ProgressVisibility}" /></StackPanel><Button Grid.Column="2" AutomationProperties.Name="{Binding ActionName}" Click="OllamaModelAction_Click" Content="{Binding ActionLabel}" IsEnabled="{Binding ActionEnabled}" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Top" Visibility="{Binding ActionVisibility}" /></Grid></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></Grid>
-                                    <Grid x:Name="ApiKeyPasswordBoxRow" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE72E;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><PasswordBox x:Name="ApiKeyPasswordBox" AutomationProperties.HelpText="Write-only field for the selected direct cloud provider. Existing keys are never displayed." Header="API key for selected cloud provider" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" MaxLength="1280" /><StackPanel x:Name="ApiKeyButtonPanel" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}"><Button x:Name="SaveApiKeyButton" Click="SaveApiKeyButton_Click" Content="Save API key" Style="{StaticResource BrandQuietButtonStyle}" /><Button x:Name="RemoveApiKeyButton" Click="RemoveApiKeyButton_Click" Content="Remove stored key" Style="{StaticResource BrandQuietButtonStyle}" /></StackPanel><TextBlock x:Name="ApiKeyStatusText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" /></StackPanel></Grid>
-                                    <TextBlock Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="API keys are stored separately in Windows Credential Manager and are never written to settings or exports. Model discovery sends only the stored credential to the selected provider; no transcript or generation request is sent. Provider and model selections apply after the next launch." TextWrapping="Wrap" />
+                                    <StackPanel x:Name="AIpolishEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                        <FontIcon x:Name="AIpolishEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsAiPolishNavGlyph.Glyph, Mode=OneTime}" />
+                                        <TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="AI polish" />
+                                    </StackPanel>
+                                    <!-- Top Enable AI Polish toggle card -->
+                                    <Grid Background="{ThemeResource BrandHitTestBrush}" ColumnSpacing="{StaticResource BrandSpacingM}" Tapped="SettingRow_Tapped">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                            <TextBlock x:Name="EnableAiPolishToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowTitleStyle}" Text="Enable AI Polish" />
+                                            <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Fixes grammar, punctuation and formatting" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <ToggleSwitch Grid.Column="1" AutomationProperties.LabeledBy="{x:Bind EnableAiPolishToggleLabel, Mode=OneTime}" x:Name="EnableAiPolishToggle" HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource BrandToggleSwitchStyle}" Toggled="EnableAiPolishToggle_Toggled" />
+                                    </Grid>
+                                    <!-- Enabled content container -->
+                                    <StackPanel x:Name="AiPolishEnabledContent" Spacing="{StaticResource BrandSpacingM}">
+                                        <!-- MODEL eyebrow -->
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" FontWeight="SemiBold" Text="MODEL" />
+                                            <TextBlock Grid.Column="1" Style="{StaticResource BrandHelperStyle}" Text="Changes apply to the next recording" />
+                                        </Grid>
+                                        <!-- Active Provider Summary Card -->
+                                        <Border x:Name="ActivePolishProviderSummaryCard" Style="{StaticResource BrandSectionCardStyle}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="16,14">
+                                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="48" Height="48" CornerRadius="10" Style="{StaticResource BrandIconTileStyle}">
+                                                    <FontIcon x:Name="ActivePolishProviderIcon" Glyph="&#xE70F;" FontSize="20" Foreground="{ThemeResource BrandAccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                                        <TextBlock x:Name="ActivePolishProviderNameText" Style="{StaticResource BrandRowTitleStyle}" Text="EG-1" />
+                                                        <Border x:Name="ActivePolishProviderBadge" CornerRadius="10" Background="{ThemeResource BrandAccentLightBrush}" Padding="8,2,8,2" VerticalAlignment="Center">
+                                                            <TextBlock x:Name="ActivePolishProviderBadgeText" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="On this PC" />
+                                                        </Border>
+                                                    </StackPanel>
+                                                    <TextBlock x:Name="ActivePolishProviderStatusText" Style="{StaticResource BrandHelperStyle}" Text="Our model for cleaning up dictation on this PC." TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <Button Grid.Column="2" x:Name="ChangePolishProviderButton" Click="ChangePolishProviderButton_Click" Content="Change ⇅" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </Border>
+                                        <!-- Provider Chooser (collapsible on Change) -->
+                                        <StackPanel x:Name="PolishProviderChooserPanel" Visibility="Collapsed" Spacing="{StaticResource BrandSpacingS}">
+                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Choose an AI Polish provider" />
+                                            <ItemsControl x:Name="PolishProviderComboBox" HorizontalAlignment="Stretch" TabFocusNavigation="Once">
+                                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="{StaticResource BrandSpacingS}" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate><DataTemplate><RadioButton GroupName="PillPolishProvider" Checked="PolishProviderCardChecked" Style="{StaticResource BrandSelectableCardStyle}" IsChecked="{Binding IsSelected, Mode=TwoWay}" ContentTemplate="{StaticResource BrandSelectableChoiceTemplate}" Content="{Binding}" /></DataTemplate></ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                        <!-- EG-1 Configuration Panel -->
+                                        <StackPanel x:Name="EgOneSettingsPanel" Spacing="{StaticResource BrandSpacingM}">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                <TextBlock Style="{StaticResource BrandRowLabelStyle}" FontWeight="SemiBold" Text="EG-1 · choose a size" />
+                                                <TextBlock Grid.Column="1" x:Name="EgOneMemoryText" Style="{StaticResource BrandHelperStyle}" Text="This PC: Local Memory" />
+                                            </Grid>
+                                            <Border BorderBrush="{ThemeResource BrandAccentBrush}" BorderThickness="2" CornerRadius="{ThemeResource BrandSectionRadius}" Background="{ThemeResource BrandCardBgBrush}" Padding="16">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                    <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="EG-1" />
+                                                            <Border CornerRadius="10" Background="{ThemeResource BrandAccentLightBrush}" Padding="8,2,8,2">
+                                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Best for this PC" />
+                                                            </Border>
+                                                        </StackPanel>
+                                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Best quality" Foreground="{ThemeResource BrandAccentBrush}" />
+                                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="The most accurate. Pick it for long dictations, email and languages other than English." TextWrapping="Wrap" />
+                                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Built-in on this PC" Margin="0,6,0,0" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                            <Border BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="{ThemeResource BrandSectionRadius}" Background="{ThemeResource BrandCardBgBrush}" Padding="16">
+                                                <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                    <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="EG-1 Mini" />
+                                                    <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Fast all-rounder" Foreground="{ThemeResource BrandAccentBrush}" />
+                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Close to EG-1 on short dictation, at about half the memory." TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </Border>
+                                            <Border BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="{ThemeResource BrandSectionRadius}" Background="{ThemeResource BrandCardBgBrush}" Padding="16">
+                                                <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                    <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="EG-1 Micro" />
+                                                    <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Smallest and fastest" Foreground="{ThemeResource BrandAccentBrush}" />
+                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="The lightest. Good for short English dictation on PCs with little memory to spare." TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </Border>
+                                            <!-- WHY USE EG-1 Explainer -->
+                                            <StackPanel Spacing="{StaticResource BrandSpacingXs}" Margin="0,4,0,0">
+                                                <TextBlock Style="{StaticResource BrandRowLabelStyle}" FontWeight="SemiBold" Foreground="{ThemeResource BrandAccentBrush}" Text="WHY USE EG-1" />
+                                                <TextBlock Style="{StaticResource BrandBodyStyle}" Text="EG-1 is our own model, built for cleaning up dictation. Its polish runs on this PC and works offline, with no API key and no per-use cost." TextWrapping="Wrap" />
+                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="When to pick something else: For the smallest download and mostly short English dictation, S1-mini is lighter. For long recordings or code, a cloud model is a step up." TextWrapping="Wrap" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                        <!-- Ollama Configuration Panel -->
+                                        <StackPanel x:Name="OllamaSettingsPanel" Spacing="{StaticResource BrandSpacingM}" Visibility="Collapsed">
+                                            <Grid x:Name="OllamaEndpointTextBoxRow" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE968;" /><TextBox x:Name="OllamaEndpointTextBox" Grid.Column="1" Header="Ollama endpoint on this PC" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" MaxLength="2048" PlaceholderText="http://127.0.0.1:11434" /></Grid>
+                                            <Grid x:Name="OllamaModelsRow" ColumnSpacing="{StaticResource BrandSpacingM}" Visibility="Collapsed"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE896;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingS}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Ollama models" TextWrapping="Wrap" /><TextBlock x:Name="OllamaSetupText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandBodyStyle}" TextWrapping="Wrap" /><StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}"><Button x:Name="OllamaSetupActionButton" Click="OllamaSetupActionButton_Click" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" /><Button x:Name="OllamaCheckAgainButton" AutomationProperties.HelpText="Looks at Ollama again and refreshes the list of models." Click="OllamaCheckAgainButton_Click" Content="Check again" Style="{StaticResource BrandQuietButtonStyle}" /></StackPanel><TextBlock x:Name="OllamaNoticeText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" Visibility="Collapsed" /><TextBlock x:Name="OllamaCaveatText" Style="{StaticResource BrandHelperStyle}" Text="No local model handled other languages well in our tests. Downloads need an internet connection, and Ollama keeps models where other apps on this PC can use them too." TextWrapping="Wrap" Visibility="Collapsed" /><ItemsControl x:Name="OllamaModelList" AutomationProperties.Name="Ollama models" HorizontalAlignment="Stretch"><ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="{StaticResource BrandSpacingM}" /></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" AutomationProperties.AccessibilityView="Raw" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="{Binding Glyph}" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="{Binding Name}" TextWrapping="Wrap" /><TextBlock Foreground="{ThemeResource BrandSuccessBrush}" Style="{StaticResource BrandHelperStyle}" Text="{Binding VerdictLabel}" Visibility="{Binding RecommendedVisibility}" /><TextBlock Foreground="{ThemeResource BrandWarningBrush}" Style="{StaticResource BrandHelperStyle}" Text="{Binding VerdictLabel}" Visibility="{Binding MixedVisibility}" /><TextBlock Foreground="{ThemeResource BrandErrorBrush}" Style="{StaticResource BrandHelperStyle}" Text="{Binding VerdictLabel}" Visibility="{Binding CautionVisibility}" /><TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding VerdictLabel}" Visibility="{Binding UntestedVisibility}" /></StackPanel><TextBlock Style="{StaticResource BrandBodyStyle}" Text="{Binding Note}" TextWrapping="Wrap" Visibility="{Binding NoteVisibility}" /><TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding Detail}" TextWrapping="Wrap" /><ProgressBar IsIndeterminate="{Binding Indeterminate}" Maximum="100" Value="{Binding Percent}" Visibility="{Binding ProgressVisibility}" /><TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding ProgressText}" TextWrapping="Wrap" Visibility="{Binding ProgressVisibility}" /></StackPanel><Button Grid.Column="2" AutomationProperties.Name="{Binding ActionName}" Click="OllamaModelAction_Click" Content="{Binding ActionLabel}" IsEnabled="{Binding ActionEnabled}" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Top" Visibility="{Binding ActionVisibility}" /></Grid></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></Grid>
+                                        </StackPanel>
+                                        <!-- Cloud Provider Configuration Panel -->
+                                        <StackPanel x:Name="CloudPolishSettingsPanel" Spacing="{StaticResource BrandSpacingM}" Visibility="Collapsed">
+                                            <Grid x:Name="ApiKeyPasswordBoxRow" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE72E;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><PasswordBox x:Name="ApiKeyPasswordBox" AutomationProperties.HelpText="Write-only field for the selected direct cloud provider. Existing keys are never displayed." Header="API key for selected cloud provider" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" MaxLength="1280" /><StackPanel x:Name="ApiKeyButtonPanel" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}"><Button x:Name="SaveApiKeyButton" Click="SaveApiKeyButton_Click" Content="Save API key" Style="{StaticResource BrandQuietButtonStyle}" /><Button x:Name="RemoveApiKeyButton" Click="RemoveApiKeyButton_Click" Content="Clear" Style="{StaticResource BrandQuietButtonStyle}" /></StackPanel><TextBlock x:Name="ApiKeyStatusText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" /></StackPanel></Grid>
+                                            <Grid x:Name="PolishModelPickerRow" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8B7;" /><ComboBox x:Name="PolishModelPicker" Grid.Column="1" AutomationProperties.HelpText="Lists the bundled EG-1 choice, locally installed Ollama chat models, or compatible models discovered from the selected direct-cloud account." Header="Available models" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" HorizontalAlignment="Stretch" PlaceholderText="No models listed" SelectionChanged="PolishModelPicker_SelectionChanged" /></Grid>
+                                            <Grid x:Name="RefreshPolishModelsButtonRow" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE72C;" /><Button x:Name="RefreshPolishModelsButton" Grid.Column="1" AutomationProperties.HelpText="Refreshes local Ollama models or fetches the selected provider's model catalog without sending transcript text." Click="RefreshPolishModelsButton_Click" Content="Refresh available models" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" /></Grid>
+                                            <Grid x:Name="PolishModelTextBoxRow" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8B7;" /><TextBox x:Name="PolishModelTextBox" Grid.Column="1" Header="Model ID (selected above or enter a custom compatible ID)" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" MaxLength="256" /></Grid>
+                                            <TextBlock Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="API keys are stored separately in Windows Credential Manager and are never written to settings or exports. Model discovery sends only the stored credential to the selected provider; no transcript or generation request is sent. Provider and model selections apply after the next launch." TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <!-- Dictation output language note -->
+                                    <Border BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" CornerRadius="{ThemeResource BrandSectionRadius}" Background="{ThemeResource BrandCardBgBrush}" Padding="16,14">
+                                        <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                            <Border Width="36" Height="36" CornerRadius="8" Style="{StaticResource BrandIconTileStyle}">
+                                                <FontIcon FontSize="16" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE774;" />
+                                            </Border>
+                                            <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                                <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Dictation output language" />
+                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Dictation translation requires Claude in AI Polish." TextWrapping="Wrap" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
                                 </StackPanel>
                             </Border>
                             <Border x:Name="HistorySettingsSection" Padding="20" Style="{StaticResource BrandSectionCardStyle}"><StackPanel Spacing="{StaticResource BrandSpacingM}"><StackPanel x:Name="HistoryEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="HistoryEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsHistoryNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="History" /></StackPanel><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE81C;" /><StackPanel Grid.Column="1" Background="{ThemeResource BrandHitTestBrush}" Spacing="{StaticResource BrandSpacingXs}" Tapped="SettingRow_Tapped"><TextBlock x:Name="HistoryEnabledToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Save dictation history on this PC" TextWrapping="Wrap" /><ToggleSwitch AutomationProperties.LabeledBy="{x:Bind HistoryEnabledToggleLabel, Mode=OneTime}" HorizontalAlignment="Left" x:Name="HistoryEnabledToggle" Style="{StaticResource BrandToggleSwitchStyle}" /></StackPanel></Grid><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE823;" /><NumberBox x:Name="RetentionDaysBox" Grid.Column="1" Header="Delete history after this many days (0 keeps it until you delete it)" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" Minimum="0" Maximum="3650" SpinButtonPlacementMode="Inline" /></Grid></StackPanel></Border>
