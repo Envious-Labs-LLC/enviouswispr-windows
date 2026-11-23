@@ -1988,7 +1988,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private void ResetMatchStrictness() =>
         WordStrictnessComboBox.SelectedItem = WordStrictnessComboBox.Items
             .OfType<ComboBoxItem>()
-            .First(item => item.Tag is MatchStrictness.Default);
+            .First(item => item.Tag is MatchStrictness.Default or (int)MatchStrictness.Default);
 
     /// <summary>Selects every word, or clears the selection when they are all already chosen.</summary>
     /// <remarks>
