@@ -73,9 +73,11 @@ tools/llama.cpp/
 # holding dictated content live beside the checkout and are never committed.
 CLAUDE.md
 AGENTS.md
+GEMINI.md
 /LOG.md
 .claude/
 .codex/
+.agents/
 /notes/
 docs/plans/
 docs/phase-zero/
