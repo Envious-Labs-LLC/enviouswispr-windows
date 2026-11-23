@@ -36,6 +36,9 @@ if (-not $Dotnet) {
     $Dotnet = if (Test-Path -LiteralPath $userLocal) { $userLocal } else { 'dotnet' }
 }
 
+. (Join-Path $PSScriptRoot "eco-qos.ps1")
+$ecoTracker = Enable-ProcessTreeEcoQoSOptOut -RequireDescendantTracking
+try {
 $ErrorActionPreference = 'Continue'
 $testProject = 'src\Production\EnviousWispr.Architecture.Tests\EnviousWispr.Architecture.Tests.csproj'
 $isolated = 'WindowsCredentialApiKeyStore'
@@ -46,10 +49,13 @@ Set-Location $Tree
 function RunHigh($argline, $out) {
     $process = Start-Process $Dotnet -ArgumentList $argline -NoNewWindow -PassThru `
         -RedirectStandardOutput $out -RedirectStandardError "$out.err"
-    # WITHOUT THIS IT LANDS ON THE EFFICIENCY CORES. Windows puts a process started by a background
+    # WITHOUT THIS IT LANDS ON THE EFFICIENCY CORES (#68). Windows puts a process started by a background
     # service into EcoQoS, and every build run over SSH was scheduled onto the E-cores until this
-    # was measured.
-    try { $process.PriorityClass = 'High' } catch { }
+    # was measured. We apply Win32 SetProcessInformation power throttling opt-out to the process,
+    # and the process-tree tracker catches all child MSBuild compilation nodes.
+    if ($process -and -not $process.HasExited) {
+        try { [EcoQoSManager]::OptOutProcess($process.Handle, $true) | Out-Null } catch { }
+    }
     $process.WaitForExit()
     $process.Refresh()
     return $process.ExitCode
@@ -149,3 +155,11 @@ Summarise "$env:TEMP\v-isolated.log" $isolated
 ''
 'BOTH LANES ARE RECEIPTS AND NEITHER IS A FULL PASS ON ITS OWN.'
 "Lane 1 is the suite minus $isolated. Lane 2 is that class alone. Quote both."
+
+# Stop tracker, join worker thread, and fail-closed if any child opt-out failed
+Disable-ProcessTreeEcoQoSOptOut -Tracker $ecoTracker
+$ecoTracker = $null
+}
+finally {
+    Disable-ProcessTreeEcoQoSOptOut -Tracker $ecoTracker -CheckFailures:$false
+}
