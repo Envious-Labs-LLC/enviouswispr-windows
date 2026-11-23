@@ -373,7 +373,7 @@ if (packaged && failureMode == JourneyFailureMode.WorkerStartup)
 }
 var appExecutable = appExecutableArgument is null
     ? packaged
-        ? ResolveRegisteredPackagedAppExecutable()
+        ? ResolveRegisteredPackagedAppExecutable(repositoryRoot)
         : Path.Combine(
             repositoryRoot,
             "src",
@@ -3556,19 +3556,21 @@ static void RemovePackagedUatProfileDirectory(string path, string unvirtualizedR
     }
 }
 
-static string ResolveRegisteredPackagedAppExecutable()
+static string ResolveRegisteredPackagedAppExecutable(string repoRoot)
 {
+    var expectedIdentityName = ReadManifestIdentityName(repoRoot);
     try
     {
         var packageManager = new Windows.Management.Deployment.PackageManager();
-        var match = packageManager.FindPackagesForUser(string.Empty)
-            .FirstOrDefault(package => string.Equals(
-                package.Id.Name,
-                "EnviousLabsLLC.EnviousWispr",
-                StringComparison.OrdinalIgnoreCase));
-        if (match is not null)
+        foreach (var package in packageManager.FindPackagesForUser(string.Empty))
         {
-            var candidate = Path.Combine(match.InstalledLocation.Path, "EnviousWispr.App.exe");
+            if (!string.Equals(package.Id.Name, expectedIdentityName, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(package.Id.Name, "EnviousLabsLLC.EnviousWispr", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var candidate = Path.Combine(package.InstalledLocation.Path, "EnviousWispr.App.exe");
             if (File.Exists(candidate))
             {
                 return candidate;
@@ -3578,11 +3580,39 @@ static string ResolveRegisteredPackagedAppExecutable()
     catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
     {
         throw JourneyExpectationException.Instrument(
-            $"--packaged could not query Windows PackageManager for EnviousLabsLLC.EnviousWispr ({exception.Message}).");
+            $"--packaged could not query Windows PackageManager for {expectedIdentityName} ({exception.Message}).");
     }
 
     throw JourneyExpectationException.Instrument(
-        "--packaged requires the EnviousWispr MSIX package to be registered on this PC, or --app-executable pointing to a registered layout.");
+        $"--packaged requires the EnviousWispr MSIX package ({expectedIdentityName}) to be registered on this PC, or --app-executable pointing to a registered layout.");
+}
+
+static string ReadManifestIdentityName(string repoRoot)
+{
+    var manifestPath = Path.Combine(
+        repoRoot,
+        "src",
+        "Production",
+        "EnviousWispr.App",
+        "Package.appxmanifest");
+    if (!File.Exists(manifestPath))
+    {
+        return "EnviousLabsLLC.EnviousWispr";
+    }
+
+    const string marker = "<Identity Name=\"";
+    var content = File.ReadAllText(manifestPath);
+    var start = content.IndexOf(marker, StringComparison.Ordinal);
+    if (start < 0)
+    {
+        return "EnviousLabsLLC.EnviousWispr";
+    }
+
+    start += marker.Length;
+    var end = content.IndexOf('"', start);
+    return end > start
+        ? content[start..end]
+        : "EnviousLabsLLC.EnviousWispr";
 }
 
 static void RequirePackagedLayoutManifest(string appExecutablePath)

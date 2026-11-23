@@ -306,12 +306,14 @@ public sealed class DistributionTests
         var provisioned = Path.Combine(dataDir, "runtime", "llama.cpp", "llama-server.exe");
 
         // Store-installed (packaged) builds must ALWAYS resolve to the signed package's bundled
-        // runtime\llama-server.exe even if a binary exists in the writable data directory (policy 10.2.2).
+        // runtime\llama-server.exe even if a binary exists in the writable data directory or an
+        // environment override is present (policy 10.2.2).
+        const string uatOverride = @"C:\UAT\llama-server.exe";
         var packagedResolved = EgOneRuntimeLocator.ResolveServerExecutable(
             baseDir,
             dataDir,
             isStoreInstalled: true,
-            environmentOverride: null,
+            environmentOverride: uatOverride,
             fileExists: path => path == provisioned);
         Assert.Equal(bundled, packagedResolved);
 
@@ -324,12 +326,11 @@ public sealed class DistributionTests
             fileExists: path => path == provisioned);
         Assert.Equal(provisioned, unpackagedFallback);
 
-        // Explicit environment override wins for UAT harnesses.
-        const string uatOverride = @"C:\UAT\llama-server.exe";
+        // Explicit environment override applies only to unpackaged UAT harnesses.
         var overridden = EgOneRuntimeLocator.ResolveServerExecutable(
             baseDir,
             dataDir,
-            isStoreInstalled: true,
+            isStoreInstalled: false,
             environmentOverride: uatOverride,
             fileExists: _ => true);
         Assert.Equal(uatOverride, overridden);

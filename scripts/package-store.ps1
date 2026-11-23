@@ -28,10 +28,6 @@ param(
     # Auto-discovered from tools\llama.cpp or %LocalAppData%\Envious Labs\EnviousWispr\runtime\llama.cpp when present.
     [string]$LlamaRuntimeDirectory,
 
-    # CI-only smoke check for hosted runners without local llama.cpp binaries: verifies the self-contained
-    # MSIX build and runtime worker inside a temporary scratch directory without emitting an incomplete .msix.
-    [switch]$CiPayloadCheckOnly,
-
     # Refuse to produce a package the Store would reject at upload: the identity must be the one Partner
     # Center reserved, not the placeholder committed until that reservation exists, and runtime\llama-server.exe
     # must be bundled inside the package payload under Store policy 10.2.2.
@@ -135,17 +131,8 @@ function Resolve-MsStoreCliVersion {
 
 function Resolve-LlamaRuntimeDirectory {
     param(
-        [string]$ExplicitDirectory,
-        [switch]$CiCheckOnly,
-        [switch]$ForUpload
+        [string]$ExplicitDirectory
     )
-
-    if ($CiCheckOnly) {
-        if ($ForUpload) {
-            throw 'Cannot combine -CiPayloadCheckOnly with -ForStoreUpload: a Store upload package must bundle runtime\llama-server.exe (Store policy 10.2.2).'
-        }
-        return $null
-    }
 
     foreach ($explicit in @($ExplicitDirectory, $env:ENVIOUSWISPR_LLAMA_RUNTIME_DIRECTORY)) {
         if (-not [string]::IsNullOrWhiteSpace($explicit)) {
@@ -170,7 +157,7 @@ function Resolve-LlamaRuntimeDirectory {
         }
     }
 
-    throw 'Every emitted Store MSIX package must bundle runtime\llama-server.exe and its dependencies (Store policy 10.2.2). Supply -LlamaRuntimeDirectory or stage tools\llama.cpp.'
+    throw 'Every Store MSIX package must bundle runtime\llama-server.exe and its dependencies (Store policy 10.2.2). Supply -LlamaRuntimeDirectory or stage tools\llama.cpp.'
 }
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
@@ -212,10 +199,7 @@ function Resolve-DotNet10 {
 
 $dotnet10 = Resolve-DotNet10
 $msstoreCliVersion = Resolve-MsStoreCliVersion -Required:$ForStoreUpload
-$resolvedLlamaDirectory = Resolve-LlamaRuntimeDirectory `
-    -ExplicitDirectory $LlamaRuntimeDirectory `
-    -CiCheckOnly:$CiPayloadCheckOnly `
-    -ForUpload:$ForStoreUpload
+$resolvedLlamaDirectory = Resolve-LlamaRuntimeDirectory -ExplicitDirectory $LlamaRuntimeDirectory
 
 $scratchRoot = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) "EnviousWisprStore-$([Guid]::NewGuid().ToString('N'))"))
 $publishDirectory = Join-Path $scratchRoot 'publish'
@@ -242,6 +226,7 @@ try {
         throw "Active .NET SDK version ($dotnetSdkVersion) does not match pinned prefix $($pinnedToolchain.DotNetSdkPrefix)*."
     }
 
+    Write-Host "Staging bundled llama-server runtime from $resolvedLlamaDirectory..."
     $publishArgs = @(
         'publish', $project,
         '-c', 'Release',
@@ -251,15 +236,9 @@ try {
         '-p:Platform=x64',
         '-p:EnviousWisprPackaged=true',
         "-p:AppxPackageDir=$packageDirectory",
+        "-p:EnviousWisprLlamaRuntimeDir=$resolvedLlamaDirectory",
         '-o', $publishDirectory
     )
-    if (-not [string]::IsNullOrWhiteSpace($resolvedLlamaDirectory)) {
-        Write-Host "Staging bundled llama-server runtime from $resolvedLlamaDirectory..."
-        $publishArgs += "-p:EnviousWisprLlamaRuntimeDir=$resolvedLlamaDirectory"
-    }
-    else {
-        Write-Host 'Running CI payload check without bundled runtime\llama-server.exe (-CiPayloadCheckOnly); no .msix will be emitted.'
-    }
 
     & $dotnet10 @publishArgs
     if ($LASTEXITCODE -ne 0) {
@@ -297,19 +276,15 @@ try {
         'hostfxr.dll',
         'Microsoft.WindowsAppRuntime.Bootstrap.dll',
         'UIAutomationClient.dll',
-        'WindowsBase.dll'
+        'WindowsBase.dll',
+        'runtime/llama-server.exe',
+        'runtime/llama-server-impl.dll',
+        'runtime/llama-common.dll',
+        'runtime/llama.dll',
+        'runtime/ggml.dll',
+        'runtime/ggml-base.dll',
+        'runtime/libomp.dll'
     )
-    if (-not [string]::IsNullOrWhiteSpace($resolvedLlamaDirectory)) {
-        $requiredEntries += @(
-            'runtime/llama-server.exe',
-            'runtime/llama-server-impl.dll',
-            'runtime/llama-common.dll',
-            'runtime/llama.dll',
-            'runtime/ggml.dll',
-            'runtime/ggml-base.dll',
-            'runtime/libomp.dll'
-        )
-    }
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [IO.Compression.ZipFile]::OpenRead($package.FullName)
@@ -367,21 +342,22 @@ try {
         throw "The packaged runtime worker could not launch (exit $LASTEXITCODE)."
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($resolvedLlamaDirectory)) {
-        Write-Host 'Validating the packaged llama-server runtime can launch from the extracted MSIX payload...'
-        $packagedLlama = Join-Path $extractedDirectory 'runtime\llama-server.exe'
-        $previousPreference = $ErrorActionPreference
-        $ErrorActionPreference = 'Continue'
-        try {
-            $llamaVersionOutput = & $packagedLlama --version 2>&1 | Out-String
-            $llamaExitCode = $LASTEXITCODE
-        }
-        finally {
-            $ErrorActionPreference = $previousPreference
-        }
-        if ($llamaExitCode -ne 0) {
-            throw "The packaged runtime\llama-server.exe could not launch from the extracted MSIX layout (exit $llamaExitCode): $llamaVersionOutput"
-        }
+    Write-Host 'Validating the packaged llama-server runtime can launch from the extracted MSIX payload...'
+    $packagedLlama = Join-Path $extractedDirectory 'runtime\llama-server.exe'
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $llamaVersionOutput = & $packagedLlama --version 2>&1 | Out-String
+        $llamaExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($llamaExitCode -ne 0) {
+        throw "The packaged runtime\llama-server.exe could not launch from the extracted MSIX layout (exit $llamaExitCode): $llamaVersionOutput"
+    }
+    if ($ForStoreUpload -and ((Get-Item -LiteralPath (Join-Path $extractedDirectory 'runtime\llama.dll')).Length -lt 65536)) {
+        throw 'The packaged runtime\llama.dll is a synthetic CI fixture rather than the production llama.cpp runtime; refusing -ForStoreUpload.'
     }
 
     $identity = $packagedManifest.Package.Identity
@@ -392,23 +368,17 @@ try {
         throw "The built package carries a placeholder identity ($($identity.Name), $($identity.Publisher)); the Store would reject it at upload."
     }
 
-    if ($CiPayloadCheckOnly) {
-        Write-Host "CI payload check passed: $($identity.Name) $($identity.Version) ($($entries.Count) files verified; no .msix emitted without bundled runtime\llama-server.exe)."
-        Write-Host "Toolchain: .NET SDK $dotnetSdkVersion | TFM $($pinnedToolchain.TargetFramework) | WinAppSDK $($pinnedToolchain.WindowsAppSdkVersion) | BuildTools $($pinnedToolchain.WindowsSdkBuildToolsVersion) | MSIX $($pinnedToolchain.MsixBuildToolsVersion) | msstore $msstoreCliVersion"
-    }
-    else {
-        New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
-        $destination = Join-Path $OutputDirectory $package.Name
-        Copy-Item -LiteralPath $package.FullName -Destination $destination -Force
+    New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
+    $destination = Join-Path $OutputDirectory $package.Name
+    Copy-Item -LiteralPath $package.FullName -Destination $destination -Force
 
-        Write-Host "Store package: $destination"
-        Write-Host "Identity: $($identity.Name) $($identity.Version) ($($identity.Publisher))"
-        Write-Host "Toolchain: .NET SDK $dotnetSdkVersion | TFM $($pinnedToolchain.TargetFramework) | WinAppSDK $($pinnedToolchain.WindowsAppSdkVersion) | BuildTools $($pinnedToolchain.WindowsSdkBuildToolsVersion) | MSIX $($pinnedToolchain.MsixBuildToolsVersion) | msstore $msstoreCliVersion"
-        Write-Host ("Llama runtime bundled: {0}" -f (-not [string]::IsNullOrWhiteSpace($resolvedLlamaDirectory)))
-        Write-Host ("Size: {0:N0} MB, {1} files" -f ($package.Length / 1MB), $entries.Count)
-        if (Test-PlaceholderIdentity $identity) {
-            Write-Host 'TEST PACKAGE: the identity is the placeholder, so this cannot be uploaded to the Store.'
-        }
+    Write-Host "Store package: $destination"
+    Write-Host "Identity: $($identity.Name) $($identity.Version) ($($identity.Publisher))"
+    Write-Host "Toolchain: .NET SDK $dotnetSdkVersion | TFM $($pinnedToolchain.TargetFramework) | WinAppSDK $($pinnedToolchain.WindowsAppSdkVersion) | BuildTools $($pinnedToolchain.WindowsSdkBuildToolsVersion) | MSIX $($pinnedToolchain.MsixBuildToolsVersion) | msstore $msstoreCliVersion"
+    Write-Host ("Llama runtime bundled: {0}" -f (-not [string]::IsNullOrWhiteSpace($resolvedLlamaDirectory)))
+    Write-Host ("Size: {0:N0} MB, {1} files" -f ($package.Length / 1MB), $entries.Count)
+    if (Test-PlaceholderIdentity $identity) {
+        Write-Host 'TEST PACKAGE: the identity is the placeholder, so this cannot be uploaded to the Store.'
     }
 }
 finally {
