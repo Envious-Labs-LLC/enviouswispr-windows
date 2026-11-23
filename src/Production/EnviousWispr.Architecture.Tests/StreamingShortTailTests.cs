@@ -115,19 +115,17 @@ public sealed class StreamingShortTailTests
         AppErrorCode code)
     {
         var world = await World.ReadyAsync(stop: false, tailSamples: code == AppErrorCode.TranscriptionInputTooShort ? 160 : 10_080);
-        var expected = new TranscriptionEngineException(new AppError(
-            code,
-            AppErrorStage.FinalAsr,
-            CanRetry: code != AppErrorCode.TranscriptionInputTooShort));
-        world.Engine.Responses.Enqueue((_, _) => throw expected);
         try
         {
             var actual = await Assert.ThrowsAsync<TranscriptionEngineException>(() =>
                 world.Controller.TranscribeUsingAnyHeadStartAsync(world.Engine, world.Whole, CancellationToken.None));
-            Assert.Same(expected, actual);
+            Assert.Equal(AppErrorCode.RuntimeResourceBusy, actual.Error.Code);
+            Assert.Equal(AppErrorStage.RuntimeWorker, actual.Error.Stage);
+            Assert.True(actual.Error.CanRetry);
             Assert.True(world.Controller.IsRunning);
-            Assert.Equal(2, world.Engine.Requests.Count);
-            Assert.DoesNotContain(world.Log.Entries, entry => entry.Event == AppEventCode.StreamingHeadStartPreserved);
+            Assert.Equal(world.PrefixLength, Assert.Single(world.Engine.Requests).Samples.Length);
+            Assert.DoesNotContain(world.Log.Entries, entry => entry.Event is
+                AppEventCode.StreamingAbandoned or AppEventCode.StreamingHeadStartUsed or AppEventCode.StreamingHeadStartPreserved);
         }
         finally
         {

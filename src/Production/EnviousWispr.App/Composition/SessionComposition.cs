@@ -85,7 +85,8 @@ public static class SessionComposition
             runner,
             runtime.Persistence,
             parts.Resources,
-            new SessionEffects(parts));
+            new SessionEffects(parts, flag),
+            clock: parts.Clock);
         // Built beside the controller so a press captures its target and delivery choice from the
         // same provider the controller would have asked, at the instant of the key, before the
         // queue's first hop.

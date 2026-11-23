@@ -255,6 +255,44 @@ public sealed class StuckTranscriptionEscapeTests
     }
 
     [Fact]
+    public async Task EscapeDuringPreservedOrdinaryStreamingDrainCancelsActiveSpeechAndResetsCleanly()
+    {
+        var clock = new OwnershipClock();
+        var world = ComposedSessionWorld.Create("words", clock);
+        world.Capture.Take = FakeAudioCapture.Script((false, 200), (true, 3000), (false, 1200), (true, 500));
+        world.Capture.ReturnTake = true;
+        world.Engine.Hold = true;
+
+        await world.PressAsync();
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        // deadline-fallback: wait for streaming to issue the active prefix request before ordinary release.
+        await world.Engine.Entered.Task.WaitAsync(Patience);
+
+        var releaseTask = world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+        // deadline-fallback: wait for ordinary release to preserve the active streaming request under the 3-min deadline.
+        await clock.WhenRegistered(TimeSpan.FromMinutes(3)).WaitAsync(Patience);
+        Assert.False(world.Engine.Tokens[0].IsCancellationRequested);
+
+        // User presses Escape while preserved streaming speech work is still in flight.
+        var cancelTask = world.Coordinator.SubmitAsync(PushToTalkSignal.Cancelled);
+        // deadline-fallback: Escape must cancel the preserved streaming request and reset cleanly.
+        var cancelResult = await cancelTask.WaitAsync(Patience);
+        // deadline-fallback: the shared release completion resolves alongside Escape cancellation.
+        var releaseResult = await releaseTask.WaitAsync(Patience);
+
+        Assert.Equal(SessionCommandDisposition.Applied, cancelResult.Disposition);
+        Assert.Equal(SessionCommandDisposition.Applied, releaseResult.Disposition);
+        Assert.True(world.Engine.Tokens[0].IsCancellationRequested);
+        Assert.Single(world.Engine.Requests);
+        Assert.Empty(world.Delivery.Requests);
+        Assert.Null(world.Controller.CurrentSession);
+        Assert.False(world.Coordinator.IsProcessing);
+        Assert.False(world.CancelArmed[^1]);
+        Assert.Contains(AppEventCode.DictationCancelled, world.Log.Events);
+        Assert.DoesNotContain(world.View.Statuses, s => s.Text.Contains("timed out", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task WorkerSupervisorCleanlyAbortsWedgedWorkerOnCancellation()
     {
         var workerPath = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");

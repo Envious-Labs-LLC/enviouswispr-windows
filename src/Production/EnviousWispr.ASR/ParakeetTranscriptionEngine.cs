@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using EnviousWispr.Core.Audio;
+using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Runtime;
@@ -812,6 +813,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
             var options = ((OnnxRunContext)runContext).Options;
             try
             {
+                using var preprocessorPhase = UatRuntimePhaseJournal.BeginNativeCall(UatNativeOperation.Preprocessor);
                 using var preprocessorResult = _preprocessor.Run(
                     [
                         NamedOnnxValue.CreateFromTensor(
@@ -823,6 +825,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                     ],
                     PreprocessorOutputs,
                     options);
+                preprocessorPhase.Returned();
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var features = preprocessorResult[0].AsEnumerable<float>().ToArray();
@@ -851,6 +854,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
             var options = ((OnnxRunContext)runContext).Options;
             try
             {
+                using var encoderPhase = UatRuntimePhaseJournal.BeginNativeCall(UatNativeOperation.Encoder);
                 using var encoderResult = _encoder.Run(
                     [
                         NamedOnnxValue.CreateFromTensor(
@@ -862,6 +866,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                     ],
                     EncoderOutputs,
                     options);
+                encoderPhase.Returned();
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var encoded = encoderResult[0].AsEnumerable<float>().ToArray();
@@ -912,6 +917,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
+                using var encoderPhase = UatRuntimePhaseJournal.BeginNativeCall(UatNativeOperation.Encoder);
                 using var encoderResult = _fp32FallbackEncoder.Run(
                     [
                         NamedOnnxValue.CreateFromTensor(
@@ -923,6 +929,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                     ],
                     EncoderOutputs,
                     options);
+                encoderPhase.Returned();
                 cancellationToken.ThrowIfCancellationRequested();
 
                 encodedChannelFirst = encoderResult[0].AsEnumerable<float>().ToArray();
@@ -975,6 +982,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
             var options = ((OnnxRunContext)runContext).Options;
             try
             {
+                using var decoderPhase = UatRuntimePhaseJournal.BeginNativeCall(UatNativeOperation.Decoder);
                 using var result = _decoder.Run(
                     [
                         NamedOnnxValue.CreateFromTensor(
@@ -999,6 +1007,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                     ],
                     DecoderOutputs,
                     options);
+                decoderPhase.Returned();
 
                 var output = result[0].AsEnumerable<float>().ToArray();
                 var token = IndexOfMaximum(output.AsSpan(0, vocabularySize));
