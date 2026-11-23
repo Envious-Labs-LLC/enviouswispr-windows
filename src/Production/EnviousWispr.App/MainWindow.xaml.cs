@@ -1686,7 +1686,7 @@ public sealed partial class MainWindow : Window, IDisposable
             {
                 CornerRadius = new CornerRadius(8),
                 Padding = new Thickness(12, 10, 12, 10),
-                Background = (Brush)Application.Current.Resources["BrandSurfaceBrush"],
+                Background = (Brush)Application.Current.Resources["BrandCardBgBrush"],
                 BorderBrush = (Brush)Application.Current.Resources["BrandDividerBrush"],
                 BorderThickness = new Thickness(1),
                 Tag = choice.Pairing,
@@ -1839,8 +1839,8 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         var accentBrush = (Brush)Application.Current.Resources["BrandAccentBrush"];
         var dividerBrush = (Brush)Application.Current.Resources["BrandDividerBrush"];
-        var surfaceBrush = (Brush)Application.Current.Resources["BrandSurfaceBrush"];
-        var hoverBrush = (Brush)Application.Current.Resources["BrandCardHoverBrush"];
+        var surfaceBrush = (Brush)Application.Current.Resources["BrandCardBgBrush"];
+        var hoverBrush = (Brush)Application.Current.Resources["BrandAccentLightBrush"];
         var secondaryTextBrush = (Brush)Application.Current.Resources["BrandTextSecondaryBrush"];
 
         foreach (var (pairing, card) in _chimeCards)
