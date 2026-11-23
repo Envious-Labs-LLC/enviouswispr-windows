@@ -218,8 +218,8 @@ public sealed class StreamingTranscriptionController
     /// <summary>Ends the loop and waits for it, however long that takes; what it committed stays usable.</summary>
     public Task<StopOutcome> StopAsync() => StopAsync(deadline: null);
 
-    /// <summary>Ends the loop and waits up to the deadline; a loop still running past it stays owned.</summary>
-    public async Task<StopOutcome> StopAsync(TimeSpan? deadline)
+    /// <summary>Ends the loop and waits up to the deadline or caller cancellation; a loop still running past it stays owned.</summary>
+    public async Task<StopOutcome> StopAsync(TimeSpan? deadline, CancellationToken cancellationToken = default)
     {
         var cancellation = _cancellation;
         var loop = _loop;
@@ -230,7 +230,7 @@ public sealed class StreamingTranscriptionController
 
         await cancellation.CancelAsync().ConfigureAwait(false);
         if (loop is not null &&
-            await BoundedJoin.JoinAsync(loop, deadline, _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
+            await BoundedJoin.JoinAsync(loop, deadline, _clock, cancellationToken).ConfigureAwait(false) == StopOutcome.StillRunning)
         {
             // STILL RUNNING, STILL OWNED: the loop is inside the engine with a token source it still
             // reads; both stay in their fields for the next stop to join.

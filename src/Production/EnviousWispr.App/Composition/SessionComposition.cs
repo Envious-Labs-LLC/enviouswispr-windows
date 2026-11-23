@@ -37,7 +37,8 @@ public sealed record SessionShell(
     Action DetachCaptureObservers,
     Action ReleaseSession,
     Action DisposeDeliveryRoute,
-    Action<bool>? DictationActivityChanged = null);
+    Action<bool>? DictationActivityChanged = null,
+    Action<bool>? CancelArmed = null);
 
 /// <summary>Everything the session's production wiring is built from.</summary>
 /// <remarks>
@@ -70,12 +71,13 @@ public static class SessionComposition
     {
         ArgumentNullException.ThrowIfNull(parts);
         var runtime = parts.Runtime;
+        var flag = RecordingFlag.Follow(parts.Controller, parts.Shell.RecordingActive, parts.Shell.CancelArmed);
         var runner = new SessionFinalizationRunner(
             parts.Controller,
             runtime.Finalizer,
             runtime.Persistence,
             runtime.Streaming,
-            new SessionFinalizationEffects(parts),
+            new SessionFinalizationEffects(parts, flag),
             parts.Clock);
         var executor = new DictationSessionExecutor(
             parts.Controller,
@@ -84,7 +86,6 @@ public static class SessionComposition
             runtime.Persistence,
             parts.Resources,
             new SessionEffects(parts));
-        RecordingFlag.Follow(parts.Controller, parts.Shell.RecordingActive);
         // Built beside the controller so a press captures its target and delivery choice from the
         // same provider the controller would have asked, at the instant of the key, before the
         // queue's first hop.
@@ -92,7 +93,7 @@ public static class SessionComposition
     }
 }
 
-/// <summary>Tells the hook whether a recording is running, read from the controller's own session changes. Ref: #86.</summary>
+/// <summary>Tells the hook whether a recording is running, and whether cancel is armed, read from the controller's own session changes. Ref: #86.</summary>
 /// <remarks>
 /// THE CONTROLLER IS THE ONE PLACE EVERY ENDING PASSES: a release, a cancel, a failed stop, and the watchdog's and the
 /// lifecycle recovery's abort all change its session and raise <see cref="PushToTalkSessionController.SessionChanged"/>.
@@ -103,28 +104,59 @@ public static class SessionComposition
 internal sealed class RecordingFlag
 {
     private readonly Action<bool> _recordingActive;
+    private readonly Action<bool>? _cancelArmed;
     private readonly Lock _sync = new();
     private bool _active;
+    private bool _cancelActive;
 
-    private RecordingFlag(Action<bool> recordingActive) => _recordingActive = recordingActive;
-
-    public static void Follow(PushToTalkSessionController controller, Action<bool> recordingActive)
+    private RecordingFlag(Action<bool> recordingActive, Action<bool>? cancelArmed)
     {
-        var flag = new RecordingFlag(recordingActive);
-        controller.SessionChanged += (_, session) => flag.Set(session.State == DictationSessionState.Recording);
+        _recordingActive = recordingActive;
+        _cancelArmed = cancelArmed;
     }
 
-    private void Set(bool active)
+    public static RecordingFlag Follow(
+        PushToTalkSessionController controller,
+        Action<bool> recordingActive,
+        Action<bool>? cancelArmed = null)
+    {
+        var flag = new RecordingFlag(recordingActive, cancelArmed);
+        controller.SessionChanged += (_, session) =>
+        {
+            var isRecording = session?.State == DictationSessionState.Recording;
+            var isCancelArmed = session?.State is DictationSessionState.Recording or DictationSessionState.Finalizing;
+            flag.Set(isRecording, isCancelArmed);
+        };
+        return flag;
+    }
+
+    public void DisarmCancel()
     {
         lock (_sync)
         {
-            if (active == _active)
+            if (_cancelActive)
             {
-                return;
+                _cancelActive = false;
+                _cancelArmed?.Invoke(false);
+            }
+        }
+    }
+
+    private void Set(bool active, bool cancelActive)
+    {
+        lock (_sync)
+        {
+            if (active != _active)
+            {
+                _active = active;
+                _recordingActive(active);
             }
 
-            _active = active;
-            _recordingActive(active);
+            if (cancelActive != _cancelActive)
+            {
+                _cancelActive = cancelActive;
+                _cancelArmed?.Invoke(cancelActive);
+            }
         }
     }
 }

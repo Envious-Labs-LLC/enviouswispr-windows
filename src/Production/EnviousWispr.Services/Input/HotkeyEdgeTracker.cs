@@ -29,6 +29,7 @@ internal sealed class HotkeyEdgeTracker
     private bool _cancelHeld;
     private bool _quickAddHeld;
     private bool _recordingActive;
+    private bool _cancelArmed;
     private bool _cancelledUntilRecordRelease;
     private bool _capturingKeybind;
 
@@ -172,6 +173,14 @@ internal sealed class HotkeyEdgeTracker
         lock (_sync)
         {
             _recordingActive = active;
+        }
+    }
+
+    public void SetCancelArmed(bool armed)
+    {
+        lock (_sync)
+        {
+            _cancelArmed = armed;
         }
     }
 
@@ -428,7 +437,7 @@ internal sealed class HotkeyEdgeTracker
     /// states in which a key must still reach the tracker so the recording can be ended.
     /// </summary>
     private bool IsAnythingInFlight() =>
-        _recordHeld || _cancelHeld || _quickAddHeld || _recordingActive ||
+        _recordHeld || _cancelHeld || _quickAddHeld || _recordingActive || _cancelArmed ||
         _pasteLast?.Held == true || _copyLast?.Held == true;
 
     /// <summary>
@@ -583,7 +592,7 @@ internal sealed class HotkeyEdgeTracker
                 return new HotkeyEdgeDecision(Consume: true);
             }
 
-            if (!_recordingActive || !ModifiersMatch(activeModifiers, _cancel.Modifiers))
+            if ((!_recordingActive && !_cancelArmed) || !ModifiersMatch(activeModifiers, _cancel.Modifiers))
             {
                 return new HotkeyEdgeDecision(Consume: false);
             }

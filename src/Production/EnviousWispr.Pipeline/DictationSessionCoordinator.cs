@@ -168,6 +168,12 @@ public interface ISessionCommandExecutor
     /// </summary>
     void CancelProcessing(object generation) => CancelProcessing();
 
+    /// <summary>
+    /// Cancels the active transcription decode immediately for Escape without queueing behind FinalizeAsync.
+    /// Returns true when an active finalising transcription was cancelled.
+    /// </summary>
+    bool TryCancelProcessingForEscape() => false;
+
     /// <summary>Admission has closed for good: a delivery not yet issued is not issued from now on.</summary>
     void Close()
     {
@@ -235,6 +241,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     private readonly List<Task> _expiries = [];
     private bool _expiryFaulted;
     private readonly Task _consumer;
+    private QueuedCommand? _activeQueued;
     private int _pendingOrRunning;
     private int _gateWaitsEntered;
     /// <summary>The recordings the pending terminals are for: null for a key's or a timeout's, which is for whatever is in flight.</summary>
@@ -244,6 +251,8 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     private bool _closed;
     /// <summary>How many commands the executor is inside right now: one, or none. Read by the shutdown's report.</summary>
     private int _running;
+    /// <summary>How many commands the consumer loop is currently inside <see cref="RunAsync"/> for, through gate release and completion.</summary>
+    private int _inRunAsync;
     private TaskCompletionSource? _noHolds;
     private Task<ShutdownReport>? _shutdown;
 
@@ -568,6 +577,14 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
                 return Task.FromResult(new SessionCommandResult(SessionCommandDisposition.Ignored));
             }
 
+            if (command.Kind == SessionCommandKind.PushToTalk &&
+                command.Signal == PushToTalkSignal.Cancelled &&
+                _executor.TryCancelProcessingForEscape())
+            {
+                return _activeQueued?.Completion.Task ??
+                    Task.FromResult(new SessionCommandResult(SessionCommandDisposition.Applied));
+            }
+
             var gateReserved = false;
             var startContext = command.StartContext;
             if (command.IsPress)
@@ -708,12 +725,22 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     private async Task<bool> OutstandingWorkFinishedAsync(TimeSpan timeout)
     {
         Task[] expiries;
+        bool noWorkInFlight;
         lock (_admission)
         {
             expiries = [.. _expiries];
+            noWorkInFlight = _pendingOrRunning == 0 &&
+                Volatile.Read(ref _running) == 0 &&
+                Volatile.Read(ref _inRunAsync) == 0 &&
+                expiries.All(e => e.IsCompleted);
         }
 
         var work = Task.WhenAll([_consumer, .. expiries]);
+        if (work.IsCompleted || noWorkInFlight)
+        {
+            return true;
+        }
+
         using var delayCancellation = new CancellationTokenSource();
         var delay = Task.Delay(timeout, _clock, delayCancellation.Token);
         var finished = await Task.WhenAny(work, delay).ConfigureAwait(false);
@@ -762,6 +789,19 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
 
     private async Task RunAsync(QueuedCommand queued)
     {
+        Interlocked.Increment(ref _inRunAsync);
+        try
+        {
+            await RunCoreAsync(queued).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _inRunAsync);
+        }
+    }
+
+    private async Task RunCoreAsync(QueuedCommand queued)
+    {
         SessionCommandResult result;
         var holdingGate = queued.GateReserved;
         try
@@ -809,6 +849,11 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             if (committed)
             {
                 Interlocked.Increment(ref _running);
+                lock (_admission)
+                {
+                    _activeQueued = queued;
+                }
+
                 try
                 {
                     var executed = await _executor
@@ -818,6 +863,11 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
                 }
                 finally
                 {
+                    lock (_admission)
+                    {
+                        _activeQueued = null;
+                    }
+
                     Interlocked.Decrement(ref _running);
                 }
             }

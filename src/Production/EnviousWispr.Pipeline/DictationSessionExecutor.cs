@@ -139,6 +139,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     private readonly TimeSpan _processingDeadline;
     private readonly TimeProvider _clock;
     private CancellationTokenSource? _processing;
+    private CancellationTokenSource? _escapeCancel;
     private bool _escapeRecoveryForSession;
     private bool _closed;
 
@@ -180,6 +181,28 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
     public void CancelProcessing()
     {
         Cancel(Volatile.Read(ref _processing));
+    }
+
+    public bool TryCancelProcessingForEscape()
+    {
+        if (_controller.CurrentSession?.State != DictationSessionState.Finalizing)
+        {
+            return false;
+        }
+
+        if (_escapeRecoveryForSession)
+        {
+            return _finalization.TryPromoteToEscapeRecovery();
+        }
+
+        if (!_finalization.TryAdmitEscape())
+        {
+            return false;
+        }
+
+        Cancel(Volatile.Read(ref _escapeCancel));
+        Cancel(Volatile.Read(ref _processing));
+        return true;
     }
 
     /// <summary>The finalisation's own token source, as the opaque generation an interruption captures before it is admitted.</summary>
@@ -518,9 +541,13 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             }
             else
             {
+                _finalization.ResetTranscriptionComplete();
+                var escapeCancel = new CancellationTokenSource();
+                Volatile.Write(ref _escapeCancel, escapeCancel);
                 await _background.StopWatchdogAsync().ConfigureAwait(false);
             }
 
+            var releaseToken = Volatile.Read(ref _escapeCancel)?.Token ?? none;
             var recoverCancelledRecording =
                 signal == PushToTalkSignal.Cancelled && _escapeRecoveryForSession;
             var result = signal switch
@@ -530,9 +557,9 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
                 PushToTalkSignal.Pressed when command.StartContext is { } startContext =>
                     await _controller.PressAsync(startContext, none).ConfigureAwait(false),
                 PushToTalkSignal.Pressed => await _controller.PressAsync(none).ConfigureAwait(false),
-                PushToTalkSignal.Released => await _controller.ReleaseAsync(none).ConfigureAwait(false),
+                PushToTalkSignal.Released => await _controller.ReleaseAsync(releaseToken).ConfigureAwait(false),
                 PushToTalkSignal.Cancelled when recoverCancelledRecording =>
-                    await _controller.ReleaseAsync(none).ConfigureAwait(false),
+                    await _controller.ReleaseAsync(releaseToken).ConfigureAwait(false),
                 PushToTalkSignal.Cancelled => await _controller.CancelAsync(none).ConfigureAwait(false),
                 _ => throw new InvalidOperationException("Unsupported push-to-talk signal."),
             };
@@ -564,7 +591,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             }
             else if (result.Kind is SessionTransitionKind.Cancelled or SessionTransitionKind.Failed)
             {
-                await _background.StopAsync().ConfigureAwait(false);
+                await _background.StopAsync(none).ConfigureAwait(false);
                 await _controller.ResetAsync(none).ConfigureAwait(false);
             }
 
@@ -578,6 +605,44 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             using var failed = interrupted is { } timedOut
                 ? DictationScope.Begin(timedOut)
                 : NoScope.Instance;
+            if (_finalization.IsEscapeClaimed &&
+                _controller.CurrentSession?.State is DictationSessionState.Recording or DictationSessionState.Finalizing)
+            {
+                _finalization.ResetTranscriptionComplete();
+                var watchdog = await _background.StopWatchdogAsync(PreviewAbortDeadline).ConfigureAwait(false);
+                var stopped = await _background.StopAsync(PreviewAbortDeadline).ConfigureAwait(false);
+                var previewStillRunning = stopped.Preview == StopOutcome.StillRunning &&
+                    await _background.AbortPreviewAsync(PreviewAbortDeadline).ConfigureAwait(false) == StopOutcome.StillRunning &&
+                    await _background.AbortPreviewAsync(PreviewAbortDeadline).ConfigureAwait(false) == StopOutcome.StillRunning;
+                if (previewStillRunning)
+                {
+                    _effects.RecordPreviewStillRunning();
+                }
+
+                if (previewStillRunning ||
+                    watchdog == StopOutcome.StillRunning ||
+                    stopped.Streaming == StopOutcome.StillRunning ||
+                    stopped.AutoStop == StopOutcome.StillRunning)
+                {
+                    await RecoverFailedSessionAsync(
+                            new AppError(AppErrorCode.RuntimeResourceBusy, AppErrorStage.RuntimeResource, CanRetry: true),
+                            SessionFailureKind.Failed)
+                        .ConfigureAwait(false);
+                    return new SessionCommandResult(SessionCommandDisposition.Failed, transition?.Session);
+                }
+
+                if (_persistence.HasPendingRecovery)
+                {
+                    await _persistence.ClearRecoveryTextAsync().ConfigureAwait(false);
+                }
+
+                var cancelledResult = await _controller.CancelAsync(none).ConfigureAwait(false);
+                RecordTransition(cancelledResult);
+                await _controller.ResetAsync(none).ConfigureAwait(false);
+                _effects.ShowTransitionStatus(cancelledResult);
+                return new SessionCommandResult(SessionCommandDisposition.Applied, cancelledResult.Session);
+            }
+
             await RecoverFailedSessionAsync(
                     new AppError(AppErrorCode.SessionTimedOut, AppErrorStage.Session, CanRetry: true),
                     SessionFailureKind.TimedOut)
@@ -612,6 +677,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         }
         finally
         {
+            _finalization.ResetTranscriptionComplete();
             ReleaseProcessingDeadline();
             await _effects.RecordDictationEdgeAsync().ConfigureAwait(false);
         }
@@ -647,33 +713,61 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
         SystemLifecycleTransition? preserving)
     {
         using var dictation = DictationScope.Begin(sessionId.Value);
-        var processing = new CancellationTokenSource(_processingDeadline, _clock);
-        Volatile.Write(ref _processing, processing);
-        var stopped = await _background.StopAsync().ConfigureAwait(false);
-        if (stopped.Preview == StopOutcome.StillRunning &&
-            await _background.AbortPreviewAsync(PreviewAbortDeadline).ConfigureAwait(false) == StopOutcome.StillRunning &&
-            await _background.AbortPreviewAsync(PreviewAbortDeadline).ConfigureAwait(false) == StopOutcome.StillRunning)
+        if (recoveryOnly || preserving is not null)
         {
-            _effects.RecordPreviewStillRunning();
-            throw new PreviewNotRetiredException();
+            _escapeRecoveryForSession = false;
         }
 
-        if (preserving is { } transition)
+        try
         {
-            _effects.ShowInterruptionPreserving(transition);
-        }
+            var processing = new CancellationTokenSource(_processingDeadline, _clock);
+            Volatile.Write(ref _processing, processing);
+            if (_finalization.IsEscapeClaimed)
+            {
+                Cancel(processing);
+            }
 
-        // THE ESCAPE SETTING IS SPENT AS THE FINALISATION BEGINS: whether this take was a recovery
-        // has been decided (recoveryOnly), and the next recording reads the setting afresh.
-        _escapeRecoveryForSession = false;
-        // A FINALISATION THAT STARTS AFTER ADMISSION CLOSED KEEPS ITS WORDS: the app is leaving, and
-        // a paste into whatever is in front is not the place for them. The recovery copy is.
-        await _finalization.RunAsync(sessionId, audio, recoveryOnly || Volatile.Read(ref _closed), processing.Token).ConfigureAwait(false);
+            var escapeToken = Volatile.Read(ref _escapeCancel)?.Token ?? CancellationToken.None;
+            var stopped = await _background.StopAsync(escapeToken).ConfigureAwait(false);
+            if (_finalization.IsEscapeClaimed)
+            {
+                Cancel(processing);
+                processing.Token.ThrowIfCancellationRequested();
+            }
+
+            if (stopped.Preview == StopOutcome.StillRunning &&
+                await _background.AbortPreviewAsync(PreviewAbortDeadline).ConfigureAwait(false) == StopOutcome.StillRunning &&
+                await _background.AbortPreviewAsync(PreviewAbortDeadline).ConfigureAwait(false) == StopOutcome.StillRunning)
+            {
+                _effects.RecordPreviewStillRunning();
+                throw new PreviewNotRetiredException();
+            }
+
+            if (preserving is { } transition)
+            {
+                _effects.ShowInterruptionPreserving(transition);
+            }
+
+            // A FINALISATION THAT STARTS AFTER ADMISSION CLOSED KEEPS ITS WORDS: the app is leaving, and
+            // a paste into whatever is in front is not the place for them. The recovery copy is.
+            await _finalization.RunAsync(
+                    sessionId,
+                    audio,
+                    recoveryOnly || _finalization.IsPromotedToEscapeRecovery || Volatile.Read(ref _closed),
+                    processing.Token)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            _escapeRecoveryForSession = false;
+        }
     }
 
     /// <summary>Releases the deadline this command armed, if it armed one. Called last, after any recovery.</summary>
     private void ReleaseProcessingDeadline()
     {
+        var escapeCancel = Interlocked.Exchange(ref _escapeCancel, null);
+        escapeCancel?.Dispose();
         var processing = Interlocked.Exchange(ref _processing, null);
         processing?.Dispose();
     }

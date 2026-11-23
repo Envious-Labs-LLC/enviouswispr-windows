@@ -46,6 +46,8 @@ internal sealed class ComposedSessionWorld
 
     public required List<bool> RecordingActive { get; init; }
 
+    public List<bool> CancelArmed { get; init; } = [];
+
     public required List<CapturedAudio> Archived { get; init; }
 
     public required List<CustomWordEntry> CustomWords { get; init; }
@@ -113,6 +115,7 @@ internal sealed class ComposedSessionWorld
         var historyStore = new FakeHistoryStore();
         var trace = new List<string>();
         var recordingActive = new List<bool>();
+        var cancelArmed = new List<bool>();
         var archived = new List<CapturedAudio>();
         var words = new List<CustomWordEntry>();
         ComposedSessionWorld? world = null;
@@ -166,7 +169,8 @@ internal sealed class ComposedSessionWorld
                 // disposes the controller itself between the first and the second.
                 DetachCaptureObservers: () => { },
                 ReleaseSession: () => world!._attached = null,
-                DisposeDeliveryRoute: () => world!.TearDowns++),
+                DisposeDeliveryRoute: () => world!.TearDowns++,
+                CancelArmed: cancelArmed.Add),
             clock));
 
         world = new ComposedSessionWorld
@@ -178,6 +182,7 @@ internal sealed class ComposedSessionWorld
             View = view,
             RunState = runState as FakeRunState ?? new FakeRunState(),
             RecordingActive = recordingActive,
+            CancelArmed = cancelArmed,
             Archived = archived,
             CustomWords = words,
             Capture = capture,
