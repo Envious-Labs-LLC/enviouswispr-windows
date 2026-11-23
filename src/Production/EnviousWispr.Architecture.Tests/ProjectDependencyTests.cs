@@ -7,13 +7,14 @@ public sealed class ProjectDependencyTests
     private static readonly IReadOnlyDictionary<string, string[]> AllowedReferences =
         new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
-            ["EnviousWispr.Core"] = [],
+            ["EnviousWispr.Analyzers"] = [],
+            ["EnviousWispr.Core"] = ["EnviousWispr.Analyzers"],
             ["EnviousWispr.Audio"] = ["EnviousWispr.Core"],
             ["EnviousWispr.ASR"] = ["EnviousWispr.Core"],
             ["EnviousWispr.PostProcessing"] = ["EnviousWispr.Core"],
             ["EnviousWispr.LLM"] = ["EnviousWispr.Core"],
-            ["EnviousWispr.Pipeline"] = ["EnviousWispr.Core", "EnviousWispr.PostProcessing"],
-            ["EnviousWispr.Presentation"] = ["EnviousWispr.Core"],
+            ["EnviousWispr.Pipeline"] = ["EnviousWispr.Analyzers", "EnviousWispr.Core", "EnviousWispr.PostProcessing"],
+            ["EnviousWispr.Presentation"] = ["EnviousWispr.Analyzers", "EnviousWispr.Core"],
             ["EnviousWispr.RuntimeWorker"] = ["EnviousWispr.ASR", "EnviousWispr.Core"],
             // The exit probe: a host process that leaves through the shell's ApplicationLifetime
             // (linked as source from App/Composition), so a test can watch a real escalation end a
@@ -23,6 +24,7 @@ public sealed class ProjectDependencyTests
             ["EnviousWispr.ModelDelivery"] = ["EnviousWispr.Core"],
             ["EnviousWispr.App"] =
             [
+                "EnviousWispr.Analyzers",
                 "EnviousWispr.Audio",
                 "EnviousWispr.ASR",
                 "EnviousWispr.Core",
@@ -36,6 +38,7 @@ public sealed class ProjectDependencyTests
             ],
             ["EnviousWispr.Architecture.Tests"] =
             [
+                "EnviousWispr.Analyzers",
                 "EnviousWispr.ASR",
                 "EnviousWispr.Audio",
                 "EnviousWispr.ExitProbe",

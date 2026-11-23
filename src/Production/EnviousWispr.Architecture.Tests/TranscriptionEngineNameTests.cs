@@ -1,9 +1,14 @@
+using System.Collections.Immutable;
 using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Diagnostics;
 using System.Xml.Linq;
+using EnviousWispr.Analyzers;
 using EnviousWispr.ASR;
+using EnviousWispr.Core.Dictation;
+using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
 
@@ -123,10 +128,7 @@ public sealed partial class DesignSystemTokenTests
                 FindRepositoryRoot(),
                 "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
 
-        var offered = ChoiceLabel()
-            .Matches(InitializerOf(source, "FinalEngineChoices"))
-            .Select(match => match.Groups[1].Value)
-            .ToArray();
+        var offered = ChoiceLabelsOf(source, "FinalEngineChoices");
 
         Assert.Equal(3, offered.Length);
         Assert.Equal("Automatic", offered[0]);
@@ -149,9 +151,6 @@ public sealed partial class DesignSystemTokenTests
 
     [GeneratedRegex(@"parakeet-tdt-[0-9.]+b-v[0-9]+|whisper-large-v[0-9]+-turbo|""whisper-small""")]
     private static partial Regex ModelNameLiteral();
-
-    [GeneratedRegex(@"new\(""([^""]+)""")]
-    private static partial Regex ChoiceLabel();
 
     /// <summary>
     /// EVERY keybind field must tell the hook it has focus. Miss one and pressing the recording
@@ -1347,11 +1346,18 @@ public sealed partial class DesignSystemTokenTests
         // them - which is exactly why the orphaned sections were invisible: they sat in that array
         // and nowhere else.
         //
-        // So: strip that one array, and ask whether the name survives anywhere in the file.
+        // So: strip that one array, and ask whether the name survives as a real code identifier
+        // anywhere in the file (never merely inside a comment or string literal).
         var reachableCode = CodeWithoutTheHideList(code);
+        var reachableIdentifiers = CSharpSyntaxTree.ParseText(reachableCode)
+            .GetRoot()
+            .DescendantNodes()
+            .OfType<IdentifierNameSyntax>()
+            .Select(identifier => identifier.Identifier.ValueText)
+            .ToHashSet(StringComparer.Ordinal);
 
         var unreachable = sections
-            .Where(section => !reachableCode.Contains(section, StringComparison.Ordinal))
+            .Where(section => !reachableIdentifiers.Contains(section))
             .ToArray();
 
         Assert.True(
@@ -1453,12 +1459,29 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void NoMemberTurnsAStatusSentenceIntoAPillAppearance()
     {
-        var app = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
-        var offenders = new List<string>();
-        foreach (var file in ProductionSourceFiles(app))
+        var root = FindRepositoryRoot();
+        var directories = new[]
         {
+            Path.Combine(root, "src", "Production", "EnviousWispr.Core"),
+            Path.Combine(root, "src", "Production", "EnviousWispr.Presentation"),
+            Path.Combine(root, "src", "Production", "EnviousWispr.Pipeline"),
+            Path.Combine(root, "src", "Production", "EnviousWispr.App"),
+        };
+        var offenders = new List<string>();
+        foreach (var directory in directories)
+        {
+            var trees = ProductionSourceFiles(directory)
+                .Select(file => CSharpSyntaxTree.ParseText(File.ReadAllText(file), path: file))
+                .ToArray();
+            var compilation = CreateSemanticCompilation(trees);
             offenders.AddRange(
-                SentenceToAppearanceOffenders(Path.GetFileName(file), File.ReadAllText(file)));
+                RunDeclarationShapeAnalyzer(
+                        compilation,
+                        trees,
+                        DeclarationShapeAnalyzer.SentenceToAppearanceDiagnosticId)
+                    .Select(diagnostic =>
+                        $"{Path.GetFileName(diagnostic.Location.SourceTree?.FilePath ?? string.Empty)}: "
+                        + diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture)));
         }
 
         Assert.True(
@@ -1468,236 +1491,56 @@ public sealed partial class DesignSystemTokenTests
                 + "known and pass DictationStatus through instead: " + string.Join(", ", offenders));
     }
 
-    /// <summary>The two type names this gate is about, however they are spelled at a use site.</summary>
-    private static readonly string[] AppearanceTypeNames = ["DictationStatus", "DictationOverlayState"];
-
-    /// <summary>Finds members in one file that turn a sentence into a pill appearance.</summary>
+    /// <summary>
+    /// Runs the Roslyn semantic analyser (<see cref="DeclarationShapeAnalyzer"/>) over one fixture,
+    /// compiled against <c>EnviousWispr.Core</c> and an external assembly declaring a delegate type.
+    /// </summary>
     /// <remarks>
-    /// THE COMPILER IS ASKED, BECAUSE FOUR ROUNDS OF REVIEW PROVED GUESSING CANNOT BE FINISHED.
-    /// Every regex draft decided a member's return type from the characters near its name, and every
-    /// draft was one shape short: a <c>using</c> alias, a return type wrapped onto its own line, a
-    /// <c>Func</c> field, an indexer, an attribute inside the parameter list. Reading the line above
-    /// to catch the wrapped case then began accusing a member whose NEIGHBOUR returned a status. The
-    /// shapes are not enumerable and each miss fails GREEN, which is indistinguishable from the
-    /// property holding.
-    ///
-    /// A SYNTAX TREE KNOWS WHERE A RETURN TYPE ENDS AND A NAME BEGINS, so comments, pragmas,
-    /// attributes, line breaks and whitespace stop mattering at all. Methods, indexers, operators,
-    /// conversion operators, properties, delegate declarations and fields or locals of a delegate
-    /// type are all covered, because each of them can be handed a string and hand back a status.
-    ///
-    /// IT IS STILL A SYNTAX TREE AND NOT A COMPILATION, so a type is matched by the NAME written at
-    /// the declaration, plus any <c>using</c> alias in the same file that resolves to one of these
-    /// types.
-    ///
-    /// WHAT THAT LEAVES OPEN, ENUMERATED, BECAUSE AN UNSTATED LIMIT READS AS COVERAGE: a field whose
-    /// type is a named delegate declared OUTSIDE the scanned app tree, in another project or a
-    /// package - one declared anywhere inside the tree is caught at its own declaration; a lambda
-    /// that states NEITHER type, leaving both to inference, since one that states its return type is
-    /// caught; a function pointer; and a third-party type that happens to share one of these names. Closing those needs a semantic model over a
-    /// real compilation, or better, an analyser that refuses the code at build time rather than a
-    /// test that reports it afterwards. That is issue #82, which also enumerates the four other gates
-    /// asking the same unanswerable question.
-    ///
-    /// The defect this guards is already gone - <c>OverlayStateFor</c> is deleted and every status
-    /// is built where its outcome is known. This stops the shape coming back in the forms it has
-    /// actually taken, and says plainly which forms it would miss.
-    /// </remarks>
-    private static List<string> SentenceToAppearanceOffenders(string fileName, string text)
-    {
-        var offenders = new List<string>();
-        var root = CSharpSyntaxTree.ParseText(text).GetRoot();
-
-        var aliases = root.DescendantNodes().OfType<UsingDirectiveSyntax>()
-            .Where(directive => directive is { Alias: not null, Name: not null })
-            .ToList();
-
-        // A file-local rename of one of these types counts as one of these types.
-        var names = new List<string>(AppearanceTypeNames);
-        names.AddRange(aliases
-            .Where(directive => AppearanceTypeNames.Any(name => MentionsName(directive.Name!, name)))
-            .Select(directive => directive.Alias!.Name.Identifier.ValueText));
-
-        // AND SO DOES A RENAME OF STRING, which is the same bypass pointing at the other half of the
-        // shape: `using Str = System.String;` turns the parameter type into a name nothing knew.
-        var stringNames = new List<string> { "String" };
-        stringNames.AddRange(aliases
-            .Where(directive => IsStringType(directive.Name!, stringNames))
-            .Select(directive => directive.Alias!.Name.Identifier.ValueText));
-
-        // The null check is a STATEMENT rather than part of the expression, because a lambda
-        // capturing `type` defeats the compiler's flow analysis and the null check stops counting.
-        bool IsAppearance(TypeSyntax? type)
-        {
-            if (type is null)
-            {
-                return false;
-            }
-
-            return names.Any(name => MentionsName(type, name));
-        }
-
-        // Handed a string, hands back an appearance. Every declaration kind that can be either,
-        // including a LOCAL FUNCTION, which is not a member declaration and is the easiest of these
-        // to reach for once the others are refused.
-        foreach (var node in root.DescendantNodes())
-        {
-            var (returnType, parameters) = node switch
-            {
-                MethodDeclarationSyntax method => (method.ReturnType, method.ParameterList.Parameters),
-                LocalFunctionStatementSyntax local => (local.ReturnType, local.ParameterList.Parameters),
-                IndexerDeclarationSyntax indexer => (indexer.Type, indexer.ParameterList.Parameters),
-                OperatorDeclarationSyntax op => (op.ReturnType, op.ParameterList.Parameters),
-                ConversionOperatorDeclarationSyntax conversion =>
-                    (conversion.Type, conversion.ParameterList.Parameters),
-                DelegateDeclarationSyntax nominal => (nominal.ReturnType, nominal.ParameterList.Parameters),
-                // A LAMBDA MAY STATE ITS RETURN TYPE, which C# 10 allows and which makes
-                // `var read = DictationStatus (string sentence) => default;` a declaration of both
-                // types with no type name anywhere on the left of the assignment.
-                ParenthesizedLambdaExpressionSyntax { ReturnType: not null } lambda =>
-                    (lambda.ReturnType, lambda.ParameterList.Parameters),
-                _ => (null, default),
-            };
-
-            if (IsAppearance(returnType) &&
-                parameters.Any(parameter => IsStringType(parameter.Type, stringNames)))
-            {
-                offenders.Add($"{fileName}: {Describe(node)}");
-            }
-        }
-
-        // A VARIABLE of a delegate type is not a declaration of any kind above, and it does exactly
-        // the refused thing.
-        //
-        // TWO NARROWINGS, BOTH BOUGHT BY A FALSE POSITIVE THIS CODE ACTUALLY HAD. Scanning every
-        // generic type anywhere flagged `Dictionary<string, DictationStatus>`, which is legitimate
-        // and is arguably the CLEAREST way to map a known outcome onto a status - so the scan reads
-        // only the type written in a DECLARATION, never a type used in an expression. And it
-        // requires the name Func, because a syntax tree cannot tell an imported delegate type from
-        // any other generic type without asking the compiler what the name resolves to.
-        //
-        // WHAT THAT LEAVES OPEN, STATED RATHER THAN IMPLIED: a field whose type is an imported
-        // named delegate, a lambda assigned to `var`, and a function pointer. Closing those needs a
-        // semantic model over a real compilation, which is tracked as its own work.
-        foreach (var site in DeclaredTypes(root))
-        {
-            // INSIDE the written type, not only its outermost name. `System.Func<...>` wraps the
-            // Func in a qualified name, `List<Func<...>>` nests it, and an alias directive's target
-            // is a type site of its own - narrowing to the outer name lost all three.
-            foreach (var declared in site.DescendantNodesAndSelf().OfType<GenericNameSyntax>())
-            {
-                var arguments = declared.TypeArgumentList.Arguments;
-                if (declared.Identifier.ValueText == "Func" &&
-                    arguments.Count >= 2 &&
-                    IsAppearance(arguments[^1]) &&
-                    arguments.Take(arguments.Count - 1).Any(type => IsStringType(type, stringNames)))
-                {
-                    offenders.Add($"{fileName}: {declared}");
-                }
-            }
-        }
-
-        return offenders;
-    }
-
-    /// <summary>The types written in a declaration, as opposed to used in an expression.</summary>
-    /// <remarks>
-    /// A DECLARATION SITE, NEVER AN EXPRESSION, and that distinction is the whole reason this exists:
-    /// scanning every generic type anywhere accused `Dictionary&lt;string, DictationStatus&gt;`, which
-    /// is legitimate. RETURN types and EVENT types are declaration sites too, and leaving them out
-    /// lost a `Func` returned by a method. A <c>using</c> alias TARGET is one as well, since naming a
-    /// type is how a rename hides it.
-    /// </remarks>
-    private static IEnumerable<TypeSyntax> DeclaredTypes(SyntaxNode root) =>
-        root.DescendantNodes().Select(node => node switch
-        {
-            VariableDeclarationSyntax variable => variable.Type,
-            PropertyDeclarationSyntax property => property.Type,
-            ParameterSyntax parameter => parameter.Type,
-            MethodDeclarationSyntax method => method.ReturnType,
-            LocalFunctionStatementSyntax local => local.ReturnType,
-            DelegateDeclarationSyntax nominal => nominal.ReturnType,
-            OperatorDeclarationSyntax op => op.ReturnType,
-            ConversionOperatorDeclarationSyntax conversion => conversion.Type,
-            IndexerDeclarationSyntax indexer => indexer.Type,
-            EventDeclarationSyntax declared => declared.Type,
-            UsingDirectiveSyntax { Alias: not null } alias => alias.Name,
-            _ => null,
-        }).OfType<TypeSyntax>();
-
-    /// <summary>Whether a written type is <c>string</c>, however it is spelled.</summary>
-    /// <remarks>
-    /// FOUR SPELLINGS, AND THE LAST TWO WERE REVIEW FINDINGS. <c>string</c> and <c>String</c> are
-    /// the obvious pair. <c>string?</c> wraps either in a nullable node, and
-    /// <c>System.String</c> wraps it in a qualified name, so a parameter written either way slipped
-    /// past a check that only looked at the outermost node.
-    /// </remarks>
-    private static bool IsStringType(TypeSyntax? type, IReadOnlyCollection<string> stringNames) =>
-        type switch
-        {
-            NullableTypeSyntax nullable => IsStringType(nullable.ElementType, stringNames),
-            QualifiedNameSyntax qualified => IsStringType(qualified.Right, stringNames),
-            PredefinedTypeSyntax predefined => predefined.Keyword.IsKind(SyntaxKind.StringKeyword),
-            IdentifierNameSyntax identifier => stringNames.Contains(identifier.Identifier.ValueText),
-            _ => false,
-        };
-
-    /// <summary>Whether a written type names the given type, qualified or not, bare or wrapped.</summary>
-    /// <remarks>
-    /// A RETURN TYPE IS OFTEN NOT THE TYPE ITSELF. <c>Task&lt;DictationStatus&gt;</c>,
-    /// <c>DictationStatus?</c> and <c>IReadOnlyList&lt;DictationOverlayState&gt;</c> all hand back an
-    /// appearance, so the whole written type is searched rather than only its outermost name.
-    /// </remarks>
-    private static bool MentionsName(SyntaxNode type, string name) =>
-        type.DescendantNodesAndSelf().OfType<SimpleNameSyntax>()
-            .Any(simple => simple.Identifier.ValueText == name);
-
-    /// <summary>One line naming the offending member, without its body.</summary>
-    private static string Describe(SyntaxNode member)
-    {
-        var text = member.ToString();
-        var bodyStart = text.IndexOfAny(['{', '=', ';']);
-        return string.Join(' ', (bodyStart > 0 ? text[..bodyStart] : text)
-            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-    }
-
-    /// <summary>Runs the gate over one fixture, as a real file rather than a fragment.</summary>
-    /// <remarks>
-    /// A MEMBER OUTSIDE A TYPE IS NOT A MEMBER DECLARATION, and the first draft of this proof wrote
-    /// its fixtures as bare members. The parser read them as something else entirely and the gate
-    /// found nothing, which is the failure the proof exists to catch, arriving from the fixture
-    /// rather than from the gate. Each fixture is wrapped in a host type here, and any leading
-    /// <c>using</c> stays outside it where the compiler requires it.
+    /// THE COMPILER'S SEMANTIC MODEL IS ASKED, CLOSING WHAT THE SYNTAX-ONLY PARSER COULD NOT SEE.
+    /// The analyser (<c>EW0001</c>) runs during every build of <c>EnviousWispr.App</c> and
+    /// <c>EnviousWispr.Pipeline</c>, and is exercised directly here against every historical and
+    /// semantic shape: an imported named delegate declared in another assembly, a lambda assigned
+    /// to <c>var</c> that leaves its return type to inference, a function pointer, and a
+    /// third-party type in another namespace that happens to share the name <c>DictationStatus</c>.
+    /// Ref: #82.
     /// </remarks>
     private static List<string> OffendersIn(string fileName, string body)
     {
         var lines = body.Split('\n');
         var usings = lines.Where(line => line.TrimStart().StartsWith("using ", StringComparison.Ordinal));
         var rest = lines.Where(line => !line.TrimStart().StartsWith("using ", StringComparison.Ordinal));
-        var source = string.Join('\n', usings)
-            + "\nnamespace Sample;\n\ninternal sealed class Host\n{\n"
+        var source = "namespace Sample;\n\n"
+            + string.Join('\n', usings)
+            + "\n\ninternal sealed class Host\n{\n"
             + string.Join('\n', rest)
             + "\n}\n";
-        return SentenceToAppearanceOffenders(fileName, source);
+        var tree = CSharpSyntaxTree.ParseText(source, path: fileName);
+        var compilation = CreateSemanticCompilation([tree], includeExternalDelegateAssembly: true);
+        return RunDeclarationShapeAnalyzer(
+                compilation,
+                [tree],
+                DeclarationShapeAnalyzer.SentenceToAppearanceDiagnosticId)
+            .Select(diagnostic => $"{fileName}: {diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture)}")
+            .ToList();
     }
 
     /// <summary>
-    /// The gate above can see every shape that has so far walked past one of its drafts.
+    /// The Roslyn semantic analyser refuses every shape that has walked past earlier drafts, plus
+    /// the four semantic shapes a syntax tree alone could not resolve.
     /// </summary>
     /// <remarks>
     /// A GATE THAT PASSES ON ITS FIRST RUN IS UNPROVEN, and this one passes by finding nothing in a
     /// clean tree, which is exactly what a gate that can find nothing at all also does.
     ///
-    /// EVERY POSITIVE CASE HERE IS A REAL BYPASS THAT SHIPPED GREEN, in the order they were found:
-    /// the plain method; the return type reached through a <c>using</c> alias; the return type
-    /// wrapped onto its own line; the <c>Func</c> field; the indexer; an attribute inside the
-    /// parameter list; a comment between the return type and the name; and a named delegate type.
-    /// The last three were found by review AFTER the previous draft called itself complete.
+    /// EVERY POSITIVE CASE HERE IS A REAL BYPASS: the seventeen syntax shapes found across five
+    /// review rounds, plus the three semantic shapes that required a compilation and analyser
+    /// (<c>ImportedNamedDelegate.cs</c> from a separate compiled assembly,
+    /// <c>InferredVarLambda.cs</c> / <c>InferredParameterLambda.cs</c> where the lambda states
+    /// neither return type nor left-hand delegate type, and <c>FunctionPointer.cs</c>).
     ///
-    /// THE NEGATIVE CASES ARE NOT DECORATION. A gate that accuses ordinary code gets switched off,
-    /// so each one is a false alarm a draft actually produced: a member returning what it was
-    /// handed, a member whose NEIGHBOUR returns a status, and a statement that USES an indexer
-    /// rather than declaring one.
+    /// THE NEGATIVE CASES ARE NOT DECORATION. Each is a false alarm a draft produced or a semantic
+    /// control (<c>ThirdPartySameName.cs</c>, where a type in another namespace shares the name
+    /// <c>DictationStatus</c>). Ref: #82.
     /// </remarks>
     [Fact]
     public void DetectsKnownShapesOfSentenceToAppearance()
@@ -1788,6 +1631,25 @@ public sealed partial class DesignSystemTokenTests
             "using Mapper = System.Func<string, DictationStatus>;\n\n"
                 + "    private Mapper _read = _ => default;"));
 
+        // SEMANTIC SHAPES THAT SYNTAX ALONE COULD NOT SEE (#82):
+        // 1. A field whose type is a named delegate declared in an external assembly outside the scanned tree.
+        Assert.NotEmpty(OffendersIn(
+            "ImportedNamedDelegate.cs",
+            "    private External.SentenceToStatus _read = null!;"));
+
+        // 2. A lambda assigned to `var` that states neither its return type nor a left-hand delegate type.
+        Assert.NotEmpty(OffendersIn(
+            "InferredVarLambda.cs",
+            "    private void Show()\n"
+                + "    {\n"
+                + "        var read = (string sentence) => DictationStatus.Quiet(sentence);\n"
+                + "    }"));
+
+        // 3. A function pointer taking a string and returning a DictationStatus.
+        Assert.NotEmpty(OffendersIn(
+            "FunctionPointer.cs",
+            "    private unsafe delegate*<string, DictationStatus> _read = null;"));
+
         Assert.Empty(OffendersIn(
             "Innocent.cs", "    private static string Trim(string sentence) => sentence.Trim();"));
 
@@ -1811,6 +1673,46 @@ public sealed partial class DesignSystemTokenTests
         Assert.Empty(OffendersIn(
             "GenericCall.cs",
             "    private void Show() { var status = cache.Get<string, DictationStatus>(); }"));
+
+        // 4. A third-party type in another namespace that happens to share the name DictationStatus,
+        // both when resolved in the compilation and when coming from an unreferenced assembly.
+        Assert.Empty(OffendersIn(
+            "ThirdPartySameName.cs",
+            "    private static OtherNamespace.DictationStatus Read(string sentence) => default;"));
+
+        Assert.Empty(OffendersIn(
+            "UnresolvedThirdPartySameName.cs",
+            "    private static UnresolvedAssembly.DictationStatus Read(string sentence) => default;"));
+    }
+
+    /// <summary>
+    /// Both production projects that own these contracts wire <c>EnviousWispr.Analyzers</c> as a
+    /// build-time Roslyn analyser, so a violation is refused by the compiler before tests run.
+    /// </summary>
+    [Fact]
+    public void TheProductionAppAndPipelineWireTheDeclarationShapeAnalyzerAtBuildTime()
+    {
+        var root = FindRepositoryRoot();
+        foreach (var project in new[]
+        {
+            Path.Combine(root, "src", "Production", "EnviousWispr.Core", "EnviousWispr.Core.csproj"),
+            Path.Combine(root, "src", "Production", "EnviousWispr.Presentation", "EnviousWispr.Presentation.csproj"),
+            Path.Combine(root, "src", "Production", "EnviousWispr.Pipeline", "EnviousWispr.Pipeline.csproj"),
+            Path.Combine(root, "src", "Production", "EnviousWispr.App", "EnviousWispr.App.csproj"),
+        })
+        {
+            var document = XDocument.Load(project);
+            var reference = document.Descendants("ProjectReference")
+                .FirstOrDefault(element =>
+                    ((string?)element.Attribute("Include"))?.EndsWith(
+                        "EnviousWispr.Analyzers.csproj",
+                        StringComparison.Ordinal) == true);
+            Assert.True(
+                reference is not null &&
+                (string?)reference.Attribute("OutputItemType") == "Analyzer" &&
+                (string?)reference.Attribute("ReferenceOutputAssembly") == "false",
+                $"{Path.GetFileName(project)} does not wire EnviousWispr.Analyzers as OutputItemType=\"Analyzer\" ReferenceOutputAssembly=\"false\".");
+        }
     }
 
     /// <summary>
@@ -1818,20 +1720,15 @@ public sealed partial class DesignSystemTokenTests
     /// </summary>
     /// <remarks>
     /// THE GATE ABOVE REFUSES THE OLD SHAPE; THIS ONE REFUSES A NEW STATUS FROM SKIPPING THE
-    /// CHOICE. Every call site must name a <c>DictationStatus</c>, including the quiet ones, so a
-    /// status that shows no pill says so on purpose rather than by falling through.
+    /// CHOICE. Every call site must name a <c>DictationStatus</c> factory or pass a carrier the
+    /// compiler resolves to <c>EnviousWispr.Core.Presentation.DictationStatus</c>, including the
+    /// quiet ones, so a status that shows no pill says so on purpose rather than by falling through.
     ///
-    /// THE CARRIER LIST IS READ OUT OF THE SOURCE, NOT KEPT HERE. The first draft carried a
-    /// hand-written list that included the bare word "status", and a reviewer showed that a helper
-    /// named <c>statusFromSentence</c> would satisfy it - the allowlist was wide enough to admit
-    /// the very defect the pair exists to refuse. Now a carrier is a member this file declares as
-    /// returning <c>DictationStatus</c>, or a parameter or local of that type, so a name only
-    /// counts once the compiler agrees what it is.
-    ///
-    /// IT COUNTS WHAT IT SKIPPED. A regex that walks nested parentheses has a depth, and a call
-    /// nested deeper than that depth is not reported as suspicious - it is not seen at all, which
-    /// is the silent direction. The extracted count is compared against a plain count of the call
-    /// token, so a call this cannot parse fails the gate rather than escaping it.
+    /// CHECKED BY THE ROSLYN SEMANTIC ANALYSER (<c>EW0003</c>) AT BUILD TIME AND HERE. A <c>var</c>
+    /// local, a pattern-bound variable, or a <c>using</c> alias for <c>DictationStatus</c> is
+    /// resolved by the compiler, while a same-named type from another namespace, a <c>default</c>
+    /// value, a raw <c>new DictationStatus(...)</c>, or a sentence-to-status helper is refused.
+    /// Ref: #82.
     /// </remarks>
     [Fact]
     public void EveryStatusHandedToTheWindowNamesItsPill()
@@ -1842,60 +1739,52 @@ public sealed partial class DesignSystemTokenTests
         // method with the status untouched. Every argument on either route must name its pill.
         var root = FindRepositoryRoot();
         var app = Path.Combine(root, "src", "Production", "EnviousWispr.App");
-        var routes = ShellSessionSources(root)
-            .Select(path => (
-                Source: File.ReadAllText(path),
-                Call: path.EndsWith("App.xaml.cs", StringComparison.Ordinal) ? "SetSessionStatus(" : ".ShowStatus("))
+        var paths = ShellSessionSources(root).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var allAppTrees = ProductionSourceFiles(app)
+            .Select(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path))
             .ToArray();
+        var trees = allAppTrees
+            .Where(tree => paths.Contains(tree.FilePath))
+            .ToArray();
+        var compilation = CreateSemanticCompilation(allAppTrees);
+        var symbols = DeclarationShapeAnalyzer.KnownSymbols.From(compilation);
+        Assert.True(
+            symbols.StatusType is { TypeKind: not TypeKind.Error },
+            "DictationStatus did not resolve in the semantic compilation.");
 
-        var arguments = new List<(string Argument, string Source)>();
-        var written = 0;
-        foreach (var (source, call) in routes)
+        var calls = new List<(InvocationExpressionSyntax Invocation, SyntaxTree Tree)>();
+        foreach (var tree in trees)
         {
-            for (var index = source.IndexOf(call, StringComparison.Ordinal);
-                 index >= 0;
-                 index = source.IndexOf(call, index + call.Length, StringComparison.Ordinal))
+            var model = compilation.GetSemanticModel(tree);
+            foreach (var invocation in tree.GetRoot().DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
-                var argument = BalancedArgument(source, index + call.Length);
-                if (argument is not null)
+                if (DeclarationShapeAnalyzer.IsStatusSinkCall(invocation, model, symbols.StatusType!))
                 {
-                    arguments.Add((argument, source));
+                    calls.Add((invocation, tree));
                 }
             }
-
-            written += CountOccurrences(source, call);
         }
 
-        Assert.True(written >= 20, $"Expected the app's status call sites, found {written}.");
-        Assert.True(
-            arguments.Count == written,
-            $"{written - arguments.Count} of {written} status calls could not be read, so "
-                + "this gate is silently not checking them.");
+        Assert.True(calls.Count >= 20, $"Expected the app's status call sites, found {calls.Count}.");
 
         // The shell forwards the view's status to the window untouched: the view's forwarder is read
         // as syntax - one expression, the parameter handed on as it arrived, nothing assigned to it -
         // and it is the only call whose argument is a bare parameter, or a status could be rewritten
         // between the composition and the window.
-        var shell = File.ReadAllText(Path.Combine(app, "App.xaml.cs"));
+        var shellPath = Path.Combine(app, "App.xaml.cs");
+        var shell = File.ReadAllText(shellPath);
         Assert.Null(StatusForwarderComplaint(shell));
-        var forwarders = arguments.Count(entry => entry.Source == shell && entry.Argument == "status");
+        var forwarders = calls.Count(entry =>
+            entry.Tree.FilePath == shellPath &&
+            entry.Invocation.ArgumentList.Arguments.Count == 1 &&
+            entry.Invocation.ArgumentList.Arguments[0].Expression.ToString() == "status");
         Assert.True(forwarders == 1, $"Expected exactly one bare forwarder of a status to the window, found {forwarders}.");
 
-        // WHITESPACE-TOLERANT ON PURPOSE, AND THIS WAS A CORRECTION. The check was a substring test
-        // for "DictationStatus." exactly, so a call site that wrapped the line between the type and
-        // its factory - which the line length forces once a status is also marked for the
-        // Transcription card - was reported as deciding its appearance somewhere unseen. It was not:
-        // it named the type on the line above. The gate was pinning the LINE BREAK rather than the
-        // property it exists to hold, and the app was right. It now asserts what it actually means,
-        // which is that the call site names the type.
-        // A carrier is a name the compiler already agrees is a DictationStatus: a member declared
-        // to return one, or a parameter or local of that type - in the file the call sits in.
-        var carriersBySource = routes.ToDictionary(route => route.Source, route => DictationStatusCarriers(route.Source));
-        var unnamed = arguments
-            .Where(entry => !DictationStatusFactoryCall().IsMatch(entry.Argument))
-            .Where(entry => !carriersBySource[entry.Source].Any(carrier =>
-                IdentifierRegexFor(carrier).IsMatch(entry.Argument)))
-            .Select(entry => entry.Argument)
+        var unnamed = RunDeclarationShapeAnalyzer(
+                compilation,
+                trees,
+                DeclarationShapeAnalyzer.StatusPillNamingDiagnosticId)
+            .Select(diagnostic => diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture))
             .ToArray();
 
         Assert.True(
@@ -2045,26 +1934,101 @@ public sealed partial class DesignSystemTokenTests
             string.Concat(node.ToString().Where(character => !char.IsWhiteSpace(character)));
     }
 
-    /// <summary>The relaxed match still refuses an argument that names no status at all.</summary>
+    /// <summary>
+    /// The Roslyn semantic analyser accepts wrapped factory calls, <c>var</c> carriers, and
+    /// <c>using</c> aliases while refusing nameless helpers, <c>default</c>, and raw construction.
+    /// </summary>
     /// <remarks>
-    /// PROVING THE RELAXATION DID NOT OPEN THE GATE. Allowing whitespace between the type and its
-    /// factory is a one-character change to a pattern, and the failure it could introduce is silent:
-    /// a gate that matches everything passes forever. Both directions are asserted here because one
-    /// of them alone is not a control.
+    /// PROVING THE ANALYSER (<c>EW0003</c>) CLOSES BOTH DIRECTIONS. Both positive and negative
+    /// calls are compiled and checked through the real semantic model, including a <c>var</c>
+    /// local bound to a <c>DictationStatus</c> and a <c>using</c> alias for the type. Ref: #82.
     /// </remarks>
     [Fact]
     public void TheStatusFactoryMatchAcceptsAWrappedCallAndStillRefusesANamelessOne()
     {
-        var pattern = DictationStatusFactoryCall();
-        Assert.Matches(pattern, "DictationStatus.Quiet(\"Ready\")");
-        Assert.Matches(
-            pattern,
-            "DictationStatus" + Environment.NewLine +
-            "                .Quiet(\"Ready\")" + Environment.NewLine +
-            "                .AboutTheTranscriptionEngine()");
-        Assert.DoesNotMatch(pattern, "helper.BuildTheStatus(sentence)");
-        Assert.DoesNotMatch(pattern, "statusFromSentence(sentence)");
-        Assert.DoesNotMatch(pattern, "DictationStatusHelper(sentence)");
+        Assert.Empty(StatusSinkDiagnosticsIn("SetSessionStatus(DictationStatus.Quiet(\"Ready\"));"));
+        Assert.Empty(StatusSinkDiagnosticsIn(
+            "SetSessionStatus(" + Environment.NewLine +
+            "    DictationStatus" + Environment.NewLine +
+            "        .Quiet(\"Ready\")" + Environment.NewLine +
+            "        .AboutTheTranscriptionEngine());"));
+        Assert.Empty(StatusSinkDiagnosticsIn(
+            "var ready = DictationStatus.Quiet(\"Ready\");" + Environment.NewLine +
+            "SetSessionStatus(ready);"));
+        Assert.Empty(StatusSinkDiagnosticsIn(
+            "using Pill = EnviousWispr.Core.Presentation.DictationStatus;" + Environment.NewLine +
+            "Pill ready = DictationStatus.Quiet(\"Ready\");" + Environment.NewLine +
+            "SetSessionStatus(ready);"));
+
+        Assert.NotEmpty(StatusSinkDiagnosticsIn("SetSessionStatus(helper.BuildTheStatus(sentence));"));
+        Assert.NotEmpty(StatusSinkDiagnosticsIn("SetSessionStatus(statusFromSentence(sentence));"));
+        Assert.NotEmpty(StatusSinkDiagnosticsIn("SetSessionStatus(DictationStatusHelper(sentence));"));
+        Assert.NotEmpty(StatusSinkDiagnosticsIn("SetSessionStatus(default);"));
+        Assert.NotEmpty(StatusSinkDiagnosticsIn(
+            "DictationStatus status = default!;" + Environment.NewLine +
+            "SetSessionStatus(status);"));
+        Assert.NotEmpty(StatusSinkDiagnosticsIn(
+            "var status = DictationStatus.Quiet(\"Ready\");" + Environment.NewLine +
+            "status = default;" + Environment.NewLine +
+            "SetSessionStatus(status);"));
+        Assert.NotEmpty(StatusSinkDiagnosticsIn(
+            "if (default(DictationStatus) is var status) { SetSessionStatus(status); }"));
+        Assert.NotEmpty(StatusSinkDiagnosticsIn(
+            "SetSessionStatus(new DictationStatus(\"Ready\", DictationOverlayState.Hidden));"));
+
+        // Cross-file partial-class status carriers are checked across trees: a field or property
+        // initialized or assigned to default in another file is refused, while a factory-backed
+        // carrier in another file is accepted.
+        Assert.Empty(StatusSinkDiagnosticsAcrossFiles(
+            "internal partial class CrossFileHost { private readonly DictationStatus _status = DictationStatus.Quiet(\"Ready\"); }",
+            "internal partial class CrossFileHost { private void SetSessionStatus(DictationStatus status) { } private void Show() => SetSessionStatus(_status); }"));
+        Assert.NotEmpty(StatusSinkDiagnosticsAcrossFiles(
+            "internal partial class CrossFileHost { private readonly DictationStatus _status = default; }",
+            "internal partial class CrossFileHost { private void SetSessionStatus(DictationStatus status) { } private void Show() => SetSessionStatus(_status); }"));
+        Assert.NotEmpty(StatusSinkDiagnosticsAcrossFiles(
+            "internal partial class CrossFileHost { private DictationStatus _status = DictationStatus.Quiet(\"Ready\"); private void Corrupt() => _status = default; }",
+            "internal partial class CrossFileHost { private void SetSessionStatus(DictationStatus status) { } private void Show() => SetSessionStatus(_status); }"));
+
+        // Reassigned parameters, defaulted parameters, uninitialized/self-assigned fields, and
+        // helper calls handed default are all refused.
+        Assert.NotEmpty(StatusSinkDiagnosticsAcrossFiles(
+            "internal sealed class ParamHost { private void SetSessionStatus(DictationStatus status) { } private void Forward(DictationStatus status) { status = default; SetSessionStatus(status); } }",
+            "internal sealed class EmptyPart { }"));
+        Assert.NotEmpty(StatusSinkDiagnosticsAcrossFiles(
+            "internal sealed class DefaultParamHost { private void SetSessionStatus(DictationStatus status) { } private void Forward(DictationStatus status = default) => SetSessionStatus(status); }",
+            "internal sealed class EmptyPart { }"));
+        Assert.NotEmpty(StatusSinkDiagnosticsAcrossFiles(
+            "internal sealed class CycleHost { private DictationStatus _status; private void SetSessionStatus(DictationStatus status) { } private void Show() { _status = _status; SetSessionStatus(_status); } }",
+            "internal sealed class EmptyPart { }"));
+        Assert.NotEmpty(StatusSinkDiagnosticsAcrossFiles(
+            "internal sealed class HelperCallHost { private void SetSessionStatus(DictationStatus status) { } private void Forward(DictationStatus status) => SetSessionStatus(status); private void Caller() => Forward(default); }",
+            "internal sealed class EmptyPart { }"));
+    }
+
+    private static Diagnostic[] StatusSinkDiagnosticsAcrossFiles(string firstFile, string secondFile)
+    {
+        var firstTree = CSharpSyntaxTree.ParseText(firstFile, path: "Part1.cs");
+        var secondTree = CSharpSyntaxTree.ParseText(secondFile, path: "Part2.cs");
+        var compilation = CreateSemanticCompilation([firstTree, secondTree]);
+        return RunDeclarationShapeAnalyzer(
+            compilation,
+            [firstTree, secondTree],
+            DeclarationShapeAnalyzer.StatusPillNamingDiagnosticId);
+    }
+
+    private static Diagnostic[] StatusSinkDiagnosticsIn(string statements)
+    {
+        var lines = statements.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        var usings = lines.Where(line => line.TrimStart().StartsWith("using ", StringComparison.Ordinal));
+        var body = lines.Where(line => !line.TrimStart().StartsWith("using ", StringComparison.Ordinal));
+        var source = string.Join('\n', usings) + "\n" + """
+            internal sealed class StatusSinkFixture
+            {
+                private void SetSessionStatus(DictationStatus status) { }
+                private void Run(string sentence, dynamic helper, System.Func<string, DictationStatus> statusFromSentence, System.Func<string, DictationStatus> DictationStatusHelper)
+                {
+            """ + "\n" + string.Join('\n', body) + "\n    }\n}\n";
+        return AnalyzeSnippet(source, DeclarationShapeAnalyzer.StatusPillNamingDiagnosticId);
     }
 
     /// <summary>The shell's session sources: the window's file and the WinUI-free composition beside it.</summary>
@@ -2081,45 +2045,6 @@ public sealed partial class DesignSystemTokenTests
             .Where(path =>
                 !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal) &&
                 !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
-
-    /// <summary>The argument between one call's parentheses, or null if they never balance.</summary>
-    private static string? BalancedArgument(string text, int start)
-    {
-        var depth = 1;
-        for (var scan = start; scan < text.Length; scan++)
-        {
-            if (text[scan] == '(')
-            {
-                depth++;
-            }
-            else if (text[scan] == ')' && --depth == 0)
-            {
-                return text[start..scan].Trim();
-            }
-        }
-
-        return null;
-    }
-
-    private static int CountOccurrences(string text, string token)
-    {
-        var total = 0;
-        for (var index = text.IndexOf(token, StringComparison.Ordinal);
-             index >= 0;
-             index = text.IndexOf(token, index + token.Length, StringComparison.Ordinal))
-        {
-            total++;
-        }
-
-        return total;
-    }
-
-    private static Regex IdentifierRegexFor(string name) =>
-        new(@"\b" + Regex.Escape(name) + @"\b", RegexOptions.CultureInvariant);
-
-    /// <summary>The type naming one of its own factories, across a line break if need be.</summary>
-    [GeneratedRegex(@"\bDictationStatus\s*\.")]
-    private static partial Regex DictationStatusFactoryCall();
 
     /// <summary>
     /// No page arrives with a heading and nothing under it.
@@ -2408,6 +2333,63 @@ public sealed partial class DesignSystemTokenTests
         Assert.Contains("void Other()", remaining, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The semantic model resolves the hide list across partial class declarations, ignores a
+    /// same-named member on an unrelated class, and finds a hide list built under another member
+    /// name when iterated by the section-hiding loop.
+    /// </summary>
+    [Fact]
+    public void TheHideListIsResolvedSemanticallyAcrossPartialClassesAndHideLoops()
+    {
+        const string partialDeclarations = """
+            public partial class MainWindow
+            {
+                private object[] SettingsSections() => [ FirstSection ];
+                private void Keep() { _ = ReachedSection; }
+            }
+            public partial class MainWindow
+            {
+                private object[] SettingsSections(int overload) => [ SecondSection ];
+            }
+            """;
+        var withoutPartials = CodeWithoutTheHideList(partialDeclarations);
+        Assert.DoesNotContain("FirstSection", withoutPartials, StringComparison.Ordinal);
+        Assert.DoesNotContain("SecondSection", withoutPartials, StringComparison.Ordinal);
+        Assert.Contains("ReachedSection", withoutPartials, StringComparison.Ordinal);
+
+        const string hideListUnderAnotherName = """
+            public partial class MainWindow
+            {
+                private object[] HiddenInventory() => [ OrphanedSection ];
+                private void Apply(object section)
+                {
+                    foreach (var candidate in HiddenInventory())
+                    {
+                        candidate.Visibility = ReferenceEquals(candidate, section)
+                            ? Visibility.Visible
+                            : Visibility.Collapsed;
+                    }
+                    _ = ReachedSection;
+                }
+            }
+            """;
+        var withoutCustomHideList = CodeWithoutTheHideList(hideListUnderAnotherName);
+        Assert.DoesNotContain("OrphanedSection", withoutCustomHideList, StringComparison.Ordinal);
+        Assert.Contains("ReachedSection", withoutCustomHideList, StringComparison.Ordinal);
+
+        const string strangerClassOnly = """
+            internal sealed class Stranger
+            {
+                private object[] SettingsSections() => [ PrivacySection ];
+            }
+            public partial class MainWindow
+            {
+                private void Other() { }
+            }
+            """;
+        Assert.ThrowsAny<Exception>(() => CodeWithoutTheHideList(strangerClassOnly));
+    }
+
     /// <summary>A hide list that is not there stops the gate rather than emptying it.</summary>
     /// <remarks>
     /// UNDER THE PATTERN THIS REPLACES, NOT FINDING IT REMOVED NOTHING AND THE TEST STILL PASSED.
@@ -2420,13 +2402,6 @@ public sealed partial class DesignSystemTokenTests
         Assert.ThrowsAny<Exception>(() => CodeWithoutTheHideList("class C { void Other() { } }"));
     }
 
-    /// <summary>A body is read whole, however the braces inside it are laid out.</summary>
-    /// <remarks>
-    /// THE PATTERN THIS REPLACES STOPPED AT THE FIRST LINE THAT WAS FOUR SPACES AND A BRACE. A local
-    /// function, a lambda block or a nested type closing at that indentation ended the capture early,
-    /// and the caller then asserted about part of a method - which passes or fails for reasons that
-    /// have nothing to do with the property being checked. Ref: #82.
-    /// </remarks>
     /// <summary>A body is read whole, however braces appear inside it.</summary>
     /// <remarks>
     /// THE PATTERN THIS REPLACES STOPPED AT THE FIRST LINE THAT WAS FOUR SPACES AND A BRACE, and it
@@ -2452,11 +2427,47 @@ public sealed partial class DesignSystemTokenTests
         Assert.Contains("Marker();", DeclarationTextOf(code, "RunAutoStopWatchAsync"), StringComparison.Ordinal);
     }
 
-    /// <summary>An initializer is found however the declaration is written.</summary>
+    [Fact]
+    public void DeclarationNamedIgnoresLocalVariablesAndInterfaceSignaturesAndRefusesDuplicates()
+    {
+        const string withInterfaceAndLocal = """
+            internal interface IRunner
+            {
+                Task RunAsync();
+            }
+            internal sealed class Runner : IRunner
+            {
+                private void Before()
+                {
+                    var RunAsync = "not a member";
+                    _ = RunAsync;
+                }
+                public async Task RunAsync()
+                {
+                    RealBodyMarker();
+                    await Task.Yield();
+                }
+            }
+            """;
+        var body = DeclarationTextOf(withInterfaceAndLocal, "RunAsync");
+        Assert.Contains("RealBodyMarker();", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("not a member", body, StringComparison.Ordinal);
+
+        const string ambiguous = """
+            internal sealed class First { public void RunAsync() { } }
+            internal sealed class Second { public void RunAsync() { } }
+            """;
+        Assert.ThrowsAny<Exception>(() => DeclarationTextOf(ambiguous, "RunAsync"));
+    }
+
+    /// <summary>An initializer is found however the declaration is written, and constant labels resolve semantically.</summary>
     /// <remarks>
     /// The pattern this replaces required the name, then `=`, then `[`, with only whitespace between,
     /// and stopped at the first `];`. A comment before the bracket hid the list entirely; a nested
     /// collection ended it early, and the caller read a truncated list as the whole set of choices.
+    /// The semantic model also resolves constant identifiers such as
+    /// <see cref="TranscriptionEngineNames.Parakeet"/> and ignores a local variable of the same
+    /// name. Ref: #82.
     /// </remarks>
     [Theory]
     [InlineData("private static readonly object[] FinalEngineChoices = [ new(\"Automatic\") ];")]
@@ -2469,32 +2480,66 @@ public sealed partial class DesignSystemTokenTests
         Assert.Contains("Automatic", text, StringComparison.Ordinal);
     }
 
-    /// <summary>A carrier is a declaration, not a mention.</summary>
-    /// <remarks>
-    /// THE PATTERN THIS REPLACES INVENTED CARRIERS AND MISSED REAL ONES. It matched the type name
-    /// followed by an identifier anywhere in the file, so a comment or a string naming the type
-    /// created a carrier that does not exist - and any name can then be treated as already being a
-    /// status. A declaration wrapped across a line break was missed the other way.
-    /// </remarks>
-    /// <summary>A carrier is a declaration, not a mention.</summary>
+    [Fact]
+    public void ChoiceLabelsResolveConstantSymbolsAndIgnoreCommentsAndLocals()
+    {
+        const string source = """
+            internal sealed class ChoiceHost
+            {
+                private void IgnoreLocal()
+                {
+                    var FinalEngineChoices = new[] { "LocalShadow" };
+                    _ = FinalEngineChoices;
+                }
+
+                private readonly object[] FinalEngineChoices =
+                [
+                    // new("CommentedOut")
+                    new("Automatic", "First"),
+                    new(TranscriptionEngineNames.Parakeet, "Second"),
+                    new(TranscriptionEngineNames.Whisper, "Third"),
+                ];
+            }
+            """;
+
+        Assert.Equal(
+            ["Automatic", TranscriptionEngineNames.Parakeet, TranscriptionEngineNames.Whisper],
+            ChoiceLabelsOf(source, "FinalEngineChoices"));
+    }
+
+    /// <summary>A carrier is a declaration the compiler resolves to DictationStatus, not a mention.</summary>
     /// <remarks>
     /// THE PATTERN THIS REPLACES INVENTED CARRIERS, and the two rows below are the ones it actually
     /// invents - checked by running it, not taken from the issue. It matched the type name, a word,
     /// and any of `( = ) , ;`, so a COMMENT ending in a semicolon and a STRING containing one both
     /// produced a name. Every name in an argument then counts as already being a status, which is
-    /// the check quietly not checking. Ref: #82.
+    /// the check quietly not checking.
+    ///
+    /// ASKING THE COMPILER'S SEMANTIC MODEL ALSO CLOSES THE THREE GAPS SYNTAX ALONE LEFT OPEN:
+    /// a <c>var</c> local bound to a <c>DictationStatus</c>, a pattern-bound variable, a
+    /// <c>using</c> alias for the type, and an imposter type of the same name from another
+    /// namespace. Ref: #82.
     /// </remarks>
     [Fact]
     public void OnlyDeclarationsCountAsCarriers()
     {
         var code = string.Join("\n", [
+            "using Pill = EnviousWispr.Core.Presentation.DictationStatus;",
             "class C",
             "{",
             "    // Returns a DictationStatus value; nothing is declared here.",
             "    private const string Note = \"DictationStatus invented;\";",
             "    private DictationStatus Declared() => default;",
             "    private void Takes(DictationStatus parameter) { }",
-            "    private void Local() { DictationStatus local = default; }",
+            "    private void Local()",
+            "    {",
+            "        DictationStatus local = default;",
+            "        var inferred = DictationStatus.Quiet(\"Ready\");",
+            "        Pill aliased = DictationStatus.Quiet(\"Ready\");",
+            "        if (Declared() is { } patterned) { _ = patterned; }",
+            "        OtherNamespace.DictationStatus imposter = default;",
+            "        _ = (local, inferred, aliased, imposter);",
+            "    }",
             "}",
         ]);
 
@@ -2503,9 +2548,13 @@ public sealed partial class DesignSystemTokenTests
         Assert.Contains("Declared", carriers);
         Assert.Contains("parameter", carriers);
         Assert.Contains("local", carriers);
-        // The two the old pattern invented.
+        Assert.Contains("inferred", carriers);
+        Assert.Contains("aliased", carriers);
+        Assert.Contains("patterned", carriers);
+        // The two the old pattern invented, plus the same-named type from another namespace.
         Assert.DoesNotContain("value", carriers);
         Assert.DoesNotContain("invented", carriers);
+        Assert.DoesNotContain("imposter", carriers);
     }
 
     /// <summary>A member that is not there stops the gate rather than emptying it.</summary>
@@ -2515,24 +2564,26 @@ public sealed partial class DesignSystemTokenTests
         Assert.ThrowsAny<Exception>(() => DeclarationTextOf("class C { }", "NotThere"));
     }
 
-    /// <summary>The whole text of the member with this name.</summary>
+    /// <summary>The whole text of the concrete member with this name.</summary>
     /// <remarks>
-    /// ASKS THE PARSER WHERE THE MEMBER ENDS. The pattern this replaces ran from the declaration to
-    /// the first line that was exactly four spaces and a closing brace, which is an assumption about
-    /// indentation rather than about C#: a nested type, a differently indented body, or a brace
-    /// inside a string ends it early and the caller then asserts about a fragment. Ref: #82.
+    /// ASKS THE COMPILER'S SEMANTIC MODEL WHICH DECLARATION IS THE CONCRETE MEMBER. Neither an
+    /// interface method signature without a body nor a local variable sharing the name counts, and
+    /// an ambiguous duplicate member name fails loudly instead of silently checking the first. Ref: #82.
     /// </remarks>
     private static string DeclarationTextOf(string code, string name) =>
-        DeclarationNamed(code, name).ToString();
+        DeclarationNamed(code, name).Node.ToString();
 
     /// <summary>The text of the initializer of the member with this name.</summary>
     /// <remarks>
     /// The pattern this replaces required `Name = [` with only whitespace between and stopped at the
     /// first `];`, so a comment before the bracket hid the list and a nested collection ended it early.
     /// </remarks>
-    private static string InitializerOf(string code, string name)
+    private static string InitializerOf(string code, string name) =>
+        InitializerNodeOf(code, name).Node.ToString();
+
+    private static (SyntaxNode Node, SemanticModel Model) InitializerNodeOf(string code, string name)
     {
-        var declaration = DeclarationNamed(code, name);
+        var (declaration, model) = DeclarationNamed(code, name);
         var initializer = declaration switch
         {
             VariableDeclaratorSyntax variable => (SyntaxNode?)variable.Initializer?.Value,
@@ -2542,66 +2593,111 @@ public sealed partial class DesignSystemTokenTests
         };
 
         Assert.True(initializer is not null, $"{name} has no initializer to read.");
-        return initializer!.ToString();
+        return (initializer!, model);
     }
 
-    /// <summary>Every name declared as a DictationStatus: member, parameter or local.</summary>
+    /// <summary>
+    /// Evaluates the first constructor argument of each choice item in a member's initializer
+    /// through the compiler's semantic constant evaluator.
+    /// </summary>
+    private static string[] ChoiceLabelsOf(string code, string name)
+    {
+        var (initializer, model) = InitializerNodeOf(code, name);
+        var creations = initializer.DescendantNodes()
+            .OfType<BaseObjectCreationExpressionSyntax>()
+            .Where(creation => creation.ArgumentList is { Arguments.Count: >= 1 })
+            .ToArray();
+
+        var labels = new List<string>(creations.Length);
+        foreach (var creation in creations)
+        {
+            var firstArgument = creation.ArgumentList!.Arguments[0].Expression;
+            var constant = model.GetConstantValue(firstArgument);
+            Assert.True(
+                constant is { HasValue: true, Value: string },
+                $"Choice argument '{firstArgument}' in {name} did not evaluate to a constant string.");
+            labels.Add((string)constant.Value!);
+        }
+
+        return labels.ToArray();
+    }
+
+    /// <summary>Every name the compiler resolves as a DictationStatus: member, parameter or local.</summary>
     /// <remarks>
-    /// SYNTAX IS BETTER THAN TEXT HERE AND STILL NOT THE COMPILER. The pattern this replaces matched
-    /// `DictationStatus` followed by a name anywhere in the file, so a comment or a string mentioning
-    /// the type INVENTED a carrier, and a declaration wrapped across a line break hid one. Reading
-    /// declarations cannot do either.
-    ///
-    /// WHAT IT STILL CANNOT SEE, because this gate's own summary claims the compiler agrees and this
-    /// does not ask it: a `var` local bound to a DictationStatus, an alias for the type, and a
-    /// different type of the same name from another namespace. That is the gap #82 wants an analyser
-    /// for, and it is the reason this member is named after what it reads rather than after what the
-    /// compiler knows.
+    /// ASKS THE COMPILER'S SEMANTIC MODEL RATHER THAN THE WRITTEN TYPE NAME. A <c>var</c> local
+    /// bound to a <c>DictationStatus</c>, a pattern-bound variable, and a <c>using</c> alias all
+    /// resolve to <c>EnviousWispr.Core.Presentation.DictationStatus</c>, while a comment, a string,
+    /// or a type of the same name from another namespace does not. Ref: #82.
     /// </remarks>
     private static HashSet<string> DictationStatusCarriers(string code)
     {
-        var root = CSharpSyntaxTree.ParseText(code).GetRoot();
-        var names = root.DescendantNodes()
-            .SelectMany(node => node switch
-            {
-                MethodDeclarationSyntax method when IsDictationStatus(method.ReturnType) =>
-                    [method.Identifier.ValueText],
-                PropertyDeclarationSyntax property when IsDictationStatus(property.Type) =>
-                    [property.Identifier.ValueText],
-                ParameterSyntax parameter when parameter.Type is not null &&
-                    IsDictationStatus(parameter.Type) => [parameter.Identifier.ValueText],
-                VariableDeclarationSyntax declaration when IsDictationStatus(declaration.Type) =>
-                    declaration.Variables.Select(variable => variable.Identifier.ValueText),
-                _ => Enumerable.Empty<string>(),
-            });
+        var tree = CSharpSyntaxTree.ParseText(code, path: "Carriers.cs");
+        var compilation = CreateSemanticCompilation([tree]);
+        var statusType = compilation.GetTypeByMetadataName("EnviousWispr.Core.Presentation.DictationStatus");
+        Assert.True(
+            statusType is { TypeKind: not TypeKind.Error },
+            "DictationStatus did not resolve in the semantic compilation.");
 
-        return names.ToHashSet(StringComparer.Ordinal);
+        var model = compilation.GetSemanticModel(tree);
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var node in tree.GetRoot().DescendantNodes())
+        {
+            var (identifier, symbol) = node switch
+            {
+                MethodDeclarationSyntax method =>
+                    (method.Identifier.ValueText, (ISymbol?)model.GetDeclaredSymbol(method)),
+                PropertyDeclarationSyntax property =>
+                    (property.Identifier.ValueText, model.GetDeclaredSymbol(property)),
+                ParameterSyntax parameter =>
+                    (parameter.Identifier.ValueText, model.GetDeclaredSymbol(parameter)),
+                VariableDeclaratorSyntax variable =>
+                    (variable.Identifier.ValueText, model.GetDeclaredSymbol(variable)),
+                SingleVariableDesignationSyntax designation =>
+                    (designation.Identifier.ValueText, model.GetDeclaredSymbol(designation)),
+                _ => (string.Empty, null),
+            };
+
+            if (identifier.Length > 0 &&
+                DeclarationShapeAnalyzer.IsDictationStatusCarrierSymbol(symbol, statusType!))
+            {
+                names.Add(identifier);
+            }
+        }
+
+        return names;
     }
 
-    private static bool IsDictationStatus(TypeSyntax type) => type switch
-    {
-        NullableTypeSyntax nullable => IsDictationStatus(nullable.ElementType),
-        QualifiedNameSyntax qualified => IsDictationStatus(qualified.Right),
-        IdentifierNameSyntax name => name.Identifier.ValueText == "DictationStatus",
-        _ => false,
-    };
-
-    /// <summary>The one member with this name, or a failure that says which.</summary>
+    /// <summary>The one concrete member with this name, resolved through the semantic model.</summary>
     /// <remarks>
-    /// A MISSING MEMBER STOPS THE TEST. Under the patterns these replace, not finding one left the
-    /// caller holding an empty match to assert about - and two of those gates compensated with a
-    /// character-count control rather than by refusing.
+    /// A MISSING OR AMBIGUOUS MEMBER STOPS THE TEST. Only concrete class or struct members
+    /// (<see cref="IFieldSymbol"/>, <see cref="IPropertySymbol"/>, or an <see cref="IMethodSymbol"/>
+    /// with a body) count: local variables (<see cref="ILocalSymbol"/>) and bodyless interface
+    /// signatures are excluded by the semantic model. Ref: #82.
     /// </remarks>
-    private static SyntaxNode DeclarationNamed(string code, string name)
+    private static (SyntaxNode Node, SemanticModel Model) DeclarationNamed(string code, string name)
     {
-        var root = CSharpSyntaxTree.ParseText(code).GetRoot();
-        var declarations = root.DescendantNodes()
-            .Where(node => node switch
+        var tree = CSharpSyntaxTree.ParseText(code, path: "DeclarationLookup.cs");
+        var compilation = CreateSemanticCompilation([tree]);
+        var model = compilation.GetSemanticModel(tree);
+
+        var declarations = tree.GetRoot()
+            .DescendantNodes()
+            .Where(node =>
             {
-                MethodDeclarationSyntax method => method.Identifier.ValueText == name,
-                PropertyDeclarationSyntax property => property.Identifier.ValueText == name,
-                VariableDeclaratorSyntax variable => variable.Identifier.ValueText == name,
-                _ => false,
+                var symbol = node switch
+                {
+                    MethodDeclarationSyntax method when method.Identifier.ValueText == name &&
+                        (method.Body is not null || method.ExpressionBody is not null) =>
+                        (ISymbol?)model.GetDeclaredSymbol(method),
+                    PropertyDeclarationSyntax property when property.Identifier.ValueText == name =>
+                        model.GetDeclaredSymbol(property),
+                    VariableDeclaratorSyntax variable when variable.Identifier.ValueText == name =>
+                        model.GetDeclaredSymbol(variable),
+                    _ => null,
+                };
+
+                return symbol is IMethodSymbol or IPropertySymbol or IFieldSymbol &&
+                    symbol.ContainingType?.TypeKind is TypeKind.Class or TypeKind.Struct;
             })
             .ToArray();
 
@@ -2609,53 +2705,227 @@ public sealed partial class DesignSystemTokenTests
             declarations.Length > 0,
             $"No member called {name}. Either it was renamed, in which case this gate is no longer "
                 + "checking what it was written for, or it is gone and the gate should be too.");
-        return declarations[0];
+        Assert.True(
+            declarations.Length == 1,
+            $"Found {declarations.Length} concrete members called {name}; disambiguate the target type so the gate cannot read the wrong one.");
+        return (declarations[0], model);
     }
 
     /// <summary>
-    /// The window's code with the hide-list member removed, so a name left only there does not
-    /// count as reached.
+    /// The window's code with the hide-list member(s) removed, resolved semantically across partial
+    /// declarations and hide loops so a name left only there does not count as reached.
     /// </summary>
     /// <remarks>
-    /// ASKS THE PARSER WHERE THE MEMBER IS, BECAUSE THE REGEX THAT DID THIS FAILED GREEN. It
-    /// matched `SettingsSections\(\) =>\s*\[[^\]]*\]`, and C# allows trivia between every one of
-    /// those parts - a comment between the parameter list and the arrow was enough to leave the
-    /// hide list in the text. The gate then found every section name inside the array it had
-    /// failed to remove, concluded all of them were reachable, and passed. An orphaned section
-    /// would have read as used, which is the exact defect this test exists to catch. Ref: #82.
+    /// ASKS THE COMPILER'S SEMANTIC MODEL WHICH MEMBERS ON THE TARGET TYPE FORM THE HIDE LIST.
+    /// Every <c>SettingsSections</c> member on the target <see cref="INamedTypeSymbol"/> across all
+    /// partial declarations is removed, together with any member on that type iterated by a
+    /// section-hiding <c>foreach</c> loop (setting <c>Visibility</c> to <c>Collapsed</c> when
+    /// <c>ReferenceEquals</c> does not match), while ignoring any member of the same name on an
+    /// unrelated class. Ref: #82.
     ///
-    /// ```csharp
-    /// private Border[] SettingsSections() /* inventory */ => [ PrivacySection ];
-    /// ```
-    ///
-    /// A MISSING MEMBER NOW FAILS LOUDLY. Under the regex, not finding the declaration removed
-    /// nothing and the test still passed; the one outcome a check must never have is that its own
-    /// blindness looks like the property holding.
-    ///
-    /// LIMIT, STATED RATHER THAN IMPLIED: this is syntax, not semantics. It finds the member by
-    /// NAME, so a second member of the same name in a partial class elsewhere is not considered,
-    /// and a hide list built somewhere other than a member called `SettingsSections` is not seen.
-    /// The durable fix for that whole class is an analyser with a semantic model - #82.
+    /// STATED LIMIT: a hide list populated dynamically at runtime from reflection or a XAML visual
+    /// tree walk rather than naming the section fields in C# would contain no section identifiers to
+    /// strip, and is outside static source analysis.
     /// </remarks>
     private static string CodeWithoutTheHideList(string code)
     {
-        var root = CSharpSyntaxTree.ParseText(code).GetRoot();
-        var declaration = root.DescendantNodes()
-            .FirstOrDefault(node => node switch
+        var tree = CSharpSyntaxTree.ParseText(code, path: "HideListLookup.cs");
+        var compilation = CreateSemanticCompilation([tree]);
+        var model = compilation.GetSemanticModel(tree);
+        var root = tree.GetRoot();
+
+        var classes = root.DescendantNodes()
+            .OfType<ClassDeclarationSyntax>()
+            .Select(declaration => model.GetDeclaredSymbol(declaration))
+            .OfType<INamedTypeSymbol>()
+            .Distinct<INamedTypeSymbol>(SymbolEqualityComparer.Default)
+            .ToArray();
+
+        var targetType = classes.FirstOrDefault(type => type.Name == "MainWindow")
+            ?? classes.FirstOrDefault();
+        Assert.True(targetType is not null, "No class declaration was found to inspect for the hide list.");
+
+        var hideSymbols = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+        foreach (var member in targetType!.GetMembers("SettingsSections"))
+        {
+            if (member is IMethodSymbol or IPropertySymbol or IFieldSymbol)
             {
-                MethodDeclarationSyntax method =>
-                    method.Identifier.ValueText == "SettingsSections",
-                PropertyDeclarationSyntax property =>
-                    property.Identifier.ValueText == "SettingsSections",
-                _ => false,
-            });
+                hideSymbols.Add(member);
+            }
+        }
+
+        // Also detect any member on the target class iterated by a section-hiding foreach loop
+        // (`foreach (var candidate in <Member>)` setting `.Visibility` to `Collapsed` via `ReferenceEquals`
+        // without a `showAll` flag), so a hide list built under another member name is still removed.
+        foreach (var loop in root.DescendantNodes().OfType<ForEachStatementSyntax>())
+        {
+            var bodyText = loop.Statement.ToString();
+            if (!bodyText.Contains(".Visibility", StringComparison.Ordinal) ||
+                !bodyText.Contains("Visibility.Collapsed", StringComparison.Ordinal) ||
+                !bodyText.Contains("ReferenceEquals", StringComparison.Ordinal) ||
+                bodyText.Contains("showAll", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var expression = loop.Expression is InvocationExpressionSyntax invocation
+                ? invocation.Expression
+                : loop.Expression;
+            var symbol = model.GetSymbolInfo(expression).Symbol;
+            if (symbol is (IMethodSymbol or IPropertySymbol or IFieldSymbol) &&
+                SymbolEqualityComparer.Default.Equals(symbol.ContainingType, targetType))
+            {
+                hideSymbols.Add(symbol);
+            }
+        }
 
         Assert.True(
-            declaration is not null,
-            "The window has no SettingsSections member. Either it was renamed - in which case this "
+            hideSymbols.Count > 0,
+            "The window has no SettingsSections or hide-list member. Either it was renamed - in which case this "
                 + "test no longer removes the hide list and would call an orphaned section reached - "
                 + "or the hide list is gone and this test should be too.");
 
-        return code.Remove(declaration!.FullSpan.Start, declaration.FullSpan.Length);
+        var spans = hideSymbols
+            .SelectMany(symbol => symbol.DeclaringSyntaxReferences)
+            .Where(reference => reference.SyntaxTree == tree)
+            .Select(reference =>
+            {
+                var syntax = reference.GetSyntax();
+                return syntax is VariableDeclaratorSyntax
+                    {
+                        Parent: VariableDeclarationSyntax
+                        {
+                            Variables.Count: 1,
+                            Parent: FieldDeclarationSyntax field,
+                        },
+                    }
+                    ? field.FullSpan
+                    : syntax.FullSpan;
+            })
+            .Distinct()
+            .OrderByDescending(span => span.Start)
+            .ToArray();
+
+        Assert.NotEmpty(spans);
+        var updated = code;
+        foreach (var span in spans)
+        {
+            updated = updated.Remove(span.Start, span.Length);
+        }
+
+        return updated;
+    }
+
+    private static readonly SyntaxTree ImplicitSemanticUsingsTree = CSharpSyntaxTree.ParseText(
+        """
+        global using System;
+        global using System.Collections.Generic;
+        global using System.IO;
+        global using System.Linq;
+        global using System.Net.Http;
+        global using System.Threading;
+        global using System.Threading.Tasks;
+        global using EnviousWispr.ASR;
+        global using EnviousWispr.Core.Audio;
+        global using EnviousWispr.Core.Diagnostics;
+        global using EnviousWispr.Core.Dictation;
+        global using EnviousWispr.Core.Errors;
+        global using EnviousWispr.Core.Input;
+        global using EnviousWispr.Core.Observability;
+        global using EnviousWispr.Core.Presentation;
+        global using EnviousWispr.Core.Runtime;
+        global using EnviousWispr.Core.Settings;
+        global using EnviousWispr.Pipeline;
+
+        namespace OtherNamespace
+        {
+            public readonly record struct DictationStatus(string Text);
+            public enum DictationOverlayState { Hidden }
+            public sealed class Task { }
+            public readonly record struct DictationSessionId(System.Guid Value);
+            public static class DictationScope
+            {
+                public static System.IDisposable? Begin(System.Guid sessionId) => null;
+            }
+        }
+        """,
+        path: "ImplicitSemanticUsings.g.cs");
+
+    private static readonly MetadataReference[] BaseSemanticReferences = BuildBaseSemanticReferences();
+
+    private static readonly PortableExecutableReference ExternalDelegateAssemblyReference = BuildExternalDelegateAssemblyReference();
+
+    private static MetadataReference[] BuildBaseSemanticReferences() =>
+        ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? string.Empty)
+            .Split(Path.PathSeparator)
+            .Where(path => path.Length > 0 && File.Exists(path))
+            .Concat(Directory.EnumerateFiles(AppContext.BaseDirectory, "EnviousWispr.*.dll"))
+            .Append(typeof(DictationStatus).Assembly.Location)
+            .Append(typeof(EnviousWispr.Pipeline.SessionCommand).Assembly.Location)
+            .Append(typeof(ITranscriptionEngine).Assembly.Location)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path))
+            .ToArray();
+
+    private static PortableExecutableReference BuildExternalDelegateAssemblyReference()
+    {
+        var tree = CSharpSyntaxTree.ParseText(
+            """
+            namespace External;
+            public delegate EnviousWispr.Core.Presentation.DictationStatus SentenceToStatus(string sentence);
+            """,
+            path: "ExternalContracts.cs");
+        var compilation = CSharpCompilation.Create(
+            "EnviousWispr.ExternalTestContracts",
+            [tree],
+            BaseSemanticReferences,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        using var stream = new MemoryStream();
+        var emit = compilation.Emit(stream);
+        Assert.True(emit.Success, "Failed to emit external delegate test assembly: " + string.Join("; ", emit.Diagnostics));
+        return MetadataReference.CreateFromImage(stream.ToArray());
+    }
+
+    private static CSharpCompilation CreateSemanticCompilation(
+        IReadOnlyList<SyntaxTree> trees,
+        bool includeExternalDelegateAssembly = false)
+    {
+        var references = includeExternalDelegateAssembly
+            ? [.. BaseSemanticReferences, ExternalDelegateAssemblyReference]
+            : BaseSemanticReferences;
+        return CSharpCompilation.Create(
+            "EnviousWispr.SemanticGateScan",
+            [.. trees, ImplicitSemanticUsingsTree],
+            references,
+            new CSharpCompilationOptions(
+                OutputKind.DynamicallyLinkedLibrary,
+                allowUnsafe: true,
+                nullableContextOptions: NullableContextOptions.Enable));
+    }
+
+    private static Diagnostic[] AnalyzeSnippet(string code, params string[] diagnosticIds)
+    {
+        var tree = CSharpSyntaxTree.ParseText(code, path: "Snippet.cs");
+        var compilation = CreateSemanticCompilation([tree], includeExternalDelegateAssembly: true);
+        return RunDeclarationShapeAnalyzer(compilation, [tree], diagnosticIds);
+    }
+
+    private static Diagnostic[] RunDeclarationShapeAnalyzer(
+        CSharpCompilation compilation,
+        IReadOnlyCollection<SyntaxTree> targetTrees,
+        params string[] diagnosticIds)
+    {
+        var targetSet = targetTrees.ToHashSet();
+        var idSet = diagnosticIds.ToHashSet(StringComparer.Ordinal);
+        var withAnalyzers = compilation.WithAnalyzers(
+            ImmutableArray.Create<DiagnosticAnalyzer>(new DeclarationShapeAnalyzer()));
+        var diagnostics = withAnalyzers.GetAnalyzerDiagnosticsAsync().GetAwaiter().GetResult();
+        return diagnostics
+            .Where(diagnostic =>
+                (idSet.Count == 0 || idSet.Contains(diagnostic.Id)) &&
+                diagnostic.Location.SourceTree is { } tree &&
+                targetSet.Contains(tree))
+            .OrderBy(diagnostic => diagnostic.Location.SourceSpan.Start)
+            .ToArray();
     }
 }

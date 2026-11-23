@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <ProjectReference Include="..\EnviousWispr.Analyzers\EnviousWispr.Analyzers.csproj" />
     <ProjectReference Include="..\EnviousWispr.ASR\EnviousWispr.ASR.csproj" />
     <ProjectReference Include="..\EnviousWispr.Audio\EnviousWispr.Audio.csproj" />
     <ProjectReference Include="..\EnviousWispr.ModelDelivery\EnviousWispr.ModelDelivery.csproj" />

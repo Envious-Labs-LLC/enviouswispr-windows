@@ -3,4 +3,8 @@
     <!-- The tests stand in at the seams the PublicationFence keeps internal; nothing in production sets them. -->
     <InternalsVisibleTo Include="EnviousWispr.Architecture.Tests" />
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EnviousWispr.Analyzers\EnviousWispr.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+  </ItemGroup>
 </Project>

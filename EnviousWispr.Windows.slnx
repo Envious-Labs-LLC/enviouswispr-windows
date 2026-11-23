@@ -5,6 +5,7 @@
     <Project Path="src/EnviousWispr/EnviousWispr.csproj" />
   </Folder>
   <Folder Name="/src/Production/">
+    <Project Path="src/Production/EnviousWispr.Analyzers/EnviousWispr.Analyzers.csproj" />
     <Project Path="src/Production/EnviousWispr.App/EnviousWispr.App.csproj" />
     <Project Path="src/Production/EnviousWispr.Architecture.Tests/EnviousWispr.Architecture.Tests.csproj" />
     <Project Path="src/Production/EnviousWispr.ASR/EnviousWispr.ASR.csproj" />
