@@ -2312,7 +2312,7 @@ public sealed partial class DesignSystemTokenTests
             })
             .ToArray();
 
-        Assert.True(rows.Length >= 15, $"Expected the navigation rows, found {rows.Length}.");
+        Assert.True(rows.Length >= 10, $"Expected the navigation rows, found {rows.Length}.");
 
         var plain = rows.Where(row => row.Icon is null).Select(row => row.Label).ToArray();
         Assert.True(

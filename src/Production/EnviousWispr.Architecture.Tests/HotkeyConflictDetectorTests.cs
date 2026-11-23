@@ -128,7 +128,7 @@ public sealed class HotkeyConflictDetectorTests
         // THE SAVE IS THE PRESENTER'S (plan-2 step 11): the window's handler hands the three fields to
         // SettingsPresenter.SaveGeneralAsync, which asks the detector before anything is stored; the
         // live warning asks the same detector with the same roles (SettingsPresenter.ShortcutRoles).
-        var save = code[code.IndexOf("private async void SaveSettingsButton_Click", StringComparison.Ordinal)..];
+        var save = code[code.IndexOf("private async Task TriggerAutoSaveAsync", StringComparison.Ordinal)..];
         save = save[..save.IndexOf("PublishSettings();", StringComparison.Ordinal)];
         Assert.Contains("_session.Settings.SaveGeneralAsync(", save, StringComparison.Ordinal);
         Assert.DoesNotContain("HotkeyGestureParser.Parse(", save, StringComparison.Ordinal);

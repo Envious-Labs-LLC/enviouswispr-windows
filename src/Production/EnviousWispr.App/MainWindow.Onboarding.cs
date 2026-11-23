@@ -279,8 +279,8 @@ public sealed partial class MainWindow
         }
 
         ShowOnboarding(show: false);
-        ProductNavigation.SelectedItem = HomeNavItem;
-        HomeNavItem.Focus(FocusState.Programmatic);
+        ProductNavigation.SelectedItem = HistoryNavItem;
+        HistoryNavItem.Focus(FocusState.Programmatic);
     }
 
     /// <summary>Draws the current screen, and carries out the moves the flow says are due.</summary>

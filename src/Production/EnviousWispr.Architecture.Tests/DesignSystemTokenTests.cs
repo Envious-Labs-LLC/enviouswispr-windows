@@ -416,21 +416,25 @@ public sealed partial class DesignSystemTokenTests
     public void ThePrimaryActionIsNotInsideAnythingThatScrolls()
     {
         var document = LoadMainWindow();
-        var button = FindNamedElement(document, "SaveSettingsButton");
+        foreach (var actionName in new[] { "RecordToolbarButton", "FinishOnboardingButton" })
+        {
+            var button = FindNamedElement(document, actionName);
 
-        var scrollers = button.Ancestors()
-            .Where(element => element.Name.LocalName == "ScrollViewer")
-            .Select(element => (string?)element.Attribute(XName.Get("Name", XamlNamespace)) ?? "unnamed")
-            .ToArray();
+            var scrollers = button.Ancestors()
+                .Where(element => element.Name.LocalName == "ScrollViewer")
+                .Select(element => (string?)element.Attribute(XName.Get("Name", XamlNamespace)) ?? "unnamed")
+                .ToArray();
 
-        Assert.True(
-            scrollers.Length == 0,
-            "Save settings sits inside a scrolling container, so it is only visible when the page "
-                + "is short enough: " + string.Join(" > ", scrollers));
+            Assert.True(
+                scrollers.Length == 0,
+                $"{actionName} sits inside a scrolling container, so it is only visible when the page "
+                    + "is short enough: " + string.Join(" > ", scrollers));
 
-        // Control. The lookup must be finding a real element inside a real tree - otherwise an
-        // element with no ancestors at all would report the same clean result.
-        Assert.NotEmpty(button.Ancestors());
+            // Control. The lookup must be finding a real element inside a real tree - otherwise an
+            // element with no ancestors at all would report the same clean result.
+            Assert.NotEmpty(button.Ancestors());
+        }
+
         Assert.Contains(document.Descendants(), e => e.Name.LocalName == "ScrollViewer");
     }
 
@@ -484,7 +488,7 @@ public sealed partial class DesignSystemTokenTests
             macLabels.Length >= 14,
             $"Expected the macOS section labels, found {macLabels.Length}.");
 
-        var windowsRows = Regex.Matches(markup, @"<NavigationViewItem [^>]*Content=""([^""]+)""")
+        var windowsRows = Regex.Matches(markup, @"<(?:NavigationViewItem|Button) [^>]*Content=""([^""]+)""")
             .Select(match => Normalise(match.Groups[1].Value))
             .ToHashSet(StringComparer.Ordinal);
 
@@ -2618,15 +2622,17 @@ public sealed partial class DesignSystemTokenTests
             "Expected to find EnviousWispr.Windows.slnx.");
     }
 
-    internal static string GetMacSnapshotPath() =>
-        Path.Combine(
-            FindRepositoryRoot(),
-            "macos-source",
-            "Sources",
-            "EnviousWisprAppKit",
-            "Views",
-            "Settings",
-            "SettingsDesignTokens.swift");
+    internal static string GetMacSnapshotPath()
+    {
+        var root = FindRepositoryRoot();
+        var generated = Path.Combine(root, "macos-source", "Sources", "EnviousWisprAppKit", "Views", "Design", "DesignTokens.generated.swift");
+        if (File.Exists(generated))
+        {
+            return generated;
+        }
+
+        return Path.Combine(root, "macos-source", "Sources", "EnviousWisprAppKit", "Views", "Settings", "SettingsDesignTokens.swift");
+    }
 
     internal static string GetMacPillSnapshotPath() =>
         Path.Combine(
@@ -3197,15 +3203,10 @@ public sealed partial class DesignSystemTokenTests
 
         Assert.True(eyebrows.Length >= 18, $"Expected the section headers, found {eyebrows.Length}.");
 
-        // EVERY ICON THE SIDEBAR DRAWS, which is the set somebody has actually looked at - and ONLY
-        // the one in a row's icon slot. Anything named anywhere beneath a row would have counted,
-        // including a FontIcon dropped into the row's own content, which nobody has seen and which
-        // would have carried a guessed codepoint straight past this.
+        // EVERY ICON THE SIDEBAR OR TAB STRIP DRAWS, which is the set somebody has actually looked at.
         var sidebar = markup.Descendants()
-            .Where(element => element.Name.LocalName == "NavigationViewItem")
-            .SelectMany(row => row.Elements())
-            .Where(slot => slot.Name.LocalName == "NavigationViewItem.Icon")
-            .SelectMany(slot => slot.Elements())
+            .Where(element => element.Name.LocalName is "NavigationViewItem" or "Button")
+            .SelectMany(element => element.Descendants())
             .Where(icon => icon.Name.LocalName == "FontIcon")
             .Select(icon => (string?)icon.Attribute(xaml + "Name"))
             .Where(name => name is not null)

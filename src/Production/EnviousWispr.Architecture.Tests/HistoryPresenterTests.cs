@@ -211,6 +211,23 @@ public sealed class HistoryPresenterTests
     }
 
     [Fact]
+    public void TheFilterSeparatesDictationFromTranscribedFiles()
+    {
+        var dictation = new DictationHistoryEntry(Guid.NewGuid(), Now, "Dictated notes", "whisper", WasPolished: false, WasDelivered: true);
+        var file = new DictationHistoryEntry(Guid.NewGuid(), Now, "Meeting audio file", "file-transcription", WasPolished: true, WasDelivered: true);
+        var entries = new[] { dictation, file };
+
+        Assert.Equal(2, HistoryPresenter.Filter(entries, string.Empty, HistoryKindFilter.All).Count);
+        Assert.Equal([dictation.Id], HistoryPresenter.Filter(entries, string.Empty, HistoryKindFilter.Dictation).Select(e => e.Id));
+        Assert.Equal([file.Id], HistoryPresenter.Filter(entries, string.Empty, HistoryKindFilter.TranscribeFile).Select(e => e.Id));
+
+        // Combined with query
+        Assert.Equal([dictation.Id], HistoryPresenter.Filter(entries, "notes", HistoryKindFilter.Dictation).Select(e => e.Id));
+        Assert.Empty(HistoryPresenter.Filter(entries, "audio", HistoryKindFilter.Dictation));
+        Assert.Equal([file.Id], HistoryPresenter.Filter(entries, "audio", HistoryKindFilter.TranscribeFile).Select(e => e.Id));
+    }
+
+    [Fact]
     public async Task ARepolishThatWorkedShowsReloadedRowsAndFiresHistoryChanged()
     {
         var row = Entry("spoken words");
