@@ -29,6 +29,9 @@ public interface ISessionBackgroundWork
     /// <summary>The recording is over: stop streaming, the auto-stop and the preview, in that order, each waited for without limit. The watchdog is stopped separately, first. A preview whose engine refused its stop is still reported.</summary>
     Task<BackgroundStopReport> StopAsync();
 
+    /// <summary>The recording is over: stop streaming, the auto-stop and the preview, in that order, each waited for until it finishes or <paramref name="cancellationToken"/> ends the wait; what did not finish stays owned and is reported.</summary>
+    Task<BackgroundStopReport> StopAsync(CancellationToken cancellationToken) => StopAsync();
+
     /// <summary>The preview's worker ended by force, for a release its stop refused; what was seen inside the deadline is what is reported.</summary>
     Task<StopOutcome> AbortPreviewAsync(TimeSpan deadline);
 
@@ -95,11 +98,13 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
         _streaming.Start(sessionId);
     }
 
-    public async Task<BackgroundStopReport> StopAsync()
+    public Task<BackgroundStopReport> StopAsync() => StopAsync(CancellationToken.None);
+
+    public async Task<BackgroundStopReport> StopAsync(CancellationToken cancellationToken)
     {
-        var streaming = await _streaming.StopAsync().ConfigureAwait(false);
-        var autoStop = await _autoStop.StopAsync().ConfigureAwait(false);
-        var preview = await _preview.StopAsync().ConfigureAwait(false);
+        var streaming = await _streaming.StopAsync(deadline: null, cancellationToken).ConfigureAwait(false);
+        var autoStop = await _autoStop.StopAsync(deadline: null, cancellationToken).ConfigureAwait(false);
+        var preview = await _preview.StopAsync(deadline: null, cancellationToken).ConfigureAwait(false);
         return new BackgroundStopReport(streaming, autoStop, preview);
     }
 

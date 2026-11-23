@@ -325,8 +325,8 @@ public sealed class AutoStopMonitor : IAsyncDisposable
     /// <summary>Ends the watch and waits for it, however long that takes.</summary>
     public Task<StopOutcome> StopAsync() => StopAsync(deadline: null);
 
-    /// <summary>Ends the watch and waits up to the deadline; a loop still running past it stays owned.</summary>
-    public async Task<StopOutcome> StopAsync(TimeSpan? deadline)
+    /// <summary>Ends the watch and waits up to the deadline or caller cancellation; a loop still running past it stays owned.</summary>
+    public async Task<StopOutcome> StopAsync(TimeSpan? deadline, CancellationToken cancellationToken = default)
     {
         var cancellation = _cancellation;
         var done = _done;
@@ -337,7 +337,7 @@ public sealed class AutoStopMonitor : IAsyncDisposable
 
         await cancellation.CancelAsync().ConfigureAwait(false);
         if (done is not null &&
-            await BoundedJoin.JoinAsync(done.Task, deadline, _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
+            await BoundedJoin.JoinAsync(done.Task, deadline, _clock, cancellationToken).ConfigureAwait(false) == StopOutcome.StillRunning)
         {
             return StopOutcome.StillRunning;
         }

@@ -80,6 +80,11 @@ public interface ISessionFinalizationEffects
 
     void RecordDelivery(DeliveryResult delivery, long elapsedMilliseconds);
 
+    /// <summary>Disarms the Escape cancel hook when transcription finishes and polish/delivery begins.</summary>
+    void DisarmCancel()
+    {
+    }
+
     /// <summary>The delivered outcome on screen, with the language offer that may follow it.</summary>
     void ReportDelivery(DeliveryResult delivery, string? language);
 
@@ -133,6 +138,23 @@ public interface ISessionFinalization
     {
     }
 
+    /// <summary>Atomically claims the Escape cancellation window before transcription completes; false once transcription has finished.</summary>
+    bool TryAdmitEscape() => true;
+
+    /// <summary>Promotes an in-flight transcription to Escape Recovery (hold words without delivering) while the Escape window is open.</summary>
+    bool TryPromoteToEscapeRecovery() => false;
+
+    /// <summary>True when Escape promoted the in-flight finalisation to Escape Recovery.</summary>
+    bool IsPromotedToEscapeRecovery => false;
+
+    /// <summary>True when Escape claimed the cancellation window before transcription completed.</summary>
+    bool IsEscapeClaimed => false;
+
+    /// <summary>Resets transcription-complete tracking as a release begins finalising.</summary>
+    void ResetTranscriptionComplete()
+    {
+    }
+
     /// <summary>Turns captured audio into delivered (or held, or recovered) text, under a deadline.</summary>
     Task<FinalizationReport> RunAsync(
         DictationSessionId sessionId,
@@ -144,8 +166,88 @@ public interface ISessionFinalization
 public sealed class SessionFinalizationRunner : ISessionFinalization
 {
     /// <summary>Serialises the closure of delivery with its admission: a delivery is admitted or closed out, never both.</summary>
+    private const int EscapeWindowOpen = 0;
+    private const int EscapeWindowPromotedToRecovery = 1;
+    private const int EscapeWindowClosedForDelivery = 2;
+    private const int EscapeWindowClaimedByCancel = 3;
+
     private readonly object _deliveryAdmission = new();
     private bool _deliveryClosed;
+    private int _escapeWindowState;
+
+    public bool TryAdmitEscape()
+    {
+        lock (_deliveryAdmission)
+        {
+            if (_escapeWindowState is not (EscapeWindowOpen or EscapeWindowClaimedByCancel))
+            {
+                return false;
+            }
+
+            _escapeWindowState = EscapeWindowClaimedByCancel;
+            return true;
+        }
+    }
+
+    public bool TryPromoteToEscapeRecovery()
+    {
+        lock (_deliveryAdmission)
+        {
+            if (_escapeWindowState is not (EscapeWindowOpen or EscapeWindowPromotedToRecovery))
+            {
+                return false;
+            }
+
+            _escapeWindowState = EscapeWindowPromotedToRecovery;
+            return true;
+        }
+    }
+
+    public bool IsPromotedToEscapeRecovery
+    {
+        get
+        {
+            lock (_deliveryAdmission)
+            {
+                return _escapeWindowState == EscapeWindowPromotedToRecovery;
+            }
+        }
+    }
+
+    public bool IsEscapeClaimed
+    {
+        get
+        {
+            lock (_deliveryAdmission)
+            {
+                return _escapeWindowState == EscapeWindowClaimedByCancel;
+            }
+        }
+    }
+
+    public void ResetTranscriptionComplete()
+    {
+        lock (_deliveryAdmission)
+        {
+            _escapeWindowState = EscapeWindowOpen;
+        }
+    }
+
+    private bool TryCloseEscapeWindow(out bool promotedToRecovery)
+    {
+        lock (_deliveryAdmission)
+        {
+            if (_escapeWindowState == EscapeWindowClaimedByCancel)
+            {
+                promotedToRecovery = false;
+                return false;
+            }
+
+            promotedToRecovery = _escapeWindowState == EscapeWindowPromotedToRecovery;
+            _escapeWindowState = EscapeWindowClosedForDelivery;
+            return true;
+        }
+    }
 
     public void CloseDelivery()
     {
@@ -236,6 +338,13 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                 .TranscribeUsingAnyHeadStartAsync(engine, audio, cancellationToken)
                 .ConfigureAwait(false);
             timer.Stop();
+            if (!TryCloseEscapeWindow(out var promotedToRecovery))
+            {
+                throw new OperationCanceledException(cancellationToken);
+            }
+
+            recoveryOnly |= promotedToRecovery;
+            _effects.DisarmCancel();
             _effects.RecordTranscriptionFinished(transcript, timer.ElapsedMilliseconds);
             var options = _effects.CurrentOptions();
             var targetAppName = TargetAppNameResolver.Resolve(_controller.CurrentSession?.Target);

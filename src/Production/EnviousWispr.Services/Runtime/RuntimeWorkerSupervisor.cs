@@ -169,8 +169,9 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            await StopCoreAsync().ConfigureAwait(false);
-            State = RuntimeWorkerState.Faulted;
+            State = await StopCoreAsync().ConfigureAwait(false)
+                ? RuntimeWorkerState.Stopped
+                : RuntimeWorkerState.Faulted;
             throw;
         }
         finally
@@ -692,10 +693,7 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         var request = new RuntimeWorkerRequest(ProtocolVersion, Guid.NewGuid(), "shutdown");
         try
         {
-            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request))
-                .ConfigureAwait(false);
-            await process.StandardInput.FlushAsync(CancellationToken.None).ConfigureAwait(false);
-            await process.WaitForExitAsync(CancellationToken.None)
+            await RequestAndWaitAsync(process, request)
                 .WaitAsync(TimeSpan.FromMilliseconds(500), CancellationToken.None)
                 .ConfigureAwait(false);
         }
@@ -704,6 +702,14 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
         {
             // The worker is already gone or wedged; process-tree kill is the fallback.
         }
+    }
+
+    private static async Task RequestAndWaitAsync(Process process, RuntimeWorkerRequest request)
+    {
+        await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request))
+            .ConfigureAwait(false);
+        await process.StandardInput.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+        await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
     }
 
     /// <summary>The current generation's process, if it has one and it is alive.</summary>

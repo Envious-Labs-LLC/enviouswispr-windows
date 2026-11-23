@@ -13,11 +13,13 @@ namespace EnviousWispr.App.Composition;
 /// a setting saved while the engine was working reaches this dictation. The runner decides when to
 /// ask; this only answers.
 /// </remarks>
-internal sealed class SessionFinalizationEffects(SessionCompositionParts parts) : ISessionFinalizationEffects
+internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, RecordingFlag? recordingFlag = null) : ISessionFinalizationEffects
 {
     private readonly IAppLogger _logger = parts.Logger;
 
     private readonly ISessionView _view = parts.Shell.View;
+
+    public void DisarmCancel() => recordingFlag?.DisarmCancel();
 
     public ITranscriptionEngine? Engine => parts.Shell.Engine();
 

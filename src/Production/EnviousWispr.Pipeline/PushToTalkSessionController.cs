@@ -252,12 +252,15 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (CurrentSession?.State != DictationSessionState.Recording)
+            if (CurrentSession?.State is not (DictationSessionState.Recording or DictationSessionState.Finalizing))
             {
                 return Ignored();
             }
 
-            var cancelled = await _audioCapture.CancelAsync(cancellationToken).ConfigureAwait(false);
+            var shouldCancelCapture = CurrentSession.State == DictationSessionState.Recording || _audioCapture.IsCapturing;
+            var cancelled = shouldCancelCapture
+                ? await _audioCapture.CancelAsync(cancellationToken).ConfigureAwait(false)
+                : new AudioOperationResult(Succeeded: true);
             var failed = !cancelled.Succeeded;
             CurrentSession = CurrentSession with
             {

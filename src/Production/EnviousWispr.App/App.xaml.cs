@@ -1572,6 +1572,7 @@ public partial class App : Application, IAsyncDisposable
                 CloudPolishProviderName: () => _cloudPolishConsent?.ProviderName,
                 RunId: () => _runId,
                 RecordingActive: active => _pushToTalkHook?.SetRecordingActive(active),
+                CancelArmed: armed => _pushToTalkHook?.SetCancelArmed(armed),
                 ArchiveAudio: audio => ArchiveDictationAudio(audio),
                 DetachCaptureObservers: DetachCaptureObservers,
                 ReleaseSession: ReleaseSession,

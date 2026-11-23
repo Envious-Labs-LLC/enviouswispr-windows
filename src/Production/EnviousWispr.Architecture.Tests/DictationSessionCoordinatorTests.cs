@@ -1317,6 +1317,7 @@ public sealed class DictationSessionCoordinatorTests
         var budget = TimeSpan.FromSeconds(10);
         var shutdown = coordinator.ShutdownAsync(budget);
         await clock.WhenRegistered(1).WaitAsync(Patience);
+        Assert.Equal(1, clock.Registered);
         clock.Advance(budget);
         var report = await shutdown.WaitAsync(Patience);
 
@@ -1333,6 +1334,7 @@ public sealed class DictationSessionCoordinatorTests
         var hold2 = coordinator2.TryHold(SessionHolder.UpdateApply).Hold;
         var shutdown2 = coordinator2.ShutdownAsync(budget);
         await clock2.WhenRegistered(1).WaitAsync(Patience);
+        Assert.Equal(1, clock2.Registered);
         Assert.False(shutdown2.IsCompleted);
         hold2!.Dispose();
         var report2 = await shutdown2.WaitAsync(Patience);

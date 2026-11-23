@@ -35,7 +35,7 @@ public sealed record BackgroundStopReport(StopOutcome Streaming, StopOutcome Aut
 public sealed record LivePreviewFrame(DictationSessionId SessionId, string Text, Func<bool> IsCurrent);
 
 /// <summary>What is left of a stop's deadline, phase by phase; null when the stop has no deadline.</summary>
-public sealed class StopBudget(TimeSpan? deadline, TimeProvider clock)
+public sealed class StopBudget(TimeSpan? deadline, TimeProvider clock, CancellationToken cancellationToken = default)
 {
     private readonly long _started = clock.GetTimestamp();
 
@@ -68,8 +68,25 @@ public sealed class StopBudget(TimeSpan? deadline, TimeProvider clock)
     {
         if (Remaining is not { } remaining)
         {
-            await gate.WaitAsync().ConfigureAwait(false);
-            return true;
+            if (gate.Wait(0))
+            {
+                return true;
+            }
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return false;
+            }
+
+            try
+            {
+                await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
         }
 
         // A FREE GATE IS TAKEN WHATEVER IS LEFT: a budget already spent still lets the stop through
@@ -79,15 +96,18 @@ public sealed class StopBudget(TimeSpan? deadline, TimeProvider clock)
             return true;
         }
 
-        if (remaining == TimeSpan.Zero)
+        if (remaining == TimeSpan.Zero || cancellationToken.IsCancellationRequested)
         {
             return false;
         }
 
         using var patience = new CancellationTokenSource(remaining, clock);
+        using var linked = cancellationToken.CanBeCanceled
+            ? CancellationTokenSource.CreateLinkedTokenSource(patience.Token, cancellationToken)
+            : null;
         try
         {
-            await gate.WaitAsync(patience.Token).ConfigureAwait(false);
+            await gate.WaitAsync(linked?.Token ?? patience.Token).ConfigureAwait(false);
             return true;
         }
         catch (OperationCanceledException)
@@ -100,16 +120,40 @@ public sealed class StopBudget(TimeSpan? deadline, TimeProvider clock)
 /// <summary>Joins a loop that has been asked to stop: without limit, or for as long as a deadline allows.</summary>
 public static class BoundedJoin
 {
-    /// <summary>Waits for the work; a cancelled ending counts as completion, a deadline that passes first does not.</summary>
-    public static async Task<StopOutcome> JoinAsync(Task work, TimeSpan? deadline, TimeProvider clock)
+    /// <summary>Waits for the work; a cancelled ending counts as completion, a deadline or caller cancellation that passes first does not.</summary>
+    public static async Task<StopOutcome> JoinAsync(
+        Task work,
+        TimeSpan? deadline,
+        TimeProvider clock,
+        CancellationToken cancellationToken = default)
     {
         try
         {
+            if (work.IsCompleted)
+            {
+                await work.ConfigureAwait(false);
+                return StopOutcome.Completed;
+            }
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return StopOutcome.StillRunning;
+            }
+
             if (deadline is { } limit)
             {
-                await work.WaitAsync(limit, clock).ConfigureAwait(false);
+                await work.WaitAsync(limit, clock, cancellationToken).ConfigureAwait(false);
             }
             else
+            {
+                await work.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            return StopOutcome.Completed;
+        }
+        catch (OperationCanceledException) when (work.IsCompleted)
+        {
+            if (work.IsFaulted && work.Exception?.InnerException is not OperationCanceledException)
             {
                 await work.ConfigureAwait(false);
             }
@@ -118,7 +162,7 @@ public static class BoundedJoin
         }
         catch (OperationCanceledException)
         {
-            return StopOutcome.Completed;
+            return StopOutcome.StillRunning;
         }
         catch (TimeoutException)
         {

@@ -315,12 +315,12 @@ public sealed class LivePreviewController : IAsyncDisposable
     public Task<StopOutcome> StopAsync() => StopAsync(deadline: null);
 
     /// <summary>
-    /// Stops the preview and waits up to the deadline - for the gate, the loop and the engine's own stop
+    /// Stops the preview and waits up to the deadline or caller cancellation - for the gate, the loop and the engine's own stop
     /// together. What did not finish stays owned: a loop still inside the engine, or an engine stop
     /// still in flight or refused, is reported <see cref="StopOutcome.StillRunning"/> and joined again
     /// by the next stop; the engine is never stopped under a loop still using it.
     /// </summary>
-    public async Task<StopOutcome> StopAsync(TimeSpan? deadline)
+    public async Task<StopOutcome> StopAsync(TimeSpan? deadline, CancellationToken cancellationToken = default)
     {
         // STOPPING IS REACHED FROM MORE PLACES THAN STARTING, and one of them is quitting the app
         // from the tray mid-recording - a shutdown path that inherits nothing, where the line saying
@@ -330,7 +330,7 @@ public sealed class LivePreviewController : IAsyncDisposable
         using var dictation = _effects.RecordingSessionId is { } recording
             ? DictationScope.Begin(recording.Value)
             : NoScope.Instance;
-        var budget = new StopBudget(deadline, _clock);
+        var budget = new StopBudget(deadline, _clock, cancellationToken);
         // THE STOP IS PUBLISHED BEFORE THE GATE IS WAITED FOR. The screen closes and the loop in
         // flight is asked to stop now, so a stop that runs out of budget waiting for the gate - held
         // by another stop inside a held engine - has still closed the screen and cancelled the loop;
@@ -369,7 +369,7 @@ public sealed class LivePreviewController : IAsyncDisposable
             var work = _work;
             cancellation?.Cancel();
             if (work is not null &&
-                await BoundedJoin.JoinAsync(work, budget.Remaining, _clock).ConfigureAwait(false) == StopOutcome.StillRunning)
+                await BoundedJoin.JoinAsync(work, budget.Remaining, _clock, cancellationToken).ConfigureAwait(false) == StopOutcome.StillRunning)
             {
                 // STILL RUNNING, STILL OWNED. The loop is inside the engine; the token source it
                 // holds is not disposed, the engine it is using is not stopped under it, and the
@@ -394,11 +394,11 @@ public sealed class LivePreviewController : IAsyncDisposable
             // reported as such and asked for again next time.
             if (_effects.Engine is { } engine)
             {
-                var engineStop = _engineStop ??= engine.StopAsync();
+                var engineStop = _engineStop ??= engine.StopAsync(CancellationToken.None);
                 StopOutcome joined;
                 try
                 {
-                    joined = await BoundedJoin.JoinAsync(engineStop, budget.Remaining, _clock).ConfigureAwait(false);
+                    joined = await BoundedJoin.JoinAsync(engineStop, budget.Remaining, _clock, cancellationToken).ConfigureAwait(false);
                 }
                 catch
                 {

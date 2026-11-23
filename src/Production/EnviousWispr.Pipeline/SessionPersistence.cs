@@ -84,6 +84,9 @@ public interface ISessionRecoveryState
 
     /// <summary>Shows whatever recovery text is pending, if any.</summary>
     void ShowPendingRecovery();
+
+    /// <summary>Clears whatever recovery text is pending, if any.</summary>
+    Task ClearRecoveryTextAsync() => Task.CompletedTask;
 }
 
 public sealed class SessionPersistence : ISessionRecoveryState
