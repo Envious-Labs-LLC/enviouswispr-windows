@@ -356,16 +356,15 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                 targetLength,
                 state1,
                 state2,
+                _vocabulary.Size,
+                _vocabulary.BlankIndex,
                 runContext,
                 cancellationToken);
 
-            var output = stepResult.Output;
-            var token = IndexOfMaximum(output.AsSpan(0, _vocabulary.Size));
-            var step = IndexOfMaximum(output.AsSpan(_vocabulary.Size));
+            var token = stepResult.Token;
+            var step = stepResult.Step;
             if (token != _vocabulary.BlankIndex)
             {
-                Array.Copy(stepResult.State1, state1, state1.Length);
-                Array.Copy(stepResult.State2, state2, state2.Length);
                 decoded.Add(new DecodedToken(token, frame));
                 emittedAtFrame++;
             }
@@ -586,9 +585,8 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
         int TrimmedLength);
 
     internal readonly record struct ParakeetDecoderStepResult(
-        float[] Output,
-        float[] State1,
-        float[] State2);
+        int Token,
+        int Step);
 
     internal interface IParakeetRunContext : IDisposable;
 
@@ -627,6 +625,8 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
             int[] targetLength,
             float[] state1,
             float[] state2,
+            int vocabularySize,
+            int blankIndex,
             IParakeetRunContext runContext,
             CancellationToken cancellationToken);
     }
@@ -884,6 +884,8 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
             int[] targetLength,
             float[] state1,
             float[] state2,
+            int vocabularySize,
+            int blankIndex,
             IParakeetRunContext runContext,
             CancellationToken cancellationToken)
         {
@@ -915,10 +917,16 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                     DecoderOutputs,
                     options);
 
-                return new ParakeetDecoderStepResult(
-                    result[0].AsEnumerable<float>().ToArray(),
-                    result[1].AsEnumerable<float>().ToArray(),
-                    result[2].AsEnumerable<float>().ToArray());
+                var output = result[0].AsEnumerable<float>().ToArray();
+                var token = IndexOfMaximum(output.AsSpan(0, vocabularySize));
+                var step = IndexOfMaximum(output.AsSpan(vocabularySize));
+                if (token != blankIndex)
+                {
+                    Array.Copy(result[1].AsEnumerable<float>().ToArray(), state1, state1.Length);
+                    Array.Copy(result[2].AsEnumerable<float>().ToArray(), state2, state2.Length);
+                }
+
+                return new ParakeetDecoderStepResult(token, step);
             }
             catch (OnnxRuntimeException exception) when (cancellationToken.IsCancellationRequested)
             {

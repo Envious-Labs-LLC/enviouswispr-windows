@@ -340,34 +340,32 @@ public sealed class ParakeetCpuBlankRescueTests
             int[] targetLength,
             float[] state1,
             float[] state2,
+            int vocabularySize,
+            int blankIndex,
             ParakeetTranscriptionEngine.IParakeetRunContext runContext,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            // 4 vocab tokens (0=" popular", 1=" tourist", 2=" area", 3="<blk>") + 2 step durations (0, 1).
-            var output = new float[6];
+            // 4 vocab tokens (0=" popular", 1=" tourist", 2=" area", 3="<blk>").
             if (encoderFrame[0] <= 0.5f)
             {
-                output[3] = 5.0f; // <blk>
-                output[5] = 2.0f; // step = 1
-            }
-            else
-            {
-                var nextToken = target[0] switch
-                {
-                    3 => 0,
-                    0 => 1,
-                    1 => 2,
-                    _ => 3,
-                };
-                output[nextToken] = 5.0f;
-                output[5] = 2.0f; // step = 1 frame per word
+                return new ParakeetTranscriptionEngine.ParakeetDecoderStepResult(blankIndex, Step: 1);
             }
 
-            return new ParakeetTranscriptionEngine.ParakeetDecoderStepResult(
-                output,
-                (float[])state1.Clone(),
-                (float[])state2.Clone());
+            var nextToken = target[0] switch
+            {
+                3 => 0,
+                0 => 1,
+                1 => 2,
+                _ => blankIndex,
+            };
+            if (nextToken != blankIndex)
+            {
+                state1[0] = nextToken + 1;
+                state2[0] = nextToken + 1;
+            }
+
+            return new ParakeetTranscriptionEngine.ParakeetDecoderStepResult(nextToken, Step: 1);
         }
 
         public void Dispose()
