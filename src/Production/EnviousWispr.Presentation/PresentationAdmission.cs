@@ -69,6 +69,35 @@ public sealed class PresentationAdmission : IDisposable
         }
     }
 
+    /// <summary>
+    /// Queues a presentation callback, or refuses after close. True means queued, not rendered:
+    /// the callback enters only when dequeued, and does nothing if the gate closed meanwhile.
+    /// </summary>
+    public bool TryPost(Func<Action, bool> enqueue, Action render)
+    {
+        ArgumentNullException.ThrowIfNull(enqueue);
+        ArgumentNullException.ThrowIfNull(render);
+        if (Closed)
+        {
+            return false;
+        }
+
+        // NO LEASE WHILE QUEUED. A dispatcher may refuse or discard its pending callbacks during
+        // shutdown; neither may keep the drain waiting. Only a callback actually running is joined.
+        return enqueue(() =>
+        {
+            if (!TryEnter(out var lease))
+            {
+                return;
+            }
+
+            using (lease)
+            {
+                render();
+            }
+        });
+    }
+
     /// <summary>Shuts the gate, cancels what is inside, and completes when the last lease is returned.</summary>
     public Task CloseAsync()
     {

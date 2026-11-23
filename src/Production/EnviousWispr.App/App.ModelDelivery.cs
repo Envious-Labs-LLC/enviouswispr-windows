@@ -335,14 +335,14 @@ public partial class App
         var percent = Math.Clamp(100.0 * deliveryEvent.CompletedBytes.Value / deliveryEvent.TotalBytes.Value, 0, 100);
         var completedMb = Megabytes(deliveryEvent.CompletedBytes.Value);
         var totalMb = Megabytes(deliveryEvent.TotalBytes.Value);
-        _window?.DispatcherQueue.TryEnqueue(() =>
+        PostToLiveWindow(window =>
         {
             // A LATE REPORT MUST NOT REDRAW A FINISHED DOWNLOAD, as the graphics runtime's already knows: reports
             // are queued to the window, and one that runs after a cancel or a failure would put the progress bar
             // back over the outcome - and tell the first-run checklist a stopped download is still running.
             if (_modelDownload is not null)
             {
-                _window?.SetModelDelivery(new(
+                window.SetModelDelivery(new(
                     $"Downloading… {completedMb} of {totalMb} MB, verified as it arrives.",
                     Percent: percent,
                     CanCancel: true,

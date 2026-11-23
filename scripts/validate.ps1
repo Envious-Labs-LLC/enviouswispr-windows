@@ -240,9 +240,13 @@ function Invoke-DotNetTest {
     # --no-build BECAUSE THE RUN ABOVE JUST BUILT IT, and re-building here would let a discovery
     # against different bytes agree with a run it never described.
     $previousDotnetRoot = $env:DOTNET_ROOT
+    $prevNodeReuse = $env:MSBUILDDISABLENODEREUSE
+    $prevServer = $env:DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER
     if (-not [string]::IsNullOrWhiteSpace($sdkDir) -and (Test-Path -LiteralPath $sdkDir)) {
         $env:DOTNET_ROOT = $sdkDir
     }
+    $env:MSBUILDDISABLENODEREUSE = "1"
+    $env:DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER = "1"
     $ErrorActionPreference = 'Continue'
     try {
         $listed = & $Executable @($common + @("--no-build", "--list-tests")) 2>&1
@@ -251,8 +255,21 @@ function Invoke-DotNetTest {
     finally {
         $ErrorActionPreference = $previousPreference
         $env:DOTNET_ROOT = $previousDotnetRoot
+        $env:MSBUILDDISABLENODEREUSE = $prevNodeReuse
+        $env:DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER = $prevServer
+    }
+
+    # DISCOVERY IS ANOTHER NATIVE PROCESS, WITH ITS OWN FAILURE. A post-run testhost crashed in
+    # PortableSymbolReader after all tests finished; counting its missing names hid that primary
+    # failure behind "no tests". Emit its captured stdout/stderr and classify it before counting.
+    $discoveryAborted = @($listed | Select-String -Pattern 'Test host process crashed|The active test run was aborted|Testhost process exited with error')
+    if ($discoveryAborted.Count -gt 0) {
+        $listed | ForEach-Object { Write-Host $_ }
+        throw ("Test discovery was ABORTED, so it cannot establish the assembly's test count: " +
+            ($discoveryAborted[0].ToString().Trim()))
     }
     if ($listExitCode -ne 0) {
+        $listed | ForEach-Object { Write-Host $_ }
         throw "Test discovery (--list-tests) failed for $Project with exit code $listExitCode."
     }
     $discovered = @($listed | Select-String -Pattern '^\s{4}\S').Count

@@ -14,7 +14,7 @@ namespace EnviousWispr.App.Composition;
 /// edge through its store. Nothing here sequences: the executor owns the order around a recording,
 /// the deadline, admission, recovery and the finalisation call.
 /// </summary>
-internal sealed class SessionEffects(SessionCompositionParts parts) : IDictationSessionEffects
+internal sealed class SessionEffects(SessionCompositionParts parts, RecordingFlag? recordingFlag = null) : IDictationSessionEffects
 {
     private readonly IAppLogger _logger = parts.Logger;
 
@@ -214,6 +214,13 @@ internal sealed class SessionEffects(SessionCompositionParts parts) : IDictation
     public void ShowInterruptionPending() =>
         _view.ShowStatus(DictationStatus.Distress(
             "Windows interrupted the active dictation; recovery is still pending"));
+
+    public void ShowCleanupPending()
+    {
+        recordingFlag?.DisarmCancel();
+        _view.ShowStatus(DictationStatus.Warning(
+            "Waiting for dictation work to finish before recovery"));
+    }
 
     public void DetachCaptureObservers() => parts.Shell.DetachCaptureObservers();
 

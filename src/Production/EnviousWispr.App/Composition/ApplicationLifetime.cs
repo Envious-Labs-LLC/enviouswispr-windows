@@ -167,6 +167,7 @@ public sealed class ApplicationLifetime
     private Task<ExitReport>? _exit;
     private List<string> _preparationOutstanding = [];
     private List<string> _preparationFailed = [];
+    private bool _presentationDrained;
     private string? _current;
     private int _terminated;
     private int _concluded;
@@ -253,13 +254,29 @@ public sealed class ApplicationLifetime
         var outstanding = new List<string>();
         var failed = new List<string>();
         Try("admission", _parts.CloseAdmission, failed);
-        await RunAsync(new LifetimeStep("presentation drain", _parts.DrainPresentation), budget, outstanding, failed);
-        Try("shell closing", _parts.ShellClosing, failed);
+        Task? drain = null;
+        await RunAsync(new LifetimeStep("presentation drain", () => drain = _parts.DrainPresentation()), budget, outstanding, failed);
+        // FINISHED IS NOT ENOUGH HERE. BoundedJoin accepts cancellation for ordinary stop work,
+        // but a cancelled/faulted presentation drain has not established that the window is unused.
+        // A timeout stays a refusal even if the task finishes after the bounded wait gave up.
+        var presentationDrained = drain is { IsCompletedSuccessfully: true } &&
+            !outstanding.Contains("presentation drain") && !failed.Contains("presentation drain");
+        if (presentationDrained)
+        {
+            Try("shell closing", _parts.ShellClosing, failed);
+        }
+        else if (!outstanding.Contains("presentation drain") && !failed.Contains("presentation drain"))
+        {
+            failed.Add("presentation drain");
+            RecordFailure();
+        }
+
         Try("polish runtime abort", _parts.AbortPolishRuntime, failed);
         lock (_lock)
         {
             _preparationOutstanding = outstanding;
             _preparationFailed = failed;
+            _presentationDrained = presentationDrained;
         }
     }
 
@@ -269,10 +286,12 @@ public sealed class ApplicationLifetime
         var budget = Budget();
         List<string> outstanding;
         List<string> failed;
+        bool presentationDrained;
         lock (_lock)
         {
             outstanding = [.. _preparationOutstanding];
             failed = [.. _preparationFailed];
+            presentationDrained = _presentationDrained;
         }
 
         Try("exit policy", _parts.CancelProcessing, failed);
@@ -289,7 +308,7 @@ public sealed class ApplicationLifetime
         // is not asked to shut down beside it, nothing of the session is disposed, and the exit
         // escalates with the drain named outstanding.
         ShutdownReport? session = null;
-        if (_parts.ShutDownSession is { } shutDown && outstanding.Count == 0)
+        if (_parts.ShutDownSession is { } shutDown && presentationDrained && outstanding.Count == 0)
         {
             Volatile.Write(ref _current, "session shutdown");
             try
@@ -312,7 +331,7 @@ public sealed class ApplicationLifetime
         // whatever it uses; a session not quiescent has a command or a loop inside the engines and
         // the stores. Either keeps everything from here on, and the exit is unclean.
         var sessionQuiescent = _parts.ShutDownSession is null || session is { SessionQuiescent: true };
-        var retained = outstanding.Count > 0 || !sessionQuiescent;
+        var retained = !presentationDrained || outstanding.Count > 0 || !sessionQuiescent;
         if (!sessionQuiescent)
         {
             _logger.Write(new AppLogEntry(

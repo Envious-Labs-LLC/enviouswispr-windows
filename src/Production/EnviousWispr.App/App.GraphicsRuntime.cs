@@ -263,13 +263,13 @@ public partial class App
         var percent = Math.Clamp(100.0 * deliveryEvent.CompletedBytes.Value / deliveryEvent.TotalBytes.Value, 0, 100);
         var completedMb = Megabytes(deliveryEvent.CompletedBytes.Value);
         var totalMb = Megabytes(deliveryEvent.TotalBytes.Value);
-        _window?.DispatcherQueue.TryEnqueue(() =>
+        PostToLiveWindow(window =>
         {
             // A LATE REPORT MUST NOT REDRAW A FINISHED DOWNLOAD. Reports are queued to the window; one that
             // runs after the delivery ended would put a progress bar back over the outcome.
             if (_graphicsRuntimeDownload is not null)
             {
-                _window.SetGraphicsRuntimeDelivery(new(
+                window.SetGraphicsRuntimeDelivery(new(
                     $"Downloading graphics support… {completedMb} of {totalMb} MB, verified as it arrives.",
                     Percent: percent,
                     CanCancel: true));
