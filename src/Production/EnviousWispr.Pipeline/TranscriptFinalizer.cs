@@ -91,12 +91,29 @@ public sealed class TranscriptFinalizer
         _snippets = snippets;
     }
 
+    public Task<FinalizedTranscript> FinalizeAsync(
+        Transcript transcript,
+        IReadOnlyList<CustomWordEntry> customWords,
+        DeterministicTextOptions options,
+        SnippetVocabulary snippets,
+        PolishSetup? polish,
+        CancellationToken cancellationToken) =>
+        FinalizeAsync(
+            transcript,
+            customWords,
+            options,
+            snippets,
+            polish,
+            targetAppName: null,
+            cancellationToken);
+
     public async Task<FinalizedTranscript> FinalizeAsync(
         Transcript transcript,
         IReadOnlyList<CustomWordEntry> customWords,
         DeterministicTextOptions options,
         SnippetVocabulary snippets,
         PolishSetup? polish,
+        string? targetAppName,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(transcript);
@@ -152,7 +169,13 @@ public sealed class TranscriptFinalizer
             ? null
             : polish;
         var polishResult = await _polish
-            .TryPolishAsync(polishSetup, processed.Output, transcript.DetectedLanguage, cancellationToken)
+            .TryPolishAsync(
+                polishSetup,
+                processed.Output,
+                transcript.DetectedLanguage,
+                targetAppName,
+                transcript.RecognitionLanguage,
+                cancellationToken)
             .ConfigureAwait(false);
         var polishReview = polishResult is null || polishResult.UsedFallback
             ? new PolishOutputReview(PolishOutputVerdict.Accepted, string.Empty)

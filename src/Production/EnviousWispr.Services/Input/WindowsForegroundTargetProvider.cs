@@ -16,7 +16,7 @@ public sealed class WindowsForegroundTargetProvider : IForegroundTargetProvider
         }
 
         _ = GetWindowThreadProcessId(handle, out var processId);
-        return new TargetWindowId(handle, processId);
+        return new TargetWindowId(handle, processId, null, TryCaptureProcessName(processId));
     }
 
     public TargetWindowId? CaptureForegroundTarget()
@@ -28,7 +28,29 @@ public sealed class WindowsForegroundTargetProvider : IForegroundTargetProvider
         }
 
         _ = GetWindowThreadProcessId(handle, out var processId);
-        return new TargetWindowId(handle, processId, TryCaptureFocusedElementId(processId));
+        return new TargetWindowId(
+            handle,
+            processId,
+            TryCaptureFocusedElementId(processId),
+            TryCaptureProcessName(processId));
+    }
+
+    private static string? TryCaptureProcessName(uint processId)
+    {
+        if (processId == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById((int)processId);
+            return process.ProcessName;
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            return null;
+        }
     }
 
     private static string? TryCaptureFocusedElementId(uint processId)

@@ -60,10 +60,20 @@ public sealed class PolishExecutor
     }
 
     /// <summary>Returns null when there is no provider or nothing to polish; otherwise the attempt's result.</summary>
+    public Task<PolishResult?> TryPolishAsync(
+        PolishSetup? setup,
+        ProcessedText input,
+        string? detectedLanguage,
+        CancellationToken cancellationToken) =>
+        TryPolishAsync(setup, input, detectedLanguage, targetAppName: null, recognitionLanguage: null, cancellationToken);
+
+    /// <summary>Returns null when there is no provider or nothing to polish; otherwise the attempt's result.</summary>
     public async Task<PolishResult?> TryPolishAsync(
         PolishSetup? setup,
         ProcessedText input,
         string? detectedLanguage,
+        string? targetAppName,
+        string? recognitionLanguage,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(input);
@@ -78,7 +88,9 @@ public sealed class PolishExecutor
         PolishResult result;
         if (!setup.UsesLocalRuntime)
         {
-            result = await provider.TryPolishAsync(Request(input, detectedLanguage), cancellationToken)
+            result = await provider.TryPolishAsync(
+                Request(input, detectedLanguage, targetAppName, recognitionLanguage),
+                cancellationToken)
                 .ConfigureAwait(false);
         }
         else
@@ -106,7 +118,9 @@ public sealed class PolishExecutor
                 {
                     // BUILT INSIDE THE LEASE, NOT BEFORE THE WAIT. The vocabulary is read at the last
                     // moment, and a refused admission never pays for scanning the dictionary.
-                    result = await provider.TryPolishAsync(Request(input, detectedLanguage), cancellationToken)
+                    result = await provider.TryPolishAsync(
+                        Request(input, detectedLanguage, targetAppName, recognitionLanguage),
+                        cancellationToken)
                         .ConfigureAwait(false);
                 }
             }
@@ -117,8 +131,14 @@ public sealed class PolishExecutor
         return result;
     }
 
-    private PolishRequest Request(ProcessedText input, string? detectedLanguage) => new(
+    private PolishRequest Request(
+        ProcessedText input,
+        string? detectedLanguage,
+        string? targetAppName,
+        string? recognitionLanguage) => new(
         input,
         detectedLanguage,
-        PolishVocabulary.Eligible(input.Text, _currentCustomWords()));
+        PolishVocabulary.Eligible(input.Text, _currentCustomWords()),
+        targetAppName,
+        recognitionLanguage);
 }

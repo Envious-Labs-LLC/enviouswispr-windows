@@ -1,3 +1,5 @@
+using EnviousWispr.Core.Input;
+
 namespace EnviousWispr.LLM;
 
 public static class OllamaLocalPrompt
@@ -51,10 +53,34 @@ public static class OllamaLocalPrompt
     /// LOCAL GETS THIS AND CLOUD DOES NOT, which is a privacy line rather than a capability one - a
     /// small local model is if anything MORE likely to tidy an unfamiliar name into a familiar one.
     /// </remarks>
-    public static string BuildSystemPrompt(IReadOnlyList<string>? vocabulary) =>
-        vocabulary is { Count: > 0 }
-            ? SystemPrompt + "\n\n" + EnviousWispr.Core.Dictation.PolishVocabulary.SystemGuidance
-            : SystemPrompt;
+    public static string BuildSystemPrompt(
+        IReadOnlyList<string>? vocabulary,
+        string? language = null,
+        string? targetAppName = null)
+    {
+        var prompt = SystemPrompt;
+        if (vocabulary is { Count: > 0 })
+        {
+            prompt += "\n\n" + EnviousWispr.Core.Dictation.PolishVocabulary.SystemGuidance;
+        }
+
+        if (IsPinnedLanguage(language))
+        {
+            prompt += $"\n\nLANGUAGE: This transcript is in {language}. Clean it in {language}.";
+        }
+
+        var sanitizedApp = TargetAppNameResolver.Sanitize(targetAppName);
+        if (sanitizedApp is not null)
+        {
+            prompt += $"\n\nThe user is dictating in {sanitizedApp}.";
+        }
+
+        return prompt;
+    }
+
+    public static bool IsPinnedLanguage(string? language) =>
+        !string.IsNullOrWhiteSpace(language) &&
+        !string.Equals(language, "auto", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The user message, carrying the transcript and any spellings as labelled data.</summary>
     public static string BuildUserMessage(string transcript, IReadOnlyList<string>? vocabulary) =>
