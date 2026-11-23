@@ -73,6 +73,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 15 => MigrateFromV15(json),
                 16 => MigrateFromV16(json),
                 17 => MigrateFromV17(json),
+                18 => MigrateFromV18(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -478,6 +479,18 @@ public sealed class JsonSettingsStore : ISettingsStore
     /// by its number rather than tripping on the unknown member and resetting every setting.
     /// </remarks>
     private static AppSettings? MigrateFromV17(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+    }
+
+    /// <summary>Takes a settings file written before Casual mode existed.</summary>
+    /// <remarks>
+    /// Absent CasualModeEnabled deserializes to false, matching the default.
+    /// </remarks>
+    private static AppSettings? MigrateFromV18(string json)
     {
         var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
         return legacy is null

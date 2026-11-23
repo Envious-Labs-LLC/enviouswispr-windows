@@ -82,13 +82,24 @@ internal sealed class TranscriptFinalizationEffects(IAppLogger logger, SessionPe
     {
         foreach (var receipt in receipts)
         {
-            // THE POLISH HALF IS TWO STAGES since English (UK): the spelling over the polish runs with the
-            // emoji restorer, so its receipt belongs to the second emission, not the first, where it is
-            // always still Skipped.
-            if ((receipt.Stage is DeterministicTextStage.EnglishSpellingAfterPolish
-                    or DeterministicTextStage.EmojiRestoration) != emojiRestorationOnly)
+            // THE POLISH HALF IS THREE STAGES since Casual mode: the spelling over the polish,
+            // the emoji restorer, and the final casual ending over the polished text.
+            if (emojiRestorationOnly)
             {
-                continue;
+                if (receipt.Stage is not (DeterministicTextStage.EnglishSpellingAfterPolish
+                        or DeterministicTextStage.EmojiRestoration
+                        or DeterministicTextStage.CasualEnding))
+                {
+                    continue;
+                }
+            }
+            else
+            {
+                if (receipt.Stage is DeterministicTextStage.EnglishSpellingAfterPolish
+                        or DeterministicTextStage.EmojiRestoration)
+                {
+                    continue;
+                }
             }
 
             logger.Write(new AppLogEntry(

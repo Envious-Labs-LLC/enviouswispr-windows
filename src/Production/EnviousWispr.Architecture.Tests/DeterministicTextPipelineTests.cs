@@ -121,6 +121,7 @@ public sealed class DeterministicTextPipelineTests
                 DeterministicTextStage.EnglishSpelling,
                 DeterministicTextStage.EnglishSpellingAfterPolish,
                 DeterministicTextStage.EmojiRestoration,
+                DeterministicTextStage.CasualEnding,
             ],
             result.Receipts.Select(receipt => receipt.Stage));
         Assert.Equal("send an EnviousWispr 👍. Done", result.Output.Text);
@@ -445,6 +446,7 @@ public sealed class DeterministicTextPipelineTests
                 DeterministicTextStage.EnglishSpelling,
                 DeterministicTextStage.EnglishSpellingAfterPolish,
                 DeterministicTextStage.EmojiRestoration,
+                DeterministicTextStage.CasualEnding,
             ],
             calls.Keys.Order());
         Assert.All(calls.Values, count => Assert.Equal(1, count));

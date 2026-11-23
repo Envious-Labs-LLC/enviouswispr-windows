@@ -187,6 +187,7 @@ public sealed class TranscriptFinalizer
         }
 
         var delivered = deterministic;
+        var polishedCasualStepExecuted = false;
         if (polishResult is not null && !polishResult.UsedFallback &&
             polishVerdict == PolishOutputVerdict.Accepted)
         {
@@ -196,6 +197,7 @@ public sealed class TranscriptFinalizer
             processed = await _pipeline
                 .ApplyPolishedTextAsync(masked, processed, polishReview.Text, cancellationToken)
                 .ConfigureAwait(false);
+            polishedCasualStepExecuted = request.Options.CasualModeEnabled;
 
             // RESOLVED AFTER THE LAST WRITER. The spelling and emoji restoration over the polish ran on
             // the masked text, so whether every sentinel survived is asked of what they produced.
@@ -218,11 +220,15 @@ public sealed class TranscriptFinalizer
             Output = processed.Output with { Text = delivered },
             DeterministicText = deterministic,
         };
-        _effects.EmitStageReceipts(processed.Receipts, emojiRestorationOnly: true);
+        var restorationReceipts = polishedCasualStepExecuted
+            ? processed.Receipts
+            : processed.Receipts.Where(receipt => receipt.Stage is not DeterministicTextStage.CasualEnding).ToArray();
+        _effects.EmitStageReceipts(restorationReceipts, emojiRestorationOnly: true);
         var restorationMilliseconds = processed.Receipts
             .Where(receipt => receipt.Stage is
                 DeterministicTextStage.EnglishSpellingAfterPolish or
-                DeterministicTextStage.EmojiRestoration)
+                DeterministicTextStage.EmojiRestoration ||
+                (polishedCasualStepExecuted && receipt.Stage is DeterministicTextStage.CasualEnding))
             .Sum(receipt => receipt.ElapsedMilliseconds);
         // THE SUMMARY IS LAST, BECAUSE IT IS THE ONLY LINE THAT CAN STILL BE WRONG. IsDegraded turns
         // true when restoration times out or fails, and the duration has to include the restoration

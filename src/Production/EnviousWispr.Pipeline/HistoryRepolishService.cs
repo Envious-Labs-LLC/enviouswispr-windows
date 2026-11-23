@@ -138,7 +138,7 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
         }
 
         var transcript = new Transcript(sessionId, startingText, entry.EngineId, DetectedLanguage: entry.LanguageCode);
-        var deterministicOptions = _textOptions();
+        var deterministicOptions = _textOptions() with { CasualModeEnabled = false };
         var customWords = _customWords();
         var request = new DeterministicTextRequest(transcript, customWords, deterministicOptions);
         var deterministicResult = new DeterministicTextResult(

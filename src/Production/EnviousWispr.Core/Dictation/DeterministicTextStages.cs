@@ -26,6 +26,9 @@ public enum DeterministicTextStage
     /// <summary>The same over the polished text, so a model that writes "color" cannot undo the choice.</summary>
     EnglishSpellingAfterPolish,
     EmojiRestoration,
+
+    /// <summary>Leaves off the full stop at the very end of a dictation when Casual mode is enabled. Ref: macOS #3737.</summary>
+    CasualEnding,
 }
 
 /// <summary>What one deterministic stage did with the text it was handed.</summary>

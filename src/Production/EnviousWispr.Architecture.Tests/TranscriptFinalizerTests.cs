@@ -228,7 +228,7 @@ public sealed class TranscriptFinalizerTests
             Spoken("um hello world"), [], AllOn, SnippetVocabulary.Empty, new PolishSetup(provider, UsesLocalRuntime: false, RuntimeResourceKind.Cpu), CancellationToken.None);
 
         Assert.Equal(
-            [DeterministicTextStage.SnippetExpansion, DeterministicTextStage.CustomWords, DeterministicTextStage.FillerAndFalseStarts, DeterministicTextStage.SpokenEmoji, DeterministicTextStage.InverseTextNormalization, DeterministicTextStage.EnglishSpelling, DeterministicTextStage.EnglishSpellingAfterPolish, DeterministicTextStage.EmojiRestoration],
+            [DeterministicTextStage.SnippetExpansion, DeterministicTextStage.CustomWords, DeterministicTextStage.FillerAndFalseStarts, DeterministicTextStage.SpokenEmoji, DeterministicTextStage.InverseTextNormalization, DeterministicTextStage.EnglishSpelling, DeterministicTextStage.EnglishSpellingAfterPolish, DeterministicTextStage.EmojiRestoration, DeterministicTextStage.CasualEnding],
             effects.MainReceipts.Select(receipt => receipt.Stage));
         // NOT "Completed". The filler and restoration stages carry 50 ms deadlines, and on a cold hosted
         // runner the first pass through a stage pays its compilation and can time out - main went red

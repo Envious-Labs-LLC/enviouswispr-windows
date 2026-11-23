@@ -280,7 +280,7 @@ public sealed class JsonSettingsStoreTests
 
             Assert.Equal(SettingsLoadStatus.Migrated, result.Status);
             Assert.Equal(17, result.SourceSchemaVersion);
-            Assert.Equal(18, result.Settings.SchemaVersion);
+            Assert.Equal(AppSettings.CurrentSchemaVersion, result.Settings.SchemaVersion);
             Assert.Equal("backslash", result.Settings.UserData.SnippetKeyword);
             Assert.Equal(legacy.UserData.Snippets, result.Settings.UserData.Snippets);
         });

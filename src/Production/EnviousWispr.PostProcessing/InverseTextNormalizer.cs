@@ -1,5 +1,7 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace EnviousWispr.PostProcessing;
@@ -172,15 +174,113 @@ public static class InverseTextNormalizer
     private static readonly string NotAfterDigitOrDot = $@"(?<{Lead}>^|[^\d.])";
     private static readonly string NotAfterDigitOrColon = $@"(?<{Lead}>^|[^\d:])";
 
-    public static string Normalize(string text, bool spokenPunctuation = false)
+    private const string CloserClass = @"[”’""'\)\]\}»]";
+    private const string SeparatorSpace = @"[ \t\u00A0\u202F]";
+    private static readonly SearchValues<char> WordBreakSpaces = SearchValues.Create([' ', '\t', '\r', '\n', '\u00A0', '\u202F']);
+    private const string MarkFormsPattern = @"(?:exclamation (?:mark|point)|question mark|full stop|semicolon|period|comma|colon)";
+    private const string BreakFormsPattern = @"(?:new paragraph|new line)";
+    private const string AllFormsPattern = @"(?:exclamation (?:mark|point)|question mark|new paragraph|full stop|new line|semicolon|period|comma|colon)";
+
+    private static readonly HashSet<string> CommonDotAbbreviations = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "mr", "mrs", "ms", "dr", "prof", "hr", "fr", "sr", "sra", "sig", "dott", "jr", "st", "mt", "vs", "etc", "ii", "iii", "iv"
+    };
+
+    private static readonly Dictionary<string, HashSet<string>> LanguageDotAbbreviations = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["en"] = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "rev", "hon", "capt", "col", "lt", "sgt", "cmdr", "adm", "esq", "ave", "blvd", "rd", "ln", "hwy", "ste", "ft",
+            "dept", "inc", "ltd", "corp", "co", "llc", "llp", "plc", "approx", "est", "fig", "vol", "pp", "cf", "viz"
+        },
+        ["de"] = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "str", "pl", "ca", "bzw", "usw", "vgl", "evtl", "inkl", "zzgl", "nr", "abs", "abb", "aufl", "bd", "gmbh"
+        },
+        ["fr"] = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "mme", "mlle", "mm", "av", "bd", "rte", "env", "approx", "réf", "ref", "fig", "vol", "éd", "ed", "sarl", "sas"
+        },
+        ["es"] = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "srta", "dra", "ud", "uds", "av", "avda", "ctra", "aprox", "pág", "pag", "págs", "pags", "núm", "num", "fig"
+        },
+        ["it"] = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "sig.ra", "sig.na", "dott.ssa", "ing", "avv", "arch", "rag", "geom", "ecc", "cfr", "pag", "pagg", "num", "art", "fig", "srl", "spa"
+        }
+    };
+
+    private static readonly Regex SingleInitialRegex = new(@"^\p{Lu}$", RegexOptions.Compiled | RegexOptions.CultureInvariant, RegexTimeout);
+    private static readonly Regex DottedInitialismRegex = new(@"\p{L}\.\p{L}$", RegexOptions.Compiled | RegexOptions.CultureInvariant, RegexTimeout);
+
+    private static readonly Regex PrimaryCommandRegex = new(
+        @"(?<!\S)(" + AllFormsPattern + @")\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        RegexTimeout);
+
+    private static readonly Regex NextRepeatedCommandRegex = new(
+        @"\G" + SeparatorSpace + @"*(?:[.,;:!?]|[.]{2}|,{2}|;{2}|:{2}|!{2}|[?]{2})(?![.,;:!?…])" + SeparatorSpace + @"*(" + AllFormsPattern + @")\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        RegexTimeout);
+
+    private static readonly Regex R1Regex = new(
+        @"(?<=[\p{L}\p{N}]|[\p{N}%][ \t]{1,2}|[\uE001\x00][ \t]?)([.,;:!?])\1?(?![.,;:!?…])(?=" + CloserClass + @"{0,3}\s+(" + MarkFormsPattern + @")\b)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        RegexTimeout);
+
+    private static readonly Regex R2Regex = new(
+        @"(?<!\S)(" + MarkFormsPattern + @")\b([.,;:!?])\2?(?=\s|$)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        RegexTimeout);
+
+    private static readonly Regex R3MarksBreakRegex = new(
+        @"((?<!\S)(?:" + MarkFormsPattern + @")\s+(?:" + BreakFormsPattern + @"))\b([.,])\2?(?=\s|$)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        RegexTimeout);
+
+    private static readonly Regex R3PauseBreakRegex = new(
+        @"(\S[,;:]" + CloserClass + @"{0,3}\s+(?:" + BreakFormsPattern + @"))\b([.,])\2?(?=\s|$)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        RegexTimeout);
+
+    private const string SpokenFinalFullStopPatternText =
+        @"(?:\s+period|\s+full stop)(?:[.]|[.]{2}|[?]|[!])?(?:\s+new (?:line\b[.]?|paragraph\b))*\s*$";
+
+    public static bool HasSpokenFinalFullStop(string text, bool spokenPunctuation = true)
+    {
+        if (!spokenPunctuation || string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var working = " " + text.Trim() + " ";
+        working = ReconcileEnglishRecognizerMarks(working);
+        return Compiled(SpokenFinalFullStopPatternText, ignoreCase: true).IsMatch(working);
+    }
+
+    public static bool SpokenFinalFullStop(string text, bool spokenPunctuation = true) =>
+        HasSpokenFinalFullStop(text, spokenPunctuation);
+
+    public static string Normalize(string text, bool spokenPunctuation = false) =>
+        Normalize(text, spokenPunctuation, out _);
+
+    public static string Normalize(string text, bool spokenPunctuation, out bool spokenFinalFullStop)
     {
         ArgumentNullException.ThrowIfNull(text);
         if (string.IsNullOrWhiteSpace(text))
         {
+            spokenFinalFullStop = false;
             return text.Trim();
         }
 
         var working = " " + text.Trim() + " ";
+        if (spokenPunctuation)
+        {
+            working = ReconcileEnglishRecognizerMarks(working);
+        }
+
+        spokenFinalFullStop = spokenPunctuation && Compiled(SpokenFinalFullStopPatternText, ignoreCase: true).IsMatch(working);
         var alphabetic = new string(text.Where(char.IsLetter).ToArray());
         var shout = alphabetic.Length > 1 && string.Equals(
             alphabetic,
@@ -884,6 +984,7 @@ public static class InverseTextNormalizer
         var result = input;
         if (enabled)
         {
+            result = ReconcileEnglishRecognizerMarks(result);
             var replacements = new (string Pattern, string Value)[]
             {
                 (@"\bnew paragraph\b", "\n\n"), (@"\bnew line\b", "\n"),
@@ -903,6 +1004,177 @@ public static class InverseTextNormalizer
             @"([.!?]\s+)([a-z])",
             match => match.Groups[1].Value + match.Groups[2].Value.ToUpperInvariant(),
             ignoreCase: false);
+    }
+
+    internal static string ReconcileEnglishRecognizerMarks(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return text;
+        }
+
+        var merged = MergeRepeatedCommands(text);
+        return AbsorbRecognizerMarks(merged);
+    }
+
+    internal static string MergeRepeatedCommands(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return text;
+        }
+
+        var matches = PrimaryCommandRegex.Matches(text);
+        if (matches.Count == 0)
+        {
+            return text;
+        }
+
+        var sb = new StringBuilder(text.Length);
+        var cursor = 0;
+
+        foreach (Match match in matches)
+        {
+            var start = match.Index;
+            if (start < cursor)
+            {
+                continue;
+            }
+
+            var end = match.Index + match.Length;
+            var key = CommandKey(match.Groups[1].Value);
+
+            while (end < text.Length)
+            {
+                var nextMatch = NextRepeatedCommandRegex.Match(text, end);
+                if (nextMatch.Success && nextMatch.Index == end && CommandKey(nextMatch.Groups[1].Value) == key)
+                {
+                    end += nextMatch.Length;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            if (end > match.Index + match.Length)
+            {
+                sb.Append(text, cursor, (match.Index + match.Length) - cursor);
+                cursor = end;
+            }
+        }
+
+        if (cursor == 0)
+        {
+            return text;
+        }
+
+        sb.Append(text, cursor, text.Length - cursor);
+        return sb.ToString();
+    }
+
+    internal static string AbsorbRecognizerMarks(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return text;
+        }
+
+        var t = ApplyR1(text);
+        t = R2Regex.Replace(t, match => match.Groups[1].Value);
+        t = R3MarksBreakRegex.Replace(t, match => match.Groups[1].Value);
+        t = R3PauseBreakRegex.Replace(t, match => match.Groups[1].Value);
+        return t;
+    }
+
+    private static string ApplyR1(string text)
+    {
+        return R1Regex.Replace(text, match =>
+        {
+            var mark = match.Groups[1].Value;
+            var command = match.Groups[2].Value;
+
+            if (mark == "." && !IsPeriodCommand(command))
+            {
+                var prefix = text[..match.Index];
+                if (IsProtectedDotToken(PrecedingToken(prefix), digitIsOrdinal: false, language: "en"))
+                {
+                    return match.Value;
+                }
+            }
+
+            return string.Empty;
+        });
+    }
+
+    private static bool IsPeriodCommand(string phrase)
+    {
+        var key = CommandKey(phrase);
+        return key is "period" or "full stop";
+    }
+
+    private static string CommandKey(string phrase) =>
+        Regex.Replace(phrase.ToLowerInvariant().Replace('\u2019', '\''), @"\s+", " ").Trim();
+
+    private static string PrecedingToken(string prefix)
+    {
+        var end = prefix.TrimEnd();
+        if (string.IsNullOrEmpty(end))
+        {
+            return string.Empty;
+        }
+
+        var lastSpace = end.AsSpan().LastIndexOfAny(WordBreakSpaces);
+        return lastSpace >= 0 ? end[(lastSpace + 1)..] : end;
+    }
+
+    private static bool IsProtectedDotToken(string token, bool digitIsOrdinal = false, string language = "en")
+    {
+        if (string.IsNullOrEmpty(token))
+        {
+            return false;
+        }
+
+        var last = token[^1];
+        if (char.IsAsciiDigit(last) || char.IsDigit(last))
+        {
+            return digitIsOrdinal;
+        }
+
+        var start = 0;
+        while (start < token.Length && !char.IsLetterOrDigit(token[start]))
+        {
+            start++;
+        }
+
+        if (start >= token.Length)
+        {
+            return false;
+        }
+
+        var trimmed = token[start..];
+        var key = trimmed.ToLowerInvariant();
+        if (CommonDotAbbreviations.Contains(key))
+        {
+            return true;
+        }
+
+        if (LanguageDotAbbreviations.TryGetValue(language, out var set) && set.Contains(key))
+        {
+            return true;
+        }
+
+        if (SingleInitialRegex.IsMatch(trimmed))
+        {
+            return true;
+        }
+
+        if (DottedInitialismRegex.IsMatch(trimmed))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private static string KeepMagnitude(string input) => Replace(

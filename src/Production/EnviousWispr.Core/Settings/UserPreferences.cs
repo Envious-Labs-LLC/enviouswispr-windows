@@ -133,7 +133,8 @@ public sealed record DictationPreferences(
     double AutoStopSilenceSeconds = 2.0,
     EnglishSpelling EnglishSpelling = EnglishSpelling.American,
     string PasteLastGesture = DictationPreferences.DefaultPasteLastGesture,
-    string CopyLastGesture = "")
+    string CopyLastGesture = "",
+    bool CasualModeEnabled = false)
 {
     /// <summary>Paste Last Dictation's default: Wispr Flow's Windows binding for the same action. Ref: #206.</summary>
     /// <remarks>
