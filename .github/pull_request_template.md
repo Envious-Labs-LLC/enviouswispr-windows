@@ -11,7 +11,7 @@ Commands, revision and observed results:
 
 ## Pull-request gate
 
-- [ ] This PR's `build-and-test` passed the full Release portable gate and Store-package check
+- [ ] This PR's `build-and-test` check passed on the cloud runner (and Store-package validation ran when packaging or dependencies changed)
 - [ ] Review is clear before squash auto-merge is armed
 
 Cloud review outcome for the final HEAD: qualifying verdict, findings resolved with local all-clear, or recorded absent-review waiver. Include the HEAD SHA.

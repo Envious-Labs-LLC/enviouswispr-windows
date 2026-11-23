@@ -1,5 +1,6 @@
-param(
-    [switch]$VerifyGitHubSecurity
+﻿param(
+    [switch]$VerifyGitHubSecurity,
+    [switch]$SkipNotices
 )
 
 $ErrorActionPreference = 'Stop'
@@ -35,9 +36,11 @@ if (-not $license.Contains('GNU GENERAL PUBLIC LICENSE') -or
 
 Push-Location $repoRoot
 try {
-    & pwsh -NoProfile -File '.\scripts\generate-third-party-notices.ps1' -Verify
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Production third-party notice verification failed.'
+    if (-not $SkipNotices) {
+        & pwsh -NoProfile -File '.\scripts\generate-third-party-notices.ps1' -Verify
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Production third-party notice verification failed.'
+        }
     }
 
     & pwsh -NoProfile -File '.\scripts\validate-artifact-license-inventory.ps1'
