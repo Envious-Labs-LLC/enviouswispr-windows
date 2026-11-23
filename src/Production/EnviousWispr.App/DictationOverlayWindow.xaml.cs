@@ -808,7 +808,10 @@ public sealed partial class DictationOverlayWindow : Window
             return;
         }
 
-        _distressPulse.Begin();
+        if (AnimationsEnabled)
+        {
+            _distressPulse.Begin();
+        }
     }
 
     private void ConfigureNotice(string? detailText)

@@ -184,7 +184,7 @@ public sealed partial class MainWindow
             FileTranscriptionOutcome.Empty => ("No speech was found in that file.", false),
             FileTranscriptionOutcome.Cancelled => ("Stopped. The words so far are below.", !string.IsNullOrWhiteSpace(result.Text)),
             FileTranscriptionOutcome.Failed when string.IsNullOrWhiteSpace(result.Text) =>
-                ("That file could not be transcribed. Choose Transcription in the sidebar to check the engine.", false),
+                ("That file could not be transcribed. Choose Dictation Settings -> Engine to check the engine.", false),
             FileTranscriptionOutcome.Failed => ("Transcription stopped part way. The words so far are below.", true),
             _ => ("That file could not be transcribed.", false),
         };

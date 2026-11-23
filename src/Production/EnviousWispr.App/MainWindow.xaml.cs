@@ -202,7 +202,7 @@ public sealed partial class MainWindow : Window, IDisposable
         new("Quick Add Words", "dictionary", "quick-add", "shortcut add word"),
         new("Snippets", "snippets", null, "text expansion templates boilerplates phrases"),
         new("Appearance & Theme", "settings-app", "appearance", "light dark system theme high contrast"),
-        new("Permissions", "settings-app", "permissions", "microphone accessibility input monitoring privacy"),
+        new("Permissions", "settings-app", "permissions", "microphone privacy"),
         new("Privacy & History", "settings-app", "privacy", "retention days safe held local dictations delete"),
         new("Backup & Profile", "settings-app", "backup", "export import portable profile reset data your data"),
         new("Updates & Licenses", "settings-app", "updates-licenses", "version release notes third party licenses"),
@@ -238,6 +238,10 @@ public sealed partial class MainWindow : Window, IDisposable
         if (args.SelectedItem is SearchableSettingItem item)
         {
             OpenPage(item.PageTag, item.TabKey);
+            sender.Text = string.Empty;
+        }
+        else if (args.SelectedItem is string)
+        {
             sender.Text = string.Empty;
         }
     }
@@ -1049,6 +1053,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private static (string PageTag, string? TabKey) ResolvePageAndTab(string tag) => tag switch
     {
+        "home" => ("history", null),
         "settings-transcription" => ("settings-dictation", "engine"),
         "settings-microphone" => ("settings-dictation", "microphone"),
         "settings-live-preview" => ("settings-dictation", "live-preview"),
@@ -1084,6 +1089,10 @@ public sealed partial class MainWindow : Window, IDisposable
 
         var row = NavigationRows()
             .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), resolvedTag, StringComparison.Ordinal));
+        if (row is null && string.Equals(resolvedTag, "history", StringComparison.Ordinal))
+        {
+            row = HistoryNavItem;
+        }
         if (row is null)
         {
             // A SILENT RETURN HERE IS A BUTTON THAT DOES NOTHING. The user pressed something,
@@ -1183,11 +1192,11 @@ public sealed partial class MainWindow : Window, IDisposable
 
             ResetRecoveryCardWords();
             FoundationInfoBar.Title = "Interrupted dictation recovered";
-            FoundationInfoBar.Message = "Review or copy the private recovery text on Home. It was not pasted automatically.";
+            FoundationInfoBar.Message = "Review or copy the private recovery text on History. It was not pasted automatically.";
             FoundationInfoBar.Severity = InfoBarSeverity.Warning;
             SetOnboardingReliabilityNotice(
                 "Interrupted dictation recovered",
-                "Finish setup, then review or copy the private recovery text on Home. It will not be pasted automatically.");
+                "Finish setup, then review or copy the private recovery text on History. It will not be pasted automatically.");
             return;
         }
 
@@ -1313,7 +1322,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 RecoveryBodyText.Text = "Copy it from here, or find it in History.";
                 if (_foundationBeforeEscape is not null)
                 {
-                    FoundationInfoBar.Message = "Copy it from Home, or find it in History.";
+                    FoundationInfoBar.Message = "Copy it from History.";
                 }
             }
         }
@@ -5437,7 +5446,7 @@ public sealed partial class MainWindow : Window, IDisposable
             "pill" => ("Recording Pill", "Choose where and how the recording pill appears while you dictate.", (FrameworkElement?)AppearanceSection, (FrameworkElement?)null),
             "sounds" => ("Sounds", "Play a short sound when recording starts and stops.", (FrameworkElement?)SoundSection, (FrameworkElement?)null),
             "clipboard" => ("Clipboard", "How your transcript reaches the clipboard and the app you're in.", (FrameworkElement?)ClipboardSection, (FrameworkElement?)null),
-            _ => ("Transcription", "The speech engine that turns your voice into text.", (FrameworkElement?)TranscriptionEngineSection, (FrameworkElement?)DeterministicCleanupSection),
+            _ => ("Dictation Settings", "The speech engine that turns your voice into text.", (FrameworkElement?)TranscriptionEngineSection, (FrameworkElement?)DeterministicCleanupSection),
         };
 
         SettingsPageTitle.Text = title;
@@ -5549,15 +5558,8 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         var allWords = _settings?.UserData?.CustomWords ?? (IReadOnlyList<CustomWordEntry>)Array.Empty<CustomWordEntry>();
         var query = DictionarySearchBox?.Text?.Trim() ?? string.Empty;
-        var filtered = allWords.AsEnumerable();
+        var list = VocabularyPresenter.FilterWords(allWords, _wordFilterCategory, query);
 
-        if (!string.IsNullOrWhiteSpace(query))
-        {
-            filtered = filtered.Where(w => w.SpokenForm.Contains(query, StringComparison.OrdinalIgnoreCase)
-                                        || w.Replacement.Contains(query, StringComparison.OrdinalIgnoreCase));
-        }
-
-        var list = filtered.ToList();
         if (DictionaryList is not null)
         {
             DictionaryList.ItemsSource = list;

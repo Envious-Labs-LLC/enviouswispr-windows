@@ -467,6 +467,40 @@ public sealed partial class DesignSystemTokenTests
         var markup = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
 
+        if (swift.Contains("enum SettingsPage"))
+        {
+            var enumBody = Regex.Match(swift, @"enum SettingsPage\s*:[^{]+\{(?<body>.*?)var id:", RegexOptions.Singleline).Groups["body"].Value;
+            var cases = Regex.Matches(enumBody, @"case\s+([a-zA-Z0-9]+)")
+                .Select(m => m.Groups[1].Value)
+                .Where(c => !string.Equals(c, "meetings", StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+
+            Assert.True(cases.Length >= 8, $"Expected the macOS SettingsPage cases, found {cases.Length}.");
+
+            var windowsTags = Regex.Matches(markup, @"<NavigationViewItem [^>]*Tag=""([^""]+)""")
+                .Select(m => m.Groups[1].Value)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var windowsRows = Regex.Matches(markup, @"<(?:NavigationViewItem|Button) [^>]*Content=""([^""]+)""")
+                .Select(match => Normalise(match.Groups[1].Value))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var missing = cases.Where(c => !HasWindowsSettingsHome(c, windowsTags, windowsRows)).ToArray();
+
+            Assert.True(
+                missing.Length == 0,
+                "macOS offers these SettingsPage cases and Windows has no navigation row for them: "
+                    + string.Join(", ", missing));
+
+            // Control. The comparison must be finding real pages on both sides.
+            Assert.Contains("dictation", cases);
+            Assert.Contains("history", cases);
+            Assert.True(HasWindowsSettingsHome("dictation", windowsTags, windowsRows));
+            Assert.True(HasWindowsSettingsHome("history", windowsTags, windowsRows));
+            return;
+        }
+
         // SLICE TO THE LABEL PROPERTY FIRST. The enum has three switch statements over the same
         // cases - label, icon and description - all written "case .x: return "y"". Matching the
         // whole file therefore compared SF Symbol names and marketing sentences against navigation
@@ -488,22 +522,37 @@ public sealed partial class DesignSystemTokenTests
             macLabels.Length >= 14,
             $"Expected the macOS section labels, found {macLabels.Length}.");
 
-        var windowsRows = Regex.Matches(markup, @"<(?:NavigationViewItem|Button) [^>]*Content=""([^""]+)""")
+        var legacyWindowsRows = Regex.Matches(markup, @"<(?:NavigationViewItem|Button) [^>]*Content=""([^""]+)""")
             .Select(match => Normalise(match.Groups[1].Value))
             .ToHashSet(StringComparer.Ordinal);
 
-        var missing = macLabels.Where(label => !windowsRows.Contains(label)).ToArray();
+        var legacyMissing = macLabels.Where(label => !legacyWindowsRows.Contains(label)).ToArray();
 
         Assert.True(
-            missing.Length == 0,
+            legacyMissing.Length == 0,
             "macOS offers these and Windows has no navigation row for them: "
-                + string.Join(", ", missing));
+                + string.Join(", ", legacyMissing));
 
         // Control. The comparison must be finding real rows on both sides, or "nothing missing"
         // would be true of two empty sets.
-        Assert.Contains("Transcription", windowsRows);
+        Assert.Contains("Transcription", legacyWindowsRows);
         Assert.Contains("Transcription", macLabels);
     }
+
+    private static bool HasWindowsSettingsHome(string caseName, HashSet<string> tags, HashSet<string> contents) =>
+        caseName switch
+        {
+            "history" => tags.Contains("history") || contents.Contains("History"),
+            "dictation" => tags.Contains("settings-dictation") || contents.Contains("Dictation Settings"),
+            "keybinds" => tags.Contains("settings-keybinds") || contents.Contains("Keybinds"),
+            "transcribeFile" => tags.Contains("settings-transcribe-file") || contents.Contains("Transcribe a File"),
+            "aiPolish" => tags.Contains("settings-ai-polish") || contents.Contains("AI Polish"),
+            "dictionary" => tags.Contains("dictionary") || contents.Contains("Your Words"),
+            "snippets" => tags.Contains("snippets") || contents.Contains("Snippets"),
+            "appSettings" => tags.Contains("settings-app") || contents.Contains("App Settings"),
+            "diagnostics" => tags.Contains("settings-diagnostics") || contents.Contains("Diagnostics"),
+            _ => tags.Contains(caseName) || tags.Contains($"settings-{caseName}") || contents.Contains(caseName),
+        };
 
     /// <summary>The label property alone, not the icon or description switches beside it.</summary>
     [GeneratedRegex(@"var label: String \{.*?\n  \}", RegexOptions.Singleline)]
@@ -513,15 +562,17 @@ public sealed partial class DesignSystemTokenTests
     private static string Normalise(string label) =>
         label.Replace('\u2019', '\'').Trim();
 
-    internal static string GetMacSectionSnapshotPath() =>
-        Path.Combine(
-            FindRepositoryRoot(),
-            "macos-source",
-            "Sources",
-            "EnviousWisprAppKit",
-            "Views",
-            "Settings",
-            "SettingsSection.swift");
+    internal static string GetMacSectionSnapshotPath()
+    {
+        var root = FindRepositoryRoot();
+        var pagePath = Path.Combine(root, "macos-source", "Sources", "EnviousWisprAppKit", "Views", "Settings", "SettingsPage.swift");
+        if (File.Exists(pagePath))
+        {
+            return pagePath;
+        }
+
+        return Path.Combine(root, "macos-source", "Sources", "EnviousWisprAppKit", "Views", "Settings", "SettingsSection.swift");
+    }
 
     [MacSnapshotFact]
     public void MacDynamicColorsMatchExpectedTable()
