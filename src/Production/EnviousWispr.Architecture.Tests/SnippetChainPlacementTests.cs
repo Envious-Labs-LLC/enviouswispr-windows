@@ -431,7 +431,7 @@ public sealed class SnippetChainPlacementTests
 
         public void RecordPolishRefused() => PolishRefusals++;
 
-        public void RecordDeterministicProcessingFinished(bool degraded, long elapsedMilliseconds)
+        public void RecordDeterministicProcessingFinished(bool degraded, long elapsedMilliseconds, bool empty = false)
         {
         }
 

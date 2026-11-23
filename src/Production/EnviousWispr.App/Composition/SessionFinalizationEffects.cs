@@ -31,7 +31,8 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts) 
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
             AppEventCode.DictationTranscriptionFailed,
-            AppFailureCategory.AsrUnavailable));
+            AppFailureCategory.AsrUnavailable,
+            ErrorCode: AppErrorCode.ModelPackUnavailable));
 
     public void ShowTranscriptionUnavailable() =>
         _view.ShowStatus(DictationStatus.Advisory(
@@ -51,7 +52,9 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts) 
             DateTimeOffset.UtcNow,
             transcript.UsedFallback
                 ? AppEventCode.DictationTranscriptionDegraded
-                : AppEventCode.DictationTranscriptionCompleted,
+                : string.IsNullOrWhiteSpace(transcript.Text)
+                    ? AppEventCode.DictationTranscriptionEmpty
+                    : AppEventCode.DictationTranscriptionCompleted,
             transcript.UsedFallback
                 ? AppFailureCategories.For(transcript.DegradedError)
                 : AppFailureCategory.None,
@@ -63,7 +66,8 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts) 
             DateTimeOffset.UtcNow,
             AppEventCode.DictationTranscriptionFailed,
             AppFailureCategories.For(failure),
-            elapsedMilliseconds));
+            elapsedMilliseconds,
+            ErrorCode: failure?.Code));
 
     public void ShowTranscriptionFailed() =>
         _view.ShowStatus(DictationStatus.Error("Local transcription failed safely"));

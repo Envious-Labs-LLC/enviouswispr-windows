@@ -165,11 +165,18 @@ public sealed class StreamingTranscriptionController
                     new CapturedAudio(sessionId, slice, snapshot.SampleRate, snapshot.Channels),
                     cancellationToken).ConfigureAwait(false);
 
-                _streamed.Append(transcript.Text);
+                var isSegmentEmpty = string.IsNullOrWhiteSpace(transcript.Text);
+                if (!isSegmentEmpty)
+                {
+                    _streamed.Append(transcript.Text);
+                }
+
                 _streamedThroughSample = range.EndSample;
                 _logger.Write(new AppLogEntry(
                     _clock.GetUtcNow(),
-                    AppEventCode.StreamingSegmentCommitted));
+                    isSegmentEmpty
+                        ? AppEventCode.StreamingSegmentEmpty
+                        : AppEventCode.StreamingSegmentCommitted));
             }
         }
         catch (OperationCanceledException)

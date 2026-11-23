@@ -22,7 +22,7 @@ public interface ITranscriptFinalizationEffects : IPolishAttemptEffects
     /// <summary>What came back from polish was not worth showing anyone.</summary>
     void RecordPolishRefused();
 
-    void RecordDeterministicProcessingFinished(bool degraded, long elapsedMilliseconds);
+    void RecordDeterministicProcessingFinished(bool degraded, long elapsedMilliseconds, bool empty = false);
 }
 
 /// <summary>What a finalisation decided: the text to deliver, and how it got there.</summary>
@@ -206,7 +206,8 @@ public sealed class TranscriptFinalizer
         // that a failure happened inside. Written before polish, a degraded pass reported itself as clean.
         _effects.RecordDeterministicProcessingFinished(
             processed.IsDegraded,
-            deterministicMilliseconds + restorationMilliseconds);
+            deterministicMilliseconds + restorationMilliseconds,
+            string.IsNullOrWhiteSpace(processed.Output.Text));
 
         return new FinalizedTranscript(request, processed, polishResult, polishVerdict)
         {

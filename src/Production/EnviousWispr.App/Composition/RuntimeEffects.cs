@@ -137,12 +137,14 @@ internal sealed class TranscriptFinalizationEffects(IAppLogger logger, SessionPe
             // claim a cause it does not know.
             AppFailureCategory.InvalidData));
 
-    public void RecordDeterministicProcessingFinished(bool degraded, long elapsedMilliseconds) =>
+    public void RecordDeterministicProcessingFinished(bool degraded, long elapsedMilliseconds, bool empty = false) =>
         logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
-            degraded
-                ? AppEventCode.DeterministicProcessingDegraded
-                : AppEventCode.DeterministicProcessingCompleted,
+            empty
+                ? AppEventCode.DeterministicProcessingEmpty
+                : degraded
+                    ? AppEventCode.DeterministicProcessingDegraded
+                    : AppEventCode.DeterministicProcessingCompleted,
             degraded
                 ? AppFailureCategory.PostProcessing
                 : AppFailureCategory.None,
