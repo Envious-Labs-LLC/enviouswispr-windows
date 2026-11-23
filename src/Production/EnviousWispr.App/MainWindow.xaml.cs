@@ -313,6 +313,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private int _recordingModeIndex;
     private RecordingSoundPairing _selectedRecordingSoundPairing = RecordingSoundPairing.WhisperTick;
     private readonly Dictionary<RecordingSoundPairing, Border> _chimeCards = new();
+    private readonly Dictionary<RecordingSoundPairing, Button> _chimeSelectButtons = new();
     private readonly Dictionary<RecordingSoundPairing, Border> _chimeBadges = new();
     private readonly Dictionary<RecordingSoundPairing, List<Border>> _chimeWaveformBars = new();
     private readonly Dictionary<RecordingSoundPairing, Button> _chimePlayButtons = new();
@@ -1680,6 +1681,7 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         ChimesGrid.Children.Clear();
         _chimeCards.Clear();
+        _chimeSelectButtons.Clear();
         _chimeBadges.Clear();
         _chimeWaveformBars.Clear();
         _chimePlayButtons.Clear();
@@ -1792,8 +1794,42 @@ public sealed partial class MainWindow : Window, IDisposable
             }
             contentStack.Children.Add(waveformPanel);
 
-            Grid.SetColumn(contentStack, 0);
-            cardGrid.Children.Add(contentStack);
+            var selectButton = new Button
+            {
+                Background = (Brush)Application.Current.Resources["BrandHitTestBrush"],
+                BorderThickness = new Thickness(0),
+                Padding = new Thickness(0),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                Content = contentStack,
+                Tag = choice.Pairing,
+            };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(selectButton, choice.DisplayName);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(selectButton, choice.Description);
+            selectButton.Click += (s, e) =>
+            {
+                if (s is Button btn && btn.Tag is RecordingSoundPairing pairing)
+                {
+                    SelectChimePairing(pairing, triggerSave: true);
+                }
+            };
+            selectButton.GotFocus += (s, e) =>
+            {
+                if (s is Button btn && btn.Tag is RecordingSoundPairing pairing && pairing != _selectedRecordingSoundPairing && _chimeCards.TryGetValue(pairing, out var c))
+                {
+                    c.BorderBrush = (Brush)Application.Current.Resources["BrandAccentBrush"];
+                }
+            };
+            selectButton.LostFocus += (s, e) =>
+            {
+                if (s is Button btn && btn.Tag is RecordingSoundPairing pairing && pairing != _selectedRecordingSoundPairing && _chimeCards.TryGetValue(pairing, out var c))
+                {
+                    c.BorderBrush = (Brush)Application.Current.Resources["BrandDividerBrush"];
+                }
+            };
+            Grid.SetColumn(selectButton, 0);
+            cardGrid.Children.Add(selectButton);
 
             var playButton = new Button
             {
@@ -1811,6 +1847,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 },
                 Tag = choice.Pairing,
             };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(playButton, $"Preview {choice.DisplayName} sound");
             ToolTipService.SetToolTip(playButton, $"Play {choice.DisplayName} preview");
             playButton.Click += (s, e) =>
             {
@@ -1826,6 +1863,7 @@ public sealed partial class MainWindow : Window, IDisposable
             ChimesGrid.Children.Add(card);
 
             _chimeCards[choice.Pairing] = card;
+            _chimeSelectButtons[choice.Pairing] = selectButton;
             _chimeBadges[choice.Pairing] = badge;
             _chimeWaveformBars[choice.Pairing] = bars;
             _chimePlayButtons[choice.Pairing] = playButton;
@@ -1838,6 +1876,18 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         _selectedRecordingSoundPairing = pairing;
         UpdateChimeCardsVisuals();
+        if (triggerSave && !_isApplyingSettings && _settings is not null && _chimeSelectButtons.TryGetValue(pairing, out var selectBtn))
+        {
+            var choice = RecordingSoundCatalog.Choices.FirstOrDefault(c => c.Pairing == pairing);
+            var name = choice?.DisplayName ?? pairing.ToString();
+            var peer = FrameworkElementAutomationPeer.FromElement(selectBtn)
+                ?? FrameworkElementAutomationPeer.CreatePeerForElement(selectBtn);
+            peer?.RaiseNotificationEvent(
+                AutomationNotificationKind.Other,
+                AutomationNotificationProcessing.CurrentThenMostRecent,
+                $"{name} selected",
+                "EnviousWisprChimeSelection");
+        }
         if (triggerSave && !_isApplyingSettings && _settings is not null)
         {
             _ = TriggerAutoSaveAsync();
@@ -1858,6 +1908,13 @@ public sealed partial class MainWindow : Window, IDisposable
             card.BorderBrush = isSelected ? accentBrush : dividerBrush;
             card.BorderThickness = isSelected ? new Thickness(2) : new Thickness(1);
             card.Background = isSelected ? hoverBrush : surfaceBrush;
+
+            if (_chimeSelectButtons.TryGetValue(pairing, out var selectButton))
+            {
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(
+                    selectButton,
+                    isSelected ? "Selected" : "Not selected");
+            }
 
             if (_chimeBadges.TryGetValue(pairing, out var badge))
             {
@@ -3106,6 +3163,7 @@ public sealed partial class MainWindow : Window, IDisposable
         foreach (var pack in VocabularyPacks.All)
         {
             var item = new MenuFlyoutItem { Text = pack.Name, Tag = pack.Id };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(item, pack.Name);
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(item, pack.Description);
             item.Click += PackMenuItem_Click;
             PackFlyout.Items.Add(item);
@@ -3153,6 +3211,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private Button BuildOfferButton(ImportConflictOffer offer)
     {
         var button = new Button { Content = offer.Label };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, offer.Label);
         button.Click += async (_, _) =>
         {
             if (await ReplaceConflictsAsync(offer.Replacements).ConfigureAwait(true))
