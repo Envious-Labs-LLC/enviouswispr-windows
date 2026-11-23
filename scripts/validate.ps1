@@ -19,6 +19,22 @@ if ($Ci -and $IncludeLocalRuntime) {
 }
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
+. (Join-Path $PSScriptRoot "eco-qos.ps1")
+$ecoTracker = Enable-ProcessTreeEcoQoSOptOut -RequireDescendantTracking
+try {
+    Write-Host "Opting out of EcoQoS efficiency-core throttling for the build process tree..."
+    $ecoStatus = Test-IsEcoQoSOptedOut
+    if (-not $ecoStatus.IsOptedOut) {
+        Write-Warning "Host process EcoQoS opt-out was not confirmed (Control=0x$($ecoStatus.ControlMask.ToString('X')), State=0x$($ecoStatus.StateMask.ToString('X')))."
+    } else {
+        Write-Host "  verified: host process opted out of EcoQoS (Control=0x$($ecoStatus.ControlMask.ToString('X')), State=0x$($ecoStatus.StateMask.ToString('X')), Priority=0x$($ecoStatus.PriorityClass.ToString('X')))."
+    }
+    if ($ecoTracker -and -not $ecoTracker.IsJobAttached) {
+        Write-Warning "Process-tree job tracking could not attach; child processes will rely on process-level opt-out."
+    } elseif ($ecoTracker) {
+        Write-Host "  verified: child process tree tracking active via Win32 Job Object completion port."
+    }
+
 Write-Host "Validating public-release repository compliance..."
 & pwsh -NoProfile -File (Join-Path $repoRoot "scripts\audit-public-release.ps1") -SkipNotices
 if ($LASTEXITCODE -ne 0) {
@@ -122,24 +138,31 @@ function Invoke-DotNet {
         [Parameter(Mandatory = $true)][string[]]$Arguments
     )
 
-    # RAISING PRIORITY HERE WAS TRIED AND MEASURED NOT TO WORK; see #68. Three findings, kept
-    # because each one refutes an obvious next attempt:
-    #
-    #   Priority is NOT inherited. A child started immediately after setting this script to High
-    #   came back Normal, so raising the script's own priority reaches nothing.
-    #
-    #   `Start-Process -PassThru` reports an EMPTY ExitCode on this host, with redirection and
-    #   without it, so switching to it would cost this helper the exit code it exists to check. A
-    #   raw Process object does report it.
-    #
-    #   AND SETTING IT ON THE dotnet PROCESS IS STILL NOT ENOUGH, which is why the attempt was
-    #   reverted rather than kept. `dotnet build` spawns MSBuild worker nodes to do the compiling,
-    #   they do not inherit the priority either, and sampling them during a real run showed Normal.
-    #   Opting out of EcoQoS properly needs SetProcessInformation with a power-throttling state
-    #   applied to the tree, not a priority class on one process.
-    & $Executable @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "dotnet $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
+    # PROCESS-TREE ECOQOS OPT-OUT (#68):
+    # Under SSH or background services, Windows puts processes into EcoQoS (Efficiency Mode),
+    # scheduling compilations onto efficiency cores. The script uses Win32 SetProcessInformation
+    # with ProcessPowerThrottling (PROCESS_POWER_THROTTLING_EXECUTION_SPEED = 0) on the host and
+    # tracks spawned child worker nodes via a Win32 Job Object completion port so the entire
+    # process tree (dotnet, MSBuild worker nodes, Roslyn compiler, test hosts) opts out.
+    $sdkDir = Split-Path -Parent $Executable
+    $previousDotnetRoot = $env:DOTNET_ROOT
+    $prevNodeReuse = $env:MSBUILDDISABLENODEREUSE
+    $prevServer = $env:DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER
+    if (-not [string]::IsNullOrWhiteSpace($sdkDir) -and (Test-Path -LiteralPath $sdkDir)) {
+        $env:DOTNET_ROOT = $sdkDir
+    }
+    $env:MSBUILDDISABLENODEREUSE = "1"
+    $env:DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER = "1"
+    try {
+        & $Executable @Arguments
+        if ($LASTEXITCODE -ne 0) {
+            throw "dotnet $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
+        }
+    }
+    finally {
+        $env:DOTNET_ROOT = $previousDotnetRoot
+        $env:MSBUILDDISABLENODEREUSE = $prevNodeReuse
+        $env:DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER = $prevServer
     }
 }
 
@@ -180,6 +203,15 @@ function Invoke-DotNetTest {
     # THE SAME TRAP IS ALREADY DOCUMENTED IN `Resolve-Python` IN THIS FILE, and knowing about it did
     # not stop it being reintroduced fifty lines away. Restored in a finally, so a throw inside the
     # capture cannot leave the rest of the gate running with errors non-terminating.
+    $sdkDir = Split-Path -Parent $Executable
+    $previousDotnetRoot = $env:DOTNET_ROOT
+    $prevNodeReuse = $env:MSBUILDDISABLENODEREUSE
+    $prevServer = $env:DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER
+    if (-not [string]::IsNullOrWhiteSpace($sdkDir) -and (Test-Path -LiteralPath $sdkDir)) {
+        $env:DOTNET_ROOT = $sdkDir
+    }
+    $env:MSBUILDDISABLENODEREUSE = "1"
+    $env:DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER = "1"
     $previousPreference = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
@@ -188,6 +220,9 @@ function Invoke-DotNetTest {
     }
     finally {
         $ErrorActionPreference = $previousPreference
+        $env:DOTNET_ROOT = $previousDotnetRoot
+        $env:MSBUILDDISABLENODEREUSE = $prevNodeReuse
+        $env:DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER = $prevServer
     }
 
     $output | ForEach-Object { Write-Host $_ }
@@ -204,6 +239,10 @@ function Invoke-DotNetTest {
 
     # --no-build BECAUSE THE RUN ABOVE JUST BUILT IT, and re-building here would let a discovery
     # against different bytes agree with a run it never described.
+    $previousDotnetRoot = $env:DOTNET_ROOT
+    if (-not [string]::IsNullOrWhiteSpace($sdkDir) -and (Test-Path -LiteralPath $sdkDir)) {
+        $env:DOTNET_ROOT = $sdkDir
+    }
     $ErrorActionPreference = 'Continue'
     try {
         $listed = & $Executable @($common + @("--no-build", "--list-tests")) 2>&1
@@ -211,6 +250,7 @@ function Invoke-DotNetTest {
     }
     finally {
         $ErrorActionPreference = $previousPreference
+        $env:DOTNET_ROOT = $previousDotnetRoot
     }
     if ($listExitCode -ne 0) {
         throw "Test discovery (--list-tests) failed for $Project with exit code $listExitCode."
@@ -392,8 +432,16 @@ try {
     Write-Host "Running production architecture and foundation tests..."
     Invoke-DotNetTest -Executable $dotnet10Exe -Project "src/Production/EnviousWispr.Architecture.Tests/EnviousWispr.Architecture.Tests.csproj"
 
+    # Stop tracker, join worker thread, and fail-closed if any child opt-out failed
+    Disable-ProcessTreeEcoQoSOptOut -Tracker $ecoTracker
+    $ecoTracker = $null
+
     Write-Host "Validation passed."
 }
 finally {
     Pop-Location
+}
+}
+finally {
+    Disable-ProcessTreeEcoQoSOptOut -Tracker $ecoTracker -CheckFailures:$false
 }

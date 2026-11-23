@@ -42,7 +42,10 @@ if (-not $Dotnet) {
     $Dotnet = if (Test-Path -LiteralPath $userLocal) { $userLocal } else { 'dotnet' }
 }
 
-$ErrorActionPreference = 'Continue'
+. (Join-Path $PSScriptRoot "eco-qos.ps1")
+$ecoTracker = Enable-ProcessTreeEcoQoSOptOut -RequireDescendantTracking
+try {
+    $ErrorActionPreference = 'Continue'
 Set-Location $Tree
 
 # COMPUTED WITHOUT AN AUTOLOADED CMDLET, ON PURPOSE. This used to call `Get-FileHash`, and on the
@@ -94,7 +97,9 @@ $process = Start-Process $Dotnet -ArgumentList @(
     'build', 'src\Production\EnviousWispr.App\EnviousWispr.App.csproj',
     '-c', 'Release', '-p:Platform=x64', '--nologo', '-v', 'minimal') `
     -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err"
-try { $process.PriorityClass = 'High' } catch { }
+if ($process -and -not $process.HasExited) {
+    try { [EcoQoSManager]::OptOutProcess($process.Handle, $true) | Out-Null } catch { }
+}
 $process.WaitForExit()
 
 # MATCH ANY ANALYSER PREFIX, NOT A LIST OF THEM. An earlier filter named CS, XLS and XAML and let a
@@ -179,6 +184,13 @@ if ([string]::IsNullOrWhiteSpace($builtHash) -or [string]::IsNullOrWhiteSpace($r
 if ($builtHash -ne $runHash) {
     'REFUSING TO LAUNCH - the run copy is not the build. Report no measurement from this machine.'
     exit 1
+}
+
+}
+finally {
+    # Disable the build process-tree tracker BEFORE launching the app so the user-facing
+    # process is not scheduled at High build priority or under build tracking.
+    Disable-ProcessTreeEcoQoSOptOut -Tracker $ecoTracker
 }
 
 if ($Launch) {
