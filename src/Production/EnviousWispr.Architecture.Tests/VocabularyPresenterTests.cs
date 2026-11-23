@@ -99,6 +99,71 @@ public sealed class VocabularyPresenterTests
         Assert.Equal([new SnippetEntry("MY EMAIL", "new@example.com")], store.Saved!.UserData.Snippets);
     }
 
+    [Fact]
+    public void FilterWordsWithAllCategoryReturnsAllWords()
+    {
+        var custom = new CustomWordEntry("my custom term", "MyCustomTerm");
+        var pack = new CustomWordEntry("kubernetes", "Kubernetes");
+        var words = new[] { custom, pack };
+
+        var result = VocabularyPresenter.FilterWords(words, "all");
+
+        Assert.Equal(2, result.Count);
+        Assert.Contains(custom, result);
+        Assert.Contains(pack, result);
+    }
+
+    [Fact]
+    public void FilterWordsWithCustomCategoryReturnsOnlyNonPackWords()
+    {
+        var custom = new CustomWordEntry("saurabh", "Saurabh");
+        var pack = new CustomWordEntry("postgres", "PostgreSQL");
+        var words = new[] { custom, pack };
+
+        var result = VocabularyPresenter.FilterWords(words, "custom");
+
+        var single = Assert.Single(result);
+        Assert.Same(custom, single);
+    }
+
+    [Fact]
+    public void FilterWordsWithPacksCategoryReturnsOnlyPackWords()
+    {
+        var custom = new CustomWordEntry("saurabh", "Saurabh");
+        var pack1 = new CustomWordEntry("kubernetes", "Kubernetes");
+        var pack2 = new CustomWordEntry("parakeet", "Parakeet");
+        var words = new[] { custom, pack1, pack2 };
+
+        var result = VocabularyPresenter.FilterWords(words, "packs");
+
+        Assert.Equal(2, result.Count);
+        Assert.Contains(pack1, result);
+        Assert.Contains(pack2, result);
+        Assert.DoesNotContain(custom, result);
+    }
+
+    [Fact]
+    public void FilterWordsWithQueryRefinesFilteredResults()
+    {
+        var custom1 = new CustomWordEntry("alpha key", "Alpha");
+        var custom2 = new CustomWordEntry("beta token", "Beta");
+        var pack = new CustomWordEntry("kubernetes", "Kubernetes");
+        var words = new[] { custom1, custom2, pack };
+
+        var result = VocabularyPresenter.FilterWords(words, "custom", query: "token");
+
+        var single = Assert.Single(result);
+        Assert.Same(custom2, single);
+    }
+
+    [Fact]
+    public void IsPackWordDistinguishesPackFromCustomEntries()
+    {
+        Assert.True(VocabularyPresenter.IsPackWord(new CustomWordEntry("kubernetes", "Kubernetes")));
+        Assert.True(VocabularyPresenter.IsPackWord(new CustomWordEntry("envious wispr", "EnviousWispr")));
+        Assert.False(VocabularyPresenter.IsPackWord(new CustomWordEntry("random phrase", "RandomPhrase")));
+    }
+
     [Theory]
     [InlineData("...", "some text", SnippetRefusal.TriggerEmpty)]
     [InlineData("   ", "some text", SnippetRefusal.TriggerEmpty)]

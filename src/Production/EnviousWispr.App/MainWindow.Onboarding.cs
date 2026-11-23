@@ -521,7 +521,7 @@ public sealed partial class MainWindow
                 ("Continue", "Available once Windows allows microphone access.", true, _onboarding.MicrophoneAllowed),
             OnboardingScreen.Ready => ("GET STARTED!", "Checks the speech engine, then opens a box to try your first dictation.", true, true),
             OnboardingScreen.WarmingUp => ("Continue", string.Empty, false, false),
-            _ => ("FINISH SETUP", "Available once your first dictation has reached the box. Opens the EnviousWispr home page.", true, _onboarding.CanFinishPractice),
+            _ => ("FINISH SETUP", "Available once your first dictation has reached the box. Opens EnviousWispr History.", true, _onboarding.CanFinishPractice),
         };
         FinishOnboardingButton.Content = label;
         AutomationProperties.SetHelpText(FinishOnboardingButton, help);

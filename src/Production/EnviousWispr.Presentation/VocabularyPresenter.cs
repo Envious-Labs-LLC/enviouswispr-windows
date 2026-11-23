@@ -137,4 +137,49 @@ public sealed class VocabularyPresenter
             return (ReferenceEquals(data, current.UserData) ? current : current with { UserData = data }, value);
         });
     }
+
+    private static readonly Lazy<HashSet<string>> PackWordSignatures = new(() =>
+        VocabularyPacks.All
+            .SelectMany(p => CustomWordImport.Read(p.Words, []).Additions)
+            .Select(e => GetSignature(e.SpokenForm, e.Replacement))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase));
+
+    private static string GetSignature(string spoken, string replacement) =>
+        $"{spoken.Trim()}\0{replacement.Trim()}";
+
+    /// <summary>Checks whether a custom word entry matches an entry from the built-in vocabulary packs.</summary>
+    public static bool IsPackWord(CustomWordEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        return PackWordSignatures.Value.Contains(GetSignature(entry.SpokenForm, entry.Replacement));
+    }
+
+    /// <summary>Filters custom word entries by category ("all", "custom", "packs") and optional search query.</summary>
+    public static IReadOnlyList<CustomWordEntry> FilterWords(
+        IEnumerable<CustomWordEntry> words,
+        string category,
+        string? query = null)
+    {
+        ArgumentNullException.ThrowIfNull(words);
+        var filtered = words;
+
+        if (string.Equals(category, "custom", StringComparison.OrdinalIgnoreCase))
+        {
+            filtered = filtered.Where(w => !IsPackWord(w));
+        }
+        else if (string.Equals(category, "packs", StringComparison.OrdinalIgnoreCase))
+        {
+            filtered = filtered.Where(IsPackWord);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            var trimmed = query.Trim();
+            filtered = filtered.Where(w =>
+                w.SpokenForm.Contains(trimmed, StringComparison.OrdinalIgnoreCase)
+                || w.Replacement.Contains(trimmed, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return filtered.ToList();
+    }
 }
