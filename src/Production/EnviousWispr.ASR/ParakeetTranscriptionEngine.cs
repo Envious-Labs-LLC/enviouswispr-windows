@@ -30,6 +30,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
     private const double MinimumVoicedFrameRms = 0.002;
     private const double StrongContinuousSpeechFrameRms = 0.015;
     private const int MinimumVoicedFrames = 8;
+    private const int MinimumSustainedSegmentVoicedFrames = 4;
     private const int VoicedTrimPaddingSamples = 1_600;
 
     private static readonly string[] QuantizedRequiredFiles =
@@ -178,19 +179,15 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
         }
 
         var frameCount = samples.Length / frameLength;
+        var frameRms = new double[frameCount];
         var voicedFrames = 0;
-        var maxFrameRms = 0.0;
         for (var frame = 0; frame < frameCount; frame++)
         {
             var rms = RootMeanSquare(samples.Slice(frame * frameLength, frameLength));
+            frameRms[frame] = rms;
             if (rms >= MinimumVoicedFrameRms)
             {
                 voicedFrames++;
-            }
-
-            if (rms > maxFrameRms)
-            {
-                maxFrameRms = rms;
             }
         }
 
@@ -209,6 +206,24 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                 continue;
             }
 
+            var startFrame = Math.Clamp(segment.StartSample / frameLength, 0, frameCount);
+            var endFrame = Math.Clamp(segment.EndSample / frameLength, startFrame, frameCount);
+            var segmentVoicedFrames = 0;
+            for (var frame = startFrame; frame < endFrame; frame++)
+            {
+                if (frameRms[frame] >= MinimumVoicedFrameRms)
+                {
+                    segmentVoicedFrames++;
+                }
+            }
+
+            // Ignore brief hotkey or microphone clicks (<80 ms voiced) so a leading or trailing
+            // transient cannot pin the trim window to the full recording or masquerade as speech.
+            if (segmentVoicedFrames < MinimumSustainedSegmentVoicedFrames)
+            {
+                continue;
+            }
+
             firstSpeech ??= segment;
             lastSpeech = segment;
         }
@@ -220,9 +235,42 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
             return new VoicedSpeechAnalysis(true, trimStart, trimEnd - trimStart);
         }
 
-        return maxFrameRms >= StrongContinuousSpeechFrameRms
-            ? new VoicedSpeechAnalysis(true, 0, samples.Length)
-            : new VoicedSpeechAnalysis(false, 0, samples.Length);
+        int? firstStrongRunStart = null;
+        var lastStrongRunEnd = 0;
+        var currentStrongRunStart = 0;
+        var currentStrongRunLength = 0;
+        for (var frame = 0; frame < frameCount; frame++)
+        {
+            if (frameRms[frame] >= StrongContinuousSpeechFrameRms)
+            {
+                if (currentStrongRunLength == 0)
+                {
+                    currentStrongRunStart = frame;
+                }
+
+                currentStrongRunLength++;
+                if (currentStrongRunLength >= MinimumSustainedSegmentVoicedFrames)
+                {
+                    firstStrongRunStart ??= currentStrongRunStart;
+                    lastStrongRunEnd = frame + 1;
+                }
+            }
+            else
+            {
+                currentStrongRunLength = 0;
+            }
+        }
+
+        if (firstStrongRunStart is { } strongStartFrame)
+        {
+            var rawStart = strongStartFrame * frameLength;
+            var rawEnd = lastStrongRunEnd == frameCount ? samples.Length : lastStrongRunEnd * frameLength;
+            var trimStart = Math.Max(0, rawStart - VoicedTrimPaddingSamples);
+            var trimEnd = Math.Min(samples.Length, rawEnd + VoicedTrimPaddingSamples);
+            return new VoicedSpeechAnalysis(true, trimStart, trimEnd - trimStart);
+        }
+
+        return new VoicedSpeechAnalysis(false, 0, samples.Length);
     }
 
     private Transcript TranscribeCore(CapturedAudio audio, CancellationToken cancellationToken)
@@ -253,21 +301,38 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
             if (speech.HasVoicedSpeech)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (_backend.TryEncodeWithFullPrecisionFallback(
-                        features,
-                        featureLength,
-                        runContext,
-                        cancellationToken,
-                        out var fp32EncodedRaw,
-                        out var fp32EncodedLength))
+                try
                 {
-                    var fp32Encoded = TransposeEncoderOutput(fp32EncodedRaw);
-                    var fp32Decoded = Decode(fp32Encoded, fp32EncodedLength, runContext, cancellationToken);
-                    if (fp32Decoded.Count > 0)
+                    if (_backend.TryEncodeWithFullPrecisionFallback(
+                            features,
+                            featureLength,
+                            runContext,
+                            cancellationToken,
+                            out var fp32EncodedRaw,
+                            out var fp32EncodedLength) &&
+                        fp32EncodedLength > 0 &&
+                        fp32EncodedRaw.Length >= (long)_encoderDimension * fp32EncodedLength &&
+                        fp32EncodedRaw.Length % _encoderDimension == 0)
                     {
-                        decoded = fp32Decoded;
-                        timingEncodedLength = fp32EncodedLength;
+                        var fp32Encoded = TransposeEncoderOutput(fp32EncodedRaw);
+                        var fp32Decoded = Decode(fp32Encoded, fp32EncodedLength, runContext, cancellationToken);
+                        if (fp32Decoded.Count > 0)
+                        {
+                            decoded = fp32Decoded;
+                            timingEncodedLength = fp32EncodedLength;
+                        }
                     }
+                }
+                catch (Exception) when (cancellationToken.IsCancellationRequested)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    throw;
+                }
+                catch (Exception exception) when (
+                    exception is not (OperationCanceledException or StackOverflowException or OutOfMemoryException))
+                {
+                    // Rescue is best-effort: a faulty optional sidecar or decode step must not turn a
+                    // completed zero-token pass into a failed dictation, and trimmed retry can still run.
                 }
 
                 if (decoded.Count == 0 &&
@@ -275,28 +340,46 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                     speech.TrimmedLength < samples.Length)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var trimmedSamples = samples.AsSpan(speech.TrimmedStartSample, speech.TrimmedLength).ToArray();
-                    var (trimmedFeatures, trimmedFeatureLength) = _backend.Preprocess(
-                        trimmedSamples,
-                        runContext,
-                        cancellationToken);
-                    var (trimmedEncodedRaw, trimmedEncodedLength) = _backend.Encode(
-                        trimmedFeatures,
-                        trimmedFeatureLength,
-                        runContext,
-                        cancellationToken);
-                    var trimmedEncoded = TransposeEncoderOutput(trimmedEncodedRaw);
-                    var trimmedDecoded = Decode(
-                        trimmedEncoded,
-                        trimmedEncodedLength,
-                        runContext,
-                        cancellationToken);
-                    if (trimmedDecoded.Count > 0)
+                    try
                     {
-                        decoded = trimmedDecoded;
-                        timingStartSample = speech.TrimmedStartSample;
-                        timingSampleCount = speech.TrimmedLength;
-                        timingEncodedLength = trimmedEncodedLength;
+                        var trimmedSamples = samples.AsSpan(speech.TrimmedStartSample, speech.TrimmedLength).ToArray();
+                        var (trimmedFeatures, trimmedFeatureLength) = _backend.Preprocess(
+                            trimmedSamples,
+                            runContext,
+                            cancellationToken);
+                        var (trimmedEncodedRaw, trimmedEncodedLength) = _backend.Encode(
+                            trimmedFeatures,
+                            trimmedFeatureLength,
+                            runContext,
+                            cancellationToken);
+                        if (trimmedEncodedLength > 0 &&
+                            trimmedEncodedRaw.Length >= (long)_encoderDimension * trimmedEncodedLength &&
+                            trimmedEncodedRaw.Length % _encoderDimension == 0)
+                        {
+                            var trimmedEncoded = TransposeEncoderOutput(trimmedEncodedRaw);
+                            var trimmedDecoded = Decode(
+                                trimmedEncoded,
+                                trimmedEncodedLength,
+                                runContext,
+                                cancellationToken);
+                            if (trimmedDecoded.Count > 0)
+                            {
+                                decoded = trimmedDecoded;
+                                timingStartSample = speech.TrimmedStartSample;
+                                timingSampleCount = speech.TrimmedLength;
+                                timingEncodedLength = trimmedEncodedLength;
+                            }
+                        }
+                    }
+                    catch (Exception) when (cancellationToken.IsCancellationRequested)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        throw;
+                    }
+                    catch (Exception exception) when (
+                        exception is not (OperationCanceledException or StackOverflowException or OutOfMemoryException))
+                    {
+                        // Leave the original empty transcript intact when the best-effort retry fails.
                     }
                 }
             }

@@ -159,6 +159,121 @@ public sealed class ParakeetCpuBlankRescueTests
     }
 
     [Fact]
+    public async Task LeadingActivationClickBeforeSpeechIsExcludedFromTrimWindowAndRescued()
+    {
+        // 20 ms hotkey activation click at sample 0, 1.0 s pause, then voiced speech right up to release.
+        var samples = new float[73_728];
+        for (var i = 0; i < samples.Length; i++)
+        {
+            samples[i] = (i % 2 == 0) ? 0.0001f : -0.0001f;
+        }
+
+        for (var i = 0; i < 320; i++)
+        {
+            samples[i] = 0.25f * MathF.Sin(i * 0.4f);
+        }
+
+        for (var i = 16_320; i < samples.Length; i++)
+        {
+            samples[i] = 0.065f * MathF.Sin(i * 0.19f);
+        }
+
+        var analysis = ParakeetTranscriptionEngine.AnalyzeVoicedSpeech(samples);
+        Assert.True(analysis.HasVoicedSpeech);
+        Assert.True(analysis.TrimmedStartSample > 10_000);
+        Assert.True(analysis.TrimmedLength < samples.Length);
+
+        var backend = new FakeParakeetBackend
+        {
+            Fp32FallbackAvailable = false,
+            PrimaryEncoderFrameSignal = 0.0f,
+            EmitWordsOnlyWhenTrimmed = true,
+        };
+        using var engine = CreateEngine(backend);
+
+        var transcript = await engine.TranscribeAsync(
+            new CapturedAudio(
+                DictationSessionId.Create(),
+                samples,
+                ParakeetTranscriptionEngine.RequiredSampleRate,
+                Channels: 1));
+
+        Assert.Equal("popular tourist area", transcript.Text);
+        Assert.Equal(2, backend.PreprocessCalls);
+        Assert.Equal(analysis.TrimmedLength, backend.LastPreprocessedSampleCount);
+    }
+
+    [Fact]
+    public void IsolatedTransientClicksWithoutSustainedSpeechDoNotTriggerRescue()
+    {
+        var samples = new float[64_000];
+        for (var i = 0; i < samples.Length; i++)
+        {
+            samples[i] = 0.0001f;
+        }
+
+        // Ten isolated 20 ms clicks spaced 360 ms apart: total voiced frames >= 8,
+        // yet no segment contains sustained speech.
+        for (var click = 0; click < 10; click++)
+        {
+            var offset = click * 5_760;
+            for (var j = 0; j < 320; j++)
+            {
+                samples[offset + j] = 0.08f * MathF.Sin(j * 0.35f);
+            }
+        }
+
+        var analysis = ParakeetTranscriptionEngine.AnalyzeVoicedSpeech(samples);
+        Assert.False(analysis.HasVoicedSpeech);
+    }
+
+    [Fact]
+    public async Task FaultyOptionalRescueFallsBackToTrimmedRetryOrSafeEmptyTranscriptWithoutThrowing()
+    {
+        var samples = BuildOlymposEnvelopeSamples();
+
+        // Case 1: FP32 rescue decode throws -> falls through to silence-trimmed retry cleanly.
+        var fallbackToTrimBackend = new FakeParakeetBackend
+        {
+            Fp32FallbackAvailable = true,
+            PrimaryEncoderFrameSignal = 0.0f,
+            ThrowOnFp32Decode = true,
+            EmitWordsOnlyWhenTrimmed = true,
+        };
+        using (var engine = CreateEngine(fallbackToTrimBackend))
+        {
+            var rescued = await engine.TranscribeAsync(
+                new CapturedAudio(
+                    DictationSessionId.Create(),
+                    samples,
+                    ParakeetTranscriptionEngine.RequiredSampleRate,
+                    Channels: 1));
+            Assert.Equal("popular tourist area", rescued.Text);
+            Assert.Equal(1, fallbackToTrimBackend.Fp32FallbackEncodeCalls);
+            Assert.Equal(2, fallbackToTrimBackend.PreprocessCalls);
+        }
+
+        // Case 2: Both FP32 rescue and trimmed retry throw -> returns safe empty transcript rather than failing.
+        var bothFailBackend = new FakeParakeetBackend
+        {
+            Fp32FallbackAvailable = true,
+            PrimaryEncoderFrameSignal = 0.0f,
+            ThrowOnFp32Decode = true,
+            ThrowOnSecondPreprocess = true,
+        };
+        using (var engine = CreateEngine(bothFailBackend))
+        {
+            var empty = await engine.TranscribeAsync(
+                new CapturedAudio(
+                    DictationSessionId.Create(),
+                    samples,
+                    ParakeetTranscriptionEngine.RequiredSampleRate,
+                    Channels: 1));
+            Assert.Equal(string.Empty, empty.Text);
+        }
+    }
+
+    [Fact]
     public async Task ModelDirectoryFileProbesDistinguishStoreInt8OnlyAndFullPacks()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"enviouswispr-parakeet-files-{Guid.NewGuid():N}");
@@ -276,6 +391,10 @@ public sealed class ParakeetCpuBlankRescueTests
 
         public bool EmitWordsOnlyWhenTrimmed { get; init; }
 
+        public bool ThrowOnFp32Decode { get; init; }
+
+        public bool ThrowOnSecondPreprocess { get; init; }
+
         public Action? OnFp32Fallback { get; init; }
 
         public int PreprocessCalls { get; private set; }
@@ -296,6 +415,11 @@ public sealed class ParakeetCpuBlankRescueTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             PreprocessCalls++;
+            if (ThrowOnSecondPreprocess && PreprocessCalls >= 2)
+            {
+                throw ParakeetTranscriptionEngine.CreateStageFailure(ParakeetOnnxStage.Preprocessor);
+            }
+
             LastPreprocessedSampleCount = samples.Length;
             var signal = EmitWordsOnlyWhenTrimmed && samples.Length < 70_000 ? 1.0f : PrimaryEncoderFrameSignal;
             return ([signal, signal, signal], 3);
@@ -330,7 +454,8 @@ public sealed class ParakeetCpuBlankRescueTests
             }
 
             Fp32FallbackEncodeCalls++;
-            (encodedChannelFirst, encodedLength) = BuildEncodedFrames(Fp32EncoderFrameSignal, (int)featureLength);
+            var signal = ThrowOnFp32Decode ? 2.0f : Fp32EncoderFrameSignal;
+            (encodedChannelFirst, encodedLength) = BuildEncodedFrames(signal, (int)featureLength);
             return true;
         }
 
@@ -346,6 +471,10 @@ public sealed class ParakeetCpuBlankRescueTests
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (encoderFrame[0] > 1.5f)
+            {
+                throw ParakeetTranscriptionEngine.CreateStageFailure(ParakeetOnnxStage.Decoder);
+            }
             // 4 vocab tokens (0=" popular", 1=" tourist", 2=" area", 3="<blk>").
             if (encoderFrame[0] <= 0.5f)
             {
