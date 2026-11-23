@@ -11,12 +11,12 @@ own assembly, so transcription could not start. The project now refuses that rou
 one that works, and it checks the payload rather than trusting the build's exit code.
 
 PINNED TOOLCHAIN (verified before packaging):
-  - .NET 10 SDK: 10.0.4xx (local rig 10.0.400; CI actions/setup-dotnet 10.0.x)
+  - .NET 10 SDK: 10.0.x (verified active via dotnet --version; local rig 10.0.400)
   - TargetFramework: net10.0-windows10.0.26100.0 (MinVersion 10.0.22000.0, MaxVersionTested 10.0.26100.0)
   - Microsoft.WindowsAppSDK: 2.4.0
   - Microsoft.Windows.SDK.BuildTools: 10.0.28000.2526 (makeappx, makepri, signtool)
   - Microsoft.Windows.SDK.BuildTools.MSIX: 1.7.251221100
-  - Microsoft Store Developer CLI (msstore): 0.4.4.3 (required for Partner Center submission)
+  - Microsoft Store Developer CLI (msstore): >= 0.4.2 (local rig 0.4.4.3; required for Partner Center submission)
 
 A test package is unsigned: install it on a development machine by registering its unpacked layout in
 Developer Mode, or sign it with the development certificate (distribution.md). The Store signs the upload.
@@ -42,11 +42,12 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $repoRoot 'src\Production\EnviousWispr.App\EnviousWispr.App.csproj'
 $directoryBuildProps = Join-Path $repoRoot 'src\Production\Directory.Build.props'
 $manifestSource = Join-Path $repoRoot 'src\Production\EnviousWispr.App\Package.appxmanifest'
+$thirdPartyNotices = Join-Path $repoRoot 'THIRD-PARTY-NOTICES.md'
 $placeholderName = 'EnviousLabsLLC.EnviousWispr'
 $placeholderPublisher = 'CN=EnviousLabsPlaceholder'
 
 $pinnedToolchain = [ordered]@{
-    DotNetMajor                  = '10'
+    DotNetSdkPrefix              = '10.0.'
     TargetFramework              = 'net10.0-windows10.0.26100.0'
     TargetPlatformMinVersion     = '10.0.22000.0'
     TargetDeviceMaxVersionTested = '10.0.26100.0'
@@ -64,7 +65,8 @@ function Assert-PinnedToolchain {
     param(
         [xml]$PropsXml,
         [xml]$ProjectXml,
-        [xml]$ManifestXml
+        [xml]$ManifestXml,
+        [string]$NoticesContent
     )
 
     $tfm = [string]$PropsXml.Project.PropertyGroup.TargetFramework
@@ -88,6 +90,46 @@ function Assert-PinnedToolchain {
     if ($null -eq $sdkBuildTools -or $sdkBuildTools.Version -ne $pinnedToolchain.WindowsSdkBuildToolsVersion) {
         throw "EnviousWispr.App.csproj Microsoft.Windows.SDK.BuildTools version drifted (expected $($pinnedToolchain.WindowsSdkBuildToolsVersion))."
     }
+
+    $expectedMsixRow = "| Microsoft.Windows.SDK.BuildTools.MSIX | $($pinnedToolchain.MsixBuildToolsVersion) |"
+    if ([string]::IsNullOrWhiteSpace($NoticesContent) -or -not $NoticesContent.Contains($expectedMsixRow)) {
+        throw "THIRD-PARTY-NOTICES.md drifted from the pinned Microsoft.Windows.SDK.BuildTools.MSIX version (expected $($pinnedToolchain.MsixBuildToolsVersion))."
+    }
+}
+
+function Resolve-MsStoreCliVersion {
+    param(
+        [switch]$Required
+    )
+
+    $command = Get-Command msstore -ErrorAction SilentlyContinue
+    if ($null -eq $command) {
+        if ($Required) {
+            throw "Microsoft Store Developer CLI (msstore >= $($pinnedToolchain.MsStoreCliMinVersion)) is required on PATH when -ForStoreUpload is specified."
+        }
+        return "not-installed (min $($pinnedToolchain.MsStoreCliMinVersion) for upload)"
+    }
+
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $rawOutput = (& $command.Source --version 2>&1 | Out-String).Trim()
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($exitCode -ne 0 -or $rawOutput -notmatch '(?<ver>\d+\.\d+\.\d+(?:\.\d+)?)') {
+        throw "Could not parse msstore --version output ('$rawOutput', exit $exitCode)."
+    }
+
+    $parsedVersion = [version]$Matches['ver']
+    $minVersion = [version]$pinnedToolchain.MsStoreCliMinVersion
+    if ($parsedVersion -lt $minVersion) {
+        throw "Installed msstore CLI version ($parsedVersion) is older than the pinned minimum ($minVersion)."
+    }
+
+    return $Matches['ver']
 }
 
 function Resolve-LlamaRuntimeDirectory {
@@ -142,7 +184,12 @@ $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 [xml]$propsXml = Get-Content -LiteralPath $directoryBuildProps -Raw
 [xml]$projectXml = Get-Content -LiteralPath $project -Raw
 [xml]$sourceManifest = Get-Content -LiteralPath $manifestSource -Raw
-Assert-PinnedToolchain -PropsXml $propsXml -ProjectXml $projectXml -ManifestXml $sourceManifest
+$noticesContent = Get-Content -LiteralPath $thirdPartyNotices -Raw
+Assert-PinnedToolchain `
+    -PropsXml $propsXml `
+    -ProjectXml $projectXml `
+    -ManifestXml $sourceManifest `
+    -NoticesContent $noticesContent
 
 if ($ForStoreUpload -and (Test-PlaceholderIdentity $sourceManifest.Package.Identity)) {
     throw "Package.appxmanifest still carries a placeholder identity ($placeholderName, $placeholderPublisher). Commit the Identity Name and Publisher that Partner Center assigned before building a Store upload."
@@ -168,6 +215,10 @@ function Resolve-DotNet10 {
 
 $dotnet10 = Resolve-DotNet10
 $dotnetSdkVersion = (& $dotnet10 --version).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $dotnetSdkVersion.StartsWith($pinnedToolchain.DotNetSdkPrefix, [StringComparison]::Ordinal)) {
+    throw "Active .NET SDK version ($dotnetSdkVersion) does not match pinned prefix $($pinnedToolchain.DotNetSdkPrefix)*."
+}
+$msstoreCliVersion = Resolve-MsStoreCliVersion -Required:$ForStoreUpload
 $resolvedLlamaDirectory = Resolve-LlamaRuntimeDirectory `
     -ExplicitDirectory $LlamaRuntimeDirectory `
     -Skip:$SkipLlamaRuntime `
@@ -201,6 +252,16 @@ try {
     & $dotnet10 @publishArgs
     if ($LASTEXITCODE -ne 0) {
         throw 'Self-contained Store publish failed.'
+    }
+
+    $assetsPath = Join-Path (Split-Path -Parent $project) 'obj\project.assets.json'
+    if (-not (Test-Path -LiteralPath $assetsPath -PathType Leaf)) {
+        throw "Could not verify transitive MSIX build tools version: missing $assetsPath."
+    }
+    $assetsContent = Get-Content -LiteralPath $assetsPath -Raw
+    $expectedMsixAssetKey = """Microsoft.Windows.SDK.BuildTools.MSIX/$($pinnedToolchain.MsixBuildToolsVersion)"""
+    if (-not $assetsContent.Contains($expectedMsixAssetKey)) {
+        throw "Restored project.assets.json does not contain pinned Microsoft.Windows.SDK.BuildTools.MSIX/$($pinnedToolchain.MsixBuildToolsVersion)."
     }
 
     $packages = @(Get-ChildItem -LiteralPath $packageDirectory -Recurse -Filter '*.msix' -File)
@@ -325,7 +386,7 @@ try {
 
     Write-Host "Store package: $destination"
     Write-Host "Identity: $($identity.Name) $($identity.Version) ($($identity.Publisher))"
-    Write-Host "Toolchain: .NET SDK $dotnetSdkVersion | TFM $($pinnedToolchain.TargetFramework) | WinAppSDK $($pinnedToolchain.WindowsAppSdkVersion) | BuildTools $($pinnedToolchain.WindowsSdkBuildToolsVersion) | MSIX $($pinnedToolchain.MsixBuildToolsVersion)"
+    Write-Host "Toolchain: .NET SDK $dotnetSdkVersion | TFM $($pinnedToolchain.TargetFramework) | WinAppSDK $($pinnedToolchain.WindowsAppSdkVersion) | BuildTools $($pinnedToolchain.WindowsSdkBuildToolsVersion) | MSIX $($pinnedToolchain.MsixBuildToolsVersion) | msstore $msstoreCliVersion"
     Write-Host ("Llama runtime bundled: {0}" -f (-not [string]::IsNullOrWhiteSpace($resolvedLlamaDirectory)))
     Write-Host ("Size: {0:N0} MB, {1} files" -f ($package.Length / 1MB), $entries.Count)
     if (Test-PlaceholderIdentity $identity) {

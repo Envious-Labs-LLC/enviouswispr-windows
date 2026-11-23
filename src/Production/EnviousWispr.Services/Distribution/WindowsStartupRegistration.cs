@@ -103,6 +103,48 @@ public sealed class WindowsStartupRegistration
         return $"\"{trimmed}\"";
     }
 
+    /// <summary>
+    /// Returns <see langword="true"/> when the command stored in the per-user <c>Run</c> key launches
+    /// <paramref name="executablePath"/> rather than a different installation or the preserved WPF proof executable.
+    /// </summary>
+    public static bool MatchesExecutable(string? storedCommand, string? executablePath)
+    {
+        if (string.IsNullOrWhiteSpace(storedCommand) || string.IsNullOrWhiteSpace(executablePath))
+        {
+            return false;
+        }
+
+        var candidate = storedCommand.Trim();
+        if (candidate.StartsWith('"'))
+        {
+            var closingQuote = candidate.IndexOf('"', 1);
+            if (closingQuote <= 1 || closingQuote != candidate.Length - 1)
+            {
+                return false;
+            }
+
+            candidate = candidate[1..closingQuote].Trim();
+        }
+
+        var target = executablePath.Trim().Trim('"');
+        if (!Path.IsPathFullyQualified(candidate) || !Path.IsPathFullyQualified(target))
+        {
+            return false;
+        }
+
+        try
+        {
+            return string.Equals(
+                Path.GetFullPath(candidate),
+                Path.GetFullPath(target),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
     public async Task<StartupRegistrationResult> GetStatusAsync(CancellationToken cancellationToken = default)
     {
         var packaged = false;
@@ -115,10 +157,12 @@ public sealed class WindowsStartupRegistration
                 return new StartupRegistrationResult(FromTaskState(task.State), IsPackaged: true);
             }
 
+            var currentExecutable = _executablePath();
+            _ = FormatRunCommand(currentExecutable);
             var command = _registry.ReadCommand();
-            var status = string.IsNullOrWhiteSpace(command)
-                ? StartupRegistrationStatus.Disabled
-                : StartupRegistrationStatus.Enabled;
+            var status = MatchesExecutable(command, currentExecutable)
+                ? StartupRegistrationStatus.Enabled
+                : StartupRegistrationStatus.Disabled;
             return new StartupRegistrationResult(status, IsPackaged: false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -174,18 +218,23 @@ public sealed class WindowsStartupRegistration
                 return new StartupRegistrationResult(FromTaskState(task.State), IsPackaged: true);
             }
 
+            var currentExecutable = _executablePath();
+            var command = FormatRunCommand(currentExecutable);
             if (enabled)
             {
-                var command = FormatRunCommand(_executablePath());
                 _registry.WriteCommand(command);
-                var verified = !string.IsNullOrWhiteSpace(_registry.ReadCommand());
+                var verified = MatchesExecutable(_registry.ReadCommand(), currentExecutable);
                 return new StartupRegistrationResult(
                     verified ? StartupRegistrationStatus.Enabled : StartupRegistrationStatus.Failed,
                     IsPackaged: false);
             }
 
-            _registry.DeleteCommand();
-            var removed = string.IsNullOrWhiteSpace(_registry.ReadCommand());
+            if (MatchesExecutable(_registry.ReadCommand(), currentExecutable))
+            {
+                _registry.DeleteCommand();
+            }
+
+            var removed = !MatchesExecutable(_registry.ReadCommand(), currentExecutable);
             return new StartupRegistrationResult(
                 removed ? StartupRegistrationStatus.Disabled : StartupRegistrationStatus.Failed,
                 IsPackaged: false);

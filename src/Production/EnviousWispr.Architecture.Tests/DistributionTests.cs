@@ -251,6 +251,36 @@ public sealed class DistributionTests
     }
 
     [Fact]
+    public async Task UnpackagedStartupRegistrationTreatsRunCommandForAnotherExecutableAsDisabled()
+    {
+        const string legacyWpfCommand = "\"C:\\TestProfile\\AppData\\Local\\EnviousWispr-WpfProof\\EnviousWispr.exe\"";
+        const string winUiExecutable = @"C:\TestProfile\AppData\Local\EnviousWispr\EnviousWispr.App.exe";
+
+        var registry = new FakeStartupRegistryStore();
+        registry.WriteCommand(legacyWpfCommand);
+        var registration = new WindowsStartupRegistration(
+            isPackaged: () => false,
+            getStartupTask: (_, _) => throw new InvalidOperationException("Unpackaged startup must not call StartupTask."),
+            registry,
+            executablePath: () => winUiExecutable);
+
+        // A Run entry pointing to a different executable (such as the preserved WPF proof) must not report this copy as enabled.
+        var initial = await registration.GetStatusAsync();
+        Assert.Equal(new StartupRegistrationResult(StartupRegistrationStatus.Disabled, IsPackaged: false), initial);
+
+        // Turning startup off for this copy when it is not the registered executable leaves the other executable's entry intact.
+        var disabled = await registration.SetEnabledAsync(false);
+        Assert.Equal(new StartupRegistrationResult(StartupRegistrationStatus.Disabled, IsPackaged: false), disabled);
+        Assert.Equal(legacyWpfCommand, registry.Command);
+        Assert.Equal(0, registry.Deletes);
+
+        // Turning startup on for this copy claims the Run entry with this executable's path.
+        var enabled = await registration.SetEnabledAsync(true);
+        Assert.Equal(new StartupRegistrationResult(StartupRegistrationStatus.Enabled, IsPackaged: false), enabled);
+        Assert.Equal($"\"{winUiExecutable}\"", registry.Command);
+    }
+
+    [Fact]
     public void PackageManifestDeclaresEnviousWisprStartupTaskDisabledByDefault()
     {
         var manifestPath = Path.Combine(
