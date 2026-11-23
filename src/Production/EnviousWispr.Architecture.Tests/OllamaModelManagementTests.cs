@@ -157,7 +157,9 @@ public sealed class OllamaModelManagementTests
             await answered.WaitAsync(TimeSpan.FromSeconds(5));
 
             Assert.NotEqual(OllamaHealth.Ready, discovery.Health);
-            var first = await Task.WhenAny(reached, Task.Delay(TimeSpan.FromMilliseconds(500)));
+            using var delayCancellation = new CancellationTokenSource();
+            var first = await Task.WhenAny(reached, Task.Delay(TimeSpan.FromMilliseconds(500), delayCancellation.Token));
+            await delayCancellation.CancelAsync();
             Assert.False(first == reached, "the redirect was followed to another address");
         }
         finally

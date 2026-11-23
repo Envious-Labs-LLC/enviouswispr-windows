@@ -508,8 +508,16 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
             waiter = _noHolds ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
-        var finished = await Task.WhenAny(waiter.Task, Task.Delay(timeout, _clock)).ConfigureAwait(false);
-        return ReferenceEquals(finished, waiter.Task);
+        using var delayCancellation = new CancellationTokenSource();
+        var delay = Task.Delay(timeout, _clock, delayCancellation.Token);
+        var finished = await Task.WhenAny(waiter.Task, delay).ConfigureAwait(false);
+        if (ReferenceEquals(finished, waiter.Task))
+        {
+            await delayCancellation.CancelAsync().ConfigureAwait(false);
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -706,8 +714,16 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
         }
 
         var work = Task.WhenAll([_consumer, .. expiries]);
-        var finished = await Task.WhenAny(work, Task.Delay(timeout, _clock)).ConfigureAwait(false);
-        return ReferenceEquals(finished, work);
+        using var delayCancellation = new CancellationTokenSource();
+        var delay = Task.Delay(timeout, _clock, delayCancellation.Token);
+        var finished = await Task.WhenAny(work, delay).ConfigureAwait(false);
+        if (ReferenceEquals(finished, work))
+        {
+            await delayCancellation.CancelAsync().ConfigureAwait(false);
+            return true;
+        }
+
+        return false;
     }
 
     public async ValueTask DisposeAsync()

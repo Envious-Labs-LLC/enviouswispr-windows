@@ -2915,7 +2915,7 @@ public sealed partial class MainWindow : Window, IDisposable
             // reported the symptom instead of the cause.
             consent = WindowsMicrophoneConsent.Read();
             var devices = await _deviceCatalog.GetCaptureDevicesAsync().ConfigureAwait(true);
-            _microphones = [
+            _microphones = (MicrophoneChoice[])[
                 new MicrophoneChoice(null, "Use the Windows default microphone"),
                 .. devices.Select(device => new MicrophoneChoice(
                     device.Id.Value,
@@ -2935,7 +2935,7 @@ public sealed partial class MainWindow : Window, IDisposable
         }
         catch
         {
-            _microphones = [new MicrophoneChoice(null, "Use the Windows default microphone")];
+            _microphones = (MicrophoneChoice[])[new MicrophoneChoice(null, "Use the Windows default microphone")];
             MicrophoneComboBox.ItemsSource = _microphones;
             MicrophoneComboBox.SelectedIndex = 0;
             ApplyMicrophoneReadiness(
