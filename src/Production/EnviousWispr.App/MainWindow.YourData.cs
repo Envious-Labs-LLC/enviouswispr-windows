@@ -81,14 +81,15 @@ public sealed partial class MainWindow
         }
 
         // CANCEL IS THE DEFAULT, as on every other dialog here that removes something for good: Enter
-        // or Escape keeps the data. The design system has no destructive button treatment of its own,
-        // so the primary button says exactly what it does instead.
+        // or Escape keeps the data. The primary action also carries the destructive button treatment
+        // alongside an explicit label naming what it does.
         var dialog = new ContentDialog
         {
             XamlRoot = WindowRoot.XamlRoot,
             Title = "Delete all EnviousWispr data?",
             Content = new TextBlock { Text = DeleteAllDataConfirmation, TextWrapping = TextWrapping.Wrap },
             PrimaryButtonText = "Delete everything and close",
+            PrimaryButtonStyle = Application.Current.Resources["BrandDestructiveButtonStyle"] as Style,
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
         };

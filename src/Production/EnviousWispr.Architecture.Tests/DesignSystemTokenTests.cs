@@ -1221,6 +1221,10 @@ public sealed partial class DesignSystemTokenTests
         var checkedState = ReadVisualState(style, "Checked");
         Assert.Contains("SelectionBorder", checkedState, StringComparison.Ordinal);
         Assert.Contains("Opacity", checkedState, StringComparison.Ordinal);
+        var disabledState = ReadVisualState(style, "Disabled");
+        Assert.Contains("SelectionBorder.Opacity", disabledState, StringComparison.Ordinal);
+        Assert.Contains("CardBorder.BorderBrush", disabledState, StringComparison.Ordinal);
+        Assert.Contains("BrandDividerBrush", disabledState, StringComparison.Ordinal);
         Assert.Contains(style.Descendants(), element =>
             string.Equals(
                 (string?)element.Attribute(XName.Get("Name", XamlNamespace)),
@@ -2986,24 +2990,27 @@ public sealed partial class DesignSystemTokenTests
                 $"A choice mentions {nameof(MatchStrictness)} somewhere other than its tag, which is "
                     + "the only place the picker reads.");
 
-            // ONE LABEL, AND ITS WORDS WRITTEN HERE. Reading the FIRST label meant a second one
-            // beside it could say anything; an x:Uid means the words on screen come from a resource
-            // file this gate never opens, so the sentence pinned below would be checked against text
-            // nobody ever sees.
+            // ONE LABEL, AND ITS WORDS WRITTEN HERE. Putting a UIElement (TextBlock) inside a
+            // ComboBoxItem breaks WinUI 3 SelectionBoxItem projection on initial load (rendering
+            // blank until clicked), so each ComboBoxItem carries its words as plain Content text.
             Assert.True(
+                choice.Attribute(xaml + "Uid") is null &&
                 choice.Descendants().All(node => node.Attribute(xaml + "Uid") is null),
                 $"A choice carries an x:Uid, so its words are replaced at run time and what is written "
                     + "here is not what anybody reads.");
 
-            var labels = choice.Descendants().Where(node => node.Name.LocalName == "TextBlock").ToArray();
+            var uiChildren = choice.Elements()
+                .Where(child => child.Name.LocalName != "ComboBoxItem.Tag")
+                .ToArray();
             Assert.True(
-                labels.Length == 1,
-                $"A choice shows {labels.Length} pieces of text, and exactly one of them is what it means.");
+                uiChildren.Length == 0,
+                $"A ComboBoxItem carries a UIElement child ({string.Join(", ", uiChildren.Select(c => c.Name.LocalName))}), "
+                    + "which renders blank in WinUI 3 SelectionBoxItem on initial load.");
 
-            var label = (string?)labels[0].Attribute("Text");
+            var label = (string?)choice.Attribute("Content");
             Assert.True(
                 !string.IsNullOrWhiteSpace(label),
-                $"The choice worth {held[0].Value.Trim()} shows no words written here, so nobody can tell "
+                $"The choice worth {held[0].Value.Trim()} shows no Content words written here, so nobody can tell "
                     + "what it does from this file.");
 
             offered.Add((held[0].Value.Trim(), label!));
@@ -3039,7 +3046,7 @@ public sealed partial class DesignSystemTokenTests
     {
         const string picker = "WordStrictnessComboBox";
         const string reset = "ResetMatchStrictness";
-        string[] banned = ["SelectedIndex", "SelectedItem", "ItemsSource", "SelectedValuePath"];
+        string[] banned = ["SelectedIndex", "ItemsSource", "SelectedValuePath"];
 
         var window = Path.Combine(
             FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs");
@@ -3071,11 +3078,12 @@ public sealed partial class DesignSystemTokenTests
         var assigned = resetBody!.DescendantNodes().OfType<AssignmentExpressionSyntax>().ToArray();
         Assert.True(assigned.Length == 1, $"{reset} makes {assigned.Length} changes, and exactly one is its job.");
         Assert.True(
-            (assigned[0].Left as MemberAccessExpressionSyntax)?.Name.Identifier.Text == "SelectedValue",
-            $"{reset} puts the picker back by something other than its value.");
-        Assert.Equal(
+            (assigned[0].Left as MemberAccessExpressionSyntax)?.Name.Identifier.Text == "SelectedItem",
+            $"{reset} puts the picker back by something other than its SelectedItem.");
+        Assert.Contains(
             $"{nameof(MatchStrictness)}.{nameof(MatchStrictness.Default)}",
-            assigned[0].Right.ToString());
+            assigned[0].Right.ToString(),
+            StringComparison.Ordinal);
 
         // BARE OR THROUGH "this.", because the same write spelled two ways is one write.
         var writes = root.DescendantNodes().OfType<AssignmentExpressionSyntax>()
@@ -3095,14 +3103,14 @@ public sealed partial class DesignSystemTokenTests
         var chosen = root.DescendantNodes().OfType<AssignmentExpressionSyntax>()
             .Where(assignment => assignment.Left is MemberAccessExpressionSyntax member
                 && Receiver(member) == picker
-                && member.Name.Identifier.Text == "SelectedValue")
+                && member.Name.Identifier.Text is "SelectedItem" or "SelectedValue")
             .Where(assignment => assignment.Ancestors().OfType<MethodDeclarationSyntax>()
                 .FirstOrDefault()?.Identifier.Text != reset)
             .Select(assignment => $"line {assignment.GetLocation().GetLineSpan().StartLinePosition.Line + 1}")
             .ToArray();
         Assert.True(
             chosen.Length == 0,
-            $"{picker}.SelectedValue is set outside {reset}, so what a person starts on is decided in "
+            $"{picker} selection is set outside {reset}, so what a person starts on is decided in "
                 + "more than one place: " + string.Join(", ", chosen));
 
         var bound = root.DescendantNodes().OfType<InvocationExpressionSyntax>()
@@ -3118,9 +3126,14 @@ public sealed partial class DesignSystemTokenTests
 
         // ASKED OF THE TREE, NOT OF THE SPELLING. "Items?.Clear()" empties the picker and contains no
         // ".Items." at all, and "this." or a pair of brackets around the name change the text again
-        // without changing what happens.
+        // without changing what happens. Reading Items inside ResetMatchStrictness to match the
+        // ComboBoxItem carrying MatchStrictness.Default is allowed; any access outside it or any
+        // mutation of Items is refused.
         var touched = root.DescendantNodes().OfType<MemberAccessExpressionSyntax>()
             .Where(member => Receiver(member) == picker && member.Name.Identifier.Text == "Items")
+            .Where(member =>
+                member.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault()?.Identifier.Text != reset ||
+                member.Parent is MemberAccessExpressionSyntax { Name.Identifier.Text: "Add" or "Clear" or "Insert" or "Remove" or "RemoveAt" })
             .Select(member => $"line {member.GetLocation().GetLineSpan().StartLinePosition.Line + 1}")
             .ToArray();
         Assert.True(
@@ -3275,6 +3288,66 @@ public sealed partial class DesignSystemTokenTests
         Assert.Equal("SemiBold", set.GetValueOrDefault("FontWeight"));
 
         Assert.True(faults.Count == 0, string.Join(Environment.NewLine, faults));
+    }
+
+    [Fact]
+    public void DestructiveDeleteButtonsUseBrandDestructiveButtonStyle()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var controls = XDocument.Load(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "Theme", "Controls.xaml"));
+        var destructiveStyle = controls.Descendants().SingleOrDefault(element =>
+            element.Name.LocalName == "Style" &&
+            string.Equals(
+                (string?)element.Attribute(XName.Get("Key", XamlNamespace)),
+                "BrandDestructiveButtonStyle",
+                StringComparison.Ordinal));
+        Assert.True(destructiveStyle is not null, "BrandDestructiveButtonStyle is missing from Theme/Controls.xaml.");
+        Assert.Contains("BrandErrorSoftBrush", destructiveStyle!.ToString(), StringComparison.Ordinal);
+        Assert.Contains("BrandErrorBrush", destructiveStyle.ToString(), StringComparison.Ordinal);
+
+        var mainWindow = LoadMainWindow();
+        foreach (var buttonName in new[] { "ClearHistoryButton", "DeleteAllDataButton" })
+        {
+            var button = FindNamedElement(mainWindow, buttonName);
+            Assert.Equal("{StaticResource BrandDestructiveButtonStyle}", (string?)button.Attribute("Style"));
+        }
+    }
+
+    [Fact]
+    public void AiPolishModelRowsCollapseWhenProviderDoesNotUseAModel()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var mainWindow = LoadMainWindow();
+        var pickerRow = FindNamedElement(mainWindow, "PolishModelPickerRow");
+        var textBoxRow = FindNamedElement(mainWindow, "PolishModelTextBoxRow");
+        Assert.Equal("Grid", pickerRow.Name.LocalName);
+        Assert.Equal("Grid", textBoxRow.Name.LocalName);
+
+        var picker = FindNamedElement(mainWindow, "PolishModelPicker");
+        Assert.False(string.IsNullOrWhiteSpace((string?)picker.Attribute("PlaceholderText")));
+
+        var codeBehind = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        Assert.Contains("PolishModelPickerRow.Visibility", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("PolishModelTextBoxRow.Visibility", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("ProviderSettingsPresenter.UsesAModel(provider)", codeBehind, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PermissionsPageUsesWindowsMicrophoneCopyAndLiveStatusBadges()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var mainWindow = LoadMainWindow();
+        Assert.Equal("TextBlock", FindNamedElement(mainWindow, "PermissionsMicrophoneText").Name.LocalName);
+        Assert.Equal("Border", FindNamedElement(mainWindow, "PermissionsMicrophoneAllowedBadge").Name.LocalName);
+        Assert.Equal("Border", FindNamedElement(mainWindow, "PermissionsMicrophoneAttentionBadge").Name.LocalName);
+
+        var codeBehind = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        Assert.DoesNotContain("and accessibility access", codeBehind, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("PermissionsMicrophoneAllowedBadge.Visibility", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("PermissionsMicrophoneAttentionBadge.Visibility", codeBehind, StringComparison.Ordinal);
     }
 
     private readonly record struct DynamicColor(Rgba Light, Rgba Dark);
