@@ -195,4 +195,86 @@ internal static class Deterministic
             }
         }
     }
+
+    /// <summary>
+    /// A scheduler that can withhold queued tasks from running until explicitly drained, reproducing
+    /// thread-pool starvation deterministically without altering process-wide pool limits.
+    /// </summary>
+    internal sealed class ControlledTaskScheduler : TaskScheduler
+    {
+        private readonly object _lock = new();
+        private readonly Queue<Task> _held = new();
+        private readonly Milestone _queued = new();
+        private int _holdRemaining;
+
+        public ControlledTaskScheduler(int holdCount = 0)
+        {
+            _holdRemaining = holdCount;
+        }
+
+        public void HoldNext(int count = 1)
+        {
+            lock (_lock)
+            {
+                _holdRemaining += count;
+            }
+        }
+
+        public Task WhenQueued(int count) => _queued.WhenAtLeast(count);
+
+        public int QueuedCount => _queued.Count;
+
+        public Task<TaskStatus[]> DrainHeldAsync()
+        {
+            Task[] tasks;
+            lock (_lock)
+            {
+                tasks = [.. _held];
+                _held.Clear();
+            }
+
+            return Task.Run(() => tasks.Select(task =>
+            {
+                TryExecuteTask(task);
+                return task.Status;
+            }).ToArray());
+        }
+
+        protected override IEnumerable<Task>? GetScheduledTasks()
+        {
+            lock (_lock)
+            {
+                return _held.ToArray();
+            }
+        }
+
+        protected override void QueueTask(Task task)
+        {
+            var hold = false;
+            lock (_lock)
+            {
+                if (_holdRemaining > 0)
+                {
+                    _holdRemaining--;
+                    _held.Enqueue(task);
+                    hold = true;
+                }
+            }
+
+            _queued.Increment();
+            if (!hold)
+            {
+                ThreadPool.UnsafeQueueUserWorkItem(
+                    static state =>
+                    {
+                        var (scheduler, queuedTask) = ((ControlledTaskScheduler, Task))state!;
+                        scheduler.TryExecuteTask(queuedTask);
+                    },
+                    (this, task),
+                    preferLocal: false);
+            }
+        }
+
+        protected override bool TryExecuteTaskInline(Task task, bool taskWasPreviouslyQueued) => false;
+    }
 }

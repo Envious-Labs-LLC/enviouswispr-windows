@@ -64,7 +64,7 @@ public interface IDeterministicTextStep
 public sealed class DeterministicTextPipeline
 {
     private readonly IDeterministicTextStep[] _steps;
-    private readonly DeterministicStageExecutor _executor = new();
+    private readonly DeterministicStageExecutor _executor;
 
     /// <summary>See <see cref="DeterministicStageExecutor.OutstandingInvocation"/>.</summary>
     internal Task<DeterministicTextContext>? OutstandingInvocation(IDeterministicTextStep step) =>
@@ -81,9 +81,18 @@ public sealed class DeterministicTextPipeline
     }
 
     public DeterministicTextPipeline(IReadOnlyList<IDeterministicTextStep> steps)
+        : this(steps, timeProvider: null, taskScheduler: null)
+    {
+    }
+
+    internal DeterministicTextPipeline(
+        IReadOnlyList<IDeterministicTextStep> steps,
+        TimeProvider? timeProvider,
+        TaskScheduler? taskScheduler)
     {
         ArgumentNullException.ThrowIfNull(steps);
         _steps = steps.ToArray();
+        _executor = new DeterministicStageExecutor(timeProvider, taskScheduler);
     }
 
     public async Task<DeterministicTextResult> ProcessAsync(

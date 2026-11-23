@@ -196,12 +196,22 @@ public sealed class DeterministicTextPipelineTests
         // sleep had returned - the stage "won" at 117 ms and the run on main went red for a change
         // in another file entirely. A stage held on a gate the test owns can only end one way.
         using var release = new ManualResetEventSlim(false);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var step = new DelegateStep(
             DeterministicTextStage.CustomWords,
             context =>
             {
-                release.Wait(TimeSpan.FromSeconds(30));
-                return context with { Text = "too late" };
+                entered.TrySetResult();
+                try
+                {
+                    release.Wait(TimeSpan.FromSeconds(30));
+                    return context with { Text = "too late" };
+                }
+                finally
+                {
+                    finished.TrySetResult();
+                }
             },
             TimeSpan.FromMilliseconds(5));
         try
@@ -215,13 +225,19 @@ public sealed class DeterministicTextPipelineTests
         finally
         {
             release.Set();
+            if (entered.Task.IsCompleted)
+            {
+                await finished.Task.WaitAsync(Patience);
+            }
         }
     }
 
     /// <summary>
     /// Each production stage, held past its OWN production deadline, stands down at that deadline with the
-    /// last valid text (#239). The deadlines were raised from measurement; this proves each is still a
-    /// deadline. The step is the production one, its Timeout read through unchanged; only its work is held.
+    /// last valid text (#239, #273). The deadlines were raised from measurement; this proves each is still a
+    /// deadline when the worker is already running. Causal fixture synchronization ensures the step has
+    /// entered before its production deadline begins, so thread-pool entry latency cannot conflate this
+    /// with queued-before-entry cancellation.
     /// </summary>
     [Theory]
     [InlineData(DeterministicTextStage.CustomWords)]
@@ -237,17 +253,20 @@ public sealed class DeterministicTextPipelineTests
         const string polished = "Send EnviousWispr the color version at 3:30.";
         var production = DeterministicTextPipeline.DefaultSteps().Single(step => step.Stage == stage);
         using var release = new ManualResetEventSlim(false);
-        using var entered = new ManualResetEventSlim(false);
-        using var finished = new ManualResetEventSlim(false);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var clock = new Deterministic.ManualClock();
         var overrunning = new OverrunningStep(production, release, entered, finished);
         var request = new DeterministicTextRequest(
             new Transcript(DictationSessionId.Create(), spoken, "test", DetectedLanguage: "en"),
             [new CustomWordEntry("envy wisper", "EnviousWispr")],
             new DeterministicTextOptions(true, true, true, true, EnglishSpelling.British));
         var afterPolish = stage is DeterministicTextStage.EnglishSpellingAfterPolish or DeterministicTextStage.EmojiRestoration;
+        Task<DeterministicTextContext>? worker = null;
         try
         {
-            DeterministicTextResult result;
+            DeterministicTextPipeline pipeline;
+            Task<DeterministicTextResult> pending;
             string lastValid;
             if (afterPolish)
             {
@@ -255,44 +274,155 @@ public sealed class DeterministicTextPipelineTests
                 IDeterministicTextStep[] steps = stage == DeterministicTextStage.EmojiRestoration
                     ? [overrunning]
                     : [overrunning, new DelegateStep(DeterministicTextStage.EmojiRestoration, context => context, Patience)];
-                var pipeline = new DeterministicTextPipeline(steps);
-                var deterministic = await pipeline.ProcessAsync(request);
+                pipeline = new DeterministicTextPipeline(steps, clock, TaskScheduler.Default);
+                var deterministic = await pipeline.ProcessAsync(request).WaitAsync(Patience);
                 Assert.Equal(
                     DeterministicStageStatus.Skipped,
                     deterministic.Receipts.Single(receipt => receipt.Stage == stage).Status);
-                result = await pipeline.ApplyPolishedTextAsync(request, deterministic, polished);
+                pending = pipeline.ApplyPolishedTextAsync(request, deterministic, polished);
                 lastValid = polished;
             }
             else
             {
-                result = await new DeterministicTextPipeline([overrunning]).ProcessAsync(request);
+                pipeline = new DeterministicTextPipeline([overrunning], clock, TaskScheduler.Default);
+                pending = pipeline.ProcessAsync(request);
                 lastValid = spoken;
             }
 
-            // THE HELD STEP REALLY RAN. Without this, a worker still queued at its deadline would time out
-            // without ever reaching the gate, and every assertion below would pass having tested nothing.
-            Assert.True(entered.Wait(TimeSpan.FromSeconds(10)), "The held production step never started.");
+            // CAUSAL PRECONDITION (#273): wait until the worker is running inside the step AND the
+            // executor has armed the exact production deadline timer before advancing the clock.
+            await entered.Task.WaitAsync(Patience);
+            await clock.WhenRegistered(1).WaitAsync(Patience);
+            Assert.Equal(production.Timeout, clock.NextDue);
+            worker = GetOutstandingInvocation(pipeline, overrunning);
+
+            clock.Advance(production.Timeout - TimeSpan.FromTicks(1));
+            Assert.False(pending.IsCompleted);
+            Assert.False(release.IsSet);
+
+            clock.Advance(TimeSpan.FromTicks(1));
+            var result = await pending.WaitAsync(Patience);
+
             var receipt = result.Receipts.Single(candidate => candidate.Stage == stage);
             Assert.Equal(DeterministicStageStatus.TimedOut, receipt.Status);
             Assert.Equal(lastValid, result.Output.Text);
             Assert.True(result.IsDegraded);
             Assert.False(release.IsSet);
-            // Stood down AT the production deadline: not before it (with room for timer granularity), and
-            // nowhere near the thirty seconds the held step would otherwise have taken.
-            Assert.InRange(
-                receipt.ElapsedMilliseconds,
-                (long)(production.Timeout.TotalMilliseconds * 0.9),
-                (long)(Patience.TotalMilliseconds / 2));
+            Assert.Equal((long)production.Timeout.TotalMilliseconds, receipt.ElapsedMilliseconds);
         }
         finally
         {
             release.Set();
             // The worker is let go and seen to finish before the gates it uses are disposed.
-            if (entered.IsSet)
+            if (entered.Task.IsCompleted)
             {
-                Assert.True(finished.Wait(Patience), "The released production step never finished; its gates would be disposed under it.");
+                await finished.Task.WaitAsync(Patience);
+                Assert.True(finished.Task.IsCompletedSuccessfully);
+            }
+
+            if (worker is not null)
+            {
+                await worker.WaitAsync(Patience);
             }
         }
+    }
+
+    /// <summary>
+    /// Controlled starvation reproduction (#273): when the pool cannot admit a queued production step
+    /// before its production deadline expires, the executor cancels the queued task without entering the
+    /// step, stands down with TimedOut and the last valid text, clears the invocation slot, and both the
+    /// timed-out request and the eventual scheduler drain terminate cleanly.
+    /// </summary>
+    [Theory]
+    [InlineData(DeterministicTextStage.CustomWords)]
+    [InlineData(DeterministicTextStage.FillerAndFalseStarts)]
+    [InlineData(DeterministicTextStage.SpokenEmoji)]
+    [InlineData(DeterministicTextStage.InverseTextNormalization)]
+    [InlineData(DeterministicTextStage.EnglishSpelling)]
+    [InlineData(DeterministicTextStage.EnglishSpellingAfterPolish)]
+    [InlineData(DeterministicTextStage.EmojiRestoration)]
+    public async Task ProductionStageCanceledWhileQueuedBeforeEntryStandsDownWithoutRunning(DeterministicTextStage stage)
+    {
+        const string spoken = "um so send envy wisper the color version thumbs up emoji at three thirty period";
+        const string polished = "Send EnviousWispr the color version at 3:30.";
+        var production = DeterministicTextPipeline.DefaultSteps().Single(step => step.Stage == stage);
+        using var release = new ManualResetEventSlim(true);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var clock = new Deterministic.ManualClock();
+        var scheduler = new Deterministic.ControlledTaskScheduler();
+        var step = new OverrunningStep(production, release, entered, finished);
+        var request = new DeterministicTextRequest(
+            new Transcript(DictationSessionId.Create(), spoken, "test", DetectedLanguage: "en"),
+            [new CustomWordEntry("envy wisper", "EnviousWispr")],
+            new DeterministicTextOptions(true, true, true, true, EnglishSpelling.British));
+        var afterPolish = stage is DeterministicTextStage.EnglishSpellingAfterPolish or DeterministicTextStage.EmojiRestoration;
+
+        DeterministicTextPipeline pipeline;
+        Task<DeterministicTextResult> pending;
+        DeterministicTextResult? deterministic = null;
+        string lastValid;
+        int queuedBefore;
+        int registeredBefore;
+        if (afterPolish)
+        {
+            IDeterministicTextStep[] steps = stage == DeterministicTextStage.EmojiRestoration
+                ? [step]
+                : [step, new DelegateStep(DeterministicTextStage.EmojiRestoration, context => context, Patience)];
+            pipeline = new DeterministicTextPipeline(steps, clock, scheduler);
+            deterministic = await pipeline.ProcessAsync(request).WaitAsync(Patience);
+            queuedBefore = scheduler.QueuedCount;
+            registeredBefore = clock.Registered;
+            scheduler.HoldNext(1);
+            pending = pipeline.ApplyPolishedTextAsync(request, deterministic, polished);
+            lastValid = polished;
+        }
+        else
+        {
+            pipeline = new DeterministicTextPipeline([step], clock, scheduler);
+            queuedBefore = scheduler.QueuedCount;
+            registeredBefore = clock.Registered;
+            scheduler.HoldNext(1);
+            pending = pipeline.ProcessAsync(request);
+            lastValid = spoken;
+        }
+
+        await scheduler.WhenQueued(queuedBefore + 1).WaitAsync(Patience);
+        await clock.WhenRegistered(registeredBefore + 1).WaitAsync(Patience);
+        Assert.Equal(production.Timeout, clock.NextDue);
+        Assert.False(entered.Task.IsCompleted);
+
+        clock.Advance(production.Timeout);
+        var result = await pending.WaitAsync(Patience);
+
+        var receipt = result.Receipts.Single(candidate => candidate.Stage == stage);
+        Assert.Equal(DeterministicStageStatus.TimedOut, receipt.Status);
+        Assert.Equal(lastValid, result.Output.Text);
+        Assert.True(result.IsDegraded);
+        Assert.Equal((long)production.Timeout.TotalMilliseconds, receipt.ElapsedMilliseconds);
+        Assert.False(entered.Task.IsCompleted);
+        Assert.False(finished.Task.IsCompleted);
+
+        var drainedStatuses = await scheduler.DrainHeldAsync().WaitAsync(Patience);
+        Assert.Equal([TaskStatus.Canceled], drainedStatuses);
+        Assert.False(entered.Task.IsCompleted);
+        Assert.False(finished.Task.IsCompleted);
+
+        var outstanding = pipeline.OutstandingInvocation(step);
+        if (outstanding is not null)
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => outstanding.WaitAsync(Patience));
+        }
+
+        // Recovery: the starved cancellation cleared the slot so a subsequent request completes normally.
+        var recovered = afterPolish
+            ? await pipeline.ApplyPolishedTextAsync(request, deterministic!, polished).WaitAsync(Patience)
+            : await pipeline.ProcessAsync(request).WaitAsync(Patience);
+        var recoveredReceipt = recovered.Receipts.Single(candidate => candidate.Stage == stage);
+        Assert.Equal(DeterministicStageStatus.Completed, recoveredReceipt.Status);
+        Assert.False(recovered.IsDegraded);
+        Assert.True(entered.Task.IsCompletedSuccessfully);
+        Assert.True(finished.Task.IsCompletedSuccessfully);
     }
 
     [Fact]
@@ -432,6 +562,7 @@ public sealed class DeterministicTextPipelineTests
     {
         using var release = new ManualResetEventSlim(false);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var clock = new Deterministic.ManualClock();
         var invocations = 0;
         var step = new DelegateStep(
             DeterministicTextStage.EmojiRestoration,
@@ -443,13 +574,15 @@ public sealed class DeterministicTextPipelineTests
                 return context with { Text = "finished text", PolishedText = "finished polish" };
             },
             TimeSpan.FromMilliseconds(250));
-        var pipeline = new DeterministicTextPipeline([step]);
+        var pipeline = new DeterministicTextPipeline([step], clock, TaskScheduler.Default);
         Task<DeterministicTextContext>? worker = null;
         try
         {
             var pending = RunStageAsync(restoration, step, pipeline: pipeline);
             await entered.Task.WaitAsync(Patience);
+            await clock.WhenRegistered(1).WaitAsync(Patience);
             worker = GetOutstandingInvocation(pipeline, step);
+            clock.Advance(step.Timeout);
             var result = await pending.WaitAsync(Patience);
 
             AssertStageFallback(result, DeterministicStageStatus.TimedOut);
@@ -494,18 +627,8 @@ public sealed class DeterministicTextPipelineTests
         using var allowExit = new ManualResetEventSlim(false);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelled = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var clock = new Deterministic.ManualClock();
         var invocations = 0;
-        // THE DEADLINE IS LONGER THAN THE POOL'S WORST DAY, AND THE STEP SAYS WHEN IT IS IN. The
-        // executor hands the worker to the thread pool with the deadline's own token, so a deadline
-        // that elapses before the pool has started the worker cancels the task without running it -
-        // correct for a stage (a stage that was never reached before its deadline is TimedOut, not
-        // run late), and fatal for this test, whose whole subject is a worker that IS running when
-        // the deadline lands. At 250 ms a starved hosted runner hit exactly that three times in one
-        // day, and the wait for the cancel below never ended (#165); reproduced locally by capping
-        // the pool and filling it past the deadline, where the worker never entered. The step now
-        // reports that it has entered, the test waits for that before it expects anything, and the
-        // deadline is long enough that entering first is the overwhelmingly likely order without
-        // being long enough to make the test slow.
         var step = new DelegateStep(
             DeterministicTextStage.EmojiRestoration,
             (context, token) =>
@@ -524,14 +647,16 @@ public sealed class DeterministicTextPipelineTests
                     throw;
                 }
             },
-            TimeSpan.FromSeconds(2));
-        var pipeline = new DeterministicTextPipeline([step]);
+            TimeSpan.FromMilliseconds(250));
+        var pipeline = new DeterministicTextPipeline([step], clock, TaskScheduler.Default);
         try
         {
             var pending = RunStageAsync(restoration, step, pipeline: pipeline);
             await entered.Task.WaitAsync(Patience);
-            var token = await cancelled.Task.WaitAsync(Patience);
+            await clock.WhenRegistered(1).WaitAsync(Patience);
             var worker = GetOutstandingInvocation(pipeline, step);
+            clock.Advance(step.Timeout);
+            var token = await cancelled.Task.WaitAsync(Patience);
             var result = await pending.WaitAsync(Patience);
 
             AssertStageFallback(result, DeterministicStageStatus.TimedOut);
@@ -557,13 +682,16 @@ public sealed class DeterministicTextPipelineTests
     [InlineData(true)]
     public async Task DeadlineOperationCanceledExceptionIsReportedAsTimeout(bool restoration)
     {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var clock = new Deterministic.ManualClock();
         var invocations = 0;
         var step = new DelegateStep(
             DeterministicTextStage.EmojiRestoration,
             (_, token) =>
             {
                 Interlocked.Increment(ref invocations);
+                entered.TrySetResult();
                 try
                 {
                     using var release = new ManualResetEventSlim(false);
@@ -576,8 +704,13 @@ public sealed class DeterministicTextPipelineTests
                 }
             },
             TimeSpan.FromMilliseconds(250));
+        var pipeline = new DeterministicTextPipeline([step], clock, TaskScheduler.Default);
 
-        var result = await RunStageAsync(restoration, step).WaitAsync(Patience);
+        var pending = RunStageAsync(restoration, step, pipeline: pipeline);
+        await entered.Task.WaitAsync(Patience);
+        await clock.WhenRegistered(1).WaitAsync(Patience);
+        clock.Advance(step.Timeout);
+        var result = await pending.WaitAsync(Patience);
         await finished.Task.WaitAsync(Patience);
 
         AssertStageFallback(result, DeterministicStageStatus.TimedOut);
@@ -973,8 +1106,8 @@ public sealed class DeterministicTextPipelineTests
     private sealed class OverrunningStep(
         IDeterministicTextStep production,
         ManualResetEventSlim release,
-        ManualResetEventSlim entered,
-        ManualResetEventSlim finished) : IDeterministicTextStep
+        TaskCompletionSource entered,
+        TaskCompletionSource finished) : IDeterministicTextStep
     {
         public DeterministicTextStage Stage => production.Stage;
 
@@ -986,13 +1119,13 @@ public sealed class DeterministicTextPipelineTests
         {
             try
             {
-                entered.Set();
+                entered.TrySetResult();
                 release.Wait(Patience, CancellationToken.None); // A hung stage: it ignores its deadline.
                 return production.Process(context, CancellationToken.None);
             }
             finally
             {
-                finished.Set();
+                finished.TrySetResult();
             }
         }
     }
