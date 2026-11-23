@@ -4,51 +4,51 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <ResourceDictionary.ThemeDictionaries>
         <ResourceDictionary x:Key="Light">
-            <Color x:Key="PillSurfaceColor">#F0FCFAFF</Color>
-            <SolidColorBrush x:Key="PillSurfaceBrush" Color="#F0FCFAFF" />
-            <Color x:Key="PillBorderColor">#240F0A1A</Color>
-            <SolidColorBrush x:Key="PillBorderBrush" Color="#240F0A1A" />
-            <Color x:Key="PillDividerColor">#1A0F0A1A</Color>
-            <SolidColorBrush x:Key="PillDividerBrush" Color="#1A0F0A1A" />
-            <Color x:Key="PillTimerColor">#FF221B33</Color>
-            <SolidColorBrush x:Key="PillTimerBrush" Color="#FF221B33" />
-            <Color x:Key="PillModeQuietColor">#990F0A1A</Color>
-            <SolidColorBrush x:Key="PillModeQuietBrush" Color="#990F0A1A" />
-            <Color x:Key="PillBadgeFillColor">#170F0A1A</Color>
-            <SolidColorBrush x:Key="PillBadgeFillBrush" Color="#170F0A1A" />
-            <Color x:Key="PillBadgeTextColor">#B80F0A1A</Color>
-            <SolidColorBrush x:Key="PillBadgeTextBrush" Color="#B80F0A1A" />
-            <Color x:Key="PillTextColor">#FF0F0A1A</Color>
-            <SolidColorBrush x:Key="PillTextBrush" Color="#FF0F0A1A" />
-            <Color x:Key="PillTextDimmedColor">#990F0A1A</Color>
-            <SolidColorBrush x:Key="PillTextDimmedBrush" Color="#990F0A1A" />
-            <Color x:Key="PillNoticeColor">#E00F0A1A</Color>
-            <SolidColorBrush x:Key="PillNoticeBrush" Color="#E00F0A1A" />
-            <Color x:Key="PillSuccessInkColor">#FF00A366</Color>
-            <SolidColorBrush x:Key="PillSuccessInkBrush" Color="#FF00A366" />
-            <Color x:Key="PillSuccessWashColor">#1A00A366</Color>
-            <SolidColorBrush x:Key="PillSuccessWashBrush" Color="#1A00A366" />
-            <Color x:Key="PillWarningInkColor">#FFCC7000</Color>
-            <SolidColorBrush x:Key="PillWarningInkBrush" Color="#FFCC7000" />
-            <Color x:Key="PillWarningWashColor">#1ACC7000</Color>
-            <SolidColorBrush x:Key="PillWarningWashBrush" Color="#1ACC7000" />
-            <Color x:Key="PillErrorInkColor">#FFC0392B</Color>
-            <SolidColorBrush x:Key="PillErrorInkBrush" Color="#FFC0392B" />
-            <Color x:Key="PillErrorWashColor">#1AC0392B</Color>
-            <SolidColorBrush x:Key="PillErrorWashBrush" Color="#1AC0392B" />
-            <Color x:Key="PillAdvisoryInkColor">#FF7C3AED</Color>
-            <SolidColorBrush x:Key="PillAdvisoryInkBrush" Color="#FF7C3AED" />
-            <Color x:Key="PillAdvisoryWashColor">#1A7C3AED</Color>
-            <SolidColorBrush x:Key="PillAdvisoryWashBrush" Color="#1A7C3AED" />
-            <Color x:Key="PillDistressWashColor">#3DC0392B</Color>
-            <SolidColorBrush x:Key="PillDistressWashBrush" Color="#3DC0392B" />
+            <Color x:Key="PillSurfaceColor">#EB110F18</Color>
+            <SolidColorBrush x:Key="PillSurfaceBrush" Color="#EB110F18" />
+            <Color x:Key="PillBorderColor">#26FFFFFF</Color>
+            <SolidColorBrush x:Key="PillBorderBrush" Color="#26FFFFFF" />
+            <Color x:Key="PillDividerColor">#17FFFFFF</Color>
+            <SolidColorBrush x:Key="PillDividerBrush" Color="#17FFFFFF" />
+            <Color x:Key="PillTimerColor">#F0FFFFFF</Color>
+            <SolidColorBrush x:Key="PillTimerBrush" Color="#F0FFFFFF" />
+            <Color x:Key="PillModeQuietColor">#80FFFFFF</Color>
+            <SolidColorBrush x:Key="PillModeQuietBrush" Color="#80FFFFFF" />
+            <Color x:Key="PillBadgeFillColor">#21FFFFFF</Color>
+            <SolidColorBrush x:Key="PillBadgeFillBrush" Color="#21FFFFFF" />
+            <Color x:Key="PillBadgeTextColor">#E0FFFFFF</Color>
+            <SolidColorBrush x:Key="PillBadgeTextBrush" Color="#E0FFFFFF" />
+            <Color x:Key="PillTextColor">#F7FFFFFF</Color>
+            <SolidColorBrush x:Key="PillTextBrush" Color="#F7FFFFFF" />
+            <Color x:Key="PillTextDimmedColor">#80FFFFFF</Color>
+            <SolidColorBrush x:Key="PillTextDimmedBrush" Color="#80FFFFFF" />
+            <Color x:Key="PillNoticeColor">#F2FFFFFF</Color>
+            <SolidColorBrush x:Key="PillNoticeBrush" Color="#F2FFFFFF" />
+            <Color x:Key="PillSuccessInkColor">#FF5CC99A</Color>
+            <SolidColorBrush x:Key="PillSuccessInkBrush" Color="#FF5CC99A" />
+            <Color x:Key="PillSuccessWashColor">#245CC99A</Color>
+            <SolidColorBrush x:Key="PillSuccessWashBrush" Color="#245CC99A" />
+            <Color x:Key="PillWarningInkColor">#FFE6B766</Color>
+            <SolidColorBrush x:Key="PillWarningInkBrush" Color="#FFE6B766" />
+            <Color x:Key="PillWarningWashColor">#24E6B766</Color>
+            <SolidColorBrush x:Key="PillWarningWashBrush" Color="#24E6B766" />
+            <Color x:Key="PillErrorInkColor">#FFEF7C89</Color>
+            <SolidColorBrush x:Key="PillErrorInkBrush" Color="#FFEF7C89" />
+            <Color x:Key="PillErrorWashColor">#24EF7C89</Color>
+            <SolidColorBrush x:Key="PillErrorWashBrush" Color="#24EF7C89" />
+            <Color x:Key="PillAdvisoryInkColor">#FFA78BFA</Color>
+            <SolidColorBrush x:Key="PillAdvisoryInkBrush" Color="#FFA78BFA" />
+            <Color x:Key="PillAdvisoryWashColor">#24A78BFA</Color>
+            <SolidColorBrush x:Key="PillAdvisoryWashBrush" Color="#24A78BFA" />
+            <Color x:Key="PillDistressWashColor">#4AEF7C89</Color>
+            <SolidColorBrush x:Key="PillDistressWashBrush" Color="#4AEF7C89" />
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="Dark">
-            <Color x:Key="PillSurfaceColor">#E6110F18</Color>
-            <SolidColorBrush x:Key="PillSurfaceBrush" Color="#E6110F18" />
-            <Color x:Key="PillBorderColor">#21FFFFFF</Color>
-            <SolidColorBrush x:Key="PillBorderBrush" Color="#21FFFFFF" />
+            <Color x:Key="PillSurfaceColor">#F014111C</Color>
+            <SolidColorBrush x:Key="PillSurfaceBrush" Color="#F014111C" />
+            <Color x:Key="PillBorderColor">#26FFFFFF</Color>
+            <SolidColorBrush x:Key="PillBorderBrush" Color="#26FFFFFF" />
             <Color x:Key="PillDividerColor">#17FFFFFF</Color>
             <SolidColorBrush x:Key="PillDividerBrush" Color="#17FFFFFF" />
             <Color x:Key="PillTimerColor">#F0FFFFFF</Color>

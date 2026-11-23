@@ -14,64 +14,105 @@
         PointerCaptureLost="OverlayRoot_PointerReleased"
         Background="{ThemeResource PillSurfaceBrush}"
         BorderThickness="1"
-        CornerRadius="29">
+        CornerRadius="26">
         <Grid>
             <!--
                 THE SEVERITY WASH SITS BEHIND THE CONTENT AND IN FRONT OF THE PILL SURFACE.
                 It cannot be the root's own Background: the surface is what keeps the pill legible
-                over somebody else's document, and a soft tint at #1A painted straight onto the
+                over somebody else's document, and a soft tint painted straight onto the
                 desktop would be no tint at all. Its Background is set from code beside the ink, so
                 the pair can never disagree, and it carries no colour here for the same reason.
 
                 THE PILL'S PADDING MOVED OFF THE ROOT AND ONTO THE CONTENT for this to be true. A
                 Border lays its child out INSIDE its padding, so while the frame owned the padding
                 the wash stopped short of the capsule edge and left an untinted band all the way
-                round - a tint that shipped, built clean, passed every gate, and was not the thing
-                the code said it was.
+                round.
             -->
-            <Border x:Name="SeverityWash" CornerRadius="29" />
+            <Border x:Name="SeverityWash" CornerRadius="26" />
+
             <!--
-                CENTRED IN THE PILL, WHICH IT WAS NOT. A StackPanel stretches to fill its parent by
-                default and stacks its children from the TOP, so a one-line recording pill drew
-                "Listening 00:01" against the ceiling with two thirds of the capsule empty beneath
-                it. Photographed on a real screen at 150% scale; no gate could see it, because the
-                gates read markup and tokens and this is a property of the rendered layout.
+                2px BOTTOM RAINBOW HAIRLINE
+                Active recording states show this subtle bottom rainbow hairline,
+                clipped cleanly inside the pill's rounded capsule geometry.
+            -->
+            <Border
+                x:Name="BottomRainbowHairline"
+                Height="2"
+                VerticalAlignment="Bottom"
+                CornerRadius="26"
+                Visibility="Collapsed">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                        <GradientStop Offset="0.00" Color="{ThemeResource BrandSpectrumVioletColor}" />
+                        <GradientStop Offset="0.12" Color="{ThemeResource BrandSpectrumRoyalColor}" />
+                        <GradientStop Offset="0.25" Color="{ThemeResource BrandSpectrumBlueColor}" />
+                        <GradientStop Offset="0.37" Color="{ThemeResource BrandSpectrumCyanColor}" />
+                        <GradientStop Offset="0.50" Color="{ThemeResource BrandSpectrumSpringColor}" />
+                        <GradientStop Offset="0.62" Color="{ThemeResource BrandSpectrumLimeColor}" />
+                        <GradientStop Offset="0.75" Color="{ThemeResource BrandSpectrumGoldColor}" />
+                        <GradientStop Offset="0.87" Color="{ThemeResource BrandSpectrumOrangeColor}" />
+                        <GradientStop Offset="1.00" Color="{ThemeResource BrandSpectrumRedColor}" />
+                    </LinearGradientBrush>
+                </Border.Background>
+            </Border>
+
+            <!--
+                CENTRED IN THE PILL. A StackPanel stretches to fill its parent by
+                default and stacks its children from the TOP, so centering vertically
+                ensures compact single-row recording and processing pills sit perfectly balanced.
             -->
             <StackPanel
                 x:Name="ContentPanel"
-                Margin="16,12"
+                Margin="14,0"
                 VerticalAlignment="Center"
                 Spacing="{StaticResource BrandSpacingS}">
                 <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <Image x:Name="RainbowMark" Width="31" Height="24" AutomationProperties.AccessibilityView="Raw" Source="Assets/Brand/EnviousWisprMark.svg" VerticalAlignment="Center" />
+
+                    <!--
+                        SPECTRUM WHEEL ICON (SPINNER)
+                        Radial rainbow wheel with 12 spectrum bars, rotating smoothly on Processing states.
+                    -->
+                    <Grid
+                        x:Name="SpectrumWheelIcon"
+                        Width="24"
+                        Height="24"
+                        VerticalAlignment="Center"
+                        Visibility="Collapsed"
+                        AutomationProperties.AccessibilityView="Raw">
+                        <Grid.RenderTransform>
+                            <CompositeTransform x:Name="SpectrumWheelTransform" CenterX="12" CenterY="12" Rotation="0" />
+                        </Grid.RenderTransform>
+                        <Grid Width="24" Height="24"><Grid.RenderTransform><RotateTransform Angle="0" CenterX="12" CenterY="12" /></Grid.RenderTransform><Border Width="2.5" Height="6" CornerRadius="1.2" Background="{ThemeResource BrandSpectrumRedBrush}" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,2,0,0" /></Grid>
+                        <Grid Width="24" Height="24"><Grid.RenderTransform><RotateTransform Angle="30" CenterX="12" CenterY="12" /></Grid.RenderTransform><Border Width="2.5" Height="6" CornerRadius="1.2" Background="{ThemeResource BrandSpectrumOrangeBrush}" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,2,0,0" /></Grid>
+                        <Grid Width="24" Height="24"><Grid.RenderTransform><RotateTransform Angle="60" CenterX="12" CenterY="12" /></Grid.RenderTransform><Border Width="2.5" Height="6" CornerRadius="1.2" Background="{ThemeResource BrandSpectrumGoldBrush}" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,2,0,0" /></Grid>
+                        <Grid Width="24" Height="24"><Grid.RenderTransform><RotateTransform Angle="90" CenterX="12" CenterY="12" /></Grid.RenderTransform><Border Width="2.5" Height="6" CornerRadius="1.2" Background="{ThemeResource BrandSpectrumLimeBrush}" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,2,0,0" /></Grid>
+                        <Grid Width="24" Height="24"><Grid.RenderTransform><RotateTransform Angle="120" CenterX="12" CenterY="12" /></Grid.RenderTransform><Border Width="2.5" Height="6" CornerRadius="1.2" Background="{ThemeResource BrandSpectrumSpringBrush}" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,2,0,0" /></Grid>
+                        <Grid Width="24" Height="24"><Grid.RenderTransform><RotateTransform Angle="150" CenterX="12" CenterY="12" /></Grid.RenderTransform><Border Width="2.5" Height="6" CornerRadius="1.2" Background="{ThemeResource BrandSpectrumCyanBrush}" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,2,0,0" /></Grid>
+                        <Grid Width="24" Height="24"><Grid.RenderTransform><RotateTransform Angle="180" CenterX="12" CenterY="12" /></Grid.RenderTransform><Border Width="2.5" Height="6" CornerRadius="1.2" Background="{ThemeResource BrandSpectrumBlueBrush}" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,2,0,0" /></Grid>
+                        <Grid Width="24" Height="24"><Grid.RenderTransform><RotateTransform Angle="210" CenterX="12" CenterY="12" /></Grid.RenderTransform><Border Width="2.5" Height="6" CornerRadius="1.2" Background="{ThemeResource BrandSpectrumRoyalBrush}" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,2,0,0" /></Grid>
+                        <Grid Width="24" Height="24"><Grid.RenderTransform><RotateTransform Angle="240" CenterX="12" CenterY="12" /></Grid.RenderTransform><Border Width="2.5" Height="6" CornerRadius="1.2" Background="{ThemeResource BrandSpectrumVioletBrush}" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,2,0,0" /></Grid>
+                        <Grid Width="24" Height="24"><Grid.RenderTransform><RotateTransform Angle="270" CenterX="12" CenterY="12" /></Grid.RenderTransform><Border Width="2.5" Height="6" CornerRadius="1.2" Background="{ThemeResource BrandSpectrumVioletBrush}" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,2,0,0" /></Grid>
+                        <Grid Width="24" Height="24"><Grid.RenderTransform><RotateTransform Angle="300" CenterX="12" CenterY="12" /></Grid.RenderTransform><Border Width="2.5" Height="6" CornerRadius="1.2" Background="{ThemeResource BrandSpectrumRedBrush}" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,2,0,0" /></Grid>
+                        <Grid Width="24" Height="24"><Grid.RenderTransform><RotateTransform Angle="330" CenterX="12" CenterY="12" /></Grid.RenderTransform><Border Width="2.5" Height="6" CornerRadius="1.2" Background="{ThemeResource BrandSpectrumOrangeBrush}" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,2,0,0" /></Grid>
+                    </Grid>
+
                     <FontIcon x:Name="StateIcon" AutomationProperties.AccessibilityView="Raw" FontSize="20" Glyph="&#xE720;" Visibility="Collapsed" />
                     <TextBlock x:Name="StateTitle" AutomationProperties.LiveSetting="Polite" Grid.Column="1" FontSize="14" FontWeight="SemiBold" Style="{StaticResource PillModeQuietTextStyle}" Text="Listening" TextWrapping="Wrap" VerticalAlignment="Center" />
-                    <!--
-                        BESIDE THE TIMER, WHICH IS WHAT THE PICKER SHOWS. The meter was drawn on its
-                        own row UNDER the timer while the Appearance page previewed it alongside, so
-                        the page was describing a pill the app did not build. They are siblings in
-                        one row now and a test holds them to it.
 
-                        TWENTY-FOUR BARS AND THEY SCROLL, WHICH IS WHAT MAKES THIS A METER RATHER
-                        THAN A DECORATION. Twelve bars all driven from the CURRENT level looked alive
-                        and told the user nothing: every bar carried the same one number dressed up
-                        differently. Each bar now holds one past sample, so the rail shows the SHAPE
-                        of the last second and a quiet patch is visibly a quiet patch.
+                    <!--
+                        BESIDE THE TIMER, WHICH IS WHAT THE PICKER SHOWS.
+                        TWENTY-FOUR BARS AND THEY SCROLL, MATCHING THE APPEARANCE PAGE EXACTLY.
                     -->
                     <StackPanel x:Name="LevelBars" Grid.Column="1" Height="25" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" Visibility="Collapsed" VerticalAlignment="Center"><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumLimeBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumGoldBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumOrangeBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumRedBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumLimeBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumGoldBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumOrangeBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumRedBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumLimeBrush}" CornerRadius="1.5" VerticalAlignment="Center" /></StackPanel>
                     <TextBlock x:Name="ElapsedText" Grid.Column="2" Foreground="{ThemeResource PillTimerBrush}" FontFamily="Consolas" FontSize="14" Text="00:00" VerticalAlignment="Center" />
                 </Grid>
-                
+
                 <Border x:Name="PreviewWell" Background="{ThemeResource PillSurfaceBrush}" CornerRadius="10" Padding="12,9" Visibility="Collapsed">
                     <TextBlock x:Name="PreviewText" AutomationProperties.Name="Live transcription preview" FontSize="14" MaxLines="5" Style="{StaticResource PillDimmedTextStyle}" Text="Listening…" TextAlignment="DetectFromContent" TextWrapping="Wrap" />
                 </Border>
                 <TextBlock x:Name="StateDetail" AutomationProperties.AccessibilityView="Raw" FontSize="14" MaxLines="2" Style="{StaticResource PillNoticeTextStyle}" Text="Release your key to finish" TextWrapping="Wrap" Visibility="Collapsed" />
-                <!--
-                    THE ONE THING THE USER CAN DO ABOUT IT. Right-aligned rather than full width so
-                    the pill still reads as a notice rather than a dialog, and 14px like everything
-                    else here because the overlay has a floor and this is not an exception to it.
-                -->
                 <Button x:Name="ActionButton" Click="ActionButton_Click" FontSize="14" HorizontalAlignment="Right" Style="{StaticResource PillActionButtonStyle}" Visibility="Collapsed" />
             </StackPanel>
         </Grid>

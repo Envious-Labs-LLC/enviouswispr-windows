@@ -97,16 +97,16 @@ public sealed partial class DesignSystemTokenTests
 
     private static readonly Dictionary<string, ThemePair> ExpectedPillTokenColors = new(StringComparer.Ordinal)
     {
-        ["PillSurface"] = new("#F0FCFAFF", "#E6110F18"),
-        ["PillBorder"] = new("#240F0A1A", "#21FFFFFF"),
-        ["PillDivider"] = new("#1A0F0A1A", "#17FFFFFF"),
-        ["PillTimer"] = new("#FF221B33", "#F0FFFFFF"),
-        ["PillModeQuiet"] = new("#990F0A1A", "#80FFFFFF"),
-        ["PillBadgeFill"] = new("#170F0A1A", "#21FFFFFF"),
-        ["PillBadgeText"] = new("#B80F0A1A", "#E0FFFFFF"),
-        ["PillText"] = new("#FF0F0A1A", "#F7FFFFFF"),
-        ["PillTextDimmed"] = new("#990F0A1A", "#80FFFFFF"),
-        ["PillNotice"] = new("#E00F0A1A", "#F2FFFFFF"),
+        ["PillSurface"] = new("#EB110F18", "#F014111C"),
+        ["PillBorder"] = new("#26FFFFFF", "#26FFFFFF"),
+        ["PillDivider"] = new("#17FFFFFF", "#17FFFFFF"),
+        ["PillTimer"] = new("#F0FFFFFF", "#F0FFFFFF"),
+        ["PillModeQuiet"] = new("#80FFFFFF", "#80FFFFFF"),
+        ["PillBadgeFill"] = new("#21FFFFFF", "#21FFFFFF"),
+        ["PillBadgeText"] = new("#E0FFFFFF", "#E0FFFFFF"),
+        ["PillText"] = new("#F7FFFFFF", "#F7FFFFFF"),
+        ["PillTextDimmed"] = new("#80FFFFFF", "#80FFFFFF"),
+        ["PillNotice"] = new("#F2FFFFFF", "#F2FFFFFF"),
 
         // THE SEVERITY SET IS THE UNIT, not the severity somebody noticed. Before these existed the
         // pill drew one surface, one border and one ink for every outcome, so an error and a
@@ -120,15 +120,15 @@ public sealed partial class DesignSystemTokenTests
         // interruption look and shares the error red, with a deeper wash and a pulse carrying the
         // difference. That is a chosen reuse, stated here, rather than a token quietly falling back
         // to a neighbour's value.
-        ["PillSuccessInk"] = new("#FF00A366", "#FF5CC99A"),
-        ["PillSuccessWash"] = new("#1A00A366", "#245CC99A"),
-        ["PillWarningInk"] = new("#FFCC7000", "#FFE6B766"),
-        ["PillWarningWash"] = new("#1ACC7000", "#24E6B766"),
-        ["PillErrorInk"] = new("#FFC0392B", "#FFEF7C89"),
-        ["PillErrorWash"] = new("#1AC0392B", "#24EF7C89"),
-        ["PillAdvisoryInk"] = new("#FF7C3AED", "#FFA78BFA"),
-        ["PillAdvisoryWash"] = new("#1A7C3AED", "#24A78BFA"),
-        ["PillDistressWash"] = new("#3DC0392B", "#4AEF7C89"),
+        ["PillSuccessInk"] = new("#FF5CC99A", "#FF5CC99A"),
+        ["PillSuccessWash"] = new("#245CC99A", "#245CC99A"),
+        ["PillWarningInk"] = new("#FFE6B766", "#FFE6B766"),
+        ["PillWarningWash"] = new("#24E6B766", "#24E6B766"),
+        ["PillErrorInk"] = new("#FFEF7C89", "#FFEF7C89"),
+        ["PillErrorWash"] = new("#24EF7C89", "#24EF7C89"),
+        ["PillAdvisoryInk"] = new("#FFA78BFA", "#FFA78BFA"),
+        ["PillAdvisoryWash"] = new("#24A78BFA", "#24A78BFA"),
+        ["PillDistressWash"] = new("#4AEF7C89", "#4AEF7C89"),
     };
 
     private static readonly (string SwiftName, string BrandName)[] SwiftTokenMap =
@@ -174,6 +174,26 @@ public sealed partial class DesignSystemTokenTests
             + "clears every dark surface. The macOS app has the same failing value and should be "
             + "raised too; until it is, matching it would mean shipping text that is hard to read in "
             + "order to keep a table green. Ref: dark-theme contrast audit, 2026-08-27.",
+        ["PillSurface"] = "Windows floating recording pills use dark-first styling (#EB110F18 Light, "
+            + "#F014111C Dark) on desktop backgrounds per founder requirement #282 rather than light surface.",
+        ["PillBorder"] = "Windows floating recording pills use subtle #26FFFFFF borders across Light "
+            + "and Dark themes per founder requirement #282 rather than dark ink in light mode.",
+        ["PillDivider"] = "Windows floating recording pills use subtle #17FFFFFF divider lines across "
+            + "Light and Dark themes per founder requirement #282 rather than dark ink in light mode.",
+        ["PillTimer"] = "Windows floating recording pills use high-contrast white timer digits "
+            + "(#F0FFFFFF) across Light and Dark themes per founder requirement #282.",
+        ["PillModeQuiet"] = "Windows floating recording pills use crisp #80FFFFFF quiet text across "
+            + "Light and Dark themes per founder requirement #282 rather than dark ink in light mode.",
+        ["PillBadgeFill"] = "Windows floating recording pills use translucent #21FFFFFF badge fills "
+            + "across Light and Dark themes per founder requirement #282 rather than dark ink in light mode.",
+        ["PillBadgeText"] = "Windows floating recording pills use crisp #E0FFFFFF badge text across "
+            + "Light and Dark themes per founder requirement #282 rather than dark ink in light mode.",
+        ["PillText"] = "Windows floating recording pills use crisp #F7FFFFFF live words text across "
+            + "Light and Dark themes per founder requirement #282 rather than dark ink in light mode.",
+        ["PillTextDimmed"] = "Windows floating recording pills use #80FFFFFF dimmed placeholder text "
+            + "across Light and Dark themes per founder requirement #282 rather than dark ink in light mode.",
+        ["PillNotice"] = "Windows floating recording pills use crisp #F2FFFFFF notice text across "
+            + "Light and Dark themes per founder requirement #282 rather than dark ink in light mode.",
     };
 
     private static readonly (string SwiftName, string PillName)[] SwiftPillTokenMap =
@@ -303,31 +323,55 @@ public sealed partial class DesignSystemTokenTests
     public void EveryAllowedDeviationIsRealAndStillNeeded()
     {
         var swiftTokens = ParseSwiftTokens(File.ReadAllText(GetMacSnapshotPath()));
+        var pillSnapshotPath = GetMacPillSnapshotPath();
+        var swiftPillTokens = File.Exists(pillSnapshotPath)
+            ? ParseSwiftTokens(File.ReadAllText(pillSnapshotPath))
+            : null;
 
-        foreach (var (brandName, reason) in AllowedDeviationsFromMac)
+        foreach (var (tokenName, reason) in AllowedDeviationsFromMac)
         {
             Assert.True(
                 reason.Length >= 60,
-                $"{brandName} is excused from macOS parity without a reason worth reading.");
+                $"{tokenName} is excused from macOS parity without a reason worth reading.");
 
-            var mapping = SwiftTokenMap.FirstOrDefault(entry => entry.BrandName == brandName);
+            var brandMapping = SwiftTokenMap.FirstOrDefault(entry => entry.BrandName == tokenName);
+            var pillMapping = SwiftPillTokenMap.FirstOrDefault(entry => entry.PillName == tokenName);
             Assert.True(
-                mapping.BrandName is not null,
-                $"{brandName} is listed as a deviation but is not a mapped token. Delete the entry.");
+                brandMapping.BrandName is not null || pillMapping.PillName is not null,
+                $"{tokenName} is listed as a deviation but is not a mapped token. Delete the entry.");
 
-            Assert.True(
-                ExpectedTokenColors.TryGetValue(brandName, out var expected),
-                $"{brandName} is listed as a deviation but is not in the expected table.");
-            Assert.True(
-                swiftTokens.TryGetValue(mapping.SwiftName, out var actual),
-                $"{brandName} maps to {mapping.SwiftName}, which is not in the macOS snapshot.");
+            if (brandMapping.BrandName is not null)
+            {
+                Assert.True(
+                    ExpectedTokenColors.TryGetValue(tokenName, out var expected),
+                    $"{tokenName} is listed as a deviation but is not in the expected table.");
+                Assert.True(
+                    swiftTokens.TryGetValue(brandMapping.SwiftName, out var actual),
+                    $"{tokenName} maps to {brandMapping.SwiftName}, which is not in the macOS snapshot.");
 
-            var lightDiffers = !SameColor(expected!.Light, actual!.Light);
-            var darkDiffers = !SameColor(expected.Dark, actual.Dark);
-            Assert.True(
-                lightDiffers || darkDiffers,
-                $"{brandName} now matches macOS on both themes, so the deviation is spent. Delete "
-                    + "the entry and let the parity check cover it again.");
+                var lightDiffers = !SameColor(expected!.Light, actual!.Light);
+                var darkDiffers = !SameColor(expected.Dark, actual.Dark);
+                Assert.True(
+                    lightDiffers || darkDiffers,
+                    $"{tokenName} now matches macOS on both themes, so the deviation is spent. Delete "
+                        + "the entry and let the parity check cover it again.");
+            }
+            else if (pillMapping.PillName is not null && swiftPillTokens is not null)
+            {
+                Assert.True(
+                    ExpectedPillTokenColors.TryGetValue(tokenName, out var expected),
+                    $"{tokenName} is listed as a deviation but is not in the expected pill table.");
+                Assert.True(
+                    swiftPillTokens.TryGetValue(pillMapping.SwiftName, out var actual),
+                    $"{tokenName} maps to {pillMapping.SwiftName}, which is not in the macOS pill snapshot.");
+
+                var lightDiffers = !SameColor(expected!.Light, actual!.Light);
+                var darkDiffers = !SameColor(expected.Dark, actual.Dark);
+                Assert.True(
+                    lightDiffers || darkDiffers,
+                    $"{tokenName} now matches macOS on both themes, so the deviation is spent. Delete "
+                        + "the entry and let the parity check cover it again.");
+            }
         }
     }
 
@@ -539,6 +583,11 @@ public sealed partial class DesignSystemTokenTests
             {
                 throw new InvalidOperationException(
                     $"Mapped Pill token '{mapping.PillName}' for '{mapping.SwiftName}' is missing from the expected table.");
+            }
+
+            if (AllowedDeviationsFromMac.ContainsKey(mapping.PillName))
+            {
+                continue;
             }
 
             AssertChannelsMatch(
