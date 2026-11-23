@@ -152,9 +152,11 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
             static state => ((RunOptions)state!).Terminate = true,
             runOptions);
 
+        var samples = audio.Samples.ToArray();
+        float[] features;
+        long featureLength;
         try
         {
-            var samples = audio.Samples.ToArray();
             using var preprocessorResult = _preprocessor.Run(
                 [
                     NamedOnnxValue.CreateFromTensor(
@@ -168,8 +170,25 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                 runOptions);
             cancellationToken.ThrowIfCancellationRequested();
 
-            var features = preprocessorResult[0].AsEnumerable<float>().ToArray();
-            var featureLength = preprocessorResult[1].AsEnumerable<long>().Single();
+            features = preprocessorResult[0].AsEnumerable<float>().ToArray();
+            featureLength = preprocessorResult[1].AsEnumerable<long>().Single();
+        }
+        catch (OnnxRuntimeException exception) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(
+                "Local transcription was cancelled.",
+                exception,
+                cancellationToken);
+        }
+        catch (OnnxRuntimeException exception)
+        {
+            throw CreateStageFailure(ParakeetOnnxStage.Preprocessor, exception);
+        }
+
+        float[] encoded;
+        int encodedLength;
+        try
+        {
             using var encoderResult = _encoder.Run(
                 [
                     NamedOnnxValue.CreateFromTensor(
@@ -183,15 +202,8 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                 runOptions);
             cancellationToken.ThrowIfCancellationRequested();
 
-            var encoded = TransposeEncoderOutput(encoderResult[0].AsEnumerable<float>().ToArray());
-            var encodedLength = checked((int)encoderResult[1].AsEnumerable<long>().Single());
-            var decoded = Decode(encoded, encodedLength, runOptions, cancellationToken);
-            var text = TokensToText(decoded);
-            var timings = CreateTimings(
-                decoded,
-                encodedLength,
-                TimeSpan.FromSeconds(samples.Length / (double)RequiredSampleRate));
-            return new Transcript(audio.SessionId, text, EngineId, timings);
+            encoded = TransposeEncoderOutput(encoderResult[0].AsEnumerable<float>().ToArray());
+            encodedLength = checked((int)encoderResult[1].AsEnumerable<long>().Single());
         }
         catch (OnnxRuntimeException exception) when (cancellationToken.IsCancellationRequested)
         {
@@ -202,8 +214,32 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
         }
         catch (OnnxRuntimeException exception)
         {
-            throw CreateFailure(AppErrorCode.TranscriptionFailed, exception);
+            throw CreateStageFailure(ParakeetOnnxStage.Encoder, exception);
         }
+
+        List<DecodedToken> decoded;
+        try
+        {
+            decoded = Decode(encoded, encodedLength, runOptions, cancellationToken);
+        }
+        catch (OnnxRuntimeException exception) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(
+                "Local transcription was cancelled.",
+                exception,
+                cancellationToken);
+        }
+        catch (OnnxRuntimeException exception)
+        {
+            throw CreateStageFailure(ParakeetOnnxStage.Decoder, exception);
+        }
+
+        var text = TokensToText(decoded);
+        var timings = CreateTimings(
+            decoded,
+            encodedLength,
+            TimeSpan.FromSeconds(samples.Length / (double)RequiredSampleRate));
+        return new Transcript(audio.SessionId, text, EngineId, timings);
     }
 
     private float[] TransposeEncoderOutput(float[] encoded)
@@ -410,11 +446,37 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
         exception is OnnxRuntimeException or IOException or UnauthorizedAccessException or
             KeyNotFoundException or InvalidDataException;
 
-    private static TranscriptionEngineException CreateFailure(
+    internal static TranscriptionEngineException CreateFailure(
         AppErrorCode code,
+        Exception? innerException = null) =>
+        CreateFailure(code, AppErrorStage.FinalAsr, innerException);
+
+    internal static TranscriptionEngineException CreateFailure(
+        AppErrorCode code,
+        AppErrorStage stage,
         Exception? innerException = null) => new(
-        new AppError(code, AppErrorStage.FinalAsr, CanRetry: true),
+        new AppError(code, stage, CanRetry: true),
         innerException);
+
+    internal static TranscriptionEngineException CreateStageFailure(
+        ParakeetOnnxStage stage,
+        Exception? innerException = null) =>
+        stage switch
+        {
+            ParakeetOnnxStage.Preprocessor => CreateFailure(
+                AppErrorCode.TranscriptionPreprocessorFailed,
+                AppErrorStage.AsrPreprocessor,
+                innerException),
+            ParakeetOnnxStage.Encoder => CreateFailure(
+                AppErrorCode.TranscriptionEncoderFailed,
+                AppErrorStage.AsrEncoder,
+                innerException),
+            ParakeetOnnxStage.Decoder => CreateFailure(
+                AppErrorCode.TranscriptionDecoderFailed,
+                AppErrorStage.AsrDecoder,
+                innerException),
+            _ => CreateFailure(AppErrorCode.TranscriptionFailed, AppErrorStage.FinalAsr, innerException),
+        };
 
     public void Dispose()
     {
@@ -432,4 +494,11 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
     }
 
     private readonly record struct DecodedToken(int Id, int Frame);
+}
+
+public enum ParakeetOnnxStage
+{
+    Preprocessor,
+    Encoder,
+    Decoder,
 }

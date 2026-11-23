@@ -55,6 +55,32 @@ public sealed class StreamingTranscriptionControllerTests
     }
 
     [Fact]
+    public async Task AnEmptySegmentLogsStreamingSegmentEmptyAndDoesNotCommitHeadStart()
+    {
+        var world = World.Build();
+        world.Audio.Samples = Build((false, 200), (true, 3000), (false, 1200), (true, 500));
+        world.Engine.NextText = "   ";
+
+        world.Controller.Start(world.Session);
+        Assert.True(world.Controller.IsRunning);
+        world.Clock.Advance(Poll);
+        await world.Clock.WhenRegistered(2).WaitAsync(Patience);
+
+        Assert.Equal([AppEventCode.StreamingSegmentEmpty], world.Log.Codes);
+
+        await world.Controller.StopAsync();
+        var whole = Build((false, 200), (true, 3000), (false, 1200), (true, 2000), (false, 600));
+        world.Engine.NextText = "whole recording words";
+        var transcript = await world.Controller.TranscribeUsingAnyHeadStartAsync(
+            world.Engine, new CapturedAudio(world.Session, whole, SampleRate, 1), CancellationToken.None);
+
+        Assert.Equal("whole recording words", transcript.Text);
+        Assert.Equal(0, world.Engine.Requests[1].From);
+        Assert.Equal(whole.Length, world.Engine.Requests[1].Length);
+        Assert.Equal([AppEventCode.StreamingSegmentEmpty], world.Log.Codes);
+    }
+
+    [Fact]
     public async Task AFailedSegmentAbandonsTheHeadStartAndTheReleaseTranscribesEverything()
     {
         var world = World.Build();

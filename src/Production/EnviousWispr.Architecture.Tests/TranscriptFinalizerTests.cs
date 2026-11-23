@@ -33,6 +33,18 @@ public sealed class TranscriptFinalizerTests
     }
 
     [Fact]
+    public async Task AWhitespaceTranscriptReportsEmptyDeterministicProcessing()
+    {
+        var (finalizer, effects, _) = Build();
+
+        var finalized = await finalizer.FinalizeAsync(
+            Spoken("   "), [], AllOn, SnippetVocabulary.Empty, polish: null, CancellationToken.None);
+
+        Assert.Equal(string.Empty, finalized.Processed.Output.Text);
+        Assert.Contains("DeterministicProcessingFinished:degraded=False:empty", effects.Trace);
+    }
+
+    [Fact]
     public async Task AnAcceptedPolishIsUsedAndSavedForRecoveryASecondTime()
     {
         var provider = new FakePolishProvider(_ => "Hello, world.");
@@ -259,8 +271,8 @@ public sealed class TranscriptFinalizerTests
 
         public void RecordPolishRefused() => Trace.Add("PolishRefused");
 
-        public void RecordDeterministicProcessingFinished(bool degraded, long elapsedMilliseconds) =>
-            Trace.Add($"DeterministicProcessingFinished:degraded={degraded}");
+        public void RecordDeterministicProcessingFinished(bool degraded, long elapsedMilliseconds, bool empty = false) =>
+            Trace.Add(empty ? $"DeterministicProcessingFinished:degraded={degraded}:empty" : $"DeterministicProcessingFinished:degraded={degraded}");
     }
 
     private sealed class FakeAdmission : IRuntimeResourceAdmission

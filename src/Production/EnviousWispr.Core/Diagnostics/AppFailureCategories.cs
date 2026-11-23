@@ -25,7 +25,10 @@ public static class AppFailureCategories
             AppFailureCategory.RuntimeProvider,
         AppErrorCode.RuntimeWorkerFailed => AppFailureCategory.RuntimeWorker,
         AppErrorCode.ModelPackUnavailable or AppErrorCode.TranscriptionFailed or
-            AppErrorCode.TranscriptionInputTooShort =>
+            AppErrorCode.TranscriptionInputTooShort or
+            AppErrorCode.TranscriptionPreprocessorFailed or
+            AppErrorCode.TranscriptionEncoderFailed or
+            AppErrorCode.TranscriptionDecoderFailed =>
             AppFailureCategory.AsrUnavailable,
         null => AppFailureCategory.None,
         _ => AppFailureCategory.Unknown,

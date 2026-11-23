@@ -363,4 +363,13 @@ public enum AppEventCode
     /// (a scanner or indexer still held it). A fixed category only: never a path, a file name or a word.
     /// </summary>
     AppImportCopyLeftBehind,
+
+    /// <summary>Raw ASR transcription finished safely but returned no recognized speech.</summary>
+    DictationTranscriptionEmpty,
+
+    /// <summary>Deterministic post-processing completed with no remaining speech (e.g. all filler words or empty raw text).</summary>
+    DeterministicProcessingEmpty,
+
+    /// <summary>A streaming audio segment was processed while the user spoke, but returned no recognized speech.</summary>
+    StreamingSegmentEmpty,
 }

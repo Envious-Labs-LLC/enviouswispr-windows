@@ -276,6 +276,21 @@ public sealed class SessionFinalizationRunnerTests
     }
 
     [Fact]
+    public async Task RawBlankSpeechIsHeldQuietlyWithNothingDeliveredAndNothingSaved()
+    {
+        var world = await World.RecordingFinishedAsync("");
+
+        var report = await world.RunAsync();
+
+        Assert.Equal(FinalizationOutcome.Held, report.Outcome);
+        Assert.Empty(world.Delivery.Requests);
+        Assert.Empty(world.History.Added);
+        Assert.False(world.Persistence.HasPendingRecovery);
+        Assert.Contains("ShowHeldStatus:Held", world.Trace);
+        Assert.Null(world.Controller.CurrentSession);
+    }
+
+    [Fact]
     public async Task WithNoDeliveryRouteTheTextIsHeld()
     {
         var world = await World.RecordingFinishedAsync("hello world");
@@ -464,7 +479,7 @@ public sealed class SessionFinalizationRunnerTests
 
         public void RecordPolishRefused() => Trace.Add("PolishRefused");
 
-        public void RecordDeterministicProcessingFinished(bool degraded, long elapsedMilliseconds)
+        public void RecordDeterministicProcessingFinished(bool degraded, long elapsedMilliseconds, bool empty = false)
         {
         }
 

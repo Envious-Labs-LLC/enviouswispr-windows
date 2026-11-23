@@ -74,5 +74,46 @@ public sealed class ParakeetInputContractTests
         Assert.Equal(response.Error, actual.Error);
         Assert.Equal(24, (int)AppErrorCode.TranscriptionFailed);
         Assert.True((int)AppErrorCode.TranscriptionInputTooShort > (int)AppErrorCode.DeliveryFaulted);
+        Assert.Equal((int)AppErrorCode.TranscriptionInputTooShort + 1, (int)AppErrorCode.TranscriptionPreprocessorFailed);
+        Assert.Equal((int)AppErrorCode.TranscriptionPreprocessorFailed + 1, (int)AppErrorCode.TranscriptionEncoderFailed);
+        Assert.Equal((int)AppErrorCode.TranscriptionEncoderFailed + 1, (int)AppErrorCode.TranscriptionDecoderFailed);
+    }
+
+    [Theory]
+    [InlineData(ParakeetOnnxStage.Preprocessor, AppErrorCode.TranscriptionPreprocessorFailed, AppErrorStage.AsrPreprocessor)]
+    [InlineData(ParakeetOnnxStage.Encoder, AppErrorCode.TranscriptionEncoderFailed, AppErrorStage.AsrEncoder)]
+    [InlineData(ParakeetOnnxStage.Decoder, AppErrorCode.TranscriptionDecoderFailed, AppErrorStage.AsrDecoder)]
+    public void ParakeetStageFailuresDistinguishStagesAndMapToAsrUnavailable(
+        ParakeetOnnxStage stage,
+        AppErrorCode expectedCode,
+        AppErrorStage expectedStage)
+    {
+        var inner = new InvalidOperationException("Simulated ONNX error");
+        var failure = ParakeetTranscriptionEngine.CreateStageFailure(stage, inner);
+
+        Assert.Equal(expectedCode, failure.Error.Code);
+        Assert.Equal(expectedStage, failure.Error.Stage);
+        Assert.True(failure.Error.CanRetry);
+        Assert.Same(inner, failure.InnerException);
+        Assert.Equal(AppFailureCategory.AsrUnavailable, AppFailureCategories.For(failure.Error));
+    }
+
+    [Theory]
+    [InlineData(AppErrorCode.TranscriptionPreprocessorFailed, AppErrorStage.AsrPreprocessor)]
+    [InlineData(AppErrorCode.TranscriptionEncoderFailed, AppErrorStage.AsrEncoder)]
+    [InlineData(AppErrorCode.TranscriptionDecoderFailed, AppErrorStage.AsrDecoder)]
+    public void StageErrorsSurviveWorkerResponseSerialization(AppErrorCode code, AppErrorStage stage)
+    {
+        var requestId = Guid.NewGuid();
+        var response = new RuntimeWorkerResponse(1, requestId, "failed", Error: new AppError(
+            code, stage, CanRetry: true));
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+
+        var actual = JsonSerializer.Deserialize<RuntimeWorkerResponse>(
+            JsonSerializer.Serialize(response, options), options);
+
+        Assert.NotNull(actual);
+        Assert.Equal(requestId, actual.RequestId);
+        Assert.Equal(response.Error, actual.Error);
     }
 }

@@ -1862,7 +1862,8 @@ public partial class App : Application, IAsyncDisposable
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionFailed,
-                AppFailureCategory.AsrUnavailable));
+                AppFailureCategory.AsrUnavailable,
+                ErrorCode: AppErrorCode.ModelPackUnavailable));
             return;
         }
 
@@ -1902,7 +1903,14 @@ public partial class App : Application, IAsyncDisposable
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionFailed,
-                AppFailureCategory.AsrUnavailable));
+                AppFailureCategory.AsrUnavailable,
+                ErrorCode: selectionReason switch
+                {
+                    DiagnosticRuntimeSelectionReason.SelectionFailedModelPackMissing => AppErrorCode.ModelPackUnavailable,
+                    DiagnosticRuntimeSelectionReason.SelectionFailedProviderUnavailable => AppErrorCode.RuntimeProviderUnavailable,
+                    DiagnosticRuntimeSelectionReason.SelectionFailedUnsupportedProcessorArchitecture => AppErrorCode.RuntimeProviderIncompatible,
+                    _ => AppErrorCode.TranscriptionFailed,
+                }));
             return;
         }
 
@@ -1932,7 +1940,8 @@ public partial class App : Application, IAsyncDisposable
                 _logger.Write(new AppLogEntry(
                     DateTimeOffset.UtcNow,
                     AppEventCode.DictationTranscriptionFailed,
-                    AppFailureCategory.RuntimeWorker));
+                    AppFailureCategory.RuntimeWorker,
+                    ErrorCode: AppErrorCode.RuntimeWorkerFailed));
                 return;
             }
 

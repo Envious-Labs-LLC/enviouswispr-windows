@@ -62,6 +62,9 @@ public enum AppErrorCode
 
     // Append new values so existing worker and diagnostic values keep their identities.
     TranscriptionInputTooShort,
+    TranscriptionPreprocessorFailed,
+    TranscriptionEncoderFailed,
+    TranscriptionDecoderFailed,
 }
 
 public enum AppErrorStage
@@ -94,6 +97,9 @@ public enum AppErrorStage
     ContextRead,
     TextDelivery,
     DiagnosticExport,
+    AsrPreprocessor,
+    AsrEncoder,
+    AsrDecoder,
 }
 
 public sealed record AppError(AppErrorCode Code, AppErrorStage Stage, bool CanRetry);
