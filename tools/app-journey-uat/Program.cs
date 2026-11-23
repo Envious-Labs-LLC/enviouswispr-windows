@@ -123,6 +123,14 @@ var packaged = args.Any(argument => string.Equals(
     argument,
     "--packaged",
     StringComparison.OrdinalIgnoreCase));
+var cleanUser = args.Any(argument => string.Equals(
+    argument,
+    "--clean-user",
+    StringComparison.OrdinalIgnoreCase));
+if (cleanUser && !packaged)
+{
+    throw new JourneyExpectationException("--clean-user requires --packaged.");
+}
 var deterministicProfileArgument = ArgumentValue(args, "--deterministic-profile");
 var deterministicProfile = deterministicProfileArgument?.ToLowerInvariant() switch
 {
@@ -442,12 +450,17 @@ var fixtureIdentity = manualMicrophone
         : englishParakeet
             ? "PolyAI-minds14-en-US-row0"
             : "PolyAI-minds14-fr-FR-row0";
+var unvirtualizedProductRoot = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+    "Envious Labs",
+    "EnviousWispr");
+var modelRootDirectory = cleanUser ? unvirtualizedProductRoot : repositoryRoot;
 var modelDirectory = Path.Combine(
-    repositoryRoot,
+    modelRootDirectory,
     "models",
     englishParakeet ? ParakeetTranscriptionEngine.ModelId : WhisperTranscriptionEngine.ModelId);
 var previewModelDirectory = Path.Combine(
-    repositoryRoot,
+    modelRootDirectory,
     "models",
     WhisperTranscriptionEngine.PreviewModelId);
 var fixturePath = Path.Combine(
@@ -513,22 +526,20 @@ if (failureMode == JourneyFailureMode.WorkerStartup)
     RequireFile(appExecutable, "The isolated worker-failure app copy is incomplete.");
 }
 Directory.CreateDirectory(Path.Combine(uatDirectory, "no-preview-model"));
-var unvirtualizedProductRoot = Path.Combine(
-    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-    "Envious Labs",
-    "EnviousWispr");
-var profileDirectory = packaged
-    ? unvirtualizedProductRoot
-    : Path.Combine(uatDirectory, "profile");
-Directory.CreateDirectory(profileDirectory);
-DefaultDataDirectoryBackupGuard? packagedDataBackup = null;
 if (packaged)
 {
     RequirePackagedLayoutManifest(appExecutable, repositoryRoot);
-    packagedDataBackup = DefaultDataDirectoryBackupGuard.Capture(
-        unvirtualizedProductRoot,
-        Path.Combine(uatDirectory, "default-data-backup"));
+    if (cleanUser)
+    {
+        RequireCleanUserProfile(unvirtualizedProductRoot);
+    }
 }
+var profileDirectory = packaged
+    ? cleanUser
+        ? unvirtualizedProductRoot
+        : Path.Combine(unvirtualizedProductRoot, $"EnviousWispr-AppJourney-PackagedUat-{runId}")
+    : Path.Combine(uatDirectory, "profile");
+Directory.CreateDirectory(profileDirectory);
 // THE HARNESS CHOOSES ITS OWN RECORDING KEY, AND IT IS F8, whatever a fresh install starts on. It presses the key
 // itself - SendKey, the synthetic hook, and the words a person is told to follow - and an ordinary key is the one it can
 // drive: a modifier set (Ctrl+Win, the product default since #66) completes on a gesture timer this harness has declared
@@ -712,17 +723,18 @@ try
         UseShellExecute = false,
         WorkingDirectory = Path.GetDirectoryName(appExecutable)!,
     };
-    if (packaged)
+    if (cleanUser)
     {
-        // Exercise the app's real default %LocalAppData%\Envious Labs\EnviousWispr directory without an
-        // ENVIOUSWISPR_DATA_DIRECTORY override (.claude/knowledge/distribution.md:50-51).
+        // Clean-user packaged validation runs in a separate clean Windows account or VM without data,
+        // credential, model, or runtime overrides (.claude/knowledge/distribution.md:39-41, 50-51).
         appStart.Environment.Remove("ENVIOUSWISPR_DATA_DIRECTORY");
+        appStart.Environment.Remove("ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX");
     }
     else
     {
         appStart.Environment["ENVIOUSWISPR_DATA_DIRECTORY"] = profileDirectory;
+        appStart.Environment["ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX"] = $"journey-{runId}";
     }
-    appStart.Environment["ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX"] = $"journey-{runId}";
     appStart.Environment["ENVIOUSWISPR_UAT_READY_EVENT"] = readyEventName;
     appStart.Environment["ENVIOUSWISPR_UAT_RUNTIME_READY_EVENT"] = runtimeEventName;
     appStart.Environment["ENVIOUSWISPR_ASR_ENGINE"] = engineName;
@@ -734,10 +746,18 @@ try
     {
         appStart.Environment["ENVIOUSWISPR_ASR_LANGUAGE"] = language;
     }
-    appStart.Environment["ENVIOUSWISPR_MODEL_DIRECTORY"] = modelDirectory;
-    appStart.Environment["ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY"] = livePreview
-        ? previewModelDirectory
-        : Path.Combine(uatDirectory, "no-preview-model");
+    if (cleanUser)
+    {
+        appStart.Environment.Remove("ENVIOUSWISPR_MODEL_DIRECTORY");
+        appStart.Environment.Remove("ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY");
+    }
+    else
+    {
+        appStart.Environment["ENVIOUSWISPR_MODEL_DIRECTORY"] = modelDirectory;
+        appStart.Environment["ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY"] = livePreview
+            ? previewModelDirectory
+            : Path.Combine(uatDirectory, "no-preview-model");
+    }
     if (livePreview)
     {
         appStart.Environment["ENVIOUSWISPR_UAT_LIVE_PREVIEW"] = "1";
@@ -1477,7 +1497,17 @@ finally
 
         try
         {
-            packagedDataBackup?.Restore();
+            if (packaged)
+            {
+                if (cleanUser)
+                {
+                    RemoveCleanUserArtifacts(unvirtualizedProductRoot);
+                }
+                else
+                {
+                    RemovePackagedUatProfileDirectory(profileDirectory, unvirtualizedProductRoot);
+                }
+            }
             RemoveUatDirectory(uatDirectory);
         }
         catch (Exception removalFailure) when (removalFailure is IOException
@@ -3566,6 +3596,66 @@ static void RemoveUatDirectory(string path)
     }
 }
 
+static void RequireCleanUserProfile(string productRoot)
+{
+    string[] existingUserFiles =
+    [
+        "settings.json",
+        "history.json",
+        "run-state.json",
+        "recovery.json",
+        Path.Combine("diagnostics", "app.jsonl"),
+    ];
+    foreach (var relative in existingUserFiles)
+    {
+        var candidate = Path.Combine(productRoot, relative);
+        if (File.Exists(candidate))
+        {
+            throw JourneyExpectationException.Instrument(
+                $"--clean-user must run in a separate clean Windows account or VM with no existing EnviousWispr user data under {productRoot} (found {relative}).");
+        }
+    }
+}
+
+static void RemoveCleanUserArtifacts(string productRoot)
+{
+    string[] relativeFiles =
+    [
+        "settings.json",
+        "history.json",
+        "run-state.json",
+        "recovery.json",
+        Path.Combine("diagnostics", "app.jsonl"),
+    ];
+    foreach (var relative in relativeFiles)
+    {
+        var candidate = Path.Combine(productRoot, relative);
+        if (File.Exists(candidate))
+        {
+            File.Delete(candidate);
+        }
+    }
+}
+
+static void RemovePackagedUatProfileDirectory(string path, string unvirtualizedRoot)
+{
+    var fullPath = Path.GetFullPath(path);
+    var expectedRoot = Path.TrimEndingDirectorySeparator(
+        Path.GetFullPath(unvirtualizedRoot)) + Path.DirectorySeparatorChar;
+    if (!fullPath.StartsWith(expectedRoot, StringComparison.OrdinalIgnoreCase) ||
+        !Path.GetFileName(fullPath).StartsWith(
+            "EnviousWispr-AppJourney-PackagedUat-",
+            StringComparison.Ordinal))
+    {
+        throw new JourneyExpectationException("Refusing to remove an unexpected packaged UAT profile directory.");
+    }
+
+    if (Directory.Exists(fullPath))
+    {
+        Directory.Delete(fullPath, recursive: true);
+    }
+}
+
 static string ResolveRegisteredPackagedAppExecutable(string repoRoot)
 {
     var (expectedName, expectedPublisher, expectedVersion) = ReadManifestIdentity(repoRoot);
@@ -3762,14 +3852,15 @@ static PackagedJourneyEvidence VerifyPackagedProcessesAndStorage(
             "The packaged app did not write its diagnostics and run-state physically into the excluded unvirtualized LocalAppData directory.");
     }
 
+    var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+    var relativeFromLocalAppData = Path.GetRelativePath(localAppData, profileDirectoryPath);
     var virtualizedShadowDirectory = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        localAppData,
         "Packages",
         shellFamilyName,
         "LocalCache",
         "Local",
-        "Envious Labs",
-        "EnviousWispr");
+        relativeFromLocalAppData);
     var virtualizedAbsent = !Directory.Exists(virtualizedShadowDirectory) &&
         !File.Exists(Path.Combine(virtualizedShadowDirectory, "run-state.json")) &&
         !File.Exists(Path.Combine(virtualizedShadowDirectory, "diagnostics", "app.jsonl"));
@@ -3887,7 +3978,7 @@ static void RequireKnownArguments(string[] arguments)
         "--live-microphone", "--manual-microphone", "--english-parakeet", "--live-preview",
         "--head-start", "--escape-recovery", "--synthesized-acoustic", "--synthetic-hotkey",
         "--quick-tap", "--virtual-cable", "--language-change", "--onboarding-practice", "--quick-add",
-        "--packaged",
+        "--packaged", "--clean-user",
     ];
     string[] valuedFlags =
     [
@@ -4244,66 +4335,6 @@ internal sealed record QuickAddRound(
 }
 
 internal sealed record QuickAddEvidence(QuickAddRound OverSentinel, QuickAddRound OverEmptyClipboard, bool WordStoredInProfile);
-
-internal sealed class DefaultDataDirectoryBackupGuard
-{
-    private static readonly string[] ManagedRelativeFiles =
-    [
-        "settings.json",
-        "history.json",
-        "run-state.json",
-        "recovery.json",
-        Path.Combine("diagnostics", "app.jsonl"),
-    ];
-
-    private readonly string _productRoot;
-    private readonly string _backupRoot;
-
-    private DefaultDataDirectoryBackupGuard(string productRoot, string backupRoot)
-    {
-        _productRoot = productRoot;
-        _backupRoot = backupRoot;
-    }
-
-    public static DefaultDataDirectoryBackupGuard Capture(string productRoot, string backupRoot)
-    {
-        Directory.CreateDirectory(productRoot);
-        Directory.CreateDirectory(backupRoot);
-        foreach (var relative in ManagedRelativeFiles)
-        {
-            var source = Path.Combine(productRoot, relative);
-            if (!File.Exists(source))
-            {
-                continue;
-            }
-
-            var destination = Path.Combine(backupRoot, relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            File.Copy(source, destination, overwrite: true);
-            File.Delete(source);
-        }
-
-        return new DefaultDataDirectoryBackupGuard(productRoot, backupRoot);
-    }
-
-    public void Restore()
-    {
-        foreach (var relative in ManagedRelativeFiles)
-        {
-            var source = Path.Combine(_productRoot, relative);
-            var backup = Path.Combine(_backupRoot, relative);
-            if (File.Exists(backup))
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(source)!);
-                File.Copy(backup, source, overwrite: true);
-            }
-            else if (File.Exists(source))
-            {
-                File.Delete(source);
-            }
-        }
-    }
-}
 
 internal sealed record PackagedJourneyEvidence(
     string PackageFullName,
