@@ -1,8 +1,11 @@
+using EnviousWispr.Analyzers;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Settings;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Diagnostics;
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -966,21 +969,24 @@ public sealed partial class DesignSystemTokenTests
     /// fresh flow off the message loop. The same is true of the watchdog, the streaming worker and
     /// the auto-stop watch, which the message loop starts on their own.
     ///
-    /// So each flow opens its own, and this refuses one that forgets. The rule is decidable and
-    /// needs no roster: a method handed a `DictationSessionId` is a flow that serves a dictation,
-    /// and every one of them must begin a scope. Methods that merely START such a flow are
-    /// exempt by the same rule - they pass the id on rather than logging under it.
+    /// So each flow opens its own, and both the build-time Roslyn analyser (<c>EW0002</c>) and this
+    /// gate refuse one that forgets. The rule is decidable and needs no roster: an async task-like
+    /// method handed a <c>DictationSessionId</c>, <c>CapturedAudio</c>, or <c>SessionCommand</c> is
+    /// a flow that serves a dictation, and every one of them must begin a scope before logging.
+    /// Methods that merely START such a flow are exempt by the same rule - they are synchronous and
+    /// pass the id on rather than logging under it.
     ///
-    /// WHAT IT CANNOT SEE, ENUMERATED, BECAUSE AN UNSTATED LIMIT READS AS COVERAGE. It matches
-    /// source text, so it does not see: a flow that logs through a HELPER rather than calling the
-    /// logger directly; a method that serves a dictation without being handed its id, which is
-    /// every Windows callback - the device-change and lifecycle handlers are scoped by hand and
-    /// nothing here would notice if they stopped being; a scope opened conditionally or with the
-    /// wrong id; and a `_logger.Write(` appearing first inside a comment or a string, which would
-    /// false-alarm.
+    /// THE COMPILER'S SEMANTIC MODEL DECIDES WHAT A FLOW IS. Earlier versions matched text and then
+    /// syntax, which still believed an unrelated type named <c>Task</c> or <c>DictationSessionId</c>
+    /// from another namespace and missed <c>ValueTask</c>, a <c>using</c> alias for the return or
+    /// parameter type, or a qualified parameter type. Ref: #82.
     ///
-    /// It closes the shape the flows actually take. The callbacks are the known hole, and they are
-    /// few enough to be read.
+    /// WHAT IT STILL CANNOT SEE, ENUMERATED, BECAUSE AN UNSTATED LIMIT READS AS COVERAGE: a flow
+    /// that logs through an indirect helper rather than calling <c>_logger.Write</c> /
+    /// <c>logger.Write</c> directly; a method that serves a dictation without being handed its id,
+    /// which is every Windows callback - the device-change and lifecycle handlers are scoped by hand
+    /// and nothing here would notice if they stopped being; and a scope opened conditionally or with
+    /// the wrong id.
     ///
     /// THE PIPELINE IS READ AS WELL AS THE SHELL, because the flows are leaving the shell one step
     /// at a time (#148) and a gate that read only the shell would have shrunk with each move while
@@ -992,50 +998,23 @@ public sealed partial class DesignSystemTokenTests
     public void EveryFlowThatServesADictationOpensItsScope()
     {
         var root = FindRepositoryRoot();
-        var sources = new[] { Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs") }
+        var files = new[] { Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs") }
             .Concat(Directory.GetFiles(Path.Combine(root, "src", "Production", "EnviousWispr.Pipeline"), "*.cs"))
-            .Select(File.ReadAllText)
+            .ToArray();
+        var trees = files
+            .Select(file => CSharpSyntaxTree.ParseText(File.ReadAllText(file), path: file))
             .ToArray();
 
-        // THE PARSER DECIDES WHAT A FLOW IS, BECAUSE THE REGEX FAILED GREEN. It required the exact
-        // text `private async Task`, and C# lets a method carry its modifiers in any order with any
-        // trivia between them, so ONE extra valid modifier hid a whole flow while the floor below
-        // still counted five and passed. A method that never opened a scope would have read as
-        // ABSENT rather than as unscoped, which is the one outcome a check must never have. Ref: #82.
-        //
-        //     private static async Task HandleAsync(DictationSessionId sessionId) { ... }
-        var methods = sources.SelectMany(DictationFlows).ToArray();
-
-        var unscoped = new List<string>();
+        var compilation = CreateSemanticCompilation(trees);
+        var methods = DictationFlowsInCompilation(compilation, trees);
         var flows = methods.Length;
-        foreach (var method in methods)
-        {
-            // THE SCOPE MUST BE OPENED BEFORE THE FLOW LOGS ANYTHING, which is the property that
-            // actually matters and needs no window at all. Two earlier drafts guessed at one - six
-            // hundred characters, then eight lines - and a reviewer pointed out that a longer
-            // signature, a blank line or a block comment moves a correct scope past either. A
-            // window is a proxy; this is the thing itself.
-            //
-            // COMPARED AS CALLS RATHER THAN AS TEXT, which closes the false alarm the old version
-            // admitted to in its own remarks: `_logger.Write(` written inside a comment or a string
-            // counted as the flow logging, and would have accused a correctly scoped method.
-            //
-            // A flow that never logs is fine either way, and is required to open one anyway,
-            // because the next line added to it will be a log line.
-            var calls = ((SyntaxNode?)method.Body ?? method.ExpressionBody)
-                ?.DescendantNodes()
-                .OfType<InvocationExpressionSyntax>()
-                .ToArray() ?? [];
-            var firstWrite = calls.FirstOrDefault(call => call.Expression.ToString()
-                .EndsWith("_logger.Write", StringComparison.Ordinal));
-            var opensScope = calls.FirstOrDefault(call => call.Expression.ToString()
-                .EndsWith("DictationScope.Begin", StringComparison.Ordinal));
-            if (opensScope is null ||
-                (firstWrite is not null && opensScope.SpanStart > firstWrite.SpanStart))
-            {
-                unscoped.Add(method.Identifier.ValueText);
-            }
-        }
+
+        var unscoped = RunDeclarationShapeAnalyzer(
+                compilation,
+                trees,
+                DeclarationShapeAnalyzer.DictationFlowScopeDiagnosticId)
+            .Select(diagnostic => diagnostic.GetMessage(CultureInfo.InvariantCulture))
+            .ToArray();
 
         // THE FLOOR IS TODAY'S COUNT, so a flow deleted or renamed out of the pattern is noticed.
         // A lower floor lets the set shrink silently, which is how a gate stops covering the thing
@@ -1043,46 +1022,78 @@ public sealed partial class DesignSystemTokenTests
         // executor's torn-down-beside catch, which was one of the flows.
         Assert.True(flows >= 15, $"Expected the dictation flows, found {flows}.");
         Assert.True(
-            unscoped.Count == 0,
+            unscoped.Length == 0,
             "These methods are handed a dictation and never open its scope, so every line they "
                 + "write is joined to nothing: " + string.Join(", ", unscoped));
     }
-    /// <summary>Every method the shell has that is handed a dictation and awaits under it.</summary>
+
+    /// <summary>Every method in the code that the semantic model resolves as a dictation flow.</summary>
     /// <remarks>
     /// A METHOD RATHER THAN AN INLINE QUERY SO THE RULE CAN BE PROVED. The shapes that broke the
-    /// regex this replaces do not appear in the repository, so a gate exercised only against the
-    /// real file cannot show it is better than what it replaced. This is called both by the gate
-    /// and by proofs written against source that exists nowhere else.
+    /// regex and syntax-only drafts do not all appear in the repository, so a gate exercised only
+    /// against the real file cannot show it is better than what it replaced. This is called both by
+    /// the gate and by proofs written against source that exists nowhere else.
     /// </remarks>
-    private static MethodDeclarationSyntax[] DictationFlows(string code) =>
-        CSharpSyntaxTree.ParseText(code).GetRoot()
-            .DescendantNodes()
-            .OfType<MethodDeclarationSyntax>()
-            .Where(method =>
-                method.Modifiers.Any(SyntaxKind.AsyncKeyword) &&
-                ReturnsTask(method.ReturnType) &&
-                method.ParameterList.Parameters.Any(parameter =>
-                    parameter.Type is IdentifierNameSyntax
-                    {
-                        // The audio of a dictation carries its id; a flow handed one serves that
-                        // dictation as surely as one handed the id, and the streaming join is one. A
-                        // session command names the dictation it is about, or is about the one in
-                        // flight; the executor's flows are handed those.
-                        Identifier.ValueText: "DictationSessionId" or "CapturedAudio" or "SessionCommand",
-                    }))
-            .ToArray();
+    private static MethodDeclarationSyntax[] DictationFlows(string code)
+    {
+        var tree = CSharpSyntaxTree.ParseText(WrapSnippetInClassIfNeeded(code), path: "FlowFixture.cs");
+        var compilation = CreateSemanticCompilation([tree]);
+        return DictationFlowsInCompilation(compilation, [tree]);
+    }
 
-    /// <summary>A flow is found however its signature is written.</summary>
+    private static MethodDeclarationSyntax[] DictationFlowsInCompilation(
+        CSharpCompilation compilation,
+        IReadOnlyList<SyntaxTree> trees)
+    {
+        var symbols = DeclarationShapeAnalyzer.KnownSymbols.From(compilation);
+        Assert.True(
+            symbols.SessionIdType is { TypeKind: not TypeKind.Error } &&
+            symbols.CapturedAudioType is { TypeKind: not TypeKind.Error } &&
+            symbols.SessionCommandType is { TypeKind: not TypeKind.Error },
+            "Dictation flow parameter types did not resolve in the semantic compilation.");
+
+        var flows = new List<MethodDeclarationSyntax>();
+        foreach (var tree in trees)
+        {
+            var model = compilation.GetSemanticModel(tree);
+            foreach (var method in tree.GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>())
+            {
+                if (model.GetDeclaredSymbol(method) is IMethodSymbol symbol &&
+                    DeclarationShapeAnalyzer.IsDictationFlow(method, symbol, symbols))
+                {
+                    flows.Add(method);
+                }
+            }
+        }
+
+        return flows.ToArray();
+    }
+
+    private static string WrapSnippetInClassIfNeeded(string code)
+    {
+        var normalized = code.Replace('|', '\n');
+        var lines = normalized.Split('\n');
+        var usings = lines.Where(line => line.TrimStart().StartsWith("using ", StringComparison.Ordinal));
+        var rest = lines.Where(line => !line.TrimStart().StartsWith("using ", StringComparison.Ordinal));
+        var body = string.Join('\n', rest);
+        if (body.Contains("class ", StringComparison.Ordinal))
+        {
+            return string.Join('\n', usings) + "\n" + body;
+        }
+
+        return string.Join('\n', usings) + "\ninternal sealed class C\n{\n" + body + "\n}\n";
+    }
+
+    /// <summary>A flow is found however its signature is written, including semantic task-like and aliased shapes.</summary>
     /// <remarks>
-    /// THREE OF THESE SIX WERE INVISIBLE YESTERDAY, checked by running the old pattern against
+    /// THREE OF THE FIRST SIX WERE INVISIBLE TO THE REGEX, checked by running the old pattern against
     /// them rather than assumed: a modifier in front of `async` (A), a qualified return type (B),
-    /// and modifiers split across lines (D). The regex required the literal text
-    /// `private async Task`. A hidden method is not reported as unscoped - it is not reported at
-    /// all, and the floor below still counted five and passed. Ref: #82.
+    /// and modifiers split across lines (D).
     ///
-    /// THE OTHER THREE ARE NOT MISSES AND ARE HERE ON PURPOSE. C, E and F were already matched, so
-    /// they are what proves the parser did not BUY the three above by dropping shapes the pattern
-    /// used to catch. A rewrite that trades one blind spot for another looks identical to a fix.
+    /// K THROUGH O WERE INVISIBLE TO THE SYNTAX-ONLY PARSER: <c>ValueTask</c> and <c>ValueTask&lt;T&gt;</c>
+    /// (task-like types under another name), a <c>using</c> alias for <c>Task</c>, a <c>using</c>
+    /// alias for <c>DictationSessionId</c>, and a qualified parameter type. The semantic model
+    /// resolves every one of them to the real symbol. Ref: #82.
     /// </remarks>
     [Theory]
     [InlineData("private static async Task A(DictationSessionId id) { }")]
@@ -1095,48 +1106,92 @@ public sealed partial class DesignSystemTokenTests
     [InlineData("internal async Task<int> H(DictationSessionId id) { return 0; }")]
     [InlineData("public async Task<Transcript> I(ITranscriptionEngine engine, CapturedAudio audio, CancellationToken token) { return null!; }")]
     [InlineData("private async Task<SessionCommandResult> J(SessionCommand command) { return null!; }")]
+    [InlineData("private async ValueTask K(DictationSessionId id) { }")]
+    [InlineData("private async ValueTask<int> L(DictationSessionId id) { return 0; }")]
+    [InlineData("using Work = System.Threading.Tasks.Task;|private async Work M(DictationSessionId id) { }")]
+    [InlineData("using TakeId = EnviousWispr.Core.Dictation.DictationSessionId;|private async Task N(TakeId id) { }")]
+    [InlineData("private async Task O(EnviousWispr.Core.Dictation.DictationSessionId id) { }")]
     public void AFlowIsFoundHoweverItsSignatureIsWritten(string declaration)
     {
-        // The bar stands for a line break: a signature split across lines is one of the shapes
-        // the pattern this replaces could not see, and it cannot be written inside an attribute.
-        var found = DictationFlows("class C { " + declaration.Replace('|', '\n') + " }");
+        var found = DictationFlows(declaration);
 
         Assert.Single(found);
     }
 
-    /// <summary>A method that only starts a flow is not one, and neither is a stranger.</summary>
+    /// <summary>A method that only starts a flow is not one, and neither is a stranger sharing a type name.</summary>
     /// <remarks>
     /// THE CONTROL. Without it, a finder that matched every method would satisfy every row above
-    /// and prove nothing at all.
+    /// and prove nothing at all. The last three rows prove the semantic model does not believe a
+    /// same-named <c>Task</c> or <c>DictationSessionId</c> from another namespace or a nullable
+    /// <c>DictationSessionId?</c> starter parameter. Ref: #82.
     /// </remarks>
     [Theory]
     [InlineData("private Task Starts(DictationSessionId id) => Task.CompletedTask;")]
     [InlineData("public Task PublicStarts(DictationSessionId id) => Task.CompletedTask;")]
     [InlineData("private async void NotATask(DictationSessionId id) { }")]
     [InlineData("private async Task NoDictation(string id) { }")]
+    [InlineData("private async OtherNamespace.Task ImposterTask(DictationSessionId id) { }")]
+    [InlineData("private async Task ImposterSession(OtherNamespace.DictationSessionId id) { }")]
+    [InlineData("public async Task NullableStarter(DictationSessionId? forSession) { }")]
     public void SomethingThatIsNotAFlowIsNotFound(string declaration)
     {
-        Assert.Empty(DictationFlows("class C { " + declaration + " }"));
+        Assert.Empty(DictationFlows(declaration));
     }
 
-    /// <summary>Whether a method returns a Task, however that Task is written.</summary>
-    /// <remarks>
-    /// `async` is the discriminator between a flow and a starter. A method that merely kicks one
-    /// off is synchronous here and passes the id on; the ones that log under it are the ones that
-    /// await.
-    ///
-    /// SYNTAX, NOT SEMANTICS, AND THE DIFFERENCE IS WRITTEN DOWN RATHER THAN IMPLIED. This believes
-    /// any type spelled `Task`, so a different `Task` brought in by a using directive would be
-    /// accepted, and a task-like type under another name would be missed. Closing that needs a
-    /// semantic model - #82.
-    /// </remarks>
-    private static bool ReturnsTask(TypeSyntax returnType) => returnType switch
+    [Fact]
+    public void TheAnalyzerRefusesAnUnscopedOrLateScopedDictationFlowAndAcceptsAScopedOne()
     {
-        IdentifierNameSyntax name => name.Identifier.ValueText == "Task",
-        GenericNameSyntax generic => generic.Identifier.ValueText == "Task",
-        QualifiedNameSyntax qualified => ReturnsTask(qualified.Right),
-        _ => false,
-    };
+        const string unscoped = """
+            internal sealed class FlowHost
+            {
+                private async ValueTask HandleAsync(DictationSessionId sessionId)
+                {
+                    await Task.Yield();
+                }
+            }
+            """;
+        const string lateScoped = """
+            internal sealed class FlowHost
+            {
+                private readonly IAppLogger _logger = null!;
+                private async Task HandleAsync(DictationSessionId sessionId)
+                {
+                    _logger.Write(default!);
+                    using var scope = DictationScope.Begin(sessionId.Value);
+                    await Task.Yield();
+                }
+            }
+            """;
+        const string imposterScope = """
+            internal sealed class FlowHost
+            {
+                private readonly IAppLogger _logger = null!;
+                private async Task HandleAsync(DictationSessionId sessionId)
+                {
+                    using var scope = OtherNamespace.DictationScope.Begin(sessionId.Value);
+                    _logger.Write(default!);
+                    await Task.Yield();
+                }
+            }
+            """;
+        const string scoped = """
+            internal sealed class FlowHost
+            {
+                private readonly IAppLogger _logger = null!;
+                private async ValueTask HandleAsync(DictationSessionId sessionId)
+                {
+                    using var scope = DictationScope.Begin(sessionId.Value);
+                    _logger.Write(default!);
+                    await Task.Yield();
+                }
+            }
+            """;
+
+        Assert.Single(AnalyzeSnippet(unscoped, DeclarationShapeAnalyzer.DictationFlowScopeDiagnosticId));
+        Assert.Single(AnalyzeSnippet(lateScoped, DeclarationShapeAnalyzer.DictationFlowScopeDiagnosticId));
+        Assert.Single(AnalyzeSnippet(imposterScope, DeclarationShapeAnalyzer.DictationFlowScopeDiagnosticId));
+        Assert.Empty(AnalyzeSnippet(scoped, DeclarationShapeAnalyzer.DictationFlowScopeDiagnosticId));
+    }
 
     /// <summary>The journey harness reports its own failures instead of crashing.</summary>
     /// <remarks>
