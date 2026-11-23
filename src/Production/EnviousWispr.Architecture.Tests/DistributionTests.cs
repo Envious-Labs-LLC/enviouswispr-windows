@@ -281,6 +281,37 @@ public sealed class DistributionTests
     }
 
     [Fact]
+    public async Task UnpackagedStartupRegistrationRespectsWindowsStartupApprovedDisabledState()
+    {
+        const string winUiExecutable = @"C:\TestProfile\AppData\Local\EnviousWispr\EnviousWispr.App.exe";
+        var registry = new FakeStartupRegistryStore { Approved = false };
+        registry.WriteCommand($"\"{winUiExecutable}\"");
+        var registration = new WindowsStartupRegistration(
+            isPackaged: () => false,
+            getStartupTask: (_, _) => throw new InvalidOperationException("Unpackaged startup must not call StartupTask."),
+            registry,
+            executablePath: () => winUiExecutable);
+
+        var status = await registration.GetStatusAsync();
+        Assert.Equal(new StartupRegistrationResult(StartupRegistrationStatus.DisabledByUser, IsPackaged: false), status);
+        Assert.False(status.IsEnabled);
+        Assert.False(status.CanToggle);
+        Assert.True(status.NeedsWindowsStartupSettings);
+
+        var attemptedEnable = await registration.SetEnabledAsync(true);
+        Assert.Equal(new StartupRegistrationResult(StartupRegistrationStatus.DisabledByUser, IsPackaged: false), attemptedEnable);
+
+        // The production WinUI app registers its own Run value name so it never collides with the preserved WPF proof.
+        Assert.Equal("EnviousWispr.App", WindowsStartupRegistration.RunRegistryValueName);
+        Assert.NotEqual("EnviousWispr", WindowsStartupRegistration.RunRegistryValueName);
+
+        Assert.True(WindowsStartupRegistration.IsStartupApprovedValue(null));
+        Assert.True(WindowsStartupRegistration.IsStartupApprovedValue([0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
+        Assert.False(WindowsStartupRegistration.IsStartupApprovedValue([0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
+        Assert.False(WindowsStartupRegistration.IsStartupApprovedValue([0x03, 0x00, 0x00, 0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x01]));
+    }
+
+    [Fact]
     public void PackageManifestDeclaresEnviousWisprStartupTaskDisabledByDefault()
     {
         var manifestPath = Path.Combine(
@@ -386,6 +417,8 @@ public sealed class DistributionTests
     {
         public string? Command { get; private set; }
 
+        public bool Approved { get; set; } = true;
+
         public int Reads { get; private set; }
 
         public int Writes { get; private set; }
@@ -397,6 +430,8 @@ public sealed class DistributionTests
             Reads++;
             return Command;
         }
+
+        public bool IsApproved() => Approved;
 
         public void WriteCommand(string command)
         {

@@ -336,12 +336,13 @@ if (syntheticHotkey &&
             + "worker that is still starting.");
 }
 if (cleanUser &&
-    (liveMicrophone || livePreview || escapeRecovery || syntheticHotkey || quickTap ||
+    (!englishParakeet || polishProvider != PolishProvider.None ||
+     liveMicrophone || livePreview || escapeRecovery || syntheticHotkey || quickTap ||
      onboardingPractice || quickAdd || languageChange || failureMode != JourneyFailureMode.None ||
      deterministicProfile != DeterministicJourneyProfile.None))
 {
     throw new JourneyExpectationException(
-        "--clean-user exercises a fresh install with no preloaded settings.json and cannot be combined with modes that pre-seed settings (--synthetic-hotkey, --live-microphone, --live-preview, --escape-recovery, --quick-add, --language-change, --deterministic-profile, or --failure).");
+        "--clean-user exercises a fresh install with default settings (Automatic/Parakeet, no polish, no preloaded settings.json) and requires --english-parakeet without mode or polish overrides.");
 }
 if (polishProvider == PolishProvider.EgOne)
 {
@@ -361,21 +362,10 @@ if (polishProvider == PolishProvider.EgOne)
             expectedFileName: "llama-server.exe");
     }
 
-    if (cleanUser)
-    {
-        if (egOneModelFile is not null)
-        {
-            throw new JourneyExpectationException(
-                "--clean-user --polish eg-1 resolves the model from the default data directory without overrides and rejects --eg1-model.");
-        }
-    }
-    else
-    {
-        RequireAbsoluteFileArgument(
-            egOneModelFile,
-            "--eg1-model must identify an existing fully qualified GGUF model.",
-            expectedExtension: ".gguf");
-    }
+    RequireAbsoluteFileArgument(
+        egOneModelFile,
+        "--eg1-model must identify an existing fully qualified GGUF model.",
+        expectedExtension: ".gguf");
 }
 else if (egOneServerExecutable is not null || egOneModelFile is not null)
 {
@@ -747,39 +737,37 @@ try
         UseShellExecute = false,
         WorkingDirectory = Path.GetDirectoryName(appExecutable)!,
     };
+    appStart.Environment["ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX"] = $"journey-{runId}";
+    appStart.Environment["ENVIOUSWISPR_UAT_READY_EVENT"] = readyEventName;
+    appStart.Environment["ENVIOUSWISPR_UAT_RUNTIME_READY_EVENT"] = runtimeEventName;
     if (cleanUser)
     {
         // Clean-user packaged validation runs in a separate clean Windows account or VM without data,
-        // model, or runtime path overrides (.claude/knowledge/distribution.md:39-41, 50-51).
+        // model, engine, language, or runtime path overrides (.claude/knowledge/distribution.md:39-41, 50-51).
         appStart.Environment.Remove("ENVIOUSWISPR_DATA_DIRECTORY");
+        appStart.Environment.Remove("ENVIOUSWISPR_MODEL_DIRECTORY");
+        appStart.Environment.Remove("ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY");
+        appStart.Environment.Remove("ENVIOUSWISPR_ASR_ENGINE");
+        appStart.Environment.Remove("ENVIOUSWISPR_ASR_LANGUAGE");
+        appStart.Environment.Remove("ENVIOUSWISPR_POLISH_PROVIDER");
     }
     else
     {
         appStart.Environment["ENVIOUSWISPR_DATA_DIRECTORY"] = profileDirectory;
-    }
-    appStart.Environment["ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX"] = $"journey-{runId}";
-    appStart.Environment["ENVIOUSWISPR_UAT_READY_EVENT"] = readyEventName;
-    appStart.Environment["ENVIOUSWISPR_UAT_RUNTIME_READY_EVENT"] = runtimeEventName;
-    appStart.Environment["ENVIOUSWISPR_ASR_ENGINE"] = engineName;
-    if (languageChange)
-    {
-        appStart.Environment.Remove("ENVIOUSWISPR_ASR_LANGUAGE");
-    }
-    else
-    {
-        appStart.Environment["ENVIOUSWISPR_ASR_LANGUAGE"] = language;
-    }
-    if (cleanUser)
-    {
-        appStart.Environment.Remove("ENVIOUSWISPR_MODEL_DIRECTORY");
-        appStart.Environment.Remove("ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY");
-    }
-    else
-    {
+        appStart.Environment["ENVIOUSWISPR_ASR_ENGINE"] = engineName;
+        if (languageChange)
+        {
+            appStart.Environment.Remove("ENVIOUSWISPR_ASR_LANGUAGE");
+        }
+        else
+        {
+            appStart.Environment["ENVIOUSWISPR_ASR_LANGUAGE"] = language;
+        }
         appStart.Environment["ENVIOUSWISPR_MODEL_DIRECTORY"] = modelDirectory;
         appStart.Environment["ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY"] = livePreview
             ? previewModelDirectory
             : Path.Combine(uatDirectory, "no-preview-model");
+        appStart.Environment["ENVIOUSWISPR_POLISH_PROVIDER"] = polishProvider.ToString();
     }
     if (livePreview)
     {
@@ -789,7 +777,6 @@ try
     {
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_CANCEL"] = "1";
     }
-    appStart.Environment["ENVIOUSWISPR_POLISH_PROVIDER"] = polishProvider.ToString();
     if (polishProvider == PolishProvider.EgOne)
     {
         if (packaged)
@@ -801,14 +788,7 @@ try
             appStart.Environment["ENVIOUSWISPR_EG1_SERVER_EXE"] = egOneServerExecutable!;
         }
 
-        if (cleanUser)
-        {
-            appStart.Environment.Remove("ENVIOUSWISPR_EG1_MODEL_PATH");
-        }
-        else
-        {
-            appStart.Environment["ENVIOUSWISPR_EG1_MODEL_PATH"] = egOneModelFile!;
-        }
+        appStart.Environment["ENVIOUSWISPR_EG1_MODEL_PATH"] = egOneModelFile!;
         appStart.Environment.Remove("ENVIOUSWISPR_EG1_GPU_LAYERS");
     }
     else if (polishProvider == PolishProvider.Ollama)
@@ -902,7 +882,7 @@ try
             {
                 BringToForeground(target.MainWindowHandle);
             }
-            runtimeReady = WaitForCleanUserRuntimeWorker(app, diagnosticPath, TimeSpan.FromMinutes(10));
+            runtimeReady = WaitForCleanUserRuntimeWorker(app, runtimeEvent, diagnosticPath, TimeSpan.FromMinutes(10));
         }
     }
     else
@@ -1372,13 +1352,18 @@ try
     }
 
     var hardware = await new WindowsHardwareDiscovery(CudaRuntimeDirectory.ForTooling()).ProbeAsync();
+    var probedModelDirectory = cleanUser
+        ? await ResolveCleanUserActivatedModelDirectoryAsync(
+            Path.Combine(unvirtualizedProductRoot, "models"),
+            englishParakeet ? ParakeetTranscriptionEngine.ModelId : WhisperTranscriptionEngine.ModelId) ?? modelDirectory
+        : modelDirectory;
     string provider;
     string modelPack;
     if (englishParakeet)
     {
         var selection = ParakeetRuntimeSelector.Select(
             hardware,
-            new LocalParakeetModelProbe().Probe(modelDirectory));
+            new LocalParakeetModelProbe().Probe(probedModelDirectory));
         provider = selection.Provider?.ToString() ?? "Unavailable";
         modelPack = selection.ModelPack?.ToString() ?? "Unavailable";
     }
@@ -1386,7 +1371,7 @@ try
     {
         var selection = WhisperRuntimeSelector.Select(
             hardware,
-            new LocalWhisperModelProbe().Probe(modelDirectory));
+            new LocalWhisperModelProbe().Probe(probedModelDirectory));
         provider = selection.Provider?.ToString() ?? "Unavailable";
         modelPack = selection.ModelPack?.ToString() ?? "Unavailable";
     }
@@ -3667,36 +3652,88 @@ static void RequireCleanUserProfile(string productRoot)
 
 static void RemoveCleanUserArtifacts(string productRoot)
 {
-    string[] relativeFiles =
-    [
-        "settings.json",
-        "history.json",
-        "run-state.json",
-        "recovery.json",
-        Path.Combine("diagnostics", "app.jsonl"),
-    ];
-    foreach (var relative in relativeFiles)
+    if (!Directory.Exists(productRoot))
     {
-        var candidate = Path.Combine(productRoot, relative);
-        if (File.Exists(candidate))
+        return;
+    }
+
+    DeleteRegularFileIfPresent(Path.Combine(productRoot, "settings.json"));
+    DeleteRegularFileIfPresent(Path.Combine(productRoot, "history.json"));
+    DeleteRegularFileIfPresent(Path.Combine(productRoot, "run-state.json"));
+    DeleteRegularFileIfPresent(Path.Combine(productRoot, "recovery.json"));
+    DeleteRegularFileIfPresent(Path.Combine(productRoot, "diagnostics", "app.jsonl"));
+    DeleteDirectoryIfEmptyAndNotReparse(Path.Combine(productRoot, "diagnostics"));
+
+    var modelsRoot = Path.Combine(productRoot, "models");
+    if (Directory.Exists(modelsRoot) && !IsReparsePoint(modelsRoot))
+    {
+        string[] allowedModelIds =
+        [
+            ParakeetTranscriptionEngine.ModelId,
+            WhisperTranscriptionEngine.ModelId,
+            WhisperTranscriptionEngine.PreviewModelId,
+        ];
+        foreach (var modelId in allowedModelIds)
         {
-            File.Delete(candidate);
+            RemoveOwnedModelStoreEntries(Path.Combine(modelsRoot, modelId));
+        }
+
+        DeleteDirectoryIfEmptyAndNotReparse(modelsRoot);
+    }
+
+    var remaining = Directory.EnumerateFileSystemEntries(productRoot).FirstOrDefault();
+    if (remaining is not null)
+    {
+        throw new JourneyExpectationException(
+            $"Clean-user cleanup left unexpected entries under {productRoot} (found {Path.GetFileName(remaining)}).");
+    }
+}
+
+static void RemoveOwnedModelStoreEntries(string modelDirectory)
+{
+    if (!Directory.Exists(modelDirectory) || IsReparsePoint(modelDirectory))
+    {
+        return;
+    }
+
+    DeleteRegularFileIfPresent(Path.Combine(modelDirectory, "active.json"));
+    DeleteRegularFileIfPresent(Path.Combine(modelDirectory, "active.json.tmp"));
+
+    foreach (var subtreeName in new[] { "versions", ".staging" })
+    {
+        var subtree = Path.Combine(modelDirectory, subtreeName);
+        if (!Directory.Exists(subtree) || IsReparsePoint(subtree))
+        {
+            continue;
+        }
+
+        RemoveRegularFilesBottomUp(subtree);
+    }
+
+    DeleteDirectoryIfEmptyAndNotReparse(modelDirectory);
+}
+
+static void RemoveRegularFilesBottomUp(string directory)
+{
+    if (!Directory.Exists(directory) || IsReparsePoint(directory))
+    {
+        return;
+    }
+
+    foreach (var childDirectory in Directory.GetDirectories(directory))
+    {
+        if (!IsReparsePoint(childDirectory))
+        {
+            RemoveRegularFilesBottomUp(childDirectory);
         }
     }
 
-    string[] relativeDirectories =
-    [
-        "diagnostics",
-        "models",
-    ];
-    foreach (var relativeDir in relativeDirectories)
+    foreach (var file in Directory.GetFiles(directory))
     {
-        var candidateDir = Path.Combine(productRoot, relativeDir);
-        if (Directory.Exists(candidateDir))
-        {
-            Directory.Delete(candidateDir, recursive: true);
-        }
+        DeleteRegularFileIfPresent(file);
     }
+
+    DeleteDirectoryIfEmptyAndNotReparse(directory);
 }
 
 static void RemovePackagedUatProfileDirectory(string path, string unvirtualizedRoot)
@@ -3712,9 +3749,48 @@ static void RemovePackagedUatProfileDirectory(string path, string unvirtualizedR
         throw new JourneyExpectationException("Refusing to remove an unexpected packaged UAT profile directory.");
     }
 
+    if (!Directory.Exists(fullPath))
+    {
+        return;
+    }
+
+    if (IsReparsePoint(fullPath))
+    {
+        throw new JourneyExpectationException($"Refusing to remove a reparse-point packaged UAT profile directory: {fullPath}");
+    }
+
+    DeleteRegularFileIfPresent(Path.Combine(fullPath, "settings.json"));
+    DeleteRegularFileIfPresent(Path.Combine(fullPath, "history.json"));
+    DeleteRegularFileIfPresent(Path.Combine(fullPath, "run-state.json"));
+    DeleteRegularFileIfPresent(Path.Combine(fullPath, "recovery.json"));
+    DeleteRegularFileIfPresent(Path.Combine(fullPath, "diagnostics", "app.jsonl"));
+    DeleteDirectoryIfEmptyAndNotReparse(Path.Combine(fullPath, "diagnostics"));
+    DeleteDirectoryIfEmptyAndNotReparse(fullPath);
+
     if (Directory.Exists(fullPath))
     {
-        Directory.Delete(fullPath, recursive: true);
+        throw new JourneyExpectationException($"Packaged UAT profile directory was not empty after removing run-owned files: {fullPath}");
+    }
+}
+
+static bool IsReparsePoint(string path) =>
+    (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+
+static void DeleteRegularFileIfPresent(string filePath)
+{
+    if (File.Exists(filePath) && !IsReparsePoint(filePath))
+    {
+        File.Delete(filePath);
+    }
+}
+
+static void DeleteDirectoryIfEmptyAndNotReparse(string directoryPath)
+{
+    if (Directory.Exists(directoryPath) &&
+        !IsReparsePoint(directoryPath) &&
+        !Directory.EnumerateFileSystemEntries(directoryPath).Any())
+    {
+        Directory.Delete(directoryPath, recursive: false);
     }
 }
 
@@ -3860,24 +3936,43 @@ static void TriggerOnboardingModelDeliveryIfPresent(int processId)
     }
 }
 
-static bool WaitForCleanUserRuntimeWorker(Process app, string diagnosticPath, TimeSpan timeout)
+static bool WaitForCleanUserRuntimeWorker(
+    Process app,
+    EventWaitHandle runtimeEvent,
+    string diagnosticPath,
+    TimeSpan timeout)
 {
     var timer = Stopwatch.StartNew();
     while (timer.Elapsed < timeout && !app.HasExited)
     {
-        var events = ReadDiagnosticEvents(diagnosticPath);
-        if (ChildProcessIds(app.Id, "EnviousWispr.RuntimeWorker").Any() &&
-            events.Any(value => value.StartsWith("SettingsCreated/", StringComparison.Ordinal)) &&
-            events.Any(value => value.StartsWith("ModelDeliveryStarted/", StringComparison.Ordinal)) &&
-            events.Any(value => value.StartsWith("ModelDeliveryCompleted/", StringComparison.Ordinal)))
+        if (runtimeEvent.WaitOne(0))
         {
-            return true;
+            var events = ReadDiagnosticEvents(diagnosticPath);
+            if (ChildProcessIds(app.Id, "EnviousWispr.RuntimeWorker").Any() &&
+                events.Any(value => value.StartsWith("SettingsCreated/", StringComparison.Ordinal)) &&
+                events.Any(value => value.StartsWith("ModelDeliveryStarted/", StringComparison.Ordinal)) &&
+                events.Any(value => value.StartsWith("ModelDeliveryCompleted/", StringComparison.Ordinal)))
+            {
+                return true;
+            }
         }
 
         Thread.Sleep(250);
     }
 
     return false;
+}
+
+static async Task<string?> ResolveCleanUserActivatedModelDirectoryAsync(string modelsRoot, string modelId)
+{
+    using var httpClient = new HttpClient();
+    var store = new ModelStore(
+        modelsRoot,
+        httpClient,
+        new ModelManifestVerifier(new Dictionary<string, string>()),
+        new Version(99, 0, 0));
+    var active = await store.OpenActiveOfflineAsync(modelId);
+    return active.Succeeded ? active.Installed?.DirectoryPath : null;
 }
 
 static void RequirePackagedLayoutManifest(string appExecutablePath, string repoRoot)

@@ -21,6 +21,8 @@ public interface IStartupRegistryStore
 {
     string? ReadCommand();
 
+    bool IsApproved() => true;
+
     void WriteCommand(string command);
 
     void DeleteCommand();
@@ -42,7 +44,8 @@ public sealed class WindowsStartupRegistration
 {
     public const string StartupTaskId = "EnviousWisprStartup";
     public const string RunRegistrySubKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    public const string RunRegistryValueName = "EnviousWispr";
+    public const string StartupApprovedRunRegistrySubKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+    public const string RunRegistryValueName = "EnviousWispr.App";
 
     private readonly Func<bool> _isPackaged;
     private readonly Func<string, CancellationToken, Task<IPackagedStartupTask>> _getStartupTask;
@@ -160,9 +163,14 @@ public sealed class WindowsStartupRegistration
             var currentExecutable = _executablePath();
             _ = FormatRunCommand(currentExecutable);
             var command = _registry.ReadCommand();
-            var status = MatchesExecutable(command, currentExecutable)
+            if (!MatchesExecutable(command, currentExecutable))
+            {
+                return new StartupRegistrationResult(StartupRegistrationStatus.Disabled, IsPackaged: false);
+            }
+
+            var status = _registry.IsApproved()
                 ? StartupRegistrationStatus.Enabled
-                : StartupRegistrationStatus.Disabled;
+                : StartupRegistrationStatus.DisabledByUser;
             return new StartupRegistrationResult(status, IsPackaged: false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -222,10 +230,20 @@ public sealed class WindowsStartupRegistration
             var command = FormatRunCommand(currentExecutable);
             if (enabled)
             {
+                if (MatchesExecutable(_registry.ReadCommand(), currentExecutable) && !_registry.IsApproved())
+                {
+                    return new StartupRegistrationResult(StartupRegistrationStatus.DisabledByUser, IsPackaged: false);
+                }
+
                 _registry.WriteCommand(command);
                 var verified = MatchesExecutable(_registry.ReadCommand(), currentExecutable);
+                if (!verified)
+                {
+                    return new StartupRegistrationResult(StartupRegistrationStatus.Failed, IsPackaged: false);
+                }
+
                 return new StartupRegistrationResult(
-                    verified ? StartupRegistrationStatus.Enabled : StartupRegistrationStatus.Failed,
+                    _registry.IsApproved() ? StartupRegistrationStatus.Enabled : StartupRegistrationStatus.DisabledByUser,
                     IsPackaged: false);
             }
 
@@ -247,6 +265,45 @@ public sealed class WindowsStartupRegistration
         {
             return new StartupRegistrationResult(StartupRegistrationStatus.Failed, IsPackaged: packaged);
         }
+    }
+
+    /// <summary>
+    /// Interprets the binary record Windows Startup Apps and Task Manager write under
+    /// <c>HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run</c>.
+    /// </summary>
+    public static bool IsStartupApprovedValue(byte[]? approvalBytes)
+    {
+        if (approvalBytes is null or { Length: 0 })
+        {
+            return true;
+        }
+
+        if (approvalBytes.Length < 4)
+        {
+            return false;
+        }
+
+        // Windows stores a 4-byte little-endian status value followed by an 8-byte FILETIME when
+        // disabled by the user. Low bit 1 (0x01, 0x03, 0x05, 0x07) or any non-zero disable timestamp
+        // marks the Run entry as disabled in Windows Startup Apps / Task Manager.
+        if ((approvalBytes[0] & 0x01) != 0 ||
+            approvalBytes[0] is not (0x00 or 0x02 or 0x04 or 0x06) ||
+            approvalBytes[1] != 0 ||
+            approvalBytes[2] != 0 ||
+            approvalBytes[3] != 0)
+        {
+            return false;
+        }
+
+        for (var index = 4; index < approvalBytes.Length; index++)
+        {
+            if (approvalBytes[index] != 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool HasPackageIdentity()
@@ -286,6 +343,12 @@ public sealed class WindowsStartupRegistration
         {
             using var key = Registry.CurrentUser.OpenSubKey(RunRegistrySubKey, writable: false);
             return key?.GetValue(RunRegistryValueName) as string;
+        }
+
+        public bool IsApproved()
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(StartupApprovedRunRegistrySubKey, writable: false);
+            return IsStartupApprovedValue(key?.GetValue(RunRegistryValueName) as byte[]);
         }
 
         public void WriteCommand(string command)

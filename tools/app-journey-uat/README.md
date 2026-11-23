@@ -385,10 +385,11 @@ registered layout via `--app-executable`). In `--packaged` mode the harness:
 4. Requires diagnostics and run-state files to exist physically in the excluded `LocalAppData` path with zero
    redirected shadow directory under `%LocalAppData%\Packages\<PackageFamilyName>\LocalCache`.
 
-Add `--clean-user` with `--packaged` in a separate clean Windows account or VM (with no existing EnviousWispr user
-files under `%LocalAppData%\Envious Labs\EnviousWispr`) to run without pre-seeding `settings.json` and without
-`ENVIOUSWISPR_DATA_DIRECTORY`, `ENVIOUSWISPR_MODEL_DIRECTORY`, `ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY`,
-`ENVIOUSWISPR_EG1_SERVER_EXE`, or `ENVIOUSWISPR_EG1_MODEL_PATH` overrides.
+Add `--clean-user` with `--packaged --english-parakeet` in a separate clean Windows account or VM (with no existing
+EnviousWispr user files or cached models under `%LocalAppData%\Envious Labs\EnviousWispr`) to run without pre-seeding
+`settings.json` and without `ENVIOUSWISPR_DATA_DIRECTORY`, `ENVIOUSWISPR_MODEL_DIRECTORY`,
+`ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY`, `ENVIOUSWISPR_ASR_ENGINE`, `ENVIOUSWISPR_ASR_LANGUAGE`,
+`ENVIOUSWISPR_POLISH_PROVIDER`, `ENVIOUSWISPR_EG1_SERVER_EXE`, or `ENVIOUSWISPR_EG1_MODEL_PATH` overrides.
 
 ```powershell
 dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `

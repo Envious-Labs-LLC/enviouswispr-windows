@@ -1984,6 +1984,7 @@ public partial class App : Application, IAsyncDisposable
                     : DictationStatus.Quiet("Local transcription ready on the processor"))
                     .AboutTheTranscriptionEngine());
             _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Ready);
+            SignalPerformanceUatEvent("ENVIOUSWISPR_UAT_RUNTIME_READY_EVENT");
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
                 AppEventCode.DictationTranscriptionDegraded,
@@ -1997,6 +1998,7 @@ public partial class App : Application, IAsyncDisposable
         _window?.SetSessionStatus(
             DictationStatus.Quiet("Local transcription ready").AboutTheTranscriptionEngine());
         _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Ready);
+        SignalPerformanceUatEvent("ENVIOUSWISPR_UAT_RUNTIME_READY_EVENT");
     }
 
     private void ConfigureLivePreview(
@@ -2919,11 +2921,20 @@ public partial class App : Application, IAsyncDisposable
                 TryOpenJourneyUatEvent("ENVIOUSWISPR_UAT_JOURNEY_EXIT_EVENT", out var exitEvent);
                 using (exitEvent)
                 {
+                    // When the app launches without an installed speech model (--clean-user first-run model
+                    // delivery), the harness waits up to 10 minutes for onboarding model download and worker
+                    // activation before signalling START.
+                    var waitingForFirstRunModelDelivery = _transcriptionEngine is null;
                     var started = await Task.Run(() => exitEvent is null
-                            ? startEvent.WaitOne(TimeSpan.FromSeconds(30))
+                            ? startEvent.WaitOne(
+                                waitingForFirstRunModelDelivery
+                                    ? TimeSpan.FromMinutes(10)
+                                    : TimeSpan.FromSeconds(30))
                             : WaitHandle.WaitAny(
                                 [startEvent, exitEvent],
-                                TimeSpan.FromSeconds(120)) == 0)
+                                waitingForFirstRunModelDelivery
+                                    ? TimeSpan.FromMinutes(10)
+                                    : TimeSpan.FromSeconds(120)) == 0)
                         .ConfigureAwait(false);
                     if (!started || _exitRequested || _disposed)
                     {

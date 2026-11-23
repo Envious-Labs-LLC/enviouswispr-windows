@@ -99,18 +99,36 @@ function Resolve-MsStoreCliVersion {
         [switch]$Required
     )
 
-    $command = Get-Command msstore -ErrorAction SilentlyContinue
-    if ($null -eq $command) {
-        if ($Required) {
-            throw "Microsoft Store Developer CLI (msstore >= $($pinnedToolchain.MsStoreCliMinVersion)) is required on PATH when -ForStoreUpload is specified."
+    if (-not $Required) {
+        return "skipped (min $($pinnedToolchain.MsStoreCliMinVersion) enforced on -ForStoreUpload)"
+    }
+
+    $cliExecutable = $null
+    $packagedCliAlias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\Microsoft.MicrosoftStoreCLI_8wekyb3d8bbwe\MSStore.exe'
+    if (Test-Path -LiteralPath $packagedCliAlias -PathType Leaf) {
+        $cliExecutable = $packagedCliAlias
+    }
+    else {
+        $standaloneCommand = Get-Command msstore -All -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.CommandType -eq 'Application' -and
+                -not [string]::IsNullOrWhiteSpace($_.Source) -and
+                $_.Source -notlike '*\Microsoft\WindowsApps\*'
+            } |
+            Select-Object -First 1
+        if ($null -ne $standaloneCommand) {
+            $cliExecutable = $standaloneCommand.Source
         }
-        return "not-installed (min $($pinnedToolchain.MsStoreCliMinVersion) for upload)"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($cliExecutable)) {
+        throw "Microsoft Store Developer CLI (msstore >= $($pinnedToolchain.MsStoreCliMinVersion)) is required when -ForStoreUpload is specified."
     }
 
     $previousPreference = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $rawOutput = (& $command.Source --version 2>&1 | Out-String).Trim()
+        $rawOutput = (& $cliExecutable --version 2>&1 | Out-String).Trim()
         $exitCode = $LASTEXITCODE
     }
     finally {
