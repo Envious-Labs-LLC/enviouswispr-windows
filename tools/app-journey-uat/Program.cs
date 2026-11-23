@@ -335,6 +335,14 @@ if (syntheticHotkey &&
             + "accepted only with --quick-tap, where the question is what a key-up does to a preview "
             + "worker that is still starting.");
 }
+if (cleanUser &&
+    (liveMicrophone || livePreview || escapeRecovery || syntheticHotkey || quickTap ||
+     onboardingPractice || quickAdd || languageChange || failureMode != JourneyFailureMode.None ||
+     deterministicProfile != DeterministicJourneyProfile.None))
+{
+    throw new JourneyExpectationException(
+        "--clean-user exercises a fresh install with no preloaded settings.json and cannot be combined with modes that pre-seed settings (--synthetic-hotkey, --live-microphone, --live-preview, --escape-recovery, --quick-add, --language-change, --deterministic-profile, or --failure).");
+}
 if (polishProvider == PolishProvider.EgOne)
 {
     if (packaged)
@@ -353,10 +361,21 @@ if (polishProvider == PolishProvider.EgOne)
             expectedFileName: "llama-server.exe");
     }
 
-    RequireAbsoluteFileArgument(
-        egOneModelFile,
-        "--eg1-model must identify an existing fully qualified GGUF model.",
-        expectedExtension: ".gguf");
+    if (cleanUser)
+    {
+        if (egOneModelFile is not null)
+        {
+            throw new JourneyExpectationException(
+                "--clean-user --polish eg-1 resolves the model from the default data directory without overrides and rejects --eg1-model.");
+        }
+    }
+    else
+    {
+        RequireAbsoluteFileArgument(
+            egOneModelFile,
+            "--eg1-model must identify an existing fully qualified GGUF model.",
+            expectedExtension: ".gguf");
+    }
 }
 else if (egOneServerExecutable is not null || egOneModelFile is not null)
 {
@@ -479,20 +498,25 @@ RequireFile(fixturePath, "The reviewed public fixture is missing.");
 RequireReviewedFixture(fixturePath, fixtureHash);
 var appVersion = FileVersionInfo.GetVersionInfo(appExecutable).ProductVersion ?? "Unknown";
 var appSha256 = Sha256Hex(appExecutable);
-if (englishParakeet && !new LocalParakeetModelProbe().Probe(modelDirectory).Int8Complete)
+if (!cleanUser)
 {
-    throw new JourneyExpectationException(
-        "The gitignored Parakeet quantized model is required for English journey UAT.");
-}
-if (!englishParakeet && !new LocalWhisperModelProbe().Probe(modelDirectory).QuantizedComplete)
-{
-    throw new JourneyExpectationException(
-        "The gitignored Whisper large-v3-turbo quantized model is required for journey UAT.");
-}
-if (livePreview && !new LocalWhisperModelProbe().Probe(previewModelDirectory).PreviewSmallComplete)
-{
-    throw new JourneyExpectationException(
-        "The gitignored Whisper small preview model is required for live-preview journey UAT.");
+    if (englishParakeet && !new LocalParakeetModelProbe().Probe(modelDirectory).Int8Complete)
+    {
+        throw new JourneyExpectationException(
+            "The gitignored Parakeet quantized model is required for English journey UAT.");
+    }
+
+    if (!englishParakeet && !new LocalWhisperModelProbe().Probe(modelDirectory).QuantizedComplete)
+    {
+        throw new JourneyExpectationException(
+            "The gitignored Whisper large-v3-turbo quantized model is required for journey UAT.");
+    }
+
+    if (livePreview && !new LocalWhisperModelProbe().Probe(previewModelDirectory).PreviewSmallComplete)
+    {
+        throw new JourneyExpectationException(
+            "The gitignored Whisper small preview model is required for live-preview journey UAT.");
+    }
 }
 
 EnsureNoUnownedProcesses("EnviousWispr.App", "EnviousWispr.Delivery.Target.Uat");
@@ -726,15 +750,14 @@ try
     if (cleanUser)
     {
         // Clean-user packaged validation runs in a separate clean Windows account or VM without data,
-        // credential, model, or runtime overrides (.claude/knowledge/distribution.md:39-41, 50-51).
+        // model, or runtime path overrides (.claude/knowledge/distribution.md:39-41, 50-51).
         appStart.Environment.Remove("ENVIOUSWISPR_DATA_DIRECTORY");
-        appStart.Environment.Remove("ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX");
     }
     else
     {
         appStart.Environment["ENVIOUSWISPR_DATA_DIRECTORY"] = profileDirectory;
-        appStart.Environment["ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX"] = $"journey-{runId}";
     }
+    appStart.Environment["ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX"] = $"journey-{runId}";
     appStart.Environment["ENVIOUSWISPR_UAT_READY_EVENT"] = readyEventName;
     appStart.Environment["ENVIOUSWISPR_UAT_RUNTIME_READY_EVENT"] = runtimeEventName;
     appStart.Environment["ENVIOUSWISPR_ASR_ENGINE"] = engineName;
@@ -778,7 +801,14 @@ try
             appStart.Environment["ENVIOUSWISPR_EG1_SERVER_EXE"] = egOneServerExecutable!;
         }
 
-        appStart.Environment["ENVIOUSWISPR_EG1_MODEL_PATH"] = egOneModelFile!;
+        if (cleanUser)
+        {
+            appStart.Environment.Remove("ENVIOUSWISPR_EG1_MODEL_PATH");
+        }
+        else
+        {
+            appStart.Environment["ENVIOUSWISPR_EG1_MODEL_PATH"] = egOneModelFile!;
+        }
         appStart.Environment.Remove("ENVIOUSWISPR_EG1_GPU_LAYERS");
     }
     else if (polishProvider == PolishProvider.Ollama)
@@ -854,10 +884,34 @@ try
         "The production WinUI app did not start.");
 
     shellReady = readyEvent.WaitOne(TimeSpan.FromSeconds(30));
-    runtimeReady = runtimeEvent.WaitOne(
-        failureMode == JourneyFailureMode.WorkerStartup
-            ? TimeSpan.FromMilliseconds(500)
-            : TimeSpan.FromSeconds(30));
+    if (cleanUser)
+    {
+        if (runtimeEvent.WaitOne(TimeSpan.FromMilliseconds(500)))
+        {
+            throw new JourneyExpectationException(
+                "--clean-user started with a pre-existing model instead of exercising first-run model delivery.");
+        }
+
+        if (shellReady && !app.HasExited)
+        {
+            // On a fresh clean-user install with no pre-downloaded model in the Store model directory,
+            // pressing Get Started on the Welcome onboarding screen triggers the app's model delivery
+            // download and subsequent ReconfigureTranscriptionAsync worker startup.
+            TriggerOnboardingModelDeliveryIfPresent(app.Id);
+            if (!target.HasExited && target.MainWindowHandle != 0)
+            {
+                BringToForeground(target.MainWindowHandle);
+            }
+            runtimeReady = WaitForCleanUserRuntimeWorker(app, diagnosticPath, TimeSpan.FromMinutes(10));
+        }
+    }
+    else
+    {
+        runtimeReady = runtimeEvent.WaitOne(
+            failureMode == JourneyFailureMode.WorkerStartup
+                ? TimeSpan.FromMilliseconds(500)
+                : TimeSpan.FromSeconds(30));
+    }
     var expectedRuntimeReady = failureMode != JourneyFailureMode.WorkerStartup;
     if (!shellReady || runtimeReady != expectedRuntimeReady ||
         app.HasExited && failureMode != JourneyFailureMode.WorkerStartup)
@@ -3598,22 +3652,16 @@ static void RemoveUatDirectory(string path)
 
 static void RequireCleanUserProfile(string productRoot)
 {
-    string[] existingUserFiles =
-    [
-        "settings.json",
-        "history.json",
-        "run-state.json",
-        "recovery.json",
-        Path.Combine("diagnostics", "app.jsonl"),
-    ];
-    foreach (var relative in existingUserFiles)
+    if (!Directory.Exists(productRoot))
     {
-        var candidate = Path.Combine(productRoot, relative);
-        if (File.Exists(candidate))
-        {
-            throw JourneyExpectationException.Instrument(
-                $"--clean-user must run in a separate clean Windows account or VM with no existing EnviousWispr user data under {productRoot} (found {relative}).");
-        }
+        return;
+    }
+
+    var existingEntry = Directory.EnumerateFileSystemEntries(productRoot).FirstOrDefault();
+    if (existingEntry is not null)
+    {
+        throw JourneyExpectationException.Instrument(
+            $"--clean-user must run in a separate clean Windows account or VM with no existing EnviousWispr user data or cached models under {productRoot} (found {Path.GetFileName(existingEntry)}).");
     }
 }
 
@@ -3633,6 +3681,20 @@ static void RemoveCleanUserArtifacts(string productRoot)
         if (File.Exists(candidate))
         {
             File.Delete(candidate);
+        }
+    }
+
+    string[] relativeDirectories =
+    [
+        "diagnostics",
+        "models",
+    ];
+    foreach (var relativeDir in relativeDirectories)
+    {
+        var candidateDir = Path.Combine(productRoot, relativeDir);
+        if (Directory.Exists(candidateDir))
+        {
+            Directory.Delete(candidateDir, recursive: true);
         }
     }
 }
@@ -3674,7 +3736,7 @@ static string ResolveRegisteredPackagedAppExecutable(string repoRoot)
 
             var publisherMatches = string.Equals(package.Id.Publisher, expectedPublisher, StringComparison.Ordinal);
             var packageVersion = $"{package.Id.Version.Major}.{package.Id.Version.Minor}.{package.Id.Version.Build}.{package.Id.Version.Revision}";
-            var versionMatches = string.Equals(packageVersion, expectedVersion, StringComparison.Ordinal);
+            var versionMatches = MatchesManifestVersion(packageVersion, expectedVersion);
             if (!publisherMatches || !versionMatches)
             {
                 conflictingByName.Add($"{package.Id.FullName} ({package.Id.Publisher})");
@@ -3771,6 +3833,53 @@ static string? ReadXmlAttribute(string xml, string elementPrefix, string attribu
     return end > start ? element[start..end] : null;
 }
 
+static bool MatchesManifestVersion(string? actualVersion, string expectedVersion)
+{
+    if (!Version.TryParse(actualVersion, out var actual) ||
+        !Version.TryParse(expectedVersion, out var expected))
+    {
+        return false;
+    }
+
+    // The repository manifest always commits a revision of 0 (X.Y.Z.0), while the Microsoft Store
+    // assigns the fourth component (revision) when signing/delivering a flight or release package.
+    return actual.Major == expected.Major &&
+        actual.Minor == expected.Minor &&
+        actual.Build == expected.Build &&
+        actual.Revision >= 0;
+}
+
+static void TriggerOnboardingModelDeliveryIfPresent(int processId)
+{
+    var window = JourneyUi.FindMainWindow(processId, TimeSpan.FromSeconds(15));
+    var button = JourneyUi.WaitForEnabled(window, "FinishOnboardingButton", TimeSpan.FromSeconds(10));
+    if (button is not null &&
+        string.Equals(button.Current.Name, "Get Started", StringComparison.Ordinal))
+    {
+        ((InvokePattern)button.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+    }
+}
+
+static bool WaitForCleanUserRuntimeWorker(Process app, string diagnosticPath, TimeSpan timeout)
+{
+    var timer = Stopwatch.StartNew();
+    while (timer.Elapsed < timeout && !app.HasExited)
+    {
+        var events = ReadDiagnosticEvents(diagnosticPath);
+        if (ChildProcessIds(app.Id, "EnviousWispr.RuntimeWorker").Any() &&
+            events.Any(value => value.StartsWith("SettingsCreated/", StringComparison.Ordinal)) &&
+            events.Any(value => value.StartsWith("ModelDeliveryStarted/", StringComparison.Ordinal)) &&
+            events.Any(value => value.StartsWith("ModelDeliveryCompleted/", StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        Thread.Sleep(250);
+    }
+
+    return false;
+}
+
 static void RequirePackagedLayoutManifest(string appExecutablePath, string repoRoot)
 {
     var directory = Path.GetDirectoryName(appExecutablePath)!;
@@ -3788,7 +3897,7 @@ static void RequirePackagedLayoutManifest(string appExecutablePath, string repoR
     var layoutVersion = ReadXmlAttribute(xml, "<Identity", "Version");
     if (!string.Equals(layoutName, expectedName, StringComparison.OrdinalIgnoreCase) ||
         !string.Equals(layoutPublisher, expectedPublisher, StringComparison.Ordinal) ||
-        !string.Equals(layoutVersion, expectedVersion, StringComparison.Ordinal))
+        !MatchesManifestVersion(layoutVersion, expectedVersion))
     {
         throw new JourneyExpectationException(
             $"The packaged AppxManifest.xml identity ({layoutName} {layoutVersion}, {layoutPublisher}) does not match the repository Package.appxmanifest ({expectedName} {expectedVersion}, {expectedPublisher}).");

@@ -386,13 +386,13 @@ registered layout via `--app-executable`). In `--packaged` mode the harness:
    redirected shadow directory under `%LocalAppData%\Packages\<PackageFamilyName>\LocalCache`.
 
 Add `--clean-user` with `--packaged` in a separate clean Windows account or VM (with no existing EnviousWispr user
-files under `%LocalAppData%\Envious Labs\EnviousWispr`) to run without `ENVIOUSWISPR_DATA_DIRECTORY`,
-`ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX`, `ENVIOUSWISPR_MODEL_DIRECTORY`, `ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY`, or
-`ENVIOUSWISPR_EG1_SERVER_EXE` overrides.
+files under `%LocalAppData%\Envious Labs\EnviousWispr`) to run without pre-seeding `settings.json` and without
+`ENVIOUSWISPR_DATA_DIRECTORY`, `ENVIOUSWISPR_MODEL_DIRECTORY`, `ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY`,
+`ENVIOUSWISPR_EG1_SERVER_EXE`, or `ENVIOUSWISPR_EG1_MODEL_PATH` overrides.
 
 ```powershell
 dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
   -c Release -- --english-parakeet --synthetic-hotkey --packaged
 dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
-  -c Release -- --english-parakeet --synthetic-hotkey --packaged --clean-user
+  -c Release -- --english-parakeet --packaged --clean-user
 ```
