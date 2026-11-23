@@ -65,5 +65,29 @@ Before public launch, the candidate must satisfy the complete Store release chec
 5. **Store Flight & In-App Update Verification:** Publish package to a Partner Center private flight. Verify that `StoreUpdateService` detects the update when idle, holds dictation admission during update application, cleanly exits, and preserves existing data.
 6. **Issue Evidence Preservation:** Record all validation results in GitHub issue #52. Raw user content, credentials, private machine paths, audio, transcripts, crash dumps, and signing metadata never enter the repository or evidence record.
 
+## Partner Center Restricted Capability Justifications
+
+Use the submission-ready text below in Partner Center (**Application -> Packages -> Capability declarations** and **Notes for certification**) when submitting `Package.appxmanifest` for Microsoft Store certification (#42, #52).
+
+### 1. `runFullTrust` (`rescap:Capability Name="runFullTrust"`)
+
+> **Partner Center Justification (`runFullTrust`):**
+> EnviousWispr is a system-wide push-to-talk desktop dictation utility for Windows 11 (`EntryPoint="Windows.FullTrustApplication"`). It requires medium-integrity desktop execution (`runFullTrust`) for three core product functions that cannot execute inside an AppContainer sandbox:
+> 1. **System-wide push-to-talk keyboard hook (`WH_KEYBOARD_LL`):** The app listens for both key-down and key-up transitions of the user's configured push-to-talk shortcut (plus optional cancel, Quick Add, and Paste/Copy Last Dictation shortcuts) while any desktop application is focused. Win32 `RegisterHotKey` delivers only key-down events and cannot detect the key-release edge required to stop recording.
+> 2. **Cross-process text delivery (`UIAutomation` and `SendInput` / clipboard restoration):** When the user releases the push-to-talk key, EnviousWispr delivers the completed transcript into the target application window that held focus when recording started, using direct UI Automation `ValuePattern` writes for standard edit controls or clipboard-backed `SendInput` paste with automatic clipboard snapshot and restoration.
+> 3. **Out-of-process local AI runtime workers (`EnviousWispr.RuntimeWorker.exe` and `runtime\llama-server.exe`) and local loopback integrations:** All speech recognition (NVIDIA Parakeet via ONNX Runtime and OpenAI Whisper via `whisper.cpp` in `EnviousWispr.RuntimeWorker.exe`) and bundled EG-1 local text polishing (`runtime\llama-server.exe`) run in supervised child processes on the user's PC, while optional local Ollama polishing connects over loopback HTTP to an independently running, user-managed Ollama service (which EnviousWispr never starts), ensuring dictated audio never leaves the device.
+>
+> The application runs at standard user (`mediumIL`) integrity, never requests administrator elevation, never injects input into elevated windows (falling back cleanly to clipboard copy), and honours the user-controlled `windows.startupTask` declaration (`EnviousWisprStartup`, disabled by default) in Windows Settings and Task Manager.
+
+### 2. `unvirtualizedResources` (`rescap:Capability Name="unvirtualizedResources"` and `virtualization:FileSystemWriteVirtualization`)
+
+> **Partner Center Justification (`unvirtualizedResources`):**
+> EnviousWispr declares `<rescap:Capability Name="unvirtualizedResources" />` paired with a single Windows 11 directory exclusion in `Package.appxmanifest`:
+> `<virtualization:ExcludedDirectory>$(KnownFolder:LocalAppData)\Envious Labs\EnviousWispr</virtualization:ExcludedDirectory>`.
+>
+> Without this exclusion, MSIX redirects writes under `%LocalAppData%` into package-private `LocalCache` storage and deletes that directory when the package is uninstalled. Excluding `%LocalAppData%\Envious Labs\EnviousWispr` from file-system write virtualization preserves the user's multi-gigabyte downloaded on-device speech and polish model packs (`models\`, up to ~3 GB across Parakeet, Whisper, EG-1, and optional on-demand CUDA runtime libraries), dictation history (`history.json`), custom dictionary and snippets, and preferences (`settings.json`) across MSIX repairs, updates, and uninstall/reinstall cycles.
+>
+> Virtualization is not disabled globally: the exclusion is scoped strictly to the single product folder `$(KnownFolder:LocalAppData)\Envious Labs\EnviousWispr` (never the parent company folder or the Windows registry). Because MSIX packages do not execute custom uninstaller dialogs during package removal, EnviousWispr discloses data retention during first-run onboarding and provides explicit in-app controls under **Settings -> Backup** (**Export my data** to a `.zip` archive and **Delete all EnviousWispr data**, which removes `%LocalAppData%\Envious Labs\EnviousWispr` and stored Windows Credential Manager API keys upon user confirmation).
+
 The final action is an explicit founder decision. The gate never merges, signs, uploads, publishes, enables
 paid infrastructure, or converts an unobserved cell into a pass.
