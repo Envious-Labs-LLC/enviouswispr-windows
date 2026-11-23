@@ -378,4 +378,7 @@ public enum AppEventCode
 
     /// <summary>A streaming audio segment was processed while the user spoke, but returned no recognized speech.</summary>
     StreamingSegmentEmpty,
+
+    /// <summary>Final tail or whole-recording transcription failed after streaming had already committed recognized speech; the committed head start was preserved instead of losing the dictation.</summary>
+    StreamingHeadStartPreserved,
 }

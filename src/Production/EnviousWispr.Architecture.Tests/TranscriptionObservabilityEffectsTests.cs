@@ -64,7 +64,58 @@ public sealed class TranscriptionObservabilityEffectsTests
         var entry = Assert.Single(logger.Entries);
         Assert.Equal(expectedEvent, entry.Event);
         Assert.Equal(AppFailureCategory.None, entry.Failure);
+        Assert.Null(entry.ErrorCode);
         Assert.Equal(210, entry.ElapsedMilliseconds);
+    }
+
+    [Theory]
+    [InlineData(AppErrorCode.RuntimeProviderUnavailable, AppFailureCategory.RuntimeProvider)]
+    [InlineData(AppErrorCode.TranscriptionFailed, AppFailureCategory.AsrUnavailable)]
+    [InlineData(AppErrorCode.TranscriptionEncoderFailed, AppFailureCategory.AsrUnavailable)]
+    [InlineData(AppErrorCode.RuntimeWorkerFailed, AppFailureCategory.RuntimeWorker)]
+    public void RecordTranscriptionFinishedPreservesDegradedErrorCodeAndCategory(
+        AppErrorCode degradedCode,
+        AppFailureCategory expectedCategory)
+    {
+        var logger = new RecordingLogger();
+        var effects = CreateEffects(logger);
+        var degradedError = new AppError(degradedCode, AppErrorStage.FinalAsr, CanRetry: true);
+        var transcript = new Transcript(
+            new DictationSessionId(Guid.NewGuid()),
+            "committed speech",
+            "parakeet",
+            [],
+            UsedFallback: true,
+            DegradedError: degradedError);
+
+        effects.RecordTranscriptionFinished(transcript, 320);
+
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal(AppEventCode.DictationTranscriptionDegraded, entry.Event);
+        Assert.Equal(expectedCategory, entry.Failure);
+        Assert.Equal(degradedCode, entry.ErrorCode);
+        Assert.Equal(320, entry.ElapsedMilliseconds);
+    }
+
+    [Fact]
+    public void RecordTranscriptionFinishedMapsUntypedFallbackToUnknownFailure()
+    {
+        var logger = new RecordingLogger();
+        var effects = CreateEffects(logger);
+        var transcript = new Transcript(
+            new DictationSessionId(Guid.NewGuid()),
+            "committed speech",
+            "parakeet",
+            [],
+            UsedFallback: true,
+            DegradedError: null);
+
+        effects.RecordTranscriptionFinished(transcript, 125);
+
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal(AppEventCode.DictationTranscriptionDegraded, entry.Event);
+        Assert.Equal(AppFailureCategory.Unknown, entry.Failure);
+        Assert.Null(entry.ErrorCode);
     }
 
     [Theory]

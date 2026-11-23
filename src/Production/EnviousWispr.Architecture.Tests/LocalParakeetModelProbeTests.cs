@@ -24,6 +24,10 @@ public sealed class LocalParakeetModelProbeTests
 
             Assert.True(result.Int8Complete);
             Assert.False(result.Fp32Complete);
+            Assert.True(LocalParakeetModelProbe.HasFullPrecisionEncoder(directory));
+
+            await File.WriteAllBytesAsync(Path.Combine(directory, "encoder-model.onnx.data"), []);
+            Assert.False(LocalParakeetModelProbe.HasFullPrecisionEncoder(directory));
         }
         finally
         {

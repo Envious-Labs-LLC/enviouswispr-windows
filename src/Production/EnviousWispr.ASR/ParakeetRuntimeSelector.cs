@@ -68,20 +68,31 @@ public static class ParakeetRuntimeSelector
         ParakeetModelInventory models,
         bool manual)
     {
-        if (!models.Int8Complete)
+        if (models.Int8Complete)
         {
-            return Failure(
-                RuntimeSelectionReason.RequiredModelPackMissing,
-                AppErrorCode.ModelPackUnavailable);
+            return Success(
+                RuntimeProviderKind.Cpu,
+                ParakeetModelPack.Quantized,
+                ChooseCpuIntraOpThreads(hardware),
+                manual
+                    ? RuntimeSelectionReason.ManualProviderAccepted
+                    : RuntimeSelectionReason.TunedCpuUniversalFallback);
         }
 
-        return Success(
-            RuntimeProviderKind.Cpu,
-            ParakeetModelPack.Quantized,
-            ChooseCpuIntraOpThreads(hardware),
-            manual
-                ? RuntimeSelectionReason.ManualProviderAccepted
-                : RuntimeSelectionReason.TunedCpuUniversalFallback);
+        if (models.Fp32Complete)
+        {
+            return Success(
+                RuntimeProviderKind.Cpu,
+                ParakeetModelPack.FullPrecision,
+                ChooseCpuIntraOpThreads(hardware),
+                manual
+                    ? RuntimeSelectionReason.ManualProviderAccepted
+                    : RuntimeSelectionReason.TunedCpuUniversalFallback);
+        }
+
+        return Failure(
+            RuntimeSelectionReason.RequiredModelPackMissing,
+            AppErrorCode.ModelPackUnavailable);
     }
 
     private static RuntimeSelection SelectCuda(

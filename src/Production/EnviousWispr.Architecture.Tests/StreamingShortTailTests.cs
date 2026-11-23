@@ -36,20 +36,59 @@ public sealed class StreamingShortTailTests
 
     [Theory]
     [InlineData(AppErrorCode.TranscriptionFailed, AppErrorStage.FinalAsr)]
+    [InlineData(AppErrorCode.TranscriptionPreprocessorFailed, AppErrorStage.AsrPreprocessor)]
+    [InlineData(AppErrorCode.TranscriptionEncoderFailed, AppErrorStage.AsrEncoder)]
+    [InlineData(AppErrorCode.TranscriptionDecoderFailed, AppErrorStage.AsrDecoder)]
+    [InlineData(AppErrorCode.RuntimeWorkerFailed, AppErrorStage.RuntimeWorker)]
     [InlineData(AppErrorCode.RuntimeResourceBusy, AppErrorStage.FinalAsr)]
     [InlineData(AppErrorCode.RuntimeProviderUnavailable, AppErrorStage.FinalAsr)]
     [InlineData(AppErrorCode.TranscriptionInputTooShort, AppErrorStage.RuntimeWorker)]
-    public async Task OtherFailuresNeverTriggerWholeRecovery(AppErrorCode code, AppErrorStage stage)
+    public async Task OtherFailuresNeverTriggerWholeRecoveryAndPreserveCommittedHeadStart(
+        AppErrorCode code,
+        AppErrorStage stage)
     {
-        var world = await World.ReadyAsync();
+        var world = await World.ReadyAsync(tailSamples: 10_080);
         var expected = new TranscriptionEngineException(new AppError(code, stage, CanRetry: true));
         world.Engine.Responses.Enqueue((_, _) => throw expected);
 
-        var actual = await Assert.ThrowsAsync<TranscriptionEngineException>(() =>
-            world.Controller.TranscribeUsingAnyHeadStartAsync(world.Engine, world.Whole, CancellationToken.None));
+        var result = await world.Controller.TranscribeUsingAnyHeadStartAsync(
+            world.Engine, world.Whole, CancellationToken.None);
 
-        Assert.Same(expected, actual);
+        Assert.Equal("committed head", result.Text);
+        Assert.Equal("head", result.EngineId);
+        Assert.Equal("en", result.DetectedLanguage);
+        Assert.Equal("auto", result.RecognitionLanguage);
+        Assert.True(result.UsedFallback);
+        Assert.Equal(expected.Error, result.DegradedError);
         Assert.Equal(2, world.Engine.Requests.Count);
+        Assert.Equal(10_080, world.Engine.Requests[1].Samples.Length);
+        var preserved = Assert.Single(
+            world.Log.Entries,
+            entry => entry.Event == AppEventCode.StreamingHeadStartPreserved);
+        Assert.Equal(AppFailureCategories.For(expected.Error), preserved.Failure);
+        Assert.Equal(code, preserved.ErrorCode);
+        Assert.DoesNotContain(world.Log.Entries, entry => entry.Event == AppEventCode.StreamingHeadStartUsed);
+        Assert.DoesNotContain(world.Log.Entries, entry => entry.Event == AppEventCode.StreamingAbandoned);
+    }
+
+    [Fact]
+    public async Task UntypedTailFailurePreservesCommittedHeadStartAsUnknownDegraded()
+    {
+        var world = await World.ReadyAsync(tailSamples: 10_080);
+        world.Engine.Responses.Enqueue((_, _) => throw new InvalidOperationException("unexpected worker pipe fault"));
+
+        var result = await world.Controller.TranscribeUsingAnyHeadStartAsync(
+            world.Engine, world.Whole, CancellationToken.None);
+
+        Assert.Equal("committed head", result.Text);
+        Assert.True(result.UsedFallback);
+        Assert.Null(result.DegradedError);
+        Assert.Equal(2, world.Engine.Requests.Count);
+        var preserved = Assert.Single(
+            world.Log.Entries,
+            entry => entry.Event == AppEventCode.StreamingHeadStartPreserved);
+        Assert.Equal(AppFailureCategory.Unknown, preserved.Failure);
+        Assert.Null(preserved.ErrorCode);
     }
 
     [Fact]
@@ -69,11 +108,17 @@ public sealed class StreamingShortTailTests
         Assert.Equal(2, world.Engine.Requests.Count);
     }
 
-    [Fact]
-    public async Task AnOwnedLoopPreventsRecoveryEvenWhenNoNativeRequestIsCurrentlyActive()
+    [Theory]
+    [InlineData(AppErrorCode.TranscriptionInputTooShort)]
+    [InlineData(AppErrorCode.TranscriptionFailed)]
+    public async Task AnOwnedLoopPreventsRecoveryAndPreservationEvenWhenNoNativeRequestIsCurrentlyActive(
+        AppErrorCode code)
     {
-        var world = await World.ReadyAsync(stop: false);
-        var expected = Short();
+        var world = await World.ReadyAsync(stop: false, tailSamples: code == AppErrorCode.TranscriptionInputTooShort ? 160 : 10_080);
+        var expected = new TranscriptionEngineException(new AppError(
+            code,
+            AppErrorStage.FinalAsr,
+            CanRetry: code != AppErrorCode.TranscriptionInputTooShort));
         world.Engine.Responses.Enqueue((_, _) => throw expected);
         try
         {
@@ -82,6 +127,7 @@ public sealed class StreamingShortTailTests
             Assert.Same(expected, actual);
             Assert.True(world.Controller.IsRunning);
             Assert.Equal(2, world.Engine.Requests.Count);
+            Assert.DoesNotContain(world.Log.Entries, entry => entry.Event == AppEventCode.StreamingHeadStartPreserved);
         }
         finally
         {
@@ -108,18 +154,110 @@ public sealed class StreamingShortTailTests
     }
 
     [Fact]
-    public async Task FailedWholeRecoveryDoesNotRecurse()
+    public async Task FailedWholeRecoveryDoesNotRecurseAndPreservesCommittedHeadStart()
     {
         var world = await World.ReadyAsync();
-        var expected = Short();
+        var expected = new TranscriptionEngineException(new AppError(
+            AppErrorCode.TranscriptionFailed,
+            AppErrorStage.FinalAsr,
+            CanRetry: true));
         world.Engine.Responses.Enqueue((_, _) => throw Short());
         world.Engine.Responses.Enqueue((_, _) => throw expected);
 
+        var result = await world.Controller.TranscribeUsingAnyHeadStartAsync(
+            world.Engine, world.Whole, CancellationToken.None);
+
+        Assert.Equal("committed head", result.Text);
+        Assert.True(result.UsedFallback);
+        Assert.Equal(expected.Error, result.DegradedError);
+        Assert.Equal(3, world.Engine.Requests.Count);
+        Assert.Contains(world.Log.Entries, entry => entry.Event == AppEventCode.StreamingAbandoned &&
+            entry.ErrorCode == AppErrorCode.TranscriptionInputTooShort);
+        Assert.Contains(world.Log.Entries, entry => entry.Event == AppEventCode.StreamingHeadStartPreserved &&
+            entry.ErrorCode == AppErrorCode.TranscriptionFailed);
+    }
+
+    [Fact]
+    public async Task CancelledTailOrAudioOutcomePropagatesWithoutPreservingHeadStart()
+    {
+        var cancelledTokenWorld = await World.ReadyAsync(tailSamples: 10_080);
+        using var cancellation = new CancellationTokenSource();
+        cancelledTokenWorld.Engine.Responses.Enqueue((_, _) =>
+        {
+            cancellation.Cancel();
+            throw new TranscriptionEngineException(new AppError(
+                AppErrorCode.TranscriptionFailed,
+                AppErrorStage.FinalAsr,
+                CanRetry: true));
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            cancelledTokenWorld.Controller.TranscribeUsingAnyHeadStartAsync(
+                cancelledTokenWorld.Engine,
+                cancelledTokenWorld.Whole,
+                cancellation.Token));
+        Assert.DoesNotContain(cancelledTokenWorld.Log.Entries, entry => entry.Event == AppEventCode.StreamingHeadStartPreserved);
+
+        var cancelledAudioWorld = await World.ReadyAsync(tailSamples: 10_080);
+        var failed = new TranscriptionEngineException(new AppError(
+            AppErrorCode.TranscriptionFailed,
+            AppErrorStage.FinalAsr,
+            CanRetry: true));
+        cancelledAudioWorld.Engine.Responses.Enqueue((_, _) => throw failed);
+
+        var thrown = await Assert.ThrowsAsync<TranscriptionEngineException>(() =>
+            cancelledAudioWorld.Controller.TranscribeUsingAnyHeadStartAsync(
+                cancelledAudioWorld.Engine,
+                cancelledAudioWorld.Whole with { Outcome = AudioCaptureOutcome.Cancelled },
+                CancellationToken.None));
+        Assert.Same(failed, thrown);
+        Assert.DoesNotContain(cancelledAudioWorld.Log.Entries, entry => entry.Event == AppEventCode.StreamingHeadStartPreserved);
+    }
+
+    [Fact]
+    public async Task PreviousSessionCommittedHeadNeverLeaksIntoAnotherSessionWhenWholeRequestFails()
+    {
+        var world = await World.ReadyAsync(stop: false, tailSamples: 10_080);
+        var nextSession = DictationSessionId.Create();
+        world.Controller.Start(nextSession);
+        await world.Controller.StopAsync();
+
+        var expected = new TranscriptionEngineException(new AppError(
+            AppErrorCode.TranscriptionFailed,
+            AppErrorStage.FinalAsr,
+            CanRetry: true));
+        world.Engine.Responses.Enqueue((_, _) => throw expected);
+
         var actual = await Assert.ThrowsAsync<TranscriptionEngineException>(() =>
-            world.Controller.TranscribeUsingAnyHeadStartAsync(world.Engine, world.Whole, CancellationToken.None));
+            world.Controller.TranscribeUsingAnyHeadStartAsync(
+                world.Engine,
+                world.Whole with { SessionId = nextSession },
+                CancellationToken.None));
 
         Assert.Same(expected, actual);
-        Assert.Equal(3, world.Engine.Requests.Count);
+        Assert.DoesNotContain(world.Log.Entries, entry => entry.Event == AppEventCode.StreamingHeadStartPreserved);
+    }
+
+    [Fact]
+    public async Task ZeroTailWholeRequestFailureStillPreservesCommittedHeadStartForSameSession()
+    {
+        var world = await World.ReadyAsync(tailSamples: 0);
+        var expected = new TranscriptionEngineException(new AppError(
+            AppErrorCode.TranscriptionFailed,
+            AppErrorStage.FinalAsr,
+            CanRetry: true));
+        world.Engine.Responses.Enqueue((_, _) => throw expected);
+
+        var result = await world.Controller.TranscribeUsingAnyHeadStartAsync(
+            world.Engine, world.Whole, CancellationToken.None);
+
+        Assert.Equal("committed head", result.Text);
+        Assert.True(result.UsedFallback);
+        Assert.Equal(expected.Error, result.DegradedError);
+        Assert.Equal(2, world.Engine.Requests.Count);
+        Assert.Equal(world.PrefixLength, world.Engine.Requests[1].Samples.Length);
+        Assert.Contains(world.Log.Entries, entry => entry.Event == AppEventCode.StreamingHeadStartPreserved &&
+            entry.ErrorCode == AppErrorCode.TranscriptionFailed);
     }
 
     [Fact]
@@ -181,12 +319,12 @@ public sealed class StreamingShortTailTests
         public required Deterministic.ManualClock Clock { get; init; }
         public required int PrefixLength { get; init; }
 
-        public static World Create()
+        public static World Create(int tailSamples = 160)
         {
             var session = DictationSessionId.Create();
             var prefix = new float[70_400];
             Array.Fill(prefix, 0.2f, 3_200, 48_000);
-            var whole = new float[prefix.Length + 160];
+            var whole = new float[prefix.Length + tailSamples];
             prefix.CopyTo(whole, 0);
             var engine = new Engine();
             var log = new Log();
@@ -200,10 +338,15 @@ public sealed class StreamingShortTailTests
             };
         }
 
-        public static async Task<World> ReadyAsync(bool stop = true)
+        public static async Task<World> ReadyAsync(bool stop = true, int tailSamples = 160)
         {
-            var world = Create();
-            world.Engine.Responses.Enqueue((audio, _) => new Transcript(audio.SessionId, "committed head", "head"));
+            var world = Create(tailSamples);
+            world.Engine.Responses.Enqueue((audio, _) => new Transcript(
+                audio.SessionId,
+                "committed head",
+                "head",
+                DetectedLanguage: "en",
+                RecognitionLanguage: "auto"));
             world.Controller.Start(world.Whole.SessionId);
             world.Clock.Advance(TimeSpan.FromMilliseconds(500));
             await world.Clock.WhenRegistered(2).WaitAsync(TimeSpan.FromSeconds(10));
