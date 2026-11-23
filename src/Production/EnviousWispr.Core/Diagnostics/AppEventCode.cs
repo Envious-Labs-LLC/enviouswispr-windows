@@ -281,6 +281,12 @@ public enum AppEventCode
     /// <summary>History's Paste was refused by the target and the clipboard caught the words.</summary>
     HistoryEntryKeptOnClipboard,
 
+    /// <summary>An existing history entry was repolished with an updated text.</summary>
+    HistoryEntryRepolished,
+
+    /// <summary>Repolish was requested for a history entry but could not complete.</summary>
+    HistoryEntryRepolishRefused,
+
     /// <summary>Undo was pressed with no offer standing: already used, or its copy on Home had moved on.</summary>
     SavedDictationUndoNotOffered,
 

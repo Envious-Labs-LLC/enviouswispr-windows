@@ -123,6 +123,177 @@ public sealed class JsonHistoryStoreTests
         });
     }
 
+    [Fact]
+    public async Task SchemaV1AndV2MigrateToV3OnWriteAndPreserveBackwardCompatibility()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "history.json");
+            var id = Guid.NewGuid();
+            var v1Json = $$"""
+            {
+              "schemaVersion": 1,
+              "entries": [
+                {
+                  "id": "{{id}}",
+                  "createdAt": "2026-08-26T12:00:00+00:00",
+                  "text": "legacy v1 transcript",
+                  "engineId": "synthetic-engine",
+                  "wasPolished": false,
+                  "wasDelivered": true,
+                  "expiresAt": null
+                }
+              ]
+            }
+            """;
+            await File.WriteAllTextAsync(path, v1Json);
+            using var store = new JsonHistoryStore(path);
+
+            var loaded = await store.LoadAsync(30, Now);
+            Assert.Equal(HistoryLoadStatus.Loaded, loaded.Status);
+            var entry = Assert.Single(loaded.Entries);
+            Assert.Equal(id, entry.Id);
+            Assert.Equal("legacy v1 transcript", entry.Text);
+            Assert.Null(entry.OriginalText);
+            Assert.Null(entry.LanguageCode);
+            Assert.Null(entry.PolishProviderId);
+            Assert.Null(entry.PolishModelId);
+
+            // Re-saving migrates schemaVersion to 3
+            var repolish = await store.UpdateRepolishedAsync(
+                id,
+                expectedCurrentText: "legacy v1 transcript",
+                newText: "migrated repolished text",
+                wasPolished: true,
+                providerId: "openai",
+                modelId: "gpt-4o-mini");
+
+            Assert.True(repolish.Succeeded);
+            Assert.Equal("migrated repolished text", repolish.UpdatedEntry!.Text);
+            Assert.Equal("legacy v1 transcript", repolish.UpdatedEntry.OriginalText);
+            Assert.Equal("openai", repolish.UpdatedEntry.PolishProviderId);
+            Assert.Equal("gpt-4o-mini", repolish.UpdatedEntry.PolishModelId);
+
+            var fileContent = await File.ReadAllTextAsync(path);
+            Assert.Contains("\"schemaVersion\": 3", fileContent);
+        });
+    }
+
+    [Fact]
+    public async Task UpdateRepolishedPreservesPreAiOriginalTextAcrossMultipleRepolishes()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "history.json");
+            using var store = new JsonHistoryStore(path);
+            var original = CreateEntry(Now, "first draft") with
+            {
+                OriginalText = "first draft",
+                LanguageCode = "en",
+            };
+            Assert.True((await store.AddAsync(original, 30, Now)).Succeeded);
+
+            // First repolish: "first draft" -> "second draft polished"
+            var firstRepolish = await store.UpdateRepolishedAsync(
+                original.Id,
+                expectedCurrentText: "first draft",
+                newText: "second draft polished",
+                wasPolished: true,
+                providerId: "ollama",
+                modelId: "llama3.2");
+
+            Assert.True(firstRepolish.Succeeded);
+            Assert.Equal("second draft polished", firstRepolish.UpdatedEntry!.Text);
+            Assert.Equal("first draft", firstRepolish.UpdatedEntry.OriginalText);
+            Assert.True(firstRepolish.UpdatedEntry.WasPolished);
+
+            // Second repolish: "second draft polished" -> "third draft polished"
+            var secondRepolish = await store.UpdateRepolishedAsync(
+                original.Id,
+                expectedCurrentText: "second draft polished",
+                newText: "third draft polished",
+                wasPolished: true,
+                providerId: "anthropic",
+                modelId: "claude-3-5-haiku");
+
+            Assert.True(secondRepolish.Succeeded);
+            Assert.Equal("third draft polished", secondRepolish.UpdatedEntry!.Text);
+            Assert.Equal("first draft", secondRepolish.UpdatedEntry.OriginalText); // PRESERVED! Not "second draft polished"
+            Assert.Equal("anthropic", secondRepolish.UpdatedEntry.PolishProviderId);
+            Assert.Equal("claude-3-5-haiku", secondRepolish.UpdatedEntry.PolishModelId);
+            Assert.Equal(original.CreatedAt, secondRepolish.UpdatedEntry.CreatedAt);
+            Assert.Equal(original.EngineId, secondRepolish.UpdatedEntry.EngineId);
+            Assert.Equal(original.WasDelivered, secondRepolish.UpdatedEntry.WasDelivered);
+
+            var retrieved = await store.GetAsync(original.Id);
+            Assert.NotNull(retrieved);
+            Assert.Equal("third draft polished", retrieved.Text);
+            Assert.Equal("first draft", retrieved.OriginalText);
+        });
+    }
+
+    [Fact]
+    public async Task UpdateRepolishedGuardsAgainstStaleEntryAndNotFound()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "history.json");
+            using var store = new JsonHistoryStore(path);
+            var entry = CreateEntry(Now, "actual text");
+            Assert.True((await store.AddAsync(entry, 30, Now)).Succeeded);
+
+            // Stale check
+            var staleResult = await store.UpdateRepolishedAsync(
+                entry.Id,
+                expectedCurrentText: "wrong stale text",
+                newText: "new text",
+                wasPolished: true,
+                providerId: "ollama",
+                modelId: "llama3");
+
+            Assert.False(staleResult.Succeeded);
+            Assert.Equal(HistoryRepolishUpdateStatus.Stale, staleResult.Status);
+
+            // Missing check
+            var missingResult = await store.UpdateRepolishedAsync(
+                Guid.NewGuid(),
+                expectedCurrentText: "actual text",
+                newText: "new text",
+                wasPolished: true,
+                providerId: "ollama",
+                modelId: "llama3");
+
+            Assert.False(missingResult.Succeeded);
+            Assert.Equal(HistoryRepolishUpdateStatus.NotFound, missingResult.Status);
+        });
+    }
+
+    [Fact]
+    public async Task UpdateRepolishedRejectsExpiredEntry()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var path = Path.Combine(directory, "history.json");
+            using var store = new JsonHistoryStore(path);
+            var expired = CreateEntry(Now.AddHours(-25), "expired recovery") with
+            {
+                ExpiresAt = Now.AddHours(-1),
+            };
+            Assert.True((await store.AddAsync(expired, 0, Now)).Succeeded);
+
+            var result = await store.UpdateRepolishedAsync(
+                expired.Id,
+                expectedCurrentText: "expired recovery",
+                newText: "attempted repolish",
+                wasPolished: true,
+                providerId: "ollama",
+                modelId: "llama3");
+
+            Assert.False(result.Succeeded);
+            Assert.Equal(HistoryRepolishUpdateStatus.Expired, result.Status);
+        });
+    }
+
     private static DictationHistoryEntry CreateEntry(DateTimeOffset createdAt, string text) => new(
         Guid.NewGuid(),
         createdAt,

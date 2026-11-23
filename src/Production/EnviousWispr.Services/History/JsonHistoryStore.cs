@@ -9,7 +9,7 @@ namespace EnviousWispr.Services.History;
 
 public sealed class JsonHistoryStore : IHistoryStore, IDisposable
 {
-    private const int CurrentSchemaVersion = 2;
+    private const int CurrentSchemaVersion = 3;
     private const int MaximumEntries = 10_000;
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
@@ -100,6 +100,112 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
         catch (SecurityException)
         {
             return Failure(AppErrorCode.AccessDenied);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<DictationHistoryEntry?> GetAsync(
+        Guid id,
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var loaded = await ReadAsync(cancellationToken).ConfigureAwait(false);
+            if (loaded.Status is not HistoryLoadStatus.Loaded)
+            {
+                return null;
+            }
+
+            return loaded.Entries.FirstOrDefault(entry => entry.Id == id);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<HistoryRepolishUpdateResult> UpdateRepolishedAsync(
+        Guid id,
+        string expectedCurrentText,
+        string newText,
+        bool wasPolished,
+        string? providerId,
+        string? modelId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedCurrentText);
+        ArgumentException.ThrowIfNullOrWhiteSpace(newText);
+        if (newText.Length > DictationHistoryEntry.MaximumTextLength)
+        {
+            return HistoryRepolishUpdateResult.Failed(
+                new AppError(AppErrorCode.InvalidData, AppErrorStage.HistorySave, CanRetry: false));
+        }
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var loaded = await ReadAsync(cancellationToken).ConfigureAwait(false);
+            if (loaded.Status is HistoryLoadStatus.Invalid or HistoryLoadStatus.Unavailable)
+            {
+                return HistoryRepolishUpdateResult.Failed(loaded.Error);
+            }
+
+            var existing = loaded.Entries.FirstOrDefault(entry => entry.Id == id);
+            if (existing is null)
+            {
+                return HistoryRepolishUpdateResult.NotFound();
+            }
+
+            if (existing.ExpiresAt is { } expiresAt && expiresAt <= DateTimeOffset.UtcNow)
+            {
+                return HistoryRepolishUpdateResult.Expired();
+            }
+
+            if (!string.Equals(existing.Text, expectedCurrentText, StringComparison.Ordinal))
+            {
+                return HistoryRepolishUpdateResult.Stale();
+            }
+
+            var updated = existing with
+            {
+                Text = newText,
+                WasPolished = wasPolished,
+                OriginalText = existing.OriginalText ?? existing.Text,
+                PolishProviderId = providerId,
+                PolishModelId = modelId,
+            };
+
+            if (!updated.IsValid)
+            {
+                return HistoryRepolishUpdateResult.Failed(
+                    new AppError(AppErrorCode.InvalidData, AppErrorStage.HistorySave, CanRetry: false));
+            }
+
+            var entries = loaded.Entries
+                .Select(entry => entry.Id == id ? updated : entry)
+                .ToArray();
+
+            await WriteAsync(entries, cancellationToken).ConfigureAwait(false);
+            return HistoryRepolishUpdateResult.Updated(updated);
+        }
+        catch (IOException)
+        {
+            return HistoryRepolishUpdateResult.Failed(
+                new AppError(AppErrorCode.StorageUnavailable, AppErrorStage.HistorySave, CanRetry: true));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return HistoryRepolishUpdateResult.Failed(
+                new AppError(AppErrorCode.AccessDenied, AppErrorStage.HistorySave, CanRetry: false));
+        }
+        catch (SecurityException)
+        {
+            return HistoryRepolishUpdateResult.Failed(
+                new AppError(AppErrorCode.AccessDenied, AppErrorStage.HistorySave, CanRetry: false));
         }
         finally
         {

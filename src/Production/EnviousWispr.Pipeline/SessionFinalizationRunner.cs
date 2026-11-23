@@ -286,7 +286,11 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                     await _persistence.SaveHistoryAsync(
                             transcript,
                             processed.Output.Text,
-                            HistoryWriteIntent.Delivered(finalized.WasPolished, result.Delivered))
+                            HistoryWriteIntent.Delivered(finalized.WasPolished, result.Delivered),
+                            originalText: finalized.Processed.DeterministicText,
+                            languageCode: language,
+                            polishProviderId: finalized.WasPolished ? options.Polish?.Provider.ProviderId : null,
+                            polishModelId: finalized.WasPolished ? options.Polish?.ModelId : null)
                         .ConfigureAwait(false);
                     await CompleteAndResetAsync(sessionId).ConfigureAwait(false);
                     _effects.ReportDelivery(result, language);
@@ -309,7 +313,11 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                     processed.Output.Text,
                     recoveryOnly
                         ? HistoryWriteIntent.EscapeRecovery(finalized.WasPolished, _clock.GetUtcNow().AddHours(24))
-                        : HistoryWriteIntent.Held(finalized.WasPolished))
+                        : HistoryWriteIntent.Held(finalized.WasPolished),
+                    originalText: finalized.Processed.DeterministicText,
+                    languageCode: DeliveryLanguagePolicy.For(transcript),
+                    polishProviderId: finalized.WasPolished ? options.Polish?.Provider.ProviderId : null,
+                    polishModelId: finalized.WasPolished ? options.Polish?.ModelId : null)
                 .ConfigureAwait(false);
             await CompleteAndResetAsync(sessionId).ConfigureAwait(false);
 

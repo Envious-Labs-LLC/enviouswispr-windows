@@ -45,6 +45,18 @@ public sealed record HistoryCommandResult(bool Succeeded, HistoryView? View, boo
     public static HistoryCommandResult Refused { get; } = new(false, null, Closing: true);
 }
 
+/// <summary>How a repolish command went, and the page that follows it when it worked.</summary>
+public sealed record HistoryRepolishCommandResult(
+    HistoryRepolishResult Result,
+    HistoryView? View = null)
+{
+    public bool Succeeded => Result.Succeeded;
+    public HistoryRepolishStatus Status => Result.Status;
+    public DictationHistoryEntry? Entry => Result.Entry;
+    public bool CopiedToClipboard => Result.CopiedToClipboard;
+    public bool Closing => Result.Status == HistoryRepolishStatus.Closing;
+}
+
 /// <summary>The history page's decisions about its stores, without the page.</summary>
 /// <remarks>
 /// THE PAGE KEEPS THE CONFIRMATIONS, THE CLIPBOARD, THE LIST AND THE ANNOUNCEMENTS. What moves here
@@ -66,6 +78,10 @@ public sealed class HistoryPresenter
     private readonly Func<HistoryPreferences> _preferences;
     private readonly PresentationAdmission _admission;
     private readonly TimeProvider _clock;
+    private readonly IHistoryRepolishService? _repolishService;
+    private readonly Action? _notifyHistoryChanged;
+
+    public event Action? HistoryChanged;
 
     /// <param name="preferences">
     /// The history preferences in force - retention, and whether history is on - read at the moment
@@ -77,7 +93,9 @@ public sealed class HistoryPresenter
         IRecoveryTextStore recovery,
         Func<HistoryPreferences> preferences,
         TimeProvider? clock = null,
-        PresentationAdmission? admission = null)
+        PresentationAdmission? admission = null,
+        IHistoryRepolishService? repolishService = null,
+        Action? notifyHistoryChanged = null)
     {
         ArgumentNullException.ThrowIfNull(history);
         ArgumentNullException.ThrowIfNull(recovery);
@@ -87,6 +105,8 @@ public sealed class HistoryPresenter
         _preferences = preferences;
         _admission = admission ?? new PresentationAdmission();
         _clock = clock ?? TimeProvider.System;
+        _repolishService = repolishService;
+        _notifyHistoryChanged = notifyHistoryChanged;
     }
 
     /// <summary>Reads the file under the current retention window and says what the page shows.</summary>
@@ -147,6 +167,93 @@ public sealed class HistoryPresenter
 
     /// <summary>Removes every dictation. The page has already asked; this does not ask again.</summary>
     public Task<HistoryCommandResult> ClearAsync() => ApplyAsync(token => _history.ClearAsync(token));
+
+    /// <summary>Re-polishes an existing history entry with the active polish provider.</summary>
+    public async Task<HistoryRepolishCommandResult> RepolishAsync(
+        Guid id,
+        bool copyToClipboard = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (!_admission.TryEnter(out var lease))
+        {
+            return new HistoryRepolishCommandResult(HistoryRepolishResult.ClosingResult());
+        }
+
+        using (lease)
+        {
+            try
+            {
+                using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.Closing);
+                if (_repolishService is null)
+                {
+                    return new HistoryRepolishCommandResult(HistoryRepolishResult.NoProvider());
+                }
+
+                var repolishResult = await _repolishService
+                    .RepolishAsync(id, copyToClipboard, stop.Token)
+                    .ConfigureAwait(false);
+
+                if (!repolishResult.Succeeded)
+                {
+                    return new HistoryRepolishCommandResult(repolishResult);
+                }
+
+                var reloadedView = await LoadInsideAsync(stop.Token).ConfigureAwait(false);
+                _notifyHistoryChanged?.Invoke();
+                HistoryChanged?.Invoke();
+
+                return new HistoryRepolishCommandResult(repolishResult, reloadedView);
+            }
+            catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
+            {
+                return new HistoryRepolishCommandResult(HistoryRepolishResult.ClosingResult());
+            }
+        }
+    }
+
+    /// <summary>Re-polishes an existing history entry with the active polish provider.</summary>
+    public async Task<HistoryRepolishCommandResult> RepolishAsync(
+        DictationHistoryEntry entry,
+        bool copyToClipboard = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        if (!_admission.TryEnter(out var lease))
+        {
+            return new HistoryRepolishCommandResult(HistoryRepolishResult.ClosingResult());
+        }
+
+        using (lease)
+        {
+            try
+            {
+                using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.Closing);
+                if (_repolishService is null)
+                {
+                    return new HistoryRepolishCommandResult(HistoryRepolishResult.NoProvider());
+                }
+
+                var repolishResult = await _repolishService
+                    .RepolishAsync(entry, copyToClipboard, stop.Token)
+                    .ConfigureAwait(false);
+
+                if (!repolishResult.Succeeded)
+                {
+                    return new HistoryRepolishCommandResult(repolishResult);
+                }
+
+                var reloadedView = await LoadInsideAsync(stop.Token).ConfigureAwait(false);
+                _notifyHistoryChanged?.Invoke();
+                HistoryChanged?.Invoke();
+
+                return new HistoryRepolishCommandResult(repolishResult, reloadedView);
+            }
+            catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
+            {
+                return new HistoryRepolishCommandResult(HistoryRepolishResult.ClosingResult());
+            }
+        }
+    }
 
     /// <summary>Removes the encrypted recovery copy. The page has already asked.</summary>
     /// <returns>True when the copy is gone; false when Windows left the file untouched, or the presentation is closing.</returns>
