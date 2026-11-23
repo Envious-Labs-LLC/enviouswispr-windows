@@ -317,14 +317,24 @@ public sealed class DistributionTests
             fileExists: path => path == provisioned);
         Assert.Equal(bundled, packagedResolved);
 
-        // Unpackaged developer builds fall back to the provisioned data-directory runtime when no bundled copy exists.
-        var unpackagedFallback = EgOneRuntimeLocator.ResolveServerExecutable(
+        // Unpackaged developer builds prefer the founder-provisioned data-directory runtime first
+        // even when a bundled copy is also present, falling back to bundled only when the data-directory
+        // copy does not exist (.claude/knowledge/distribution.md:45-46).
+        var unpackagedProvisionedFirst = EgOneRuntimeLocator.ResolveServerExecutable(
             baseDir,
             dataDir,
             isStoreInstalled: false,
             environmentOverride: null,
-            fileExists: path => path == provisioned);
-        Assert.Equal(provisioned, unpackagedFallback);
+            fileExists: _ => true);
+        Assert.Equal(provisioned, unpackagedProvisionedFirst);
+
+        var unpackagedBundledFallback = EgOneRuntimeLocator.ResolveServerExecutable(
+            baseDir,
+            dataDir,
+            isStoreInstalled: false,
+            environmentOverride: null,
+            fileExists: _ => false);
+        Assert.Equal(bundled, unpackagedBundledFallback);
 
         // Explicit environment override applies only to unpackaged UAT harnesses.
         var overridden = EgOneRuntimeLocator.ResolveServerExecutable(

@@ -142,10 +142,13 @@
       <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\mtmd.dll" Condition="Exists('$(EnviousWisprLlamaRuntimeDir)\mtmd.dll')" />
       <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\ggml*.dll" />
       <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\libomp*.dll" />
-      <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\LICENSE*" />
+      <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\LICENSE-llama.cpp" />
+      <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\LICENSE-LLVM-OpenMP" />
       <ResolvedFileToPublish Include="@(_StoreLlamaRuntimeFile)" RelativePath="runtime\%(Filename)%(Extension)" CopyToPublishDirectory="PreserveNewest" />
     </ItemGroup>
     <Error Condition="!Exists('$(EnviousWisprLlamaRuntimeDir)\llama-server.exe')" Text="The llama.cpp runtime directory '$(EnviousWisprLlamaRuntimeDir)' does not contain llama-server.exe." />
+    <Error Condition="!Exists('$(EnviousWisprLlamaRuntimeDir)\LICENSE-llama.cpp')" Text="The llama.cpp runtime directory '$(EnviousWisprLlamaRuntimeDir)' does not contain LICENSE-llama.cpp." />
+    <Error Condition="!Exists('$(EnviousWisprLlamaRuntimeDir)\LICENSE-LLVM-OpenMP')" Text="The llama.cpp runtime directory '$(EnviousWisprLlamaRuntimeDir)' does not contain LICENSE-LLVM-OpenMP." />
   </Target>
 
   <Target Name="CopyUnpackagedWinUiResourcesForPublish" AfterTargets="Publish" Condition="'$(EnviousWisprPackaged)' != 'true'">

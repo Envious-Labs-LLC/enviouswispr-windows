@@ -132,5 +132,8 @@ jobs:
           foreach ($dll in @('llama-server-impl.dll', 'llama-common.dll', 'llama.dll', 'mtmd.dll', 'ggml.dll', 'ggml-base.dll', 'libomp.dll')) {
             [IO.File]::WriteAllBytes((Join-Path $fixtureDir $dll), [byte[]]@(0x4D, 0x5A))
           }
+          foreach ($licenseFile in @('LICENSE-llama.cpp', 'LICENSE-LLVM-OpenMP')) {
+            Set-Content -LiteralPath (Join-Path $fixtureDir $licenseFile) -Encoding UTF8 -Value 'CI fixture notice'
+          }
           powershell -ExecutionPolicy Bypass -File scripts/package-store.ps1 -LlamaRuntimeDirectory $fixtureDir -OutputDirectory "$env:RUNNER_TEMP\store-package"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

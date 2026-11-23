@@ -32,11 +32,6 @@ public static class EgOneRuntimeLocator
         }
 
         var exists = fileExists ?? File.Exists;
-        if (exists(bundledServer))
-        {
-            return bundledServer;
-        }
-
         var provisionedServer = Path.Combine(
             dataDirectory,
             "runtime",

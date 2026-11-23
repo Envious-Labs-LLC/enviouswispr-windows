@@ -134,11 +134,14 @@ function Resolve-LlamaRuntimeDirectory {
         [string]$ExplicitDirectory
     )
 
+    $requiredFiles = @('llama-server.exe', 'LICENSE-llama.cpp', 'LICENSE-LLVM-OpenMP')
     foreach ($explicit in @($ExplicitDirectory, $env:ENVIOUSWISPR_LLAMA_RUNTIME_DIRECTORY)) {
         if (-not [string]::IsNullOrWhiteSpace($explicit)) {
             $full = [IO.Path]::GetFullPath($explicit)
-            if (-not (Test-Path -LiteralPath (Join-Path $full 'llama-server.exe') -PathType Leaf)) {
-                throw "The specified llama.cpp runtime directory does not contain llama-server.exe: $full"
+            foreach ($req in $requiredFiles) {
+                if (-not (Test-Path -LiteralPath (Join-Path $full $req) -PathType Leaf)) {
+                    throw "The specified llama.cpp runtime directory is missing required file '$req': $full"
+                }
             }
             return $full
         }
@@ -151,13 +154,22 @@ function Resolve-LlamaRuntimeDirectory {
         (Join-Path $localAppData 'Envious Labs\EnviousWispr-Founder\runtime\llama.cpp')
     )
     foreach ($candidate in $candidates) {
-        if (-not [string]::IsNullOrWhiteSpace($candidate) -and
-            (Test-Path -LiteralPath (Join-Path $candidate 'llama-server.exe') -PathType Leaf)) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+        $allPresent = $true
+        foreach ($req in $requiredFiles) {
+            if (-not (Test-Path -LiteralPath (Join-Path $candidate $req) -PathType Leaf)) {
+                $allPresent = $false
+                break
+            }
+        }
+        if ($allPresent) {
             return [IO.Path]::GetFullPath($candidate)
         }
     }
 
-    throw 'Every Store MSIX package must bundle runtime\llama-server.exe and its dependencies (Store policy 10.2.2). Supply -LlamaRuntimeDirectory or stage tools\llama.cpp.'
+    throw 'Every Store MSIX package must bundle runtime\llama-server.exe, LICENSE-llama.cpp, LICENSE-LLVM-OpenMP, and their dependencies (Store policy 10.2.2). Supply -LlamaRuntimeDirectory or stage tools\llama.cpp.'
 }
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
@@ -175,8 +187,15 @@ Assert-PinnedToolchain `
     -ManifestXml $sourceManifest `
     -NoticesContent $noticesContent
 
-if ($ForStoreUpload -and (Test-PlaceholderIdentity $sourceManifest.Package.Identity)) {
-    throw "Package.appxmanifest still carries a placeholder identity ($placeholderName, $placeholderPublisher). Commit the Identity Name and Publisher that Partner Center assigned before building a Store upload."
+if ($ForStoreUpload) {
+    if (Test-PlaceholderIdentity $sourceManifest.Package.Identity) {
+        throw "Package.appxmanifest still carries a placeholder identity ($placeholderName, $placeholderPublisher). Commit the Identity Name and Publisher that Partner Center assigned before building a Store upload."
+    }
+
+    & powershell -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'scripts\validate-artifact-license-inventory.ps1') -RequireApproved
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Cannot build a Store upload package while artifact-license-inventory.json still has unapproved records.'
+    }
 }
 
 function Resolve-DotNet10 {
@@ -283,7 +302,9 @@ try {
         'runtime/llama.dll',
         'runtime/ggml.dll',
         'runtime/ggml-base.dll',
-        'runtime/libomp.dll'
+        'runtime/libomp.dll',
+        'runtime/LICENSE-llama.cpp',
+        'runtime/LICENSE-LLVM-OpenMP'
     )
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem

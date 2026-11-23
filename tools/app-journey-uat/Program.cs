@@ -518,12 +518,16 @@ var unvirtualizedProductRoot = Path.Combine(
     "Envious Labs",
     "EnviousWispr");
 var profileDirectory = packaged
-    ? Path.Combine(unvirtualizedProductRoot, $"EnviousWispr-AppJourney-PackagedUat-{runId}")
+    ? unvirtualizedProductRoot
     : Path.Combine(uatDirectory, "profile");
 Directory.CreateDirectory(profileDirectory);
+DefaultDataDirectoryBackupGuard? packagedDataBackup = null;
 if (packaged)
 {
     RequirePackagedLayoutManifest(appExecutable, repositoryRoot);
+    packagedDataBackup = DefaultDataDirectoryBackupGuard.Capture(
+        unvirtualizedProductRoot,
+        Path.Combine(uatDirectory, "default-data-backup"));
 }
 // THE HARNESS CHOOSES ITS OWN RECORDING KEY, AND IT IS F8, whatever a fresh install starts on. It presses the key
 // itself - SendKey, the synthetic hook, and the words a person is told to follow - and an ordinary key is the one it can
@@ -708,7 +712,16 @@ try
         UseShellExecute = false,
         WorkingDirectory = Path.GetDirectoryName(appExecutable)!,
     };
-    appStart.Environment["ENVIOUSWISPR_DATA_DIRECTORY"] = profileDirectory;
+    if (packaged)
+    {
+        // Exercise the app's real default %LocalAppData%\Envious Labs\EnviousWispr directory without an
+        // ENVIOUSWISPR_DATA_DIRECTORY override (.claude/knowledge/distribution.md:50-51).
+        appStart.Environment.Remove("ENVIOUSWISPR_DATA_DIRECTORY");
+    }
+    else
+    {
+        appStart.Environment["ENVIOUSWISPR_DATA_DIRECTORY"] = profileDirectory;
+    }
     appStart.Environment["ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX"] = $"journey-{runId}";
     appStart.Environment["ENVIOUSWISPR_UAT_READY_EVENT"] = readyEventName;
     appStart.Environment["ENVIOUSWISPR_UAT_RUNTIME_READY_EVENT"] = runtimeEventName;
@@ -876,8 +889,7 @@ try
         packagedEvidence = VerifyPackagedProcessesAndStorage(
             app,
             [.. ownedWorkerIds, .. ownedPolishWorkerIds],
-            profileDirectory,
-            runId);
+            profileDirectory);
     }
 
     if (quickAdd)
@@ -1465,10 +1477,7 @@ finally
 
         try
         {
-            if (packaged)
-            {
-                RemovePackagedUatProfileDirectory(profileDirectory, unvirtualizedProductRoot);
-            }
+            packagedDataBackup?.Restore();
             RemoveUatDirectory(uatDirectory);
         }
         catch (Exception removalFailure) when (removalFailure is IOException
@@ -3557,25 +3566,6 @@ static void RemoveUatDirectory(string path)
     }
 }
 
-static void RemovePackagedUatProfileDirectory(string path, string unvirtualizedRoot)
-{
-    var fullPath = Path.GetFullPath(path);
-    var expectedRoot = Path.TrimEndingDirectorySeparator(
-        Path.GetFullPath(unvirtualizedRoot)) + Path.DirectorySeparatorChar;
-    if (!fullPath.StartsWith(expectedRoot, StringComparison.OrdinalIgnoreCase) ||
-        !Path.GetFileName(fullPath).StartsWith(
-            "EnviousWispr-AppJourney-PackagedUat-",
-            StringComparison.Ordinal))
-    {
-        throw new JourneyExpectationException("Refusing to remove an unexpected packaged UAT profile directory.");
-    }
-
-    if (Directory.Exists(fullPath))
-    {
-        Directory.Delete(fullPath, recursive: true);
-    }
-}
-
 static string ResolveRegisteredPackagedAppExecutable(string repoRoot)
 {
     var (expectedName, expectedPublisher, expectedVersion) = ReadManifestIdentity(repoRoot);
@@ -3739,8 +3729,7 @@ static void RequirePackagedLayoutManifest(string appExecutablePath, string repoR
 static PackagedJourneyEvidence VerifyPackagedProcessesAndStorage(
     Process shellProcess,
     IReadOnlyList<int> workerIds,
-    string profileDirectoryPath,
-    string runIdValue)
+    string profileDirectoryPath)
 {
     var (shellFullName, shellFamilyName) = ReadProcessPackageIdentity(shellProcess.Handle);
     if (string.IsNullOrWhiteSpace(shellFullName) || string.IsNullOrWhiteSpace(shellFamilyName))
@@ -3780,9 +3769,10 @@ static PackagedJourneyEvidence VerifyPackagedProcessesAndStorage(
         "LocalCache",
         "Local",
         "Envious Labs",
-        "EnviousWispr",
-        $"EnviousWispr-AppJourney-PackagedUat-{runIdValue}");
-    var virtualizedAbsent = !Directory.Exists(virtualizedShadowDirectory);
+        "EnviousWispr");
+    var virtualizedAbsent = !Directory.Exists(virtualizedShadowDirectory) &&
+        !File.Exists(Path.Combine(virtualizedShadowDirectory, "run-state.json")) &&
+        !File.Exists(Path.Combine(virtualizedShadowDirectory, "diagnostics", "app.jsonl"));
     if (!virtualizedAbsent)
     {
         throw new JourneyExpectationException(
@@ -4254,6 +4244,66 @@ internal sealed record QuickAddRound(
 }
 
 internal sealed record QuickAddEvidence(QuickAddRound OverSentinel, QuickAddRound OverEmptyClipboard, bool WordStoredInProfile);
+
+internal sealed class DefaultDataDirectoryBackupGuard
+{
+    private static readonly string[] ManagedRelativeFiles =
+    [
+        "settings.json",
+        "history.json",
+        "run-state.json",
+        "recovery.json",
+        Path.Combine("diagnostics", "app.jsonl"),
+    ];
+
+    private readonly string _productRoot;
+    private readonly string _backupRoot;
+
+    private DefaultDataDirectoryBackupGuard(string productRoot, string backupRoot)
+    {
+        _productRoot = productRoot;
+        _backupRoot = backupRoot;
+    }
+
+    public static DefaultDataDirectoryBackupGuard Capture(string productRoot, string backupRoot)
+    {
+        Directory.CreateDirectory(productRoot);
+        Directory.CreateDirectory(backupRoot);
+        foreach (var relative in ManagedRelativeFiles)
+        {
+            var source = Path.Combine(productRoot, relative);
+            if (!File.Exists(source))
+            {
+                continue;
+            }
+
+            var destination = Path.Combine(backupRoot, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.Copy(source, destination, overwrite: true);
+            File.Delete(source);
+        }
+
+        return new DefaultDataDirectoryBackupGuard(productRoot, backupRoot);
+    }
+
+    public void Restore()
+    {
+        foreach (var relative in ManagedRelativeFiles)
+        {
+            var source = Path.Combine(_productRoot, relative);
+            var backup = Path.Combine(_backupRoot, relative);
+            if (File.Exists(backup))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(source)!);
+                File.Copy(backup, source, overwrite: true);
+            }
+            else if (File.Exists(source))
+            {
+                File.Delete(source);
+            }
+        }
+    }
+}
 
 internal sealed record PackagedJourneyEvidence(
     string PackageFullName,
