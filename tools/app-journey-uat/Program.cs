@@ -119,6 +119,10 @@ var quickAdd = args.Any(argument => string.Equals(
     argument,
     "--quick-add",
     StringComparison.OrdinalIgnoreCase));
+var packaged = args.Any(argument => string.Equals(
+    argument,
+    "--packaged",
+    StringComparison.OrdinalIgnoreCase));
 var deterministicProfileArgument = ArgumentValue(args, "--deterministic-profile");
 var deterministicProfile = deterministicProfileArgument?.ToLowerInvariant() switch
 {
@@ -362,22 +366,33 @@ if (appExecutableArgument is not null &&
         "--app-executable must be a fully qualified EnviousWispr.App.exe path.");
 }
 var repositoryRoot = FindRepositoryRoot(AppContext.BaseDirectory);
+if (packaged && failureMode == JourneyFailureMode.WorkerStartup)
+{
+    throw new JourneyExpectationException(
+        "--packaged cannot be combined with --failure worker-startup because copying the payload outside its registered package layout strips MSIX package identity.");
+}
 var appExecutable = appExecutableArgument is null
-    ? Path.Combine(
-        repositoryRoot,
-        "src",
-        "Production",
-        "EnviousWispr.App",
-        "bin",
-        "x64",
-        "Release",
-        "net10.0-windows10.0.26100.0",
-        "win-x64",
-        "EnviousWispr.App.exe")
+    ? packaged
+        ? ResolveRegisteredPackagedAppExecutable()
+        : Path.Combine(
+            repositoryRoot,
+            "src",
+            "Production",
+            "EnviousWispr.App",
+            "bin",
+            "x64",
+            "Release",
+            "net10.0-windows10.0.26100.0",
+            "win-x64",
+            "EnviousWispr.App.exe")
     : Path.GetFullPath(appExecutableArgument);
-var appSource = appExecutableArgument is null
-    ? "RepositoryReleaseBuild"
-    : "ExplicitCandidateExecutable";
+var appSource = packaged
+    ? appExecutableArgument is null
+        ? "RegisteredMsixPackage"
+        : "ExplicitPackagedExecutable"
+    : appExecutableArgument is null
+        ? "RepositoryReleaseBuild"
+        : "ExplicitCandidateExecutable";
 var targetExecutable = Path.Combine(
     repositoryRoot,
     "tools",
@@ -486,8 +501,18 @@ if (failureMode == JourneyFailureMode.WorkerStartup)
     RequireFile(appExecutable, "The isolated worker-failure app copy is incomplete.");
 }
 Directory.CreateDirectory(Path.Combine(uatDirectory, "no-preview-model"));
-var profileDirectory = Path.Combine(uatDirectory, "profile");
+var unvirtualizedProductRoot = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+    "Envious Labs",
+    "EnviousWispr");
+var profileDirectory = packaged
+    ? Path.Combine(unvirtualizedProductRoot, $"EnviousWispr-AppJourney-PackagedUat-{runId}")
+    : Path.Combine(uatDirectory, "profile");
 Directory.CreateDirectory(profileDirectory);
+if (packaged)
+{
+    RequirePackagedLayoutManifest(appExecutable);
+}
 // THE HARNESS CHOOSES ITS OWN RECORDING KEY, AND IT IS F8, whatever a fresh install starts on. It presses the key
 // itself - SendKey, the synthetic hook, and the words a person is told to follow - and an ordinary key is the one it can
 // drive: a modifier set (Ctrl+Win, the product default since #66) completes on a gesture timer this harness has declared
@@ -626,6 +651,7 @@ string? clipboardSentinel = null;
 bool? clipboardRestored = null;
 SyntheticHotkeyEvidence? syntheticHotkeyEvidence = null;
 EscapeActionEvidence? escapeActionEvidence = null;
+PackagedJourneyEvidence? packagedEvidence = null;
 var usesPublicFixtureJourney = !liveMicrophone &&
     failureMode is JourneyFailureMode.None or JourneyFailureMode.TargetUnavailable;
 
@@ -798,6 +824,15 @@ try
         throw new JourneyExpectationException(
             $"The production journey started {ownedWorkerIds.Length} owned final-ASR workers; " +
             $"expected {expectedWorkerCount}.");
+    }
+
+    if (packaged)
+    {
+        packagedEvidence = VerifyPackagedProcessesAndStorage(
+            app,
+            ownedWorkerIds,
+            profileDirectory,
+            runId);
     }
 
     if (IsLocalPolishProvider(polishProvider))
@@ -1324,6 +1359,7 @@ try
             ? liveMicrophone ? "MachineDefaultEndpoints" : null
             : $"VirtualCable: {audioRoute.RenderName} -> {audioRoute.CaptureName}",
         syntheticHotkey = syntheticHotkeyEvidence,
+        packagedIdentity = packagedEvidence,
         polish = PolishProviderName(polishProvider),
         polishCompleted = polishEvidence.Completed,
         polishDegraded = polishEvidence.Degraded,
@@ -1409,6 +1445,10 @@ finally
 
         try
         {
+            if (packaged)
+            {
+                RemovePackagedUatProfileDirectory(profileDirectory, unvirtualizedProductRoot);
+            }
             RemoveUatDirectory(uatDirectory);
         }
         catch (Exception removalFailure) when (removalFailure is IOException
@@ -3497,6 +3537,180 @@ static void RemoveUatDirectory(string path)
     }
 }
 
+static void RemovePackagedUatProfileDirectory(string path, string unvirtualizedRoot)
+{
+    var fullPath = Path.GetFullPath(path);
+    var expectedRoot = Path.TrimEndingDirectorySeparator(
+        Path.GetFullPath(unvirtualizedRoot)) + Path.DirectorySeparatorChar;
+    if (!fullPath.StartsWith(expectedRoot, StringComparison.OrdinalIgnoreCase) ||
+        !Path.GetFileName(fullPath).StartsWith(
+            "EnviousWispr-AppJourney-PackagedUat-",
+            StringComparison.Ordinal))
+    {
+        throw new JourneyExpectationException("Refusing to remove an unexpected packaged UAT profile directory.");
+    }
+
+    if (Directory.Exists(fullPath))
+    {
+        Directory.Delete(fullPath, recursive: true);
+    }
+}
+
+static string ResolveRegisteredPackagedAppExecutable()
+{
+    try
+    {
+        var packageManager = new Windows.Management.Deployment.PackageManager();
+        var match = packageManager.FindPackagesForUser(string.Empty)
+            .FirstOrDefault(package => string.Equals(
+                package.Id.Name,
+                "EnviousLabsLLC.EnviousWispr",
+                StringComparison.OrdinalIgnoreCase));
+        if (match is not null)
+        {
+            var candidate = Path.Combine(match.InstalledLocation.Path, "EnviousWispr.App.exe");
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+    }
+    catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+    {
+        throw JourneyExpectationException.Instrument(
+            $"--packaged could not query Windows PackageManager for EnviousLabsLLC.EnviousWispr ({exception.Message}).");
+    }
+
+    throw JourneyExpectationException.Instrument(
+        "--packaged requires the EnviousWispr MSIX package to be registered on this PC, or --app-executable pointing to a registered layout.");
+}
+
+static void RequirePackagedLayoutManifest(string appExecutablePath)
+{
+    var directory = Path.GetDirectoryName(appExecutablePath)!;
+    var manifestPath = Path.Combine(directory, "AppxManifest.xml");
+    if (!File.Exists(manifestPath))
+    {
+        throw JourneyExpectationException.Instrument(
+            "--packaged requires AppxManifest.xml beside EnviousWispr.App.exe in the registered package layout.");
+    }
+
+    var xml = File.ReadAllText(manifestPath);
+    if (!xml.Contains("TaskId=\"EnviousWisprStartup\"", StringComparison.Ordinal) ||
+        !xml.Contains("Enabled=\"false\"", StringComparison.Ordinal))
+    {
+        throw new JourneyExpectationException(
+            "The packaged AppxManifest.xml does not declare EnviousWisprStartup with Enabled=\"false\".");
+    }
+
+    if (!xml.Contains(@"$(KnownFolder:LocalAppData)\Envious Labs\EnviousWispr", StringComparison.Ordinal) ||
+        !xml.Contains("unvirtualizedResources", StringComparison.Ordinal))
+    {
+        throw new JourneyExpectationException(
+            "The packaged AppxManifest.xml does not declare the unvirtualizedResources exclusion for $(KnownFolder:LocalAppData)\\Envious Labs\\EnviousWispr.");
+    }
+}
+
+static PackagedJourneyEvidence VerifyPackagedProcessesAndStorage(
+    Process shellProcess,
+    IReadOnlyList<int> workerIds,
+    string profileDirectoryPath,
+    string runIdValue)
+{
+    var (shellFullName, shellFamilyName) = ReadProcessPackageIdentity(shellProcess.Handle);
+    if (string.IsNullOrWhiteSpace(shellFullName) || string.IsNullOrWhiteSpace(shellFamilyName))
+    {
+        throw new JourneyExpectationException(
+            "--packaged requires the running EnviousWispr.App.exe process to hold MSIX package identity, but Windows reported APPMODEL_ERROR_NO_PACKAGE.");
+    }
+
+    var workerMatches = workerIds.Count > 0;
+    foreach (var workerId in workerIds)
+    {
+        using var worker = Process.GetProcessById(workerId);
+        var (workerFullName, workerFamilyName) = ReadProcessPackageIdentity(worker.Handle);
+        if (!string.Equals(workerFullName, shellFullName, StringComparison.Ordinal) ||
+            !string.Equals(workerFamilyName, shellFamilyName, StringComparison.Ordinal))
+        {
+            workerMatches = false;
+            throw new JourneyExpectationException(
+                $"The child RuntimeWorker process ({workerId}) did not inherit matching MSIX package identity " +
+                $"(shell='{shellFullName}', worker='{workerFullName}').");
+        }
+    }
+
+    var physicalDiagnosticFile = Path.Combine(profileDirectoryPath, "diagnostics", "app.jsonl");
+    var physicalRunStateFile = Path.Combine(profileDirectoryPath, "run-state.json");
+    var physicalObserved = File.Exists(physicalDiagnosticFile) && File.Exists(physicalRunStateFile);
+    if (!physicalObserved)
+    {
+        throw new JourneyExpectationException(
+            "The packaged app did not write its diagnostics and run-state physically into the excluded unvirtualized LocalAppData directory.");
+    }
+
+    var virtualizedShadowDirectory = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Packages",
+        shellFamilyName,
+        "LocalCache",
+        "Local",
+        "Envious Labs",
+        "EnviousWispr",
+        $"EnviousWispr-AppJourney-PackagedUat-{runIdValue}");
+    var virtualizedAbsent = !Directory.Exists(virtualizedShadowDirectory);
+    if (!virtualizedAbsent)
+    {
+        throw new JourneyExpectationException(
+            "The packaged app's writes under %LocalAppData%\\Envious Labs\\EnviousWispr were redirected into Packages LocalCache instead of honouring the folder virtualization exclusion.");
+    }
+
+    return new PackagedJourneyEvidence(
+        shellFullName,
+        shellFamilyName,
+        ShellHasPackageIdentity: true,
+        WorkerHasMatchingPackageIdentity: workerMatches,
+        StartupTaskDeclaredDisabledByDefault: true,
+        UnvirtualizedDirectoryExcludedInManifest: true,
+        PhysicalDataDirectoryObserved: physicalObserved,
+        VirtualizedLocalCacheAbsent: virtualizedAbsent);
+}
+
+static (string? FullName, string? FamilyName) ReadProcessPackageIdentity(nint processHandle)
+{
+    const int ErrorInsufficientBuffer = 122;
+    const int AppModelErrorNoPackage = 15700;
+
+    uint fullLength = 0;
+    var fullStatus = NativeMethods.GetPackageFullName(processHandle, ref fullLength, null);
+    if (fullStatus == AppModelErrorNoPackage || fullStatus != ErrorInsufficientBuffer || fullLength == 0)
+    {
+        return (null, null);
+    }
+
+    var fullChars = new char[fullLength];
+    if (NativeMethods.GetPackageFullName(processHandle, ref fullLength, fullChars) != 0)
+    {
+        return (null, null);
+    }
+
+    uint familyLength = 0;
+    var familyStatus = NativeMethods.GetPackageFamilyName(processHandle, ref familyLength, null);
+    if (familyStatus != ErrorInsufficientBuffer || familyLength == 0)
+    {
+        return (null, null);
+    }
+
+    var familyChars = new char[familyLength];
+    if (NativeMethods.GetPackageFamilyName(processHandle, ref familyLength, familyChars) != 0)
+    {
+        return (null, null);
+    }
+
+    return (
+        new string(fullChars, 0, (int)fullLength - 1),
+        new string(familyChars, 0, (int)familyLength - 1));
+}
+
 static string FindRepositoryRoot(string startDirectory)
 {
     var directory = new DirectoryInfo(startDirectory);
@@ -3558,6 +3772,7 @@ static void RequireKnownArguments(string[] arguments)
         "--live-microphone", "--manual-microphone", "--english-parakeet", "--live-preview",
         "--head-start", "--escape-recovery", "--synthesized-acoustic", "--synthetic-hotkey",
         "--quick-tap", "--virtual-cable", "--language-change", "--onboarding-practice", "--quick-add",
+        "--packaged",
     ];
     string[] valuedFlags =
     [
@@ -3869,6 +4084,18 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetWindowRect(nint window, out NativeRect rect);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    internal static extern int GetPackageFullName(
+        nint hProcess,
+        ref uint packageFullNameLength,
+        [Out] char[]? packageFullName);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    internal static extern int GetPackageFamilyName(
+        nint hProcess,
+        ref uint packageFamilyNameLength,
+        [Out] char[]? packageFamilyName);
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -3902,6 +4129,16 @@ internal sealed record QuickAddRound(
 }
 
 internal sealed record QuickAddEvidence(QuickAddRound OverSentinel, QuickAddRound OverEmptyClipboard, bool WordStoredInProfile);
+
+internal sealed record PackagedJourneyEvidence(
+    string PackageFullName,
+    string PackageFamilyName,
+    bool ShellHasPackageIdentity,
+    bool WorkerHasMatchingPackageIdentity,
+    bool StartupTaskDeclaredDisabledByDefault,
+    bool UnvirtualizedDirectoryExcludedInManifest,
+    bool PhysicalDataDirectoryObserved,
+    bool VirtualizedLocalCacheAbsent);
 
 internal sealed record EscapeActionEvidence(
     string Action,

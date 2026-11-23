@@ -18,6 +18,7 @@ using EnviousWispr.App.Composition;
 using EnviousWispr.Pipeline;
 using EnviousWispr.Presentation;
 using EnviousWispr.Services.Diagnostics;
+using EnviousWispr.Services.Distribution;
 using EnviousWispr.Services.Credentials;
 using EnviousWispr.Services.Input;
 using EnviousWispr.Services.History;
@@ -38,6 +39,7 @@ public partial class App : Application, IAsyncDisposable
     private readonly PrivacySafeObservabilityLogger _logger;
     private readonly ReleaseIdentity _releaseIdentity;
     private readonly StoreUpdateService _updateService;
+    private readonly WindowsStartupRegistration _startupRegistration = new();
     // The session hold an accepted Store install keeps until the app leaves; see OnUpdateApplyRequested.
     private IDisposable? _updateInstallHold;
     private readonly JsonDiagnosticExportService _diagnosticExportService;
@@ -356,6 +358,8 @@ public partial class App : Application, IAsyncDisposable
         _window.WordImportReported += OnWordImportReported;
         _window.UpdateCheckRequested += OnUpdateCheckRequested;
         _window.UpdateApplyRequested += OnUpdateApplyRequested;
+        _window.StartupToggleRequested += OnStartupToggleRequested;
+        _window.LoadStartupRegistration = () => _startupRegistration.GetStatusAsync(_startupCancellation.Token);
         _window.ModelDownloadRequested += OnModelDownloadRequested;
         _window.ModelDownloadCancelRequested += OnModelDownloadCancelRequested;
         _window.TranscriptionRetryRequested += OnTranscriptionRetryRequested;
@@ -595,6 +599,8 @@ public partial class App : Application, IAsyncDisposable
             window.WordImportReported -= OnWordImportReported;
             window.UpdateCheckRequested -= OnUpdateCheckRequested;
             window.UpdateApplyRequested -= OnUpdateApplyRequested;
+            window.StartupToggleRequested -= OnStartupToggleRequested;
+            window.LoadStartupRegistration = null;
             window.ModelDownloadRequested -= OnModelDownloadRequested;
             window.ModelDownloadCancelRequested -= OnModelDownloadCancelRequested;
             window.TranscriptionRetryRequested -= OnTranscriptionRetryRequested;
@@ -974,6 +980,21 @@ public partial class App : Application, IAsyncDisposable
         if (!_exitRequested && !_disposed)
         {
             _window?.SetUpdateStatus(result);
+        }
+    }
+
+    private async void OnStartupToggleRequested(bool enabled)
+    {
+        if (_exitRequested || _disposed)
+        {
+            return;
+        }
+
+        _window?.SetStartupRegistrationInProgress();
+        var result = await _startupRegistration.SetEnabledAsync(enabled).ConfigureAwait(true);
+        if (!_exitRequested && !_disposed)
+        {
+            _window?.SetStartupRegistration(result);
         }
     }
 
@@ -1726,19 +1747,11 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        var serverExecutable = Environment.GetEnvironmentVariable(
-            "ENVIOUSWISPR_EG1_SERVER_EXE");
-        if (string.IsNullOrWhiteSpace(serverExecutable))
-        {
-            var provisionedServer = Path.Combine(
-                _dataDirectory,
-                "runtime",
-                "llama.cpp",
-                "llama-server.exe");
-            serverExecutable = File.Exists(provisionedServer)
-                ? provisionedServer
-                : Path.Combine(AppContext.BaseDirectory, "runtime", "llama-server.exe");
-        }
+        var serverExecutable = EgOneRuntimeLocator.ResolveServerExecutable(
+            AppContext.BaseDirectory,
+            _dataDirectory,
+            _updateService.IsStoreInstalled,
+            Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_SERVER_EXE"));
 
         var modelFile = Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH");
         if (string.IsNullOrWhiteSpace(modelFile))

@@ -368,3 +368,22 @@ carries a `quickAdd` object per round, including `TargetCopyWriteMilliseconds`, 
 clipboard write took: a write that took hundreds of milliseconds was held up by the app, not the target.
 
 This mode needs `--english-parakeet` (the runtime must become ready) and nothing else.
+
+## Packaged MSIX identity and unvirtualized storage assertions
+
+Add `--packaged` to run against the registered `EnviousLabsLLC.EnviousWispr` MSIX package (or an explicit
+registered layout via `--app-executable`). In `--packaged` mode the harness:
+
+1. Verifies the package layout's `AppxManifest.xml` declares `<desktop:StartupTask TaskId="EnviousWisprStartup" Enabled="false"`
+   and the `unvirtualizedResources` exclusion for `$(KnownFolder:LocalAppData)\Envious Labs\EnviousWispr`.
+2. Places the isolated journey profile under `%LocalAppData%\Envious Labs\EnviousWispr\EnviousWispr-AppJourney-PackagedUat-<runId>`
+   and removes only that subdirectory on exit.
+3. Queries Windows AppModel (`GetPackageFullName` / `GetPackageFamilyName`) on the running `EnviousWispr.App.exe`
+   and child `EnviousWispr.RuntimeWorker.exe` process handles, requiring both to carry matching MSIX package identity.
+4. Requires diagnostics and run-state files to exist physically in the excluded `LocalAppData` path with zero
+   redirected shadow directory under `%LocalAppData%\Packages\<PackageFamilyName>\LocalCache`.
+
+```powershell
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --synthetic-hotkey --packaged
+```

@@ -127,6 +127,27 @@
     <Error Condition="'@(_StoreRuntimeWorkerFile)' == ''" Text="The runtime worker was not built for $(RuntimeIdentifier); the Store package would ship without transcription." />
   </Target>
 
+  <!--
+    STORE POLICY 10.2.2 GOVERNS DYNAMIC CODE: the packaged app runs llama-server.exe from its own
+    package directory (runtime\llama-server.exe), never from the writable data directory. When
+    EnviousWisprLlamaRuntimeDir is supplied by scripts/package-store.ps1, the minimal llama-server
+    runtime set is added to the publish item list before MSIX payload collection. Ref #42.
+  -->
+  <Target Name="AddLlamaRuntimeToStorePackage" AfterTargets="ComputeResolvedFilesToPublishList" Condition="'$(EnviousWisprPackaged)' == 'true' And '$(EnviousWisprLlamaRuntimeDir)' != ''">
+    <ItemGroup>
+      <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\llama-server.exe" />
+      <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\llama-server-impl.dll" />
+      <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\llama-common.dll" />
+      <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\llama.dll" />
+      <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\mtmd.dll" />
+      <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\ggml*.dll" />
+      <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\libomp*.dll" />
+      <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\LICENSE*" />
+      <ResolvedFileToPublish Include="@(_StoreLlamaRuntimeFile)" RelativePath="runtime\%(Filename)%(Extension)" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+    <Error Condition="!Exists('$(EnviousWisprLlamaRuntimeDir)\llama-server.exe')" Text="The llama.cpp runtime directory '$(EnviousWisprLlamaRuntimeDir)' does not contain llama-server.exe." />
+  </Target>
+
   <Target Name="CopyUnpackagedWinUiResourcesForPublish" AfterTargets="Publish" Condition="'$(EnviousWisprPackaged)' != 'true'">
     <ItemGroup>
       <UnpackagedWinUiResource Include="$(TargetDir)*.xbf" />
