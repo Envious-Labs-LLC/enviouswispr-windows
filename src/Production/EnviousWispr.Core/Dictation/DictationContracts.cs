@@ -68,7 +68,9 @@ public sealed record PolishRequest(
     /// the transcript and wrong in the polish. Only words already in the text are carried - a word
     /// that is not there cannot be miscorrected there, so sending it buys nothing and costs privacy.
     /// </remarks>
-    IReadOnlyList<string>? Vocabulary = null);
+    IReadOnlyList<string>? Vocabulary = null,
+    string? TargetAppName = null,
+    string? RecognitionLanguage = null);
 
 public sealed record PolishResult(
     ProcessedText Output,

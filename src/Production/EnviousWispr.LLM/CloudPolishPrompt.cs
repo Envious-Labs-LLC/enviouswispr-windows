@@ -1,3 +1,5 @@
+using EnviousWispr.Core.Input;
+
 namespace EnviousWispr.LLM;
 
 public static class CloudPolishPrompt
@@ -56,21 +58,32 @@ And remember what this is: they are composing text to paste somewhere else. Ever
     /// the letters are - and a promise in the product cannot be reasoned around from inside the code
     /// it constrains. The local providers get them instead.
     /// </remarks>
-    public static string BuildSystemPrompt(string? language, int wordCount)
+    public static string BuildSystemPrompt(string? language, int wordCount, string? targetAppName = null)
     {
         var prefix =
             "Keep the cleaned text in the same language(s) and script(s) as the transcript. " +
             "Never translate it, and preserve any code-switching between languages.\n\n";
-        if (!string.IsNullOrWhiteSpace(language))
+        if (IsPinnedLanguage(language))
         {
             prefix += $"LANGUAGE: This transcript is in {language}. Clean it in {language}.\n\n";
+        }
+
+        var appHint = string.Empty;
+        var sanitizedApp = TargetAppNameResolver.Sanitize(targetAppName);
+        if (sanitizedApp is not null)
+        {
+            appHint = $"\n\nThe user is dictating in {sanitizedApp}.";
         }
 
         var suffix = wordCount <= 10
             ? "\n\nIMPORTANT: Very short input. Return as-is with only minimal punctuation fixes."
             : string.Empty;
-        return prefix + SystemPrompt + suffix;
+        return prefix + SystemPrompt + appHint + suffix;
     }
+
+    public static bool IsPinnedLanguage(string? language) =>
+        !string.IsNullOrWhiteSpace(language) &&
+        !string.Equals(language, "auto", StringComparison.OrdinalIgnoreCase);
 
     public static string BuildUserMessage(string transcript)
     {

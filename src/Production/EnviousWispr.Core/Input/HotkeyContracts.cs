@@ -239,7 +239,8 @@ public static class HotkeyGestureParser
 public readonly record struct TargetWindowId(
     nint Value,
     uint ProcessId = 0,
-    string? FocusedElementId = null)
+    string? FocusedElementId = null,
+    string? ProcessName = null)
 {
     public bool IsValid => Value != 0;
 }

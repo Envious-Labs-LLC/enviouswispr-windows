@@ -102,7 +102,25 @@ public sealed class WindowsForegroundHistory : IDisposable
             return;
         }
 
-        _last = new TargetWindowId(window, processId, FocusedElementId: null);
+        _last = new TargetWindowId(window, processId, FocusedElementId: null, ProcessName: TryCaptureProcessName(processId));
+    }
+
+    private static string? TryCaptureProcessName(uint processId)
+    {
+        if (processId == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById((int)processId);
+            return process.ProcessName;
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            return null;
+        }
     }
 
     private static bool IsShellSurface(nint window)

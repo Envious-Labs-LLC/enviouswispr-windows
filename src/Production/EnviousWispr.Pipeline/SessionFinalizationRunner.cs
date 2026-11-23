@@ -2,6 +2,7 @@ using System.Diagnostics;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Pipeline;
@@ -237,8 +238,16 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
             timer.Stop();
             _effects.RecordTranscriptionFinished(transcript, timer.ElapsedMilliseconds);
             var options = _effects.CurrentOptions();
+            var targetAppName = TargetAppNameResolver.Resolve(_controller.CurrentSession?.Target);
             var finalized = await _finalizer
-                .FinalizeAsync(transcript, options.CustomWords, options.TextOptions, options.Snippets, options.Polish, cancellationToken)
+                .FinalizeAsync(
+                    transcript,
+                    options.CustomWords,
+                    options.TextOptions,
+                    options.Snippets,
+                    options.Polish,
+                    targetAppName: targetAppName,
+                    cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
             var processed = finalized.Processed;
 

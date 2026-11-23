@@ -95,8 +95,9 @@ public abstract class CloudPolishProviderBase : IPolishProvider, IMishearingAdvi
             (char[]?)null,
             StringSplitOptions.RemoveEmptyEntries).Length;
         var systemPrompt = CloudPolishPrompt.BuildSystemPrompt(
-            request.DetectedLanguage,
-            wordCount);
+            request.RecognitionLanguage,
+            wordCount,
+            request.TargetAppName);
         var userMessage = CloudPolishPrompt.BuildUserMessage(request.Input.Text);
 
         try

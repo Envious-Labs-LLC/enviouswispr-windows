@@ -91,6 +91,8 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
                     var output = await SendOnceAsync(
                         request.Input.Text,
                         request.Vocabulary,
+                        request.RecognitionLanguage,
+                        request.TargetAppName,
                         readiness.Model,
                         timeout.Token).ConfigureAwait(false);
                     if (LooksLikeCodeOutput(output))
@@ -233,11 +235,13 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
     private async Task<string> SendOnceAsync(
         string transcript,
         IReadOnlyList<string>? vocabulary,
+        string? recognitionLanguage,
+        string? targetAppName,
         OllamaModelInfo model,
         CancellationToken cancellationToken) =>
         await SendOnceAsync(
             transcript,
-            OllamaLocalPrompt.BuildSystemPrompt(vocabulary),
+            OllamaLocalPrompt.BuildSystemPrompt(vocabulary, recognitionLanguage, targetAppName),
             OllamaLocalPrompt.BuildUserMessage(transcript, vocabulary),
             model,
             cancellationToken).ConfigureAwait(false);
