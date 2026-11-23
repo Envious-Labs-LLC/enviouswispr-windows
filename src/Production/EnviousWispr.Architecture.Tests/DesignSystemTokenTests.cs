@@ -3351,6 +3351,73 @@ public sealed partial class DesignSystemTokenTests
         Assert.Contains("PermissionsMicrophoneAttentionBadge.Visibility", codeBehind, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void AllBrandResourcesReferencedInMainWindowCodeExistInThemeDictionaries()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var themeDictionaries = LoadThemeDictionaries(repositoryRoot, "DesignTokens.xaml");
+        var controlsDoc = XDocument.Load(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "Theme", "Controls.xaml"));
+        var typographyDoc = XDocument.Load(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "Theme", "Typography.xaml"));
+        var layoutDoc = XDocument.Load(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "Theme", "Layout.xaml"));
+
+        var controlsKeys = controlsDoc.Descendants()
+            .Select(element => (string?)element.Attribute(XName.Get("Key", XamlNamespace)))
+            .Where(key => !string.IsNullOrEmpty(key))
+            .ToHashSet(StringComparer.Ordinal);
+
+        var typographyKeys = typographyDoc.Descendants()
+            .Select(element => (string?)element.Attribute(XName.Get("Key", XamlNamespace)))
+            .Where(key => !string.IsNullOrEmpty(key))
+            .ToHashSet(StringComparer.Ordinal);
+
+        var layoutKeys = layoutDoc.Descendants()
+            .Select(element => (string?)element.Attribute(XName.Get("Key", XamlNamespace)))
+            .Where(key => !string.IsNullOrEmpty(key))
+            .ToHashSet(StringComparer.Ordinal);
+
+        var appDirectory = Path.Combine(repositoryRoot, "src", "Production", "EnviousWispr.App");
+        var csFiles = Directory.GetFiles(appDirectory, "MainWindow*.cs");
+
+        var regex = new Regex(@"Application\.Current\.Resources\[""(?<key>Brand[^""]+)""\]", RegexOptions.Compiled);
+        var missingReport = new List<string>();
+
+        foreach (var file in csFiles)
+        {
+            var content = File.ReadAllText(file);
+            var matches = regex.Matches(content);
+            foreach (Match match in matches)
+            {
+                var key = match.Groups["key"].Value;
+                if (key.EndsWith("Brush", StringComparison.Ordinal) || key.EndsWith("Color", StringComparison.Ordinal))
+                {
+                    foreach (var theme in new[] { "Light", "Dark", "HighContrast" })
+                    {
+                        var themeDict = themeDictionaries[theme];
+                        var hasKey = themeDict.Elements().Any(e => (string?)e.Attribute(XName.Get("Key", XamlNamespace)) == key);
+                        if (!hasKey)
+                        {
+                            missingReport.Add($"{Path.GetFileName(file)} references '{key}' which is missing from theme '{theme}'");
+                        }
+                    }
+                }
+                else
+                {
+                    var exists = controlsKeys.Contains(key) || typographyKeys.Contains(key) || layoutKeys.Contains(key) ||
+                        themeDictionaries.Values.Any(dict => dict.Elements().Any(e => (string?)e.Attribute(XName.Get("Key", XamlNamespace)) == key));
+                    if (!exists)
+                    {
+                        missingReport.Add($"{Path.GetFileName(file)} references '{key}' which is missing from theme resource dictionaries");
+                    }
+                }
+            }
+        }
+
+        Assert.Empty(missingReport);
+    }
+
     private readonly record struct DynamicColor(Rgba Light, Rgba Dark);
 
     private readonly record struct ThemePair(string Light, string Dark);

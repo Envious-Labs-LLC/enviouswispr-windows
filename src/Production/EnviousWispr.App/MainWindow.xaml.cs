@@ -306,6 +306,14 @@ public sealed partial class MainWindow : Window, IDisposable
     // (Ctrl+Win). Cleared with the candidate. Ref: #66.
     private HotkeyModifiers _keybindModifierSet;
     private CancellationTokenSource? _soundPreviewCancellation;
+    private int _recordingModeIndex;
+    private RecordingSoundPairing _selectedRecordingSoundPairing = RecordingSoundPairing.WhisperTick;
+    private readonly Dictionary<RecordingSoundPairing, Border> _chimeCards = new();
+    private readonly Dictionary<RecordingSoundPairing, Border> _chimeBadges = new();
+    private readonly Dictionary<RecordingSoundPairing, List<Border>> _chimeWaveformBars = new();
+    private readonly Dictionary<RecordingSoundPairing, Button> _chimePlayButtons = new();
+    private PolishProvider _lastNonNonePolishProvider = PolishProvider.EgOne;
+    private bool _isRepolishing;
 
     public MainWindow(
         AppSettings settings,
@@ -397,7 +405,8 @@ public sealed partial class MainWindow : Window, IDisposable
         }
         _recordingSoundCoordinator = new RecordingSoundCueCoordinator(
             _recordingSoundPlayer.Play);
-        RecordingSoundComboBox.ItemsSource = RecordingSoundCatalog.Choices;
+        InitializeChimeCards();
+        SetTranscribeFileStep(1);
         _overlayWindow = new DictationOverlayWindow();
         _historyAnnounceDebounce.Tick += OnHistoryAnnounceDue;
         _overlayWindow.ActionInvoked += OnPillActionInvoked;
@@ -414,7 +423,12 @@ public sealed partial class MainWindow : Window, IDisposable
         // it correct for the case nobody remembers: the user leaves the app on "Use Windows
         // setting" and Windows itself switches at sunset.
         ApplyCaptionButtonColors();
-        WindowRoot.ActualThemeChanged += (_, _) => ApplyCaptionButtonColors();
+        WindowRoot.ActualThemeChanged += (_, _) =>
+        {
+            ApplyCaptionButtonColors();
+            UpdateChimeCardsVisuals();
+            UpdateRecordingModeButtons();
+        };
         TryUseMicaBackdrop();
         ConfigureMinimumWindowWidth();
         ResizeToDefault();
@@ -705,7 +719,10 @@ public sealed partial class MainWindow : Window, IDisposable
         {
             RecordToolbarButtonIcon.Glyph = overlayState == DictationOverlayState.Recording ? "\uE71A" : "\uE720";
         }
-        PreviewRecordingSoundButton.IsEnabled = overlayState != DictationOverlayState.Recording;
+        foreach (var button in _chimePlayButtons.Values)
+        {
+            button.IsEnabled = overlayState != DictationOverlayState.Recording;
+        }
         SetSpeedCheckAvailability(overlayState != DictationOverlayState.Recording);
         _overlayWindow.ShowState(status);
         // THE STATUS SAYS WHETHER IT BELONGS HERE; THIS NO LONGER GUESSES FROM THE WORDS. What stood
@@ -1466,7 +1483,7 @@ public sealed partial class MainWindow : Window, IDisposable
             SpokenPunctuationToggle.IsOn,
             WhisperLanguageComboBox.SelectedIndex,
             EnglishSpellingComboBox.SelectedIndex,
-            RecordingModeComboBox.SelectedIndex,
+            _recordingModeIndex,
             EscapeRecoveryToggle.IsOn,
             AutoStopToggle.IsOn,
             AutoStopSecondsBox.Value,
@@ -1480,7 +1497,7 @@ public sealed partial class MainWindow : Window, IDisposable
             RawSelectedIndexOf(OverlayPositionChoices),
             LevelRailPillButton.IsChecked == true,
             PlayRecordingSoundsToggle.IsOn,
-            (RecordingSoundComboBox.SelectedItem as RecordingSoundChoice)?.Pairing,
+            SelectedRecordingSoundPairing(),
             CopyInsteadOfPasteToggle.IsOn,
             LocalDiagnosticsToggle.IsOn,
             DiagnosticRetentionDaysBox.Value,
@@ -1536,8 +1553,6 @@ public sealed partial class MainWindow : Window, IDisposable
 
         WhisperLanguageComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
         EnglishSpellingComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
-        RecordingModeComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
-        RecordingSoundComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
         MicrophoneComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
 
         AutoStopSecondsBox.ValueChanged += (_, _) => _ = TriggerAutoSaveAsync();
@@ -1652,13 +1667,206 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
-    private void RecordingSoundComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void InitializeChimeCards()
     {
-        var choice = RecordingSoundComboBox.SelectedItem as RecordingSoundChoice;
-        RecordingSoundDescriptionText.Text = choice?.Description ?? string.Empty;
+        ChimesGrid.Children.Clear();
+        _chimeCards.Clear();
+        _chimeBadges.Clear();
+        _chimeWaveformBars.Clear();
+        _chimePlayButtons.Clear();
+
+        var choices = RecordingSoundCatalog.Choices;
+        for (var index = 0; index < choices.Count; index++)
+        {
+            var choice = choices[index];
+            var col = index % 2;
+            var row = index / 2;
+
+            var card = new Border
+            {
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(12, 10, 12, 10),
+                Background = (Brush)Application.Current.Resources["BrandCardBgBrush"],
+                BorderBrush = (Brush)Application.Current.Resources["BrandDividerBrush"],
+                BorderThickness = new Thickness(1),
+                Tag = choice.Pairing,
+                IsTapEnabled = true,
+            };
+            Grid.SetColumn(card, col);
+            Grid.SetRow(card, row);
+
+            card.Tapped += (s, e) =>
+            {
+                if (s is Border b && b.Tag is RecordingSoundPairing pairing)
+                {
+                    SelectChimePairing(pairing, triggerSave: true);
+                }
+            };
+
+            var cardGrid = new Grid
+            {
+                ColumnSpacing = 8,
+            };
+            cardGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            cardGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var contentStack = new StackPanel { Spacing = 4 };
+
+            var headerPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            var titleText = new TextBlock
+            {
+                Text = choice.DisplayName,
+                Style = (Style)Application.Current.Resources["BrandRowLabelStyle"],
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            };
+
+            var badge = new Border
+            {
+                CornerRadius = new CornerRadius(4),
+                Background = (Brush)Application.Current.Resources["BrandAccentBrush"],
+                Padding = new Thickness(6, 1, 6, 1),
+                Visibility = Visibility.Collapsed,
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock
+                {
+                    Text = "IN USE",
+                    FontSize = 10,
+                    FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                    Foreground = (Brush)Application.Current.Resources["BrandOnAccentBrush"],
+                },
+            };
+
+            headerPanel.Children.Add(titleText);
+            headerPanel.Children.Add(badge);
+            contentStack.Children.Add(headerPanel);
+
+            var descText = new TextBlock
+            {
+                Text = choice.Description,
+                Style = (Style)Application.Current.Resources["BrandHelperStyle"],
+                TextWrapping = TextWrapping.NoWrap,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxLines = 1,
+            };
+            contentStack.Children.Add(descText);
+
+            var waveformPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 2,
+                Height = 20,
+                Margin = new Thickness(0, 4, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            var barHeights = Audio.RecordingChimeWaveform.GetBarHeights(choice.Pairing);
+            var bars = new List<Border>();
+            foreach (var h in barHeights)
+            {
+                var barHeight = Math.Max(2.0, h * 18.0);
+                var bar = new Border
+                {
+                    Width = 2,
+                    Height = barHeight,
+                    CornerRadius = new CornerRadius(1),
+                    Background = (Brush)Application.Current.Resources["BrandTextSecondaryBrush"],
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                bars.Add(bar);
+                waveformPanel.Children.Add(bar);
+            }
+            contentStack.Children.Add(waveformPanel);
+
+            Grid.SetColumn(contentStack, 0);
+            cardGrid.Children.Add(contentStack);
+
+            var playButton = new Button
+            {
+                Width = 32,
+                Height = 32,
+                CornerRadius = new CornerRadius(16),
+                Padding = new Thickness(0),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Style = (Style)Application.Current.Resources["BrandQuietButtonStyle"],
+                Content = new FontIcon
+                {
+                    Glyph = "\uE768",
+                    FontSize = 12,
+                },
+                Tag = choice.Pairing,
+            };
+            ToolTipService.SetToolTip(playButton, $"Play {choice.DisplayName} preview");
+            playButton.Click += (s, e) =>
+            {
+                if (s is Button btn && btn.Tag is RecordingSoundPairing pairing)
+                {
+                    _ = PlayChimePreviewAsync(pairing, btn);
+                }
+            };
+            Grid.SetColumn(playButton, 1);
+            cardGrid.Children.Add(playButton);
+
+            card.Child = cardGrid;
+            ChimesGrid.Children.Add(card);
+
+            _chimeCards[choice.Pairing] = card;
+            _chimeBadges[choice.Pairing] = badge;
+            _chimeWaveformBars[choice.Pairing] = bars;
+            _chimePlayButtons[choice.Pairing] = playButton;
+        }
+
+        UpdateChimeCardsVisuals();
     }
 
-    private async void PreviewRecordingSoundButton_Click(object sender, RoutedEventArgs e)
+    private void SelectChimePairing(RecordingSoundPairing pairing, bool triggerSave = true)
+    {
+        _selectedRecordingSoundPairing = pairing;
+        UpdateChimeCardsVisuals();
+        if (triggerSave && !_isApplyingSettings && _settings is not null)
+        {
+            _ = TriggerAutoSaveAsync();
+        }
+    }
+
+    private void UpdateChimeCardsVisuals()
+    {
+        var accentBrush = (Brush)Application.Current.Resources["BrandAccentBrush"];
+        var dividerBrush = (Brush)Application.Current.Resources["BrandDividerBrush"];
+        var surfaceBrush = (Brush)Application.Current.Resources["BrandCardBgBrush"];
+        var hoverBrush = (Brush)Application.Current.Resources["BrandAccentLightBrush"];
+        var secondaryTextBrush = (Brush)Application.Current.Resources["BrandTextSecondaryBrush"];
+
+        foreach (var (pairing, card) in _chimeCards)
+        {
+            var isSelected = pairing == _selectedRecordingSoundPairing;
+            card.BorderBrush = isSelected ? accentBrush : dividerBrush;
+            card.BorderThickness = isSelected ? new Thickness(2) : new Thickness(1);
+            card.Background = isSelected ? hoverBrush : surfaceBrush;
+
+            if (_chimeBadges.TryGetValue(pairing, out var badge))
+            {
+                badge.Visibility = isSelected ? Visibility.Visible : Visibility.Collapsed;
+            }
+
+            if (_chimeWaveformBars.TryGetValue(pairing, out var bars))
+            {
+                var barBrush = isSelected ? accentBrush : secondaryTextBrush;
+                foreach (var bar in bars)
+                {
+                    bar.Background = barBrush;
+                }
+            }
+        }
+    }
+
+    private async Task PlayChimePreviewAsync(RecordingSoundPairing pairing, Button? button = null)
     {
         if (_currentOverlayState == DictationOverlayState.Recording)
         {
@@ -1669,8 +1877,11 @@ public sealed partial class MainWindow : Window, IDisposable
         _soundPreviewCancellation?.Dispose();
         var cancellation = new CancellationTokenSource();
         _soundPreviewCancellation = cancellation;
-        PreviewRecordingSoundButton.IsEnabled = false;
-        var pairing = SelectedRecordingSoundPairing();
+        if (button is not null)
+        {
+            button.IsEnabled = false;
+        }
+
         try
         {
             if (!_recordingSoundPlayer.Play(pairing, RecordingSoundMoment.Start))
@@ -1697,19 +1908,219 @@ public sealed partial class MainWindow : Window, IDisposable
             {
                 _soundPreviewCancellation.Dispose();
                 _soundPreviewCancellation = null;
-                PreviewRecordingSoundButton.IsEnabled =
-                    _currentOverlayState != DictationOverlayState.Recording;
+                if (button is not null)
+                {
+                    button.IsEnabled = _currentOverlayState != DictationOverlayState.Recording;
+                }
             }
+        }
+    }
+
+    private void PushToTalkSegmentButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetRecordingMode(0, triggerSave: true);
+    }
+
+    private void ToggleSegmentButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetRecordingMode(1, triggerSave: true);
+    }
+
+    private void SetRecordingMode(int modeIndex, bool triggerSave = true)
+    {
+        _recordingModeIndex = modeIndex;
+        UpdateRecordingModeButtons();
+
+        if (AutoStopToggle is not null)
+        {
+            AutoStopToggle.IsEnabled = modeIndex != 0;
+            UpdateAutoStopAvailability();
+        }
+
+        if (triggerSave && !_isApplyingSettings && _settings is not null)
+        {
+            _ = TriggerAutoSaveAsync();
+        }
+    }
+
+    private void UpdateRecordingModeButtons()
+    {
+        var pttSelected = _recordingModeIndex == 0;
+        var accentBrush = (Brush)Application.Current.Resources["BrandAccentBrush"];
+        var accentFgBrush = (Brush)Application.Current.Resources["BrandOnAccentBrush"];
+
+        if (PushToTalkSegmentButton is not null)
+        {
+            if (pttSelected)
+            {
+                PushToTalkSegmentButton.Background = accentBrush;
+                PushToTalkSegmentButton.Foreground = accentFgBrush;
+                PushToTalkSegmentButton.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+            }
+            else
+            {
+                PushToTalkSegmentButton.ClearValue(Button.BackgroundProperty);
+                PushToTalkSegmentButton.ClearValue(Button.ForegroundProperty);
+                PushToTalkSegmentButton.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
+            }
+        }
+
+        if (ToggleSegmentButton is not null)
+        {
+            if (!pttSelected)
+            {
+                ToggleSegmentButton.Background = accentBrush;
+                ToggleSegmentButton.Foreground = accentFgBrush;
+                ToggleSegmentButton.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+            }
+            else
+            {
+                ToggleSegmentButton.ClearValue(Button.BackgroundProperty);
+                ToggleSegmentButton.ClearValue(Button.ForegroundProperty);
+                ToggleSegmentButton.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
+            }
+        }
+    }
+
+    private void ChangeHotkeyButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string tag })
+        {
+            var box = tag switch
+            {
+                "Hotkey" => HotkeyTextBox,
+                "CancelHotkey" => CancelHotkeyTextBox,
+                "QuickAdd" => QuickAddHotkeyTextBox,
+                "PasteLast" => PasteLastHotkeyTextBox,
+                "CopyLast" => CopyLastHotkeyTextBox,
+                _ => null,
+            };
+            if (box is not null)
+            {
+                box.Focus(FocusState.Programmatic);
+                box.SelectAll();
+            }
+        }
+    }
+
+    private void EnableAiPolishToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_isApplyingSettings || _settings is null)
+        {
+            return;
+        }
+
+        var isEnabled = EnableAiPolishToggle.IsOn;
+        if (AiPolishEnabledContent is not null)
+        {
+            AiPolishEnabledContent.Visibility = isEnabled ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (isEnabled)
+        {
+            var provider = _lastNonNonePolishProvider == PolishProvider.None ? PolishProvider.EgOne : _lastNonNonePolishProvider;
+            SelectChoice(PolishProviderChoices, PolishProviderIndex(provider));
+        }
+        else
+        {
+            var current = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
+            if (current != PolishProvider.None)
+            {
+                _lastNonNonePolishProvider = current;
+            }
+            SelectChoice(PolishProviderChoices, PolishProviderIndex(PolishProvider.None));
+        }
+
+        UpdateActivePolishProviderDisplay();
+        _ = TriggerAutoSaveAsync();
+        UpdateHistoryStatusCards();
+    }
+
+    private void ChangePolishProviderButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (PolishProviderChooserPanel is not null)
+        {
+            PolishProviderChooserPanel.Visibility =
+                PolishProviderChooserPanel.Visibility == Visibility.Visible
+                    ? Visibility.Collapsed
+                    : Visibility.Visible;
+        }
+    }
+
+    private void UpdateActivePolishProviderDisplay()
+    {
+        var provider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
+        if (provider != PolishProvider.None)
+        {
+            _lastNonNonePolishProvider = provider;
+        }
+
+        var isPolishEnabled = provider != PolishProvider.None;
+        if (EnableAiPolishToggle is not null && EnableAiPolishToggle.IsOn != isPolishEnabled)
+        {
+            EnableAiPolishToggle.IsOn = isPolishEnabled;
+        }
+        if (AiPolishEnabledContent is not null)
+        {
+            AiPolishEnabledContent.Visibility = isPolishEnabled ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (ActivePolishProviderNameText is not null)
+        {
+            ActivePolishProviderNameText.Text = ProviderDisplayName(provider);
+        }
+
+        var isCloud = IsCloudProvider(provider);
+        if (ActivePolishProviderBadgeText is not null)
+        {
+            ActivePolishProviderBadgeText.Text = isCloud ? "Cloud" : "On this PC";
+        }
+
+        if (ActivePolishProviderIcon is not null)
+        {
+            ActivePolishProviderIcon.Glyph = provider switch
+            {
+                PolishProvider.EgOne => "\uE70F",
+                PolishProvider.Ollama => "\uE968",
+                _ => "\uE753",
+            };
+        }
+
+        if (ActivePolishProviderStatusText is not null)
+        {
+            ActivePolishProviderStatusText.Text = provider switch
+            {
+                PolishProvider.EgOne => "Our model for cleaning up dictation on this PC.",
+                PolishProvider.Ollama => "Local LLM runner on this PC.",
+                PolishProvider.OpenAI => "OpenAI GPT models (requires your API key).",
+                PolishProvider.Anthropic => "Anthropic Claude models (requires your API key).",
+                PolishProvider.Gemini => "Google Gemini models (requires your API key).",
+                _ => "AI Polish is disabled.",
+            };
+        }
+
+        if (EgOneSettingsPanel is not null)
+        {
+            EgOneSettingsPanel.Visibility = provider == PolishProvider.EgOne ? Visibility.Visible : Visibility.Collapsed;
+        }
+        if (OllamaSettingsPanel is not null)
+        {
+            OllamaSettingsPanel.Visibility = provider == PolishProvider.Ollama ? Visibility.Visible : Visibility.Collapsed;
+        }
+        if (CloudPolishSettingsPanel is not null)
+        {
+            CloudPolishSettingsPanel.Visibility = isCloud ? Visibility.Visible : Visibility.Collapsed;
         }
     }
 
     private async void PolishProviderCardChecked(object sender, RoutedEventArgs e)
     {
-        if (_isApplyingSettings)
+        if (_isApplyingSettings || _settings is null)
         {
             return;
         }
 
+        UpdateActivePolishProviderDisplay();
         ApiKeyPasswordBox.Password = string.Empty;
         RefreshApiKeyStatus();
         await RefreshPolishModelChoicesAsync(
@@ -2480,6 +2891,93 @@ public sealed partial class MainWindow : Window, IDisposable
                 "Recovery copy could not be deleted",
                 "Windows left the encrypted recovery file untouched.",
                 InfoBarSeverity.Error);
+        }
+    }
+
+    private async void RepolishHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isRepolishing)
+        {
+            return;
+        }
+
+        if (HistoryList.SelectedItem is not HistoryItemViewModel selected)
+        {
+            ShowMessage("Select a dictation first", "Choose the history entry you want to re-polish.", InfoBarSeverity.Informational);
+            return;
+        }
+
+        if (selected.IsTemporary)
+        {
+            ShowMessage("Keep dictation first", "Escape recovery entries must be kept before re-polishing.", InfoBarSeverity.Informational);
+            return;
+        }
+
+        if (_settings?.Preferences.Polish.Provider == PolishProvider.None)
+        {
+            ShowMessage("AI polish is off", "Enable an AI polish provider in settings first.", InfoBarSeverity.Warning);
+            return;
+        }
+
+        _isRepolishing = true;
+        if (RepolishHistoryProgress is not null)
+        {
+            RepolishHistoryProgress.IsActive = true;
+            RepolishHistoryProgress.Visibility = Visibility.Visible;
+        }
+        UpdateSelectionDependentButtons();
+
+        try
+        {
+            var result = await _session.History.RepolishAsync(selected.Id).ConfigureAwait(true);
+            if (result.Status == HistoryRepolishStatus.Closing || _session.Closing)
+            {
+                return;
+            }
+
+            if (result.Succeeded)
+            {
+                if (result.View is not null)
+                {
+                    ShowHistory(result.View);
+                    if (HistoryList.ItemsSource is HistoryItemViewModel[] items)
+                    {
+                        var reselected = items.FirstOrDefault(i => i.Id == selected.Id);
+                        if (reselected is not null)
+                        {
+                            HistoryList.SelectedItem = reselected;
+                        }
+                    }
+                }
+                if (result.Entry is not null)
+                {
+                    HistoryDetailTextBox.Text = result.Entry.Text;
+                }
+                ShowMessage("Re-polished dictation", "Transcript updated with active polish model.", InfoBarSeverity.Success);
+            }
+            else
+            {
+                var (title, message, severity) = result.Status switch
+                {
+                    HistoryRepolishStatus.NoProviderConfigured => ("AI polish is off", "Enable an AI polish provider in settings first.", InfoBarSeverity.Warning),
+                    HistoryRepolishStatus.EscapeRecoveryEntryMustBeKept => ("Keep dictation first", "Escape recovery entries must be kept before re-polishing.", InfoBarSeverity.Informational),
+                    HistoryRepolishStatus.PolishRefused => ("Re-polish refused", "The polish provider returned no response.", InfoBarSeverity.Warning),
+                    HistoryRepolishStatus.EntryNotFound => ("History entry not found", "The entry may have already been removed.", InfoBarSeverity.Warning),
+                    HistoryRepolishStatus.EntryExpired => ("History entry expired", "The entry is past retention.", InfoBarSeverity.Warning),
+                    _ => ("Re-polish failed", "The polish service encountered an error.", InfoBarSeverity.Error),
+                };
+                ShowMessage(title, message, severity);
+            }
+        }
+        finally
+        {
+            _isRepolishing = false;
+            if (RepolishHistoryProgress is not null)
+            {
+                RepolishHistoryProgress.IsActive = false;
+                RepolishHistoryProgress.Visibility = Visibility.Collapsed;
+            }
+            UpdateSelectionDependentButtons();
         }
     }
 
@@ -3323,11 +3821,16 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         var historySelected = HistoryList.SelectedItem is not null;
-        CopyHistoryButton.IsEnabled = historySelected;
-        PasteHistoryButton.IsEnabled = historySelected;
-        KeepHistoryButton.IsEnabled = historySelected;
-        DeleteHistoryButton.IsEnabled = historySelected;
-        ClearHistoryButton.IsEnabled = _history.Count > 0;
+        var activeHistoryItem = HistoryList.SelectedItem as HistoryItemViewModel;
+        CopyHistoryButton.IsEnabled = historySelected && !_isRepolishing;
+        PasteHistoryButton.IsEnabled = historySelected && !_isRepolishing;
+        KeepHistoryButton.IsEnabled = historySelected && !_isRepolishing;
+        DeleteHistoryButton.IsEnabled = historySelected && !_isRepolishing;
+        ClearHistoryButton.IsEnabled = _history.Count > 0 && !_isRepolishing;
+        if (RepolishHistoryButton is not null)
+        {
+            RepolishHistoryButton.IsEnabled = historySelected && !_isRepolishing && (activeHistoryItem is null || !activeHistoryItem.IsTemporary);
+        }
 
         if (HistoryList.SelectedItem is HistoryItemViewModel selectedHistory)
         {
@@ -4185,7 +4688,7 @@ public sealed partial class MainWindow : Window, IDisposable
             WhisperLanguageComboBox.SelectedIndex = (int)preferences.Dictation.WhisperLanguage;
             EnglishSpellingComboBox.SelectedIndex = (int)preferences.Dictation.EnglishSpelling;
             HotkeyTextBox.Text = preferences.Dictation.PushToTalkGesture;
-            RecordingModeComboBox.SelectedIndex = (int)preferences.Dictation.RecordingMode;
+            SetRecordingMode((int)preferences.Dictation.RecordingMode, triggerSave: false);
             CancelHotkeyTextBox.Text = preferences.Dictation.CancelGesture;
             EscapeRecoveryToggle.IsOn = preferences.Dictation.EscapeRecoveryEnabled;
             QuickAddHotkeyTextBox.Text = preferences.Dictation.QuickAddGesture;
@@ -4199,7 +4702,12 @@ public sealed partial class MainWindow : Window, IDisposable
             AutoStopToggle.IsOn = preferences.Dictation.AutoStopEnabled;
             AutoStopSecondsBox.Value = preferences.Dictation.AutoStopSilenceSeconds;
             UpdateAutoStopAvailability();
+            if (preferences.Polish.Provider != PolishProvider.None)
+            {
+                _lastNonNonePolishProvider = preferences.Polish.Provider;
+            }
             SelectChoice(PolishProviderChoices, PolishProviderIndex(preferences.Polish.Provider));
+            UpdateActivePolishProviderDisplay();
             PolishModelTextBox.Text = _polishModelSetByApp = preferences.Polish.ModelId ?? string.Empty;
             OllamaEndpointTextBox.Text = preferences.Polish.OllamaEndpoint ?? string.Empty;
             HistoryEnabledToggle.IsOn = preferences.History.IsEnabled;
@@ -4214,10 +4722,7 @@ public sealed partial class MainWindow : Window, IDisposable
             ReadingWellPillButton.IsChecked = true;
             PlayRecordingSoundsToggle.IsOn = preferences.PlayRecordingSounds;
             CopyInsteadOfPasteToggle.IsOn = preferences.CopyInsteadOfPaste;
-            RecordingSoundComboBox.SelectedItem = RecordingSoundCatalog.Find(
-                preferences.RecordingSoundPairing);
-            RecordingSoundDescriptionText.Text = RecordingSoundCatalog.Find(
-                preferences.RecordingSoundPairing).Description;
+            SelectChimePairing(preferences.RecordingSoundPairing, triggerSave: false);
             UpdatePillDesignControls();
             _overlayWindow.ApplyPreferences(
                 preferences.OverlayPosition,
@@ -5465,9 +5970,7 @@ public sealed partial class MainWindow : Window, IDisposable
             ? RecordingPillDesign.LevelRail
             : RecordingPillDesign.Classic;
 
-    private RecordingSoundPairing SelectedRecordingSoundPairing() =>
-        (RecordingSoundComboBox.SelectedItem as RecordingSoundChoice)?.Pairing ??
-        RecordingSoundPairing.WhisperTick;
+    private RecordingSoundPairing SelectedRecordingSoundPairing() => _selectedRecordingSoundPairing;
 
     private void UpdatePillDesignControls()
     {
