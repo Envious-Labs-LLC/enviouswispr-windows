@@ -1,7 +1,11 @@
 param(
     [switch]$IncludeLocalRuntime,
     [ValidateSet("Debug", "Release")]
-    [string]$Configuration = "Release"
+    [string]$Configuration = "Release",
+    [switch]$Ci,
+    [switch]$IncludeLegacyProof,
+    [switch]$IncludeNotices,
+    [switch]$IncludeManifests
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,10 +14,13 @@ $ErrorActionPreference = "Stop"
 if ($IncludeLocalRuntime -and $Configuration -eq "Debug") {
     throw "Debug supports portable validation only. Use -Configuration Release -IncludeLocalRuntime for model-dependent validation."
 }
+if ($Ci -and $IncludeLocalRuntime) {
+    throw "-Ci and -IncludeLocalRuntime cannot be combined; cloud runners have no local model packs."
+}
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
 Write-Host "Validating public-release repository compliance..."
-& pwsh -NoProfile -File (Join-Path $repoRoot "scripts\audit-public-release.ps1")
+& pwsh -NoProfile -File (Join-Path $repoRoot "scripts\audit-public-release.ps1") -SkipNotices
 if ($LASTEXITCODE -ne 0) {
     throw "Public-release repository compliance failed."
 }
@@ -56,6 +63,9 @@ function Resolve-Python {
 
 $python = Resolve-Python
 if ($null -eq $python) {
+    if ($Ci) {
+        throw "Python 3 is required in -Ci mode for the C# string escape check."
+    }
     # SKIPPED LOUDLY, NOT SILENTLY, and only because the check is enforced elsewhere. CI runs on a
     # runner that has Python, so the rule is kept there; a developer machine without it gets a line
     # it cannot miss rather than a green run that quietly proved less. This is the same allowance
@@ -197,9 +207,13 @@ function Invoke-DotNetTest {
     $ErrorActionPreference = 'Continue'
     try {
         $listed = & $Executable @($common + @("--no-build", "--list-tests")) 2>&1
+        $listExitCode = $LASTEXITCODE
     }
     finally {
         $ErrorActionPreference = $previousPreference
+    }
+    if ($listExitCode -ne 0) {
+        throw "Test discovery (--list-tests) failed for $Project with exit code $listExitCode."
     }
     $discovered = @($listed | Select-String -Pattern '^\s{4}\S').Count
     $reported = 0
@@ -222,19 +236,28 @@ function Invoke-DotNetTest {
     Write-Host "  verified: $reported of $discovered tests ran."
 }
 
-$dotnet8Exe = Resolve-DotNetSdk -MajorVersion 8
+$runLegacyProof = (-not $Ci) -or $IncludeLegacyProof
+$runNotices = (-not $Ci) -or $IncludeNotices
+$runManifests = (-not $Ci) -or $IncludeManifests
+$runToolHarnesses = (-not $Ci) -or $IncludeLocalRuntime
+
+$dotnet8Exe = if ($runLegacyProof) { Resolve-DotNetSdk -MajorVersion 8 } else { $null }
 $dotnet10Exe = Resolve-DotNetSdk -MajorVersion 10
 
 Push-Location $repoRoot
 try {
-    Write-Host "Using .NET 8 SDK from $dotnet8Exe for the preserved proof"
+    if ($runLegacyProof) {
+        Write-Host "Using .NET 8 SDK from $dotnet8Exe for the preserved proof"
+    }
     Write-Host "Using .NET 10 SDK from $dotnet10Exe for production"
 
-    Write-Host "Building EnviousWispr app ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet8Exe -Arguments @("build", "src/EnviousWispr/EnviousWispr.csproj", "-c", $Configuration, "--nologo")
+    if ($runLegacyProof) {
+        Write-Host "Building EnviousWispr app ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet8Exe -Arguments @("build", "src/EnviousWispr/EnviousWispr.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building smoke harness ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet8Exe -Arguments @("build", "src/EnviousWispr.Smoke/EnviousWispr.Smoke.csproj", "-c", $Configuration, "--nologo")
+        Write-Host "Building smoke harness ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet8Exe -Arguments @("build", "src/EnviousWispr.Smoke/EnviousWispr.Smoke.csproj", "-c", $Configuration, "--nologo")
+    }
 
     Write-Host "Building production WinUI app and module graph ($Configuration, x64)..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "src/Production/EnviousWispr.App/EnviousWispr.App.csproj", "-c", $Configuration, "--nologo", "-p:Platform=x64")
@@ -246,44 +269,12 @@ try {
         throw "The WinUI-bundled runtime worker could not launch (exit $LASTEXITCODE)."
     }
 
-    Write-Host "Building native audio UAT harness ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/audio-uat/EnviousWispr.Audio.Uat.csproj", "-c", $Configuration, "--nologo")
-
-    Write-Host "Building native hotkey UAT harness ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/hotkey-uat/EnviousWispr.Hotkey.Uat.csproj", "-c", $Configuration, "--nologo")
-
-    Write-Host "Building native context and delivery UAT harness ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/delivery-uat/EnviousWispr.Delivery.Uat.csproj", "-c", $Configuration, "--nologo")
-
-    Write-Host "Building controlled delivery target UAT harness ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/delivery-target-uat/EnviousWispr.Delivery.Target.Uat.csproj", "-c", $Configuration, "--nologo")
-
-    Write-Host "Building limited-token delivery launcher UAT harness ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/limited-launch-uat/EnviousWispr.LimitedLaunch.Uat.csproj", "-c", $Configuration, "--nologo")
-
-    Write-Host "Building local polish UAT harness ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/polish-uat/EnviousWispr.Polish.Uat.csproj", "-c", $Configuration, "--nologo")
-
-    Write-Host "Building opt-in cloud polish UAT harness ($Configuration; no provider call)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/cloud-polish-uat/EnviousWispr.CloudPolish.Uat.csproj", "-c", $Configuration, "--nologo")
-
-    Write-Host "Building local Ollama UAT harness ($Configuration; no model pull)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/ollama-uat/EnviousWispr.Ollama.Uat.csproj", "-c", $Configuration, "--nologo")
-
-    Write-Host "Building native runtime UAT harness ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/runtime-uat/EnviousWispr.Runtime.Uat.csproj", "-c", $Configuration, "--nologo")
-
-    Write-Host "Building signed model-delivery UAT harness ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/model-delivery-uat/EnviousWispr.ModelDelivery.Uat.csproj", "-c", $Configuration, "--nologo")
-
-    Write-Host "Building the model-manifest authoring tool ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/model-manifest/EnviousWispr.ModelManifest.Tool.csproj", "-c", $Configuration, "--nologo")
-
-    # VERIFY EVERY BUNDLED MANIFEST FROM SOURCE, not only through the embedded copy the tests read.
-    # A manifest edited by hand without its digest recomputed would otherwise be found by a user.
-    Get-ChildItem -Path "models/manifests" -Filter "*.json" | ForEach-Object {
-        Write-Host "Verifying bundled manifest $($_.Name)..."
-        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--no-build", "-c", $Configuration, "--project", "tools/model-manifest/EnviousWispr.ModelManifest.Tool.csproj", "--", "verify", $_.FullName)
+    if ($runNotices) {
+        Write-Host "Verifying production third-party notices..."
+        & pwsh -NoProfile -File (Join-Path $repoRoot "scripts\generate-third-party-notices.ps1") -Verify
+        if ($LASTEXITCODE -ne 0) {
+            throw "Production third-party notice verification failed."
+        }
     }
 
     Write-Host "Building privacy-safe observability UAT harness ($Configuration)..."
@@ -297,37 +288,81 @@ try {
     Write-Host "Running the privacy-safe observability acceptance..."
     Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/observability-uat/EnviousWispr.Observability.Uat.csproj", "-c", $Configuration, "--no-build")
 
-    Write-Host "Building privacy-safe compatibility UAT harness ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/compatibility-uat/EnviousWispr.Compatibility.Uat.csproj", "-c", $Configuration, "--nologo")
+    if ($runManifests) {
+        Write-Host "Building the model-manifest authoring tool ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/model-manifest/EnviousWispr.ModelManifest.Tool.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building privacy-safe performance UAT harness ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/performance-uat/EnviousWispr.Performance.Uat.csproj", "-c", $Configuration, "--nologo")
+        # VERIFY EVERY BUNDLED MANIFEST FROM SOURCE, not only through the embedded copy the tests read.
+        # A manifest edited by hand without its digest recomputed would otherwise be found by a user.
+        Get-ChildItem -Path "models/manifests" -Filter "*.json" | ForEach-Object {
+            Write-Host "Verifying bundled manifest $($_.Name)..."
+            Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--no-build", "-c", $Configuration, "--project", "tools/model-manifest/EnviousWispr.ModelManifest.Tool.csproj", "--", "verify", $_.FullName)
+        }
+    }
 
-    Write-Host "Building native ASR UAT harness ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/asr-uat/EnviousWispr.Asr.Uat.csproj", "-c", $Configuration, "--nologo")
+    if ($runToolHarnesses) {
+        Write-Host "Building native audio UAT harness ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/audio-uat/EnviousWispr.Audio.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building native Whisper UAT harness ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/whisper-uat/EnviousWispr.Whisper.Uat.csproj", "-c", $Configuration, "--nologo")
+        Write-Host "Building native hotkey UAT harness ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/hotkey-uat/EnviousWispr.Hotkey.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    # BUILT BY THE GATE THOUGH THE GATE CANNOT RUN IT. It needs a model pack and long recordings that
-    # are not in the repository, so it is a measuring instrument rather than a check. Compiling it here
-    # is what stops it rotting into something that cannot be pointed at the next question.
-    Write-Host "Building live-preview cost spike ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/asr-incremental-spike/EnviousWispr.Asr.Incremental.Spike.csproj", "-c", $Configuration, "--nologo")
+        Write-Host "Building native context and delivery UAT harness ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/delivery-uat/EnviousWispr.Delivery.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    # THE PREVIEW MODEL BENCH (#127), compiled for the same reason: it runs against the product's own runtime worker
-    # and model packs, so a change there that it no longer builds against is found here, not the next time a model
-    # has to be chosen.
-    Write-Host "Building live-preview model bench ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/preview-model-bench/EnviousWispr.Preview.Model.Bench.csproj", "-c", $Configuration, "--nologo")
+        Write-Host "Building controlled delivery target UAT harness ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/delivery-target-uat/EnviousWispr.Delivery.Target.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    # THE STAGE BUDGET BENCH (#239), compiled for the same reason: the cleanup stages' deadlines are set from
-    # what it prints, so it must still build against the stages the next time one of them changes.
-    Write-Host "Building deterministic stage budget bench ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/stage-budget-bench/EnviousWispr.StageBudget.Bench.csproj", "-c", $Configuration, "--nologo")
+        Write-Host "Building limited-token delivery launcher UAT harness ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/limited-launch-uat/EnviousWispr.LimitedLaunch.Uat.csproj", "-c", $Configuration, "--nologo")
 
-    Write-Host "Building production WinUI end-to-end journey UAT harness ($Configuration)..."
-    Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", $Configuration, "--nologo")
+        Write-Host "Building local polish UAT harness ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/polish-uat/EnviousWispr.Polish.Uat.csproj", "-c", $Configuration, "--nologo")
+
+        Write-Host "Building opt-in cloud polish UAT harness ($Configuration; no provider call)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/cloud-polish-uat/EnviousWispr.CloudPolish.Uat.csproj", "-c", $Configuration, "--nologo")
+
+        Write-Host "Building local Ollama UAT harness ($Configuration; no model pull)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/ollama-uat/EnviousWispr.Ollama.Uat.csproj", "-c", $Configuration, "--nologo")
+
+        Write-Host "Building native runtime UAT harness ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/runtime-uat/EnviousWispr.Runtime.Uat.csproj", "-c", $Configuration, "--nologo")
+
+        Write-Host "Building signed model-delivery UAT harness ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/model-delivery-uat/EnviousWispr.ModelDelivery.Uat.csproj", "-c", $Configuration, "--nologo")
+
+        Write-Host "Building privacy-safe compatibility UAT harness ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/compatibility-uat/EnviousWispr.Compatibility.Uat.csproj", "-c", $Configuration, "--nologo")
+
+        Write-Host "Building privacy-safe performance UAT harness ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/performance-uat/EnviousWispr.Performance.Uat.csproj", "-c", $Configuration, "--nologo")
+
+        Write-Host "Building native ASR UAT harness ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/asr-uat/EnviousWispr.Asr.Uat.csproj", "-c", $Configuration, "--nologo")
+
+        Write-Host "Building native Whisper UAT harness ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/whisper-uat/EnviousWispr.Whisper.Uat.csproj", "-c", $Configuration, "--nologo")
+
+        # BUILT BY THE GATE THOUGH THE GATE CANNOT RUN IT. It needs a model pack and long recordings that
+        # are not in the repository, so it is a measuring instrument rather than a check. Compiling it here
+        # is what stops it rotting into something that cannot be pointed at the next question.
+        Write-Host "Building live-preview cost spike ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/asr-incremental-spike/EnviousWispr.Asr.Incremental.Spike.csproj", "-c", $Configuration, "--nologo")
+
+        # THE PREVIEW MODEL BENCH (#127), compiled for the same reason: it runs against the product's own runtime worker
+        # and model packs, so a change there that it no longer builds against is found here, not the next time a model
+        # has to be chosen.
+        Write-Host "Building live-preview model bench ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/preview-model-bench/EnviousWispr.Preview.Model.Bench.csproj", "-c", $Configuration, "--nologo")
+
+        # THE STAGE BUDGET BENCH (#239), compiled for the same reason: the cleanup stages' deadlines are set from
+        # what it prints, so it must still build against the stages the next time one of them changes.
+        Write-Host "Building deterministic stage budget bench ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/stage-budget-bench/EnviousWispr.StageBudget.Bench.csproj", "-c", $Configuration, "--nologo")
+
+        Write-Host "Building production WinUI end-to-end journey UAT harness ($Configuration)..."
+        Invoke-DotNet -Executable $dotnet10Exe -Arguments @("build", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", $Configuration, "--nologo")
+    }
 
     if ($IncludeLocalRuntime) {
         Write-Host "Running contract and local model runtime tests..."
@@ -348,7 +383,7 @@ try {
         Write-Host "Running the streaming head-start journey..."
         Invoke-DotNet -Executable $dotnet10Exe -Arguments @("run", "--project", "tools/app-journey-uat/EnviousWispr.AppJourney.Uat.csproj", "-c", $Configuration, "--no-build", "--", "--english-parakeet", "--head-start")
     }
-    else {
+    elseif ($runLegacyProof) {
         Write-Host "Running portable contract tests..."
         Invoke-DotNetTest -Executable $dotnet8Exe -Project "src/EnviousWispr.Tests/EnviousWispr.Tests.csproj" -ExtraArguments @("-p:ExcludeLocalOnlyTests=true")
         Write-Host "Local model runtime tests were not requested. Use -IncludeLocalRuntime on a configured Windows machine."

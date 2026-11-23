@@ -14,6 +14,7 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -30,24 +31,94 @@ jobs:
         if: github.event_name == 'pull_request'
         shell: pwsh
         run: |
-          $hits = @(git log --format='%h %B' "origin/${{ github.base_ref }}..HEAD" | Select-String -Pattern '^\s*(Co-Authored-By:\s*Claude|Claude-Session:|\W{0,3}\s*Generated with \[?Claude Code)')
+          $logLines = @(git log --format='%h %B' "origin/${{ github.base_ref }}..HEAD")
+          if ($LASTEXITCODE -ne 0) { "git log failed while checking AI attribution."; exit $LASTEXITCODE }
+          $hits = @($logLines | Select-String -Pattern '^\s*(Co-Authored-By:\s*(Claude|Codex|Copilot|Gemini|ChatGPT|OpenAI|Anthropic)|Claude-Session:|\W{0,3}\s*Generated with \[?(Claude Code|Codex|Copilot))')
           if ($hits.Count -gt 0) { "AI attribution found:"; $hits; exit 1 }
 
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - name: Classify changes
+        id: changes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $baseRef = 'origin/${{ github.base_ref }}'
+          $mergeBase = & git merge-base $baseRef HEAD 2>$null
+          $files = @()
+          if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($mergeBase)) {
+            $files = @(& git diff --name-only "$($mergeBase.Trim())..HEAD" | ForEach-Object { ($_ -replace '\\', '/').Trim() } | Where-Object { $_ })
+            if ($LASTEXITCODE -ne 0) { $files = @() }
+          }
+
+          if ($files.Count -eq 0) {
+            Write-Host 'Change list could not be determined; running full cloud gate.'
+            $needsBuild = $true
+            $needsStorePackage = $true
+            $needsLegacyProof = $true
+            $needsManifests = $true
+          }
+          else {
+            $docsOnlyPattern = '^(docs/.*\.md|notes/.*|\.github/pull_request_template\.md|(README|PRIVACY|SECURITY|SUPPORT)\.md)$'
+            $storePattern = '(?i)(^|/)(Package\.appxmanifest|app\.manifest|NuGet\.Config|packages\.lock\.json|global\.json)$|\.(csproj|props|targets)$|^scripts/(package-store|generate-third-party-notices)\.ps1$|^THIRD-PARTY-NOTICES\.md$|^\.github/workflows/ci\.yml$|^src/Production/EnviousWispr\.App/Assets/'
+            $legacyPattern = '(?i)^src/EnviousWispr(\.Smoke|\.Tests)?/|^(src/)?(Directory\.[^/]*\.(props|targets)|NuGet\.Config|global\.json|\.editorconfig)$|^scripts/validate\.ps1$'
+            $manifestPattern = '^models/manifests/|^tools/model-manifest/'
+
+            $needsBuild = (@($files | Where-Object { $_ -notmatch $docsOnlyPattern }).Count -gt 0)
+            $needsStorePackage = (@($files | Where-Object { $_ -match $storePattern }).Count -gt 0)
+            $needsLegacyProof = (@($files | Where-Object { $_ -match $legacyPattern }).Count -gt 0)
+            $needsManifests = (@($files | Where-Object { $_ -match $manifestPattern }).Count -gt 0)
+          }
+
+          "needs_build=$($needsBuild.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "needs_store_package=$($needsStorePackage.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "needs_legacy_proof=$($needsLegacyProof.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "needs_manifests=$($needsManifests.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Changed files: $($files.Count) | needs_build=$needsBuild | needs_store_package=$needsStorePackage | needs_legacy_proof=$needsLegacyProof | needs_manifests=$needsManifests"
+
+      - name: Public-repo safety scan (docs-only fast path)
+        if: steps.changes.outputs.needs_build != 'true'
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/audit-public-release.ps1 -SkipNotices
+
+      - name: Cache NuGet packages
+        if: steps.changes.outputs.needs_build == 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.*.props', '**/Directory.*.targets', '**/packages.lock.json', '**/NuGet.Config', '**/global.json') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Setup .NET 10
+        if: steps.changes.outputs.needs_build == 'true' && steps.changes.outputs.needs_legacy_proof != 'true'
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Setup .NET 8 and 10
+        if: steps.changes.outputs.needs_build == 'true' && steps.changes.outputs.needs_legacy_proof == 'true'
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: |
             8.0.x
             10.0.x
 
-      # Canonical parity with local validation. Model runtime tests remain
-      # excluded because their packs are gitignored and machine-local by design.
-      - name: Validate portable Release build and contracts
-        shell: powershell
-        run: powershell -ExecutionPolicy Bypass -File scripts/validate.ps1 -Configuration Release
+      # Lean cloud gate: builds production WinUI app + RuntimeWorker, runs privacy acceptance and
+      # the full production architecture/unit suite. Local-only tool harnesses, legacy WPF proof,
+      # and third-party notice resolution run only when their paths change (or in local validate.ps1).
+      - name: Validate production Release build and tests
+        if: steps.changes.outputs.needs_build == 'true'
+        shell: pwsh
+        run: |
+          $argsList = @('-ExecutionPolicy', 'Bypass', '-File', 'scripts/validate.ps1', '-Configuration', 'Release', '-Ci')
+          if ('${{ steps.changes.outputs.needs_legacy_proof }}' -eq 'true') { $argsList += '-IncludeLegacyProof' }
+          if ('${{ steps.changes.outputs.needs_store_package }}' -eq 'true') { $argsList += '-IncludeNotices' }
+          if ('${{ steps.changes.outputs.needs_manifests }}' -eq 'true') { $argsList += '-IncludeManifests' }
+          & powershell @argsList
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # THE STORE PACKAGE IS THE ONLY THING THAT SHIPS, so every change proves it still builds and that
-      # its payload is whole. The script checks the files inside the .msix, not the publish folder, and
-      # launches the packaged worker; a build that only passes unpackaged has shipped nothing. #42.
+      # Run the self-contained Store MSIX publish and payload check when packaging, manifest,
+      # dependency, or CI inputs change.
       - name: Build and check the Store package
+        if: steps.changes.outputs.needs_build == 'true' && steps.changes.outputs.needs_store_package == 'true'
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File scripts/package-store.ps1 -OutputDirectory "$env:RUNNER_TEMP\store-package"
