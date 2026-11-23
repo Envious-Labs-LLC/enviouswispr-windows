@@ -104,7 +104,8 @@ public sealed record GeneralSettingsInput(
     bool TelemetryAvailable,
     string? MicrophoneId,
     string PasteLastShortcut,
-    string CopyLastShortcut);
+    string CopyLastShortcut,
+    bool CasualMode = false);
 
 /// <summary>Which shortcut field a General save found wanting, for the window to put the focus in.</summary>
 public enum GeneralShortcutField
@@ -313,7 +314,8 @@ public sealed class SettingsPresenter : IDisposable
             double.IsNaN(input.AutoStopSeconds) ? DictationPreferences.Default.AutoStopSilenceSeconds : input.AutoStopSeconds,
             (EnglishSpelling)Math.Clamp(Chosen(input.EnglishSpellingIndex), 0, 1),
             pasteLast.Gesture?.ToString() ?? string.Empty,
-            copyLast.Gesture?.ToString() ?? string.Empty);
+            copyLast.Gesture?.ToString() ?? string.Empty,
+            input.CasualMode);
         var polish = new PolishPreferences(
             PolishProviderFromIndex(Chosen(input.PolishProviderIndex)),
             NullIfBlank(input.PolishModel),

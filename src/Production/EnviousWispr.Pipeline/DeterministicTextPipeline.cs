@@ -15,7 +15,8 @@ public sealed record DeterministicTextOptions(
     bool FillerRemovalEnabled,
     bool EmojiFormatterEnabled,
     bool SpokenPunctuationEnabled,
-    EnglishSpelling EnglishSpelling = EnglishSpelling.American)
+    EnglishSpelling EnglishSpelling = EnglishSpelling.American,
+    bool CasualModeEnabled = false)
 {
     public static DeterministicTextOptions From(DictationPreferences preferences)
     {
@@ -25,7 +26,8 @@ public sealed record DeterministicTextOptions(
             preferences.FillerRemovalEnabled,
             preferences.EmojiFormatterEnabled,
             preferences.SpokenPunctuationEnabled,
-            preferences.EnglishSpelling);
+            preferences.EnglishSpelling,
+            preferences.CasualModeEnabled);
     }
 }
 
@@ -41,6 +43,7 @@ public sealed record DeterministicTextResult(
     bool IsDegraded)
 {
     public string DeterministicText { get; init; } = Output.Text;
+    public bool SpokenFinalFullStop { get; init; }
 }
 
 public sealed record DeterministicTextContext(
@@ -48,7 +51,8 @@ public sealed record DeterministicTextContext(
     string Text,
     IReadOnlyList<CustomWordEntry> CustomWords,
     DeterministicTextOptions Options,
-    string? PolishedText = null);
+    string? PolishedText = null,
+    bool SpokenFinalFullStop = false);
 
 public interface IDeterministicTextStep
 {
@@ -145,6 +149,7 @@ public sealed class DeterministicTextPipeline
             degraded)
         {
             DeterministicText = deterministicText,
+            SpokenFinalFullStop = context.SpokenFinalFullStop,
         };
     }
 
@@ -162,7 +167,8 @@ public sealed class DeterministicTextPipeline
             deterministicResult.DeterministicText,
             request.CustomWords,
             request.Options,
-            polishedText);
+            polishedText,
+            deterministicResult.SpokenFinalFullStop);
         // THE SPELLING FIRST, THEN THE EMOJI: the restorer aligns the polish with the deterministic text, and
         // both are British by then. Ref: macOS #3124 runs the same two in the same order.
         var spelling = _steps.SingleOrDefault(candidate => candidate.Stage == DeterministicTextStage.EnglishSpellingAfterPolish);
@@ -191,13 +197,31 @@ public sealed class DeterministicTextPipeline
                 !string.Equals(before.PolishedText, after.PolishedText, StringComparison.Ordinal),
             cancellationToken).ConfigureAwait(false);
         var context = execution.Context;
-        var degraded = deterministicResult.IsDegraded || spellingDegraded || execution.IsDegraded;
+
+        var casualEnding = _steps.SingleOrDefault(candidate => candidate.Stage == DeterministicTextStage.CasualEnding);
+        DeterministicStageReceipt? casualEndingReceipt = null;
+        var casualEndingDegraded = false;
+        if (casualEnding is not null && casualEnding.IsEnabled(context))
+        {
+            var casualExecuted = await _executor.ExecuteAsync(
+                casualEnding,
+                context,
+                static (before, after) =>
+                    !string.Equals(before.PolishedText, after.PolishedText, StringComparison.Ordinal),
+                cancellationToken).ConfigureAwait(false);
+            context = casualExecuted.Context;
+            casualEndingReceipt = casualExecuted.Receipt;
+            casualEndingDegraded = casualExecuted.IsDegraded;
+        }
+
+        var degraded = deterministicResult.IsDegraded || spellingDegraded || execution.IsDegraded || casualEndingDegraded;
         var receipt = execution.Receipt;
         var receipts = deterministicResult.Receipts
             .Select(existing => existing.Stage switch
             {
                 DeterministicTextStage.EmojiRestoration => receipt,
                 DeterministicTextStage.EnglishSpellingAfterPolish when spellingReceipt is not null => spellingReceipt,
+                DeterministicTextStage.CasualEnding when casualEndingReceipt is not null => casualEndingReceipt,
                 _ => existing,
             })
             .ToArray();
@@ -207,6 +231,7 @@ public sealed class DeterministicTextPipeline
             degraded)
         {
             DeterministicText = deterministicResult.DeterministicText,
+            SpokenFinalFullStop = deterministicResult.SpokenFinalFullStop,
         };
     }
 
@@ -265,7 +290,8 @@ public sealed class DeterministicTextPipeline
                 FillerRemovalEnabled: true,
                 EmojiFormatterEnabled: true,
                 SpokenPunctuationEnabled: true,
-                EnglishSpelling: EnglishSpelling.British),
+                EnglishSpelling: EnglishSpelling.British,
+                CasualModeEnabled: true),
             PolishedText: "Send EnviousWispr the colour version at 3:30.");
 
     private const string WarmUpSpoken =
@@ -310,6 +336,7 @@ public sealed class DeterministicTextPipeline
             new EnglishSpellingStep(BritishSpellingConverter.Shared, afterPolish: false),
             new EnglishSpellingStep(BritishSpellingConverter.Shared, afterPolish: true),
             new EmojiRestorationStep(),
+            new CasualEndingStep(),
         ];
     }
 
@@ -381,11 +408,14 @@ public sealed class DeterministicTextPipeline
         public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var text = InverseTextNormalizer.Normalize(
+                context.Text,
+                context.Options.SpokenPunctuationEnabled,
+                out var spokenFinalFullStop);
             return context with
             {
-                Text = InverseTextNormalizer.Normalize(
-                    context.Text,
-                    context.Options.SpokenPunctuationEnabled),
+                Text = text,
+                SpokenFinalFullStop = spokenFinalFullStop,
             };
         }
     }
@@ -456,6 +486,31 @@ public sealed class DeterministicTextPipeline
             return afterPolish
                 ? context with { PolishedText = converter!.Convert(context.PolishedText!, protectedWords).Text }
                 : context with { Text = converter!.Convert(context.Text, protectedWords).Text };
+        }
+    }
+
+    private sealed class CasualEndingStep : IDeterministicTextStep
+    {
+        public DeterministicTextStage Stage => DeterministicTextStage.CasualEnding;
+
+        /// <summary>Pure string work on one character at the end; runaway backstop matching macOS.</summary>
+        public TimeSpan Timeout => TimeSpan.FromMilliseconds(50);
+
+        public bool IsEnabled(DeterministicTextContext context) => context.Options.CasualModeEnabled;
+
+        public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var language = context.Transcript.DetectedLanguage;
+            var text = CasualEnding.RemoveFinalFullStop(context.Text, context.SpokenFinalFullStop, language);
+            var polished = context.PolishedText is not null
+                ? CasualEnding.RemoveFinalFullStop(context.PolishedText, context.SpokenFinalFullStop, language)
+                : null;
+            return context with
+            {
+                Text = text,
+                PolishedText = polished,
+            };
         }
     }
 

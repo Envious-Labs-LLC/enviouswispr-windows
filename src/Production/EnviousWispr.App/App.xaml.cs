@@ -2286,7 +2286,10 @@ public partial class App : Application, IAsyncDisposable
                                     CanRetry: true)))
                             .TranscribeAsync(audio, token),
                         Finish: async (transcript, token) => (await _deterministicTextPipeline.ProcessAsync(
-                                new DeterministicTextRequest(transcript, _settings.UserData.CustomWords, _deterministicTextOptions),
+                                new DeterministicTextRequest(
+                                    transcript,
+                                    _settings.UserData.CustomWords,
+                                    _deterministicTextOptions with { CasualModeEnabled = false }),
                                 token).ConfigureAwait(false)).Output.Text);
                     result = await Task.Run(
                         () => FileTranscriptionJob.RunAsync(source, environment, progress, run.Token),

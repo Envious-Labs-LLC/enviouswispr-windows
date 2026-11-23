@@ -188,6 +188,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private static readonly SearchableSettingItem[] SearchableSettings =
     [
         new("Transcription Engine", "settings-dictation", "engine", "model whisper parakeet speed english language spelling"),
+        new("Casual mode", "settings-dictation", "engine", "casual mode period full stop punctuation"),
         new("Microphone & Input", "settings-dictation", "microphone", "mic audio device source readiness test"),
         new("Live Preview", "settings-dictation", "live-preview", "overlay text preview words on screen"),
         new("Recording Pill", "settings-dictation", "pill", "position design capsule reading rail overlay"),
@@ -1515,7 +1516,8 @@ public sealed partial class MainWindow : Window, IDisposable
             _telemetryAvailable,
             (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id,
             PasteLastHotkeyTextBox.Text,
-            CopyLastHotkeyTextBox.Text);
+            CopyLastHotkeyTextBox.Text,
+            CasualModeToggle?.IsOn == true);
 
         var outcome = await _session.Settings.SaveGeneralAsync(input).ConfigureAwait(true);
         switch (outcome.Status)
@@ -1553,6 +1555,10 @@ public sealed partial class MainWindow : Window, IDisposable
         FillerRemovalToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         EmojiFormatterToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         SpokenPunctuationToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        if (CasualModeToggle != null)
+        {
+            CasualModeToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        }
         EscapeRecoveryToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         HistoryEnabledToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         LivePreviewToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
@@ -4767,6 +4773,10 @@ public sealed partial class MainWindow : Window, IDisposable
             FillerRemovalToggle.IsOn = preferences.Dictation.FillerRemovalEnabled;
             EmojiFormatterToggle.IsOn = preferences.Dictation.EmojiFormatterEnabled;
             SpokenPunctuationToggle.IsOn = preferences.Dictation.SpokenPunctuationEnabled;
+            if (CasualModeToggle != null)
+            {
+                CasualModeToggle.IsOn = preferences.Dictation.CasualModeEnabled;
+            }
             AutoStopToggle.IsOn = preferences.Dictation.AutoStopEnabled;
             AutoStopSecondsBox.Value = preferences.Dictation.AutoStopSilenceSeconds;
             UpdateAutoStopAvailability();

@@ -54,6 +54,7 @@ DeterministicTextStage[] stages =
     DeterministicTextStage.EnglishSpelling,
     DeterministicTextStage.EnglishSpellingAfterPolish,
     DeterministicTextStage.EmojiRestoration,
+    DeterministicTextStage.CasualEnding,
 ];
 
 Console.WriteLine($"{runs} fresh processes per stage and condition; {WarmIterations} warm calls each; " +
@@ -254,7 +255,8 @@ internal static class Child
             FillerRemovalEnabled: true,
             EmojiFormatterEnabled: true,
             SpokenPunctuationEnabled: true,
-            EnglishSpelling: EnglishSpelling.British);
+            EnglishSpelling: EnglishSpelling.British,
+            CasualModeEnabled: true);
 }
 
 internal static class Throttle

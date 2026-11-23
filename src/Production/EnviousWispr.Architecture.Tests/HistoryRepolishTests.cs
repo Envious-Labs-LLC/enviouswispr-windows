@@ -196,6 +196,30 @@ public sealed class HistoryRepolishTests
         Assert.Contains("👍", result.Entry!.Text);
     }
 
+    [Fact]
+    public async Task RepolishPreservesTrailingPeriodEvenWhenCasualModeIsEnabled()
+    {
+        var world = CreateWorld(
+            text => text,
+            options: new DeterministicTextOptions(
+                WordCorrectionEnabled: false,
+                FillerRemovalEnabled: false,
+                EmojiFormatterEnabled: false,
+                SpokenPunctuationEnabled: false,
+                EnglishSpelling: EnglishSpelling.American,
+                CasualModeEnabled: true));
+        var entry = CreateEntry("This is a complete sentence.") with
+        {
+            OriginalText = "This is a complete sentence.",
+        };
+        world.Store.Entries.Add(entry);
+
+        var result = await world.Service.RepolishAsync(entry.Id);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("This is a complete sentence.", result.Entry!.Text);
+    }
+
     private static DictationHistoryEntry CreateEntry(string text) => new(
         Guid.NewGuid(),
         Now,
