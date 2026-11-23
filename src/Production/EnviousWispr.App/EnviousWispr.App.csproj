@@ -139,7 +139,7 @@
       <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\llama-server-impl.dll" />
       <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\llama-common.dll" />
       <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\llama.dll" />
-      <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\mtmd.dll" />
+      <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\mtmd.dll" Condition="Exists('$(EnviousWisprLlamaRuntimeDir)\mtmd.dll')" />
       <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\ggml*.dll" />
       <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\libomp*.dll" />
       <_StoreLlamaRuntimeFile Include="$(EnviousWisprLlamaRuntimeDir)\LICENSE*" />

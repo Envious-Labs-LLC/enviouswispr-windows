@@ -129,7 +129,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $fixtureDir | Out-Null
           $fixtureExe = Join-Path $fixtureDir 'llama-server.exe'
           Add-Type -OutputAssembly $fixtureExe -OutputType ConsoleApplication -TypeDefinition 'public static class Program { public static int Main(string[] args) { return 0; } }'
-          foreach ($dll in @('llama-server-impl.dll', 'llama-common.dll', 'llama.dll', 'ggml.dll', 'ggml-base.dll', 'libomp.dll')) {
+          foreach ($dll in @('llama-server-impl.dll', 'llama-common.dll', 'llama.dll', 'mtmd.dll', 'ggml.dll', 'ggml-base.dll', 'libomp.dll')) {
             [IO.File]::WriteAllBytes((Join-Path $fixtureDir $dll), [byte[]]@(0x4D, 0x5A))
           }
           powershell -ExecutionPolicy Bypass -File scripts/package-store.ps1 -LlamaRuntimeDirectory $fixtureDir -OutputDirectory "$env:RUNNER_TEMP\store-package"
