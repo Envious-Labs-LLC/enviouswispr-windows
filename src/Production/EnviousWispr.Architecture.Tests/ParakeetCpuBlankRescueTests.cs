@@ -307,6 +307,29 @@ public sealed class ParakeetCpuBlankRescueTests
         }
     }
 
+    [Fact]
+    public async Task PrefixSliceOfLargerBackingArrayPreprocessesOnlyTheRequestedSliceLength()
+    {
+        var backing = BuildOlymposEnvelopeSamples();
+        var prefixLength = 32_000;
+        var backend = new FakeParakeetBackend
+        {
+            PrimaryEncoderFrameSignal = 1.0f,
+        };
+        using var engine = CreateEngine(backend);
+
+        var result = await engine.TranscribeAsync(
+            new CapturedAudio(
+                DictationSessionId.Create(),
+                backing.AsMemory(0, prefixLength),
+                ParakeetTranscriptionEngine.RequiredSampleRate,
+                Channels: 1));
+
+        Assert.Equal("popular tourist area", result.Text);
+        Assert.Equal(1, backend.PreprocessCalls);
+        Assert.Equal(prefixLength, backend.LastPreprocessedSampleCount);
+    }
+
     private static ParakeetTranscriptionEngine CreateEngine(
         ParakeetTranscriptionEngine.IParakeetBackend backend)
     {

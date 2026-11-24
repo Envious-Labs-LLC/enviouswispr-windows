@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using EnviousWispr.Core.Audio;
@@ -279,7 +280,12 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
         cancellationToken.ThrowIfCancellationRequested();
         using var runContext = _backend.CreateRunContext(cancellationToken);
 
-        var samples = audio.Samples.ToArray();
+        var samples = MemoryMarshal.TryGetArray(audio.Samples, out var backing) &&
+            backing.Array is { } array &&
+            backing.Offset == 0 &&
+            array.Length == audio.Samples.Length
+            ? array
+            : audio.Samples.ToArray();
         var (features, featureLength) = _backend.Preprocess(samples, runContext, cancellationToken);
         var (encodedRaw, encodedLength) = _backend.Encode(features, featureLength, runContext, cancellationToken);
         var encoded = TransposeEncoderOutput(encodedRaw);
@@ -828,8 +834,8 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                 preprocessorPhase.Returned();
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var features = preprocessorResult[0].AsEnumerable<float>().ToArray();
-                var featureLength = preprocessorResult[1].AsEnumerable<long>().Single();
+                var features = TensorArray<float>(preprocessorResult[0]);
+                var featureLength = TensorSingle<long>(preprocessorResult[1]);
                 return (features, featureLength);
             }
             catch (OnnxRuntimeException exception) when (cancellationToken.IsCancellationRequested)
@@ -869,8 +875,8 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                 encoderPhase.Returned();
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var encoded = encoderResult[0].AsEnumerable<float>().ToArray();
-                var encodedLength = checked((int)encoderResult[1].AsEnumerable<long>().Single());
+                var encoded = TensorArray<float>(encoderResult[0]);
+                var encodedLength = checked((int)TensorSingle<long>(encoderResult[1]));
                 return (encoded, encodedLength);
             }
             catch (OnnxRuntimeException exception) when (cancellationToken.IsCancellationRequested)
@@ -932,8 +938,8 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                 encoderPhase.Returned();
                 cancellationToken.ThrowIfCancellationRequested();
 
-                encodedChannelFirst = encoderResult[0].AsEnumerable<float>().ToArray();
-                encodedLength = checked((int)encoderResult[1].AsEnumerable<long>().Single());
+                encodedChannelFirst = TensorArray<float>(encoderResult[0]);
+                encodedLength = checked((int)TensorSingle<long>(encoderResult[1]));
                 if (encodedLength <= 0 ||
                     encodedChannelFirst.Length < (long)EncoderDimension * encodedLength ||
                     encodedChannelFirst.Length % EncoderDimension != 0)
@@ -1009,13 +1015,13 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                     options);
                 decoderPhase.Returned();
 
-                var output = result[0].AsEnumerable<float>().ToArray();
-                var token = IndexOfMaximum(output.AsSpan(0, vocabularySize));
-                var step = IndexOfMaximum(output.AsSpan(vocabularySize));
+                var output = TensorSpan<float>(result[0]);
+                var token = IndexOfMaximum(output[..vocabularySize]);
+                var step = IndexOfMaximum(output[vocabularySize..]);
                 if (token != blankIndex)
                 {
-                    Array.Copy(result[1].AsEnumerable<float>().ToArray(), state1, state1.Length);
-                    Array.Copy(result[2].AsEnumerable<float>().ToArray(), state2, state2.Length);
+                    TensorSpan<float>(result[1])[..state1.Length].CopyTo(state1);
+                    TensorSpan<float>(result[2])[..state2.Length].CopyTo(state2);
                 }
 
                 return new ParakeetDecoderStepResult(token, step);
@@ -1039,6 +1045,26 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
             _encoder.Dispose();
             _fp32FallbackEncoder?.Dispose();
             _decoder.Dispose();
+        }
+
+        private static ReadOnlySpan<T> TensorSpan<T>(DisposableNamedOnnxValue value) =>
+            value.Value is DenseTensor<T> dense
+                ? dense.Buffer.Span
+                : value.AsEnumerable<T>().ToArray();
+
+        private static T[] TensorArray<T>(DisposableNamedOnnxValue value) =>
+            value.Value is DenseTensor<T> dense
+                ? dense.Buffer.Span.ToArray()
+                : value.AsEnumerable<T>().ToArray();
+
+        private static T TensorSingle<T>(DisposableNamedOnnxValue value)
+        {
+            if (value.Value is DenseTensor<T> dense && dense.Buffer.Length == 1)
+            {
+                return dense.Buffer.Span[0];
+            }
+
+            return value.AsEnumerable<T>().Single();
         }
 
         private sealed class OnnxRunContext : IParakeetRunContext

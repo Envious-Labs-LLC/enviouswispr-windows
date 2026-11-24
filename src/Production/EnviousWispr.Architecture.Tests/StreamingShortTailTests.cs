@@ -237,9 +237,13 @@ public sealed class StreamingShortTailTests
     }
 
     [Fact]
-    public async Task ZeroTailWholeRequestFailureStillPreservesCommittedHeadStartForSameSession()
+    public async Task TruncatedWholeRequestFailureStillPreservesCommittedHeadStartForSameSession()
     {
         var world = await World.ReadyAsync(tailSamples: 0);
+        var truncatedWhole = world.Whole with
+        {
+            Samples = world.Whole.Samples[..^1],
+        };
         var expected = new TranscriptionEngineException(new AppError(
             AppErrorCode.TranscriptionFailed,
             AppErrorStage.FinalAsr,
@@ -247,15 +251,56 @@ public sealed class StreamingShortTailTests
         world.Engine.Responses.Enqueue((_, _) => throw expected);
 
         var result = await world.Controller.TranscribeUsingAnyHeadStartAsync(
-            world.Engine, world.Whole, CancellationToken.None);
+            world.Engine, truncatedWhole, CancellationToken.None);
 
         Assert.Equal("committed head", result.Text);
         Assert.True(result.UsedFallback);
         Assert.Equal(expected.Error, result.DegradedError);
         Assert.Equal(2, world.Engine.Requests.Count);
-        Assert.Equal(world.PrefixLength, world.Engine.Requests[1].Samples.Length);
+        Assert.Equal(world.PrefixLength - 1, world.Engine.Requests[1].Samples.Length);
         Assert.Contains(world.Log.Entries, entry => entry.Event == AppEventCode.StreamingHeadStartPreserved &&
             entry.ErrorCode == AppErrorCode.TranscriptionFailed);
+    }
+
+    [Fact]
+    public async Task ZeroTailReusesCommittedHeadStartWithoutSecondEngineRequest()
+    {
+        var world = await World.ReadyAsync(tailSamples: 0);
+
+        var result = await world.Controller.TranscribeUsingAnyHeadStartAsync(
+            world.Engine, world.Whole, CancellationToken.None);
+
+        Assert.Equal("committed head", result.Text);
+        Assert.Equal("head", result.EngineId);
+        Assert.Equal("en", result.DetectedLanguage);
+        Assert.Equal("auto", result.RecognitionLanguage);
+        Assert.False(result.UsedFallback);
+        Assert.Null(result.DegradedError);
+        Assert.Single(world.Engine.Requests);
+        var used = Assert.Single(
+            world.Log.Entries,
+            entry => entry.Event == AppEventCode.StreamingHeadStartUsed);
+        Assert.Equal(0, used.ElapsedMilliseconds);
+        Assert.DoesNotContain(world.Log.Entries, entry => entry.Event == AppEventCode.StreamingAbandoned);
+    }
+
+    [Fact]
+    public async Task NonEmptyQuietTailStillDispatchesToFinalAsrSoSoftWordsAreNeverSkipped()
+    {
+        var world = await World.ReadyAsync(tailSamples: 1_600);
+        world.Engine.Responses.Enqueue((audio, _) => new Transcript(
+            audio.SessionId,
+            "whispered ending",
+            "tail",
+            DetectedLanguage: "en",
+            RecognitionLanguage: "auto"));
+
+        var result = await world.Controller.TranscribeUsingAnyHeadStartAsync(
+            world.Engine, world.Whole, CancellationToken.None);
+
+        Assert.Equal("committed head whispered ending", result.Text);
+        Assert.Equal(2, world.Engine.Requests.Count);
+        Assert.Equal(1_600, world.Engine.Requests[1].Samples.Length);
     }
 
     [Fact]

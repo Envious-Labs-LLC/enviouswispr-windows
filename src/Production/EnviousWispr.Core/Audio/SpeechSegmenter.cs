@@ -6,6 +6,12 @@ public readonly record struct SpeechSegment(int StartSample, int EndSample, bool
     public int LengthSamples => EndSample - StartSample;
 }
 
+/// <summary>Counts of voiced and silent samples inside a slice of captured audio.</summary>
+public readonly record struct AudioSpeechCoverage(int SpeechSamples, int SilenceSamples)
+{
+    public int TotalSamples => SpeechSamples + SilenceSamples;
+}
+
 /// <summary>
 /// Finds where speech starts and stops inside captured audio, by loudness.
 /// </summary>
@@ -189,6 +195,43 @@ public sealed class SpeechSegmenter
         }
 
         return TimeSpan.FromSeconds((double)segments[^1].LengthSamples / _sampleRate);
+    }
+
+    /// <summary>
+    /// Measures how many samples inside <c>[startSample..endSample)</c> fall in speech vs. silence stretches.
+    /// </summary>
+    public AudioSpeechCoverage MeasureCoverage(ReadOnlySpan<float> samples, int startSample, int endSample)
+    {
+        var clampedStart = Math.Clamp(startSample, 0, samples.Length);
+        var clampedEnd = Math.Clamp(endSample, clampedStart, samples.Length);
+        if (clampedEnd <= clampedStart)
+        {
+            return new AudioSpeechCoverage(0, 0);
+        }
+
+        var speech = 0;
+        var silence = 0;
+        foreach (var segment in Segment(samples))
+        {
+            var overlapStart = Math.Max(clampedStart, segment.StartSample);
+            var overlapEnd = Math.Min(clampedEnd, segment.EndSample);
+            if (overlapEnd <= overlapStart)
+            {
+                continue;
+            }
+
+            var count = overlapEnd - overlapStart;
+            if (segment.IsSpeech)
+            {
+                speech += count;
+            }
+            else
+            {
+                silence += count;
+            }
+        }
+
+        return new AudioSpeechCoverage(speech, silence);
     }
 
     private static SpeechSegment Frames(int startFrame, int endFrame, int frameLength, bool isSpeech) =>

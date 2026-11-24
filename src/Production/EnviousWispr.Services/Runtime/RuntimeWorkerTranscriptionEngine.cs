@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO.MemoryMappedFiles;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Runtime;
@@ -130,9 +131,9 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
             mapName,
             byteLength,
             MemoryMappedFileAccess.ReadWrite);
-        using (var view = map.CreateViewAccessor(0, byteLength, MemoryMappedFileAccess.Write))
+        using (var view = map.CreateViewStream(0, byteLength, MemoryMappedFileAccess.Write))
         {
-            view.WriteArray(0, audio.Samples.ToArray(), 0, audio.Samples.Length);
+            view.Write(MemoryMarshal.AsBytes(audio.Samples.Span));
         }
 
         var request = new RuntimeWorkerTranscriptionRequest(

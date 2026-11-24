@@ -397,6 +397,39 @@ public sealed class PrivacySafeObservabilityTests
     }
 
     [Theory]
+    [InlineData(AppEventCode.StreamingSegmentCommitted, 185L)]
+    [InlineData(AppEventCode.StreamingSegmentEmpty, 42L)]
+    [InlineData(AppEventCode.StreamingHeadStartUsed, 0L)]
+    [InlineData(AppEventCode.StreamingHeadStartUsed, 164L)]
+    public void StreamingCompletionEventsCarryOnlyContentFreeTimingAndNoSampleOrRequestFields(
+        AppEventCode code,
+        long elapsedMilliseconds)
+    {
+        var session = Guid.NewGuid();
+        var record = PrivacySafeDiagnosticRecord.From(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            code,
+            ElapsedMilliseconds: elapsedMilliseconds));
+        var line = LocalDiagnosticLine.From(record, session);
+
+        Assert.Equal(code, record.Event);
+        Assert.Equal(elapsedMilliseconds, record.ElapsedMilliseconds);
+        Assert.Equal(elapsedMilliseconds, line.ElapsedMilliseconds);
+        Assert.Equal(session, line.DictationId);
+
+        var telemetryFields = TelemetryFieldNames();
+        Assert.DoesNotContain("startSample", telemetryFields);
+        Assert.DoesNotContain("endSample", telemetryFields);
+        Assert.DoesNotContain("coveredSamples", telemetryFields);
+        Assert.DoesNotContain("remainingSamples", telemetryFields);
+        Assert.DoesNotContain("speechSamples", telemetryFields);
+        Assert.DoesNotContain("silenceSamples", telemetryFields);
+        Assert.DoesNotContain("sampleRate", telemetryFields);
+        Assert.DoesNotContain("requestId", telemetryFields);
+        Assert.DoesNotContain("sessionId", telemetryFields);
+    }
+
+    [Theory]
     [InlineData("https://telemetry.example.test/v1/events", false, true)]
     [InlineData("http://127.0.0.1:43210/events", true, true)]
     [InlineData("http://127.0.0.1:43210/events", false, false)]

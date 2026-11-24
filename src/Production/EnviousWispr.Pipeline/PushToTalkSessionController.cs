@@ -39,6 +39,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
     private readonly TimeSpan _minimumHoldDuration;
     private readonly Func<TextDeliveryOptions> _deliveryOptions;
     private readonly AudioDeviceId? _preferredAudioDevice;
+    private readonly UatRuntimePhaseJournal? _phaseJournal;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private bool _disposed;
 
@@ -48,7 +49,8 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         TimeProvider? timeProvider = null,
         TimeSpan? minimumHoldDuration = null,
         Func<TextDeliveryOptions>? deliveryOptions = null,
-        AudioDeviceId? preferredAudioDevice = null)
+        AudioDeviceId? preferredAudioDevice = null,
+        UatRuntimePhaseJournal? phaseJournal = null)
     {
         ArgumentNullException.ThrowIfNull(audioCapture);
         ArgumentNullException.ThrowIfNull(targetProvider);
@@ -63,6 +65,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         // that recording, so a change saved mid-take cannot alter where the words already going.
         _deliveryOptions = deliveryOptions ?? (() => TextDeliveryOptions.Default);
         _preferredAudioDevice = preferredAudioDevice;
+        _phaseJournal = phaseJournal ?? UatRuntimePhaseJournal.FromEnvironment();
         ArgumentOutOfRangeException.ThrowIfLessThan(_minimumHoldDuration, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(
             _minimumHoldDuration,
@@ -214,9 +217,18 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
                     cancellationToken).ConfigureAwait(false);
             }
 
+            var sessionId = CurrentSession.Id.Value;
             CurrentSession = CurrentSession with { State = DictationSessionState.Finalizing };
             RaiseChanged();
+            _phaseJournal?.Record(UatRuntimePhase.CaptureStopEntered, sessionId);
             var audio = await _audioCapture.StopAsync(cancellationToken).ConfigureAwait(false);
+            _phaseJournal?.Record(
+                UatRuntimePhase.CaptureStopReturned,
+                sessionId,
+                startSample: 0,
+                endSample: audio.Samples.Length,
+                remainingSamples: audio.Samples.Length,
+                sampleRate: audio.SampleRate > 0 ? audio.SampleRate : null);
             if (audio.Error is not null && audio.Samples.IsEmpty)
             {
                 CurrentSession = CurrentSession with

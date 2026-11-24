@@ -26,6 +26,11 @@ public interface ISessionBackgroundWork
     /// <summary>The recording has started: arm the watchdog, start the preview, the auto-stop and the streaming head start.</summary>
     Task StartAsync(DictationSessionId sessionId, RecordingBackgroundSettings settings);
 
+    /// <summary>Closes streaming segment admission immediately at release/cancel entry before capture stop.</summary>
+    void CloseStreamingAdmission()
+    {
+    }
+
     /// <summary>The recording is over: stop streaming, the auto-stop and the preview, in that order, each waited for without limit. The watchdog is stopped separately, first. A preview whose engine refused its stop is still reported.</summary>
     Task<BackgroundStopReport> StopAsync();
 
@@ -72,6 +77,7 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
     private readonly AutoStopMonitor _autoStop;
     private readonly StreamingTranscriptionController _streaming;
     private readonly TimeProvider _clock;
+    private readonly UatRuntimePhaseJournal? _phaseJournal;
 
     /// <param name="clock">The clock the bounded stop measures its one deadline on: the owners' own, so a test can cross it.</param>
     public SessionBackgroundWork(
@@ -79,7 +85,8 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
         LivePreviewController preview,
         AutoStopMonitor autoStop,
         StreamingTranscriptionController streaming,
-        TimeProvider clock)
+        TimeProvider clock,
+        UatRuntimePhaseJournal? phaseJournal = null)
     {
         ArgumentNullException.ThrowIfNull(watchdog);
         ArgumentNullException.ThrowIfNull(preview);
@@ -91,7 +98,10 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
         _autoStop = autoStop;
         _streaming = streaming;
         _clock = clock;
+        _phaseJournal = phaseJournal ?? UatRuntimePhaseJournal.FromEnvironment();
     }
+
+    public void CloseStreamingAdmission() => _streaming.CloseAdmission();
 
     public async Task StartAsync(DictationSessionId sessionId, RecordingBackgroundSettings settings)
     {
@@ -107,10 +117,17 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
 
     public async Task<BackgroundStopReport> StopAsync(CancellationToken cancellationToken)
     {
+        _phaseJournal?.Record(UatRuntimePhase.BackgroundCleanupEntered, DictationScope.Current);
         var streaming = await _streaming.StopAsync(deadline: null, cancellationToken).ConfigureAwait(false);
         var autoStop = await _autoStop.StopAsync(deadline: null, cancellationToken).ConfigureAwait(false);
         var preview = await _preview.StopAsync(deadline: null, cancellationToken).ConfigureAwait(false);
-        return new BackgroundStopReport(streaming, autoStop, preview);
+        var report = new BackgroundStopReport(streaming, autoStop, preview);
+        if (report.Completed)
+        {
+            _phaseJournal?.Record(UatRuntimePhase.BackgroundCleanupCompleted, DictationScope.Current);
+        }
+
+        return report;
     }
 
     public async Task<BackgroundStopReport> CompleteOrdinaryAsync(
@@ -118,14 +135,22 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
         CancellationToken processingToken)
     {
         ArgumentNullException.ThrowIfNull(cleanupRemaining);
+        _phaseJournal?.Record(UatRuntimePhase.BackgroundCleanupEntered, DictationScope.Current);
         var streaming = await _streaming.CompleteOrdinaryAsync(cleanupRemaining, processingToken).ConfigureAwait(false);
         var autoStop = await _autoStop.StopAsync(cleanupRemaining(), CancellationToken.None).ConfigureAwait(false);
         var preview = await _preview.StopAsync(cleanupRemaining(), CancellationToken.None).ConfigureAwait(false);
-        return new BackgroundStopReport(streaming, autoStop, preview);
+        var report = new BackgroundStopReport(streaming, autoStop, preview);
+        if (report.Completed)
+        {
+            _phaseJournal?.Record(UatRuntimePhase.BackgroundCleanupCompleted, DictationScope.Current);
+        }
+
+        return report;
     }
 
     public async Task<BackgroundStopReport> JoinStoppedAsync(Action observeFailure)
     {
+        _phaseJournal?.Record(UatRuntimePhase.BackgroundCleanupEntered, DictationScope.Current);
         StopOutcome streaming;
         try
         {
@@ -139,7 +164,13 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
 
         var autoStop = await _autoStop.StopAsync().ConfigureAwait(false);
         var preview = await _preview.StopAsync().ConfigureAwait(false);
-        return new BackgroundStopReport(streaming, autoStop, preview);
+        var report = new BackgroundStopReport(streaming, autoStop, preview);
+        if (report.Completed)
+        {
+            _phaseJournal?.Record(UatRuntimePhase.BackgroundCleanupCompleted, DictationScope.Current);
+        }
+
+        return report;
     }
 
     public Task<StopOutcome> AbortPreviewAsync(TimeSpan deadline)
@@ -158,11 +189,18 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
     public async Task<BackgroundStopReport> StopAsync(TimeSpan deadline)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(deadline, TimeSpan.Zero);
+        _phaseJournal?.Record(UatRuntimePhase.BackgroundCleanupEntered, DictationScope.Current);
         var budget = new StopBudget(deadline, _clock);
         var streaming = await _streaming.StopAsync(budget.Left).ConfigureAwait(false);
         var autoStop = await _autoStop.StopAsync(budget.Left).ConfigureAwait(false);
         var preview = await _preview.StopAsync(budget.Left).ConfigureAwait(false);
-        return new BackgroundStopReport(streaming, autoStop, preview);
+        var report = new BackgroundStopReport(streaming, autoStop, preview);
+        if (report.Completed)
+        {
+            _phaseJournal?.Record(UatRuntimePhase.BackgroundCleanupCompleted, DictationScope.Current);
+        }
+
+        return report;
     }
 
     public Task StopWatchdogAsync() => _watchdog.StopAsync();
