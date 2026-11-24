@@ -2,7 +2,12 @@
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <EnviousWisprReleaseChannel Condition="'$(EnviousWisprReleaseChannel)' == ''">stable</EnviousWisprReleaseChannel>
   </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="EnviousWisprReleaseChannel" Value="$(EnviousWisprReleaseChannel)" />
+  </ItemGroup>
 
   <ItemGroup>
     <!--
@@ -46,6 +51,7 @@
       cannot.
     -->
     <Compile Include="..\EnviousWispr.App\Composition\*.cs" Link="Composition\%(Filename)%(Extension)" />
+    <Compile Include="..\..\..\tools\preview-model-bench\PreviewModelBenchEvaluation.cs" Link="PreviewModelBench\PreviewModelBenchEvaluation.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -5,10 +5,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>EnviousWispr.PreviewModelBench</RootNamespace>
     <Nullable>enable</Nullable>
+    <EnviousWisprReleaseChannel Condition="'$(EnviousWisprReleaseChannel)' == ''">stable</EnviousWisprReleaseChannel>
   </PropertyGroup>
 
   <ItemGroup>
+    <AssemblyMetadata Include="EnviousWisprReleaseChannel" Value="$(EnviousWisprReleaseChannel)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Production\EnviousWispr.Core\EnviousWispr.Core.csproj" />
+    <ProjectReference Include="..\..\src\Production\EnviousWispr.ASR\EnviousWispr.ASR.csproj" />
+    <ProjectReference Include="..\..\src\Production\EnviousWispr.ModelDelivery\EnviousWispr.ModelDelivery.csproj" />
     <ProjectReference Include="..\..\src\Production\EnviousWispr.Services\EnviousWispr.Services.csproj" />
     <ProjectReference Include="..\..\src\Production\EnviousWispr.RuntimeWorker\EnviousWispr.RuntimeWorker.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>

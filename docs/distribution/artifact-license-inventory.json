@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "evidenceObservedAt": "2026-08-26",
+  "evidenceObservedAt": "2026-11-23",
   "artifacts": [
     {
       "id": "parakeet-final-model",
@@ -9,14 +9,14 @@
       "upstreamIdentity": "nvidia/parakeet-tdt-0.6b-v3",
       "observedLicense": "CC-BY-4.0",
       "sourceUrl": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3",
-      "sourceRevision": "PENDING",
+      "sourceRevision": "istupakov/parakeet-tdt-0.6b-v3-onnx 8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce (5 ONNX files pinned by size and SHA-256 in models/manifests/parakeet-tdt-0.6b-v3.json)",
       "shipDisposition": "pending-review",
       "approvedBy": null,
       "approvedAt": null,
       "openRequirements": [
-        "Pin the exact ONNX conversion source and revision.",
-        "Record the exact file names, sizes, and hashes in the signed manifest.",
-        "Approve and preserve the required attribution notice."
+        "Verify the upstream nvidia/parakeet-tdt-0.6b-v3 base checkpoint revision corresponding to the pinned istupakov ONNX export.",
+        "Confirm full-precision sidecar distribution policy alongside the signed int8 delivery manifest.",
+        "Approve and preserve the required CC-BY-4.0 attribution notice."
       ]
     },
     {
@@ -26,14 +26,13 @@
       "upstreamIdentity": "openai/whisper large-v3-turbo",
       "observedLicense": "MIT",
       "sourceUrl": "https://github.com/openai/whisper/blob/main/LICENSE",
-      "sourceRevision": "PENDING",
+      "sourceRevision": "ggerganov/whisper.cpp 5359861c739e955e79d9a303bcbc70fb988958b1 (ggml-large-v3-turbo-q5_0.bin, 574041195 bytes, SHA-256 394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2 in models/manifests/whisper-large-v3-turbo.json)",
       "shipDisposition": "pending-review",
       "approvedBy": null,
       "approvedAt": null,
       "openRequirements": [
-        "Pin the exact GGML conversion source and revision.",
-        "Record the exact quantized and full-precision files, sizes, and hashes.",
-        "Approve and preserve the OpenAI MIT notice with the model pack."
+        "Confirm whether the unquantized ggml-large-v3-turbo.bin weight file is distributed or kept development-only.",
+        "Approve and preserve the OpenAI and whisper.cpp MIT notices with the model pack."
       ]
     },
     {
@@ -43,14 +42,12 @@
       "upstreamIdentity": "openai/whisper small",
       "observedLicense": "MIT",
       "sourceUrl": "https://github.com/openai/whisper/blob/main/LICENSE",
-      "sourceRevision": "PENDING",
+      "sourceRevision": "ggerganov/whisper.cpp 5359861c739e955e79d9a303bcbc70fb988958b1 (ggml-small-q5_1.bin, 190085487 bytes, SHA-256 ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb in models/manifests/whisper-small.json)",
       "shipDisposition": "pending-review",
       "approvedBy": null,
       "approvedAt": null,
       "openRequirements": [
-        "Pin the exact GGML conversion source and revision.",
-        "Record the exact preview file, size, and hash.",
-        "Approve and preserve the OpenAI MIT notice with the model pack."
+        "Approve and preserve the OpenAI and whisper.cpp MIT notices with the preview model pack."
       ]
     },
     {
@@ -77,14 +74,13 @@
       "upstreamIdentity": "ggml-org/llama.cpp",
       "observedLicense": "MIT",
       "sourceUrl": "https://github.com/ggml-org/llama.cpp/blob/master/LICENSE",
-      "sourceRevision": "PENDING",
+      "sourceRevision": "ggml-org/llama.cpp build b10615 commit f280b2698 (Clang 20.1.8 win-cpu-x64; llama-server.exe SHA-256 ba3d12e43cc2867d977dfa0501a8487561a6490833da05a98318900c7584ea1f, llama-server-impl.dll SHA-256 2e20b3f59c6a9ef091421e05ee3faa3a5f7823013fc5d89f8fc4033521f126e3)",
       "shipDisposition": "pending-review",
       "approvedBy": null,
       "approvedAt": null,
       "openRequirements": [
-        "Pin the exact source commit and reproducible Windows build recipe.",
-        "Inventory licenses for every compiled or vendored component in that build.",
-        "Record binary hashes and approve the complete native notice bundle."
+        "Inventory and verify notices for every bundled runtime DLL in the b10615 win-cpu-x64 distribution, including libomp.dll (Apache-2.0 WITH LLVM-exception in LICENSE-LLVM-OpenMP).",
+        "Approve the complete native notice bundle for MSIX packaging under Store policy 10.2.2."
       ]
     },
     {
@@ -124,7 +120,7 @@
     {
       "id": "minds14-public-uat-fixtures",
       "artifactClass": "test-data",
-      "plannedPayload": "Eleven reviewed PolyAI MINDS-14 WAV fixtures and attribution manifest",
+      "plannedPayload": "Twelve reviewed PolyAI MINDS-14 WAV fixtures and attribution manifest",
       "upstreamIdentity": "PolyAI/minds14 revision 40ce77cb32a384e4d50a568e1ec39ac804019d33",
       "observedLicense": "CC-BY-4.0",
       "sourceUrl": "https://huggingface.co/datasets/PolyAI/minds14/tree/40ce77cb32a384e4d50a568e1ec39ac804019d33",
