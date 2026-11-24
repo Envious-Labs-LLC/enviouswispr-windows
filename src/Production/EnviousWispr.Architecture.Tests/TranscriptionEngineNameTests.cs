@@ -457,35 +457,31 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void EveryPagePinsItsContentToTheLeftEdge()
     {
-        var markup = File.ReadAllText(
-            Path.Combine(
-                FindRepositoryRoot(),
-                "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var document = LoadMainWindow();
 
-        var columns = PageContentColumn().Count(markup);
+        // Redesigned Fluent pages use a centered responsive container (MaxWidth=860 via BrandFluentPageMaxWidth,
+        // HorizontalAlignment="Stretch") so wide monitors have no blank right-hand void.
+        foreach (var name in new[]
+                 {
+                     "WhatsNewPage",
+                     "DictionaryPage",
+                     "SnippetsPage",
+                     "SettingsPage",
+                     "HelpPage",
+                 })
+        {
+            var page = FindNamedElement(document, name);
+            var container = page.Elements().Single();
+            Assert.Equal("StackPanel", container.Name.LocalName);
+            Assert.Equal("{StaticResource BrandFluentPageMaxWidth}", (string?)container.Attribute("MaxWidth"));
+            Assert.Equal("Stretch", (string?)container.Attribute("HorizontalAlignment"));
+        }
 
-        Assert.True(
-            columns >= 7,
-            $"Expected at least seven capped content columns, found {columns}. Every page's content "
-                + "must live in a column that is both star-sized and capped, or its edges move.");
+        // HistoryPage keeps its existing layout until Wave 3.
+        var historyPage = FindNamedElement(document, "HistoryPage");
+        Assert.Equal(1, PageContentColumn().Count(historyPage.ToString()));
 
-        // The old construction, which fixed the left edge and left the right one loose. A panel
-        // that carries the page width itself is sized by its CONTENT, so every page's cards ended
-        // wherever that page happened to end - measured at a 424px spread across twenty pages, and
-        // the primary Save button swung 391px with them.
-        var selfSized = PageContentPanel().Matches(markup)
-            .Select(match => match.Value)
-            .Where(panel => panel.StartsWith("<StackPanel", StringComparison.Ordinal))
-            .ToArray();
-
-        Assert.True(
-            selfSized.Length == 0,
-            $"{selfSized.Length} page panel(s) still carry the page width themselves, so their right "
-                + "edge is wherever their content ends: " + string.Join(" | ", selfSized));
-
-        // Control, both directions. The matcher must recognise the old shape - otherwise a matcher
-        // that had stopped matching anything would report the same clean result - and the new shape
-        // must not be mistaken for it.
+        // Control, both directions.
         const string selfSizedPanel =
             "<StackPanel HorizontalAlignment=\"Left\" MaxWidth=\"{StaticResource BrandPageContentMaxWidth}\" Spacing=\"18\">";
         const string cappedColumn =

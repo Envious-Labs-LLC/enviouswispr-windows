@@ -66,7 +66,6 @@ public sealed partial class WindowMinimumSizeTests
         foreach (var input in new[]
                  {
                      "OpenPaneLength",
-                     "BrandWindowFrameInset",
                      "BrandContentCardMinimumWidth",
                  })
         {
@@ -117,24 +116,22 @@ public sealed partial class WindowMinimumSizeTests
 
         var layout = XDocument.Load(Path.Combine(
             root, "src", "Production", "EnviousWispr.App", "Theme", "Layout.xaml"));
-        var frameInset = ReadLayoutDouble(layout, "BrandWindowFrameInset");
         var contentMinimum = ReadLayoutDouble(layout, "BrandContentCardMinimumWidth");
 
         Assert.True(
             contentMinimum >= UsableContentFloor,
             $"BrandContentCardMinimumWidth is {contentMinimum}, below the {UsableContentFloor} needed for "
-                + "a header card and a setting row to read. Satisfying the frame arithmetic with a content "
-                + "card nobody can use is not a fix.");
+                + "a header and a setting row to read. Satisfying the frame arithmetic with a content "
+                + "pane nobody can use is not a fix.");
 
-        // Three gutters: window edge, between the cards, window edge.
-        var derived = openPaneLength + (3 * frameInset) + contentMinimum;
+        var derived = openPaneLength + contentMinimum;
         Assert.True(
-            derived > openPaneLength + contentMinimum,
-            "The derived minimum does not account for the frame gutters.");
+            derived > openPaneLength,
+            "The derived minimum does not account for the content pane minimum.");
     }
 
     [Fact]
-    public void AllThreeFrameGuttersUseTheFrameInsetToken()
+    public void ShellIsFlushWithoutFloatingFrameGutters()
     {
         var root = FindRepositoryRoot();
         var mainWindow = XDocument.Load(Path.Combine(
@@ -143,31 +140,34 @@ public sealed partial class WindowMinimumSizeTests
             .Single(element =>
                 (string?)element.Attribute(XName.Get("Name", XamlNamespace)) == "ProductNavigation");
 
-        Assert.Equal(
-            "{StaticResource BrandWindowFrameInset}",
-            (string?)navigation.Attribute("Margin"));
+        Assert.Null(navigation.Attribute("Margin"));
 
-        var sidebarCard = mainWindow.Descendants()
-            .SingleOrDefault(element =>
+        var floatingSidebarCard = mainWindow.Descendants()
+            .FirstOrDefault(element =>
                 element.Name.LocalName == "Border"
                 && string.Equals(
                     (string?)element.Attribute("Width"),
                     "{Binding OpenPaneLength, ElementName=ProductNavigation}",
                     StringComparison.Ordinal));
-        Assert.True(sidebarCard is not null, "The sidebar frame card was not found in MainWindow.xaml.");
-        Assert.Equal(
-            "{StaticResource BrandWindowFrameInset}",
-            (string?)sidebarCard!.Attribute("Margin"));
+        Assert.Null(floatingSidebarCard);
+
+        var navResources = navigation.Descendants()
+            .Where(element => element.Attribute(XName.Get("Key", XamlNamespace)) is not null)
+            .ToDictionary(
+                element => (string)element.Attribute(XName.Get("Key", XamlNamespace))!,
+                element => element.Value.Trim(),
+                StringComparer.Ordinal);
+        Assert.Equal("0", navResources.GetValueOrDefault("NavigationViewContentMargin"));
+        Assert.Equal("8,0,0,0", navResources.GetValueOrDefault("NavigationViewContentGridCornerRadius"));
+        Assert.Equal("1,1,0,0", navResources.GetValueOrDefault("NavigationViewContentGridBorderThickness"));
 
         var codeBehind = File.ReadAllText(Path.Combine(
             root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
         var method = ConfigureMinimumWidthBodyRegex().Match(codeBehind);
         Assert.True(
             method.Success,
-            "ConfigureMinimumWindowWidth was not found, so the content-card gutter could not be checked.");
-        Assert.Matches(
-            NavigationContentMarginFromFrameInsetRegex(),
-            method.Groups["body"].Value);
+            "ConfigureMinimumWindowWidth was not found.");
+        Assert.DoesNotContain("NavigationViewContentMargin", method.Groups["body"].Value, StringComparison.Ordinal);
     }
 
     private static double ReadLayoutDouble(XDocument layout, string key)

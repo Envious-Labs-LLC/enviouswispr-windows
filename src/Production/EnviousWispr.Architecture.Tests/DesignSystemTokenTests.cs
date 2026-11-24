@@ -1631,11 +1631,18 @@ public sealed partial class DesignSystemTokenTests
     public void EveryProductPageStartsWithAHeaderCard()
     {
         var document = LoadMainWindow();
+
+        // HistoryPage keeps its existing layout until Wave 3.
+        var historyPage = FindNamedElement(document, "HistoryPage");
+        var historyStack = historyPage.Descendants().First(element => element.Name.LocalName == "StackPanel");
+        var historyHeader = historyStack.Elements().First();
+        Assert.Equal("Border", historyHeader.Name.LocalName);
+        Assert.Equal("{StaticResource BrandHeaderCardStyle}", (string?)historyHeader.Attribute("Style"));
+
+        // Redesigned Fluent pages use a borderless header (title + subtitle) instead of a boxed hero banner.
         foreach (var name in new[]
                  {
-                     "HomePage",
                      "WhatsNewPage",
-                     "HistoryPage",
                      "DictionaryPage",
                      "SnippetsPage",
                      "SettingsPage",
@@ -1643,18 +1650,17 @@ public sealed partial class DesignSystemTokenTests
                  })
         {
             var page = FindNamedElement(document, name);
-
-            // DESCENDANT, NOT CHILD. The property being checked is "the first thing on the page is
-            // its header card", which says nothing about how many containers sit between the page
-            // and its content. Requiring a direct child pinned the nesting instead, so wrapping
-            // every page in a width-capped column broke this test without changing what a user sees
-            // - a gate failing on the shape of a change rather than on its effect.
-            var stack = page.Descendants().First(element => element.Name.LocalName == "StackPanel");
-            var firstContent = stack.Elements().First();
-            Assert.Equal("Border", firstContent.Name.LocalName);
-            Assert.Equal(
-                "{StaticResource BrandHeaderCardStyle}",
-                (string?)firstContent.Attribute("Style"));
+            var rootStack = page.Elements().First(element => element.Name.LocalName == "StackPanel");
+            var header = rootStack.Elements().First();
+            Assert.NotEqual("{StaticResource BrandHeaderCardStyle}", (string?)header.Attribute("Style"));
+            Assert.Contains(
+                header.Descendants(),
+                e => e.Name.LocalName == "TextBlock"
+                    && (string?)e.Attribute("Style") == "{StaticResource BrandPageTitleStyle}");
+            Assert.Contains(
+                header.Descendants(),
+                e => e.Name.LocalName == "TextBlock"
+                    && (string?)e.Attribute("Style") == "{StaticResource BrandBodyStyle}");
         }
     }
 

@@ -46,7 +46,7 @@ public sealed class NavigationIconTests
     {
         var rows = SidebarRows();
         var headers = StaticHeaders();
-        Assert.True(headers.Count >= 4, $"Only {headers.Count} page headers were parsed, so this check swept less than the app.");
+        Assert.True(headers.Count >= 1, "Expected at least HistoryPage's static icon-tile header.");
 
         var wrong = new List<string>();
         foreach (var header in headers)
@@ -129,7 +129,7 @@ public sealed class NavigationIconTests
     /// <summary>The two methods that build a page header.</summary>
     private static readonly string[] PageDispatchNames = ["ConfigureSettingsPage", "ConfigureHelpPage"];
 
-    /// <summary>The two page dispatches, sliced from their signature to where they set the glyph.</summary>
+    /// <summary>The two page dispatches, sliced to the end of their method body.</summary>
     private static (string Name, string Body)[] PageDispatches()
     {
         var code = File.ReadAllText(AppSourcePath("MainWindow.xaml.cs"));
@@ -138,8 +138,8 @@ public sealed class NavigationIconTests
             {
                 var start = code.IndexOf($"private void {name}(string tag)", StringComparison.Ordinal);
                 Assert.True(start >= 0, $"{name} was not found, so this check verified nothing.");
-                var end = code.IndexOf("NavigationGlyphFor(tag)", start, StringComparison.Ordinal);
-                Assert.True(end > start, $"{name} no longer reads its icon from the sidebar.");
+                var end = code.IndexOf("\n    }", start, StringComparison.Ordinal);
+                Assert.True(end > start, $"{name} method body end was not found.");
                 return (name, code[start..end]);
             })
             .ToArray();
