@@ -46,7 +46,6 @@ public sealed class NavigationIconTests
     {
         var rows = SidebarRows();
         var headers = StaticHeaders();
-        Assert.True(headers.Count >= 1, "Expected at least HistoryPage's static icon-tile header.");
 
         var wrong = new List<string>();
         foreach (var header in headers)

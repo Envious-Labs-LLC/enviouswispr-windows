@@ -477,9 +477,10 @@ public sealed partial class DesignSystemTokenTests
             Assert.Equal("Stretch", (string?)container.Attribute("HorizontalAlignment"));
         }
 
-        // HistoryPage keeps its existing layout until Wave 3.
+        // Wave 3 HistoryPage uses a full-height two-column split instead of a capped content column.
         var historyPage = FindNamedElement(document, "HistoryPage");
-        Assert.Equal(1, PageContentColumn().Count(historyPage.ToString()));
+        Assert.Equal("Grid", historyPage.Name.LocalName);
+        Assert.Equal(0, PageContentColumn().Count(historyPage.ToString()));
 
         // Control, both directions.
         const string selfSizedPanel =
