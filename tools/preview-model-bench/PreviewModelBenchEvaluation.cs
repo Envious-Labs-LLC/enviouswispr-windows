@@ -679,9 +679,9 @@ internal static class PreviewModelBenchEvaluation
     }
 
     /// <summary>
-    /// Classifies a language's WER or CER into the macOS <c>rubric.md</c> tiers:
-    /// <c>Ship</c> (&lt;5% WER / &lt;10% CER), <c>Experimental</c> (5–15% WER / 10–20% CER),
-    /// or <c>Hide</c> (&gt;15% WER / &gt;20% CER).
+    /// Classifies a language's WER or CER into the macOS <c>rubric.md</c> / <c>score.py</c> tiers:
+    /// <c>Ship</c> (&lt;5% WER / &lt;10% CER), <c>Experimental</c> (5 to &lt;15% WER / 10 to &lt;20% CER),
+    /// or <c>Hide</c> (&gt;=15% WER / &gt;=20% CER).
     /// </summary>
     public static string? ClassifyRubricTier(string? language, double? errorRate)
     {
@@ -702,7 +702,7 @@ internal static class PreviewModelBenchEvaluation
                 return BenchRubricTier.Ship;
             }
 
-            if (score <= ExperimentalCerThreshold)
+            if (score < ExperimentalCerThreshold)
             {
                 return BenchRubricTier.Experimental;
             }
@@ -715,7 +715,7 @@ internal static class PreviewModelBenchEvaluation
             return BenchRubricTier.Ship;
         }
 
-        if (score <= ExperimentalWerThreshold)
+        if (score < ExperimentalWerThreshold)
         {
             return BenchRubricTier.Experimental;
         }
@@ -723,9 +723,8 @@ internal static class PreviewModelBenchEvaluation
         return BenchRubricTier.Hide;
     }
 
-    private static bool IsStrippedPunctuation(char character) =>
+    private static bool IsStrippedAsciiOrCjkPunctuation(char character) =>
         CjkPunctuationSet.Contains(character) ||
-        char.IsPunctuation(character) ||
         (character <= 0x7F && !char.IsLetterOrDigit(character) && !char.IsWhiteSpace(character));
 
     /// <summary>
@@ -758,7 +757,7 @@ internal static class PreviewModelBenchEvaluation
                 continue;
             }
 
-            if (IsStrippedPunctuation(character))
+            if (IsStrippedAsciiOrCjkPunctuation(character))
             {
                 continue;
             }
@@ -795,7 +794,7 @@ internal static class PreviewModelBenchEvaluation
             var hasLetterOrDigit = false;
             foreach (var character in rawToken)
             {
-                if (IsStrippedPunctuation(character))
+                if (IsStrippedAsciiOrCjkPunctuation(character))
                 {
                     continue;
                 }
@@ -1035,27 +1034,30 @@ internal static class PreviewModelBenchEvaluation
         int? editDistance = classification == BenchRowClassification.Error
             ? null
             : LevenshteinDistance(expectedWords, actualWords);
-        double? wer = editDistance is { } edits
+        double? rawWer = editDistance is { } edits
             ? expectedWords.Length == 0
                 ? (actualWords.Length == 0 ? 0.0 : 1.0)
-                : Math.Round(edits / (double)expectedWords.Length, 4)
+                : edits / (double)expectedWords.Length
             : null;
+        double? wer = rawWer is { } rw ? Math.Round(rw, 4) : null;
         int? charEditDistance = classification == BenchRowClassification.Error
             ? null
             : LevenshteinDistance(expectedChars, actualChars);
-        double? cer = charEditDistance is { } cEdits
+        double? rawCer = charEditDistance is { } cEdits
             ? expectedChars.Length == 0
                 ? (actualChars.Length == 0 ? 0.0 : 1.0)
-                : Math.Round(cEdits / (double)expectedChars.Length, 4)
+                : cEdits / (double)expectedChars.Length
             : null;
+        double? cer = rawCer is { } rc ? Math.Round(rc, 4) : null;
         var primaryMetric = MetricForLanguage(normalizedLanguage);
-        var primaryScore = usesCer ? cer : wer;
+        var rawPrimaryScore = usesCer ? rawCer : rawWer;
         var rubricTier = classification == BenchRowClassification.Error
             ? null
-            : ClassifyRubricTier(normalizedLanguage, primaryScore);
-        bool? detectedLanguageMatched = classification == BenchRowClassification.Error
-            ? null
-            : IsDetectedLanguageMatch(detectedLanguage, normalizedLanguage);
+            : ClassifyRubricTier(normalizedLanguage, rawPrimaryScore);
+        bool? detectedLanguageMatched =
+            classification == BenchRowClassification.Error || string.IsNullOrWhiteSpace(detectedLanguage)
+                ? null
+                : IsDetectedLanguageMatch(detectedLanguage, normalizedLanguage);
         return new FixtureResult(
             file,
             normalizedLanguage,
@@ -1136,7 +1138,10 @@ internal static class PreviewModelBenchEvaluation
     /// (<c>fallback</c>), returns <see langword="null"/> so an incomplete measurement never publishes
     /// a survivor-biased accuracy number.
     /// </summary>
-    public static double? Rate(IEnumerable<FixtureResult> results)
+    public static double? Rate(IEnumerable<FixtureResult> results) =>
+         RawRate(results) is { } raw ? Math.Round(raw, 3) : null;
+
+    private static double? RawRate(IEnumerable<FixtureResult> results)
     {
         ArgumentNullException.ThrowIfNull(results);
         var list = results.ToList();
@@ -1150,14 +1155,17 @@ internal static class PreviewModelBenchEvaluation
 
         var words = list.Sum(result => result.ReferenceWords);
         var edits = list.Sum(result => result.EditDistance!.Value);
-        return words == 0 ? (edits == 0 ? 0.0 : 1.0) : Math.Round(edits / (double)words, 3);
+        return words == 0 ? (edits == 0 ? 0.0 : 1.0) : edits / (double)words;
     }
 
     /// <summary>
     /// Computes aggregate pooled Character Error Rate (CER) over a complete slice of primary and empty rows.
     /// Returns <see langword="null"/> if the slice is empty or contains any error/fallback row.
     /// </summary>
-    public static double? CharacterRate(IEnumerable<FixtureResult> results)
+    public static double? CharacterRate(IEnumerable<FixtureResult> results) =>
+        RawCharacterRate(results) is { } raw ? Math.Round(raw, 3) : null;
+
+    private static double? RawCharacterRate(IEnumerable<FixtureResult> results)
     {
         ArgumentNullException.ThrowIfNull(results);
         var list = results.ToList();
@@ -1171,7 +1179,7 @@ internal static class PreviewModelBenchEvaluation
 
         var characters = list.Sum(result => result.ReferenceCharacters);
         var edits = list.Sum(result => result.CharacterEditDistance!.Value);
-        return characters == 0 ? (edits == 0 ? 0.0 : 1.0) : Math.Round(edits / (double)characters, 3);
+        return characters == 0 ? (edits == 0 ? 0.0 : 1.0) : edits / (double)characters;
     }
 
     public static double? PrimaryErrorRate(IEnumerable<FixtureResult> results, string? language) =>
@@ -1180,7 +1188,8 @@ internal static class PreviewModelBenchEvaluation
     /// <summary>
     /// Computes the detected-language match rate (<c>DetectedLanguage == expectedLang</c> normalized to
     /// base ISO subtag) across a complete slice of primary and empty rows. Returns <see langword="null"/>
-    /// if the slice is empty or contains any error/fallback row.
+    /// if the slice is empty, contains any error/fallback row, or the engine did not report a detected
+    /// language on any row in the slice (e.g. Parakeet).
     /// </summary>
     public static double? DetectedLanguageMatchRate(IEnumerable<FixtureResult> results)
     {
@@ -1189,6 +1198,13 @@ internal static class PreviewModelBenchEvaluation
         if (list.Count == 0 ||
             list.Any(result =>
                 result.Classification is not (BenchRowClassification.Primary or BenchRowClassification.Empty)))
+        {
+            return null;
+        }
+
+        var hasAnyDetection = list.Any(result =>
+            result.DetectedLanguageMatched is not null || !string.IsNullOrWhiteSpace(result.DetectedLanguage));
+        if (!hasAnyDetection)
         {
             return null;
         }
@@ -1215,13 +1231,13 @@ internal static class PreviewModelBenchEvaluation
         foreach (var group in groups)
         {
             var lang = group.Key;
-            var langWer = Rate(group);
-            var langCer = CharacterRate(group);
-            var langPrimary = UsesCharacterErrorRate(lang) ? langCer : langWer;
-            werByLang[lang] = langWer;
-            cerByLang[lang] = langCer;
+            var rawWer = RawRate(group);
+            var rawCer = RawCharacterRate(group);
+            var rawPrimary = UsesCharacterErrorRate(lang) ? rawCer : rawWer;
+            werByLang[lang] = rawWer is { } rw ? Math.Round(rw, 3) : null;
+            cerByLang[lang] = rawCer is { } rc ? Math.Round(rc, 3) : null;
             detMatchByLang[lang] = DetectedLanguageMatchRate(group);
-            tierByLang[lang] = ClassifyRubricTier(lang, langPrimary);
+            tierByLang[lang] = ClassifyRubricTier(lang, rawPrimary);
         }
 
         string? overallTier = null;
@@ -2230,23 +2246,38 @@ internal static class PreviewModelBenchEvaluation
         }
 
         var discovered = new List<string>();
-        foreach (var subDir in Directory.EnumerateDirectories(dir).OrderBy(d => d, StringComparer.Ordinal))
+        DiscoverManifestsRecursive(dir, discovered);
+        return discovered;
+    }
+
+    private static void DiscoverManifestsRecursive(string directory, List<string> discovered)
+    {
+        string[] candidates =
+        [
+            Path.Combine(directory, "cases.sealed.jsonl"),
+            Path.Combine(directory, "cases.jsonl"),
+            Path.Combine(directory, "manifest.jsonl"),
+            Path.Combine(directory, "manifest.json"),
+        ];
+        var matched = candidates.FirstOrDefault(File.Exists);
+        if (matched is not null)
         {
-            string[] subCandidates =
-            [
-                Path.Combine(subDir, "cases.sealed.jsonl"),
-                Path.Combine(subDir, "cases.jsonl"),
-                Path.Combine(subDir, "manifest.jsonl"),
-                Path.Combine(subDir, "manifest.json"),
-            ];
-            var matched = subCandidates.FirstOrDefault(File.Exists);
-            if (matched is not null)
-            {
-                discovered.Add(matched);
-            }
+            discovered.Add(matched);
+            return;
         }
 
-        return discovered;
+        foreach (var subDir in Directory.EnumerateDirectories(directory).OrderBy(d => d, StringComparer.Ordinal))
+        {
+            var folderName = Path.GetFileName(subDir);
+            if (string.Equals(folderName, "results", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(folderName, "wav", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(folderName, "audio", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            DiscoverManifestsRecursive(subDir, discovered);
+        }
     }
 
     private static IEnumerable<CorpusManifestEntry> ParseSingleManifestFile(string manifestFilePath, string? wavRoot)

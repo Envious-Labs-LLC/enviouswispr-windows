@@ -920,6 +920,10 @@ public sealed class PreviewModelBenchEvaluationTests
             Assert.Equal("el", elSingle.Language);
             Assert.Equal("Καλημέρα.", elSingle.Reference);
 
+            // Recursive root discovery across the full synced mac-corpus layout (speech/* + german-parakeet-stress + lang-stress/*)
+            var rootEntries = PreviewModelBenchEvaluation.ParseCorpusManifestEntries(root, wavRoot: customWavRoot);
+            Assert.Equal(6, rootEntries.Count);
+
             // Missing WAV file fails closed with InvalidDataException
             File.Delete(Path.Combine(customWavRoot, "el_std01.wav"));
             Assert.Throws<InvalidDataException>(() =>
@@ -1003,18 +1007,38 @@ public sealed class PreviewModelBenchEvaluationTests
     public void DetectedLanguageMatchRateAndMacRubricTierClassificationRenderInJsonAndMarkdown()
     {
         // Rubric thresholds:
-        // WER: Ship < 5%, Experimental 5..15%, Hide > 15%
+        // WER: Ship < 5%, Experimental 5 to <15%, Hide >= 15%
         Assert.Equal(BenchRubricTier.Ship, PreviewModelBenchEvaluation.ClassifyRubricTier("de", 0.049));
         Assert.Equal(BenchRubricTier.Experimental, PreviewModelBenchEvaluation.ClassifyRubricTier("de", 0.05));
-        Assert.Equal(BenchRubricTier.Experimental, PreviewModelBenchEvaluation.ClassifyRubricTier("de", 0.15));
-        Assert.Equal(BenchRubricTier.Hide, PreviewModelBenchEvaluation.ClassifyRubricTier("de", 0.151));
+        Assert.Equal(BenchRubricTier.Experimental, PreviewModelBenchEvaluation.ClassifyRubricTier("de", 0.149));
+        Assert.Equal(BenchRubricTier.Hide, PreviewModelBenchEvaluation.ClassifyRubricTier("de", 0.15));
 
-        // CER (zh, ja, ko, th): Ship < 10%, Experimental 10..20%, Hide > 20%
+        // CER (zh, ja, ko, th): Ship < 10%, Experimental 10 to <20%, Hide >= 20%
         Assert.Equal(BenchRubricTier.Ship, PreviewModelBenchEvaluation.ClassifyRubricTier("zh", 0.099));
         Assert.Equal(BenchRubricTier.Experimental, PreviewModelBenchEvaluation.ClassifyRubricTier("zh", 0.10));
-        Assert.Equal(BenchRubricTier.Experimental, PreviewModelBenchEvaluation.ClassifyRubricTier("ja", 0.20));
-        Assert.Equal(BenchRubricTier.Hide, PreviewModelBenchEvaluation.ClassifyRubricTier("ko", 0.201));
+        Assert.Equal(BenchRubricTier.Experimental, PreviewModelBenchEvaluation.ClassifyRubricTier("ja", 0.199));
+        Assert.Equal(BenchRubricTier.Hide, PreviewModelBenchEvaluation.ClassifyRubricTier("ko", 0.20));
         Assert.Null(PreviewModelBenchEvaluation.ClassifyRubricTier("en", null));
+
+        // Unrounded pooled score governs rubric tier (496 / 10000 = 4.96% raw WER -> Ship, even though display WER rounds to 0.050)
+        var boundaryFixture = new FixtureResult(
+            "en-boundary.wav",
+            "en",
+            ReferenceWords: 10_000,
+            EditDistance: 496,
+            Milliseconds: 100,
+            Transcript: "sample",
+            ActualWords: 10_000,
+            WordErrorRate: 0.0496,
+            ReferenceCharacters: 50_000,
+            ActualCharacters: 50_000,
+            CharacterEditDistance: 2_480,
+            CharacterErrorRate: 0.0496);
+        var boundarySummary = PreviewModelBenchEvaluation.SummarizeLanguageMetrics([boundaryFixture]);
+        Assert.Equal(0.05, boundarySummary.WordErrorRateByLanguage["en"]);
+        Assert.Equal(BenchRubricTier.Ship, boundarySummary.RubricTierByLanguage["en"]);
+        Assert.Null(boundarySummary.DetectedLanguageMatchRateByLanguage["en"]);
+        Assert.Null(boundarySummary.DetectedLanguageMatchRate);
 
         // Language subtag normalization and match rate
         Assert.True(PreviewModelBenchEvaluation.IsDetectedLanguageMatch("de-DE", "de"));
