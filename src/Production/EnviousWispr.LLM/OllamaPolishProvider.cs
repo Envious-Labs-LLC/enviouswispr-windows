@@ -52,6 +52,14 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
         CancellationToken cancellationToken = default) =>
         _apiClient.DiscoverAsync(cancellationToken);
 
+    public Task<OllamaModelReadinessResult> ProbeModelAsync(
+        CancellationToken cancellationToken = default) =>
+        _apiClient.ProbeModelAsync(_options.ModelId, cancellationToken);
+
+    public Task<EnviousWispr.Core.Polish.OllamaWarmupOutcome> WarmUpAsync(
+        CancellationToken cancellationToken = default) =>
+        _apiClient.WarmUpAsync(_options.ModelId, cancellationToken);
+
     public async Task<PolishResult> TryPolishAsync(
         PolishRequest request,
         CancellationToken cancellationToken = default)
@@ -206,6 +214,11 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
             return MishearingAdvice.None(MishearingAdviceStatus.Failed);
         }
 
+        if (readiness.Model.IsRemote)
+        {
+            return MishearingAdvice.None(MishearingAdviceStatus.NotSupported);
+        }
+
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(_requestTimeout);
 
@@ -238,13 +251,28 @@ public sealed class OllamaPolishProvider : IPolishProvider, IMishearingAdvisor
         string? recognitionLanguage,
         string? targetAppName,
         OllamaModelInfo model,
-        CancellationToken cancellationToken) =>
-        await SendOnceAsync(
+        CancellationToken cancellationToken)
+    {
+        if (model.IsRemote)
+        {
+            var wordCount = transcript.Split(
+                (char[]?)null,
+                StringSplitOptions.RemoveEmptyEntries).Length;
+            return await SendOnceAsync(
+                transcript,
+                CloudPolishPrompt.BuildSystemPrompt(recognitionLanguage, wordCount, targetAppName),
+                CloudPolishPrompt.BuildUserMessage(transcript),
+                model,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        return await SendOnceAsync(
             transcript,
             OllamaLocalPrompt.BuildSystemPrompt(vocabulary, recognitionLanguage, targetAppName),
             OllamaLocalPrompt.BuildUserMessage(transcript, vocabulary),
             model,
             cancellationToken).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// One call to the local model, with the instruction supplied by the caller.

@@ -8,6 +8,7 @@ public enum OllamaServerState
 {
     Ready,
     NoModels,
+    Starting,
 
     /// <summary>Nothing is listening at the endpoint.</summary>
     NotListening,
@@ -17,19 +18,21 @@ public enum OllamaServerState
     EndpointInvalid,
 }
 
-public sealed record OllamaInstalledModel(string Id, long? SizeBytes, string? ParameterSize);
+public sealed record OllamaInstalledModel(
+    string Id,
+    long? SizeBytes,
+    string? ParameterSize,
+    bool IsRemote = false,
+    bool? SupportsThinking = null);
 
-/// <summary>One look at Ollama: what answered, what is installed, and whether its app was found on this PC.</summary>
-/// <param name="OllamaFound">
-/// The Ollama app is where its installer puts it, or on PATH. Decides only which instructions to give when nothing
-/// answers - never whether to start anything. The app does not start Ollama (see <see cref="OllamaModelsPresenter"/>).
-/// </param>
+/// <summary>One look at Ollama: what answered, what is installed, whether its app was found on this PC, and advertised cloud models.</summary>
 public sealed record OllamaInventory(
     OllamaServerState Server,
     IReadOnlyList<OllamaInstalledModel> Models,
-    bool OllamaFound);
+    bool OllamaFound,
+    IReadOnlyList<string>? CloudCatalogIds = null);
 
-/// <summary>The app's side of the Ollama models block: the wire client and the log. Core types only.</summary>
+/// <summary>The app's side of the Ollama models block: the wire client, the launcher, and the log. Core types only.</summary>
 public interface IOllamaModelHost
 {
     /// <summary>The model the running polish provider uses this launch, or null. It cannot be removed from the page.</summary>
@@ -40,22 +43,46 @@ public interface IOllamaModelHost
     Task<OllamaPullOutcome> PullAsync(string? endpoint, string modelId, IProgress<OllamaPullUpdate> progress, CancellationToken cancellationToken);
 
     Task<OllamaDeleteOutcome> DeleteAsync(string? endpoint, string modelId, CancellationToken cancellationToken);
+
+    OllamaLaunchSafety CheckLaunchSafety() => OllamaLaunchSafety.SafeLocalOnly;
+
+    bool TryOpenOllama() => false;
+
+    Task<OllamaHostedAddResult> ResolveAndAddHostedModelAsync(
+        string? endpoint,
+        string advertisedId,
+        IProgress<OllamaPullUpdate> progress,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(new OllamaHostedAddResult(OllamaHostedAddOutcome.Unreachable));
+
+    Task<OllamaWarmupOutcome> WarmUpAsync(
+        string? endpoint,
+        string modelId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(OllamaWarmupOutcome.SkippedUnknownModel);
 }
 
 public enum OllamaSetupAction
 {
     None,
+    OpenOllama,
     DownloadOllama,
     DownloadRecommended,
 }
 
 /// <summary>The block's one line about Ollama itself, and the one thing to do about it.</summary>
-public sealed record OllamaSetupView(string Sentence, OllamaSetupAction Action, string? ActionLabel, bool ShowsModels);
+public sealed record OllamaSetupView(
+    string Sentence,
+    OllamaSetupAction Action,
+    string? ActionLabel,
+    bool ShowsModels,
+    string StatusBadge = "Checking");
 
 public enum OllamaRowAction
 {
     None,
     Download,
+    Add,
     Remove,
     Stop,
 }
@@ -77,9 +104,22 @@ public sealed record OllamaModelRow(
     bool ActionEnabled,
     bool Downloading,
     double? Progress,
-    string? ProgressText);
+    string? ProgressText,
+    bool IsRemote = false,
+    string GroupTitle = OllamaModelsPresenter.LocalGroupTitle);
 
-public sealed record OllamaModelsView(OllamaSetupView Setup, IReadOnlyList<OllamaModelRow> Rows, string? Notice);
+public sealed record OllamaModelsView(
+    OllamaSetupView Setup,
+    IReadOnlyList<OllamaModelRow> Rows,
+    string? Notice,
+    string SearchQuery = "")
+{
+    public IReadOnlyList<OllamaModelRow> LocalRows =>
+        Rows.Where(row => !row.IsRemote).ToArray();
+
+    public IReadOnlyList<OllamaModelRow> HostedRows =>
+        Rows.Where(row => row.IsRemote).ToArray();
+}
 
 public enum OllamaCheck
 {
@@ -99,11 +139,6 @@ public enum OllamaCheck
 }
 
 /// <summary>Which list a question was asked about: the endpoint it came from, and its version.</summary>
-/// <remarks>
-/// A DOWNLOAD OR REMOVAL CARRIES THE LIST THE PERSON SAW. A confirmation dialog stays open while the page can move to
-/// another endpoint; the action is refused if the list changed underneath it, rather than sent to a server the person
-/// was not looking at. Ref: #213 review.
-/// </remarks>
 public sealed record OllamaListContext(string? Endpoint, int Version);
 
 /// <summary>How a download or removal went, and the page as it stands after it.</summary>
@@ -111,28 +146,16 @@ public sealed record OllamaListContext(string? Endpoint, int Version);
 /// <param name="Endpoint">The endpoint the change was made against. The window repairs the picker only while the page still names it.</param>
 public sealed record OllamaModelChange(OllamaModelsView View, string? Changed, bool Downloaded, bool Removed, string? Endpoint);
 
-/// <summary>The Ollama models block of the AI Polish page: setup, the catalogue, downloads and removals. Ref: #213.</summary>
-/// <remarks>
-/// ONE CHANGE AT A TIME. A download or a removal takes the block for its whole run, and anything asked for meanwhile
-/// is Busy - as on macOS, where every row's button is disabled while one download runs. Each runs inside the
-/// presentation's admission, so the exit stops it and waits, and each ends by looking at Ollama again: a stopped
-/// download may have finished anyway, and the list shows what Ollama has, not what was hoped. The change is given
-/// back in a finally, whatever the host did.
-///
-/// THE APP DOES NOT START OLLAMA, which is the one thing here macOS does and Windows deliberately does not. Ollama's
-/// Windows desktop app keeps its own saved "expose to the network" setting and applies it to the server it starts; the
-/// app cannot read that setting reliably, so a start could open Ollama to the whole network - and the same app can
-/// stop a server another tool started. The page says how to start it instead. Ref: #213 review.
-///
-/// A DOWNLOAD RUNS ON WHEN THE PAGE IS LEFT OR THE WINDOW HIDDEN, as a browser's does: a 7 GB model should not need
-/// watching. Stop is on the row when the page is opened again; switching the provider away from Ollama stops it, as
-/// on macOS; the app's exit stops it through the admission.
-///
-/// THE WINDOW RENDERS, THIS DECIDES. Every sentence, label and ordering is made here. Calls come from the window's
-/// thread; progress arrives on whatever thread the host reports it and is folded in under a lock.
-/// </remarks>
+/// <summary>The Ollama models block of the AI Polish page: setup, the catalogue, downloads, hosted additions, and removals. Ref: #71, #213.</summary>
 public sealed class OllamaModelsPresenter
 {
+    public const string LocalGroupTitle = "On this PC";
+    public const string HostedGroupTitle = "Runs on Ollama's servers";
+    public const string PrivacySummary = "Local models stay on this PC; hosted models run on Ollama's servers and send transcript text to Ollama.";
+
+    private static readonly TimeSpan DefaultStartupPollDelay = TimeSpan.FromMilliseconds(500);
+    private const int DefaultStartupPollAttempts = 20;
+
     private readonly IOllamaModelHost _host;
     private readonly PresentationAdmission _admission;
     private readonly object _lock = new();
@@ -140,10 +163,14 @@ public sealed class OllamaModelsPresenter
     private OllamaInventory? _inventory;
     private string? _notice;
     private string? _downloading;
+    private bool _downloadingIsHosted;
     private OllamaPullPhase _phase;
     private bool _quiet;
+    private bool _starting;
+    private string _searchQuery = string.Empty;
     private CancellationTokenSource? _change;
     private int _inspections;
+    private int _statusEpoch;
 
     /// <summary>The endpoint the page last asked about. A look at any other is not made after a change, and not kept.</summary>
     private string? _requested;
@@ -173,6 +200,17 @@ public sealed class OllamaModelsPresenter
         }
     }
 
+    public string SearchQuery
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _searchQuery;
+            }
+        }
+    }
+
     /// <summary>
     /// The list on the page, or null while there is none or a look at another endpoint is still out - a moment in which
     /// the rows on screen belong to one server and the page is asking another, so nothing may be changed.
@@ -188,15 +226,24 @@ public sealed class OllamaModelsPresenter
         }
     }
 
-    /// <summary>Whether a download or removal is running. A progress view queued to the window before it ended is not drawn after.</summary>
+    /// <summary>Whether a download, hosted add, removal, or startup poll is running.</summary>
     public bool Changing
     {
         get
         {
             lock (_lock)
             {
-                return _change is not null;
+                return _change is not null || _starting;
             }
+        }
+    }
+
+    public OllamaModelsView SetSearchQuery(string? query)
+    {
+        lock (_lock)
+        {
+            _searchQuery = query?.Trim() ?? string.Empty;
+            return Render();
         }
     }
 
@@ -234,12 +281,274 @@ public sealed class OllamaModelsPresenter
         }
     }
 
+    /// <summary>
+    /// Silent background poll: refreshes Ollama daemon and model state without contending with active pulls, removals,
+    /// or startup polls, and without flashing transient loading state. Returns null when skipped or superseded.
+    /// </summary>
+    public async Task<OllamaModelsView?> PollAsync(string? endpoint)
+    {
+        if (!_admission.TryEnter(out var lease))
+        {
+            return null;
+        }
+
+        using (lease)
+        {
+            int ticket;
+            int epochBefore;
+            lock (_lock)
+            {
+                if (_change is not null || _starting)
+                {
+                    return null;
+                }
+
+                if (!_requestedKnown)
+                {
+                    _requested = endpoint;
+                    _requestedKnown = true;
+                }
+                else if (!IsRequested(endpoint))
+                {
+                    return null;
+                }
+
+                ticket = ++_inspections;
+                epochBefore = _statusEpoch;
+            }
+
+            OllamaInventory inventory;
+            try
+            {
+                inventory = await _host.InspectAsync(endpoint, lease.Closing).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
+            {
+                return null;
+            }
+
+            lock (_lock)
+            {
+                if (ticket != _inspections ||
+                    _statusEpoch != epochBefore ||
+                    _change is not null ||
+                    _starting ||
+                    !IsRequested(endpoint))
+                {
+                    return null;
+                }
+
+                var changed = !InventoryEquals(_inventory, inventory);
+                _inventory = inventory;
+                if (!_listKnown || !string.Equals(_listEndpoint, endpoint, StringComparison.Ordinal))
+                {
+                    _notice = null;
+                    _listEndpoint = endpoint;
+                    _listKnown = true;
+                    _listVersion++;
+                }
+                else if (changed)
+                {
+                    _listVersion++;
+                }
+
+                return Render();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Launches Ollama when it is installed and not listening, enters transient <see cref="OllamaServerState.Starting"/>,
+    /// and runs an epoch-guarded startup poll (default 500 ms x 20 attempts) so the UI transitions automatically to
+    /// <see cref="OllamaServerState.NoModels"/> or <see cref="OllamaServerState.Ready"/> as soon as Ollama answers.
+    /// </summary>
+    public async Task<OllamaModelsView?> OpenOllamaAsync(
+        string? endpoint,
+        IProgress<OllamaModelsView>? progress = null,
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        int maxAttempts = DefaultStartupPollAttempts)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxAttempts, 0);
+        if (!_admission.TryEnter(out var lease))
+        {
+            return null;
+        }
+
+        using (lease)
+        {
+            int startEpoch;
+            lock (_lock)
+            {
+                if (_starting || _change is not null)
+                {
+                    return null;
+                }
+
+                if (_inventory is { Server: not OllamaServerState.NotListening } ||
+                    _inventory is { OllamaFound: false })
+                {
+                    return null;
+                }
+
+                _requested = endpoint;
+                _requestedKnown = true;
+                _statusEpoch++;
+                if (_host.CheckLaunchSafety() != OllamaLaunchSafety.SafeLocalOnly)
+                {
+                    _notice = "Ollama is configured to expose its server to the network. Turn off network exposure in Ollama or start Ollama from the Start menu, then choose Check again.";
+                    return Render();
+                }
+
+                if (!_host.TryOpenOllama())
+                {
+                    _notice = "EnviousWispr couldn't start Ollama automatically. Start Ollama from the Start menu, then choose Check again.";
+                    return Render();
+                }
+
+                _starting = true;
+                _notice = null;
+                startEpoch = ++_statusEpoch;
+            }
+
+            progress?.Report(View);
+            var wait = delay ?? Task.Delay;
+            try
+            {
+                for (var attempt = 0; attempt < maxAttempts; attempt++)
+                {
+                    await wait(DefaultStartupPollDelay, lease.Closing).ConfigureAwait(false);
+                    lock (_lock)
+                    {
+                        if (_statusEpoch != startEpoch)
+                        {
+                            return null;
+                        }
+
+                        if (_change is not null || !IsRequested(endpoint))
+                        {
+                            _starting = false;
+                            return null;
+                        }
+                    }
+
+                    var inventory = await _host.InspectAsync(endpoint, lease.Closing).ConfigureAwait(false);
+                    lock (_lock)
+                    {
+                        if (_statusEpoch != startEpoch)
+                        {
+                            return null;
+                        }
+
+                        if (_change is not null || !IsRequested(endpoint))
+                        {
+                            _starting = false;
+                            return null;
+                        }
+
+                        if (inventory.Server is OllamaServerState.Ready or OllamaServerState.NoModels or OllamaServerState.EndpointInvalid)
+                        {
+                            _starting = false;
+                            _inventory = inventory;
+                            _listEndpoint = endpoint;
+                            _listKnown = true;
+                            _listVersion++;
+                            _statusEpoch++;
+                            var readyView = Render();
+                            progress?.Report(readyView);
+                            return readyView;
+                        }
+                    }
+                }
+
+                lock (_lock)
+                {
+                    if (_statusEpoch != startEpoch)
+                    {
+                        return null;
+                    }
+
+                    if (_change is not null || !IsRequested(endpoint))
+                    {
+                        _starting = false;
+                        return null;
+                    }
+
+                    _starting = false;
+                    _notice = "Ollama is taking longer than usual to start. Wait a moment, then choose Check again.";
+                    _statusEpoch++;
+                    var timeoutView = Render();
+                    progress?.Report(timeoutView);
+                    return timeoutView;
+                }
+            }
+            catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
+            {
+                lock (_lock)
+                {
+                    if (_statusEpoch == startEpoch)
+                    {
+                        _starting = false;
+                    }
+                }
+
+                return null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Warms up a local Ollama model in memory ahead of the next dictation. Skips remote and unknown models.
+    /// </summary>
+    public async Task<OllamaWarmupOutcome> WarmUpAsync(string? endpoint, string? modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId))
+        {
+            return OllamaWarmupOutcome.SkippedUnknownModel;
+        }
+
+        if (!_admission.TryEnter(out var lease))
+        {
+            return OllamaWarmupOutcome.Cancelled;
+        }
+
+        using (lease)
+        {
+            lock (_lock)
+            {
+                if (_inventory is not { Server: OllamaServerState.Ready } ready)
+                {
+                    return OllamaWarmupOutcome.SkippedUnknownModel;
+                }
+
+                var matched = ready.Models.FirstOrDefault(model => OllamaModelCatalog.SameModel(model.Id, modelId));
+                if (matched is null)
+                {
+                    return OllamaWarmupOutcome.SkippedUnknownModel;
+                }
+
+                if (matched.IsRemote)
+                {
+                    return OllamaWarmupOutcome.SkippedRemote;
+                }
+            }
+
+            try
+            {
+                return await _host.WarmUpAsync(endpoint, modelId, lease.Closing).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (lease.Closing.IsCancellationRequested)
+            {
+                return OllamaWarmupOutcome.Cancelled;
+            }
+        }
+    }
+
     /// <summary>Whether a download may start now, and whether to ask the person first.</summary>
     public OllamaCheck CheckDownload(string modelId)
     {
         lock (_lock)
         {
-            if (_change is not null)
+            if (_change is not null || _starting)
             {
                 return OllamaCheck.Busy;
             }
@@ -250,20 +559,46 @@ public sealed class OllamaModelsPresenter
         }
     }
 
+    /// <summary>Whether a hosted model Add may start now.</summary>
+    public OllamaCheck CheckAddHosted(string advertisedId)
+    {
+        lock (_lock)
+        {
+            if (_change is not null || _starting)
+            {
+                return OllamaCheck.Busy;
+            }
+
+            if (string.IsNullOrWhiteSpace(advertisedId))
+            {
+                return OllamaCheck.NotOffered;
+            }
+
+            var offered = _inventory?.CloudCatalogIds?.Any(id => OllamaModelCatalog.SameHostedModel(id, advertisedId)) == true;
+            return offered ? OllamaCheck.Proceed : OllamaCheck.NotOffered;
+        }
+    }
+
     /// <summary>The confirmation for a model that failed every test, in macOS's words.</summary>
     public static (string Title, string Message, string Proceed) NotRecommendedQuestion(string modelId) =>
         ("This model did not pass any of our cleanup tests.",
          $"{NameOf(modelId)} failed every dictation cleanup test we ran. You can still download it.",
          "Download anyway");
 
-    /// <summary>Whether a removal may start now; only a catalogue model the running provider does not use.</summary>
+    /// <summary>Whether a removal may start now; only a local catalogue model the running provider does not use.</summary>
     public OllamaCheck CheckRemove(string modelId)
     {
         lock (_lock)
         {
-            if (_change is not null)
+            if (_change is not null || _starting)
             {
                 return OllamaCheck.Busy;
+            }
+
+            // Hosted models never offer Remove.
+            if (_inventory?.Models.FirstOrDefault(model => OllamaModelCatalog.SameModel(model.Id, modelId)) is { IsRemote: true })
+            {
+                return OllamaCheck.NotOffered;
             }
 
             if (OllamaModelCatalog.Offered(modelId) is null)
@@ -318,6 +653,39 @@ public sealed class OllamaModelsPresenter
         }
     }
 
+    /// <summary>
+    /// Resolves and adds an advertised Ollama cloud model (<c>-cloud</c> / <c>:cloud</c>) at the endpoint the block's
+    /// list came from. Null when refused.
+    /// </summary>
+    public async Task<OllamaModelChange?> AddHostedAsync(string advertisedId, OllamaListContext context, IProgress<OllamaModelsView>? progress)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (string.IsNullOrWhiteSpace(advertisedId) || Context != context || !_admission.TryEnter(out var lease))
+        {
+            return null;
+        }
+
+        using (lease)
+        {
+            if (!TryBegin(context, out var change))
+            {
+                return null;
+            }
+
+            OllamaModelChange? result;
+            try
+            {
+                result = await AddHostedInsideAsync(context.Endpoint, advertisedId.Trim(), progress, lease, change).ConfigureAwait(false);
+            }
+            finally
+            {
+                End(change);
+            }
+
+            return result is null ? null : result with { View = View };
+        }
+    }
+
     private async Task<OllamaModelChange?> DownloadInsideAsync(
         string? endpoint,
         string modelId,
@@ -329,6 +697,7 @@ public sealed class OllamaModelsPresenter
         lock (_lock)
         {
             _downloading = modelId;
+            _downloadingIsHosted = false;
             _phase = OllamaPullPhase.Starting;
             _quiet = false;
             _layers.Clear();
@@ -355,6 +724,7 @@ public sealed class OllamaModelsPresenter
             lock (_lock)
             {
                 _downloading = null;
+                _downloadingIsHosted = false;
                 _layers.Clear();
             }
         }
@@ -370,17 +740,85 @@ public sealed class OllamaModelsPresenter
         lock (_lock)
         {
             var installed = _inventory is { Server: OllamaServerState.Ready } now &&
-                now.Models.Any(model => OllamaModelCatalog.SameModel(model.Id, modelId));
+                now.Models.Any(model => !model.IsRemote && OllamaModelCatalog.SameModel(model.Id, modelId));
             if (IsRequested(endpoint))
             {
                 // A NOTICE ABOUT ANOTHER SERVER IS NOT SHOWN: the page has moved to a different endpoint since.
                 _notice = DownloadNotice(outcome, modelId, refreshed: after is not null);
             }
+
             return new OllamaModelChange(Render(), modelId, Downloaded: installed, Removed: false, endpoint);
         }
     }
 
-    /// <summary>Stops the download in flight, if there is one. Ollama may keep what it has, to resume next time.</summary>
+    private async Task<OllamaModelChange?> AddHostedInsideAsync(
+        string? endpoint,
+        string advertisedId,
+        IProgress<OllamaModelsView>? progress,
+        PresentationAdmission.Lease lease,
+        CancellationTokenSource change)
+    {
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(lease.Closing, change.Token);
+        lock (_lock)
+        {
+            _downloading = advertisedId;
+            _downloadingIsHosted = true;
+            _phase = OllamaPullPhase.Starting;
+            _quiet = false;
+            _layers.Clear();
+            _notice = null;
+        }
+
+        progress?.Report(View);
+        OllamaHostedAddResult outcome;
+        try
+        {
+            outcome = await _host.ResolveAndAddHostedModelAsync(endpoint, advertisedId, new FoldIntoView(this, progress), stop.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested)
+        {
+            outcome = new OllamaHostedAddResult(OllamaHostedAddOutcome.Cancelled);
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException or OperationCanceledException))
+        {
+            outcome = new OllamaHostedAddResult(OllamaHostedAddOutcome.PullFailed);
+        }
+        finally
+        {
+            lock (_lock)
+            {
+                _downloading = null;
+                _downloadingIsHosted = false;
+                _layers.Clear();
+            }
+        }
+
+        if (lease.Closing.IsCancellationRequested)
+        {
+            return null;
+        }
+
+        var (after, _) = await InspectQuietlyAsync(endpoint, lease.Closing).ConfigureAwait(false);
+        lock (_lock)
+        {
+            var matched = _inventory is { Server: OllamaServerState.Ready } now
+                ? now.Models.FirstOrDefault(model =>
+                    model.IsRemote &&
+                    (OllamaModelCatalog.SameHostedModel(model.Id, advertisedId) ||
+                     (outcome.ResolvedModelId is not null && OllamaModelCatalog.SameModel(model.Id, outcome.ResolvedModelId))))
+                : null;
+            var changedId = matched?.Id ?? outcome.ResolvedModelId ?? advertisedId;
+            if (IsRequested(endpoint))
+            {
+                _notice = HostedAddNotice(outcome.Outcome, advertisedId, refreshed: after is not null);
+            }
+
+            return new OllamaModelChange(Render(), changedId, Downloaded: matched is not null, Removed: false, endpoint);
+        }
+    }
+
+    /// <summary>Stops the download or hosted add in flight, if there is one.</summary>
     public void Stop()
     {
         lock (_lock)
@@ -388,6 +826,12 @@ public sealed class OllamaModelsPresenter
             if (_downloading is not null)
             {
                 _change?.Cancel();
+            }
+
+            if (_starting)
+            {
+                _starting = false;
+                _statusEpoch++;
             }
         }
     }
@@ -460,22 +904,21 @@ public sealed class OllamaModelsPresenter
     /// listing that succeeded (the caller's to check); never overwrites a model that is installed, nor one the person
     /// typed.
     /// </summary>
-    /// <param name="installed">The picker's fresh listing of installed models; empty when there are none.</param>
-    /// <param name="field">The model field as it reads now.</param>
-    /// <param name="setByApp">
-    /// The value the app itself last put in the field - loaded from settings, chosen as a default, or repaired. A field
-    /// that still reads it has not been edited by the person, however many times the app changed it.
-    /// </param>
     public static string? RepairSelection(IReadOnlyList<string> installed, string field, string? setByApp, OllamaModelChange change)
     {
         ArgumentNullException.ThrowIfNull(installed);
         ArgumentNullException.ThrowIfNull(field);
         ArgumentNullException.ThrowIfNull(change);
         var current = field.Trim();
-        string? Installed(string id) => installed.FirstOrDefault(model => OllamaModelCatalog.SameModel(model, id));
+        string? Installed(string id) =>
+            installed.FirstOrDefault(model => OllamaModelCatalog.SameModel(model, id));
         string? Fallback() =>
             Installed(OllamaModelCatalog.RecommendedModelId) ??
-            OllamaModelCatalog.OrderedByVerdict(installed.OrderBy(model => model, StringComparer.OrdinalIgnoreCase), model => model)
+            OllamaModelCatalog.OrderedByVerdict(
+                    installed
+                        .Where(model => !OllamaModelCatalog.LooksLikeHostedCloudModel(model))
+                        .OrderBy(model => model, StringComparer.OrdinalIgnoreCase),
+                    model => model)
                 .FirstOrDefault();
 
         // A FIELD THAT NAMES AN INSTALLED MODEL IS RIGHT, whatever just happened - a removed model reinstalled by
@@ -511,12 +954,13 @@ public sealed class OllamaModelsPresenter
     {
         lock (_lock)
         {
-            if (_change is not null || !Settled() || _listVersion != context.Version)
+            if (_change is not null || _starting || !Settled() || _listVersion != context.Version)
             {
                 change = null!;
                 return false;
             }
 
+            _statusEpoch++;
             _change = change = new CancellationTokenSource();
             return true;
         }
@@ -529,18 +973,13 @@ public sealed class OllamaModelsPresenter
             if (ReferenceEquals(_change, change))
             {
                 _change = null;
+                _statusEpoch++;
             }
         }
 
         change.Dispose();
     }
 
-    /// <summary>
-    /// Looks at Ollama and keeps the answer only if it is still the latest look, at the endpoint the block is about. The
-    /// ticket is taken and compared under the same lock that installs the answer, so a slow answer never overwrites a
-    /// newer one. <paramref name="claim"/> makes <paramref name="endpoint"/> the block's endpoint (a refresh); without it
-    /// (the look after a change) a look at any other endpoint is not even made - it would supersede the block's own.
-    /// </summary>
     private async Task<(OllamaInventory? Inventory, bool Current)> InspectAsync(string? endpoint, bool claim, CancellationToken closing)
     {
         int ticket;
@@ -550,6 +989,8 @@ public sealed class OllamaModelsPresenter
             {
                 _requested = endpoint;
                 _requestedKnown = true;
+                _starting = false;
+                _statusEpoch++;
             }
             else if (!IsRequested(endpoint))
             {
@@ -568,6 +1009,7 @@ public sealed class OllamaModelsPresenter
             }
 
             _inventory = inventory;
+            _statusEpoch++;
             if (!_listKnown || !string.Equals(_listEndpoint, endpoint, StringComparison.Ordinal))
             {
                 // A NEW SERVER'S LIST STARTS WITHOUT THE OLD ONE'S NEWS.
@@ -629,26 +1071,61 @@ public sealed class OllamaModelsPresenter
         _ => "Ollama could not download that model. Try again, or update Ollama.",
     };
 
+    private static string HostedAddNotice(OllamaHostedAddOutcome outcome, string advertisedId, bool refreshed) => outcome switch
+    {
+        OllamaHostedAddOutcome.Succeeded => refreshed
+            ? $"{advertisedId} is added. Choose it above, then Save."
+            : $"{advertisedId} is added. The list could not be refreshed; choose Check again.",
+        OllamaHostedAddOutcome.Cancelled => "Adding the model was stopped.",
+        OllamaHostedAddOutcome.Ambiguous => "Ollama returned two valid names for this model. Add it in Ollama, then refresh this list.",
+        OllamaHostedAddOutcome.NoUsableName => "Ollama listed this model but did not return a name EnviousWispr can add. Try again after updating Ollama.",
+        OllamaHostedAddOutcome.Unreachable => "EnviousWispr could not confirm this model's name with Ollama. Try again in a moment.",
+        OllamaHostedAddOutcome.ServerUnavailable => "Ollama stopped answering. Start it and try again.",
+        OllamaHostedAddOutcome.EndpointInvalid => "The Ollama endpoint must be on this PC.",
+        _ => "Couldn't add the model. Check your internet connection and try again.",
+    };
+
     private OllamaModelsView Render()
     {
-        var setup = SetupFor(_inventory);
+        var setup = SetupFor(_inventory, _starting);
         if (!setup.ShowsModels || _inventory is null)
         {
-            return new OllamaModelsView(setup, [], _notice);
+            return new OllamaModelsView(setup, [], _notice, _searchQuery);
         }
 
-        var busy = _change is not null || !Settled();
-        var installed = OllamaModelCatalog.OrderedByVerdict(
-                _inventory.Models.OrderBy(model => model.Id, StringComparer.OrdinalIgnoreCase),
+        var busy = _change is not null || _starting || !Settled();
+        var localInstalled = _inventory.Models.Where(model => !model.IsRemote).ToArray();
+        var hostedInstalled = _inventory.Models.Where(model => model.IsRemote).ToArray();
+
+        var installedLocalRows = OllamaModelCatalog.OrderedByVerdict(
+                localInstalled.OrderBy(model => model.Id, StringComparer.OrdinalIgnoreCase),
                 model => model.Id)
-            .Select(model => InstalledRow(model, busy));
-        var suggested = OllamaModelCatalog.OrderedByVerdict(OllamaModelCatalog.Entries, entry => entry.Id)
-            .Where(entry => !_inventory.Models.Any(model => OllamaModelCatalog.SameModel(model.Id, entry.Id)))
-            .Select(entry => SuggestedRow(entry, busy));
-        return new OllamaModelsView(setup, [.. installed, .. suggested], _notice);
+            .Select(model => InstalledLocalRow(model, busy));
+        var suggestedLocalRows = OllamaModelCatalog.OrderedByVerdict(OllamaModelCatalog.Entries, entry => entry.Id)
+            .Where(entry => !localInstalled.Any(model => OllamaModelCatalog.SameModel(model.Id, entry.Id)))
+            .Select(entry => SuggestedLocalRow(entry, busy));
+
+        var installedHostedKeys = hostedInstalled
+            .Select(model => OllamaModelCatalog.HostedCatalogKey(model.Id))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var installedHostedRows = hostedInstalled
+            .OrderBy(model => model.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(InstalledHostedRow);
+        var suggestedHostedRows = (_inventory.CloudCatalogIds ?? [])
+            .Where(advertisedId => !installedHostedKeys.Contains(OllamaModelCatalog.HostedCatalogKey(advertisedId)))
+            .Select(advertisedId => SuggestedHostedRow(advertisedId, busy));
+
+        var allRows = installedLocalRows
+            .Concat(suggestedLocalRows)
+            .Concat(installedHostedRows)
+            .Concat(suggestedHostedRows)
+            .Where(row => row.Downloading || OllamaModelCatalog.MatchesSearch(_searchQuery, row.Id, row.Name))
+            .ToArray();
+
+        return new OllamaModelsView(setup, allRows, _notice, _searchQuery);
     }
 
-    private OllamaModelRow InstalledRow(OllamaInstalledModel model, bool busy)
+    private OllamaModelRow InstalledLocalRow(OllamaInstalledModel model, bool busy)
     {
         var (verdict, note) = OllamaModelCatalog.VerdictFor(model.Id);
         var offered = OllamaModelCatalog.Offered(model.Id);
@@ -675,26 +1152,99 @@ public sealed class OllamaModelsPresenter
             ActionEnabled: removable && !busy,
             Downloading: false,
             Progress: null,
-            ProgressText: null);
+            ProgressText: null,
+            IsRemote: false,
+            GroupTitle: LocalGroupTitle);
     }
 
-    private OllamaModelRow SuggestedRow(OllamaCatalogEntry entry, bool busy)
+    private OllamaModelRow SuggestedLocalRow(OllamaCatalogEntry entry, bool busy)
     {
         var detail = $"{entry.Parameters} parameters · {entry.DownloadSize} download";
-        if (OllamaModelCatalog.SameModel(_downloading, entry.Id))
+        if (!_downloadingIsHosted && OllamaModelCatalog.SameModel(_downloading, entry.Id))
         {
             var (progress, text) = DownloadProgress();
             return new OllamaModelRow(
                 entry.Id, entry.DisplayName, entry.Verdict, OllamaModelCatalog.Label(entry.Verdict), Sentence(entry.Note), detail,
                 Installed: false, OllamaRowAction.Stop, "Stop", $"Stop downloading {entry.DisplayName}",
-                ActionEnabled: true, Downloading: true, progress, text);
+                ActionEnabled: true, Downloading: true, progress, text,
+                IsRemote: false, GroupTitle: LocalGroupTitle);
         }
 
         return new OllamaModelRow(
             entry.Id, entry.DisplayName, entry.Verdict, OllamaModelCatalog.Label(entry.Verdict), Sentence(entry.Note), detail,
             Installed: false, OllamaRowAction.Download, "Download", $"Download {entry.DisplayName}",
             ActionEnabled: !busy && _inventory?.Server is OllamaServerState.Ready or OllamaServerState.NoModels,
-            Downloading: false, Progress: null, ProgressText: null);
+            Downloading: false, Progress: null, ProgressText: null,
+            IsRemote: false, GroupTitle: LocalGroupTitle);
+    }
+
+    private OllamaModelRow InstalledHostedRow(OllamaInstalledModel model)
+    {
+        var inUse = OllamaModelCatalog.SameModel(_host.ActiveModelId, model.Id);
+        var detail = inUse
+            ? "Runs on Ollama's servers · polishing your dictation now"
+            : "Installed · runs on Ollama's servers";
+        // Hosted rows keep their exact tag name verbatim and never offer Remove. Ref: macOS #1956.
+        return new OllamaModelRow(
+            model.Id,
+            model.Id,
+            OllamaModelVerdict.NotTested,
+            HostedGroupTitle,
+            string.Empty,
+            detail,
+            Installed: true,
+            OllamaRowAction.None,
+            ActionLabel: null,
+            ActionName: null,
+            ActionEnabled: false,
+            Downloading: false,
+            Progress: null,
+            ProgressText: null,
+            IsRemote: true,
+            GroupTitle: HostedGroupTitle);
+    }
+
+    private OllamaModelRow SuggestedHostedRow(string advertisedId, bool busy)
+    {
+        const string detail = "Runs on Ollama's servers · sends transcript text to Ollama";
+        if (_downloadingIsHosted && string.Equals(_downloading, advertisedId, StringComparison.OrdinalIgnoreCase))
+        {
+            return new OllamaModelRow(
+                advertisedId,
+                advertisedId,
+                OllamaModelVerdict.NotTested,
+                HostedGroupTitle,
+                string.Empty,
+                detail,
+                Installed: false,
+                OllamaRowAction.Stop,
+                "Stop",
+                $"Stop adding {advertisedId}",
+                ActionEnabled: true,
+                Downloading: true,
+                Progress: null,
+                ProgressText: "Adding...",
+                IsRemote: true,
+                GroupTitle: HostedGroupTitle);
+        }
+
+        return new OllamaModelRow(
+            advertisedId,
+            advertisedId,
+            OllamaModelVerdict.NotTested,
+            HostedGroupTitle,
+            string.Empty,
+            detail,
+            Installed: false,
+            OllamaRowAction.Add,
+            "Add",
+            $"Add {advertisedId}",
+            ActionEnabled: !busy && _inventory?.Server is OllamaServerState.Ready or OllamaServerState.NoModels,
+            Downloading: false,
+            Progress: null,
+            ProgressText: null,
+            IsRemote: true,
+            GroupTitle: HostedGroupTitle);
     }
 
     private (double? Progress, string Text) DownloadProgress()
@@ -722,29 +1272,82 @@ public sealed class OllamaModelsPresenter
         return (fraction, text);
     }
 
-    private static OllamaSetupView SetupFor(OllamaInventory? inventory)
+    private static OllamaSetupView SetupFor(OllamaInventory? inventory, bool starting)
     {
+        if (starting || inventory is { Server: OllamaServerState.Starting })
+        {
+            return new("Starting Ollama...", OllamaSetupAction.None, null, ShowsModels: false, StatusBadge: "Starting");
+        }
+
         var recommended = OllamaModelCatalog.Offered(OllamaModelCatalog.RecommendedModelId)!;
         return inventory switch
         {
-            null => new("Checking Ollama...", OllamaSetupAction.None, null, ShowsModels: false),
+            null => new("Checking Ollama...", OllamaSetupAction.None, null, ShowsModels: false, StatusBadge: "Checking"),
             { Server: OllamaServerState.EndpointInvalid } =>
-                new("The Ollama endpoint must be on this PC, such as http://127.0.0.1:11434.", OllamaSetupAction.None, null, false),
+                new("The Ollama endpoint must be on this PC, such as http://127.0.0.1:11434.", OllamaSetupAction.None, null, false, StatusBadge: "Invalid endpoint"),
             { Server: OllamaServerState.NotResponding } =>
-                new("Ollama isn't responding at this endpoint. Check that it's running, then choose Check again.", OllamaSetupAction.None, null, false),
+                new("Ollama isn't responding at this endpoint. Check that it's running, then choose Check again.", OllamaSetupAction.None, null, false, StatusBadge: "Not responding"),
             { Server: OllamaServerState.NotListening, OllamaFound: true } =>
-                new("Ollama is installed but isn't running. Start Ollama from the Start menu, then choose Check again.",
-                    OllamaSetupAction.None, null, false),
+                new("Ollama is installed on this PC, but it isn't running. Open Ollama to use local or hosted models.",
+                    OllamaSetupAction.OpenOllama, "Open Ollama", false, StatusBadge: "Not running"),
             { Server: OllamaServerState.NotListening } =>
                 new("EnviousWispr couldn't find Ollama on this PC. Ollama runs AI models on your PC: no API keys, completely free. After installing and starting it, choose Check again.",
-                    OllamaSetupAction.DownloadOllama, "Download Ollama", false),
+                    OllamaSetupAction.DownloadOllama, "Download Ollama", false, StatusBadge: "Not installed"),
             { Server: OllamaServerState.NoModels } =>
                 new($"Ollama needs a language model to polish your text. {recommended.DisplayName} did best in our tests: about {recommended.DownloadSize.TrimStart('~')}, and it runs entirely on your PC.",
-                    OllamaSetupAction.DownloadRecommended, $"Download {recommended.DisplayName}", true),
+                    OllamaSetupAction.DownloadRecommended, $"Download {recommended.DisplayName}", true, StatusBadge: "Running"),
             _ => new(
-                inventory.Models.Count == 1 ? "Ollama is running with 1 model on this PC." : $"Ollama is running with {inventory.Models.Count.ToString(CultureInfo.CurrentCulture)} models on this PC.",
-                OllamaSetupAction.None, null, true),
+                ReadySentence(inventory),
+                OllamaSetupAction.None, null, true, StatusBadge: "Running"),
         };
+    }
+
+    private static string ReadySentence(OllamaInventory inventory)
+    {
+        var localCount = inventory.Models.Count(model => !model.IsRemote);
+        var hostedCount = inventory.Models.Count(model => model.IsRemote);
+        if (hostedCount == 0)
+        {
+            return localCount == 1
+                ? "Ollama is running with 1 model on this PC."
+                : $"Ollama is running with {localCount.ToString(CultureInfo.CurrentCulture)} models on this PC.";
+        }
+
+        if (localCount == 0)
+        {
+            return hostedCount == 1
+                ? "Ollama is running with 1 hosted model on Ollama's servers."
+                : $"Ollama is running with {hostedCount.ToString(CultureInfo.CurrentCulture)} hosted models on Ollama's servers.";
+        }
+
+        return $"Ollama is running with {localCount.ToString(CultureInfo.CurrentCulture)} local model{(localCount == 1 ? string.Empty : "s")} on this PC and {hostedCount.ToString(CultureInfo.CurrentCulture)} hosted model{(hostedCount == 1 ? string.Empty : "s")} on Ollama's servers.";
+    }
+
+    private static bool InventoryEquals(OllamaInventory? left, OllamaInventory? right)
+    {
+        if (ReferenceEquals(left, right))
+        {
+            return true;
+        }
+
+        if (left is null || right is null)
+        {
+            return false;
+        }
+
+        if (left.Server != right.Server || left.OllamaFound != right.OllamaFound)
+        {
+            return false;
+        }
+
+        if (!left.Models.SequenceEqual(right.Models))
+        {
+            return false;
+        }
+
+        var leftCloud = left.CloudCatalogIds ?? [];
+        var rightCloud = right.CloudCatalogIds ?? [];
+        return leftCloud.SequenceEqual(rightCloud, StringComparer.Ordinal);
     }
 
     private static string NameOf(string modelId) => OllamaModelCatalog.Offered(modelId)?.DisplayName ?? modelId;

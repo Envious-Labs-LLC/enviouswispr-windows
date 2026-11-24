@@ -8,18 +8,19 @@ public sealed class OllamaModelsPresenterTests
 {
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(10);
 
-    /// <summary>The app never starts Ollama: when nothing answers it says how, and offers the download only when Ollama was not found.</summary>
+    /// <summary>When nothing is listening and Ollama is installed, offers Open Ollama; never on a slow server, and offers Download Ollama only when not found.</summary>
     [Theory]
-    [InlineData(OllamaServerState.NotListening, true, OllamaSetupAction.None, "Start Ollama from the Start menu")]
-    [InlineData(OllamaServerState.NotListening, false, OllamaSetupAction.DownloadOllama, "couldn't find Ollama")]
-    [InlineData(OllamaServerState.NotResponding, true, OllamaSetupAction.None, "isn't responding")]
-    [InlineData(OllamaServerState.EndpointInvalid, true, OllamaSetupAction.None, "must be on this PC")]
-    [InlineData(OllamaServerState.NoModels, true, OllamaSetupAction.DownloadRecommended, "needs a language model")]
+    [InlineData(OllamaServerState.NotListening, true, OllamaSetupAction.OpenOllama, "Open Ollama to use local or hosted models", "Not running")]
+    [InlineData(OllamaServerState.NotListening, false, OllamaSetupAction.DownloadOllama, "couldn't find Ollama", "Not installed")]
+    [InlineData(OllamaServerState.NotResponding, true, OllamaSetupAction.None, "isn't responding", "Not responding")]
+    [InlineData(OllamaServerState.EndpointInvalid, true, OllamaSetupAction.None, "must be on this PC", "Invalid endpoint")]
+    [InlineData(OllamaServerState.NoModels, true, OllamaSetupAction.DownloadRecommended, "needs a language model", "Running")]
     public async Task EachStateSaysWhatToDo(
         OllamaServerState server,
         bool found,
         OllamaSetupAction action,
-        string says)
+        string says,
+        string expectedBadge)
     {
         var host = new Host { Inventory = new OllamaInventory(server, [], found) };
         var presenter = new OllamaModelsPresenter(host);
@@ -27,6 +28,7 @@ public sealed class OllamaModelsPresenterTests
         var view = await presenter.RefreshAsync(null).WaitAsync(Patience);
 
         Assert.Equal(action, view!.Setup.Action);
+        Assert.Equal(expectedBadge, view.Setup.StatusBadge);
         Assert.Contains(says, view.Setup.Sentence, StringComparison.Ordinal);
         Assert.Equal(server == OllamaServerState.NoModels, view.Setup.ShowsModels);
         Assert.Equal(server == OllamaServerState.NoModels ? OllamaModelCatalog.Entries.Count : 0, view.Rows.Count);
@@ -389,6 +391,302 @@ public sealed class OllamaModelsPresenterTests
         Assert.Null(presenter.View.Notice);
     }
 
+    [Fact]
+    public async Task OpenOllamaPollsUntilServerAnswersAndTransitionsToReadyWithoutManualRefresh()
+    {
+        var host = new Host
+        {
+            Inventory = new OllamaInventory(OllamaServerState.NotListening, [], OllamaFound: true),
+            OpenOllamaResult = true,
+        };
+        var pollAttempts = 0;
+        host.OnInspect = () =>
+        {
+            pollAttempts++;
+            if (pollAttempts >= 4)
+            {
+                host.Inventory = Ready(("qwen2.5:3b", 1_900_000_000, "3.1B"));
+            }
+        };
+        var presenter = new OllamaModelsPresenter(host);
+        await presenter.RefreshAsync(null).WaitAsync(Patience);
+        Assert.Equal(OllamaSetupAction.OpenOllama, presenter.View.Setup.Action);
+
+        var progressViews = new List<OllamaModelsView>();
+        var finalView = await presenter.OpenOllamaAsync(
+            null,
+            new Collect(progressViews),
+            delay: (_, _) => Task.CompletedTask).WaitAsync(Patience);
+
+        Assert.Equal(1, host.OpenAttempts);
+        Assert.Contains(progressViews, v => v.Setup.StatusBadge == "Starting" && v.Setup.Action == OllamaSetupAction.None);
+        Assert.NotNull(finalView);
+        Assert.Equal("Running", finalView!.Setup.StatusBadge);
+        Assert.Equal(OllamaSetupAction.None, finalView.Setup.Action);
+        Assert.Contains(finalView.Rows, row => row is { Id: "qwen2.5:3b", Installed: true });
+        Assert.NotNull(presenter.Context);
+    }
+
+    [Fact]
+    public async Task OpenOllamaStartupPollAbortsOnEpochSupersedureAndReportsFailedLaunch()
+    {
+        var failHost = new Host
+        {
+            Inventory = new OllamaInventory(OllamaServerState.NotListening, [], OllamaFound: true),
+            OpenOllamaResult = false,
+        };
+        var failPresenter = new OllamaModelsPresenter(failHost);
+        await failPresenter.RefreshAsync(null).WaitAsync(Patience);
+
+        var failed = await failPresenter.OpenOllamaAsync(
+            null,
+            delay: (_, _) => Task.CompletedTask).WaitAsync(Patience);
+        Assert.NotNull(failed);
+        Assert.Equal(OllamaSetupAction.OpenOllama, failed!.Setup.Action);
+        Assert.Contains("couldn't start Ollama automatically", failed.Notice, StringComparison.Ordinal);
+
+        // Epoch guard: if a refresh on another endpoint happens while the startup poll is waiting, the startup poll aborts cleanly.
+        var delayEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var delayRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var host = new Host
+        {
+            Inventory = new OllamaInventory(OllamaServerState.NotListening, [], OllamaFound: true),
+            OpenOllamaResult = true,
+        };
+        host.ByEndpoint["http://b:11434"] = Ready(("gemma2", null, null));
+        var presenter = new OllamaModelsPresenter(host);
+        await presenter.RefreshAsync("http://a:11434").WaitAsync(Patience);
+
+        var openTask = presenter.OpenOllamaAsync(
+            "http://a:11434",
+            delay: async (_, _) =>
+            {
+                delayEntered.TrySetResult();
+                await delayRelease.Task;
+            });
+        await delayEntered.Task.WaitAsync(Patience);
+        await presenter.RefreshAsync("http://b:11434").WaitAsync(Patience);
+        delayRelease.SetResult();
+        var supersededResult = await openTask.WaitAsync(Patience);
+
+        Assert.Null(supersededResult);
+        Assert.Equal("http://b:11434", presenter.Context?.Endpoint);
+        Assert.Contains(presenter.View.Rows, row => row is { Id: "gemma2", Installed: true });
+
+        // Network exposure guard: blocks launch and explains why.
+        var exposedHost = new Host
+        {
+            Inventory = new OllamaInventory(OllamaServerState.NotListening, [], OllamaFound: true),
+            LaunchSafety = OllamaLaunchSafety.BlockedByNetworkExposure,
+        };
+        var exposedPresenter = new OllamaModelsPresenter(exposedHost);
+        await exposedPresenter.RefreshAsync(null).WaitAsync(Patience);
+        var blocked = await exposedPresenter.OpenOllamaAsync(null, delay: (_, _) => Task.CompletedTask).WaitAsync(Patience);
+        Assert.NotNull(blocked);
+        Assert.Equal(0, exposedHost.OpenAttempts);
+        Assert.Contains("expose its server to the network", blocked!.Notice, StringComparison.Ordinal);
+
+        // Superseded startup poll must not clear a newer startup poll's Starting state.
+        var firstDelayEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstDelayRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondDelayEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondDelayRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var restartHost = new Host
+        {
+            Inventory = new OllamaInventory(OllamaServerState.NotListening, [], OllamaFound: true),
+            OpenOllamaResult = true,
+        };
+        var restartPresenter = new OllamaModelsPresenter(restartHost);
+        await restartPresenter.RefreshAsync(null).WaitAsync(Patience);
+
+        var firstPoll = restartPresenter.OpenOllamaAsync(
+            null,
+            delay: async (_, _) =>
+            {
+                firstDelayEntered.TrySetResult();
+                await firstDelayRelease.Task;
+            });
+        await firstDelayEntered.Task.WaitAsync(Patience);
+        restartPresenter.Stop();
+
+        var secondPoll = restartPresenter.OpenOllamaAsync(
+            null,
+            delay: async (_, _) =>
+            {
+                secondDelayEntered.TrySetResult();
+                await secondDelayRelease.Task;
+            });
+        await secondDelayEntered.Task.WaitAsync(Patience);
+        Assert.Equal("Starting", restartPresenter.View.Setup.StatusBadge);
+
+        firstDelayRelease.SetResult();
+        Assert.Null(await firstPoll.WaitAsync(Patience));
+        Assert.Equal("Starting", restartPresenter.View.Setup.StatusBadge);
+
+        restartHost.Inventory = Ready(("qwen2.5:3b", 1_900_000_000, "3.1B"));
+        secondDelayRelease.SetResult();
+        var secondResult = await secondPoll.WaitAsync(Patience);
+        Assert.NotNull(secondResult);
+        Assert.Equal("Running", secondResult!.Setup.StatusBadge);
+    }
+
+    [Fact]
+    public void HostedModelsNeverBecomeAutomaticDefaultsAfterRemovalOrInRepair()
+    {
+        var view = new OllamaModelsView(new OllamaSetupView("", OllamaSetupAction.None, null, true), [], null);
+        var removed = new OllamaModelChange(view, "qwen2.5:3b", Downloaded: false, Removed: true, null);
+
+        // When only a hosted model remains after removing a local model, RepairSelection clears to empty rather than defaulting to the cloud.
+        Assert.Equal(
+            string.Empty,
+            OllamaModelsPresenter.RepairSelection(["gpt-oss:120b-cloud"], "qwen2.5:3b", setByApp: "qwen2.5:3b", removed));
+
+        // When the user explicitly adds a hosted model, RepairSelection selects the hosted model they just added.
+        var addedHosted = new OllamaModelChange(view, "glm-5.1-cloud", Downloaded: true, Removed: false, null);
+        Assert.Equal(
+            "glm-5.1-cloud",
+            OllamaModelsPresenter.RepairSelection(["glm-5.1-cloud"], string.Empty, setByApp: string.Empty, addedHosted));
+    }
+
+    [Fact]
+    public async Task SilentPollRefreshesStateWithoutFlashingCheckingOrOverwritingActivePull()
+    {
+        var host = new Host
+        {
+            Inventory = new OllamaInventory(OllamaServerState.NotListening, [], OllamaFound: true),
+        };
+        var presenter = new OllamaModelsPresenter(host);
+        await presenter.RefreshAsync(null).WaitAsync(Patience);
+        Assert.Equal("Not running", presenter.View.Setup.StatusBadge);
+
+        // External launch detected by silent poll: transitions to Running without flashing Checking.
+        host.Inventory = Ready(("qwen2.5:3b", 1_900_000_000, "3.1B"));
+        var polledUp = await presenter.PollAsync(null).WaitAsync(Patience);
+        Assert.NotNull(polledUp);
+        Assert.Equal("Running", polledUp!.Setup.StatusBadge);
+        Assert.Contains(polledUp.Rows, row => row is { Id: "qwen2.5:3b", Installed: true });
+
+        // Active pull in flight: PollAsync must not inspect or overwrite the active pull progress.
+        var pullEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pullRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.OnPullAsync = async (progress, _) =>
+        {
+            progress.Report(new OllamaPullUpdate(OllamaPullPhase.Downloading, "layer1", 50, 100));
+            pullEntered.SetResult();
+            await pullRelease.Task;
+            return OllamaPullOutcome.Succeeded;
+        };
+        var downloadTask = presenter.DownloadAsync("qwen3:0.6b", presenter.Context!, null);
+        await pullEntered.Task.WaitAsync(Patience);
+        var inspectionsBeforePoll = host.Inspections;
+
+        var pollDuringPull = await presenter.PollAsync(null).WaitAsync(Patience);
+        Assert.Null(pollDuringPull);
+        Assert.Equal(inspectionsBeforePoll, host.Inspections);
+        Assert.Contains(presenter.View.Rows, row => row is { Id: "qwen3:0.6b", Downloading: true });
+
+        pullRelease.SetResult();
+        await downloadTask.WaitAsync(Patience);
+    }
+
+    [Fact]
+    public async Task LocalAndHostedModelsAreGroupedClearlyAndHostedRowsHideRemoveAndSupportOneClickAdd()
+    {
+        var host = new Host
+        {
+            Inventory = new OllamaInventory(
+                OllamaServerState.Ready,
+                [
+                    new OllamaInstalledModel("qwen2.5:3b", 1_900_000_000, "3.1B", IsRemote: false),
+                    new OllamaInstalledModel("gpt-oss:120b-cloud", null, "120B", IsRemote: true),
+                ],
+                OllamaFound: true,
+                CloudCatalogIds: ["gpt-oss:120b", "glm-5.1", "qwen2.5:3b"]),
+        };
+        var presenter = new OllamaModelsPresenter(host);
+
+        var view = (await presenter.RefreshAsync(null).WaitAsync(Patience))!;
+
+        Assert.NotEmpty(view.LocalRows);
+        Assert.All(view.LocalRows, row =>
+        {
+            Assert.False(row.IsRemote);
+            Assert.Equal(OllamaModelsPresenter.LocalGroupTitle, row.GroupTitle);
+        });
+        Assert.Equal(3, view.HostedRows.Count);
+        Assert.All(view.HostedRows, row =>
+        {
+            Assert.True(row.IsRemote);
+            Assert.Equal(OllamaModelsPresenter.HostedGroupTitle, row.GroupTitle);
+        });
+
+        // Installed hosted model deduplicates against catalog "gpt-oss:120b" and hides Remove.
+        var installedHosted = Assert.Single(view.HostedRows, row => row.Id == "gpt-oss:120b-cloud");
+        Assert.True(installedHosted.Installed);
+        Assert.Equal(OllamaRowAction.None, installedHosted.Action);
+        Assert.Equal(OllamaCheck.NotOffered, presenter.CheckRemove("gpt-oss:120b-cloud"));
+
+        // Local "qwen2.5:3b" and hosted "qwen2.5:3b" remain distinct in their respective groups.
+        Assert.Contains(view.LocalRows, row => row is { Id: "qwen2.5:3b", Installed: true, IsRemote: false });
+        Assert.Contains(view.HostedRows, row => row is { Id: "qwen2.5:3b", Installed: false, IsRemote: true, Action: OllamaRowAction.Add });
+
+        // One-click Add on uninstalled hosted model shows "Adding..." and installs the resolved -cloud tag.
+        var addViews = new List<OllamaModelsView>();
+        host.OnAddHosted = progress =>
+        {
+            progress.Report(new OllamaPullUpdate(OllamaPullPhase.Starting));
+            host.Inventory = new OllamaInventory(
+                OllamaServerState.Ready,
+                [
+                    new OllamaInstalledModel("qwen2.5:3b", 1_900_000_000, "3.1B", IsRemote: false),
+                    new OllamaInstalledModel("gpt-oss:120b-cloud", null, "120B", IsRemote: true),
+                    new OllamaInstalledModel("glm-5.1-cloud", null, null, IsRemote: true),
+                ],
+                OllamaFound: true,
+                CloudCatalogIds: ["gpt-oss:120b", "glm-5.1", "qwen2.5:3b"]);
+            return new OllamaHostedAddResult(OllamaHostedAddOutcome.Succeeded, "glm-5.1-cloud");
+        };
+
+        var addChange = await presenter.AddHostedAsync("glm-5.1", presenter.Context!, new Collect(addViews)).WaitAsync(Patience);
+
+        Assert.Contains(
+            addViews.SelectMany(v => v.HostedRows),
+            row => row is { Id: "glm-5.1", Downloading: true, Action: OllamaRowAction.Stop, ProgressText: "Adding..." });
+        Assert.NotNull(addChange);
+        Assert.True(addChange!.Downloaded);
+        Assert.Equal("glm-5.1-cloud", addChange.Changed);
+        Assert.Contains("glm-5.1 is added.", addChange.View.Notice, StringComparison.Ordinal);
+        Assert.Contains(addChange.View.HostedRows, row => row is { Id: "glm-5.1-cloud", Installed: true, Action: OllamaRowAction.None });
+    }
+
+    [Fact]
+    public async Task SetSearchQueryFiltersUninstalledRowsAndRestoresOnClear()
+    {
+        var host = new Host
+        {
+            Inventory = new OllamaInventory(
+                OllamaServerState.Ready,
+                [new OllamaInstalledModel("qwen2.5:3b", 1_900_000_000, "3.1B")],
+                OllamaFound: true,
+                CloudCatalogIds: ["glm-5.1", "gpt-oss:120b"]),
+        };
+        var presenter = new OllamaModelsPresenter(host);
+        var fullView = (await presenter.RefreshAsync(null).WaitAsync(Patience))!;
+
+        var filtered = presenter.SetSearchQuery("glm-5.1");
+        Assert.Equal("glm-5.1", filtered.SearchQuery);
+        Assert.Empty(filtered.LocalRows);
+        Assert.Single(filtered.HostedRows);
+        Assert.Equal("glm-5.1", filtered.HostedRows[0].Id);
+
+        var localFiltered = presenter.SetSearchQuery("Qwen 2.5");
+        Assert.Equal(2, localFiltered.LocalRows.Count);
+        Assert.Empty(localFiltered.HostedRows);
+
+        var restored = presenter.SetSearchQuery(string.Empty);
+        Assert.Equal(fullView.Rows.Count, restored.Rows.Count);
+    }
+
     private static OllamaInventory Ready(params (string Id, long? Size, string? Parameters)[] models) =>
         new(models.Length == 0 ? OllamaServerState.NoModels : OllamaServerState.Ready,
             models.Select(model => new OllamaInstalledModel(model.Id, model.Size, model.Parameters)).ToArray(),
@@ -411,6 +709,16 @@ public sealed class OllamaModelsPresenterTests
 
         public Action? OnDelete { get; set; }
 
+        public Action? OnInspect { get; set; }
+
+        public Func<IProgress<OllamaPullUpdate>, OllamaHostedAddResult>? OnAddHosted { get; set; }
+
+        public bool OpenOllamaResult { get; set; } = true;
+
+        public OllamaLaunchSafety LaunchSafety { get; set; } = OllamaLaunchSafety.SafeLocalOnly;
+
+        public int OpenAttempts { get; private set; }
+
         public int Inspections { get; private set; }
 
         public int Pulls { get; private set; }
@@ -423,9 +731,18 @@ public sealed class OllamaModelsPresenterTests
 
         public Dictionary<string, OllamaInventory> ByEndpoint { get; } = new(StringComparer.Ordinal);
 
+        public OllamaLaunchSafety CheckLaunchSafety() => LaunchSafety;
+
+        public bool TryOpenOllama()
+        {
+            OpenAttempts++;
+            return OpenOllamaResult;
+        }
+
         public Task<OllamaInventory> InspectAsync(string? endpoint, CancellationToken cancellationToken)
         {
             Inspections++;
+            OnInspect?.Invoke();
             if (endpoint is not null && ByEndpoint.TryGetValue(endpoint, out var there))
             {
                 return Task.FromResult(there);
@@ -454,6 +771,12 @@ public sealed class OllamaModelsPresenterTests
 
             return OnPull?.Invoke(progress) ?? OllamaPullOutcome.Succeeded;
         }
+
+        public Task<OllamaHostedAddResult> ResolveAndAddHostedModelAsync(string? endpoint, string advertisedId, IProgress<OllamaPullUpdate> progress, CancellationToken cancellationToken) =>
+            Task.FromResult(OnAddHosted?.Invoke(progress) ?? new OllamaHostedAddResult(OllamaHostedAddOutcome.Succeeded, $"{advertisedId}-cloud"));
+
+        public Task<OllamaWarmupOutcome> WarmUpAsync(string? endpoint, string modelId, CancellationToken cancellationToken) =>
+            Task.FromResult(OllamaWarmupOutcome.Warmed);
 
         public Task<OllamaDeleteOutcome> DeleteAsync(string? endpoint, string modelId, CancellationToken cancellationToken)
         {

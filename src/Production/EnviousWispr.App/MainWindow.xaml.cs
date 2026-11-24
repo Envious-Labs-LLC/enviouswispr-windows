@@ -666,9 +666,11 @@ public sealed partial class MainWindow : Window, IDisposable
         if (args.WindowActivationState == WindowActivationState.Deactivated)
         {
             ForgetKeybindChord();
+            OnWindowActivationChangedForOllama(active: false);
             return;
         }
 
+        OnWindowActivationChangedForOllama(active: true);
         if (_initialFocusAssigned)
         {
             // When the user returns from Windows Settings (ms-settings:startupapps) or Task Manager, re-read the
@@ -1179,6 +1181,7 @@ public sealed partial class MainWindow : Window, IDisposable
         // an announcement for a window that is going away.
         _historyAnnounceDebounce.Stop();
         _historyAnnounceDebounce.Tick -= OnHistoryAnnounceDue;
+        StopOllamaLivePollTimer();
         // THE WRITER IS NOT DISPOSED HERE, AND THAT IS DELIBERATE. Shutdown is synchronous and a
         // save may still be inside it; disposing its gate makes the release throw. The session that
         // owns the writer is closed by the shell's lifetime after the drain, once the save is over.
@@ -2173,9 +2176,14 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         var isCloud = IsCloudProvider(provider);
+        var isOllamaHosted = provider == PolishProvider.Ollama && IsSelectedOllamaModelHosted();
         if (ActivePolishProviderBadgeText is not null)
         {
-            ActivePolishProviderBadgeText.Text = isCloud ? "Cloud" : "On this PC";
+            ActivePolishProviderBadgeText.Text = isCloud
+                ? "Cloud"
+                : isOllamaHosted
+                    ? "Runs on Ollama's servers"
+                    : "On this PC";
         }
 
         if (ActivePolishProviderIcon is not null)
@@ -2193,7 +2201,7 @@ public sealed partial class MainWindow : Window, IDisposable
             ActivePolishProviderStatusText.Text = provider switch
             {
                 PolishProvider.EgOne => "Our model for cleaning up dictation on this PC.",
-                PolishProvider.Ollama => "Local LLM runner on this PC.",
+                PolishProvider.Ollama => "Local models on this PC or hosted models on Ollama's servers.",
                 PolishProvider.OpenAI => "OpenAI GPT models (requires your API key).",
                 PolishProvider.Anthropic => "Anthropic Claude models (requires your API key).",
                 PolishProvider.Gemini => "Google Gemini models (requires your API key).",
@@ -2211,8 +2219,11 @@ public sealed partial class MainWindow : Window, IDisposable
         }
         if (CloudPolishSettingsPanel is not null)
         {
-            CloudPolishSettingsPanel.Visibility = isCloud ? Visibility.Visible : Visibility.Collapsed;
+            CloudPolishSettingsPanel.Visibility = ProviderSettingsPresenter.UsesAModel(provider)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         }
+        UpdateOllamaLivePollTimer();
     }
 
     private async void PolishProviderCardChecked(object sender, RoutedEventArgs e)
@@ -2235,7 +2246,32 @@ public sealed partial class MainWindow : Window, IDisposable
         if (!_isApplyingSettings && PolishModelPicker.SelectedItem is string modelId)
         {
             PolishModelTextBox.Text = modelId;
+            UpdateActivePolishProviderDisplay();
+            _ = WarmUpSelectedOllamaModelAsync(modelId);
         }
+    }
+
+    private bool IsSelectedOllamaModelHosted()
+    {
+        var current = PolishModelTextBox?.Text?.Trim();
+        if (string.IsNullOrEmpty(current))
+        {
+            current = _settings?.Preferences.Polish.ModelId?.Trim();
+        }
+
+        if (string.IsNullOrEmpty(current))
+        {
+            return false;
+        }
+
+        if (OllamaModelCatalog.LooksLikeHostedCloudModel(current))
+        {
+            return true;
+        }
+
+        return OllamaModels?.View.HostedRows.Any(row =>
+            row.Installed &&
+            OllamaModelCatalog.SameModel(row.Id, current)) == true;
     }
 
     private async void SaveApiKeyButton_Click(object sender, RoutedEventArgs e)
@@ -4965,12 +5001,14 @@ public sealed partial class MainWindow : Window, IDisposable
     private string _polishModelSetByApp = string.Empty;
 
     /// <param name="ollamaChange">A download or removal just made on the Ollama models block, to repair the field against; null otherwise.</param>
+    /// <param name="silentPoll">True when triggered by background live polling or startup detection so the Ollama models block is not re-fetched.</param>
     private async Task RefreshPolishModelChoicesAsync(
         PolishProvider provider,
         bool chooseDefault,
-        OllamaModelChange? ollamaChange = null)
+        OllamaModelChange? ollamaChange = null,
+        bool silentPoll = false)
     {
-        if (ollamaChange is null)
+        if (ollamaChange is null && !silentPoll)
         {
             ShowOllamaModels(provider);
         }
@@ -5076,7 +5114,7 @@ public sealed partial class MainWindow : Window, IDisposable
         return discovery.Status switch
         {
             PolishModelDiscoveryStatus.Ready when provider == PolishProvider.Ollama =>
-                $"{count.ToString(CultureInfo.CurrentCulture)} local Ollama model{plural} available on this PC.",
+                $"{count.ToString(CultureInfo.CurrentCulture)} Ollama model{plural} available. Local models stay on this PC; hosted models run on Ollama's servers.",
             PolishModelDiscoveryStatus.OllamaNotReady =>
                 "Ollama is not ready at this endpoint. Start Ollama or enter another loopback endpoint.",
             PolishModelDiscoveryStatus.Ready when count > 0 =>
@@ -5114,7 +5152,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 ApiKeyStatusText,
     provider switch
                 {
-                    PolishProvider.Ollama => "Ollama runs on this PC and does not use a cloud API key.",
+                    PolishProvider.Ollama => "Ollama runs on this PC and does not use a direct cloud API key here. Local models stay on this PC; hosted models run on Ollama's servers.",
                     PolishProvider.EgOne => "EG-1 runs on this PC and does not use a cloud API key.",
                     _ => "AI polish is off; no provider key is used.",
             
@@ -5489,6 +5527,13 @@ public sealed partial class MainWindow : Window, IDisposable
                 PlayPageEntrance(page);
                 break;
             }
+        }
+
+        UpdateOllamaLivePollTimer();
+        if (resolvedTag == "settings-ai-polish" &&
+            PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)) == PolishProvider.Ollama)
+        {
+            _ = PollOllamaModelsSilentlyAsync();
         }
     }
 

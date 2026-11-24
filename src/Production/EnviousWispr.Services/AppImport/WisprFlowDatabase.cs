@@ -1,4 +1,6 @@
 using System.Security.Cryptography;
+using System.Text.Json;
+using EnviousWispr.Core.Polish;
 
 namespace EnviousWispr.Services.AppImport;
 
@@ -214,4 +216,133 @@ internal static class WisprFlowDatabase
 /// <summary>Another app's store could not be read safely and whole. Each import turns it into its own sentence.</summary>
 internal sealed class RivalStoreUnreadableException : Exception
 {
+}
+
+/// <summary>
+/// Verifies that Ollama's persisted Windows configuration (<c>OLLAMA_HOST</c>, <c>%LocalAppData%\Ollama\config.json</c>,
+/// and <c>%LocalAppData%\Ollama\db.sqlite</c> <c>settings.expose</c>) does not expose the Ollama server to the network
+/// before EnviousWispr starts Ollama on the user's behalf. Fails closed if an existing store cannot be verified.
+/// </summary>
+public static class OllamaLocalConfigProbe
+{
+    private const long MaxConfigJsonBytes = 65_536;
+
+    public static OllamaLaunchSafety CheckLaunchSafety(
+        string? localAppDataPath = null,
+        IEnumerable<string?>? ollamaHostVariables = null)
+    {
+        var hostVars = ollamaHostVariables ?? ReadDefaultOllamaHostVariables();
+        foreach (var hostVar in hostVars)
+        {
+            if (!OllamaModelCatalog.IsLoopbackOllamaHostVariable(hostVar))
+            {
+                return OllamaLaunchSafety.BlockedByNetworkExposure;
+            }
+        }
+
+        var appData = localAppDataPath ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(appData))
+        {
+            return OllamaLaunchSafety.SafeLocalOnly;
+        }
+
+        var ollamaDir = Path.Combine(appData, "Ollama");
+        var configJsonPath = Path.Combine(ollamaDir, "config.json");
+        if (File.Exists(configJsonPath) && !IsConfigJsonSafe(configJsonPath))
+        {
+            return OllamaLaunchSafety.BlockedByNetworkExposure;
+        }
+
+        var dbSqlitePath = Path.Combine(ollamaDir, "db.sqlite");
+        if (File.Exists(dbSqlitePath) && !IsSqliteSettingsSafe(dbSqlitePath))
+        {
+            return OllamaLaunchSafety.BlockedByNetworkExposure;
+        }
+
+        return OllamaLaunchSafety.SafeLocalOnly;
+    }
+
+    private static string?[] ReadDefaultOllamaHostVariables()
+    {
+        string? GetSafe(EnvironmentVariableTarget target)
+        {
+            try
+            {
+                return Environment.GetEnvironmentVariable("OLLAMA_HOST", target);
+            }
+            catch (Exception exception) when (exception is System.Security.SecurityException or ArgumentException)
+            {
+                return null;
+            }
+        }
+
+        return
+        [
+            GetSafe(EnvironmentVariableTarget.Process),
+            GetSafe(EnvironmentVariableTarget.User),
+            GetSafe(EnvironmentVariableTarget.Machine),
+        ];
+    }
+
+    private static bool IsConfigJsonSafe(string configJsonPath)
+    {
+        try
+        {
+            var info = new FileInfo(configJsonPath);
+            if (info.Length > MaxConfigJsonBytes)
+            {
+                return false;
+            }
+
+            using var document = JsonDocument.Parse(File.ReadAllBytes(configJsonPath));
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            foreach (var prop in document.RootElement.EnumerateObject())
+            {
+                if (string.Equals(prop.Name, "expose", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (prop.Value.ValueKind == JsonValueKind.True ||
+                        (prop.Value.ValueKind == JsonValueKind.Number && prop.Value.TryGetInt64(out var n) && n != 0) ||
+                        (prop.Value.ValueKind == JsonValueKind.String && !string.Equals(prop.Value.GetString(), "false", StringComparison.OrdinalIgnoreCase) && !string.Equals(prop.Value.GetString(), "0", StringComparison.Ordinal)))
+                    {
+                        return false;
+                    }
+                }
+                else if (string.Equals(prop.Name, "host", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(prop.Name, "OLLAMA_HOST", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (prop.Value.ValueKind != JsonValueKind.String ||
+                        !OllamaModelCatalog.IsLoopbackOllamaHostVariable(prop.Value.GetString()))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsSqliteSettingsSafe(string dbSqlitePath)
+    {
+        try
+        {
+            var (rows, excluded) = WisprFlowDatabase.Read(
+                dbSqlitePath,
+                "SELECT expose FROM settings WHERE id = 1;",
+                row => row.RequiredBoolean(0) ? "1" : "0");
+            return excluded == 0 && rows.Count <= 1 && rows.All(value => value == "0");
+        }
+        catch (RivalStoreUnreadableException)
+        {
+            return false;
+        }
+    }
 }

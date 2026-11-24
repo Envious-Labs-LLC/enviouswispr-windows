@@ -42,7 +42,8 @@ internal sealed class PolishModelSource : IPolishModelSource, IDisposable
                 discovery.Health is OllamaHealth.Ready or OllamaHealth.NoLocalModels
                     ? PolishModelDiscoveryStatus.Ready
                     : PolishModelDiscoveryStatus.OllamaNotReady,
-                discovery.LocalModels.Select(model => model.Id).ToArray());
+                discovery.LocalModels.Concat(discovery.HostedModels).Select(model => model.Id).ToArray(),
+                discovery.RemoteModelIds);
         }
 
         var cloud = await _catalog.DiscoverAsync(provider, cancellationToken).ConfigureAwait(false);

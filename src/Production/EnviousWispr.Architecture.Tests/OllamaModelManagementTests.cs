@@ -1,8 +1,10 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using EnviousWispr.Core.Polish;
 using EnviousWispr.LLM;
+using EnviousWispr.Services.AppImport;
 
 namespace EnviousWispr.Architecture.Tests;
 
@@ -260,6 +262,384 @@ public sealed class OllamaModelManagementTests
         Assert.Equal(["qwen2.5:7b", "qwen3:0.6b", "gemma2", "gemma2:2b", "my-own", "mistral", "tinyllama"], ordered);
     }
 
+    [Fact]
+    public void CatalogSearchFiltersByModelIdAndDisplayName()
+    {
+        var qwen = OllamaModelCatalog.FilterEntries("Qwen 2.5");
+        Assert.Equal(["qwen2.5:3b", "qwen2.5:7b"], qwen.Select(entry => entry.Id));
+
+        var gemma = OllamaModelCatalog.FilterEntries("gemma3n:e4b");
+        Assert.Equal(["gemma3n:e4b"], gemma.Select(entry => entry.Id));
+
+        Assert.Equal(OllamaModelCatalog.Entries.Count, OllamaModelCatalog.FilterEntries("   ").Count);
+        Assert.Empty(OllamaModelCatalog.FilterEntries("nonexistent-model-xyz"));
+        Assert.True(OllamaModelCatalog.SameHostedModel("gpt-oss:120b", "gpt-oss:120b-cloud"));
+        Assert.True(OllamaModelCatalog.SameHostedModel("minimax-m2.7", "minimax-m2.7:cloud"));
+        Assert.False(OllamaModelCatalog.SameHostedModel("gpt-oss:120b", "gpt-oss:20b-cloud"));
+    }
+
+    [Fact]
+    public void CloudCatalogParserAcceptsLiveShapeDeduplicatesAndEnforcesRawCap()
+    {
+        var json = """
+        {
+          "object": "list",
+          "data": [
+            { "id": "glm-5.1", "object": "model", "created": 1775520000, "owned_by": "zai-org" },
+            { "id": "gpt-oss:120b", "object": "model", "created": 1754352000, "owned_by": "openai" },
+            { "id": "GPT-OSS:120B", "object": "model", "created": 1754352000, "owned_by": "openai" },
+            { "id": "   ", "object": "model", "created": 0, "owned_by": "nobody" },
+            { "id": "minimax-m2.7", "object": "model", "created": 1773792000, "owned_by": "minimaxai" }
+          ]
+        }
+        """;
+
+        var ids = OllamaCloudCatalogClient.ParseCloudCatalog(Encoding.UTF8.GetBytes(json));
+
+        Assert.Equal(["glm-5.1", "gpt-oss:120b", "minimax-m2.7"], ids);
+        Assert.Throws<OllamaCloudCatalogException>(() => OllamaCloudCatalogClient.ParseCloudCatalog("not json"u8));
+        Assert.Throws<OllamaCloudCatalogException>(() => OllamaCloudCatalogClient.ParseCloudCatalog("""{"object":"list"}"""u8));
+
+        var rawEntries = Enumerable.Range(0, 201)
+            .Select(index => $$$"""{"id":"model-{{{index}}}"}""");
+        var overCapDoc = $$$"""{"object":"list","data":[{{{string.Join(",", rawEntries)}}}]}""";
+        Assert.Throws<OllamaCloudCatalogException>(() =>
+            OllamaCloudCatalogClient.ParseCloudCatalog(Encoding.UTF8.GetBytes(overCapDoc)));
+    }
+
+    [Fact]
+    public async Task CloudCatalogEnforcesSizeCapRedirectPolicyAndCacheWithFallback()
+    {
+        Assert.True(OllamaCloudCatalogClient.ShouldFollowRedirect(new Uri("https://ollama.com/v1/models")));
+        Assert.False(OllamaCloudCatalogClient.ShouldFollowRedirect(new Uri("https://api.ollama.com/v1/models")));
+        Assert.False(OllamaCloudCatalogClient.ShouldFollowRedirect(new Uri("http://ollama.com/v1/models")));
+        Assert.False(OllamaCloudCatalogClient.ShouldFollowRedirect(new Uri("https://evil.example.com/v1/models")));
+        Assert.False(OllamaCloudCatalogClient.ShouldFollowRedirect(new Uri("https://ollama.com.attacker.test/v1/models")));
+
+        await using var oversizeStream = new MemoryStream(new byte[OllamaCloudCatalogClient.MaximumBytes + 1]);
+        var oversizeError = await Assert.ThrowsAsync<OllamaCloudCatalogException>(() =>
+            OllamaCloudCatalogClient.ReadBoundedBytesAsync(
+                oversizeStream,
+                OllamaCloudCatalogClient.MaximumBytes,
+                CancellationToken.None));
+        Assert.Equal(OllamaCloudCatalogError.ResponseTooLarge, oversizeError.Error);
+
+        var clock = new FakeClock(new DateTimeOffset(2026, 11, 24, 12, 0, 0, TimeSpan.Zero));
+        var calls = 0;
+        var shouldFail = false;
+        var handler = new ScriptedHttpHandler(_ =>
+        {
+            calls++;
+            if (shouldFail)
+            {
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"object":"list","data":[{"id":"gpt-oss:120b"},{"id":"glm-5.1"}]}""",
+                    Encoding.UTF8,
+                    "application/json"),
+            };
+        });
+        using var client = new OllamaCloudCatalogClient(handler, clock);
+
+        var first = await client.TryGetCatalogIdsAsync();
+        var second = await client.TryGetCatalogIdsAsync();
+        Assert.Equal(["gpt-oss:120b", "glm-5.1"], first);
+        Assert.Equal(first, second);
+        Assert.Equal(1, calls);
+
+        // After 15 minutes, a failed refresh retains the prior list rather than wiping the UI.
+        clock.Advance(TimeSpan.FromMinutes(16));
+        shouldFail = true;
+        var retained = await client.TryGetCatalogIdsAsync();
+        Assert.Equal(["gpt-oss:120b", "glm-5.1"], retained);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public void HostedIdentityFingerprintComparesSubstanceAndRejectsVacuousShowResponses()
+    {
+        var first = """
+        {
+          "modified_at": "2026-04-01T00:00:00Z",
+          "details": { "family": "qwen3", "parameter_size": "30B" },
+          "model_info": { "general.architecture": "qwen3" }
+        }
+        """;
+        var second = """
+        {
+          "model_info": { "general.architecture": "qwen3" },
+          "details": { "parameter_size": "30B", "family": "qwen3" },
+          "modified_at": "2026-04-02T12:34:56Z"
+        }
+        """;
+        var different = """
+        {
+          "details": { "family": "qwen3", "parameter_size": "235B" },
+          "model_info": { "general.architecture": "qwen3" }
+        }
+        """;
+
+        var fp1 = OllamaApiClient.HostedIdentityFingerprint(first);
+        var fp2 = OllamaApiClient.HostedIdentityFingerprint(second);
+        var fpDiff = OllamaApiClient.HostedIdentityFingerprint(different);
+
+        Assert.NotNull(fp1);
+        Assert.Equal(fp1, fp2);
+        Assert.NotEqual(fp1, fpDiff);
+        Assert.Null(OllamaApiClient.HostedIdentityFingerprint("{}"));
+        Assert.Null(OllamaApiClient.HostedIdentityFingerprint("""{"modified_at":"2026-04-01T00:00:00Z"}"""));
+        Assert.Null(OllamaApiClient.HostedIdentityFingerprint("""{"details":{"format":"gguf"}}"""));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.OK, HttpStatusCode.NotFound, true, OllamaHostedAddOutcome.Succeeded, "gpt-oss:120b-cloud")]
+    [InlineData(HttpStatusCode.NotFound, HttpStatusCode.OK, true, OllamaHostedAddOutcome.Succeeded, "gpt-oss:120b:cloud")]
+    [InlineData(HttpStatusCode.OK, HttpStatusCode.OK, true, OllamaHostedAddOutcome.Succeeded, "gpt-oss:120b-cloud")]
+    [InlineData(HttpStatusCode.OK, HttpStatusCode.OK, false, OllamaHostedAddOutcome.Ambiguous, null)]
+    [InlineData(HttpStatusCode.NotFound, HttpStatusCode.NotFound, true, OllamaHostedAddOutcome.NoUsableName, null)]
+    [InlineData(HttpStatusCode.OK, HttpStatusCode.InternalServerError, true, OllamaHostedAddOutcome.Unreachable, null)]
+    public async Task ResolveAndAddHostedModelProbesBothCloudFormsAndPullsOnlyWhenProven(
+        HttpStatusCode dashStatus,
+        HttpStatusCode colonStatus,
+        bool sameFingerprint,
+        OllamaHostedAddOutcome expectedOutcome,
+        string? expectedInstalledId)
+    {
+        var showCalls = new List<string>();
+        var pullCalls = new List<string>();
+        var handler = new ScriptedHttpHandler(async (request, cancellationToken) =>
+        {
+            var body = request.Content is null
+                ? string.Empty
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+            using var doc = JsonDocument.Parse(body);
+            var model = doc.RootElement.GetProperty("model").GetString()!;
+
+            if (request.RequestUri!.AbsolutePath == "/api/show")
+            {
+                showCalls.Add(model);
+                var isDash = model.EndsWith("-cloud", StringComparison.Ordinal);
+                var status = isDash ? dashStatus : colonStatus;
+                if (status != HttpStatusCode.OK)
+                {
+                    return new HttpResponseMessage(status);
+                }
+
+                var paramSize = isDash || sameFingerprint ? "120B" : "20B";
+                var payload = $$$"""
+                {
+                  "modified_at": "{{{(isDash ? "2026-04-01T00:00:00Z" : "2026-04-02T00:00:00Z")}}}",
+                  "details": { "family": "gpt-oss", "parameter_size": "{{{paramSize}}}" }
+                }
+                """;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(payload, Encoding.UTF8, "application/json"),
+                };
+            }
+
+            if (request.RequestUri.AbsolutePath == "/api/pull")
+            {
+                pullCalls.Add(model);
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"status\":\"success\"}\n", Encoding.UTF8, "application/x-ndjson"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        await using var client = new OllamaApiClient(Endpoint, handler);
+
+        var result = await client.ResolveAndAddHostedModelAsync("gpt-oss:120b", null, CancellationToken.None);
+
+        Assert.Equal(expectedOutcome, result.Outcome);
+        Assert.Equal(expectedInstalledId, result.ResolvedModelId);
+        Assert.Equal(["gpt-oss:120b-cloud", "gpt-oss:120b:cloud"], showCalls);
+        if (expectedInstalledId is not null)
+        {
+            Assert.Equal([expectedInstalledId], pullCalls);
+        }
+        else
+        {
+            Assert.Empty(pullCalls);
+        }
+    }
+
+    [Fact]
+    public async Task WarmUpWarmsLocalModelsAndSkipsRemoteOrUnknownModels()
+    {
+        var thinkingBody = JsonSerializer.Serialize(OllamaApiClient.MakeWarmupRequestBody("qwen3:4b", true));
+        using (var doc = JsonDocument.Parse(thinkingBody))
+        {
+            Assert.Equal("qwen3:4b", doc.RootElement.GetProperty("model").GetString());
+            Assert.Equal("60m", doc.RootElement.GetProperty("keep_alive").GetString());
+            Assert.Equal(1, doc.RootElement.GetProperty("options").GetProperty("num_predict").GetInt32());
+            Assert.Equal("low", doc.RootElement.GetProperty("think").GetString());
+        }
+
+        var nonThinkingBody = JsonSerializer.Serialize(OllamaApiClient.MakeWarmupRequestBody("qwen2.5:3b", false));
+        using (var doc = JsonDocument.Parse(nonThinkingBody))
+        {
+            Assert.False(doc.RootElement.TryGetProperty("think", out _));
+        }
+
+        var chatModels = new List<string>();
+        var handler = new ScriptedHttpHandler(async (request, cancellationToken) =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/api/tags")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """
+                        {
+                          "models": [
+                            { "name": "qwen2.5:3b", "capabilities": ["completion"] },
+                            { "name": "gpt-oss:120b-cloud", "remote_host": "https://ollama.com", "capabilities": ["completion"] }
+                          ]
+                        }
+                        """,
+                        Encoding.UTF8,
+                        "application/json"),
+                };
+            }
+
+            if (request.RequestUri.AbsolutePath == "/api/chat")
+            {
+                var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+                using var doc = JsonDocument.Parse(body);
+                chatModels.Add(doc.RootElement.GetProperty("model").GetString()!);
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""{"message":{"content":""},"done":true}""", Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        await using var client = new OllamaApiClient(Endpoint, handler);
+
+        Assert.Equal(OllamaWarmupOutcome.Warmed, await client.WarmUpAsync("qwen2.5:3b"));
+        Assert.Equal(["qwen2.5:3b"], chatModels);
+
+        Assert.Equal(OllamaWarmupOutcome.SkippedRemote, await client.WarmUpAsync("gpt-oss:120b-cloud"));
+        Assert.Equal(OllamaWarmupOutcome.SkippedUnknownModel, await client.WarmUpAsync("uninstalled:latest"));
+        Assert.Single(chatModels);
+    }
+
+    [Fact]
+    public void ResolveOllamaLaunchTargetPrefersDesktopTrayAppAndFallsBackToCliServe()
+    {
+        var localAppData = @"C:\LocalAppData";
+        var appExe = @"C:\LocalAppData\Programs\Ollama\ollama app.exe";
+        var cliExe = @"C:\LocalAppData\Programs\Ollama\ollama.exe";
+
+        var bothExist = OllamaModelCatalog.ResolveOllamaLaunchTarget(
+            localAppData,
+            null,
+            path => path == appExe || path == cliExe);
+        Assert.NotNull(bothExist);
+        Assert.Equal(appExe, bothExist!.FileName);
+        Assert.Null(bothExist.Arguments);
+        Assert.True(bothExist.UseShellExecute);
+        Assert.False(bothExist.CreateNoWindow);
+
+        var cliOnly = OllamaModelCatalog.ResolveOllamaLaunchTarget(
+            localAppData,
+            null,
+            path => path == cliExe);
+        Assert.NotNull(cliOnly);
+        Assert.Equal(cliExe, cliOnly!.FileName);
+        Assert.Equal("serve", cliOnly.Arguments);
+        Assert.False(cliOnly.UseShellExecute);
+        Assert.True(cliOnly.CreateNoWindow);
+
+        var neither = OllamaModelCatalog.ResolveOllamaLaunchTarget(
+            localAppData,
+            null,
+            _ => false);
+        Assert.Null(neither);
+    }
+
+    [Fact]
+    public void CheckLaunchSafetyVerifiesEnvironmentConfigJsonAndSqliteExposeSetting()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"ew-ollama-safety-{Guid.NewGuid():N}");
+        var ollamaDir = Path.Combine(tempRoot, "Ollama");
+        Directory.CreateDirectory(ollamaDir);
+        try
+        {
+            // Clean directory and loopback OLLAMA_HOST -> SafeLocalOnly.
+            Assert.Equal(
+                OllamaLaunchSafety.SafeLocalOnly,
+                OllamaLocalConfigProbe.CheckLaunchSafety(tempRoot, ["127.0.0.1:11434", "http://localhost:11434", null]));
+
+            // Non-loopback OLLAMA_HOST -> BlockedByNetworkExposure.
+            Assert.Equal(
+                OllamaLaunchSafety.BlockedByNetworkExposure,
+                OllamaLocalConfigProbe.CheckLaunchSafety(tempRoot, ["0.0.0.0:11434"]));
+            Assert.Equal(
+                OllamaLaunchSafety.BlockedByNetworkExposure,
+                OllamaLocalConfigProbe.CheckLaunchSafety(tempRoot, [":11434"]));
+            Assert.Equal(
+                OllamaLaunchSafety.BlockedByNetworkExposure,
+                OllamaLocalConfigProbe.CheckLaunchSafety(tempRoot, ["192.168.1.50:11434"]));
+
+            // config.json with expose: true -> BlockedByNetworkExposure.
+            var configJsonPath = Path.Combine(ollamaDir, "config.json");
+            File.WriteAllText(configJsonPath, """{"expose":true}""");
+            Assert.Equal(
+                OllamaLaunchSafety.BlockedByNetworkExposure,
+                OllamaLocalConfigProbe.CheckLaunchSafety(tempRoot, [null]));
+
+            // config.json with expose: false -> SafeLocalOnly.
+            File.WriteAllText(configJsonPath, """{"expose":false}""");
+            Assert.Equal(
+                OllamaLaunchSafety.SafeLocalOnly,
+                OllamaLocalConfigProbe.CheckLaunchSafety(tempRoot, [null]));
+            File.Delete(configJsonPath);
+
+            // db.sqlite with settings.expose = 0 -> SafeLocalOnly; expose = 1 -> BlockedByNetworkExposure.
+            var dbPath = Path.Combine(ollamaDir, "db.sqlite");
+            WindowsSqlite.ExecuteOnNewDatabase(
+                dbPath,
+                "CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK (id = 1), expose BOOLEAN NOT NULL DEFAULT 0); INSERT INTO settings (id, expose) VALUES (1, 0);");
+            Assert.Equal(
+                OllamaLaunchSafety.SafeLocalOnly,
+                OllamaLocalConfigProbe.CheckLaunchSafety(tempRoot, [null]));
+
+            File.Delete(dbPath);
+            WindowsSqlite.ExecuteOnNewDatabase(
+                dbPath,
+                "CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK (id = 1), expose BOOLEAN NOT NULL DEFAULT 0); INSERT INTO settings (id, expose) VALUES (1, 1);");
+            Assert.Equal(
+                OllamaLaunchSafety.BlockedByNetworkExposure,
+                OllamaLocalConfigProbe.CheckLaunchSafety(tempRoot, [null]));
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void CloudPolishConsentReportsHostedOllamaAsCloudProcessing()
+    {
+        var consent = CloudPolishConsent.ForOllamaHosted("gpt-oss:120b-cloud");
+        Assert.Equal("Ollama Cloud", consent.ProviderName);
+        Assert.Equal("ollama.com", consent.ApiHost);
+        Assert.Contains("gpt-oss:120b-cloud", consent.Notice, StringComparison.Ordinal);
+        Assert.Contains("Ollama's servers", consent.Notice, StringComparison.Ordinal);
+    }
+
     private static byte[] Line(string json) => Encoding.UTF8.GetBytes(json + "\n");
 
     private static (byte[] Bytes, TimeSpan Delay)[] Chunks(params string[] lines) =>
@@ -347,5 +727,32 @@ public sealed class OllamaModelManagementTests
         public override void SetLength(long value) => throw new NotSupportedException();
 
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class FakeClock(DateTimeOffset initial) : TimeProvider
+    {
+        private DateTimeOffset _now = initial;
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public void Advance(TimeSpan delta) => _now = _now.Add(delta);
+    }
+
+    private sealed class ScriptedHttpHandler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _send;
+
+        public ScriptedHttpHandler(Func<HttpRequestMessage, HttpResponseMessage> send)
+            : this((request, _) => Task.FromResult(send(request)))
+        {
+        }
+
+        public ScriptedHttpHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send)
+        {
+            _send = send;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            _send(request, cancellationToken);
     }
 }
