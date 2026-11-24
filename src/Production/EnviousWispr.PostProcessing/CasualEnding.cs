@@ -5,15 +5,14 @@ namespace EnviousWispr.PostProcessing;
 /// <summary>
 /// Casual mode: leave off the full stop at the very end of a dictation. Ref: macOS #3737.
 /// </summary>
-public static class CasualEnding
+public static partial class CasualEnding
 {
     private static readonly HashSet<char> FullStops = ['.', '\u3002', '\u0964'];
 
-    private static readonly Regex DottedAbbreviation = new(
-        @"^(?:\p{L}{1,2}\.){2,}$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
     private static readonly HashSet<char> LeadingOpeners = ['(', '[', '"', '\'', '\u201C', '\u2018'];
+
+    [GeneratedRegex(@"^(?:\p{L}{1,2}\.){2,}$", RegexOptions.CultureInvariant, 1000)]
+    private static partial Regex DottedAbbreviationRegex();
 
     /// <summary>
     /// Removes the final full stop if it meets the Casual Mode contract; otherwise returns the input unchanged.
@@ -70,7 +69,7 @@ public static class CasualEnding
 
             // Keep if final whitespace-delimited token matches ^(?:\p{L}{1,2}\.){2,}$
             var finalWord = ExtractFinalWord(text, lastIndex);
-            if (DottedAbbreviation.IsMatch(finalWord))
+            if (DottedAbbreviationRegex().IsMatch(finalWord))
             {
                 return text;
             }

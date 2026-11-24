@@ -3524,6 +3524,74 @@ public sealed partial class DesignSystemTokenTests
         Assert.Empty(missingReport);
     }
 
+    [Fact]
+    public void LanguageChangeDriverSelectsExistingNavigationItemAndPickerHeader()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var driverSource = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "tools",
+            "app-journey-uat",
+            "TranscriptionPageDriver.cs"));
+        var document = LoadMainWindow();
+
+        var navItems = document
+            .Descendants()
+            .Where(item => item.Name.LocalName == "NavigationViewItem")
+            .Select(item => (string?)item.Attribute("Content"))
+            .Where(content => !string.IsNullOrEmpty(content))
+            .ToHashSet(StringComparer.Ordinal);
+        var comboHeaders = document
+            .Descendants()
+            .Where(item => item.Name.LocalName == "ComboBox")
+            .Select(item => (string?)item.Attribute("Header"))
+            .Where(header => !string.IsNullOrEmpty(header))
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.Contains("Dictation Settings", navItems);
+        Assert.Contains("Whisper language", comboHeaders);
+        Assert.Contains("\"Dictation Settings\"", driverSource, StringComparison.Ordinal);
+        Assert.Contains("\"Whisper language\"", driverSource, StringComparison.Ordinal);
+        Assert.Contains("WaitForAppliedLanguage", driverSource, StringComparison.Ordinal);
+        Assert.Contains("picker.Current.ItemStatus", driverSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"Transcription\"", driverSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"Save settings\"", driverSource, StringComparison.Ordinal);
+
+        var mainWindowCode = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "src",
+            "Production",
+            "EnviousWispr.App",
+            "MainWindow.xaml.cs"));
+        var publishIndex = mainWindowCode.IndexOf("SettingsChanged?.Invoke(_settings);", StringComparison.Ordinal);
+        var syncStatusIndex = mainWindowCode.IndexOf("SyncAppliedWhisperLanguageStatus(_settings.Preferences.Dictation.WhisperLanguage);", StringComparison.Ordinal);
+        Assert.True(publishIndex >= 0 && syncStatusIndex > publishIndex);
+    }
+
+    [Fact]
+    public void HistoryDetailContentKeepsActionButtonsTopAlignedAndCompactBesideRecoveryCard()
+    {
+        var document = LoadMainWindow();
+        var detailContent = FindNamedElement(document, "HistoryDetailContent");
+        Assert.Equal("Top", (string?)detailContent.Attribute("VerticalAlignment"));
+
+        var detailGrid = detailContent.Elements().Single(element => element.Name.LocalName == "Grid");
+        var rowHeights = detailGrid
+            .Elements()
+            .Single(element => element.Name.LocalName == "Grid.RowDefinitions")
+            .Elements()
+            .Where(element => element.Name.LocalName == "RowDefinition")
+            .Select(row => (string?)row.Attribute("Height") ?? string.Empty)
+            .ToArray();
+        Assert.Equal(3, rowHeights.Length);
+        Assert.All(rowHeights, height => Assert.Equal("Auto", height));
+
+        var pasteButton = FindNamedElement(document, "PasteHistoryButton");
+        Assert.Equal(
+            "PasteHistoryButton",
+            pasteButton.Attributes().FirstOrDefault(a => a.Name.LocalName == "AutomationProperties.AutomationId")?.Value);
+    }
+
     private readonly record struct DynamicColor(Rgba Light, Rgba Dark);
 
     private readonly record struct ThemePair(string Light, string Dark);

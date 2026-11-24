@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 
 namespace EnviousWispr.PostProcessing;
 
-public static class InverseTextNormalizer
+public static partial class InverseTextNormalizer
 {
     private static readonly IReadOnlyDictionary<string, long> Units =
         new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase)
@@ -211,38 +211,52 @@ public static class InverseTextNormalizer
         }
     };
 
-    private static readonly Regex SingleInitialRegex = new(@"^\p{Lu}$", RegexOptions.Compiled | RegexOptions.CultureInvariant, RegexTimeout);
-    private static readonly Regex DottedInitialismRegex = new(@"\p{L}\.\p{L}$", RegexOptions.Compiled | RegexOptions.CultureInvariant, RegexTimeout);
+    private const int RecognizerRegexTimeoutMilliseconds = 1000;
 
-    private static readonly Regex PrimaryCommandRegex = new(
+    [GeneratedRegex(@"^\p{Lu}$", RegexOptions.CultureInvariant, RecognizerRegexTimeoutMilliseconds)]
+    private static partial Regex SingleInitialRegex();
+
+    [GeneratedRegex(@"\p{L}\.\p{L}$", RegexOptions.CultureInvariant, RecognizerRegexTimeoutMilliseconds)]
+    private static partial Regex DottedInitialismRegex();
+
+    [GeneratedRegex(
         @"(?<!\S)(" + AllFormsPattern + @")\b",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
-        RegexTimeout);
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        RecognizerRegexTimeoutMilliseconds)]
+    private static partial Regex PrimaryCommandRegex();
 
-    private static readonly Regex NextRepeatedCommandRegex = new(
+    [GeneratedRegex(
         @"\G" + SeparatorSpace + @"*(?:[.,;:!?]|[.]{2}|,{2}|;{2}|:{2}|!{2}|[?]{2})(?![.,;:!?…])" + SeparatorSpace + @"*(" + AllFormsPattern + @")\b",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
-        RegexTimeout);
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        RecognizerRegexTimeoutMilliseconds)]
+    private static partial Regex NextRepeatedCommandRegex();
 
-    private static readonly Regex R1Regex = new(
+    [GeneratedRegex(
         @"(?<=[\p{L}\p{N}]|[\p{N}%][ \t]{1,2}|[\uE001\x00][ \t]?)([.,;:!?])\1?(?![.,;:!?…])(?=" + CloserClass + @"{0,3}\s+(" + MarkFormsPattern + @")\b)",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
-        RegexTimeout);
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        RecognizerRegexTimeoutMilliseconds)]
+    private static partial Regex R1Regex();
 
-    private static readonly Regex R2Regex = new(
+    [GeneratedRegex(
         @"(?<!\S)(" + MarkFormsPattern + @")\b([.,;:!?])\2?(?=\s|$)",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
-        RegexTimeout);
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        RecognizerRegexTimeoutMilliseconds)]
+    private static partial Regex R2Regex();
 
-    private static readonly Regex R3MarksBreakRegex = new(
+    [GeneratedRegex(
         @"((?<!\S)(?:" + MarkFormsPattern + @")\s+(?:" + BreakFormsPattern + @"))\b([.,])\2?(?=\s|$)",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
-        RegexTimeout);
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        RecognizerRegexTimeoutMilliseconds)]
+    private static partial Regex R3MarksBreakRegex();
 
-    private static readonly Regex R3PauseBreakRegex = new(
+    [GeneratedRegex(
         @"(\S[,;:]" + CloserClass + @"{0,3}\s+(?:" + BreakFormsPattern + @"))\b([.,])\2?(?=\s|$)",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
-        RegexTimeout);
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        RecognizerRegexTimeoutMilliseconds)]
+    private static partial Regex R3PauseBreakRegex();
+
+    [GeneratedRegex(@"\s+", RegexOptions.CultureInvariant, RecognizerRegexTimeoutMilliseconds)]
+    private static partial Regex WhitespaceRunRegex();
 
     private const string SpokenFinalFullStopPatternText =
         @"(?:\s+period|\s+full stop)(?:[.]|[.]{2}|[?]|[!])?(?:\s+new (?:line\b[.]?|paragraph\b))*\s*$";
@@ -1024,7 +1038,7 @@ public static class InverseTextNormalizer
             return text;
         }
 
-        var matches = PrimaryCommandRegex.Matches(text);
+        var matches = PrimaryCommandRegex().Matches(text);
         if (matches.Count == 0)
         {
             return text;
@@ -1046,7 +1060,7 @@ public static class InverseTextNormalizer
 
             while (end < text.Length)
             {
-                var nextMatch = NextRepeatedCommandRegex.Match(text, end);
+                var nextMatch = NextRepeatedCommandRegex().Match(text, end);
                 if (nextMatch.Success && nextMatch.Index == end && CommandKey(nextMatch.Groups[1].Value) == key)
                 {
                     end += nextMatch.Length;
@@ -1081,15 +1095,15 @@ public static class InverseTextNormalizer
         }
 
         var t = ApplyR1(text);
-        t = R2Regex.Replace(t, match => match.Groups[1].Value);
-        t = R3MarksBreakRegex.Replace(t, match => match.Groups[1].Value);
-        t = R3PauseBreakRegex.Replace(t, match => match.Groups[1].Value);
+        t = R2Regex().Replace(t, match => match.Groups[1].Value);
+        t = R3MarksBreakRegex().Replace(t, match => match.Groups[1].Value);
+        t = R3PauseBreakRegex().Replace(t, match => match.Groups[1].Value);
         return t;
     }
 
     private static string ApplyR1(string text)
     {
-        return R1Regex.Replace(text, match =>
+        return R1Regex().Replace(text, match =>
         {
             var mark = match.Groups[1].Value;
             var command = match.Groups[2].Value;
@@ -1114,7 +1128,7 @@ public static class InverseTextNormalizer
     }
 
     private static string CommandKey(string phrase) =>
-        Regex.Replace(phrase.ToLowerInvariant().Replace('\u2019', '\''), @"\s+", " ").Trim();
+        WhitespaceRunRegex().Replace(phrase.ToLowerInvariant().Replace('\u2019', '\''), " ").Trim();
 
     private static string PrecedingToken(string prefix)
     {
@@ -1164,12 +1178,12 @@ public static class InverseTextNormalizer
             return true;
         }
 
-        if (SingleInitialRegex.IsMatch(trimmed))
+        if (SingleInitialRegex().IsMatch(trimmed))
         {
             return true;
         }
 
-        if (DottedInitialismRegex.IsMatch(trimmed))
+        if (DottedInitialismRegex().IsMatch(trimmed))
         {
             return true;
         }
@@ -1385,12 +1399,15 @@ public static class InverseTextNormalizer
     private static readonly Lazy<bool> WarmOnce = new(() =>
     {
         _ = Normalize(WarmRepresentative);
-        _ = Normalize(WarmRepresentative, spokenPunctuation: true);
+        _ = Normalize(WarmSpokenPunctuationRepresentative, spokenPunctuation: true);
         return true;
-    });
+    }, LazyThreadSafetyMode.PublicationOnly);
 
     private const string WarmRepresentative =
         "one point five dollars and two cents at half past three on the fourth of july nineteen ninety nine";
+
+    private const string WarmSpokenPunctuationRepresentative =
+        WarmRepresentative + " Mr. comma J. comma U.S. comma hello. comma, comma period. period new line. wait, new paragraph.";
 
     /// <summary>Builds every pattern once, so no later call pays construction inside a timed stage.</summary>
     public static void Warm() => _ = WarmOnce.Value;

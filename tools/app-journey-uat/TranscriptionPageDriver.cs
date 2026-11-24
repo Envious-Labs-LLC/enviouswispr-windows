@@ -3,7 +3,7 @@ using System.Windows.Automation;
 
 namespace EnviousWispr.AppJourney.Uat;
 
-/// <summary>Changes the Whisper language the way a person does: the Transcription page, the picker, Save.</summary>
+/// <summary>Changes the Whisper language the way a person does: the Dictation Settings page and the picker (auto-saved).</summary>
 /// <remarks>
 /// THROUGH UI AUTOMATION, NOT A FILE WRITE. The question is whether a change made in the running app
 /// reaches the next take (#241), and the app never re-reads its settings file while it runs, so a file
@@ -16,7 +16,7 @@ internal static class TranscriptionPageDriver
     public static void ChooseWhisperLanguage(int processId, string languageName)
     {
         _ = Find(processId, "EnviousWispr navigation", TimeSpan.FromSeconds(30));
-        Select(Find(processId, "Transcription", TimeSpan.FromSeconds(10)));
+        Select(Find(processId, "Dictation Settings", TimeSpan.FromSeconds(10)));
         var picker = Find(processId, "Whisper language", TimeSpan.FromSeconds(10));
         if (!picker.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out var expanderPattern) ||
             expanderPattern is not ExpandCollapsePattern expander)
@@ -31,8 +31,25 @@ internal static class TranscriptionPageDriver
             expander.Collapse();
         }
 
-        Invoke(Find(processId, "Save settings", TimeSpan.FromSeconds(10)));
-        _ = Find(processId, "Settings saved", TimeSpan.FromSeconds(10));
+        WaitForAppliedLanguage(picker, languageName, TimeSpan.FromSeconds(10));
+    }
+
+    private static void WaitForAppliedLanguage(AutomationElement picker, string languageName, TimeSpan timeout)
+    {
+        var timer = Stopwatch.StartNew();
+        while (timer.Elapsed < timeout)
+        {
+            if (string.Equals(picker.Current.ItemStatus, languageName, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            Thread.Sleep(100);
+        }
+
+        throw JourneyExpectationException.Instrument(
+            $"The running app did not apply Whisper language \"{languageName}\" within {timeout.TotalSeconds:0} seconds "
+            + $"(itemStatus=\"{picker.Current.ItemStatus}\").");
     }
 
     private static AutomationElement Find(int processId, string name, TimeSpan timeout)
@@ -65,17 +82,5 @@ internal static class TranscriptionPageDriver
         }
 
         pattern.Select();
-    }
-
-    private static void Invoke(AutomationElement element)
-    {
-        if (!element.TryGetCurrentPattern(InvokePattern.Pattern, out var found) ||
-            found is not InvokePattern pattern)
-        {
-            throw JourneyExpectationException.Instrument(
-                $"\"{element.Current.Name}\" cannot be invoked through UI Automation.");
-        }
-
-        pattern.Invoke();
     }
 }
