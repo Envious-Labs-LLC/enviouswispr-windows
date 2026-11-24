@@ -111,6 +111,23 @@ public static class LivePreviewRuntimeResolver
                     hardware));
         }
 
+        if (whisperReady)
+        {
+            return new LivePreviewRuntimePlan(
+                Succeeded: true,
+                RequestedEngine: LivePreviewEngineChoice.Parakeet,
+                EffectiveEngine: LivePreviewEngineChoice.Whisper,
+                IsStandingIn: true,
+                Options: CreateWhisperPreviewOptions(
+                    workerExecutable,
+                    whisperPreviewModelDirectory!,
+                    whisperProvider,
+                    hardware,
+                    whisperLanguage,
+                    currentWhisperLanguage,
+                    cudaRuntimeDirectory));
+        }
+
         return new LivePreviewRuntimePlan(
             Succeeded: false,
             RequestedEngine: LivePreviewEngineChoice.Parakeet,

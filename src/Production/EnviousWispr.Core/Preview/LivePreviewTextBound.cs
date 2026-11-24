@@ -33,8 +33,15 @@ public static class LivePreviewTextBound
 
         var tail = text[start..];
         var space = tail.IndexOf(' ');
-        return space >= 0
-            ? tail[(space + 1)..]
-            : tail;
+        if (space >= 0)
+        {
+            var afterSpace = tail[(space + 1)..];
+            if (!string.IsNullOrWhiteSpace(afterSpace))
+            {
+                return afterSpace;
+            }
+        }
+
+        return tail;
     }
 }

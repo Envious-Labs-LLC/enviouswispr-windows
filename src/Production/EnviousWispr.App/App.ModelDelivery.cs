@@ -113,6 +113,15 @@ public partial class App
                 ? WhisperTranscriptionEngine.ModelId
                 : ParakeetTranscriptionEngine.ModelId,
         };
+        if (preferences.LivePreviewEnabled &&
+            preferences.LivePreviewEngine == LivePreviewEngineChoice.Parakeet)
+        {
+            var previewModelId = RequiredPreviewModelId(preferences.LivePreviewEngine);
+            if (!wanted.Contains(previewModelId, StringComparer.Ordinal))
+            {
+                wanted.Add(previewModelId);
+            }
+        }
 
         var missing = new List<string>();
         foreach (var modelId in wanted)

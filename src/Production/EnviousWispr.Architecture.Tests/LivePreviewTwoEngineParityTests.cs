@@ -285,6 +285,11 @@ public sealed class LivePreviewTwoEngineParityTests
         var boundedCjk = LivePreviewTextBound.Apply(unspacedCjk);
         Assert.Equal(LivePreviewTextBound.MaxCharacters, boundedCjk.Length);
         Assert.EndsWith(boundedCjk, unspacedCjk, StringComparison.Ordinal);
+
+        var unspacedWithTrailingSpace = new string('語', 5_000) + " ";
+        var boundedTrailingSpace = LivePreviewTextBound.Apply(unspacedWithTrailingSpace);
+        Assert.Equal(LivePreviewTextBound.MaxCharacters, boundedTrailingSpace.Length);
+        Assert.False(string.IsNullOrWhiteSpace(boundedTrailingSpace));
     }
 
     [Fact]
