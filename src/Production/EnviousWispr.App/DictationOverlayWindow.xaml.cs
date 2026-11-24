@@ -320,7 +320,9 @@ public sealed partial class DictationOverlayWindow : Window
         }
 
         ApplySeverity(state);
-        StateTitle.Text = presentation.Item1;
+        StateTitle.Text = state == DictationOverlayState.Recording && _activeDesign == RecordingPillDesign.ReadingWell
+            ? presentation.Item1.ToUpperInvariant()
+            : presentation.Item1;
         StateIcon.Glyph = presentation.Item2;
         StateDetail.Text = presentation.Item3;
         // THE ANNOUNCEMENT LIVES ON THE TITLE, NOT ON THE FRAME. WinUI creates no automation peer for
@@ -531,24 +533,51 @@ public sealed partial class DictationOverlayWindow : Window
         StateIcon.Visibility = Visibility.Collapsed;
         StateDetail.Visibility = Visibility.Collapsed;
         ElapsedText.Visibility = Visibility.Visible;
-        RainbowMark.Visibility = _activeDesign == RecordingPillDesign.Classic
+
+        var rail = _activeDesign == RecordingPillDesign.LevelRail;
+        var readingWell = _activeDesign == RecordingPillDesign.ReadingWell;
+        RainbowMark.Visibility = (_activeDesign == RecordingPillDesign.Classic || readingWell)
             ? Visibility.Visible
             : Visibility.Collapsed;
+        if (readingWell)
+        {
+            RainbowMark.Width = 24;
+            RainbowMark.Height = 18;
+            RainbowMark.HorizontalAlignment = HorizontalAlignment.Left;
+            Grid.SetColumn(RainbowMark, 1);
+            Grid.SetColumn(ElapsedText, 0);
+            Grid.SetColumn(StateTitle, 2);
+            StateTitle.HorizontalAlignment = HorizontalAlignment.Right;
+            StateTitle.CharacterSpacing = 80;
+        }
+        else
+        {
+            RainbowMark.Width = 31;
+            RainbowMark.Height = 24;
+            RainbowMark.HorizontalAlignment = HorizontalAlignment.Center;
+            Grid.SetColumn(RainbowMark, 0);
+            Grid.SetColumn(ElapsedText, rail ? 0 : 2);
+            Grid.SetColumn(StateTitle, 1);
+            StateTitle.HorizontalAlignment = HorizontalAlignment.Left;
+            StateTitle.CharacterSpacing = 0;
+        }
 
-        // THE TIMER MOVES TO THE FRONT AND THE WORD GOES, so the row reads exactly as the Appearance
-        // page draws it: the time, then the meter. On this design the meter IS the "listening", and
-        // a word beside it would be saying the same thing twice in less room.
-        var rail = _activeDesign == RecordingPillDesign.LevelRail;
+        // THE TIMER MOVES TO THE FRONT AND THE WORD GOES, so the row reads exactly as the
+        // Recording Pill page draws it: the time, then the meter. On this design the meter IS
+        // the "listening", and a word beside it would be saying the same thing twice in less room.
         LevelBars.Visibility = rail ? Visibility.Visible : Visibility.Collapsed;
         SetLiveVisibility(StateTitle, rail ? Visibility.Collapsed : Visibility.Visible);
-        Grid.SetColumn(ElapsedText, rail ? 0 : 2);
         PreviewText.Text = _previewText ?? "Listening…";
         ApplyPreviewInk();
-        OverlayRoot.CornerRadius = _activeDesign == RecordingPillDesign.ReadingWell
+        OverlayRoot.CornerRadius = readingWell
             ? new CornerRadius(18)
             : new CornerRadius(26);
         SeverityWash.CornerRadius = OverlayRoot.CornerRadius;
-        BottomRainbowHairline.CornerRadius = OverlayRoot.CornerRadius;
+        BottomRainbowHairline.CornerRadius = new CornerRadius(
+            0,
+            0,
+            OverlayRoot.CornerRadius.BottomLeft,
+            OverlayRoot.CornerRadius.BottomRight);
         BottomRainbowHairline.Visibility = Visibility.Visible;
 
         ContentPanel.Margin = _activeDesign == RecordingPillDesign.ReadingWell
@@ -822,9 +851,16 @@ public sealed partial class DictationOverlayWindow : Window
 
     private void ConfigureNotice(string? detailText)
     {
-        // A NOTICE IS NEVER THE RAIL, so the row goes back to its ordinary shape. Leaving the timer
-        // in the first column would put an error's icon and its sentence in the wrong places.
+        // A NOTICE IS NEVER THE RAIL OR READING WELL, so the row goes back to its ordinary shape.
+        // Leaving the timer or title in another column would put an error's icon and sentence in the wrong places.
+        Grid.SetColumn(StateTitle, 1);
+        StateTitle.HorizontalAlignment = HorizontalAlignment.Left;
+        StateTitle.CharacterSpacing = 0;
         SetLiveVisibility(StateTitle, Visibility.Visible);
+        Grid.SetColumn(RainbowMark, 0);
+        RainbowMark.Width = 31;
+        RainbowMark.Height = 24;
+        RainbowMark.HorizontalAlignment = HorizontalAlignment.Center;
         Grid.SetColumn(ElapsedText, 2);
         StateTitle.Style = GetPillStyle("PillNoticeTextStyle");
         RainbowMark.Visibility = Visibility.Collapsed;
@@ -914,7 +950,7 @@ public sealed partial class DictationOverlayWindow : Window
         {
             PreviewWell.Visibility = Visibility.Visible;
             var estimatedLines = Math.Clamp((textLength + 43) / 44, 1, 5);
-            Resize(ReadingWellWidth, CapsuleHeight + 10 + estimatedLines * 22);
+            Resize(ReadingWellWidth, CapsuleHeight + 14 + estimatedLines * 22);
         }
 
         if (_state == DictationOverlayState.Recording)

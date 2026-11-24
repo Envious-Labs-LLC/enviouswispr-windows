@@ -136,6 +136,29 @@ public sealed class SettingsPresenterTests
     }
 
     [Fact]
+    public async Task SaveRecordingPillSelectionUpdatesLivePreviewAndWordlessDesignWithoutTouchingUnrelatedFields()
+    {
+        var store = new BlockingStore();
+        using var presenter = new SettingsPresenter(store, AppSettings.Default);
+        store.LetSavesFinish();
+
+        var switchToLevelRail = await presenter
+            .SaveRecordingPillSelectionAsync(livePreviewEnabled: false, RecordingPillDesign.LevelRail)
+            .WaitAsync(Patience);
+        Assert.True(switchToLevelRail.Saved);
+        Assert.False(store.LastSaved!.Preferences.LivePreviewEnabled);
+        Assert.Equal(RecordingPillDesign.LevelRail, store.LastSaved.Preferences.PillDesignWithoutWords);
+
+        var switchToReadingWell = await presenter
+            .SaveRecordingPillSelectionAsync(livePreviewEnabled: true, RecordingPillDesign.LevelRail)
+            .WaitAsync(Patience);
+        Assert.True(switchToReadingWell.Saved);
+        Assert.True(store.LastSaved!.Preferences.LivePreviewEnabled);
+        Assert.Equal(RecordingPillDesign.LevelRail, store.LastSaved.Preferences.PillDesignWithoutWords);
+        Assert.Equal(AppSettings.Default.Preferences.Theme, store.LastSaved.Preferences.Theme);
+    }
+
+    [Fact]
     public async Task TwoPresentersShareNothing()
     {
         // Two windows, two presenters, two stores: a change in one is not a change in the other.

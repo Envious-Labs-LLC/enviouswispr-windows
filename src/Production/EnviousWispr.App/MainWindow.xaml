@@ -1474,71 +1474,166 @@
                                 </StackPanel>
                             </Border>
                             <Border x:Name="HistorySettingsSection" Padding="20" Style="{StaticResource BrandSectionCardStyle}"><StackPanel Spacing="{StaticResource BrandSpacingM}"><StackPanel x:Name="HistoryEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="HistoryEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsHistoryNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="History" /></StackPanel><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE81C;" /><StackPanel Grid.Column="1" Background="{ThemeResource BrandHitTestBrush}" Spacing="{StaticResource BrandSpacingXs}" Tapped="SettingRow_Tapped"><TextBlock x:Name="HistoryEnabledToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Save dictation history on this PC" TextWrapping="Wrap" /><ToggleSwitch AutomationProperties.LabeledBy="{x:Bind HistoryEnabledToggleLabel, Mode=OneTime}" HorizontalAlignment="Left" x:Name="HistoryEnabledToggle" Style="{StaticResource BrandToggleSwitchStyle}" /></StackPanel></Grid><Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE823;" /><NumberBox x:Name="RetentionDaysBox" Grid.Column="1" Header="Delete history after this many days (0 keeps it until you delete it)" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" Minimum="0" Maximum="3650" SpinButtonPlacementMode="Inline" /></Grid></StackPanel></Border>
-                            <Border x:Name="AppearanceSection" Tag="settings-appearance" Padding="20" Style="{StaticResource BrandSectionCardStyle}">
+                            <Border x:Name="RecordingPillSection" Tag="settings-pill" Padding="20" Style="{StaticResource BrandSectionCardStyle}">
                                 <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                    <!--
-                                        THE PILL'S LOOK BELONGS BESIDE THE PILL'S POSITION.
-                                        These cards lived on Live Preview while Appearance
-                                        held where the pill appears, so one decision was split
-                                        across two pages - and the half on Live Preview was
-                                        invisible to anybody with Live Preview switched off,
-                                        which is most people. Appearance's own subtitle already
-                                        promised this.
-                                    -->
-                                    <StackPanel x:Name="RecordingpillEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="RecordingpillEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsAppearanceNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Recording pill" /></StackPanel>
-                                    <TextBlock x:Name="WithoutWordsPillHeading" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Live Preview off · In use" />
-                                    <!--
-                                        ONE FULL-WIDTH COLUMN, WHICH THIS GROUP ALONE WAS NOT. Capsule
-                                        and Level Rail sat side by side while Reading Well below them
-                                        ran full width, so one set of choices on one page used two
-                                        layouts. The written rule is one column always, and nothing
-                                        pinned it here.
-                                    -->
-                                    <StackPanel Spacing="{StaticResource BrandSpacingM}">
-                                        <RadioButton x:Name="CapsulePillButton" Checked="AppearanceCardChecked" AutomationProperties.Name="Capsule. A small capsule with the rainbow mark and a timer." GroupName="PillWithoutWords" Style="{StaticResource BrandSelectableCardStyle}">
-                                            <StackPanel Spacing="{StaticResource BrandSpacingS}">
+                                    <StackPanel x:Name="RecordingpillEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="RecordingpillEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsPillNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Recording pill" /></StackPanel>
+                                    <Grid x:Name="RecordingPillCardsGrid" HorizontalAlignment="Stretch" ColumnSpacing="{StaticResource BrandSpacingM}" SizeChanged="RecordingPillCardsGrid_SizeChanged">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <RadioButton x:Name="CapsulePillButton" Grid.Column="0" Checked="PillStyleCardChecked" AutomationProperties.Name="Capsule. A compact pill with the rainbow mark and timer." GroupName="RecordingPillStyle" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}">
+                                            <StackPanel Margin="0,12,0,0" Spacing="{StaticResource BrandSpacingS}">
+                                                <Viewbox Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Center" Height="52">
+                                                    <Border Width="185" Height="52" Background="{ThemeResource PillSurfaceBrush}" BorderBrush="{ThemeResource PillBorderBrush}" BorderThickness="1" CornerRadius="26">
+                                                        <Grid>
+                                                            <Border Height="2" VerticalAlignment="Bottom" CornerRadius="0,0,26,26">
+                                                                <Border.Background>
+                                                                    <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                                                                        <GradientStop Offset="0.00" Color="{ThemeResource BrandSpectrumVioletColor}" />
+                                                                        <GradientStop Offset="0.12" Color="{ThemeResource BrandSpectrumRoyalColor}" />
+                                                                        <GradientStop Offset="0.25" Color="{ThemeResource BrandSpectrumBlueColor}" />
+                                                                        <GradientStop Offset="0.37" Color="{ThemeResource BrandSpectrumCyanColor}" />
+                                                                        <GradientStop Offset="0.50" Color="{ThemeResource BrandSpectrumSpringColor}" />
+                                                                        <GradientStop Offset="0.62" Color="{ThemeResource BrandSpectrumLimeColor}" />
+                                                                        <GradientStop Offset="0.75" Color="{ThemeResource BrandSpectrumGoldColor}" />
+                                                                        <GradientStop Offset="0.87" Color="{ThemeResource BrandSpectrumOrangeColor}" />
+                                                                        <GradientStop Offset="1.00" Color="{ThemeResource BrandSpectrumRedColor}" />
+                                                                    </LinearGradientBrush>
+                                                                </Border.Background>
+                                                            </Border>
+                                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="{StaticResource BrandSpacingM}">
+                                                                <Image Width="31" Height="24" AutomationProperties.AccessibilityView="Raw" Source="Assets/Brand/EnviousWisprMark.svg" VerticalAlignment="Center" />
+                                                                <TextBlock Foreground="{ThemeResource PillTimerBrush}" FontFamily="Consolas" Style="{StaticResource BrandRowLabelStyle}" Text="0:12" VerticalAlignment="Center" />
+                                                            </StackPanel>
+                                                        </Grid>
+                                                    </Border>
+                                                </Viewbox>
                                                 <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Capsule" />
-                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="A small capsule with the rainbow mark and a timer." TextWrapping="Wrap" />
-                                                <Border Width="185" Height="58" Background="{ThemeResource BrandSidebarBgBrush}" CornerRadius="29" Padding="16,10">
-                                                    <Grid ColumnSpacing="{StaticResource BrandSpacingS}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Ellipse Width="27" Height="16"><Ellipse.Fill><LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5"><GradientStop Color="{ThemeResource BrandSpectrumVioletColor}" Offset="0" /><GradientStop Color="{ThemeResource BrandSpectrumBlueColor}" Offset="0.35" /><GradientStop Color="{ThemeResource BrandSpectrumSpringColor}" Offset="0.7" /><GradientStop Color="{ThemeResource BrandSpectrumGoldColor}" Offset="1" /></LinearGradientBrush></Ellipse.Fill></Ellipse><TextBlock Grid.Column="1" Foreground="{ThemeResource BrandTextPrimaryBrush}" FontFamily="Consolas" Style="{StaticResource BrandRowLabelStyle}" Text="00:12" VerticalAlignment="Center" /></Grid>
-                                                </Border>
+                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="A compact pill with the rainbow mark and timer." TextWrapping="Wrap" />
                                             </StackPanel>
                                         </RadioButton>
-                                        <RadioButton x:Name="LevelRailPillButton" Checked="AppearanceCardChecked" AutomationProperties.Name="Level Rail. A wider capsule with a live rainbow meter beside the timer." GroupName="PillWithoutWords" Style="{StaticResource BrandSelectableCardStyle}">
-                                            <StackPanel Spacing="{StaticResource BrandSpacingS}">
+                                        <RadioButton x:Name="LevelRailPillButton" Grid.Column="1" Checked="PillStyleCardChecked" AutomationProperties.Name="Level Rail. A wider capsule with a live rainbow meter beside the timer." GroupName="RecordingPillStyle" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}">
+                                            <StackPanel Margin="0,12,0,0" Spacing="{StaticResource BrandSpacingS}">
+                                                <Viewbox Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Center" Height="52">
+                                                    <Border Width="288" Height="52" Background="{ThemeResource PillSurfaceBrush}" BorderBrush="{ThemeResource PillBorderBrush}" BorderThickness="1" CornerRadius="26">
+                                                        <Grid>
+                                                            <Border Height="2" VerticalAlignment="Bottom" CornerRadius="0,0,26,26">
+                                                                <Border.Background>
+                                                                    <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                                                                        <GradientStop Offset="0.00" Color="{ThemeResource BrandSpectrumVioletColor}" />
+                                                                        <GradientStop Offset="0.12" Color="{ThemeResource BrandSpectrumRoyalColor}" />
+                                                                        <GradientStop Offset="0.25" Color="{ThemeResource BrandSpectrumBlueColor}" />
+                                                                        <GradientStop Offset="0.37" Color="{ThemeResource BrandSpectrumCyanColor}" />
+                                                                        <GradientStop Offset="0.50" Color="{ThemeResource BrandSpectrumSpringColor}" />
+                                                                        <GradientStop Offset="0.62" Color="{ThemeResource BrandSpectrumLimeColor}" />
+                                                                        <GradientStop Offset="0.75" Color="{ThemeResource BrandSpectrumGoldColor}" />
+                                                                        <GradientStop Offset="0.87" Color="{ThemeResource BrandSpectrumOrangeColor}" />
+                                                                        <GradientStop Offset="1.00" Color="{ThemeResource BrandSpectrumRedColor}" />
+                                                                    </LinearGradientBrush>
+                                                                </Border.Background>
+                                                            </Border>
+                                                            <Grid Margin="16,0" ColumnSpacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                                <TextBlock Foreground="{ThemeResource PillTimerBrush}" FontFamily="Consolas" Style="{StaticResource BrandRowLabelStyle}" Text="0:12" VerticalAlignment="Center" />
+                                                                <StackPanel Grid.Column="1" Height="25" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center"><Border Width="3" Height="5" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="7" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="11" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="16" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="21" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="24" Background="{ThemeResource BrandSpectrumLimeBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="22" Background="{ThemeResource BrandSpectrumGoldBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="18" Background="{ThemeResource BrandSpectrumOrangeBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="13" Background="{ThemeResource BrandSpectrumRedBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="9" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="6" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="5" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="8" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="14" Background="{ThemeResource BrandSpectrumLimeBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="20" Background="{ThemeResource BrandSpectrumGoldBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="23" Background="{ThemeResource BrandSpectrumOrangeBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="25" Background="{ThemeResource BrandSpectrumRedBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="21" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="15" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="10" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="7" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="5" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumLimeBrush}" CornerRadius="1.5" VerticalAlignment="Center" /></StackPanel>
+                                                            </Grid>
+                                                        </Grid>
+                                                    </Border>
+                                                </Viewbox>
                                                 <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Level Rail" />
                                                 <TextBlock Style="{StaticResource BrandHelperStyle}" Text="A wider capsule with a live rainbow meter beside the timer." TextWrapping="Wrap" />
-                                                <Border Width="288" Height="58" Background="{ThemeResource BrandSidebarBgBrush}" CornerRadius="29" Padding="16,10">
-                                                    <Grid ColumnSpacing="{StaticResource BrandSpacingS}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Foreground="{ThemeResource BrandTextPrimaryBrush}" FontFamily="Consolas" Style="{StaticResource BrandRowLabelStyle}" Text="00:12" VerticalAlignment="Center" /><StackPanel Grid.Column="1" Height="25" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center"><Border Width="3" Height="5" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="7" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="11" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="16" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="21" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="24" Background="{ThemeResource BrandSpectrumLimeBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="22" Background="{ThemeResource BrandSpectrumGoldBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="18" Background="{ThemeResource BrandSpectrumOrangeBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="13" Background="{ThemeResource BrandSpectrumRedBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="9" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="6" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="5" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="8" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="14" Background="{ThemeResource BrandSpectrumLimeBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="20" Background="{ThemeResource BrandSpectrumGoldBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="23" Background="{ThemeResource BrandSpectrumOrangeBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="25" Background="{ThemeResource BrandSpectrumRedBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="21" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="15" Background="{ThemeResource BrandSpectrumRoyalBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="10" Background="{ThemeResource BrandSpectrumBlueBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="7" Background="{ThemeResource BrandSpectrumCyanBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="5" Background="{ThemeResource BrandSpectrumSpringBrush}" CornerRadius="1.5" VerticalAlignment="Center" /><Border Width="3" Height="4" Background="{ThemeResource BrandSpectrumLimeBrush}" CornerRadius="1.5" VerticalAlignment="Center" /></StackPanel></Grid>
-                                                </Border>
                                             </StackPanel>
                                         </RadioButton>
-                                    </StackPanel>
-                                    <!--
-                                        TWO QUESTIONS, NOT ONE LIST. Both groups are radio groups and
-                                        each legitimately shows a tick, so with three cards running
-                                        together the page showed two ticked cards side by side, which
-                                        reads as a bug whatever the helper text says. A rule between
-                                        them makes the second question visibly a second question.
-
-                                        A DIVIDER RATHER THAN DIMMING, because dimming a group that
-                                        already carries disabled text pushes it under the contrast a
-                                        person needs to read the reason it is disabled.
-                                    -->
+                                        <RadioButton x:Name="ReadingWellPillButton" Grid.Column="2" Checked="PillStyleCardChecked" AutomationProperties.Name="Reading Well. A wide panel that shows your words as you speak." GroupName="RecordingPillStyle" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}">
+                                            <StackPanel Margin="0,12,0,0" Spacing="{StaticResource BrandSpacingS}">
+                                                <Viewbox Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Center" Height="64">
+                                                    <Border Width="340" MinHeight="74" Background="{ThemeResource PillSurfaceBrush}" BorderBrush="{ThemeResource PillBorderBrush}" BorderThickness="1" CornerRadius="16">
+                                                        <Grid>
+                                                            <Border Height="2" VerticalAlignment="Bottom" CornerRadius="0,0,16,16">
+                                                                <Border.Background>
+                                                                    <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                                                                        <GradientStop Offset="0.00" Color="{ThemeResource BrandSpectrumVioletColor}" />
+                                                                        <GradientStop Offset="0.12" Color="{ThemeResource BrandSpectrumRoyalColor}" />
+                                                                        <GradientStop Offset="0.25" Color="{ThemeResource BrandSpectrumBlueColor}" />
+                                                                        <GradientStop Offset="0.37" Color="{ThemeResource BrandSpectrumCyanColor}" />
+                                                                        <GradientStop Offset="0.50" Color="{ThemeResource BrandSpectrumSpringColor}" />
+                                                                        <GradientStop Offset="0.62" Color="{ThemeResource BrandSpectrumLimeColor}" />
+                                                                        <GradientStop Offset="0.75" Color="{ThemeResource BrandSpectrumGoldColor}" />
+                                                                        <GradientStop Offset="0.87" Color="{ThemeResource BrandSpectrumOrangeColor}" />
+                                                                        <GradientStop Offset="1.00" Color="{ThemeResource BrandSpectrumRedColor}" />
+                                                                    </LinearGradientBrush>
+                                                                </Border.Background>
+                                                            </Border>
+                                                            <StackPanel Margin="14,10,14,12" Spacing="{StaticResource BrandSpacingS}">
+                                                                <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                                                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                                                        <TextBlock Foreground="{ThemeResource PillTimerBrush}" FontFamily="Consolas" Style="{StaticResource BrandRowLabelStyle}" Text="0:12" VerticalAlignment="Center" />
+                                                                        <Image Width="22" Height="17" AutomationProperties.AccessibilityView="Raw" Source="Assets/Brand/EnviousWisprMark.svg" VerticalAlignment="Center" />
+                                                                    </StackPanel>
+                                                                    <TextBlock HorizontalAlignment="Right" Foreground="{ThemeResource PillModeQuietBrush}" FontSize="14" FontWeight="SemiBold" Text="LISTENING" VerticalAlignment="Center" />
+                                                                </Grid>
+                                                                <Border Height="1" Background="{ThemeResource PillDividerBrush}" />
+                                                                <TextBlock Foreground="{ThemeResource PillTextBrush}" Style="{StaticResource BrandBodyStyle}" Text="the quarterly numbers came in" TextWrapping="Wrap" />
+                                                            </StackPanel>
+                                                        </Grid>
+                                                    </Border>
+                                                </Viewbox>
+                                                <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Reading Well" />
+                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="A wide panel that shows your words as you speak." TextWrapping="Wrap" />
+                                            </StackPanel>
+                                        </RadioButton>
+                                    </Grid>
+                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Choosing Reading Well turns Live Preview on automatically. Capsule and Level Rail keep live words off screen." TextWrapping="Wrap" />
                                     <Border Height="1" Background="{ThemeResource BrandDividerBrush}" Margin="0,4,0,4" />
-                                    <TextBlock x:Name="WithWordsPillHeading" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Live Preview on" />
-                                    <RadioButton x:Name="ReadingWellPillButton" Checked="AppearanceCardChecked" AutomationProperties.Name="Reading Well. A wide panel that shows your words as you speak." GroupName="PillWithWords" HorizontalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}">
-                                        <StackPanel Spacing="{StaticResource BrandSpacingS}">
-                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Reading Well" />
-                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="A wide panel that shows your words as you speak." TextWrapping="Wrap" />
-                                            <Border Width="400" MinHeight="96" Background="{ThemeResource BrandSidebarBgBrush}" CornerRadius="18" Padding="14">
-                                                <StackPanel Spacing="{StaticResource BrandSpacingS}"><Grid><TextBlock Foreground="{ThemeResource BrandTextPrimaryBrush}" Style="{StaticResource BrandRowLabelStyle}" Text="Listening" /><TextBlock HorizontalAlignment="Right" Foreground="{ThemeResource BrandTextSecondaryBrush}" FontFamily="Consolas" Text="00:12" /></Grid><Border Background="{ThemeResource BrandCardBgBrush}" CornerRadius="10" Padding="12"><TextBlock Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="the quarterly numbers came in" TextWrapping="Wrap" /></Border></StackPanel>
-                                            </Border>
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE707;" />
+                                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Recording pill position" TextWrapping="Wrap" />
+                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Where the pill floats while you dictate." TextWrapping="Wrap" />
                                         </StackPanel>
-                                    </RadioButton>
+                                        <Border Grid.Column="2" CornerRadius="18" Background="{ThemeResource BrandAccentLightBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="3" VerticalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                                <Button x:Name="TopPositionSegmentButton" Click="TopPositionSegmentButton_Click" Content="Top" AutomationProperties.Name="Top. Shows the recording pill at the top of the active display." Style="{StaticResource BrandSegmentedButtonStyle}" />
+                                                <Button x:Name="BottomPositionSegmentButton" Click="BottomPositionSegmentButton_Click" Content="Bottom" AutomationProperties.Name="Bottom. Shows the recording pill at the bottom of the active display." Style="{StaticResource BrandSegmentedButtonStyle}" />
+                                            </StackPanel>
+                                        </Border>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                            <Border x:Name="AppearanceSection" Tag="settings-appearance" Padding="20" Style="{StaticResource BrandSectionCardStyle}">
+                                <StackPanel Spacing="{StaticResource BrandSpacingM}">
                                     <StackPanel x:Name="AppearanceEyebrow" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center"><FontIcon x:Name="AppearanceEyebrowGlyph" Style="{StaticResource BrandSectionEyebrowGlyphStyle}" Glyph="{x:Bind SettingsAppearanceNavGlyph.Glyph, Mode=OneTime}" /><TextBlock Style="{StaticResource BrandSectionEyebrowStyle}" Text="Appearance" /></StackPanel>
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE771;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Theme" TextWrapping="Wrap" /><ItemsControl x:Name="ThemeComboBox" HorizontalAlignment="Stretch" TabFocusNavigation="Once"><ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="{StaticResource BrandSpacingS}" /></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate><RadioButton GroupName="PillTheme" Checked="ThemeCardChecked" Style="{StaticResource BrandSelectableCardStyle}" IsChecked="{Binding IsSelected, Mode=TwoWay}" ContentTemplate="{StaticResource BrandSelectableChoiceTemplate}" Content="{Binding}" /></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></Grid>
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE707;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Recording pill position" TextWrapping="Wrap" /><ItemsControl x:Name="OverlayPositionComboBox" HorizontalAlignment="Stretch" TabFocusNavigation="Once"><ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="{StaticResource BrandSpacingS}" /></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate><RadioButton GroupName="PillOverlayPosition" Checked="AppearanceCardChecked" Style="{StaticResource BrandSelectableCardStyle}" IsChecked="{Binding IsSelected, Mode=TwoWay}" ContentTemplate="{StaticResource BrandSelectableChoiceTemplate}" Content="{Binding}" /></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></Grid>
+                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE771;" />
+                                        <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}" VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Theme" TextWrapping="Wrap" />
+                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Choose how EnviousWispr looks." TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <Border Grid.Column="2" CornerRadius="18" Background="{ThemeResource BrandAccentLightBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="3" VerticalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                                <Button x:Name="SystemThemeSegmentButton" Click="SystemThemeSegmentButton_Click" Content="System" AutomationProperties.Name="Use Windows setting. Follows the current Windows light or dark setting." Style="{StaticResource BrandSegmentedButtonStyle}" />
+                                                <Button x:Name="LightThemeSegmentButton" Click="LightThemeSegmentButton_Click" Content="Light" AutomationProperties.Name="Light. Uses the light EnviousWispr palette." Style="{StaticResource BrandSegmentedButtonStyle}" />
+                                                <Button x:Name="DarkThemeSegmentButton" Click="DarkThemeSegmentButton_Click" Content="Dark" AutomationProperties.Name="Dark. Uses the dark EnviousWispr palette." Style="{StaticResource BrandSegmentedButtonStyle}" />
+                                            </StackPanel>
+                                        </Border>
+                                    </Grid>
                                     <Grid ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE7E8;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><StackPanel Background="{ThemeResource BrandHitTestBrush}" Spacing="{StaticResource BrandSpacingXs}" Tapped="SettingRow_Tapped"><TextBlock x:Name="StartAtLoginToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Start EnviousWispr when you sign in" TextWrapping="Wrap" /><ToggleSwitch AutomationProperties.LabeledBy="{x:Bind StartAtLoginToggleLabel, Mode=OneTime}" HorizontalAlignment="Left" x:Name="StartAtLoginToggle" AutomationProperties.HelpText="Starts EnviousWispr automatically when you sign in to Windows." Style="{StaticResource BrandToggleSwitchStyle}" Toggled="StartAtLoginToggle_Toggled" /></StackPanel><TextBlock x:Name="StartAtLoginStatusText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" Text="Checking Windows startup settings…" TextWrapping="Wrap" /><Button x:Name="OpenStartupSettingsButton" AutomationProperties.HelpText="Opens the Windows Startup Apps page, where apps turned off in Windows Settings or Task Manager can be turned back on." Click="OpenStartupSettingsButton_Click" Content="Open Windows startup settings" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" /></StackPanel></Grid>
                                 </StackPanel>
                             </Border>

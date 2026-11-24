@@ -2119,58 +2119,49 @@ public sealed partial class DesignSystemTokenTests
         var markup = File.ReadAllText(Path.Combine(root, "MainWindow.xaml"));
         var code = File.ReadAllText(Path.Combine(root, "MainWindow.xaml.cs"));
 
-        // Both choice controls must report a selection at all. An unwired RadioButton changes the
-        // screen through its binding and tells no one, which is precisely the original defect.
-        foreach (var group in new[] { "PillTheme", "PillOverlayPosition" })
+        foreach (var buttonName in new[]
+                 {
+                     "SystemThemeSegmentButton",
+                     "LightThemeSegmentButton",
+                     "DarkThemeSegmentButton",
+                     "TopPositionSegmentButton",
+                     "BottomPositionSegmentButton",
+                 })
         {
-            var button = RadioButtonInGroup(group).Match(markup);
-            Assert.True(button.Success, $"No radio button found in the {group} group.");
-            // NOT Contains("Checked=\"") - every one of these carries IsChecked="{Binding ...}",
-            // and that substring satisfies a naive search, so the check passed with the wiring
-            // deliberately removed. The handler attribute has to be matched as its own attribute.
             Assert.True(
-                CheckedHandler().IsMatch(button.Value),
-                $"The {group} choice changes the window and reports it to nothing, so it cannot be "
-                    + "kept. Appearance has no Save button to fall back on.");
+                Regex.IsMatch(markup, $@"x:Name=""{buttonName}""[^>]*Click=""\w+"""),
+                $"{buttonName} has no Click handler, so choosing it would not be saved.");
         }
 
-        // Every handler those controls name must reach the one method that writes.
-        var handlers = RadioButtonInGroup("Pill(Theme|OverlayPosition)").Matches(markup)
-            .Select(match => CheckedHandler().Match(match.Value).Groups[1].Value)
-            .Where(name => name.Length > 0)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-
-        Assert.True(handlers.Length >= 1, "No Checked handlers found on the Appearance choices.");
-
-        foreach (var handler in handlers)
+        foreach (var cardName in new[] { "CapsulePillButton", "LevelRailPillButton", "ReadingWellPillButton" })
         {
-            var body = HandlerBody(handler).Match(code);
-            Assert.True(body.Success, $"{handler} is named in the markup and does not exist.");
             Assert.True(
-                body.Value.Contains("PersistAppearanceChoicesAsync", StringComparison.Ordinal),
-                $"{handler} changes the window without keeping the choice.");
+                Regex.IsMatch(markup, $@"x:Name=""{cardName}""[^>]*Checked=""PillStyleCardChecked"""),
+                $"{cardName} does not report its check to PillStyleCardChecked.");
         }
 
-        // And the method they reach must hand the choice to the presenter, whose appearance write
-        // is proven by behaviour (SettingsPresenterTests: three fields written, nothing else touched)
-        // rather than by reading this window's source. This wiring check is what the window still
-        // owes: that the handler reaches the write at all.
+        var setTheme = HandlerBody("SetThemeSelection").Match(code);
+        Assert.True(setTheme.Success && setTheme.Value.Contains("PersistAppearanceChoicesAsync", StringComparison.Ordinal));
+        var setPosition = HandlerBody("SetOverlayPositionSelection").Match(code);
+        Assert.True(setPosition.Success && setPosition.Value.Contains("PersistAppearanceChoicesAsync", StringComparison.Ordinal));
+        var pillStyle = HandlerBody("PillStyleCardChecked").Match(code);
+        Assert.True(pillStyle.Success && pillStyle.Value.Contains("PersistRecordingPillSelectionAsync", StringComparison.Ordinal));
+
         var persist = HandlerBody("PersistAppearanceChoicesAsync").Match(code);
         Assert.True(persist.Success, "PersistAppearanceChoicesAsync does not exist.");
         Assert.True(
             persist.Value.Contains("SaveAppearanceAsync", StringComparison.Ordinal),
-            "PersistAppearanceChoicesAsync does not hand the choice to the presenter, so an appearance "
-                + "chosen without a Save button is lost on the next launch.");
+            "PersistAppearanceChoicesAsync does not hand the choice to the presenter.");
 
-        // AND THE SNAPSHOT IT HANDS OVER IS READ FROM THE CONTROLS, each one. A snapshot built from a
-        // default instead of a selection would reach the presenter and be written faithfully.
-        foreach (var reader in new[] { "ThemeChoices", "OverlayPositionChoices", "PillDesignWithoutWordsFromControls" })
+        foreach (var reader in new[] { "_selectedThemeIndex", "_selectedOverlayPositionIndex", "PillDesignWithoutWordsFromControls" })
         {
             Assert.True(
                 persist.Value.Contains(reader, StringComparison.Ordinal),
                 $"PersistAppearanceChoicesAsync does not read {reader}, so that choice on screen is not the one saved.");
         }
+
+        var persistPill = HandlerBody("PersistRecordingPillSelectionAsync").Match(code);
+        Assert.True(persistPill.Success && persistPill.Value.Contains("SaveRecordingPillSelectionAsync", StringComparison.Ordinal));
     }
 
     private static Regex RadioButtonInGroup(string group) =>
