@@ -51,6 +51,20 @@ public sealed class PrivacySafeObservabilityTests
     }
 
     [Fact]
+    public void FreshInstallDefaultsUsageMetricsAndCrashReportsToOn()
+    {
+        Assert.True(ObservabilityPreferences.Default.LocalDiagnosticsEnabled);
+        Assert.Equal(14, ObservabilityPreferences.Default.DiagnosticRetentionDays);
+        Assert.True(ObservabilityPreferences.Default.ShareAnonymousTelemetry);
+        Assert.True(ObservabilityPreferences.Default.ShareUsageMetrics);
+        Assert.True(ObservabilityPreferences.Default.SendCrashReports);
+        Assert.True(AppSettings.Default.Observability?.ShareAnonymousTelemetry);
+        Assert.True(AppSettings.Default.Observability?.SendCrashReports);
+        Assert.True(AppSettings.FreshInstall.Observability?.ShareAnonymousTelemetry);
+        Assert.True(AppSettings.FreshInstall.Observability?.SendCrashReports);
+    }
+
+    [Fact]
     public void InvalidEnumValuesCannotReachThePrivacySafeRecord()
     {
         var record = PrivacySafeDiagnosticRecord.From(new AppLogEntry(

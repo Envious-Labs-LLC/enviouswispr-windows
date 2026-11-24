@@ -264,6 +264,8 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private readonly bool _telemetryAvailable;
 
+    private readonly bool _launchedCrashReports;
+
     // Whether this copy came from the Microsoft Store; an unpackaged copy has nothing to check.
     private readonly bool _storeInstalled;
 
@@ -333,6 +335,7 @@ public sealed partial class MainWindow : Window, IDisposable
         _settings = settings;
         _session = session;
         _telemetryAvailable = launch.TelemetryAvailable;
+        _launchedCrashReports = launch.LaunchedCrashReports;
         var settingsLoadStatus = launch.SettingsLoadStatus;
         var releaseIdentity = launch.ReleaseIdentity;
         _storeInstalled = launch.StoreInstalled;
@@ -1558,13 +1561,14 @@ public sealed partial class MainWindow : Window, IDisposable
             CopyInsteadOfPasteToggle.IsOn,
             LocalDiagnosticsToggle.IsOn,
             DiagnosticRetentionDaysBox.Value,
-            ShareTelemetryToggle.IsOn,
-            _telemetryAvailable,
+            ShareUsageMetricsToggle.IsOn,
+            TelemetryAvailable: true,
             (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id,
             PasteLastHotkeyTextBox.Text,
             CopyLastHotkeyTextBox.Text,
             CasualModeToggle?.IsOn == true,
-            SelectedLivePreviewEngineIndex());
+            SelectedLivePreviewEngineIndex(),
+            SendCrashReportsToggle.IsOn);
 
         var outcome = await _session.Settings.SaveGeneralAsync(input).ConfigureAwait(true);
         switch (outcome.Status)
@@ -1612,7 +1616,12 @@ public sealed partial class MainWindow : Window, IDisposable
         PlayRecordingSoundsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         CopyInsteadOfPasteToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
         LocalDiagnosticsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
-        ShareTelemetryToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        ShareUsageMetricsToggle.Toggled += (_, _) => _ = TriggerAutoSaveAsync();
+        SendCrashReportsToggle.Toggled += (_, _) =>
+        {
+            UpdateDiagnosticsStatusText(SendCrashReportsToggle.IsOn);
+            _ = TriggerAutoSaveAsync();
+        };
 
         WhisperLanguageComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
         EnglishSpellingComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
@@ -5102,13 +5111,9 @@ public sealed partial class MainWindow : Window, IDisposable
             var observability = _settings.Observability ?? ObservabilityPreferences.Default;
             LocalDiagnosticsToggle.IsOn = observability.LocalDiagnosticsEnabled;
             DiagnosticRetentionDaysBox.Value = observability.DiagnosticRetentionDays;
-            ShareTelemetryToggle.IsEnabled = _telemetryAvailable;
-            ShareTelemetryToggle.IsOn = _telemetryAvailable && observability.ShareAnonymousTelemetry;
-            SetLiveText(
-                DiagnosticsStatusText,
-    _telemetryAvailable
-                    ? "Anonymous sharing is off until you explicitly enable and save it. Local exports and uploads contain only the typed fields listed here."
-                    : "No telemetry upload channel is configured in this development build. Local content-free diagnostics can still be retained, exported, or disabled.");
+            ShareUsageMetricsToggle.IsOn = observability.ShareAnonymousTelemetry;
+            SendCrashReportsToggle.IsOn = observability.SendCrashReports;
+            UpdateDiagnosticsStatusText(observability.SendCrashReports);
             RefreshReusableUserDataViews();
             UpdateHistoryStatusCards();
         }
@@ -5122,6 +5127,15 @@ public sealed partial class MainWindow : Window, IDisposable
         _ = RefreshPolishModelChoicesAsync(
             _settings.Preferences.Polish.Provider,
             chooseDefault: false);
+    }
+
+    private void UpdateDiagnosticsStatusText(bool storedSendCrashReports)
+    {
+        SetLiveText(
+            DiagnosticsStatusText,
+            storedSendCrashReports != _launchedCrashReports
+                ? "Takes effect when EnviousWispr restarts"
+                : "We never collect your audio, dictated or transcribed text, history, snippets, dictionary words, API keys, or any text on your screen.");
     }
 
     /// <summary>

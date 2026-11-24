@@ -75,9 +75,29 @@ public sealed class JsonSettingsStore : ISettingsStore
                 17 => MigrateFromV17(json),
                 18 => MigrateFromV18(json),
                 19 => MigrateFromV19(json),
+                20 => MigrateFromV20(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
+            // A FILE WRITTEN BEFORE SEPARATE USAGE METRICS AND CRASH REPORTS EXISTED stored a single
+            // shareAnonymousTelemetry boolean. When sendCrashReports was not yet present in the file,
+            // carry that prior remote-sharing choice into SendCrashReports so an existing user who
+            // had opted out of remote telemetry stays opted out of crash reports on upgrade (#40).
+            if (settings is { Observability: not null } &&
+                schemaVersion < AppSettings.CurrentSchemaVersion &&
+                document.RootElement.TryGetProperty("observability", out var observabilityElement) &&
+                observabilityElement.ValueKind == JsonValueKind.Object &&
+                !observabilityElement.TryGetProperty("sendCrashReports", out _))
+            {
+                settings = settings with
+                {
+                    Observability = settings.Observability with
+                    {
+                        SendCrashReports = settings.Observability.ShareAnonymousTelemetry,
+                    },
+                };
+            }
+
             // A FILE FROM BEFORE THE LAST-DICTATION SHORTCUTS gains their defaults on load; one that already gave
             // Alt+Shift+Z to another key keeps its own binding rather than being refused and reset. Ref: #206.
             if (settings is { Preferences.Dictation: not null } && schemaVersion < LastDictationShortcutsSchema)
@@ -504,6 +524,19 @@ public sealed class JsonSettingsStore : ISettingsStore
     /// Absent LivePreviewEngine deserializes to Parakeet, matching the workhorse default (#127).
     /// </remarks>
     private static AppSettings? MigrateFromV19(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+    }
+
+    /// <summary>Takes a settings file written before separate PostHog usage metrics and Sentry crash reports existed (#40).</summary>
+    /// <remarks>
+    /// Preserves any explicit user preference stored in the existing profile while defaulting the new
+    /// SendCrashReports switch to true, matching macOS PrivacySettingsView.
+    /// </remarks>
+    private static AppSettings? MigrateFromV20(string json)
     {
         var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
         return legacy is null

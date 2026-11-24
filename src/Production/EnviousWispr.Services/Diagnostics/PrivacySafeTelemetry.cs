@@ -38,6 +38,31 @@ public static class TelemetryEndpointPolicy
         endpoint = parsed;
         return true;
     }
+
+    public static bool TryResolveConfiguredEndpoint(
+        out Uri? endpoint,
+        Func<string, string?>? getEnvironmentVariable = null,
+        IEnumerable<KeyValuePair<string, string?>>? allEnvironmentVariables = null)
+    {
+        var envReader = getEnvironmentVariable ?? Environment.GetEnvironmentVariable;
+        var allowLoopbackTelemetry = string.Equals(
+            envReader("ENVIOUSWISPR_UAT_ALLOW_LOOPBACK_TELEMETRY"),
+            "1",
+            StringComparison.Ordinal);
+        var suppressed = ObservabilityKeyResolver.IsTelemetryExplicitlyDisabled(envReader) ||
+            (!allowLoopbackTelemetry &&
+             ObservabilityKeyResolver.IsTelemetrySuppressed(envReader, allEnvironmentVariables));
+        if (suppressed)
+        {
+            endpoint = null;
+            return false;
+        }
+
+        return TryNormalize(
+            envReader("ENVIOUSWISPR_TELEMETRY_ENDPOINT"),
+            allowLoopbackTelemetry,
+            out endpoint);
+    }
 }
 
 public sealed class HttpPrivacySafeTelemetryTransport : IPrivacySafeTelemetryTransport
@@ -93,6 +118,7 @@ public sealed class PrivacySafeObservabilityLogger : IAppLogger, IAsyncDisposabl
     private readonly CancellationTokenSource _lifetime = new();
     private readonly Task? _sender;
     private volatile bool _shareAnonymousTelemetry;
+    private volatile Action<PrivacySafeDiagnosticRecord>? _recordObserver;
 
     public PrivacySafeObservabilityLogger(
         JsonLineFileLogger localLogger,
@@ -113,6 +139,9 @@ public sealed class PrivacySafeObservabilityLogger : IAppLogger, IAsyncDisposabl
 
     public bool TelemetryAvailable => _transport is not null;
 
+    public void AttachObserver(Action<PrivacySafeDiagnosticRecord>? observer) =>
+        _recordObserver = observer;
+
     public void Configure(ObservabilityPreferences preferences, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(preferences);
@@ -128,6 +157,18 @@ public sealed class PrivacySafeObservabilityLogger : IAppLogger, IAsyncDisposabl
         if (_shareAnonymousTelemetry)
         {
             _telemetryQueue.Writer.TryWrite(record);
+        }
+
+        if (_recordObserver is { } observer)
+        {
+            try
+            {
+                observer(record);
+            }
+            catch
+            {
+                // External telemetry observation is a limb and cannot affect product logging.
+            }
         }
     }
 

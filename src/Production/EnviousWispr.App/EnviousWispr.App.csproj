@@ -55,6 +55,9 @@
   <ItemGroup>
     <Manifest Include="$(ApplicationManifest)" />
     <AssemblyMetadata Include="EnviousWisprReleaseChannel" Value="$(EnviousWisprReleaseChannel)" />
+    <AssemblyMetadata Include="EnviousWisprPostHogApiKey" Value="$(EnviousWisprPostHogApiKey)" Condition="'$(EnviousWisprPostHogApiKey)' != ''" />
+    <AssemblyMetadata Include="EnviousWisprPostHogHost" Value="$(EnviousWisprPostHogHost)" Condition="'$(EnviousWisprPostHogHost)' != ''" />
+    <AssemblyMetadata Include="EnviousWisprSentryDsn" Value="$(EnviousWisprSentryDsn)" Condition="'$(EnviousWisprSentryDsn)' != ''" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(EnviousWisprPackaged)' == 'true'">

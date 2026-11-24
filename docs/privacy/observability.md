@@ -10,16 +10,13 @@ JSONL writer, exporter, or HTTP transport.
 - Local content-free diagnostics default on with 14-day retention. The user can choose 1–90 days or turn
   new local writes off. Expired records are pruned at startup/settings application even when local writes
   are disabled.
-- Anonymous operational sharing defaults off. It begins only after the user explicitly enables and saves
-  it and only when the build has a configured endpoint that passes the endpoint policy.
+- Anonymous usage metrics (PostHog) and crash reports (Sentry) default ON on fresh installs (`ShareAnonymousTelemetry = true`, `SendCrashReports = true`), matching macOS `PrivacySettingsView` (founder decision 2026-11-24). Users can opt out anytime in Settings (`Share usage metrics` is live-mutable; `Send crash reports` is launch-locked and takes effect when EnviousWispr restarts). Telemetry toggles are never part of onboarding.
 - Production telemetry endpoints must use HTTPS, contain no URL credentials, query, or fragment. Plain
-  HTTP is accepted only for an explicitly enabled loopback UAT process.
+  HTTP is accepted only for an explicitly enabled loopback UAT process. Missing PostHog or Sentry keys cleanly no-op with zero startup errors, and automated UAT or `ENVIOUSWISPR_DISABLE_TELEMETRY=1` suppresses remote sends automatically.
+- Windows events are unmistakably differentiated from macOS and Android: PostHog stamps `app = "enviouswispr-windows"`, `platform = "windows"`, `$os = "Windows"`, `os_version`, `app_version`, `release_channel`, `packaging`, `environment`, `process_launch_id`, and `telemetry_policy_version = 6`; Sentry stamps `release = "EnviousLabsLLC.EnviousWispr@<version>"`, `platform = "csharp"`, `contexts.os = { name: "Windows", version, build }`, and `app.platform = "windows"`.
 - Consent is machine-local. Portable profiles never import or export local-diagnostic or telemetry choices.
-- Turning sharing off stops new records from entering the bounded upload queue. Telemetry failure, timeout,
+- Turning usage metrics off stops new records and drops the in-memory PostHog upload queue immediately. Telemetry failure, timeout,
   queue pressure, or shutdown cannot block dictation, delivery, settings, or app exit.
-- Any network receiver inherently observes connection metadata such as source IP and TLS timing even though
-  those values are not product fields. Phase 22 must define server-side minimization, access, and retention
-  before a production endpoint is approved.
 
 ## Allowed data dictionary
 
@@ -77,11 +74,6 @@ code. Windows may separately create operating-system crash records outside this 
 
 ## Review and release gate
 
-Automated redaction tests deliberately inject transcript-shaped content into the raw source and require it
-to disappear from export. The loopback UAT requires zero requests before consent and exactly one typed
+Automated redaction tests deliberately inject transcript-shaped content, Windows and macOS user paths, API keys, hex tokens, and emails into the diagnostic and telemetry pipelines and require them to be scrubbed both at write time and in `beforeSend`. The loopback UAT requires zero requests before consent and exactly one typed
 request after consent. Any future field addition, crash SDK, endpoint, install identifier, sampling scheme,
 or correlation token requires a new privacy review and matching allowlist/redaction tests before release.
-
-No production telemetry endpoint is embedded in the current development build. Phase 22 owns the vetted
-beta endpoint and operating policy; the Phase 18 implementation intentionally remains unavailable for
-upload until that input exists.

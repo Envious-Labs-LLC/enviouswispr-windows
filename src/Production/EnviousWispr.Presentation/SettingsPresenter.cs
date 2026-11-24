@@ -106,7 +106,8 @@ public sealed record GeneralSettingsInput(
     string PasteLastShortcut,
     string CopyLastShortcut,
     bool CasualMode = false,
-    int LivePreviewEngineIndex = 0);
+    int LivePreviewEngineIndex = 0,
+    bool SendCrashReports = true);
 
 /// <summary>Which shortcut field a General save found wanting, for the window to put the focus in.</summary>
 public enum GeneralShortcutField
@@ -332,7 +333,8 @@ public sealed class SettingsPresenter : IDisposable
                 ObservabilityPreferences.Default.DiagnosticRetentionDays,
                 RetentionDays.DiagnosticMinimum,
                 RetentionDays.DiagnosticMaximum),
-            input.TelemetryAvailable && input.ShareTelemetry);
+            input.TelemetryAvailable && input.ShareTelemetry,
+            input.SendCrashReports);
         var preferences = new UserPreferences(
             dictation,
             polish,

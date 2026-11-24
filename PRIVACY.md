@@ -35,10 +35,7 @@ document is authoritative. A build gate compares it against the record that cros
 field cannot ship undisclosed. The paragraph above is the plain-language summary of the same promise. Local diagnostics
 default on with a 14-day retention setting that the user can disable or change from 1–90 days.
 
-Anonymous operational sharing defaults off and remains unavailable until an approved HTTPS endpoint and
-server policy exist. Saved consent is required before queue admission. A network service can inherently see
-connection metadata such as source IP and TLS timing; server minimization, access, retention, deletion,
-incident response, sampling, region, and subprocessors must be approved and disclosed before activation.
+Anonymous usage metrics (PostHog) and crash reports (Sentry) default on for fresh installs (`ShareAnonymousTelemetry = true`, `SendCrashReports = true`), matching macOS `PrivacySettingsView`, and can be turned off anytime in Settings (`Share usage metrics` applies immediately; `Send crash reports` takes effect on the next launch). Both pipelines run a dual-stage privacy sanitizer that strips user profile paths (`C:\Users\<name>\...` and `/Users/<name>/...`), strings over 100 characters, API keys, hex tokens, email addresses, and `server_name`, with IP inference disabled (`sdk.settings.infer_ip = "never"`).
 
 ## User control and deletion
 
