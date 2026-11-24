@@ -824,6 +824,357 @@ public sealed class PreviewModelBenchEvaluationTests
         }
     }
 
+    [Fact]
+    public void MacCorpusManifestLoaderParsesSealedCasesPrimaryCasesAndStressManifestsWithLanguageAndMaxFixturesFilters()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "mac-corpus-test-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            // 1. Mac intl-sealed-2026-11 cases.sealed.jsonl (uses voice_text, resolves <dir>/wav/<id>.wav)
+            var enSealedDir = Directory.CreateDirectory(Path.Combine(root, "speech", "en-sealed")).FullName;
+            var enWavDir = Directory.CreateDirectory(Path.Combine(enSealedDir, "wav")).FullName;
+            WriteMinimalPcmWaveFile(Path.Combine(enWavDir, "SB-00000.wav"));
+            WriteMinimalPcmWaveFile(Path.Combine(enWavDir, "SB-00001.wav"));
+            var sealedPath = Path.Combine(enSealedDir, "cases.sealed.jsonl");
+            File.WriteAllText(
+                sealedPath,
+                """
+                {"id": "SB-00000", "lang": "en", "shape": "self_correction", "voice_text": "Božidar, the couple wants the group photos before dinner—sorry, before the speeches.", "expected_output": "Bositor, the couple wants the group photos before the speeches."}
+                {"id": "SB-00001", "lang": "en", "shape": "self_correction", "voice_text": "Aurel said he'd call the owner about the trailer.", "expected_output": "Orl said he'd call the owner."}
+                """);
+
+            var sealedFixtures = PreviewModelBenchEvaluation.LoadCorpusFixtures(sealedPath);
+            Assert.Equal(2, sealedFixtures.Count);
+            Assert.Equal("SB-00000.wav", sealedFixtures[0].File);
+            Assert.Equal("en", sealedFixtures[0].Language);
+            Assert.Contains("before dinner", sealedFixtures[0].Reference, StringComparison.Ordinal);
+
+            // 2. Mac intl-sealed-2026-11 cases.jsonl (uses text + id + lang/locale, resolves <dir>/wav/<id>.wav)
+            var dePrimaryDir = Directory.CreateDirectory(Path.Combine(root, "speech", "de-primary")).FullName;
+            var deWavDir = Directory.CreateDirectory(Path.Combine(dePrimaryDir, "wav")).FullName;
+            WriteMinimalPcmWaveFile(Path.Combine(deWavDir, "de-20260815-S-clean-0000-0.wav"));
+            var deCasesPath = Path.Combine(dePrimaryDir, "cases.jsonl");
+            File.WriteAllText(
+                deCasesPath,
+                """
+                {"id": "de-20260815-S-clean-0000-0", "locale": "de-DE", "lang": "de", "bucket": "clean", "text": "Ich schicke Anna nach dem letzten Besuch noch ein kurzes Update."}
+                """);
+
+            var zhPrimaryDir = Directory.CreateDirectory(Path.Combine(root, "speech", "zh-primary")).FullName;
+            var zhWavDir = Directory.CreateDirectory(Path.Combine(zhPrimaryDir, "wav")).FullName;
+            WriteMinimalPcmWaveFile(Path.Combine(zhWavDir, "zh-20260815-S-clean-0000-0.wav"));
+            var zhCasesPath = Path.Combine(zhPrimaryDir, "cases.jsonl");
+            File.WriteAllText(
+                zhCasesPath,
+                """
+                {"id": "zh-20260815-S-clean-0000-0", "locale": "zh-CN", "lang": "zh", "bucket": "clean", "text": "今天上门随访杨洋，血压和睡眠情况都正常。"}
+                """);
+
+            // Directory discovery across speech/ plus --languages and --max-fixtures filters
+            var speechRoot = Path.Combine(root, "speech");
+            var allSpeechFixtures = PreviewModelBenchEvaluation.LoadCorpusFixtures(speechRoot);
+            Assert.Equal(4, allSpeechFixtures.Count);
+
+            var filteredZhDe = PreviewModelBenchEvaluation.LoadCorpusFixtures(
+                speechRoot,
+                languages: ["de-DE", "ZH"]);
+            Assert.Equal(2, filteredZhDe.Count);
+            Assert.Equal(["de", "zh"], filteredZhDe.Select(f => f.Language).ToArray());
+
+            var cappedFixtures = PreviewModelBenchEvaluation.LoadCorpusFixtures(
+                speechRoot,
+                maxFixtures: 2);
+            Assert.Equal(2, cappedFixtures.Count);
+
+            // 3. Mac german-parakeet-stress and lang-stress manifest.jsonl (uses sample_id, reference_text, locale/voice, resolves audio/<sample_id>.wav)
+            var stressDir = Directory.CreateDirectory(Path.Combine(root, "german-parakeet-stress")).FullName;
+            var stressAudioDir = Directory.CreateDirectory(Path.Combine(stressDir, "audio")).FullName;
+            WriteMinimalPcmWaveFile(Path.Combine(stressAudioDir, "std01.wav"));
+            var stressManifestPath = Path.Combine(stressDir, "manifest.jsonl");
+            File.WriteAllText(
+                stressManifestPath,
+                """
+                {"sample_id": "std01", "category": "standard", "reference_text": "Guten Morgen.", "normalized_reference_text": null, "locale": "de-DE", "voice": "de-DE-KatjaNeural"}
+                """);
+
+            var stressFixtures = PreviewModelBenchEvaluation.LoadCorpusFixtures(stressManifestPath);
+            var stressSingle = Assert.Single(stressFixtures);
+            Assert.Equal("std01.wav", stressSingle.File);
+            Assert.Equal("de", stressSingle.Language);
+            Assert.Equal("Guten Morgen.", stressSingle.Reference);
+
+            // lang-stress row without explicit 'locale', inferred from voice / parent directory, with --wav-root override
+            var elStressDir = Directory.CreateDirectory(Path.Combine(root, "lang-stress", "el")).FullName;
+            var customWavRoot = Directory.CreateDirectory(Path.Combine(root, "custom-wav-root")).FullName;
+            WriteMinimalPcmWaveFile(Path.Combine(customWavRoot, "el_std01.wav"));
+            var elManifestPath = Path.Combine(elStressDir, "manifest.jsonl");
+            File.WriteAllText(
+                elManifestPath,
+                """
+                {"sample_id": "el_std01", "category": "standard", "reference_text": "Καλημέρα.", "voice": "el-GR-AthinaNeural", "speech_rate": "default", "duration_seconds": 1.73}
+                """);
+
+            var elFixtures = PreviewModelBenchEvaluation.LoadCorpusFixtures(elManifestPath, wavRoot: customWavRoot);
+            var elSingle = Assert.Single(elFixtures);
+            Assert.Equal("el_std01.wav", elSingle.File);
+            Assert.Equal("el", elSingle.Language);
+            Assert.Equal("Καλημέρα.", elSingle.Reference);
+
+            // Missing WAV file fails closed with InvalidDataException
+            File.Delete(Path.Combine(customWavRoot, "el_std01.wav"));
+            Assert.Throws<InvalidDataException>(() =>
+                PreviewModelBenchEvaluation.LoadCorpusFixtures(elManifestPath, wavRoot: customWavRoot));
+
+            // 4. Existing tools/whisper-uat/fixtures/manifest.json remains the unchanged default
+            var defaultManifestPath = Path.Combine(FindRepositoryRoot(), "tools", "whisper-uat", "fixtures", "manifest.json");
+            var defaultFixtures = PreviewModelBenchEvaluation.LoadCorpusFixtures(defaultManifestPath);
+            Assert.Equal(12, defaultFixtures.Count);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void CjkCharacterErrorRateStripsCjkPunctuationAndSkipsLowercasingForCaselessScripts()
+    {
+        // CJK punctuation stripping: 。、！？「」『』（）【】《》…—–·，；：
+        var zhRef = "「今天上门随访杨洋，血压、睡眠情况都正常！（复诊：【下周二】《备注》…—–·；：）」";
+        var zhHypExact = "『今天上门随访杨洋血压睡眠情况都正常复诊下周二备注』";
+        Assert.Equal(
+            PreviewModelBenchEvaluation.NormalizeCharacters(zhRef, "zh"),
+            PreviewModelBenchEvaluation.NormalizeCharacters(zhHypExact, "zh"));
+        Assert.Equal(0.0, PreviewModelBenchEvaluation.ComputeCharacterErrorRate(zhRef, zhHypExact, "zh"));
+
+        // 1 character substitution out of 10 characters = 0.10 CER
+        var scoredZh = PreviewModelBenchEvaluation.ScoreFixture(
+            "zh-0001.wav",
+            "zh-CN",
+            "今天上门随访杨洋，血压。",
+            "今天上门随访杨洋，血糖！",
+            elapsedMilliseconds: 95,
+            requestedLanguage: "auto",
+            detectedLanguage: "zh",
+            usedFallback: false);
+        Assert.Equal("zh", scoredZh.Language);
+        Assert.Equal("cer", scoredZh.PrimaryMetric);
+        Assert.Equal(10, scoredZh.ReferenceCharacters);
+        Assert.Equal(10, scoredZh.ActualCharacters);
+        Assert.Equal(1, scoredZh.CharacterEditDistance);
+        Assert.Equal(0.1, scoredZh.CharacterErrorRate);
+        Assert.Equal(BenchRubricTier.Experimental, scoredZh.RubricTier);
+        Assert.True(scoredZh.DetectedLanguageMatched);
+
+        // Unspaced CER languages are exactly zh, ja, ko, th
+        foreach (var cerLang in new[] { "zh", "ja", "ko", "th", "zh-CN", "ja-JP" })
+        {
+            Assert.True(PreviewModelBenchEvaluation.UsesCharacterErrorRate(cerLang));
+            Assert.Equal("cer", PreviewModelBenchEvaluation.MetricForLanguage(cerLang));
+        }
+
+        foreach (var werLang in new[] { "en", "de", "fr", "es", "ru", "hi", "ar", "he", "bn", "ta", "te" })
+        {
+            Assert.False(PreviewModelBenchEvaluation.UsesCharacterErrorRate(werLang));
+            Assert.Equal("wer", PreviewModelBenchEvaluation.MetricForLanguage(werLang));
+        }
+
+        // Caseless languages (ja, zh, ko, th, ar, he, hi, bn, ta, te) skip lowercasing; bicameral scripts lowercase
+        foreach (var caseless in new[] { "ja", "zh", "ko", "th", "ar", "he", "hi", "bn", "ta", "te" })
+        {
+            Assert.True(PreviewModelBenchEvaluation.IsCaselessLanguage(caseless));
+            var normalizedCaseless = PreviewModelBenchEvaluation.NormalizeText("API Call 測試!", caseless);
+            Assert.Equal("API Call 測試", normalizedCaseless);
+            Assert.Contains("API", PreviewModelBenchEvaluation.NormalizeWords("API Call", caseless));
+        }
+
+        foreach (var bicameral in new[] { "en", "de", "fr", "ru", "el", "uk" })
+        {
+            Assert.False(PreviewModelBenchEvaluation.IsCaselessLanguage(bicameral));
+            Assert.Equal("api call", PreviewModelBenchEvaluation.NormalizeText("API Call!", bicameral));
+            Assert.Contains("api", PreviewModelBenchEvaluation.NormalizeWords("API Call", bicameral));
+        }
+    }
+
+    [Fact]
+    public void DetectedLanguageMatchRateAndMacRubricTierClassificationRenderInJsonAndMarkdown()
+    {
+        // Rubric thresholds:
+        // WER: Ship < 5%, Experimental 5..15%, Hide > 15%
+        Assert.Equal(BenchRubricTier.Ship, PreviewModelBenchEvaluation.ClassifyRubricTier("de", 0.049));
+        Assert.Equal(BenchRubricTier.Experimental, PreviewModelBenchEvaluation.ClassifyRubricTier("de", 0.05));
+        Assert.Equal(BenchRubricTier.Experimental, PreviewModelBenchEvaluation.ClassifyRubricTier("de", 0.15));
+        Assert.Equal(BenchRubricTier.Hide, PreviewModelBenchEvaluation.ClassifyRubricTier("de", 0.151));
+
+        // CER (zh, ja, ko, th): Ship < 10%, Experimental 10..20%, Hide > 20%
+        Assert.Equal(BenchRubricTier.Ship, PreviewModelBenchEvaluation.ClassifyRubricTier("zh", 0.099));
+        Assert.Equal(BenchRubricTier.Experimental, PreviewModelBenchEvaluation.ClassifyRubricTier("zh", 0.10));
+        Assert.Equal(BenchRubricTier.Experimental, PreviewModelBenchEvaluation.ClassifyRubricTier("ja", 0.20));
+        Assert.Equal(BenchRubricTier.Hide, PreviewModelBenchEvaluation.ClassifyRubricTier("ko", 0.201));
+        Assert.Null(PreviewModelBenchEvaluation.ClassifyRubricTier("en", null));
+
+        // Language subtag normalization and match rate
+        Assert.True(PreviewModelBenchEvaluation.IsDetectedLanguageMatch("de-DE", "de"));
+        Assert.True(PreviewModelBenchEvaluation.IsDetectedLanguageMatch("German", "de-DE"));
+        Assert.True(PreviewModelBenchEvaluation.IsDetectedLanguageMatch("zh_CN", "zh"));
+        Assert.False(PreviewModelBenchEvaluation.IsDetectedLanguageMatch("en", "de"));
+        Assert.False(PreviewModelBenchEvaluation.IsDetectedLanguageMatch("auto", "de"));
+        Assert.False(PreviewModelBenchEvaluation.IsDetectedLanguageMatch(null, "de"));
+
+        var de1 = PreviewModelBenchEvaluation.ScoreFixture(
+            "de-1.wav",
+            "de-DE",
+            "eins zwei drei vier fünf sechs sieben acht neun zehn",
+            "eins zwei drei vier fünf sechs sieben acht neun zehn",
+            elapsedMilliseconds: 80,
+            requestedLanguage: "auto",
+            detectedLanguage: "de-DE",
+            usedFallback: false);
+        var de2 = PreviewModelBenchEvaluation.ScoreFixture(
+            "de-2.wav",
+            "de",
+            "eins zwei drei vier fünf sechs sieben acht neun zehn",
+            "eins zwei drei vier fünf sechs sieben acht neun zehn",
+            elapsedMilliseconds: 85,
+            requestedLanguage: "auto",
+            detectedLanguage: "en",
+            usedFallback: false);
+        var zh1 = PreviewModelBenchEvaluation.ScoreFixture(
+            "zh-1.wav",
+            "zh",
+            "今天上门随访杨洋血压和睡眠情况都正常提醒",
+            "今天上门随访杨洋血压和睡眠情况都正常提醒",
+            elapsedMilliseconds: 90,
+            requestedLanguage: "auto",
+            detectedLanguage: "zh-CN",
+            usedFallback: false);
+
+        var summary = PreviewModelBenchEvaluation.SummarizeLanguageMetrics([de1, de2, zh1]);
+        Assert.Equal(0.0, summary.WordErrorRateByLanguage["de"]);
+        Assert.Equal(0.0, summary.CharacterErrorRateByLanguage["zh"]);
+        Assert.Equal(0.5, summary.DetectedLanguageMatchRateByLanguage["de"]);
+        Assert.Equal(1.0, summary.DetectedLanguageMatchRateByLanguage["zh"]);
+        Assert.Equal(Math.Round(2.0 / 3.0, 3), summary.DetectedLanguageMatchRate);
+        Assert.Equal(BenchRubricTier.Ship, summary.RubricTierByLanguage["de"]);
+        Assert.Equal(BenchRubricTier.Ship, summary.RubricTierByLanguage["zh"]);
+        Assert.Equal(BenchRubricTier.Ship, summary.RubricTier);
+
+        var candidateRow = new CandidateResult(
+            Model: $"{WhisperModelIds.Final} q5_0",
+            Provider: "Cuda",
+            Error: null,
+            ColdStartMilliseconds: 420,
+            MedianPassMilliseconds: null,
+            PassesOverCadence: null,
+            Passes: 0,
+            WordErrorRateByLanguage: summary.WordErrorRateByLanguage,
+            WordErrorRate: summary.WordErrorRate,
+            PeakWorkingSetMegabytes: 612,
+            VideoMemoryMegabytes: 980,
+            CardLoadBeforePercent: 5,
+            Fixtures: [de1, de2, zh1],
+            PassDetails: [],
+            Role: "final",
+            IntraOpThreads: 8,
+            CpuFallbackThreads: 8,
+            WorkerPriority: "Normal",
+            RequestedLanguage: "auto",
+            DetectedLanguage: "de-DE,en,zh-CN",
+            PrimaryFixtureRows: 3,
+            CharacterErrorRateByLanguage: summary.CharacterErrorRateByLanguage,
+            CharacterErrorRate: summary.CharacterErrorRate,
+            DetectedLanguageMatchRateByLanguage: summary.DetectedLanguageMatchRateByLanguage,
+            DetectedLanguageMatchRate: summary.DetectedLanguageMatchRate,
+            RubricTierByLanguage: summary.RubricTierByLanguage,
+            RubricTier: summary.RubricTier);
+
+        var json = JsonSerializer.Serialize(candidateRow);
+        Assert.Contains("\"CharacterErrorRateByLanguage\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"DetectedLanguageMatchRateByLanguage\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"RubricTierByLanguage\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"Ship\"", json, StringComparison.Ordinal);
+
+        var markdown = PreviewModelBenchEvaluation.FormatMarkdownReport([candidateRow], []);
+        Assert.Contains("CER all", markdown, StringComparison.Ordinal);
+        Assert.Contains("CER zh", markdown, StringComparison.Ordinal);
+        Assert.Contains("lang match de", markdown, StringComparison.Ordinal);
+        Assert.Contains("50.0%", markdown, StringComparison.Ordinal);
+        Assert.Contains("rubric tier", markdown, StringComparison.Ordinal);
+        Assert.Contains("tier de", markdown, StringComparison.Ordinal);
+        Assert.Contains("tier zh", markdown, StringComparison.Ordinal);
+        Assert.Contains("| Ship |", markdown, StringComparison.Ordinal);
+        Assert.Contains("| CER |", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseCommandLineSupportsAccuracyOnlyCorpusManifestWavRootMaxFixturesAndLanguages()
+    {
+        var repoRoot = FindRepositoryRoot();
+        var options = PreviewModelBenchEvaluation.ParseCommandLine(
+            [
+                "--role", "final",
+                "--accuracy-only",
+                "--corpus-manifest", @"C:\benchmarks\mac-corpus\speech\de-primary\cases.jsonl",
+                "--wav-root", @"C:\benchmarks\mac-corpus\speech\de-primary\wav",
+                "--max-fixtures", "25",
+                "--languages", "de-DE, zh-CN, en",
+                "--providers", "cuda",
+                "--only", "parakeet",
+                "--allow-busy-card",
+            ],
+            defaultRepositoryRoot: repoRoot);
+
+        Assert.Equal(BenchRole.Final, options.Role);
+        Assert.True(options.AccuracyOnly);
+        Assert.True(options.AllowBusyCard);
+        Assert.Equal(@"C:\benchmarks\mac-corpus\speech\de-primary\cases.jsonl", options.CorpusManifestPath);
+        Assert.Equal(@"C:\benchmarks\mac-corpus\speech\de-primary\wav", options.WavRoot);
+        Assert.Equal(25, options.MaxFixtures);
+        Assert.Equal(["de", "zh", "en"], options.Languages);
+        Assert.Equal([RuntimeProviderKind.Cuda], options.Providers);
+        Assert.Equal("parakeet", options.Only);
+        Assert.False(options.ShowHelp);
+
+        var helpOptions = PreviewModelBenchEvaluation.ParseCommandLine(["--help"], defaultRepositoryRoot: repoRoot);
+        Assert.True(helpOptions.ShowHelp);
+        Assert.Contains("--corpus-manifest", PreviewModelBenchEvaluation.FormatHelpText(), StringComparison.Ordinal);
+        Assert.Contains("--accuracy-only", PreviewModelBenchEvaluation.FormatHelpText(), StringComparison.Ordinal);
+
+        Assert.Throws<ArgumentException>(() =>
+            PreviewModelBenchEvaluation.ParseCommandLine(["--max-fixtures", "0"], defaultRepositoryRoot: repoRoot));
+        Assert.Throws<ArgumentException>(() =>
+            PreviewModelBenchEvaluation.ParseCommandLine(["--languages", "auto"], defaultRepositoryRoot: repoRoot));
+        Assert.Throws<ArgumentException>(() =>
+            PreviewModelBenchEvaluation.ParseCommandLine(["--corpus-manifest"], defaultRepositoryRoot: repoRoot));
+    }
+
+    private static void WriteMinimalPcmWaveFile(string path, int sampleCount = 1600)
+    {
+        using var stream = File.Create(path);
+        using var writer = new BinaryWriter(stream);
+        var dataSize = sampleCount * sizeof(short);
+        writer.Write("RIFF"u8);
+        writer.Write(36 + dataSize);
+        writer.Write("WAVE"u8);
+        writer.Write("fmt "u8);
+        writer.Write(16);
+        writer.Write((short)1); // PCM
+        writer.Write((short)1); // Mono
+        writer.Write(16_000);   // 16 kHz
+        writer.Write(16_000 * sizeof(short));
+        writer.Write((short)sizeof(short));
+        writer.Write((short)16);
+        writer.Write("data"u8);
+        writer.Write(dataSize);
+        for (var i = 0; i < sampleCount; i++)
+        {
+            writer.Write((short)0);
+        }
+    }
+
     private static HardwareSnapshot CreateHardware(int physicalCores, int logicalProcessors) => new(
         HardwareProbeStatus.Complete,
         ProcessorArchitectureKind.X64,

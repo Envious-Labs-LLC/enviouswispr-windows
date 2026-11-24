@@ -30,33 +30,62 @@ const int sampleRate = PreviewModelBenchEvaluation.SampleRate;
 const double cadenceMilliseconds = 2_500;
 // A card at or above this load, by the middle of five readings, is doing someone else's work.
 const int BusyCard = 50;
-double[] windowSeconds = [0.5, 2.5, 5, 10, 20];
+double[] defaultWindowSeconds = [0.5, 2.5, 5, 10, 20];
 
-var repositoryRoot = ArgumentValue("--repo") ?? FindRepositoryRoot(AppContext.BaseDirectory);
-var modelsRoot = ArgumentValue("--models");
-var releaseChannelArg = ArgumentValue("--channel");
-var activeAppDataDirectory = PreviewModelBenchEvaluation.ResolveActiveAppDataDirectory(releaseChannel: releaseChannelArg);
-var audioDirectory = ArgumentValue("--audio") ?? Path.Combine(activeAppDataDirectory, "audio-archive");
-var extraModels = ArgumentValue("--extra-models");
-var fixturesDirectory = ArgumentValue("--fixtures") ?? Path.Combine(repositoryRoot, "tools", "whisper-uat", "fixtures");
-var repeats = int.TryParse(ArgumentValue("--repeats"), out var parsedRepeats) ? Math.Max(1, parsedRepeats) : 3;
-var providers = (ArgumentValue("--providers") ?? "cpu,cuda")
-    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-    .Select(name => name.Equals("cuda", StringComparison.OrdinalIgnoreCase) ? RuntimeProviderKind.Cuda : RuntimeProviderKind.Cpu)
-    .Distinct()
-    .ToArray();
-var only = ArgumentValue("--only");
-var role = PreviewModelBenchEvaluation.ParseRole(ArgumentValue("--role"));
-var requestedLanguageArg = ArgumentValue("--language") ?? "auto";
-var prefixReferencesPath = ArgumentValue("--prefix-references");
-var output = ArgumentValue("--out") ?? Path.Combine(Path.GetTempPath(), "preview-model-bench.json");
-var markdownOutput = ArgumentValue("--markdown");
-
-var clips = LoadClips(audioDirectory);
-var fixtures = ReadFixtures(fixturesDirectory);
-if (clips.Count == 0 || fixtures.Count == 0)
+BenchCliOptions cliOptions;
+try
 {
-    Console.Error.WriteLine($"Need archived dictations in {audioDirectory} ({clips.Count}) and fixtures in {fixturesDirectory} ({fixtures.Count}).");
+    cliOptions = PreviewModelBenchEvaluation.ParseCommandLine(args);
+}
+catch (ArgumentException exception)
+{
+    Console.Error.WriteLine(exception.Message);
+    Console.Error.WriteLine();
+    Console.Error.WriteLine(PreviewModelBenchEvaluation.FormatHelpText());
+    return 2;
+}
+
+if (cliOptions.ShowHelp)
+{
+    Console.WriteLine(PreviewModelBenchEvaluation.FormatHelpText());
+    return 0;
+}
+
+var repositoryRoot = cliOptions.RepositoryRoot;
+var modelsRoot = cliOptions.ModelsRoot;
+var releaseChannelArg = cliOptions.ReleaseChannel;
+var activeAppDataDirectory = PreviewModelBenchEvaluation.ResolveActiveAppDataDirectory(releaseChannel: releaseChannelArg);
+var audioDirectory = cliOptions.AudioDirectory ?? Path.Combine(activeAppDataDirectory, "audio-archive");
+var extraModels = cliOptions.ExtraModels;
+var fixturesDirectory = cliOptions.FixturesDirectory;
+var corpusManifestPath = cliOptions.CorpusManifestPath;
+var wavRoot = cliOptions.WavRoot;
+var maxFixtures = cliOptions.MaxFixtures;
+var languagesFilter = cliOptions.Languages;
+var accuracyOnly = cliOptions.AccuracyOnly;
+var windowSeconds = accuracyOnly ? [] : defaultWindowSeconds;
+var repeats = cliOptions.Repeats;
+var providers = cliOptions.Providers;
+var only = cliOptions.Only;
+var role = cliOptions.Role;
+var requestedLanguageArg = cliOptions.RequestedLanguage;
+var prefixReferencesPath = cliOptions.PrefixReferencesPath;
+var output = cliOptions.OutputPath;
+var markdownOutput = cliOptions.MarkdownOutputPath;
+
+var clips = accuracyOnly ? [] : LoadClips(audioDirectory);
+var manifestTarget = corpusManifestPath ?? Path.Combine(fixturesDirectory, "manifest.json");
+var fixtures = PreviewModelBenchEvaluation.LoadCorpusFixtures(
+    manifestTarget,
+    wavRoot,
+    languagesFilter,
+    maxFixtures);
+if ((!accuracyOnly && clips.Count == 0) || fixtures.Count == 0)
+{
+    Console.Error.WriteLine(
+        accuracyOnly
+            ? $"Need fixtures in {manifestTarget} ({fixtures.Count})."
+            : $"Need archived dictations in {audioDirectory} ({clips.Count}) and fixtures in {manifestTarget} ({fixtures.Count}).");
     return 2;
 }
 
@@ -132,9 +161,12 @@ var candidates = new List<Candidate?>
 .Where(candidate => only is null || candidate.Name.Contains(only, StringComparison.OrdinalIgnoreCase))
 .ToList();
 
+var clipsSummary = clips.Count > 0
+    ? $"clips={clips.Count} (longest {clips.Max(clip => clip.Samples.Length) / (double)sampleRate:0.0} s)"
+    : "clips=0 (accuracy-only)";
 Console.WriteLine(
     $"role={CandidateResult.FormatRole(role)} language={requestedLanguageArg} previewThreads={previewThreads} " +
-    $"clips={clips.Count} (longest {clips.Max(clip => clip.Samples.Length) / (double)sampleRate:0.0} s) " +
+    $"{clipsSummary} " +
     $"fixtures={fixtures.Count} repeats={repeats} logical processors={Environment.ProcessorCount}");
 
 var worker = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
@@ -174,10 +206,11 @@ return 0;
 
 List<Clip> LoadClips(string path)
 {
+    var minSamples = (int)(defaultWindowSeconds[0] * sampleRate);
     if (File.Exists(path))
     {
-        var clip = new Clip(ShortName(path), ReadWaveFile(path));
-        return clip.Samples.Length >= (int)(windowSeconds[0] * sampleRate) ? [clip] : [];
+        var clip = new Clip(ShortName(path), PreviewModelBenchEvaluation.ReadWaveFile(path));
+        return clip.Samples.Length >= minSamples ? [clip] : [];
     }
 
     if (!Directory.Exists(path))
@@ -187,8 +220,8 @@ List<Clip> LoadClips(string path)
 
     return Directory.EnumerateFiles(path, "*.wav")
         .OrderBy(file => file, StringComparer.Ordinal)
-        .Select(file => new Clip(ShortName(file), ReadWaveFile(file)))
-        .Where(clip => clip.Samples.Length >= (int)(windowSeconds[0] * sampleRate))
+        .Select(file => new Clip(ShortName(file), PreviewModelBenchEvaluation.ReadWaveFile(file)))
+        .Where(clip => clip.Samples.Length >= minSamples)
         .ToList();
 }
 
@@ -241,7 +274,7 @@ async Task<CandidateResult> MeasureAsync(Candidate candidate, RuntimeProviderKin
         // A CARD SOMETHING ELSE IS SATURATING MEASURES THE OTHER WORK, NOT THE CANDIDATE. The first run of this bench
         // printed card figures slower than the processor's while another process held the card at 100% - an instrument
         // that answered, well-formed, about the wrong thing. So a busy card is refused by name unless asked for.
-        var allowBusyCard = args.Contains("--allow-busy-card", StringComparer.OrdinalIgnoreCase);
+        var allowBusyCard = cliOptions.AllowBusyCard;
         var cardBefore = provider == RuntimeProviderKind.Cuda ? CardLoad() : null;
         if (provider == RuntimeProviderKind.Cuda && !allowBusyCard)
         {
@@ -347,7 +380,8 @@ async Task<CandidateResult> MeasureAsync(Candidate candidate, RuntimeProviderKin
         Transcript first;
         try
         {
-            first = await TranscribeAsync(engine, Prefix(clips[0].Samples, 2.5));
+            var coldProbeSamples = clips.Count > 0 ? clips[0].Samples : fixtures[0].Samples;
+            first = await TranscribeAsync(engine, Prefix(coldProbeSamples, 2.5));
         }
         catch (TranscriptionEngineException exception)
         {
@@ -741,25 +775,27 @@ async Task<CandidateResult> MeasureAsync(Candidate candidate, RuntimeProviderKin
                 prefixAccuracy,
                 workerRestarts);
         var steadyPasses = PreviewModelBenchEvaluation.FilterSteadyPrimaryPasses(passes);
+        var languageMetrics = PreviewModelBenchEvaluation.SummarizeLanguageMetrics(accuracy);
 
         return new CandidateResult(
             candidate.Name,
             provider.ToString(),
             Error: null,
             ColdStartMilliseconds: coldPassRestarted ? null : cold.ElapsedMilliseconds,
-            MedianPassMilliseconds: windowSeconds.ToDictionary(
-                window => window.ToString("0.0", CultureInfo.InvariantCulture),
-                window => Median(steadyPasses.Where(pass => pass.WindowSeconds == window).Select(pass => pass.Milliseconds))),
-            PassesOverCadence: PreviewModelBenchEvaluation.CountPassesOverPreviewCadence(
-                role,
-                steadyPasses,
-                cadenceMilliseconds),
+            MedianPassMilliseconds: accuracyOnly
+                ? null
+                : windowSeconds.ToDictionary(
+                    window => window.ToString("0.0", CultureInfo.InvariantCulture),
+                    window => Median(steadyPasses.Where(pass => pass.WindowSeconds == window).Select(pass => pass.Milliseconds))),
+            PassesOverCadence: accuracyOnly
+                ? null
+                : PreviewModelBenchEvaluation.CountPassesOverPreviewCadence(
+                    role,
+                    steadyPasses,
+                    cadenceMilliseconds),
             Passes: steadyPasses.Count,
-            WordErrorRateByLanguage: accuracy
-                .GroupBy(result => result.Language)
-                .OrderBy(group => group.Key, StringComparer.Ordinal)
-                .ToDictionary(group => group.Key, group => PreviewModelBenchEvaluation.Rate(group)),
-            WordErrorRate: PreviewModelBenchEvaluation.Rate(accuracy),
+            WordErrorRateByLanguage: languageMetrics.WordErrorRateByLanguage,
+            WordErrorRate: languageMetrics.WordErrorRate,
             CardLoadBeforePercent: cardBefore?.Utilization,
             PeakWorkingSetMegabytes: peakWorkingSetMb,
             VideoMemoryMegabytes: videoMemoryMb,
@@ -797,7 +833,13 @@ async Task<CandidateResult> MeasureAsync(Candidate candidate, RuntimeProviderKin
             PrefixZeroReferenceInsertions: prefixAccuracy is { Count: > 0 }
                 ? PreviewModelBenchEvaluation.CountZeroReferenceInsertions(prefixAccuracy)
                 : null,
-            WorkerRestarts: workerRestarts);
+            WorkerRestarts: workerRestarts,
+            CharacterErrorRateByLanguage: languageMetrics.CharacterErrorRateByLanguage,
+            CharacterErrorRate: languageMetrics.CharacterErrorRate,
+            DetectedLanguageMatchRateByLanguage: languageMetrics.DetectedLanguageMatchRateByLanguage,
+            DetectedLanguageMatchRate: languageMetrics.DetectedLanguageMatchRate,
+            RubricTierByLanguage: languageMetrics.RubricTierByLanguage,
+            RubricTier: languageMetrics.RubricTier);
     }
     finally
     {
@@ -922,127 +964,8 @@ static float[] Prefix(float[] samples, double seconds)
 static Task<Transcript> TranscribeAsync(RuntimeWorkerTranscriptionEngine engine, float[] samples) =>
     engine.TranscribeAsync(new CapturedAudio(DictationSessionId.Create(), samples, sampleRate, Channels: 1));
 
-string? ArgumentValue(string name)
-{
-    var index = Array.FindIndex(args, value => string.Equals(value, name, StringComparison.OrdinalIgnoreCase));
-    return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
-}
-
 static string ShortName(string path)
 {
     var name = Path.GetFileNameWithoutExtension(path);
     return name.Length <= 8 ? name : name[..8];
-}
-
-/// The public MINDS-14 fixtures and the reference the Whisper UAT grades against (its evaluation transcription where
-/// the manifest has one - the source reference stops early on some rows).
-static List<Fixture> ReadFixtures(string directory)
-{
-    var manifest = Path.Combine(directory, "manifest.json");
-    if (!File.Exists(manifest))
-    {
-        return [];
-    }
-
-    using var document = JsonDocument.Parse(File.ReadAllText(manifest));
-    var fixtures = new List<Fixture>();
-    foreach (var row in document.RootElement.GetProperty("fixtures").EnumerateArray())
-    {
-        var file = row.GetProperty("file").GetString()!;
-        var language = row.GetProperty("config").GetString()!.Split('-')[0];
-        var reference = row.TryGetProperty("evaluationTranscription", out var evaluation) && evaluation.ValueKind == JsonValueKind.String
-            ? evaluation.GetString()!
-            : row.GetProperty("transcription").GetString()!;
-        var path = Path.Combine(directory, file);
-        // A MISSING FIXTURE IS A DIFFERENT CORPUS: skipped, the pooled error would be over whatever survived.
-        if (!File.Exists(path))
-        {
-            throw new InvalidDataException($"Missing fixture: {file}");
-        }
-
-        fixtures.Add(new Fixture(file, language, reference, ReadWaveFile(path)));
-    }
-
-    return fixtures;
-}
-
-static float[] ReadWaveFile(string path)
-{
-    var bytes = File.ReadAllBytes(path);
-    byte[]? format = null;
-    var position = 12;
-    while (position + 8 <= bytes.Length)
-    {
-        var chunkId = bytes.AsSpan(position, 4);
-        var chunkSize = BitConverter.ToInt32(bytes, position + 4);
-        position += 8;
-        if (chunkId.SequenceEqual("fmt "u8))
-        {
-            format = bytes.AsSpan(position, chunkSize).ToArray();
-        }
-        else if (chunkId.SequenceEqual("data"u8) && format is { Length: >= 16 })
-        {
-            var audioFormat = BitConverter.ToInt16(format, 0);
-            var channels = BitConverter.ToInt16(format, 2);
-            var sourceRate = BitConverter.ToInt32(format, 4);
-            var bitsPerSample = BitConverter.ToInt16(format, 14);
-            var bytesPerSample = bitsPerSample / 8;
-            var sampleCount = Math.Min(chunkSize, bytes.Length - position) / bytesPerSample / channels;
-            var samples = new float[sampleCount];
-            for (var index = 0; index < sampleCount; index++)
-            {
-                var offset = position + (index * bytesPerSample * channels);
-                samples[index] = audioFormat switch
-                {
-                    1 when bitsPerSample == 16 => BitConverter.ToInt16(bytes, offset) / 32768f,
-                    3 when bitsPerSample == 32 => BitConverter.ToSingle(bytes, offset),
-                    7 when bitsPerSample == 8 => DecodeMuLaw(bytes[offset]),
-                    _ => throw new InvalidDataException($"{Path.GetFileName(path)} uses an unsupported codec."),
-                };
-            }
-
-            return sourceRate == sampleRate ? samples : Resample(samples, sourceRate, sampleRate);
-        }
-
-        position += chunkSize + (chunkSize % 2);
-    }
-
-    throw new InvalidDataException($"{Path.GetFileName(path)} has no supported audio data.");
-}
-
-static float DecodeMuLaw(byte value)
-{
-    var decoded = (byte)~value;
-    var sign = (decoded & 0x80) == 0 ? 1 : -1;
-    var exponent = (decoded >> 4) & 0x07;
-    var mantissa = decoded & 0x0F;
-    var magnitude = (((mantissa << 3) + 0x84) << exponent) - 0x84;
-    return sign * magnitude / 32768f;
-}
-
-static float[] Resample(float[] source, int sourceRate, int destinationRate)
-{
-    var destinationLength = checked((int)Math.Round(source.Length * (destinationRate / (double)sourceRate)));
-    var destination = new float[destinationLength];
-    for (var index = 0; index < destinationLength; index++)
-    {
-        var sourcePosition = index * (sourceRate / (double)destinationRate);
-        var lower = Math.Min((int)sourcePosition, source.Length - 1);
-        var upper = Math.Min(lower + 1, source.Length - 1);
-        var fraction = sourcePosition - lower;
-        destination[index] = (float)(source[lower] + ((source[upper] - source[lower]) * fraction));
-    }
-
-    return destination;
-}
-
-static string FindRepositoryRoot(string start)
-{
-    var directory = new DirectoryInfo(start);
-    while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "EnviousWispr.Windows.slnx")))
-    {
-        directory = directory.Parent;
-    }
-
-    return directory?.FullName ?? start;
 }
