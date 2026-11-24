@@ -732,7 +732,10 @@ try
         "The controlled delivery target did not start.");
     WaitForWindow(target, TimeSpan.FromSeconds(10));
 
-    var appStart = new ProcessStartInfo(appExecutable)
+    var launchExecutable = packaged
+        ? ResolvePackagedAppExecutionAlias(appExecutable, repositoryRoot)
+        : appExecutable;
+    var appStart = new ProcessStartInfo(launchExecutable)
     {
         UseShellExecute = false,
         WorkingDirectory = Path.GetDirectoryName(appExecutable)!,
@@ -3853,6 +3856,69 @@ static string ResolveRegisteredPackagedAppExecutable(string repoRoot)
         $"--packaged requires the EnviousWispr MSIX package ({expectedName} {expectedVersion}, {expectedPublisher}) to be registered on this PC, or --app-executable pointing to a registered layout.");
 }
 
+static string ResolvePackagedAppExecutionAlias(string appExecutablePath, string repoRoot)
+{
+    var expectedLayoutDir = Path.TrimEndingDirectorySeparator(
+        Path.GetFullPath(Path.GetDirectoryName(appExecutablePath)!));
+    var (expectedName, expectedPublisher, expectedVersion) = ReadManifestIdentity(repoRoot);
+    string? matchedFamilyName = null;
+    try
+    {
+        var packageManager = new Windows.Management.Deployment.PackageManager();
+        foreach (var package in packageManager.FindPackagesForUser(string.Empty))
+        {
+            if (!string.Equals(package.Id.Name, expectedName, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(package.Id.Publisher, expectedPublisher, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var packageVersion = $"{package.Id.Version.Major}.{package.Id.Version.Minor}.{package.Id.Version.Build}.{package.Id.Version.Revision}";
+            if (!MatchesManifestVersion(packageVersion, expectedVersion))
+            {
+                continue;
+            }
+
+            var installedDir = Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(package.InstalledLocation.Path));
+            if (string.Equals(installedDir, expectedLayoutDir, StringComparison.OrdinalIgnoreCase))
+            {
+                matchedFamilyName = package.Id.FamilyName;
+                break;
+            }
+        }
+    }
+    catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+    {
+        throw JourneyExpectationException.Instrument(
+            $"--packaged could not query Windows PackageManager for {expectedName} ({exception.Message}).");
+    }
+
+    if (string.IsNullOrWhiteSpace(matchedFamilyName))
+    {
+        throw JourneyExpectationException.Instrument(
+            $"--packaged requires {appExecutablePath} to belong to the registered MSIX package for {expectedName} ({expectedPublisher}, {expectedVersion}).");
+    }
+
+    // Launching a Windows.FullTrustApplication executable directly from InstalledLocation.Path via CreateProcessW
+    // creates an unpackaged Win32 process (APPMODEL_ERROR_NO_PACKAGE). Launching the package's WindowsApps
+    // AppExecutionAlias reparse point activates the process with full MSIX package identity while preserving
+    // ProcessStartInfo.Environment and returning the direct process handle.
+    var aliasPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Microsoft",
+        "WindowsApps",
+        matchedFamilyName,
+        "EnviousWispr.exe");
+    if (!File.Exists(aliasPath))
+    {
+        throw JourneyExpectationException.Instrument(
+            $"--packaged requires the registered MSIX AppExecutionAlias at {aliasPath}.");
+    }
+
+    return aliasPath;
+}
+
 static (string Name, string Publisher, string Version) ReadManifestIdentity(string repoRoot)
 {
     var manifestPath = Path.Combine(
@@ -4003,6 +4069,12 @@ static void RequirePackagedLayoutManifest(string appExecutablePath, string repoR
     {
         throw new JourneyExpectationException(
             "The packaged AppxManifest.xml does not declare EnviousWisprStartup with Enabled=\"false\".");
+    }
+
+    if (!xml.Contains("Alias=\"EnviousWispr.exe\"", StringComparison.Ordinal))
+    {
+        throw new JourneyExpectationException(
+            "The packaged AppxManifest.xml does not declare the EnviousWispr.exe AppExecutionAlias.");
     }
 
     if (!xml.Contains(@"$(KnownFolder:LocalAppData)\Envious Labs\EnviousWispr", StringComparison.Ordinal) ||

@@ -2923,17 +2923,18 @@ public partial class App : Application, IAsyncDisposable
                 {
                     // When the app launches without an installed speech model (--clean-user first-run model
                     // delivery), the harness waits up to 10 minutes for onboarding model download and worker
-                    // activation before signalling START.
+                    // activation before verifying identity and signalling START; keep the app's START wait 2
+                    // minutes longer (12 minutes) so the harness deadline always governs.
                     var waitingForFirstRunModelDelivery = _transcriptionEngine is null;
                     var started = await Task.Run(() => exitEvent is null
                             ? startEvent.WaitOne(
                                 waitingForFirstRunModelDelivery
-                                    ? TimeSpan.FromMinutes(10)
+                                    ? TimeSpan.FromMinutes(12)
                                     : TimeSpan.FromSeconds(30))
                             : WaitHandle.WaitAny(
                                 [startEvent, exitEvent],
                                 waitingForFirstRunModelDelivery
-                                    ? TimeSpan.FromMinutes(10)
+                                    ? TimeSpan.FromMinutes(12)
                                     : TimeSpan.FromSeconds(120)) == 0)
                         .ConfigureAwait(false);
                     if (!started || _exitRequested || _disposed)

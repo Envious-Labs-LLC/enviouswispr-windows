@@ -326,6 +326,10 @@ public sealed class DistributionTests
         var startupTask = document.Descendants(desktop + "StartupTask").Single();
         Assert.Equal(WindowsStartupRegistration.StartupTaskId, (string?)startupTask.Attribute("TaskId"));
         Assert.Equal("false", (string?)startupTask.Attribute("Enabled"));
+
+        XNamespace uap5 = "http://schemas.microsoft.com/appx/manifest/uap/windows10/5";
+        var executionAlias = document.Descendants(uap5 + "ExecutionAlias").Single();
+        Assert.Equal("EnviousWispr.exe", (string?)executionAlias.Attribute("Alias"));
     }
 
     [Fact]
