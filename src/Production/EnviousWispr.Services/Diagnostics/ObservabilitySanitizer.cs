@@ -29,8 +29,8 @@ public static partial class ObservabilitySanitizer
     ];
 
     /// <summary>
-    /// Scrubs the username segment from Windows (<c>C:\Users\&lt;name&gt;\...</c>) and
-    /// macOS (<c>/Users/&lt;name&gt;/...</c>) paths while leaving the remaining path structure intact.
+    /// Scrubs the username segment from Windows (<c>C:\Users\%USERNAME%\...</c>) and
+    /// POSIX user profile paths while leaving the remaining path structure intact.
     /// Pure, idempotent, and never throws.
     /// </summary>
     public static string RedactUserPath(string? input)

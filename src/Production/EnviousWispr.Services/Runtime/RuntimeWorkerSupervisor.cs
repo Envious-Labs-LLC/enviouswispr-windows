@@ -724,7 +724,7 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
 
         if (observedExitCode is { } exitCode &&
             exitCode != 0 &&
-            generation.Owner is not "abort")
+            generation.Owner is not ("abort" or "stop"))
         {
             try
             {

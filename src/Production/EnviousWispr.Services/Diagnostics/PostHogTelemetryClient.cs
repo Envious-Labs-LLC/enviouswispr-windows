@@ -103,6 +103,7 @@ public sealed class PostHogTelemetryClient : IAsyncDisposable
     private volatile bool _disposed;
     private string? _distinctId;
     private long _operationGeneration;
+    private CancellationTokenSource? _activeSessionCts;
 
     public PostHogTelemetryClient(
         string? apiKey,
@@ -195,26 +196,49 @@ public sealed class PostHogTelemetryClient : IAsyncDisposable
     /// </summary>
     public void SetUsageMetricsEnabled(bool enabled)
     {
-        lock (_stateLock)
+        CancellationTokenSource? sessionToCancel = null;
+        try
         {
-            _operationGeneration++;
-            if (!enabled)
+            lock (_stateLock)
             {
-                _usageMetricsEnabled = false;
-                _distinctId = null;
-                DrainAndDropQueue();
-                return;
-            }
+                _operationGeneration++;
+                if (!enabled)
+                {
+                    _usageMetricsEnabled = false;
+                    _distinctId = null;
+                    sessionToCancel = _activeSessionCts;
+                    _activeSessionCts = null;
+                    DrainAndDropQueue();
+                    return;
+                }
 
-            if (_apiKey is null)
+                if (_activeSessionCts is null || _activeSessionCts.IsCancellationRequested)
+                {
+                    sessionToCancel = _activeSessionCts;
+                    _activeSessionCts = new CancellationTokenSource();
+                }
+
+                if (_apiKey is null)
+                {
+                    _usageMetricsEnabled = true;
+                    _distinctId = null;
+                    return;
+                }
+
+                _distinctId = LoadOrCreateAnonymousDistinctId();
+                _usageMetricsEnabled = _distinctId is not null;
+            }
+        }
+        finally
+        {
+            try
             {
-                _usageMetricsEnabled = true;
-                _distinctId = null;
-                return;
+                sessionToCancel?.Cancel();
             }
-
-            _distinctId = LoadOrCreateAnonymousDistinctId();
-            _usageMetricsEnabled = _distinctId is not null;
+            catch (ObjectDisposedException)
+            {
+                // Ignore already-disposed session token source.
+            }
         }
     }
 
@@ -366,13 +390,16 @@ public sealed class PostHogTelemetryClient : IAsyncDisposable
                     break;
                 }
 
+                CancellationToken sessionToken;
                 lock (_stateLock)
                 {
-                    if (!_usageMetricsEnabled || generationSnapshot != _operationGeneration)
+                    if (!_usageMetricsEnabled || generationSnapshot != _operationGeneration || _activeSessionCts is null)
                     {
                         DrainAndDropQueue();
                         break;
                     }
+
+                    sessionToken = _activeSessionCts.Token;
                 }
 
                 var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -392,9 +419,10 @@ public sealed class PostHogTelemetryClient : IAsyncDisposable
                 using var content = new StringContent(json, Encoding.UTF8, new MediaTypeHeaderValue("application/json"));
                 try
                 {
-                    using var response = await _httpClient.PostAsync(_batchEndpoint, content, cancellationToken)
+                    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, sessionToken);
+                    using var response = await _httpClient.PostAsync(_batchEndpoint, content, linkedCts.Token)
                         .ConfigureAwait(false);
-                    if (response.IsSuccessStatusCode)
+                    if (response.IsSuccessStatusCode && _usageMetricsEnabled)
                     {
                         sentCount += batch.Count;
                     }
@@ -453,6 +481,7 @@ public sealed class PostHogTelemetryClient : IAsyncDisposable
         }
 
         _flushGate.Dispose();
+        _activeSessionCts?.Dispose();
         _lifetime.Dispose();
     }
 

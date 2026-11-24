@@ -539,11 +539,6 @@ public sealed class WindowsObservabilityService : IAsyncDisposable
                     errorCode: record.ErrorCode,
                     asrBackend: asrBackend,
                     elapsedMs: record.ElapsedMilliseconds);
-                if (record.ErrorCode == AppErrorCode.RuntimeWorkerFailed ||
-                    record.Failure == AppFailureCategory.RuntimeWorker)
-                {
-                    _ = RecordRuntimeWorkerFailedAsync(asrBackend, errorCode: record.ErrorCode);
-                }
                 break;
 
             case AppEventCode.TextDeliveryFailed:

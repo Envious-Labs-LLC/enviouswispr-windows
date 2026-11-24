@@ -1917,9 +1917,20 @@ public partial class App : Application, IAsyncDisposable
         var modelDirectory = await ResolveModelDirectoryAsync(engine == FinalAsrEngine.Whisper
             ? WhisperTranscriptionEngine.ModelId
             : ParakeetTranscriptionEngine.ModelId).ConfigureAwait(true);
+        var parakeetPreviewDirectory = engine == FinalAsrEngine.Whisper
+            ? await ResolveModelDirectoryAsync(ParakeetTranscriptionEngine.ModelId).ConfigureAwait(true)
+            : modelDirectory;
+        var whisperFinalDirectory = engine == FinalAsrEngine.Whisper
+            ? modelDirectory
+            : await ResolveModelDirectoryAsync(WhisperTranscriptionEngine.ModelId).ConfigureAwait(true);
+        var previewModelDirectory = await ResolveModelDirectoryAsync(
+            WhisperTranscriptionEngine.PreviewModelId,
+            "ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY").ConfigureAwait(true);
+        var hasParakeet = parakeetPreviewDirectory is not null;
+        var hasWhisper = whisperFinalDirectory is not null || previewModelDirectory is not null;
         if (modelDirectory is null)
         {
-            RecordAppLaunchedOnce(hardware: null, hasParakeet: false, hasWhisper: false);
+            RecordAppLaunchedOnce(hardware: null, hasParakeet: hasParakeet, hasWhisper: hasWhisper);
             _window?.SetSessionStatus(
                 DictationStatus.Advisory(
                         "Local transcription model is not installed", StatusActions.OpenTranscription)
@@ -1939,19 +1950,10 @@ public partial class App : Application, IAsyncDisposable
             .ConfigureAwait(true);
         _configuredTranscription = new ConfiguredTranscription(engine, modelDirectory, hardware);
         var workerExecutable = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
-        var parakeetPreviewDirectory = engine == FinalAsrEngine.Whisper
-            ? await ResolveModelDirectoryAsync(ParakeetTranscriptionEngine.ModelId).ConfigureAwait(true)
-            : modelDirectory;
-        var whisperFinalDirectory = engine == FinalAsrEngine.Whisper
-            ? modelDirectory
-            : await ResolveModelDirectoryAsync(WhisperTranscriptionEngine.ModelId).ConfigureAwait(true);
-        var previewModelDirectory = await ResolveModelDirectoryAsync(
-            WhisperTranscriptionEngine.PreviewModelId,
-            "ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY").ConfigureAwait(true);
         RecordAppLaunchedOnce(
             hardware,
-            hasParakeet: parakeetPreviewDirectory is not null,
-            hasWhisper: whisperFinalDirectory is not null || previewModelDirectory is not null);
+            hasParakeet: hasParakeet,
+            hasWhisper: hasWhisper);
         // THE SELECTION IS MADE BEFORE IT IS OBSERVED. This line used to be written above the two
         // Create calls, so it could only ever report the hardware and never what the hardware was
         // used FOR - which is why a machine transcribing on the processor beside an idle graphics
