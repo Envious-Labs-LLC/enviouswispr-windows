@@ -27,6 +27,54 @@ internal static class BenchRowClassification
     public const string Error = "error";
 }
 
+public static class BenchRubricTier
+{
+    public const string Ship = "Ship";
+    public const string Experimental = "Experimental";
+    public const string Hide = "Hide";
+}
+
+internal sealed record BenchCliOptions(
+    string RepositoryRoot,
+    string? ModelsRoot,
+    string? ReleaseChannel,
+    string? AudioDirectory,
+    string? ExtraModels,
+    string FixturesDirectory,
+    string? CorpusManifestPath,
+    string? WavRoot,
+    int? MaxFixtures,
+    IReadOnlyList<string>? Languages,
+    bool AccuracyOnly,
+    int Repeats,
+    RuntimeProviderKind[] Providers,
+    string? Only,
+    BenchRole Role,
+    string RequestedLanguage,
+    string? PrefixReferencesPath,
+    string OutputPath,
+    string? MarkdownOutputPath,
+    bool AllowBusyCard,
+    bool ShowHelp);
+
+internal sealed record CorpusManifestEntry(
+    string Id,
+    string File,
+    string Language,
+    string Reference,
+    string AudioPath,
+    string SourceFormat);
+
+internal sealed record LanguageMetricsSummary(
+    Dictionary<string, double?> WordErrorRateByLanguage,
+    double? WordErrorRate,
+    Dictionary<string, double?> CharacterErrorRateByLanguage,
+    double? CharacterErrorRate,
+    Dictionary<string, double?> DetectedLanguageMatchRateByLanguage,
+    double? DetectedLanguageMatchRate,
+    Dictionary<string, string?> RubricTierByLanguage,
+    string? RubricTier);
+
 internal sealed record Candidate(
     string Name,
     FinalAsrEngine Engine,
@@ -64,7 +112,14 @@ internal sealed record FixtureResult(
     string Classification = BenchRowClassification.Primary,
     int ActualWords = 0,
     double? WordErrorRate = null,
-    bool WorkerRestarted = false);
+    bool WorkerRestarted = false,
+    int ReferenceCharacters = 0,
+    int ActualCharacters = 0,
+    int? CharacterEditDistance = null,
+    double? CharacterErrorRate = null,
+    string PrimaryMetric = "wer",
+    bool? DetectedLanguageMatched = null,
+    string? RubricTier = null);
 
 internal sealed record PrefixReferenceEntry(
     string File,
@@ -132,7 +187,13 @@ internal sealed record CandidateResult(
     Dictionary<string, double?>? PrefixWordErrorRateByLanguage = null,
     List<PrefixFixtureResult>? PrefixFixtures = null,
     int? PrefixZeroReferenceInsertions = null,
-    int WorkerRestarts = 0)
+    int WorkerRestarts = 0,
+    Dictionary<string, double?>? CharacterErrorRateByLanguage = null,
+    double? CharacterErrorRate = null,
+    Dictionary<string, double?>? DetectedLanguageMatchRateByLanguage = null,
+    double? DetectedLanguageMatchRate = null,
+    Dictionary<string, string?>? RubricTierByLanguage = null,
+    string? RubricTier = null)
 {
     public static CandidateResult Failed(
         string model,
@@ -183,7 +244,13 @@ internal sealed record CandidateResult(
             PrefixWordErrorRateByLanguage: null,
             PrefixFixtures: prefixFixtures,
             PrefixZeroReferenceInsertions: null,
-            WorkerRestarts: workerRestarts);
+            WorkerRestarts: workerRestarts,
+            CharacterErrorRateByLanguage: null,
+            CharacterErrorRate: null,
+            DetectedLanguageMatchRateByLanguage: null,
+            DetectedLanguageMatchRate: null,
+            RubricTierByLanguage: null,
+            RubricTier: null);
 
     public static string FormatRole(BenchRole role) =>
         role == BenchRole.Final ? "final" : "preview";
@@ -497,12 +564,219 @@ internal static class PreviewModelBenchEvaluation
     }
 
     /// <summary>
+    /// Unspaced scripts evaluated with Character Error Rate (CER) rather than Word Error Rate (WER),
+    /// matching macOS <c>scripts/multilingual-eval/score.py</c>.
+    /// </summary>
+    public static readonly IReadOnlySet<string> CerLanguages = new HashSet<string>(
+        ["zh", "ja", "ko", "th"],
+        StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Caseless scripts for which lowercasing is skipped during normalization, matching macOS
+    /// <c>scripts/multilingual-eval/score.py</c> (<c>NO_LOWER_LANGS</c>).
+    /// </summary>
+    public static readonly IReadOnlySet<string> CaselessLanguages = new HashSet<string>(
+        ["ja", "zh", "ko", "th", "ar", "he", "hi", "bn", "ta", "te"],
+        StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// CJK and ideographic punctuation stripped alongside ASCII and general Unicode punctuation.
+    /// </summary>
+    public const string CjkPunctuation = "。、！？「」『』（）【】《》…—–·，；：・〜［］〈〉．～";
+
+    public const double ShipWerThreshold = 0.05;
+    public const double ExperimentalWerThreshold = 0.15;
+    public const double ShipCerThreshold = 0.10;
+    public const double ExperimentalCerThreshold = 0.20;
+
+    private static readonly HashSet<char> CjkPunctuationSet = [.. CjkPunctuation];
+
+    private static readonly Dictionary<string, string> KnownLanguageNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["english"] = "en",
+        ["german"] = "de",
+        ["chinese"] = "zh",
+        ["mandarin"] = "zh",
+        ["spanish"] = "es",
+        ["french"] = "fr",
+        ["italian"] = "it",
+        ["portuguese"] = "pt",
+        ["russian"] = "ru",
+        ["dutch"] = "nl",
+        ["polish"] = "pl",
+        ["japanese"] = "ja",
+        ["korean"] = "ko",
+        ["thai"] = "th",
+        ["arabic"] = "ar",
+        ["hebrew"] = "he",
+        ["hindi"] = "hi",
+        ["bengali"] = "bn",
+        ["tamil"] = "ta",
+        ["telugu"] = "te",
+        ["greek"] = "el",
+        ["ukrainian"] = "uk",
+    };
+
+    /// <summary>
+    /// Normalizes a language tag, locale, or recognizer language name (e.g. <c>de-DE</c>, <c>zh_CN</c>,
+    /// <c>German</c>) to its lowercase base ISO 639 subtag (<c>de</c>, <c>zh</c>).
+    /// </summary>
+    public static string? NormalizeLanguageSubtag(string? languageOrLocale)
+    {
+        if (string.IsNullOrWhiteSpace(languageOrLocale))
+        {
+            return null;
+        }
+
+        var trimmed = languageOrLocale.Trim();
+        if (string.Equals(trimmed, "auto", StringComparison.OrdinalIgnoreCase))
+        {
+            return "auto";
+        }
+
+        if (KnownLanguageNames.TryGetValue(trimmed, out var mappedIso))
+        {
+            return mappedIso;
+        }
+
+        var primary = trimmed.Split(['-', '_'], StringSplitOptions.RemoveEmptyEntries)[0];
+        if (KnownLanguageNames.TryGetValue(primary, out var mappedPrimary))
+        {
+            return mappedPrimary;
+        }
+
+        return primary.ToLowerInvariant();
+    }
+
+    public static bool UsesCharacterErrorRate(string? language)
+    {
+        var baseLang = NormalizeLanguageSubtag(language);
+        return baseLang is not null && CerLanguages.Contains(baseLang);
+    }
+
+    public static bool IsCaselessLanguage(string? language)
+    {
+        var baseLang = NormalizeLanguageSubtag(language);
+        return baseLang is not null && CaselessLanguages.Contains(baseLang);
+    }
+
+    public static string MetricForLanguage(string? language) =>
+        UsesCharacterErrorRate(language) ? "cer" : "wer";
+
+    public static bool IsDetectedLanguageMatch(string? detectedLanguage, string? expectedLanguage)
+    {
+        var normalizedDetected = NormalizeLanguageSubtag(detectedLanguage);
+        var normalizedExpected = NormalizeLanguageSubtag(expectedLanguage);
+        if (string.IsNullOrWhiteSpace(normalizedDetected) ||
+            string.IsNullOrWhiteSpace(normalizedExpected) ||
+            string.Equals(normalizedDetected, "auto", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(normalizedExpected, "auto", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return string.Equals(normalizedDetected, normalizedExpected, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Classifies a language's WER or CER into the macOS <c>rubric.md</c> / <c>score.py</c> tiers:
+    /// <c>Ship</c> (&lt;5% WER / &lt;10% CER), <c>Experimental</c> (5 to &lt;15% WER / 10 to &lt;20% CER),
+    /// or <c>Hide</c> (&gt;=15% WER / &gt;=20% CER).
+    /// </summary>
+    public static string? ClassifyRubricTier(string? language, double? errorRate)
+    {
+        if (errorRate is not { } score || !double.IsFinite(score))
+        {
+            return null;
+        }
+
+        if (score < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(errorRate), "Error rate cannot be negative.");
+        }
+
+        if (UsesCharacterErrorRate(language))
+        {
+            if (score < ShipCerThreshold)
+            {
+                return BenchRubricTier.Ship;
+            }
+
+            if (score < ExperimentalCerThreshold)
+            {
+                return BenchRubricTier.Experimental;
+            }
+
+            return BenchRubricTier.Hide;
+        }
+
+        if (score < ShipWerThreshold)
+        {
+            return BenchRubricTier.Ship;
+        }
+
+        if (score < ExperimentalWerThreshold)
+        {
+            return BenchRubricTier.Experimental;
+        }
+
+        return BenchRubricTier.Hide;
+    }
+
+    private static bool IsStrippedAsciiOrCjkPunctuation(char character) =>
+        CjkPunctuationSet.Contains(character) ||
+        (character <= 0x7F && !char.IsLetterOrDigit(character) && !char.IsWhiteSpace(character));
+
+    /// <summary>
+    /// Normalizes text following macOS <c>scripts/multilingual-eval/score.py</c>: Unicode NFC,
+    /// strips ASCII and CJK punctuation, skips lowercasing for caseless scripts
+    /// (<see cref="CaselessLanguages"/>), lowercases bicameral scripts with invariant culture, and
+    /// collapses internal whitespace.
+    /// </summary>
+    public static string NormalizeText(string? text, string? language = null)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var normalizedText = text.Normalize(NormalizationForm.FormC);
+        var skipLowercase = IsCaselessLanguage(language);
+        var builder = new StringBuilder(normalizedText.Length);
+        var previousWasSpace = true;
+        foreach (var character in normalizedText)
+        {
+            if (char.IsWhiteSpace(character))
+            {
+                if (!previousWasSpace)
+                {
+                    builder.Append(' ');
+                    previousWasSpace = true;
+                }
+
+                continue;
+            }
+
+            if (IsStrippedAsciiOrCjkPunctuation(character))
+            {
+                continue;
+            }
+
+            builder.Append(skipLowercase ? character : char.ToLowerInvariant(character));
+            previousWasSpace = false;
+        }
+
+        return builder.ToString().Trim().Normalize(NormalizationForm.FormC);
+    }
+
+    /// <summary>
     /// Frozen Unicode-aware lexical normalizer (#258): normalizes input to NFC first so decomposed
     /// combining-mark sequences (NFD) collapse to the same precomposed letters as NFC references,
-    /// strips punctuation while retaining letters, digits, and any attached combining marks, and
-    /// lowercases with invariant culture.
+    /// strips ASCII and CJK punctuation while retaining letters, digits, and any attached combining
+    /// marks, and lowercases with invariant culture unless <paramref name="language"/> is in
+    /// <see cref="CaselessLanguages"/>.
     /// </summary>
-    public static string[] NormalizeWords(string? text)
+    public static string[] NormalizeWords(string? text, string? language = null)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -510,6 +784,7 @@ internal static class PreviewModelBenchEvaluation
         }
 
         var normalizedText = text.Normalize(NormalizationForm.FormC);
+        var skipLowercase = IsCaselessLanguage(language);
         var rawTokens = normalizedText.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         var words = new List<string>(rawTokens.Length);
         var builder = new StringBuilder();
@@ -519,9 +794,14 @@ internal static class PreviewModelBenchEvaluation
             var hasLetterOrDigit = false;
             foreach (var character in rawToken)
             {
+                if (IsStrippedAsciiOrCjkPunctuation(character))
+                {
+                    continue;
+                }
+
                 if (char.IsLetterOrDigit(character))
                 {
-                    builder.Append(char.ToLowerInvariant(character));
+                    builder.Append(skipLowercase ? character : char.ToLowerInvariant(character));
                     hasLetterOrDigit = true;
                 }
                 else if (hasLetterOrDigit &&
@@ -540,6 +820,47 @@ internal static class PreviewModelBenchEvaluation
         }
 
         return words.ToArray();
+    }
+
+    /// <summary>
+    /// Normalizes text into individual character tokens for Character Error Rate (CER) scoring on
+    /// unspaced scripts (<c>zh</c>, <c>ja</c>, <c>ko</c>, <c>th</c>), stripping all whitespace and
+    /// ASCII/CJK punctuation after NFC normalization and caseless-aware lowercasing.
+    /// </summary>
+    public static string[] NormalizeCharacters(string? text, string? language = null)
+    {
+        var normalized = NormalizeText(text, language);
+        if (string.IsNullOrEmpty(normalized))
+        {
+            return [];
+        }
+
+        var characters = new List<string>(normalized.Length);
+        foreach (var character in normalized)
+        {
+            if (!char.IsWhiteSpace(character))
+            {
+                characters.Add(character.ToString());
+            }
+        }
+
+        return characters.ToArray();
+    }
+
+    public static double ComputeCharacterErrorRate(
+        string? referenceText,
+        string? transcriptText,
+        string? language = "zh")
+    {
+        var expected = NormalizeCharacters(referenceText, language);
+        var actual = NormalizeCharacters(transcriptText, language);
+        if (expected.Length == 0)
+        {
+            return actual.Length == 0 ? 0.0 : 1.0;
+        }
+
+        var edits = LevenshteinDistance(expected, actual);
+        return Math.Round(edits / (double)expected.Length, 4);
     }
 
     public static int LevenshteinDistance(IReadOnlyList<string> left, IReadOnlyList<string> right)
@@ -700,22 +1021,47 @@ internal static class PreviewModelBenchEvaluation
         bool hasError = false,
         bool workerRestarted = false)
     {
-        var expected = NormalizeWords(referenceText);
-        var actual = NormalizeWords(transcriptText);
-        var classification = ClassifyRow(hasError, usedFallback, actual.Length, expected.Length);
+        var normalizedLanguage = NormalizeLanguageSubtag(language) ?? language;
+        var usesCer = UsesCharacterErrorRate(normalizedLanguage);
+        var expectedWords = NormalizeWords(referenceText, normalizedLanguage);
+        var actualWords = NormalizeWords(transcriptText, normalizedLanguage);
+        var expectedChars = NormalizeCharacters(referenceText, normalizedLanguage);
+        var actualChars = NormalizeCharacters(transcriptText, normalizedLanguage);
+        var actualUnits = usesCer ? actualChars.Length : actualWords.Length;
+        var expectedUnits = usesCer ? expectedChars.Length : expectedWords.Length;
+        var classification = ClassifyRow(hasError, usedFallback, actualUnits, expectedUnits);
         var failureCategory = ClassifyFailureCategory(classification, errorCategory);
         int? editDistance = classification == BenchRowClassification.Error
             ? null
-            : LevenshteinDistance(expected, actual);
-        double? wer = editDistance is { } edits
-            ? expected.Length == 0
-                ? (actual.Length == 0 ? 0.0 : 1.0)
-                : Math.Round(edits / (double)expected.Length, 4)
+            : LevenshteinDistance(expectedWords, actualWords);
+        double? rawWer = editDistance is { } edits
+            ? expectedWords.Length == 0
+                ? (actualWords.Length == 0 ? 0.0 : 1.0)
+                : edits / (double)expectedWords.Length
             : null;
+        double? wer = rawWer is { } rw ? Math.Round(rw, 4) : null;
+        int? charEditDistance = classification == BenchRowClassification.Error
+            ? null
+            : LevenshteinDistance(expectedChars, actualChars);
+        double? rawCer = charEditDistance is { } cEdits
+            ? expectedChars.Length == 0
+                ? (actualChars.Length == 0 ? 0.0 : 1.0)
+                : cEdits / (double)expectedChars.Length
+            : null;
+        double? cer = rawCer is { } rc ? Math.Round(rc, 4) : null;
+        var primaryMetric = MetricForLanguage(normalizedLanguage);
+        var rawPrimaryScore = usesCer ? rawCer : rawWer;
+        var rubricTier = classification == BenchRowClassification.Error
+            ? null
+            : ClassifyRubricTier(normalizedLanguage, rawPrimaryScore);
+        bool? detectedLanguageMatched =
+            classification == BenchRowClassification.Error || string.IsNullOrWhiteSpace(detectedLanguage)
+                ? null
+                : IsDetectedLanguageMatch(detectedLanguage, normalizedLanguage);
         return new FixtureResult(
             file,
-            language,
-            expected.Length,
+            normalizedLanguage,
+            expectedWords.Length,
             editDistance,
             elapsedMilliseconds,
             transcriptText?.Trim() ?? string.Empty,
@@ -724,9 +1070,16 @@ internal static class PreviewModelBenchEvaluation
             UsedFallback: usedFallback,
             FailureCategory: failureCategory,
             Classification: classification,
-            ActualWords: actual.Length,
+            ActualWords: actualWords.Length,
             WordErrorRate: wer,
-            WorkerRestarted: workerRestarted);
+            WorkerRestarted: workerRestarted,
+            ReferenceCharacters: expectedChars.Length,
+            ActualCharacters: actualChars.Length,
+            CharacterEditDistance: charEditDistance,
+            CharacterErrorRate: cer,
+            PrimaryMetric: primaryMetric,
+            DetectedLanguageMatched: detectedLanguageMatched,
+            RubricTier: rubricTier);
     }
 
     public static PrefixFixtureResult ScorePrefixFixture(
@@ -741,8 +1094,8 @@ internal static class PreviewModelBenchEvaluation
         bool hasError = false,
         bool workerRestarted = false)
     {
-        var expected = NormalizeWords(prefixReference.Reference);
-        var actual = NormalizeWords(transcriptText);
+        var expected = NormalizeWords(prefixReference.Reference, fixture.Language);
+        var actual = NormalizeWords(transcriptText, fixture.Language);
         var hasUnresolvedWords = prefixReference.UnresolvedWords is { Count: > 0 };
         var classification = ClassifyRow(hasError, usedFallback, actual.Length, expected.Length);
         var failureCategory = ClassifyFailureCategory(
@@ -785,7 +1138,10 @@ internal static class PreviewModelBenchEvaluation
     /// (<c>fallback</c>), returns <see langword="null"/> so an incomplete measurement never publishes
     /// a survivor-biased accuracy number.
     /// </summary>
-    public static double? Rate(IEnumerable<FixtureResult> results)
+    public static double? Rate(IEnumerable<FixtureResult> results) =>
+         RawRate(results) is { } raw ? Math.Round(raw, 3) : null;
+
+    private static double? RawRate(IEnumerable<FixtureResult> results)
     {
         ArgumentNullException.ThrowIfNull(results);
         var list = results.ToList();
@@ -799,7 +1155,117 @@ internal static class PreviewModelBenchEvaluation
 
         var words = list.Sum(result => result.ReferenceWords);
         var edits = list.Sum(result => result.EditDistance!.Value);
-        return words == 0 ? (edits == 0 ? 0.0 : 1.0) : Math.Round(edits / (double)words, 3);
+        return words == 0 ? (edits == 0 ? 0.0 : 1.0) : edits / (double)words;
+    }
+
+    /// <summary>
+    /// Computes aggregate pooled Character Error Rate (CER) over a complete slice of primary and empty rows.
+    /// Returns <see langword="null"/> if the slice is empty or contains any error/fallback row.
+    /// </summary>
+    public static double? CharacterRate(IEnumerable<FixtureResult> results) =>
+        RawCharacterRate(results) is { } raw ? Math.Round(raw, 3) : null;
+
+    private static double? RawCharacterRate(IEnumerable<FixtureResult> results)
+    {
+        ArgumentNullException.ThrowIfNull(results);
+        var list = results.ToList();
+        if (list.Count == 0 ||
+            list.Any(result =>
+                result.CharacterEditDistance is null ||
+                result.Classification is not (BenchRowClassification.Primary or BenchRowClassification.Empty)))
+        {
+            return null;
+        }
+
+        var characters = list.Sum(result => result.ReferenceCharacters);
+        var edits = list.Sum(result => result.CharacterEditDistance!.Value);
+        return characters == 0 ? (edits == 0 ? 0.0 : 1.0) : edits / (double)characters;
+    }
+
+    public static double? PrimaryErrorRate(IEnumerable<FixtureResult> results, string? language) =>
+        UsesCharacterErrorRate(language) ? CharacterRate(results) : Rate(results);
+
+    /// <summary>
+    /// Computes the detected-language match rate (<c>DetectedLanguage == expectedLang</c> normalized to
+    /// base ISO subtag) across a complete slice of primary and empty rows. Returns <see langword="null"/>
+    /// if the slice is empty, contains any error/fallback row, or the engine did not report a detected
+    /// language on any row in the slice (e.g. Parakeet).
+    /// </summary>
+    public static double? DetectedLanguageMatchRate(IEnumerable<FixtureResult> results)
+    {
+        ArgumentNullException.ThrowIfNull(results);
+        var list = results.ToList();
+        if (list.Count == 0 ||
+            list.Any(result =>
+                result.Classification is not (BenchRowClassification.Primary or BenchRowClassification.Empty)))
+        {
+            return null;
+        }
+
+        var hasAnyDetection = list.Any(result =>
+            result.DetectedLanguageMatched is not null || !string.IsNullOrWhiteSpace(result.DetectedLanguage));
+        if (!hasAnyDetection)
+        {
+            return null;
+        }
+
+        var matches = list.Count(result =>
+            result.DetectedLanguageMatched ?? IsDetectedLanguageMatch(result.DetectedLanguage, result.Language));
+        return Math.Round(matches / (double)list.Count, 3);
+    }
+
+    public static LanguageMetricsSummary SummarizeLanguageMetrics(IReadOnlyList<FixtureResult> fixtures)
+    {
+        ArgumentNullException.ThrowIfNull(fixtures);
+
+        var groups = fixtures
+            .GroupBy(result => NormalizeLanguageSubtag(result.Language) ?? result.Language, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(group => group.Key, StringComparer.Ordinal)
+            .ToList();
+
+        var werByLang = new Dictionary<string, double?>(StringComparer.Ordinal);
+        var cerByLang = new Dictionary<string, double?>(StringComparer.Ordinal);
+        var detMatchByLang = new Dictionary<string, double?>(StringComparer.Ordinal);
+        var tierByLang = new Dictionary<string, string?>(StringComparer.Ordinal);
+
+        foreach (var group in groups)
+        {
+            var lang = group.Key;
+            var rawWer = RawRate(group);
+            var rawCer = RawCharacterRate(group);
+            var rawPrimary = UsesCharacterErrorRate(lang) ? rawCer : rawWer;
+            werByLang[lang] = rawWer is { } rw ? Math.Round(rw, 3) : null;
+            cerByLang[lang] = rawCer is { } rc ? Math.Round(rc, 3) : null;
+            detMatchByLang[lang] = DetectedLanguageMatchRate(group);
+            tierByLang[lang] = ClassifyRubricTier(lang, rawPrimary);
+        }
+
+        string? overallTier = null;
+        if (tierByLang.Count > 0 && tierByLang.Values.All(t => t is not null))
+        {
+            if (tierByLang.Values.Any(t => string.Equals(t, BenchRubricTier.Hide, StringComparison.Ordinal)))
+            {
+                overallTier = BenchRubricTier.Hide;
+            }
+            else if (tierByLang.Values.Any(t => string.Equals(t, BenchRubricTier.Experimental, StringComparison.Ordinal)))
+            {
+                overallTier = BenchRubricTier.Experimental;
+            }
+            else
+            {
+                overallTier = BenchRubricTier.Ship;
+            }
+        }
+
+        return new LanguageMetricsSummary(
+            WordErrorRateByLanguage: werByLang,
+            WordErrorRate: Rate(fixtures),
+            CharacterErrorRateByLanguage: cerByLang,
+            CharacterErrorRate: CharacterRate(fixtures),
+            DetectedLanguageMatchRateByLanguage: detMatchByLang,
+            DetectedLanguageMatchRate: DetectedLanguageMatchRate(fixtures),
+            RubricTierByLanguage: tierByLang,
+            RubricTier: overallTier);
     }
 
     /// <summary>
@@ -1439,6 +1905,680 @@ internal static class PreviewModelBenchEvaluation
         return includeCount;
     }
 
+    public static BenchCliOptions ParseCommandLine(
+        IReadOnlyList<string> args,
+        string? defaultRepositoryRoot = null)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+
+        var showHelp = false;
+        var allowBusyCard = false;
+        var accuracyOnly = false;
+        string? repoArg = null;
+        string? modelsArg = null;
+        string? channelArg = null;
+        string? audioArg = null;
+        string? extraModelsArg = null;
+        string? fixturesArg = null;
+        string? corpusManifestArg = null;
+        string? wavRootArg = null;
+        int? maxFixturesArg = null;
+        List<string>? languagesArg = null;
+        var repeats = 3;
+        var providersText = "cpu,cuda";
+        string? onlyArg = null;
+        string? roleArg = null;
+        var requestedLanguage = "auto";
+        string? prefixReferencesArg = null;
+        string? outputArg = null;
+        string? markdownArg = null;
+
+        string ReadRequiredValue(int index, string flagName)
+        {
+            if (index + 1 >= args.Count || string.IsNullOrWhiteSpace(args[index + 1]) || args[index + 1].StartsWith("--", StringComparison.Ordinal))
+            {
+                throw new ArgumentException($"Option '{flagName}' requires a value.", nameof(args));
+            }
+
+            return args[index + 1];
+        }
+
+        for (var i = 0; i < args.Count; i++)
+        {
+            var arg = args[i];
+            if (string.Equals(arg, "--help", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(arg, "-h", StringComparison.OrdinalIgnoreCase))
+            {
+                showHelp = true;
+            }
+            else if (string.Equals(arg, "--allow-busy-card", StringComparison.OrdinalIgnoreCase))
+            {
+                allowBusyCard = true;
+            }
+            else if (string.Equals(arg, "--accuracy-only", StringComparison.OrdinalIgnoreCase))
+            {
+                accuracyOnly = true;
+            }
+            else if (string.Equals(arg, "--repo", StringComparison.OrdinalIgnoreCase))
+            {
+                repoArg = ReadRequiredValue(i++, "--repo");
+            }
+            else if (string.Equals(arg, "--models", StringComparison.OrdinalIgnoreCase))
+            {
+                modelsArg = ReadRequiredValue(i++, "--models");
+            }
+            else if (string.Equals(arg, "--channel", StringComparison.OrdinalIgnoreCase))
+            {
+                channelArg = ReadRequiredValue(i++, "--channel");
+            }
+            else if (string.Equals(arg, "--audio", StringComparison.OrdinalIgnoreCase))
+            {
+                audioArg = ReadRequiredValue(i++, "--audio");
+            }
+            else if (string.Equals(arg, "--extra-models", StringComparison.OrdinalIgnoreCase))
+            {
+                extraModelsArg = ReadRequiredValue(i++, "--extra-models");
+            }
+            else if (string.Equals(arg, "--fixtures", StringComparison.OrdinalIgnoreCase))
+            {
+                fixturesArg = ReadRequiredValue(i++, "--fixtures");
+            }
+            else if (string.Equals(arg, "--corpus-manifest", StringComparison.OrdinalIgnoreCase))
+            {
+                corpusManifestArg = ReadRequiredValue(i++, "--corpus-manifest");
+            }
+            else if (string.Equals(arg, "--wav-root", StringComparison.OrdinalIgnoreCase))
+            {
+                wavRootArg = ReadRequiredValue(i++, "--wav-root");
+            }
+            else if (string.Equals(arg, "--max-fixtures", StringComparison.OrdinalIgnoreCase))
+            {
+                var rawMax = ReadRequiredValue(i++, "--max-fixtures");
+                if (!int.TryParse(rawMax, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedMax) || parsedMax <= 0)
+                {
+                    throw new ArgumentException($"Invalid --max-fixtures value '{rawMax}'. Expected a positive integer.", nameof(args));
+                }
+
+                maxFixturesArg = parsedMax;
+            }
+            else if (string.Equals(arg, "--languages", StringComparison.OrdinalIgnoreCase))
+            {
+                var rawLanguages = ReadRequiredValue(i++, "--languages");
+                var parsedLanguages = rawLanguages
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(NormalizeLanguageSubtag)
+                    .Where(lang => !string.IsNullOrWhiteSpace(lang) && !string.Equals(lang, "auto", StringComparison.OrdinalIgnoreCase))
+                    .Select(lang => lang!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (parsedLanguages.Count == 0)
+                {
+                    throw new ArgumentException($"Invalid --languages value '{rawLanguages}'. Expected comma-separated ISO language codes.", nameof(args));
+                }
+
+                languagesArg = parsedLanguages;
+            }
+            else if (string.Equals(arg, "--repeats", StringComparison.OrdinalIgnoreCase))
+            {
+                var rawRepeats = ReadRequiredValue(i++, "--repeats");
+                if (int.TryParse(rawRepeats, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedRepeats))
+                {
+                    repeats = Math.Max(1, parsedRepeats);
+                }
+            }
+            else if (string.Equals(arg, "--providers", StringComparison.OrdinalIgnoreCase))
+            {
+                providersText = ReadRequiredValue(i++, "--providers");
+            }
+            else if (string.Equals(arg, "--only", StringComparison.OrdinalIgnoreCase))
+            {
+                onlyArg = ReadRequiredValue(i++, "--only");
+            }
+            else if (string.Equals(arg, "--role", StringComparison.OrdinalIgnoreCase))
+            {
+                roleArg = ReadRequiredValue(i++, "--role");
+            }
+            else if (string.Equals(arg, "--language", StringComparison.OrdinalIgnoreCase))
+            {
+                requestedLanguage = ReadRequiredValue(i++, "--language");
+            }
+            else if (string.Equals(arg, "--prefix-references", StringComparison.OrdinalIgnoreCase))
+            {
+                prefixReferencesArg = ReadRequiredValue(i++, "--prefix-references");
+            }
+            else if (string.Equals(arg, "--out", StringComparison.OrdinalIgnoreCase))
+            {
+                outputArg = ReadRequiredValue(i++, "--out");
+            }
+            else if (string.Equals(arg, "--markdown", StringComparison.OrdinalIgnoreCase))
+            {
+                markdownArg = ReadRequiredValue(i++, "--markdown");
+            }
+        }
+
+        var repositoryRoot = repoArg ?? defaultRepositoryRoot ?? FindRepositoryRoot(AppContext.BaseDirectory);
+        var fixturesDirectory = fixturesArg ?? Path.Combine(repositoryRoot, "tools", "whisper-uat", "fixtures");
+        var providers = providersText
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(name => name.Equals("cuda", StringComparison.OrdinalIgnoreCase) ? RuntimeProviderKind.Cuda : RuntimeProviderKind.Cpu)
+            .Distinct()
+            .ToArray();
+        var role = ParseRole(roleArg);
+        var outputPath = outputArg ?? Path.Combine(Path.GetTempPath(), "preview-model-bench.json");
+
+        return new BenchCliOptions(
+            RepositoryRoot: repositoryRoot,
+            ModelsRoot: modelsArg,
+            ReleaseChannel: channelArg,
+            AudioDirectory: audioArg,
+            ExtraModels: extraModelsArg,
+            FixturesDirectory: fixturesDirectory,
+            CorpusManifestPath: corpusManifestArg,
+            WavRoot: wavRootArg,
+            MaxFixtures: maxFixturesArg,
+            Languages: languagesArg,
+            AccuracyOnly: accuracyOnly,
+            Repeats: repeats,
+            Providers: providers,
+            Only: onlyArg,
+            Role: role,
+            RequestedLanguage: requestedLanguage,
+            PrefixReferencesPath: prefixReferencesArg,
+            OutputPath: outputPath,
+            MarkdownOutputPath: markdownArg,
+            AllowBusyCard: allowBusyCard,
+            ShowHelp: showHelp);
+    }
+
+    public static string FormatHelpText() =>
+        """
+        Usage: preview-model-bench [options]
+
+        Options:
+          --role <preview|final>         Worker role and thread/priority profile (default: preview)
+          --providers <cpu,cuda>         Comma-separated runtime providers to measure (default: cpu,cuda)
+          --only <substring>             Filter candidate models by name substring
+          --language <lang|auto>         Requested Whisper recognition language (default: auto)
+          --corpus-manifest <path>       Manifest file or corpus directory (cases.sealed.jsonl, cases.jsonl, manifest.jsonl, or manifest.json)
+          --wav-root <dir>               Optional root directory for resolving corpus WAV files
+          --max-fixtures <N>             Maximum number of corpus fixtures to evaluate
+          --languages <csv>              Comma-separated base ISO language filter (e.g. en,de,zh)
+          --accuracy-only                Skip archived window-timing passes and evaluate corpus accuracy only
+          --fixtures <dir>               Legacy MINDS-14 fixtures directory (default: tools/whisper-uat/fixtures)
+          --audio <dir|file>             Archived dictation WAV directory for window-timing passes
+          --prefix-references <json>     Frozen prefix-reference JSON for partial-window WER grading
+          --repeats <N>                  Window-timing pass repeats per clip (default: 3)
+          --models <dir>                 Explicit model store root override
+          --extra-models <dir>           Directory containing optional extra Whisper GGML binaries
+          --channel <stable|founder>     Release channel for app data and model store lookup
+          --allow-busy-card              Measure CUDA even if GPU utilization is at or above 50%
+          --out <path>                   JSON report output path
+          --markdown <path>              Optional Markdown report output path
+          --help, -h                     Show this help message
+        """;
+
+    public static string FindRepositoryRoot(string start)
+    {
+        var directory = new DirectoryInfo(start);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "EnviousWispr.Windows.slnx")))
+        {
+            directory = directory.Parent;
+        }
+
+        return directory?.FullName ?? start;
+    }
+
+    /// <summary>
+    /// Parses corpus manifest entries from a file or directory supporting:
+    /// <list type="bullet">
+    /// <item>Mac <c>intl-sealed-2026-11</c> JSONL (<c>cases.sealed.jsonl</c> with <c>voice_text</c> or <c>cases.jsonl</c> with <c>text</c> + <c>id</c>, <c>lang</c>, resolving <c>&lt;dir&gt;/wav/&lt;id&gt;.wav</c>),</item>
+    /// <item>Mac <c>lang-stress</c> / <c>german-parakeet-stress</c> JSONL (<c>manifest.jsonl</c> with <c>sample_id</c>, <c>reference_text</c>, <c>locale</c>/<c>voice</c>, resolving <c>&lt;dir&gt;/audio/&lt;sample_id&gt;.wav</c>), and</item>
+    /// <item>Windows <c>tools/whisper-uat/fixtures/manifest.json</c> (<c>fixtures</c> array with <c>file</c>, <c>config</c>, <c>evaluationTranscription</c>/<c>transcription</c>).</item>
+    /// </list>
+    /// Applies optional <paramref name="languages"/> filtering (normalized to base ISO subtags) and
+    /// <paramref name="maxFixtures"/> capping in manifest order.
+    /// </summary>
+    public static IReadOnlyList<CorpusManifestEntry> ParseCorpusManifestEntries(
+        string manifestPathOrDirectory,
+        string? wavRoot = null,
+        IReadOnlyCollection<string>? languages = null,
+        int? maxFixtures = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(manifestPathOrDirectory);
+        if (maxFixtures is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxFixtures), "maxFixtures must be positive when specified.");
+        }
+
+        HashSet<string>? languageFilter = null;
+        if (languages is { Count: > 0 })
+        {
+            languageFilter = languages
+                .Select(NormalizeLanguageSubtag)
+                .Where(lang => !string.IsNullOrWhiteSpace(lang))
+                .Select(lang => lang!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var manifestFiles = ResolveManifestFiles(manifestPathOrDirectory);
+        var entries = new List<CorpusManifestEntry>();
+        foreach (var manifestFile in manifestFiles)
+        {
+            foreach (var entry in ParseSingleManifestFile(manifestFile, wavRoot))
+            {
+                if (languageFilter is not null && !languageFilter.Contains(entry.Language))
+                {
+                    continue;
+                }
+
+                entries.Add(entry);
+                if (maxFixtures is { } max && entries.Count >= max)
+                {
+                    return entries;
+                }
+            }
+        }
+
+        return entries;
+    }
+
+    /// <summary>
+    /// Loads corpus fixtures and their WAV audio samples from <paramref name="manifestPathOrDirectory"/>,
+    /// applying optional <paramref name="wavRoot"/>, <paramref name="languages"/>, and
+    /// <paramref name="maxFixtures"/> filters. Fails closed with <see cref="InvalidDataException"/> if any
+    /// selected fixture's WAV file is missing.
+    /// </summary>
+    public static List<Fixture> LoadCorpusFixtures(
+        string manifestPathOrDirectory,
+        string? wavRoot = null,
+        IReadOnlyCollection<string>? languages = null,
+        int? maxFixtures = null,
+        Func<string, float[]>? waveReader = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(manifestPathOrDirectory);
+        if (!File.Exists(manifestPathOrDirectory) && !Directory.Exists(manifestPathOrDirectory))
+        {
+            return [];
+        }
+
+        var entries = ParseCorpusManifestEntries(manifestPathOrDirectory, wavRoot, languages, maxFixtures);
+        var reader = waveReader ?? ReadWaveFile;
+        var fixtures = new List<Fixture>(entries.Count);
+        foreach (var entry in entries)
+        {
+            if (!File.Exists(entry.AudioPath))
+            {
+                throw new InvalidDataException($"Missing fixture: {entry.File} (expected at '{entry.AudioPath}').");
+            }
+
+            fixtures.Add(new Fixture(entry.File, entry.Language, entry.Reference, reader(entry.AudioPath)));
+        }
+
+        return fixtures;
+    }
+
+    private static List<string> ResolveManifestFiles(string manifestPathOrDirectory)
+    {
+        if (File.Exists(manifestPathOrDirectory))
+        {
+            return [Path.GetFullPath(manifestPathOrDirectory)];
+        }
+
+        if (!Directory.Exists(manifestPathOrDirectory))
+        {
+            throw new FileNotFoundException($"Corpus manifest path not found: {manifestPathOrDirectory}", manifestPathOrDirectory);
+        }
+
+        var dir = Path.GetFullPath(manifestPathOrDirectory);
+        string[] directCandidates =
+        [
+            Path.Combine(dir, "manifest.json"),
+            Path.Combine(dir, "cases.sealed.jsonl"),
+            Path.Combine(dir, "cases.jsonl"),
+            Path.Combine(dir, "manifest.jsonl"),
+        ];
+        foreach (var direct in directCandidates)
+        {
+            if (File.Exists(direct))
+            {
+                return [direct];
+            }
+        }
+
+        var discovered = new List<string>();
+        DiscoverManifestsRecursive(dir, discovered);
+        return discovered;
+    }
+
+    private static void DiscoverManifestsRecursive(string directory, List<string> discovered)
+    {
+        string[] candidates =
+        [
+            Path.Combine(directory, "cases.sealed.jsonl"),
+            Path.Combine(directory, "cases.jsonl"),
+            Path.Combine(directory, "manifest.jsonl"),
+            Path.Combine(directory, "manifest.json"),
+        ];
+        var matched = candidates.FirstOrDefault(File.Exists);
+        if (matched is not null)
+        {
+            discovered.Add(matched);
+            return;
+        }
+
+        foreach (var subDir in Directory.EnumerateDirectories(directory).OrderBy(d => d, StringComparer.Ordinal))
+        {
+            var folderName = Path.GetFileName(subDir);
+            if (string.Equals(folderName, "results", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(folderName, "wav", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(folderName, "audio", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            DiscoverManifestsRecursive(subDir, discovered);
+        }
+    }
+
+    private static IEnumerable<CorpusManifestEntry> ParseSingleManifestFile(string manifestFilePath, string? wavRoot)
+    {
+        var manifestDir = Path.GetDirectoryName(Path.GetFullPath(manifestFilePath)) ?? string.Empty;
+        var content = File.ReadAllText(manifestFilePath);
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            yield break;
+        }
+
+        if (manifestFilePath.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+        {
+            using var document = JsonDocument.Parse(content);
+            if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                document.RootElement.TryGetProperty("fixtures", out var fixturesArray) &&
+                fixturesArray.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var row in fixturesArray.EnumerateArray())
+                {
+                    var file = GetOptionalString(row, "file")
+                        ?? throw new InvalidDataException($"Manifest row in '{manifestFilePath}' is missing 'file'.");
+                    var rawLanguage = GetOptionalString(row, "lang")
+                        ?? GetOptionalString(row, "locale")
+                        ?? GetOptionalString(row, "config")
+                        ?? InferLanguageFromPath(manifestFilePath)
+                        ?? throw new InvalidDataException($"Manifest row '{file}' in '{manifestFilePath}' is missing language/config.");
+                    var language = NormalizeLanguageSubtag(rawLanguage)
+                        ?? throw new InvalidDataException($"Manifest row '{file}' in '{manifestFilePath}' has invalid language '{rawLanguage}'.");
+                    var reference = GetOptionalString(row, "evaluationTranscription")
+                        ?? GetOptionalString(row, "transcription")
+                        ?? throw new InvalidDataException($"Manifest row '{file}' in '{manifestFilePath}' is missing transcription.");
+                    var audioPath = ResolveCorpusAudioPath(manifestDir, wavRoot, file, preferredSubfolder: string.Empty);
+                    yield return new CorpusManifestEntry(
+                        Id: Path.GetFileNameWithoutExtension(file),
+                        File: file,
+                        Language: language,
+                        Reference: reference,
+                        AudioPath: audioPath,
+                        SourceFormat: "whisper-uat-manifest-json");
+                }
+
+                yield break;
+            }
+        }
+
+        var lineNumber = 0;
+        foreach (var rawLine in content.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            lineNumber++;
+            var line = rawLine.Trim();
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            using var lineDoc = JsonDocument.Parse(line);
+            var row = lineDoc.RootElement;
+            if (row.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidDataException($"Line {lineNumber} in '{manifestFilePath}' must be a JSON object.");
+            }
+
+            var id = GetOptionalString(row, "id");
+            var sampleId = GetOptionalString(row, "sample_id");
+            var voiceText = GetOptionalString(row, "voice_text");
+            var text = GetOptionalString(row, "text");
+            var referenceText = GetOptionalString(row, "reference_text") ?? GetOptionalString(row, "normalized_reference_text");
+            var explicitAudio = GetOptionalString(row, "wav") ?? GetOptionalString(row, "audio") ?? GetOptionalString(row, "file");
+
+            if (!string.IsNullOrWhiteSpace(id) && (voiceText is not null || text is not null))
+            {
+                var reference = voiceText ?? text!;
+                var rawLang = GetOptionalString(row, "lang")
+                    ?? GetOptionalString(row, "locale")
+                    ?? TryExtractLocaleFromVoice(GetOptionalString(row, "voice"))
+                    ?? InferLanguageFromPath(manifestFilePath)
+                    ?? TryExtractLanguageFromIdentifier(id)
+                    ?? throw new InvalidDataException($"Line {lineNumber} ('{id}') in '{manifestFilePath}' is missing 'lang' or 'locale'.");
+                var language = NormalizeLanguageSubtag(rawLang)!;
+                var file = id.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) ? id : $"{id}.wav";
+                var audioPath = ResolveCorpusAudioPath(manifestDir, wavRoot, file, preferredSubfolder: "wav", explicitRelativePath: explicitAudio);
+                yield return new CorpusManifestEntry(
+                    Id: id,
+                    File: file,
+                    Language: language,
+                    Reference: reference,
+                    AudioPath: audioPath,
+                    SourceFormat: voiceText is not null ? "mac-intl-cases-sealed-jsonl" : "mac-intl-cases-jsonl");
+            }
+            else if (!string.IsNullOrWhiteSpace(sampleId) && referenceText is not null)
+            {
+                var rawLang = GetOptionalString(row, "lang")
+                    ?? GetOptionalString(row, "locale")
+                    ?? TryExtractLocaleFromVoice(GetOptionalString(row, "voice"))
+                    ?? InferLanguageFromPath(manifestFilePath)
+                    ?? TryExtractLanguageFromIdentifier(sampleId)
+                    ?? throw new InvalidDataException($"Line {lineNumber} ('{sampleId}') in '{manifestFilePath}' is missing 'locale' or 'lang'.");
+                var language = NormalizeLanguageSubtag(rawLang)!;
+                var file = sampleId.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) ? sampleId : $"{sampleId}.wav";
+                var audioPath = ResolveCorpusAudioPath(manifestDir, wavRoot, file, preferredSubfolder: "audio", explicitRelativePath: explicitAudio);
+                yield return new CorpusManifestEntry(
+                    Id: sampleId,
+                    File: file,
+                    Language: language,
+                    Reference: referenceText,
+                    AudioPath: audioPath,
+                    SourceFormat: "mac-stress-manifest-jsonl");
+            }
+            else
+            {
+                throw new InvalidDataException(
+                    $"Line {lineNumber} in '{manifestFilePath}' does not match a supported corpus schema (expected id+voice_text/text or sample_id+reference_text).");
+            }
+        }
+    }
+
+    private static string? GetOptionalString(JsonElement element, string propertyName) =>
+        element.TryGetProperty(propertyName, out var prop) && prop.ValueKind == JsonValueKind.String
+            ? prop.GetString()
+            : null;
+
+    private static string? TryExtractLocaleFromVoice(string? voice)
+    {
+        if (string.IsNullOrWhiteSpace(voice))
+        {
+            return null;
+        }
+
+        var parts = voice.Trim().Split(['-', '_'], StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2 && parts[0].Length is 2 or 3 && parts[0].All(char.IsLetter)
+            ? parts[0].ToLowerInvariant()
+            : null;
+    }
+
+    private static string? TryExtractLanguageFromIdentifier(string? identifier)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+        {
+            return null;
+        }
+
+        var prefix = identifier.Trim().Split(['-', '_'], StringSplitOptions.RemoveEmptyEntries)[0];
+        return prefix.Length == 2 && prefix.All(char.IsLetter) && !string.Equals(prefix, "SB", StringComparison.OrdinalIgnoreCase)
+            ? prefix.ToLowerInvariant()
+            : null;
+    }
+
+    private static string? InferLanguageFromPath(string manifestFilePath)
+    {
+        var directory = Path.GetDirectoryName(Path.GetFullPath(manifestFilePath));
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return null;
+        }
+
+        var folderName = Path.GetFileName(directory);
+        if (string.IsNullOrWhiteSpace(folderName))
+        {
+            return null;
+        }
+
+        if (folderName.Contains("german", StringComparison.OrdinalIgnoreCase))
+        {
+            return "de";
+        }
+
+        var token = folderName.Split(['-', '_'], StringSplitOptions.RemoveEmptyEntries)[0];
+        return token.Length == 2 && token.All(char.IsLetter)
+            ? token.ToLowerInvariant()
+            : null;
+    }
+
+    private static string ResolveCorpusAudioPath(
+        string manifestDir,
+        string? wavRoot,
+        string file,
+        string preferredSubfolder,
+        string? explicitRelativePath = null)
+    {
+        var sliceName = Path.GetFileName(manifestDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        var candidates = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(wavRoot))
+        {
+            var root = Path.GetFullPath(wavRoot);
+            if (!string.IsNullOrWhiteSpace(explicitRelativePath))
+            {
+                candidates.Add(Path.Combine(root, explicitRelativePath));
+            }
+
+            if (!string.IsNullOrEmpty(preferredSubfolder))
+            {
+                candidates.Add(Path.Combine(root, preferredSubfolder, file));
+            }
+
+            candidates.Add(Path.Combine(root, file));
+            if (!string.IsNullOrWhiteSpace(sliceName))
+            {
+                if (!string.IsNullOrEmpty(preferredSubfolder))
+                {
+                    candidates.Add(Path.Combine(root, sliceName, preferredSubfolder, file));
+                }
+
+                candidates.Add(Path.Combine(root, sliceName, file));
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(explicitRelativePath))
+        {
+            candidates.Add(Path.Combine(manifestDir, explicitRelativePath));
+        }
+
+        if (!string.IsNullOrEmpty(preferredSubfolder))
+        {
+            candidates.Add(Path.Combine(manifestDir, preferredSubfolder, file));
+        }
+
+        candidates.Add(Path.Combine(manifestDir, file));
+
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+            {
+                return Path.GetFullPath(candidate);
+            }
+        }
+
+        return Path.GetFullPath(candidates[0]);
+    }
+
+    public static float[] ReadWaveFile(string path)
+    {
+        var bytes = File.ReadAllBytes(path);
+        byte[]? format = null;
+        var position = 12;
+        while (position + 8 <= bytes.Length)
+        {
+            var chunkId = bytes.AsSpan(position, 4);
+            var chunkSize = BitConverter.ToInt32(bytes, position + 4);
+            position += 8;
+            if (chunkId.SequenceEqual("fmt "u8))
+            {
+                format = bytes.AsSpan(position, chunkSize).ToArray();
+            }
+            else if (chunkId.SequenceEqual("data"u8) && format is { Length: >= 16 })
+            {
+                var audioFormat = BitConverter.ToInt16(format, 0);
+                var channels = BitConverter.ToInt16(format, 2);
+                var sourceRate = BitConverter.ToInt32(format, 4);
+                var bitsPerSample = BitConverter.ToInt16(format, 14);
+                var bytesPerSample = bitsPerSample / 8;
+                var sampleCount = Math.Min(chunkSize, bytes.Length - position) / bytesPerSample / channels;
+                var samples = new float[sampleCount];
+                for (var index = 0; index < sampleCount; index++)
+                {
+                    var offset = position + (index * bytesPerSample * channels);
+                    samples[index] = audioFormat switch
+                    {
+                        1 when bitsPerSample == 16 => BitConverter.ToInt16(bytes, offset) / 32768f,
+                        3 when bitsPerSample == 32 => BitConverter.ToSingle(bytes, offset),
+                        7 when bitsPerSample == 8 => DecodeMuLaw(bytes[offset]),
+                        _ => throw new InvalidDataException($"{Path.GetFileName(path)} uses an unsupported codec."),
+                    };
+                }
+
+                return sourceRate == SampleRate ? samples : Resample(samples, sourceRate, SampleRate);
+            }
+
+            position += chunkSize + (chunkSize % 2);
+        }
+
+        throw new InvalidDataException($"{Path.GetFileName(path)} has no supported audio data.");
+    }
+
+    private static float DecodeMuLaw(byte value)
+    {
+        var decoded = (byte)~value;
+        var sign = (decoded & 0x80) == 0 ? 1 : -1;
+        var exponent = (decoded >> 4) & 0x07;
+        var mantissa = decoded & 0x0F;
+        var magnitude = (((mantissa << 3) + 0x84) << exponent) - 0x84;
+        return sign * magnitude / 32768f;
+    }
+
+    private static float[] Resample(float[] source, int sourceRate, int destinationRate)
+    {
+        var destinationLength = checked((int)Math.Round(source.Length * (destinationRate / (double)sourceRate)));
+        var destination = new float[destinationLength];
+        for (var index = 0; index < destinationLength; index++)
+        {
+            var sourcePosition = index * (sourceRate / (double)destinationRate);
+            var lower = Math.Min((int)sourcePosition, source.Length - 1);
+            var upper = Math.Min(lower + 1, source.Length - 1);
+            var fraction = sourcePosition - lower;
+            destination[index] = (float)(source[lower] + ((source[upper] - source[lower]) * fraction));
+        }
+
+        return destination;
+    }
+
     public static int? CountPassesOverPreviewCadence(
         BenchRole role,
         IEnumerable<Pass> steadyPasses,
@@ -1459,12 +2599,25 @@ internal static class PreviewModelBenchEvaluation
 
         var sb = new StringBuilder();
         var languages = rows
-            .SelectMany(row => row.WordErrorRateByLanguage?.Keys ?? Enumerable.Empty<string>())
+            .SelectMany(row =>
+                (row.WordErrorRateByLanguage?.Keys ?? Enumerable.Empty<string>())
+                .Concat(row.CharacterErrorRateByLanguage?.Keys ?? Enumerable.Empty<string>())
+                .Concat(row.RubricTierByLanguage?.Keys ?? Enumerable.Empty<string>()))
             .Distinct(StringComparer.Ordinal)
             .OrderBy(lang => lang, StringComparer.Ordinal)
             .ToList();
         var hasPrefixWer = rows.Any(row => row.PrefixWordErrorRate is not null || row.PrefixFixtures is { Count: > 0 });
         var hasPreviewCadence = rows.Any(row => row.PassesOverCadence is not null);
+        var hasCer = rows.Any(row =>
+            row.CharacterErrorRate is not null ||
+            row.CharacterErrorRateByLanguage is { Count: > 0 } ||
+            languages.Any(UsesCharacterErrorRate));
+        var hasDetectedLangMatch = rows.Any(row =>
+            row.DetectedLanguageMatchRate is not null ||
+            row.DetectedLanguageMatchRateByLanguage is { Count: > 0 });
+        var hasRubricTier = rows.Any(row =>
+            row.RubricTier is not null ||
+            row.RubricTierByLanguage is { Count: > 0 });
 
         var headerParts = new List<string>
         {
@@ -1484,6 +2637,24 @@ internal static class PreviewModelBenchEvaluation
         headerParts.Add(hasPreviewCadence ? "over 2.5 s (preview)" : "passes");
         headerParts.Add("WER all");
         headerParts.AddRange(languages.Select(language => $"WER {language}"));
+        if (hasCer)
+        {
+            headerParts.Add("CER all");
+            headerParts.AddRange(languages.Select(language => $"CER {language}"));
+        }
+
+        if (hasDetectedLangMatch)
+        {
+            headerParts.Add("lang match");
+            headerParts.AddRange(languages.Select(language => $"lang match {language}"));
+        }
+
+        if (hasRubricTier)
+        {
+            headerParts.Add("rubric tier");
+            headerParts.AddRange(languages.Select(language => $"tier {language}"));
+        }
+
         if (hasPrefixWer)
         {
             headerParts.Add("prefix WER");
@@ -1517,6 +2688,24 @@ internal static class PreviewModelBenchEvaluation
                 failedCells.Add("-");
                 failedCells.Add("-");
                 failedCells.AddRange(languages.Select(_ => "-"));
+                if (hasCer)
+                {
+                    failedCells.Add("-");
+                    failedCells.AddRange(languages.Select(_ => "-"));
+                }
+
+                if (hasDetectedLangMatch)
+                {
+                    failedCells.Add("-");
+                    failedCells.AddRange(languages.Select(_ => "-"));
+                }
+
+                if (hasRubricTier)
+                {
+                    failedCells.Add("-");
+                    failedCells.AddRange(languages.Select(_ => "-"));
+                }
+
                 if (hasPrefixWer)
                 {
                     failedCells.Add("-");
@@ -1560,6 +2749,33 @@ internal static class PreviewModelBenchEvaluation
             cells.Add(Percent(row.WordErrorRate));
             cells.AddRange(languages.Select(language =>
                 Percent(row.WordErrorRateByLanguage?.GetValueOrDefault(language))));
+            if (hasCer)
+            {
+                cells.Add(Percent(row.CharacterErrorRate));
+                cells.AddRange(languages.Select(language =>
+                    Percent(row.CharacterErrorRateByLanguage?.GetValueOrDefault(language))));
+            }
+
+            if (hasDetectedLangMatch)
+            {
+                cells.Add(Percent(row.DetectedLanguageMatchRate));
+                cells.AddRange(languages.Select(language =>
+                    Percent(row.DetectedLanguageMatchRateByLanguage?.GetValueOrDefault(language))));
+            }
+
+            if (hasRubricTier)
+            {
+                cells.Add(row.RubricTier ?? "-");
+                cells.AddRange(languages.Select(language =>
+                    row.RubricTierByLanguage?.GetValueOrDefault(language)
+                    ?? ClassifyRubricTier(
+                        language,
+                        UsesCharacterErrorRate(language)
+                            ? row.CharacterErrorRateByLanguage?.GetValueOrDefault(language)
+                            : row.WordErrorRateByLanguage?.GetValueOrDefault(language))
+                    ?? "-"));
+            }
+
             if (hasPrefixWer)
             {
                 cells.Add(Percent(row.PrefixWordErrorRate));
@@ -1581,19 +2797,31 @@ internal static class PreviewModelBenchEvaluation
         if (fixtureRows.Count > 0)
         {
             sb.AppendLine();
-            sb.AppendLine("| model | on | role | fixture | lang | req lang | det lang | fallback | failure | status | edits / ref | WER | time |");
-            sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|---:|---:|---:|");
+            sb.AppendLine("| model | on | role | fixture | lang | req lang | det lang | lang match | fallback | failure | status | edits / ref | WER | CER | metric | tier | time |");
+            sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|---:|---:|---:|---|---|---:|");
             foreach (var (row, fixture) in fixtureRows)
             {
-                var editsCell = fixture.EditDistance is { } edits
-                    ? $"{edits} / {fixture.ReferenceWords}"
-                    : $"- / {fixture.ReferenceWords}";
+                var usesCer = UsesCharacterErrorRate(fixture.Language);
+                var editsCell = usesCer
+                    ? (fixture.CharacterEditDistance is { } charEdits
+                        ? $"{charEdits} / {fixture.ReferenceCharacters}"
+                        : $"- / {fixture.ReferenceCharacters}")
+                    : (fixture.EditDistance is { } wordEdits
+                        ? $"{wordEdits} / {fixture.ReferenceWords}"
+                        : $"- / {fixture.ReferenceWords}");
+                var langMatchCell = fixture.DetectedLanguageMatched is { } matched
+                    ? (matched ? "yes" : "no")
+                    : "-";
+                var tierCell = fixture.RubricTier
+                    ?? ClassifyRubricTier(fixture.Language, usesCer ? fixture.CharacterErrorRate : fixture.WordErrorRate)
+                    ?? "-";
                 sb.AppendLine(
                     CultureInfo.InvariantCulture,
                     $"| {row.Model} | {row.Provider} | {row.Role} | {fixture.File} | {fixture.Language} | " +
-                    $"{fixture.RequestedLanguage ?? "-"} | {fixture.DetectedLanguage ?? "-"} | " +
+                    $"{fixture.RequestedLanguage ?? "-"} | {fixture.DetectedLanguage ?? "-"} | {langMatchCell} | " +
                     $"{(fixture.UsedFallback ? "yes" : "no")} | {fixture.FailureCategory} | {fixture.Classification} | " +
-                    $"{editsCell} | {Percent(fixture.WordErrorRate)} | {fixture.Milliseconds} ms |");
+                    $"{editsCell} | {Percent(fixture.WordErrorRate)} | {Percent(fixture.CharacterErrorRate)} | " +
+                    $"{fixture.PrimaryMetric.ToUpperInvariant()} | {tierCell} | {fixture.Milliseconds} ms |");
             }
         }
 
