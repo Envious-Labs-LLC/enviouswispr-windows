@@ -1,3 +1,6 @@
+using System.Collections.Concurrent;
+using System.Reflection;
+using System.Text.RegularExpressions;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Pipeline;
 using EnviousWispr.PostProcessing;
@@ -90,5 +93,104 @@ public sealed class RecognizerMarksTests
         var casualReceipt = result.Receipts.Single(r => r.Stage == DeterministicTextStage.CasualEnding);
         Assert.Equal(DeterministicStageStatus.Completed, casualReceipt.Status);
         Assert.False(casualReceipt.Changed);
+    }
+
+    [Fact]
+    public void RecognizerMarksAndPostProcessingUseSourceGeneratedRegexWithoutRuntimeCompiledOption()
+    {
+        InverseTextNormalizer.Warm();
+
+        var assembly = typeof(InverseTextNormalizer).Assembly;
+        var compiledOffenders = new List<string>();
+        var generatedRecognizerRegexCount = 0;
+
+        foreach (var type in assembly.GetTypes())
+        {
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
+            foreach (var field in type.GetFields(flags))
+            {
+                if (field.FieldType == typeof(Regex) && field.GetValue(null) is Regex regex)
+                {
+                    if ((regex.Options & RegexOptions.Compiled) != 0)
+                    {
+                        compiledOffenders.Add($"{type.Name}.{field.Name}");
+                    }
+                }
+            }
+
+            foreach (var method in type.GetMethods(flags))
+            {
+                if (method.ReturnType == typeof(Regex) && method.GetParameters().Length == 0)
+                {
+                    var regex = (Regex)method.Invoke(null, null)!;
+                    if ((regex.Options & RegexOptions.Compiled) != 0)
+                    {
+                        compiledOffenders.Add($"{type.Name}.{method.Name}()");
+                    }
+
+                    if (type == typeof(InverseTextNormalizer))
+                    {
+                        generatedRecognizerRegexCount++;
+                        Assert.NotEqual(Regex.InfiniteMatchTimeout, regex.MatchTimeout);
+                        Assert.InRange(regex.MatchTimeout, TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(2));
+                    }
+                }
+            }
+        }
+
+        var patternsField = typeof(InverseTextNormalizer).GetField(
+            "Patterns",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(patternsField);
+        var patterns = (ConcurrentDictionary<(string Pattern, bool IgnoreCase), Regex>)patternsField.GetValue(null)!;
+        Assert.NotEmpty(patterns);
+        foreach (var pair in patterns)
+        {
+            if ((pair.Value.Options & RegexOptions.Compiled) != 0)
+            {
+                compiledOffenders.Add($"Patterns[{pair.Key.Pattern}]");
+            }
+        }
+
+        Assert.True(
+            generatedRecognizerRegexCount >= 9,
+            $"Expected all recognizer-mark patterns on InverseTextNormalizer to be [GeneratedRegex] methods, found {generatedRecognizerRegexCount}.");
+        Assert.Empty(compiledOffenders);
+    }
+
+    [Fact]
+    public async Task WarmAndRecognizerMarkReconciliationSucceedUnderConcurrentCallsAndUsePublicationOnlyLazy()
+    {
+        var sourcePath = Path.Combine(
+            AppContext.BaseDirectory,
+            "..", "..", "..", "..",
+            "EnviousWispr.PostProcessing",
+            "InverseTextNormalizer.cs");
+        if (File.Exists(sourcePath))
+        {
+            var source = await File.ReadAllTextAsync(sourcePath);
+            Assert.Contains("LazyThreadSafetyMode.PublicationOnly", source, StringComparison.Ordinal);
+        }
+
+        var tasks = Enumerable.Range(0, 16).Select(index => Task.Run(() =>
+        {
+            InverseTextNormalizer.Warm();
+            var reconciled = InverseTextNormalizer.ReconcileEnglishRecognizerMarks(
+                " Mr. comma J. comma U.S. comma hello. comma, comma period. period new line. wait, new paragraph. ");
+            Assert.Equal(
+                " Mr. comma J. comma U.S. comma hello comma period new line wait, new paragraph ",
+                reconciled);
+            var absorbed = InverseTextNormalizer.AbsorbRecognizerMarks(
+                " Sounds good. See you tomorrow, period.. ");
+            Assert.Equal(" Sounds good. See you tomorrow period ", absorbed);
+            var normalized = InverseTextNormalizer.Normalize(
+                $"Sounds good. See you tomorrow, period.. Take {index + 1} is ready, comma thanks.",
+                spokenPunctuation: true,
+                out var spokenFinalFullStop);
+            Assert.Equal($"Sounds good. See you tomorrow. Take {index + 1} is ready, thanks.", normalized);
+            Assert.False(spokenFinalFullStop);
+        }));
+
+        await Task.WhenAll(tasks);
     }
 }

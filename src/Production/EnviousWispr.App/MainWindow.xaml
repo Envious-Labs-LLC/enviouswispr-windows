@@ -577,7 +577,7 @@
                             <Border Style="{StaticResource BrandHeaderCardStyle}"><Grid ColumnSpacing="{StaticResource BrandSpacingL}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Width="56" Height="56" Style="{StaticResource BrandIconTileStyle}"><FontIcon Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE81C;" /></Border><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><TextBlock Style="{StaticResource BrandPageTitleStyle}" Text="History" /><TextBlock Style="{StaticResource BrandBodyStyle}" Text="Your past dictations, searchable and ready to reuse." TextWrapping="Wrap" /></StackPanel></Grid></Border>
                             <InfoBar x:Name="FoundationInfoBar" IsClosable="False" IsOpen="True" Message="Your voice is transcribed here and never leaves it. Turn on cloud polish and only the text goes out, to the provider you choose." Severity="Success" Title="Everything happens on this PC" />
                             <Border x:Name="RecoveryCard" AutomationProperties.Name="Recovered unfinished dictation" Padding="20" Style="{StaticResource BrandSectionCardStyle}" Visibility="Collapsed"><StackPanel Spacing="{StaticResource BrandSpacingS}"><TextBlock x:Name="RecoveryTitleText" Style="{StaticResource BrandRowTitleStyle}" Text="Recovered unfinished dictation" /><TextBlock x:Name="RecoveryBodyText" Text="EnviousWispr found text that had not reached its destination before the previous run ended. Review it here; it will never be pasted automatically." TextWrapping="Wrap" /><TextBox x:Name="RecoveryTextBox" AcceptsReturn="True" AutomationProperties.Name="Recovered dictation text" IsReadOnly="True" MaxHeight="180" TextAlignment="DetectFromContent" TextWrapping="Wrap" /><StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}"><Button x:Name="UndoRecoveryButton" AutomationProperties.AutomationId="UndoRecoveryButton" AutomationProperties.HelpText="Pastes the cancelled dictation back where you were dictating." Click="UndoRecoveryButton_Click" Content="Undo" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" /><Button Click="CopyRecoveryButton_Click" Content="Copy recovered text" Style="{StaticResource BrandQuietButtonStyle}" /><Button Click="DeleteRecoveryButton_Click" Content="Delete recovery copy" Style="{StaticResource BrandQuietButtonStyle}" /></StackPanel></StackPanel></Border>
-                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}" MinHeight="620">
+                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="360" />
                                     <ColumnDefinition Width="*" />
@@ -620,7 +620,7 @@
                                         </Grid>
                                     </Border>
                                     <Grid Grid.Row="3">
-                                        <ListView x:Name="HistoryList" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" SelectionChanged="ListSelectionChanged" AutomationProperties.Name="Local dictation history" SelectionMode="Single" MinHeight="280">
+                                        <ListView x:Name="HistoryList" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" SelectionChanged="ListSelectionChanged" AutomationProperties.Name="Local dictation history" SelectionMode="Single" MaxHeight="360">
                                             <ListView.ItemContainerTransitions>
                                                 <TransitionCollection><AddDeleteThemeTransition /><ContentThemeTransition /><ReorderThemeTransition /></TransitionCollection>
                                             </ListView.ItemContainerTransitions>
@@ -678,7 +678,7 @@
                                     <Button x:Name="ClearHistoryButton" Grid.Row="4" Margin="0,12,0,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Click="ClearHistoryButton_Click" Content="Delete all history" Style="{StaticResource BrandDestructiveButtonStyle}" />
                                 </Grid>
                                 <Grid Grid.Column="1">
-                                    <Border x:Name="HistoryDetailEmptyState" Padding="32" Style="{StaticResource BrandSectionCardStyle}" VerticalAlignment="Stretch">
+                                    <Border x:Name="HistoryDetailEmptyState" Padding="32" Style="{StaticResource BrandSectionCardStyle}" VerticalAlignment="Top">
                                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="{StaticResource BrandSpacingM}">
                                             <Border Width="64" Height="64" HorizontalAlignment="Center" Style="{StaticResource BrandIconTileStyle}">
                                                 <FontIcon FontSize="24" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE720;" />
@@ -688,18 +688,18 @@
                                             <TextBlock x:Name="HistoryDetailReadinessText" Style="{StaticResource BrandBodyStyle}" Text="Hold your shortcut to dictate, or select an item from the list to view details." TextAlignment="Center" TextWrapping="Wrap" />
                                         </StackPanel>
                                     </Border>
-                                    <Border x:Name="HistoryDetailContent" Padding="24" Style="{StaticResource BrandSectionCardStyle}" Visibility="Collapsed" VerticalAlignment="Stretch">
+                                    <Border x:Name="HistoryDetailContent" Padding="24" Style="{StaticResource BrandSectionCardStyle}" Visibility="Collapsed" VerticalAlignment="Top">
                                         <Grid>
                                             <Grid.RowDefinitions>
                                                 <RowDefinition Height="Auto" />
-                                                <RowDefinition Height="*" />
+                                                <RowDefinition Height="Auto" />
                                                 <RowDefinition Height="Auto" />
                                             </Grid.RowDefinitions>
                                             <StackPanel Grid.Row="0" Spacing="{StaticResource BrandSpacingXs}" Margin="0,0,0,16">
                                                 <TextBlock x:Name="HistoryDetailTimestampText" Style="{StaticResource BrandRowTitleStyle}" Text="" />
                                                 <TextBlock x:Name="HistoryDetailMetadataText" Style="{StaticResource BrandHelperStyle}" Text="" />
                                             </StackPanel>
-                                            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                                            <ScrollViewer Grid.Row="1" MaxHeight="240" VerticalScrollBarVisibility="Auto">
                                                 <TextBox x:Name="HistoryDetailTextBox" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontSize="16" FontFamily="Segoe UI Variable Text, Segoe UI" BorderThickness="0" Margin="0,0,0,16" />
                                             </ScrollViewer>
                                             <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" HorizontalAlignment="Right">

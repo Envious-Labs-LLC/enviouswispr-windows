@@ -3936,11 +3936,17 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void RefreshHistoryView()
     {
+        var previousSelectedId = (HistoryList.SelectedItem as HistoryItemViewModel)?.Id;
         var query = HistorySearchBox.Text.Trim();
         var visibleHistory = HistoryPresenter.Filter(_history, query, _historyKindFilter)
             .Select(entry => new HistoryItemViewModel(entry))
             .ToArray();
         HistoryList.ItemsSource = visibleHistory;
+        if (previousSelectedId is { } id)
+        {
+            HistoryList.SelectedItem = visibleHistory.FirstOrDefault(item => item.Id == id);
+        }
+
         UpdateHistoryListVisibility(query, visibleHistory.Length);
         UpdateSelectionDependentButtons();
         UpdateHistoryStatusCards();

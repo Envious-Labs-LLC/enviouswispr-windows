@@ -1015,11 +1015,11 @@ try
             TranscriptionPageDriver.ChooseWhisperLanguage(app.Id, "French");
             // THE PRECONDITION LANDED, READ FROM WHAT THE APP WROTE: a save that silently kept Automatic
             // would otherwise run the take on the default and report whatever that happened to show.
-            var saved = await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json")).LoadAsync();
-            if (saved.Settings.Preferences.Dictation.WhisperLanguage != WhisperLanguagePreference.French)
+            if (!WaitForStoredWhisperLanguage(profileDirectory, WhisperLanguagePreference.French, TimeSpan.FromSeconds(10)))
             {
+                var saved = await new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json")).LoadAsync();
                 throw JourneyExpectationException.Instrument(
-                    "The Transcription page's save did not record French; the language change was not staged "
+                    "The Dictation Settings page's save did not record French; the language change was not staged "
                         + $"(saved {saved.Settings.Preferences.Dictation.WhisperLanguage}).");
             }
         }
@@ -3175,6 +3175,32 @@ static bool WaitForStoredCustomWord(string profileDirectory, string word, TimeSp
         }
 
         Thread.Sleep(200);
+    }
+
+    return false;
+}
+
+/// <summary>True once the profile's settings file records the chosen Whisper language after auto-save.</summary>
+static bool WaitForStoredWhisperLanguage(string profileDirectory, WhisperLanguagePreference expected, TimeSpan timeout)
+{
+    var clock = Stopwatch.StartNew();
+    var store = new JsonSettingsStore(Path.Combine(profileDirectory, "settings.json"));
+    while (clock.Elapsed < timeout)
+    {
+        try
+        {
+            var loaded = store.LoadAsync().GetAwaiter().GetResult();
+            if (loaded.Settings.Preferences.Dictation.WhisperLanguage == expected)
+            {
+                Thread.Sleep(100);
+                return true;
+            }
+        }
+        catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
+        {
+        }
+
+        Thread.Sleep(100);
     }
 
     return false;
