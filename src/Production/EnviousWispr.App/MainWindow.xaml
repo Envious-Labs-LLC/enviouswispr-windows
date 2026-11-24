@@ -535,7 +535,7 @@
                         <NavigationViewItem.Icon><FontIcon x:Name="HelpNavGlyph" Glyph="&#xE897;" /></NavigationViewItem.Icon>
                     </NavigationViewItem>
                 </NavigationView.FooterMenuItems>
-                <Grid Padding="28,18,28,32">
+                <Grid x:Name="MainContentGrid" Padding="28,18,28,32">
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <InfoBar Grid.Row="0" x:Name="OperationInfoBar" Margin="0,0,0,12" IsOpen="False" IsClosable="True" VerticalAlignment="Top" />
 
@@ -550,150 +550,190 @@
                         </StackPanel>
                     </ScrollViewer>
 
-                    <ScrollViewer Grid.Row="1" x:Name="HistoryPage" AutomationProperties.Name="History page" HorizontalScrollMode="Disabled" Visibility="Collapsed">
-                        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" MaxWidth="{StaticResource BrandPageContentMaxWidth}" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel Spacing="{StaticResource BrandSpacingL}">
-                            <Border Style="{StaticResource BrandHeaderCardStyle}"><Grid ColumnSpacing="{StaticResource BrandSpacingL}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Width="56" Height="56" Style="{StaticResource BrandIconTileStyle}"><FontIcon Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE81C;" /></Border><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><TextBlock Style="{StaticResource BrandPageTitleStyle}" Text="History" /><TextBlock Style="{StaticResource BrandBodyStyle}" Text="Your past dictations, searchable and ready to reuse." TextWrapping="Wrap" /></StackPanel></Grid></Border>
-                            <InfoBar x:Name="FoundationInfoBar" IsClosable="False" IsOpen="True" Message="Your voice is transcribed here and never leaves it. Turn on cloud polish and only the text goes out, to the provider you choose." Severity="Success" Title="Everything happens on this PC" />
-                            <Border x:Name="RecoveryCard" AutomationProperties.Name="Recovered unfinished dictation" Padding="20" Style="{StaticResource BrandSectionCardStyle}" Visibility="Collapsed"><StackPanel Spacing="{StaticResource BrandSpacingS}"><TextBlock x:Name="RecoveryTitleText" Style="{StaticResource BrandRowTitleStyle}" Text="Recovered unfinished dictation" /><TextBlock x:Name="RecoveryBodyText" Text="EnviousWispr found text that had not reached its destination before the previous run ended. Review it here; it will never be pasted automatically." TextWrapping="Wrap" /><TextBox x:Name="RecoveryTextBox" AcceptsReturn="True" AutomationProperties.Name="Recovered dictation text" IsReadOnly="True" MaxHeight="180" TextAlignment="DetectFromContent" TextWrapping="Wrap" /><StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}"><Button x:Name="UndoRecoveryButton" AutomationProperties.AutomationId="UndoRecoveryButton" AutomationProperties.HelpText="Pastes the cancelled dictation back where you were dictating." Click="UndoRecoveryButton_Click" Content="Undo" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" /><Button Click="CopyRecoveryButton_Click" Content="Copy recovered text" Style="{StaticResource BrandQuietButtonStyle}" /><Button Click="DeleteRecoveryButton_Click" Content="Delete recovery copy" Style="{StaticResource BrandQuietButtonStyle}" /></StackPanel></StackPanel></Border>
-                            <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="360" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <Grid Grid.Column="0">
+                    <Grid Grid.Row="1" x:Name="HistoryPage" AutomationProperties.Name="History page" Visibility="Collapsed">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="304" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="0,0,1,0">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Border Grid.RowSpan="5" Background="{ThemeResource BrandSidebarBgBrush}" Opacity="0.45" IsHitTestVisible="False" />
+                                <Grid Grid.Row="0" Padding="14,14,14,8" ColumnSpacing="{StaticResource BrandSpacingS}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="HistorySearchBox" AutomationProperties.Name="Search dictation history" PlaceholderText="Search history" TextChanged="HistorySearchBox_TextChanged" />
+                                    <TextBlock x:Name="HistoryCountText" Grid.Column="1" VerticalAlignment="Center" Style="{StaticResource BrandHelperStyle}" Text="0" />
+                                </Grid>
+                                <Border Grid.Row="1" Padding="14,0,14,10">
+                                    <Border HorizontalAlignment="Center" CornerRadius="18" Background="{ThemeResource BrandAccentLightBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="3">
+                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}">
+                                            <Button x:Name="HistoryFilterAllButton" Content="All" ToolTipService.ToolTip="All history (A)" Click="HistoryFilterButton_Click" Tag="All" Style="{StaticResource BrandSegmentedActiveButtonStyle}" Padding="10,4,10,4" />
+                                            <Button x:Name="HistoryFilterDictationButton" Content="Dictation" ToolTipService.ToolTip="Dictation only (D)" Click="HistoryFilterButton_Click" Tag="Dictation" Style="{StaticResource BrandSegmentedButtonStyle}" Padding="10,4,10,4" />
+                                            <Button x:Name="HistoryFilterTranscribeButton" Content="Transcribe a File" ToolTipService.ToolTip="Transcribed files (T)" Click="HistoryFilterButton_Click" Tag="TranscribeFile" Style="{StaticResource BrandSegmentedButtonStyle}" Padding="10,4,10,4" />
+                                        </StackPanel>
+                                    </Border>
+                                </Border>
+                                <Border Grid.Row="2" Padding="14,8,14,10" BorderThickness="0,0,0,1" BorderBrush="{ThemeResource BrandDividerBrush}">
+                                    <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                        <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Style="{StaticResource BrandHelperStyle}" Text="Engine" VerticalAlignment="Center" />
+                                            <TextBlock x:Name="HistoryEngineStatusText" Grid.Column="1" HorizontalAlignment="Right" Style="{StaticResource BrandRowLabelStyle}" Text="Automatic" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                        </Grid>
+                                        <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Style="{StaticResource BrandHelperStyle}" Text="AI Polish" VerticalAlignment="Center" />
+                                            <TextBlock x:Name="HistoryPolishStatusText" Grid.Column="1" HorizontalAlignment="Right" Style="{StaticResource BrandRowLabelStyle}" Text="Off" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                                <Grid Grid.Row="3">
+                                    <ListView x:Name="HistoryList" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" SelectionChanged="ListSelectionChanged" AutomationProperties.Name="Local dictation history" SelectionMode="Single" Padding="8,8,8,8">
+                                        <ListView.ItemContainerTransitions>
+                                            <TransitionCollection><AddDeleteThemeTransition /><ContentThemeTransition /><ReorderThemeTransition /></TransitionCollection>
+                                        </ListView.ItemContainerTransitions>
+                                        <ListView.ItemContainerStyle>
+                                            <Style TargetType="ListViewItem">
+                                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                                <Setter Property="Padding" Value="0" />
+                                                <Setter Property="Margin" Value="0,3,0,3" />
+                                                <Setter Property="MinHeight" Value="0" />
+                                                <Setter Property="CornerRadius" Value="{StaticResource BrandSectionRadius}" />
+                                            </Style>
+                                        </ListView.ItemContainerStyle>
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Padding="12,10" CornerRadius="{StaticResource BrandSectionRadius}" Background="{ThemeResource BrandHitTestBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1">
+                                                    <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                        <Grid ColumnSpacing="{StaticResource BrandSpacingS}">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding CreatedDisplay}" TextTrimming="CharacterEllipsis" />
+                                                            <Border Grid.Column="1" Background="{ThemeResource BrandAccentLightBrush}" CornerRadius="4" Padding="6,1" Visibility="{Binding TagVisibility}">
+                                                                <TextBlock Text="{Binding TagText}" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandAccentBrush}" />
+                                                            </Border>
+                                                        </Grid>
+                                                        <TextBlock FontSize="15" MaxLines="2" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="{Binding Text}" TextAlignment="DetectFromContent" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding Details}" TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+                                    <StackPanel x:Name="HistoryLoadingState" AutomationProperties.Name="Loading local history" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="20" Spacing="{StaticResource BrandSpacingS}">
+                                        <FontIcon FontSize="24" Foreground="{ThemeResource BrandTextTertiaryBrush}" Glyph="&#xE895;" HorizontalAlignment="Center" />
+                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Loading local history…" TextAlignment="Center" />
+                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Your saved dictations will appear here when the local history file is ready." TextAlignment="Center" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <StackPanel x:Name="HistoryEmptyState" AutomationProperties.Name="No dictation history yet" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="20" Spacing="{StaticResource BrandSpacingS}" Visibility="Collapsed">
+                                        <FontIcon FontSize="24" Foreground="{ThemeResource BrandTextTertiaryBrush}" Glyph="&#xE81C;" HorizontalAlignment="Center" />
+                                        <TextBlock x:Name="HistoryEmptyTitle" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandRowLabelStyle}" Text="No dictations yet" TextAlignment="Center" />
+                                        <TextBlock Style="{StaticResource BrandHelperStyle}" Text="When history is on, your dictations appear here after you hold your recording key, speak, and release." TextAlignment="Center" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <StackPanel x:Name="HistorySearchEmptyState" AutomationProperties.Name="No matching dictations" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="20" Spacing="{StaticResource BrandSpacingS}" Visibility="Collapsed">
+                                        <FontIcon FontSize="24" Foreground="{ThemeResource BrandTextTertiaryBrush}" Glyph="&#xE721;" HorizontalAlignment="Center" />
+                                        <TextBlock x:Name="HistorySearchEmptyTitle" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandRowLabelStyle}" Text="No matching dictations" TextAlignment="Center" />
+                                        <TextBlock x:Name="HistorySearchEmptyDescription" Style="{StaticResource BrandHelperStyle}" TextAlignment="Center" TextWrapping="Wrap" />
+                                        <Button HorizontalAlignment="Center" Click="ClearHistorySearchButton_Click" Content="Clear search" Style="{StaticResource BrandQuietButtonStyle}" />
+                                    </StackPanel>
+                                    <StackPanel x:Name="HistoryUnavailableState" AutomationProperties.Name="History is unavailable" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="20" Spacing="{StaticResource BrandSpacingS}" Visibility="Collapsed">
+                                        <FontIcon FontSize="24" Foreground="{ThemeResource BrandTextTertiaryBrush}" Glyph="&#xE783;" HorizontalAlignment="Center" />
+                                        <TextBlock x:Name="HistoryUnavailableTitle" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandRowLabelStyle}" Text="History is unavailable" TextAlignment="Center" />
+                                        <TextBlock x:Name="HistoryUnavailableDescription" Style="{StaticResource BrandHelperStyle}" TextAlignment="Center" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Grid>
+                                <Border Grid.Row="4" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource BrandDividerBrush}" Padding="12,8">
+                                    <Button x:Name="ClearHistoryButton" HorizontalAlignment="Center" HorizontalContentAlignment="Center" Background="{ThemeResource BrandHitTestBrush}" BorderBrush="{ThemeResource BrandHitTestBrush}" BorderThickness="0" Padding="12,6" Click="ClearHistoryButton_Click" AutomationProperties.Name="Delete all history" Style="{StaticResource BrandDestructiveButtonStyle}">
+                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                            <FontIcon FontSize="14" Glyph="&#xE74D;" />
+                                            <TextBlock Text="Delete all history" />
+                                        </StackPanel>
+                                    </Button>
+                                </Border>
+                            </Grid>
+                        </Border>
+                        <Grid Grid.Column="1" Background="{ThemeResource BrandPageBgBrush}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Border Grid.Row="0" x:Name="RecoveryCard" AutomationProperties.Name="Recovered unfinished dictation" Margin="28,18,28,0" Padding="20" Style="{StaticResource BrandSectionCardStyle}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Visibility="Collapsed">
+                                <StackPanel Spacing="{StaticResource BrandSpacingS}">
+                                    <TextBlock x:Name="RecoveryTitleText" Style="{StaticResource BrandRowTitleStyle}" Text="Recovered unfinished dictation" />
+                                    <TextBlock x:Name="RecoveryBodyText" Text="EnviousWispr found text that had not reached its destination before the previous run ended. Review it here; it will never be pasted automatically." TextWrapping="Wrap" />
+                                    <TextBox x:Name="RecoveryTextBox" AcceptsReturn="True" AutomationProperties.Name="Recovered dictation text" IsReadOnly="True" MaxHeight="180" TextAlignment="DetectFromContent" TextWrapping="Wrap" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                        <Button x:Name="UndoRecoveryButton" AutomationProperties.AutomationId="UndoRecoveryButton" AutomationProperties.HelpText="Pastes the cancelled dictation back where you were dictating." Click="UndoRecoveryButton_Click" Content="Undo" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
+                                        <Button Click="CopyRecoveryButton_Click" Content="Copy recovered text" Style="{StaticResource BrandQuietButtonStyle}" />
+                                        <Button Click="DeleteRecoveryButton_Click" Content="Delete recovery copy" Style="{StaticResource BrandQuietButtonStyle}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                            <Grid Grid.Row="1">
+                                <StackPanel x:Name="HistoryDetailEmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="{StaticResource BrandSpacingM}" Padding="32">
+                                    <FontIcon FontSize="32" Foreground="{ThemeResource BrandTextTertiaryBrush}" Glyph="&#xE720;" HorizontalAlignment="Center" />
+                                    <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Ready to Transcribe" TextAlignment="Center" />
+                                    <TextBlock x:Name="HistoryDetailReadinessText" Style="{StaticResource BrandBodyStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Press the record button or hold your shortcut to start dictating." TextAlignment="Center" TextWrapping="Wrap" />
+                                    <TextBlock x:Name="HistoryDetailReadyHotkeyText" Style="{StaticResource BrandHelperStyle}" Text="Keybind: Ctrl+Win" TextAlignment="Center" />
+                                </StackPanel>
+                                <Grid x:Name="HistoryDetailContent" Visibility="Collapsed">
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="*" />
-                                        <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
-                                    <Grid Grid.Row="0" Margin="0,0,0,8" ColumnSpacing="{StaticResource BrandSpacingS}">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBox x:Name="HistorySearchBox" AutomationProperties.Name="Search dictation history" PlaceholderText="Search history" TextChanged="HistorySearchBox_TextChanged" />
-                                        <TextBlock x:Name="HistoryCountText" Grid.Column="1" VerticalAlignment="Center" Style="{StaticResource BrandHelperStyle}" />
-                                    </Grid>
-                                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingXs}" Margin="0,0,0,10">
-                                        <Button x:Name="HistoryFilterAllButton" Content="All" ToolTipService.ToolTip="All history (A)" Click="HistoryFilterButton_Click" Tag="All" Style="{StaticResource BrandTabStripActiveButtonStyle}" Padding="10,4,10,4" />
-                                        <Button x:Name="HistoryFilterDictationButton" Content="Dictation" ToolTipService.ToolTip="Dictation only (D)" Click="HistoryFilterButton_Click" Tag="Dictation" Style="{StaticResource BrandTabStripButtonStyle}" Padding="10,4,10,4" />
-                                        <Button x:Name="HistoryFilterTranscribeButton" Content="Transcribe a File" ToolTipService.ToolTip="Transcribed files (T)" Click="HistoryFilterButton_Click" Tag="TranscribeFile" Style="{StaticResource BrandTabStripButtonStyle}" Padding="10,4,10,4" />
-                                    </StackPanel>
-                                    <Border Grid.Row="2" Margin="0,0,0,10" Padding="12,8" Style="{StaticResource BrandSectionCardStyle}">
-                                        <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="*" />
-                                            </Grid.ColumnDefinitions>
+                                    <Border Grid.Row="0" BorderThickness="0,0,0,1" BorderBrush="{ThemeResource BrandDividerBrush}" Padding="28,18,28,14">
+                                        <StackPanel Spacing="{StaticResource BrandSpacingM}">
                                             <StackPanel Spacing="{StaticResource BrandSpacingXs}">
-                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="ENGINE" />
-                                                <TextBlock x:Name="HistoryEngineStatusText" Style="{StaticResource BrandRowLabelStyle}" Text="Parakeet v2" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock x:Name="HistoryDetailTimestampText" Style="{StaticResource BrandRowTitleStyle}" Text="" />
+                                                <TextBlock x:Name="HistoryDetailMetadataText" Style="{StaticResource BrandHelperStyle}" Text="" TextWrapping="Wrap" />
                                             </StackPanel>
-                                            <StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}">
-                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="AI POLISH" />
-                                                <TextBlock x:Name="HistoryPolishStatusText" Style="{StaticResource BrandRowLabelStyle}" Text="Off" TextTrimming="CharacterEllipsis" />
-                                            </StackPanel>
-                                        </Grid>
-                                    </Border>
-                                    <Grid Grid.Row="3">
-                                        <ListView x:Name="HistoryList" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" SelectionChanged="ListSelectionChanged" AutomationProperties.Name="Local dictation history" SelectionMode="Single" MaxHeight="360">
-                                            <ListView.ItemContainerTransitions>
-                                                <TransitionCollection><AddDeleteThemeTransition /><ContentThemeTransition /><ReorderThemeTransition /></TransitionCollection>
-                                            </ListView.ItemContainerTransitions>
-                                            <ListView.ItemTemplate>
-                                                <DataTemplate>
-                                                    <Border Padding="10,8" Margin="0,2,0,2" CornerRadius="{StaticResource BrandSectionRadius}" Background="{ThemeResource BrandCardBgBrush}">
-                                                        <StackPanel Spacing="{StaticResource BrandSpacingXs}">
-                                                            <Grid>
-                                                                <Grid.ColumnDefinitions>
-                                                                    <ColumnDefinition Width="*" />
-                                                                    <ColumnDefinition Width="Auto" />
-                                                                </Grid.ColumnDefinitions>
-                                                                <TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding CreatedDisplay}" />
-                                                                <Border Grid.Column="1" Background="{ThemeResource BrandAccentLightBrush}" CornerRadius="4" Padding="6,1" Visibility="{Binding TagVisibility}">
-                                                                    <TextBlock Text="{Binding TagText}" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandAccentBrush}" />
-                                                                </Border>
-                                                            </Grid>
-                                                            <TextBlock FontSize="16" MaxLines="2" Text="{Binding Text}" TextAlignment="DetectFromContent" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" />
-                                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Text="{Binding Details}" TextTrimming="CharacterEllipsis" />
-                                                        </StackPanel>
-                                                    </Border>
-                                                </DataTemplate>
-                                            </ListView.ItemTemplate>
-                                        </ListView>
-                                        <Border x:Name="HistoryLoadingState" AutomationProperties.Name="Loading local history" Padding="24" Style="{StaticResource BrandSectionCardStyle}">
-                                            <StackPanel MaxWidth="{StaticResource BrandInlineContentMaxWidth}" HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
-                                                <Border Width="56" Height="56" HorizontalAlignment="Center" Style="{StaticResource BrandIconTileStyle}"><FontIcon Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE895;" /></Border>
-                                                <TextBlock Style="{StaticResource BrandRowTitleStyle}" Text="Loading local history…" TextAlignment="Center" />
-                                                <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Your saved dictations will appear here when the local history file is ready." TextAlignment="Center" TextWrapping="Wrap" />
-                                            </StackPanel>
-                                        </Border>
-                                        <Border x:Name="HistoryEmptyState" AutomationProperties.Name="No dictation history yet" Padding="24" Style="{StaticResource BrandSectionCardStyle}" Visibility="Collapsed">
-                                            <StackPanel MaxWidth="{StaticResource BrandInlineContentMaxWidth}" HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
-                                                <Border Width="56" Height="56" HorizontalAlignment="Center" Style="{StaticResource BrandIconTileStyle}"><FontIcon Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE81C;" /></Border>
-                                                <TextBlock x:Name="HistoryEmptyTitle" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandRowTitleStyle}" Text="No dictations yet" TextAlignment="Center" />
-                                                <TextBlock Style="{StaticResource BrandBodyStyle}" Text="When history is on, your dictations appear here after you hold your recording key, speak, and release." TextAlignment="Center" TextWrapping="Wrap" />
-                                            </StackPanel>
-                                        </Border>
-                                        <Border x:Name="HistorySearchEmptyState" AutomationProperties.Name="No matching dictations" Padding="24" Style="{StaticResource BrandSectionCardStyle}" Visibility="Collapsed">
-                                            <StackPanel MaxWidth="{StaticResource BrandInlineContentMaxWidth}" HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
-                                                <Border Width="56" Height="56" HorizontalAlignment="Center" Style="{StaticResource BrandIconTileStyle}"><FontIcon Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE721;" /></Border>
-                                                <TextBlock x:Name="HistorySearchEmptyTitle" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandRowTitleStyle}" Text="No matching dictations" TextAlignment="Center" />
-                                                <TextBlock x:Name="HistorySearchEmptyDescription" Style="{StaticResource BrandBodyStyle}" TextAlignment="Center" TextWrapping="Wrap" />
-                                                <Button HorizontalAlignment="Center" Click="ClearHistorySearchButton_Click" Content="Clear search" Style="{StaticResource BrandPrimaryButtonStyle}" />
-                                            </StackPanel>
-                                        </Border>
-                                        <Border x:Name="HistoryUnavailableState" AutomationProperties.Name="History is unavailable" Padding="24" Style="{StaticResource BrandSectionCardStyle}" Visibility="Collapsed">
-                                            <StackPanel MaxWidth="{StaticResource BrandInlineContentMaxWidth}" HorizontalAlignment="Center" Spacing="{StaticResource BrandSpacingS}">
-                                                <Border Width="56" Height="56" HorizontalAlignment="Center" Style="{StaticResource BrandIconTileStyle}"><FontIcon Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE783;" /></Border>
-                                                <TextBlock x:Name="HistoryUnavailableTitle" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandRowTitleStyle}" Text="History is unavailable" TextAlignment="Center" />
-                                                <TextBlock x:Name="HistoryUnavailableDescription" Style="{StaticResource BrandBodyStyle}" TextAlignment="Center" TextWrapping="Wrap" />
-                                            </StackPanel>
-                                        </Border>
-                                    </Grid>
-                                    <Button x:Name="ClearHistoryButton" Grid.Row="4" Margin="0,12,0,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Click="ClearHistoryButton_Click" Content="Delete all history" Style="{StaticResource BrandDestructiveButtonStyle}" />
-                                </Grid>
-                                <Grid Grid.Column="1">
-                                    <Border x:Name="HistoryDetailEmptyState" Padding="32" Style="{StaticResource BrandSectionCardStyle}" VerticalAlignment="Top">
-                                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="{StaticResource BrandSpacingM}">
-                                            <Border Width="64" Height="64" HorizontalAlignment="Center" Style="{StaticResource BrandIconTileStyle}">
-                                                <FontIcon FontSize="24" Foreground="{ThemeResource BrandAccentBrush}" Glyph="&#xE720;" />
-                                            </Border>
-                                            <TextBlock Style="{StaticResource BrandPageTitleStyle}" Text="Ready to Transcribe" TextAlignment="Center" />
-                                            <TextBlock x:Name="HistoryDetailReadyHotkeyText" Style="{StaticResource BrandRowTitleStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Ctrl+Win" TextAlignment="Center" />
-                                            <TextBlock x:Name="HistoryDetailReadinessText" Style="{StaticResource BrandBodyStyle}" Text="Hold your shortcut to dictate, or select an item from the list to view details." TextAlignment="Center" TextWrapping="Wrap" />
+                                            <ScrollViewer HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Auto" VerticalScrollBarVisibility="Disabled" VerticalScrollMode="Disabled" HorizontalAlignment="Right">
+                                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                                    <ProgressRing x:Name="RepolishHistoryProgress" IsActive="False" Visibility="Collapsed" Width="16" Height="16" VerticalAlignment="Center" />
+                                                    <Button x:Name="RepolishHistoryButton" Click="RepolishHistoryButton_Click" Content="Re-polish" Style="{StaticResource BrandQuietButtonStyle}" />
+                                                    <Button x:Name="CopyHistoryButton" Click="CopyHistoryButton_Click" Content="Copy" Style="{StaticResource BrandQuietButtonStyle}" />
+                                                    <Button x:Name="PasteHistoryButton" AutomationProperties.AutomationId="PasteHistoryButton" AutomationProperties.HelpText="Pastes the selected dictation into the app you were using before EnviousWispr." Click="PasteHistoryButton_Click" Content="Paste" Style="{StaticResource BrandPrimaryButtonStyle}" />
+                                                    <Button x:Name="KeepHistoryButton" Click="KeepHistoryButton_Click" Content="Keep" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" />
+                                                    <Button x:Name="DeleteHistoryButton" Click="DeleteHistoryButton_Click" Content="Delete" Style="{StaticResource BrandDestructiveButtonStyle}" />
+                                                </StackPanel>
+                                            </ScrollViewer>
                                         </StackPanel>
                                     </Border>
-                                    <Border x:Name="HistoryDetailContent" Padding="24" Style="{StaticResource BrandSectionCardStyle}" Visibility="Collapsed" VerticalAlignment="Top">
-                                        <Grid>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto" />
-                                                <RowDefinition Height="Auto" />
-                                                <RowDefinition Height="Auto" />
-                                            </Grid.RowDefinitions>
-                                            <StackPanel Grid.Row="0" Spacing="{StaticResource BrandSpacingXs}" Margin="0,0,0,16">
-                                                <TextBlock x:Name="HistoryDetailTimestampText" Style="{StaticResource BrandRowTitleStyle}" Text="" />
-                                                <TextBlock x:Name="HistoryDetailMetadataText" Style="{StaticResource BrandHelperStyle}" Text="" />
-                                            </StackPanel>
-                                            <ScrollViewer Grid.Row="1" MaxHeight="240" VerticalScrollBarVisibility="Auto">
-                                                <TextBox x:Name="HistoryDetailTextBox" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontSize="16" FontFamily="Segoe UI Variable Text, Segoe UI" BorderThickness="0" Margin="0,0,0,16" />
-                                            </ScrollViewer>
-                                            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" HorizontalAlignment="Right">
-                                                <ProgressRing x:Name="RepolishHistoryProgress" IsActive="False" Visibility="Collapsed" Width="16" Height="16" VerticalAlignment="Center" />
-                                                <Button x:Name="RepolishHistoryButton" Click="RepolishHistoryButton_Click" Content="Re-polish" Style="{StaticResource BrandQuietButtonStyle}" />
-                                                <Button x:Name="CopyHistoryButton" Click="CopyHistoryButton_Click" Content="Copy" Style="{StaticResource BrandQuietButtonStyle}" />
-                                                <Button x:Name="PasteHistoryButton" AutomationProperties.AutomationId="PasteHistoryButton" AutomationProperties.HelpText="Pastes the selected dictation into the app you were using before EnviousWispr." Click="PasteHistoryButton_Click" Content="Paste" Style="{StaticResource BrandPrimaryButtonStyle}" />
-                                                <Button x:Name="KeepHistoryButton" Click="KeepHistoryButton_Click" Content="Keep" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" />
-                                                <Button x:Name="DeleteHistoryButton" Click="DeleteHistoryButton_Click" Content="Delete" Style="{StaticResource BrandDestructiveButtonStyle}" />
-                                            </StackPanel>
-                                        </Grid>
-                                    </Border>
+                                    <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto">
+                                        <TextBox x:Name="HistoryDetailTextBox" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontSize="15" FontFamily="Segoe UI Variable Text, Segoe UI" Background="{ThemeResource BrandHitTestBrush}" BorderThickness="0" Padding="28,20,28,28" VerticalAlignment="Stretch" TextAlignment="DetectFromContent">
+                                            <TextBox.Resources>
+                                                <SolidColorBrush x:Key="TextControlBackground" Color="{StaticResource BrandTransparentColor}" />
+                                                <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="{StaticResource BrandTransparentColor}" />
+                                                <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="{StaticResource BrandTransparentColor}" />
+                                                <SolidColorBrush x:Key="TextControlBorderBrush" Color="{StaticResource BrandTransparentColor}" />
+                                                <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{StaticResource BrandTransparentColor}" />
+                                                <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{StaticResource BrandTransparentColor}" />
+                                            </TextBox.Resources>
+                                        </TextBox>
+                                    </ScrollViewer>
                                 </Grid>
                             </Grid>
-                        </StackPanel></Grid>
-                    </ScrollViewer>
+                        </Grid>
+                    </Grid>
 
                     <ScrollViewer Grid.Row="1" x:Name="DictionaryPage" AutomationProperties.Name="Dictionary page" HorizontalScrollMode="Disabled" Visibility="Collapsed">
                         <StackPanel MaxWidth="{StaticResource BrandFluentPageMaxWidth}" HorizontalAlignment="Stretch" Spacing="{StaticResource BrandSpacingL}">
@@ -1877,6 +1917,7 @@
                             <TextBlock x:Name="BuildInfoText" Foreground="{ThemeResource BrandTextSecondaryBrush}" />
                         </StackPanel>
                     </ScrollViewer>
+                    <InfoBar Grid.Row="2" x:Name="DeletionLeftoverInfoBar" Margin="0,12,0,0" IsOpen="False" IsClosable="True" Severity="Warning" VerticalAlignment="Bottom" />
                 </Grid>
             </NavigationView>
         </Grid>

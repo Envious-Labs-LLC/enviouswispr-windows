@@ -1632,12 +1632,11 @@ public sealed partial class DesignSystemTokenTests
     {
         var document = LoadMainWindow();
 
-        // HistoryPage keeps its existing layout until Wave 3.
+        // Wave 3 HistoryPage uses the full-height two-pane diary split without a boxed hero header.
         var historyPage = FindNamedElement(document, "HistoryPage");
-        var historyStack = historyPage.Descendants().First(element => element.Name.LocalName == "StackPanel");
-        var historyHeader = historyStack.Elements().First();
-        Assert.Equal("Border", historyHeader.Name.LocalName);
-        Assert.Equal("{StaticResource BrandHeaderCardStyle}", (string?)historyHeader.Attribute("Style"));
+        Assert.DoesNotContain(
+            historyPage.Descendants(),
+            element => (string?)element.Attribute("Style") == "{StaticResource BrandHeaderCardStyle}");
 
         // Redesigned Fluent pages use a borderless header (title + subtitle) instead of a boxed hero banner.
         foreach (var name in new[]
@@ -1704,7 +1703,7 @@ public sealed partial class DesignSystemTokenTests
         Assert.Contains(
             document.Descendants(),
             element => (string?)element.Attribute("MaxWidth")
-                == "{StaticResource BrandPageContentMaxWidth}");
+                == "{StaticResource BrandFluentPageMaxWidth}");
     }
 
     /// <summary>
@@ -3578,22 +3577,27 @@ public sealed partial class DesignSystemTokenTests
     }
 
     [Fact]
-    public void HistoryDetailContentKeepsActionButtonsTopAlignedAndCompactBesideRecoveryCard()
+    public void HistoryDetailContentUsesFullHeightBorderlessSplitAndKeepsPasteButtonId()
     {
         var document = LoadMainWindow();
         var detailContent = FindNamedElement(document, "HistoryDetailContent");
-        Assert.Equal("Top", (string?)detailContent.Attribute("VerticalAlignment"));
+        Assert.Equal("Grid", detailContent.Name.LocalName);
+        Assert.Null(detailContent.Attribute("VerticalAlignment"));
 
-        var detailGrid = detailContent.Elements().Single(element => element.Name.LocalName == "Grid");
-        var rowHeights = detailGrid
+        var rowHeights = detailContent
             .Elements()
             .Single(element => element.Name.LocalName == "Grid.RowDefinitions")
             .Elements()
             .Where(element => element.Name.LocalName == "RowDefinition")
             .Select(row => (string?)row.Attribute("Height") ?? string.Empty)
             .ToArray();
-        Assert.Equal(3, rowHeights.Length);
-        Assert.All(rowHeights, height => Assert.Equal("Auto", height));
+        Assert.Equal(["Auto", "Auto", "Auto", "*"], rowHeights);
+
+        var detailScroller = detailContent
+            .Elements()
+            .Single(element => element.Name.LocalName == "ScrollViewer");
+        Assert.Equal("3", (string?)detailScroller.Attribute("Grid.Row"));
+        Assert.Null(detailScroller.Attribute("MaxHeight"));
 
         var pasteButton = FindNamedElement(document, "PasteHistoryButton");
         Assert.Equal(

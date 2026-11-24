@@ -108,6 +108,7 @@ public sealed partial class MainWindow
 
         // THE BUTTONS STAY LIVE. The app is on its way out, and a second press is answered by the hold
         // it already has - "already deleting", or "closing" - rather than by a control nothing re-enables.
+        DeletionLeftoverInfoBar.IsOpen = false;
         ShowMessage("Deleting your data", "EnviousWispr is closing to remove everything it keeps.", InfoBarSeverity.Informational);
     }
 
@@ -150,9 +151,9 @@ public sealed partial class MainWindow
         var what = parts.Count == 0 ? "Something could not be removed" : string.Join(", and ", parts);
         var message = char.ToUpper(what[0], CultureInfo.CurrentCulture) + what[1..]
             + " when EnviousWispr last deleted your data. To finish, open Backup and choose Delete all EnviousWispr data again.";
-        FoundationInfoBar.Title = title;
-        FoundationInfoBar.Message = message;
-        FoundationInfoBar.Severity = InfoBarSeverity.Warning;
+        DeletionLeftoverInfoBar.Title = title;
+        DeletionLeftoverInfoBar.Message = message;
+        DeletionLeftoverInfoBar.IsOpen = true;
         SetOnboardingReliabilityNotice(title, message);
     }
 }

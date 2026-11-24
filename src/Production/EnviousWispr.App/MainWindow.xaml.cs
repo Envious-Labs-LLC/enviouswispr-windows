@@ -461,6 +461,7 @@ public sealed partial class MainWindow : Window, IDisposable
             UpdateRecordingModeButtons();
             UpdateThemeSegmentButtons();
             UpdateOverlayPositionSegmentButtons();
+            UpdateHistoryFilterSegmentButtons();
         };
         TryUseMicaBackdrop();
         ConfigureMinimumWindowWidth();
@@ -500,7 +501,10 @@ public sealed partial class MainWindow : Window, IDisposable
         CheckForUpdatesButton.IsEnabled = _storeInstalled;
         if (settingsLoadStatus is SettingsLoadStatus.Invalid or SettingsLoadStatus.Migrated)
         {
-            FoundationInfoBar.Message += " Previous settings were recovered safely.";
+            ShowMessage(
+                "Previous settings recovered",
+                "Previous settings were recovered safely.",
+                InfoBarSeverity.Informational);
         }
     }
 
@@ -883,24 +887,24 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public void SetCloudPolishNotice(string? notice)
     {
-        if (string.IsNullOrWhiteSpace(notice))
+        if (string.IsNullOrWhiteSpace(notice) ||
+            (OperationInfoBar.IsOpen && OperationInfoBar.Severity >= InfoBarSeverity.Warning))
         {
             return;
         }
 
-        FoundationInfoBar.Title = "Cloud polish is on, using your own key";
-        FoundationInfoBar.Message = notice;
+        ShowMessage("Cloud polish is on, using your own key", notice, InfoBarSeverity.Informational);
     }
 
     public void SetOllamaPolishNotice(string? notice)
     {
-        if (string.IsNullOrWhiteSpace(notice))
+        if (string.IsNullOrWhiteSpace(notice) ||
+            (OperationInfoBar.IsOpen && OperationInfoBar.Severity >= InfoBarSeverity.Warning))
         {
             return;
         }
 
-        FoundationInfoBar.Title = "Ollama polish is on, running on this PC";
-        FoundationInfoBar.Message = notice;
+        ShowMessage("Ollama polish is on, running on this PC", notice, InfoBarSeverity.Informational);
     }
 
     public void SetLivePreview(string? text) =>
@@ -1255,17 +1259,14 @@ public sealed partial class MainWindow : Window, IDisposable
                 RecoveryBodyText.Text = EscapeRecoveryUndoBody;
                 UndoRecoveryButton.Visibility = Visibility.Visible;
                 UndoRecoveryButton.IsEnabled = true;
-                _foundationBeforeEscape ??= (FoundationInfoBar.Title, FoundationInfoBar.Message, FoundationInfoBar.Severity);
-                FoundationInfoBar.Title = EscapeRecoveryCardTitle;
-                FoundationInfoBar.Message = EscapeRecoveryUndoBody;
-                FoundationInfoBar.Severity = InfoBarSeverity.Informational;
                 return;
             }
 
             ResetRecoveryCardWords();
-            FoundationInfoBar.Title = "Interrupted dictation recovered";
-            FoundationInfoBar.Message = "Review or copy the private recovery text on History. It was not pasted automatically.";
-            FoundationInfoBar.Severity = InfoBarSeverity.Warning;
+            ShowMessage(
+                "Interrupted dictation recovered",
+                "Review or copy the private recovery text on History. It was not pasted automatically.",
+                InfoBarSeverity.Warning);
             SetOnboardingReliabilityNotice(
                 "Interrupted dictation recovered",
                 "Finish setup, then review or copy the private recovery text on History. It will not be pasted automatically.");
@@ -1319,9 +1320,7 @@ public sealed partial class MainWindow : Window, IDisposable
         const string message =
             "EnviousWispr stopped while a dictation was in progress, and there was nothing saved to "
             + "restore. You may need to say it again.";
-        FoundationInfoBar.Title = title;
-        FoundationInfoBar.Message = message;
-        FoundationInfoBar.Severity = InfoBarSeverity.Warning;
+        ShowMessage(title, message, InfoBarSeverity.Warning);
         SetOnboardingReliabilityNotice(title, message);
     }
 
@@ -1349,21 +1348,9 @@ public sealed partial class MainWindow : Window, IDisposable
     private const string EscapeRecoveryCardTitle = "Dictation cancelled";
     private const string EscapeRecoveryUndoBody = "Press Undo to get it back, or find it in History.";
 
-    /// <summary>What Home's banner said before an Escape Recovery borrowed it, put back when the offer ends.</summary>
-    private (string Title, string Message, InfoBarSeverity Severity)? _foundationBeforeEscape;
-
     /// <summary>The card's words for text found after an unfinished run, and no Undo.</summary>
     private void ResetRecoveryCardWords()
     {
-        // THE BANNER STOPS OFFERING UNDO WHEN THE CARD DOES, or Home would say "Press Undo" with no Undo on it.
-        if (_foundationBeforeEscape is { } before)
-        {
-            FoundationInfoBar.Title = before.Title;
-            FoundationInfoBar.Message = before.Message;
-            FoundationInfoBar.Severity = before.Severity;
-            _foundationBeforeEscape = null;
-        }
-
         RecoveryTitleText.Text = "Recovered unfinished dictation";
         RecoveryBodyText.Text =
             "EnviousWispr found text that had not reached its destination before the previous run ended. "
@@ -1392,10 +1379,6 @@ public sealed partial class MainWindow : Window, IDisposable
             {
                 UndoRecoveryButton.Visibility = Visibility.Collapsed;
                 RecoveryBodyText.Text = "Copy it from here, or find it in History.";
-                if (_foundationBeforeEscape is not null)
-                {
-                    FoundationInfoBar.Message = "Copy it from History.";
-                }
             }
         }
 
@@ -3460,9 +3443,6 @@ public sealed partial class MainWindow : Window, IDisposable
         if (recoveryDeleted)
         {
             ClearRecoveredText();
-            FoundationInfoBar.Title = "No recovered dictation is pending";
-            FoundationInfoBar.Message = "The saved copy is gone. EnviousWispr will not paste it or keep it anywhere.";
-            FoundationInfoBar.Severity = InfoBarSeverity.Success;
             OnboardingReliabilityInfoBar.IsOpen = false;
             RecoveryCleared?.Invoke();
             ShowMessage(
@@ -4398,11 +4378,15 @@ public sealed partial class MainWindow : Window, IDisposable
             _ => HistoryKindFilter.All,
         };
 
-        HistoryFilterAllButton.Style = (Style)Application.Current.Resources[_historyKindFilter == HistoryKindFilter.All ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
-        HistoryFilterDictationButton.Style = (Style)Application.Current.Resources[_historyKindFilter == HistoryKindFilter.Dictation ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
-        HistoryFilterTranscribeButton.Style = (Style)Application.Current.Resources[_historyKindFilter == HistoryKindFilter.TranscribeFile ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
-
+        UpdateHistoryFilterSegmentButtons();
         RefreshHistoryView();
+    }
+
+    private void UpdateHistoryFilterSegmentButtons()
+    {
+        ApplySegmentButtonState(HistoryFilterAllButton, _historyKindFilter == HistoryKindFilter.All);
+        ApplySegmentButtonState(HistoryFilterDictationButton, _historyKindFilter == HistoryKindFilter.Dictation);
+        ApplySegmentButtonState(HistoryFilterTranscribeButton, _historyKindFilter == HistoryKindFilter.TranscribeFile);
     }
 
     private void RefreshHistoryView()
@@ -4413,6 +4397,10 @@ public sealed partial class MainWindow : Window, IDisposable
             .Select(entry => new HistoryItemViewModel(entry))
             .ToArray();
         HistoryList.ItemsSource = visibleHistory;
+        if (HistoryCountText is not null)
+        {
+            HistoryCountText.Text = visibleHistory.Length.ToString("N0", CultureInfo.CurrentCulture);
+        }
         if (previousSelectedId is { } id)
         {
             HistoryList.SelectedItem = visibleHistory.FirstOrDefault(item => item.Id == id);
@@ -4438,6 +4426,10 @@ public sealed partial class MainWindow : Window, IDisposable
             HistoryPolishStatusText.Text = providerIndex > 0 && providerIndex < PolishProviderChoices.Length
                 ? PolishProviderChoices[providerIndex].Name
                 : "Off";
+        }
+        if (HistoryDetailReadyHotkeyText is not null && _settings is not null)
+        {
+            HistoryDetailReadyHotkeyText.Text = $"Keybind: {_settings.Preferences.Dictation.PushToTalkGesture}";
         }
     }
 
@@ -4510,7 +4502,7 @@ public sealed partial class MainWindow : Window, IDisposable
             KeepHistoryButton.Visibility = Visibility.Collapsed;
             if (_settings is not null)
             {
-                HistoryDetailReadyHotkeyText.Text = _settings.Preferences.Dictation.PushToTalkGesture;
+                HistoryDetailReadyHotkeyText.Text = $"Keybind: {_settings.Preferences.Dictation.PushToTalkGesture}";
             }
         }
 
@@ -5965,9 +5957,20 @@ public sealed partial class MainWindow : Window, IDisposable
         var (resolvedTag, resolvedTab) = ResolvePageAndTab(tag);
         var targetTab = tabKey ?? resolvedTab;
 
+        var isHistoryPage = resolvedTag == "history";
+        MainContentGrid.Padding = isHistoryPage
+            ? new Thickness(0)
+            : new Thickness(28, 18, 28, 32);
+        OperationInfoBar.Margin = isHistoryPage
+            ? new Thickness(16, 12, 16, 8)
+            : new Thickness(0, 0, 0, 12);
+        DeletionLeftoverInfoBar.Margin = isHistoryPage
+            ? new Thickness(16, 8, 16, 12)
+            : new Thickness(0, 12, 0, 0);
+
         var settingsPage = resolvedTag.StartsWith("settings-", StringComparison.Ordinal);
         var helpPage = resolvedTag == "help" || resolvedTag.StartsWith("help-", StringComparison.Ordinal);
-        HistoryPage.Visibility = resolvedTag == "history" ? Visibility.Visible : Visibility.Collapsed;
+        HistoryPage.Visibility = isHistoryPage ? Visibility.Visible : Visibility.Collapsed;
         if (resolvedTag == "history")
         {
             AnnounceHistoryOnPageShown();
@@ -6019,7 +6022,7 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>Every page the sidebar can reach, in the order they are declared.</summary>
-    private ScrollViewer[] Pages() =>
+    private FrameworkElement[] Pages() =>
     [
         HistoryPage,
         WhatsNewPage,
@@ -6793,6 +6796,12 @@ public sealed partial class MainWindow : Window, IDisposable
             Text = entry.Text;
             CreatedDisplay = entry.CreatedAt.ToLocalTime().ToString("f", CultureInfo.CurrentCulture);
             IsTemporary = entry.ExpiresAt is not null;
+            TagText = IsTemporary
+                ? "Recovery"
+                : HistoryPresenter.IsFileTranscription(entry)
+                    ? "File"
+                    : string.Empty;
+            TagVisibility = string.IsNullOrEmpty(TagText) ? Visibility.Collapsed : Visibility.Visible;
             var retention = entry.ExpiresAt is null
                 ? string.Empty
                 : $" · Escape Recovery expires {entry.ExpiresAt.Value.ToLocalTime():g} unless kept";
@@ -6806,6 +6815,10 @@ public sealed partial class MainWindow : Window, IDisposable
         public string CreatedDisplay { get; }
 
         public string Details { get; }
+
+        public string TagText { get; }
+
+        public Visibility TagVisibility { get; }
 
         public bool IsTemporary { get; }
 
