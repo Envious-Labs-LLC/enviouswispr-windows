@@ -4,6 +4,7 @@ using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Distribution;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Feedback;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Preview;
@@ -20,6 +21,7 @@ using EnviousWispr.Presentation;
 using EnviousWispr.Services.Diagnostics;
 using EnviousWispr.Services.Distribution;
 using EnviousWispr.Services.Credentials;
+using EnviousWispr.Services.Feedback;
 using EnviousWispr.Services.Input;
 using EnviousWispr.Services.History;
 using EnviousWispr.Services.Lifecycle;
@@ -38,6 +40,10 @@ public partial class App : Application, IAsyncDisposable
 
     private readonly PrivacySafeObservabilityLogger _logger;
     private WindowsObservabilityService? _observabilityService;
+    private FeedbackCoordinator? _feedbackCoordinator;
+    private SentryFeedbackSender? _feedbackSender;
+    private FeedbackOutbox? _feedbackOutbox;
+    private HardwareSnapshot? _lastHardwareSnapshot;
     private bool _appLaunchedTelemetryRecorded;
     private readonly ReleaseIdentity _releaseIdentity;
     private readonly StoreUpdateService _updateService;
@@ -267,7 +273,18 @@ public partial class App : Application, IAsyncDisposable
             observability);
         _observabilityService.ApplySettings(loadResult.Settings, emitSettingsChangedEvent: false);
         _observabilityService.AttachProcessExceptionHandlers();
-        _logger.AttachObserver(_observabilityService.ObserveDiagnosticRecord);
+        _feedbackSender = new SentryFeedbackSender(observabilityIdentity);
+        _feedbackOutbox = new FeedbackOutbox(_dataDirectory);
+        _feedbackCoordinator = new FeedbackCoordinator(
+            new FeedbackDraftStore(_dataDirectory),
+            _feedbackOutbox,
+            _feedbackSender,
+            observabilityIdentity);
+        _logger.AttachObserver(record =>
+        {
+            _observabilityService.ObserveDiagnosticRecord(record);
+            _feedbackCoordinator?.ObserveDiagnosticRecord(record);
+        });
         RuntimeWorkerSupervisor.AbnormalWorkerExitObserved += OnAbnormalWorkerExitObserved;
 
         _logger.Configure(observability, DateTimeOffset.UtcNow);
@@ -401,6 +418,16 @@ public partial class App : Application, IAsyncDisposable
         ReportDataDeletionLeftover(_window);
         _window.SpeedCheckRequested += OnSpeedCheckRequested;
         _window.MishearingSuggestionsRequested += OnMishearingSuggestionsRequested;
+        _window.FeedbackDataDirectory = _dataDirectory;
+        _window.FeedbackDraftStore = _feedbackCoordinator.DraftStore;
+        _window.BuildFeedbackDiagnosticsSnapshot = () =>
+            _feedbackCoordinator.BuildDiagnosticsSnapshot(_settings, _lastHardwareSnapshot);
+        _window.SubmitFeedback = (submission, cancellationToken) =>
+            _feedbackCoordinator.SubmitAsync(submission, cancellationToken);
+        _window.FlushFeedbackOutbox = cancellationToken =>
+            _feedbackCoordinator.FlushOutboxAsync(cancellationToken);
+        _window.CheckUndeliverableFeedback = cancellationToken =>
+            _feedbackCoordinator.HasUndeliverableReportsAsync(cancellationToken);
         _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosed;
         _window.Activate();
@@ -526,6 +553,7 @@ public partial class App : Application, IAsyncDisposable
         ApplyOverlayUatState();
         StartSyntheticLevelRampIfRequested();
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellShown));
+        _ = FlushFeedbackOutboxSafelyAsync(_startupCancellation.Token);
         SignalPerformanceUatReady();
         StartPublicFixtureJourneyUat();
         ApplyReliabilityUatExit();
@@ -1719,6 +1747,13 @@ public partial class App : Application, IAsyncDisposable
                 await observabilityService.DisposeAsync().ConfigureAwait(false);
             }
 
+            _feedbackCoordinator?.Dispose();
+            _feedbackCoordinator = null;
+            _feedbackOutbox?.Dispose();
+            _feedbackOutbox = null;
+            _feedbackSender?.Dispose();
+            _feedbackSender = null;
+
             await _logger.DisposeAsync().ConfigureAwait(false);
         });
 
@@ -2242,6 +2277,7 @@ public partial class App : Application, IAsyncDisposable
         var hardware = await new WindowsHardwareDiscovery(_cudaRuntimeDirectory)
             .ProbeAsync()
             .ConfigureAwait(true);
+        _lastHardwareSnapshot = hardware;
         _configuredTranscription = new ConfiguredTranscription(engine, modelDirectory, hardware);
         var workerExecutable = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
         RecordAppLaunchedOnce(
@@ -3638,6 +3674,23 @@ public partial class App : Application, IAsyncDisposable
     };
 
     private static AppFailureCategory FailureFor(AppError? error) => AppFailureCategories.For(error);
+
+    private async Task FlushFeedbackOutboxSafelyAsync(CancellationToken cancellationToken)
+    {
+        if (_feedbackCoordinator is not { } coordinator)
+        {
+            return;
+        }
+
+        try
+        {
+            await coordinator.FlushOutboxAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
+        {
+            // Startup outbox flush is best-effort and must never fail launch.
+        }
+    }
 
     private void RecordAppLaunchedOnce(HardwareSnapshot? hardware, bool hasParakeet, bool hasWhisper)
     {
