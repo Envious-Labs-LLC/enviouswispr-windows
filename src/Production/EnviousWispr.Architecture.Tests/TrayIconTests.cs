@@ -1,6 +1,8 @@
 using System.Drawing;
 using System.Text.RegularExpressions;
+using System.Windows.Forms;
 using EnviousWispr.Core.Presentation;
+using EnviousWispr.Core.Settings;
 using EnviousWispr.Services.Lifecycle;
 
 namespace EnviousWispr.Architecture.Tests;
@@ -248,4 +250,284 @@ public sealed class TrayIconTests
     }
 
     private static long CountPainted(Bitmap drawing) => Fingerprint(drawing).Painted;
+
+    [Theory]
+    [InlineData(16)]
+    [InlineData(20)]
+    [InlineData(24)]
+    [InlineData(32)]
+    public void WaveformLipsRenderBothRowsAcrossColumnsWithMouthGap(int size)
+    {
+        foreach (var state in new[] { TrayIconState.Idle, TrayIconState.Recording })
+        {
+            using var drawing = TrayIconRenderer.Render(state, size);
+            var midY = size / 2;
+
+            var upperLit = 0;
+            var lowerLit = 0;
+            var leftThirdLit = 0;
+            var centerThirdLit = 0;
+            var rightThirdLit = 0;
+
+            for (var x = 0; x < size; x++)
+            {
+                for (var y = 0; y < size; y++)
+                {
+                    if (drawing.GetPixel(x, y).A < 32)
+                    {
+                        continue;
+                    }
+
+                    if (y < midY)
+                    {
+                        upperLit++;
+                    }
+                    else if (y > midY)
+                    {
+                        lowerLit++;
+                    }
+
+                    if (x < size / 3)
+                    {
+                        leftThirdLit++;
+                    }
+                    else if (x < (2 * size) / 3)
+                    {
+                        centerThirdLit++;
+                    }
+                    else
+                    {
+                        rightThirdLit++;
+                    }
+                }
+            }
+
+            Assert.True(upperLit > 0, $"The {state} icon at {size}px has no painted upper-lip pixels.");
+            Assert.True(lowerLit > 0, $"The {state} icon at {size}px has no painted lower-lip pixels.");
+            Assert.True(leftThirdLit > 0, $"The {state} icon at {size}px has no painted left-column pixels.");
+            Assert.True(centerThirdLit > 0, $"The {state} icon at {size}px has no painted center-column pixels.");
+            Assert.True(rightThirdLit > 0, $"The {state} icon at {size}px has no painted right-column pixels.");
+
+            if (size >= 24)
+            {
+                // Verify the mouth gap separates the upper lip's Cupid's-bow dip from the lower lip.
+                var centerX = size / 2;
+                var minCenterAlpha = Enumerable.Range((int)(size * 0.35), Math.Max(3, (int)(size * 0.25)))
+                    .Min(y => drawing.GetPixel(centerX, y).A);
+                Assert.True(
+                    minCenterAlpha < 64,
+                    $"Expected a crisp transparent mouth gap at center column x={centerX} for {state} {size}px, got min alpha {minCenterAlpha}.");
+            }
+        }
+    }
+
+    [Fact]
+    public void IdleTaskbarPalettesContrastBetweenDarkAndLightTaskbars()
+    {
+        using var darkTaskbarIcon = TrayIconRenderer.Render(
+            TrayIconState.Idle, 32, TrayIconPalette.ForTaskbar(systemUsesLightTheme: false));
+        using var lightTaskbarIcon = TrayIconRenderer.Render(
+            TrayIconState.Idle, 32, TrayIconPalette.ForTaskbar(systemUsesLightTheme: true));
+
+        var darkSamples = SampleSolidLuminance(darkTaskbarIcon);
+        var lightSamples = SampleSolidLuminance(lightTaskbarIcon);
+
+        Assert.NotEmpty(darkSamples);
+        Assert.NotEmpty(lightSamples);
+        Assert.True(
+            darkSamples.Average() > 210,
+            $"Dark-taskbar idle lips should be bright monochrome (#F4F1FA), got average luminance {darkSamples.Average():F1}.");
+        Assert.True(
+            lightSamples.Average() < 50,
+            $"Light-taskbar idle lips should be deep monochrome (#1C1826), got average luminance {lightSamples.Average():F1}.");
+    }
+
+    [Fact]
+    public void RecordingLipsRenderMultipleVividSpectrumColours()
+    {
+        using var recording = TrayIconRenderer.Render(TrayIconState.Recording, 32, TrayIconPalette.Brand);
+        var distinctColours = new HashSet<(int R, int G, int B)>();
+        for (var x = 0; x < recording.Width; x++)
+        {
+            for (var y = 0; y < recording.Height; y++)
+            {
+                var p = recording.GetPixel(x, y);
+                if (p.A >= 200)
+                {
+                    distinctColours.Add((p.R / 32, p.G / 32, p.B / 32));
+                }
+            }
+        }
+
+        Assert.True(
+            distinctColours.Count >= 5,
+            $"Recording lips should show the EnviousWispr spectrum across columns, found only {distinctColours.Count} quantized colours.");
+    }
+
+    [Fact]
+    public void ErrorLipsPaintOnlyFaultColour()
+    {
+        var fault = Color.FromArgb(0xE5, 0x48, 0x4D);
+        var palette = TrayIconPalette.Brand with { Fault = fault };
+        using var error = TrayIconRenderer.Render(TrayIconState.Error, 32, palette);
+
+        var solidPixels = 0;
+        for (var x = 0; x < error.Width; x++)
+        {
+            for (var y = 0; y < error.Height; y++)
+            {
+                var p = error.GetPixel(x, y);
+                if (p.A < 128)
+                {
+                    continue;
+                }
+
+                solidPixels++;
+                Assert.True(
+                    Math.Abs(p.R - fault.R) <= 8 &&
+                    Math.Abs(p.G - fault.G) <= 8 &&
+                    Math.Abs(p.B - fault.B) <= 8,
+                    $"Error pixel {p} at {x},{y} did not match fault colour {fault}.");
+            }
+        }
+
+        Assert.True(solidPixels >= 40);
+    }
+
+    [Theory]
+    [InlineData(AppTheme.System, true, false, false, TrayMenuThemeMode.HighContrast)]
+    [InlineData(AppTheme.Dark, true, true, true, TrayMenuThemeMode.HighContrast)]
+    [InlineData(AppTheme.Light, false, false, false, TrayMenuThemeMode.Light)]
+    [InlineData(AppTheme.Dark, false, true, true, TrayMenuThemeMode.Dark)]
+    [InlineData(AppTheme.System, false, false, true, TrayMenuThemeMode.Light)]
+    [InlineData(AppTheme.System, false, true, false, TrayMenuThemeMode.Dark)]
+    [InlineData(AppTheme.System, false, true, null, TrayMenuThemeMode.Light)]
+    [InlineData(AppTheme.System, false, null, null, TrayMenuThemeMode.Dark)]
+    public void TrayMenuThemeResolverCoversAllModes(
+        AppTheme appTheme,
+        bool highContrast,
+        bool? systemUsesLight,
+        bool? appsUseLight,
+        TrayMenuThemeMode expected)
+    {
+        var resolved = TrayMenuThemeResolver.Resolve(appTheme, highContrast, systemUsesLight, appsUseLight);
+        Assert.Equal(expected, resolved);
+    }
+
+    [Theory]
+    [InlineData(FinalAsrEngine.Automatic, PolishProvider.None, "Automatic · AI Polish Off")]
+    [InlineData(FinalAsrEngine.Parakeet, PolishProvider.EgOne, "Parakeet · EG-1")]
+    [InlineData(FinalAsrEngine.Whisper, PolishProvider.Ollama, "Whisper · Ollama")]
+    [InlineData(FinalAsrEngine.Parakeet, PolishProvider.OpenAI, "Parakeet · OpenAI")]
+    [InlineData(FinalAsrEngine.Whisper, PolishProvider.Anthropic, "Whisper · Anthropic")]
+    [InlineData(FinalAsrEngine.Automatic, PolishProvider.Gemini, "Automatic · Gemini")]
+    public void TrayMenuFormatsEngineAndPolishHeader(
+        FinalAsrEngine engine,
+        PolishProvider polish,
+        string expected)
+    {
+        Assert.Equal(expected, TrayMenuFormatting.FormatStatusHeader(engine, polish));
+    }
+
+    [Fact]
+    public void WindowsTrayIconUpdatesMenuStateMicrophonesAndAppearanceCleanly()
+    {
+        var previousContext = SynchronizationContext.Current;
+        using var formsContext = new WindowsFormsSynchronizationContext();
+        SynchronizationContext.SetSynchronizationContext(formsContext);
+        try
+        {
+            using var tray = new WindowsTrayIcon();
+            var previewRequested = false;
+            var micsRequested = false;
+            tray.LastDictationPreviewRequested += () => previewRequested = true;
+            tray.MicrophoneMenuOpeningRequested += () => micsRequested = true;
+
+            tray.SetEngineAndPolishSummary(FinalAsrEngine.Parakeet, PolishProvider.EgOne);
+            tray.SetVersion("1.0.0");
+            tray.SetRecordingShortcut("Ctrl+Space");
+
+            Assert.Equal("Parakeet · EG-1", tray.StatusHeaderText);
+            Assert.Equal("Version 1.0.0", tray.VersionText);
+            Assert.Equal("Start Recording", tray.RecordItemText);
+            Assert.True(tray.RecordItemEnabled);
+            Assert.Equal("Ctrl+Space", tray.RecordItemShortcut);
+
+            tray.SetState(TrayIconState.Recording);
+            Assert.Equal("Stop Recording", tray.RecordItemText);
+            Assert.True(tray.RecordItemEnabled);
+
+            tray.SetState(TrayIconState.Processing);
+            Assert.Equal("Start Recording", tray.RecordItemText);
+            Assert.False(tray.RecordItemEnabled);
+
+            tray.SetState(TrayIconState.Idle);
+            Assert.Equal("Start Recording", tray.RecordItemText);
+            Assert.True(tray.RecordItemEnabled);
+
+            tray.SetMicrophones(
+                [
+                    new TrayMicrophoneItem("mic-1", "USB Mic & Studio"),
+                    new TrayMicrophoneItem("mic-2", "Headset Mic"),
+                ],
+                selectedDeviceId: "mic-1");
+
+            Assert.Equal(
+                [
+                    ("System Default", false),
+                    ("USB Mic && Studio", true),
+                    ("Headset Mic", false),
+                ],
+                tray.MicrophoneMenuItems);
+
+            tray.SetMicrophones(
+                [new TrayMicrophoneItem("mic-2", "Headset Mic")],
+                selectedDeviceId: "missing-id");
+
+            Assert.Equal(
+                [
+                    ("System Default", true),
+                    ("Headset Mic", false),
+                ],
+                tray.MicrophoneMenuItems);
+
+            tray.SetTheme(AppTheme.Light);
+            Assert.Equal(TrayMenuThemeMode.Light, tray.EffectiveMenuThemeMode);
+            Assert.Equal(
+                [("System", false), ("Light", true), ("Dark", false)],
+                tray.AppearanceMenuItems);
+
+            tray.SetTheme(AppTheme.Dark);
+            Assert.Equal(TrayMenuThemeMode.Dark, tray.EffectiveMenuThemeMode);
+            Assert.Equal(
+                [("System", false), ("Light", false), ("Dark", true)],
+                tray.AppearanceMenuItems);
+
+            tray.SimulateMenuOpeningForTest();
+            Assert.True(previewRequested);
+            Assert.True(micsRequested);
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+        }
+    }
+
+    private static List<double> SampleSolidLuminance(Bitmap bitmap)
+    {
+        var result = new List<double>();
+        for (var x = 0; x < bitmap.Width; x++)
+        {
+            for (var y = 0; y < bitmap.Height; y++)
+            {
+                var p = bitmap.GetPixel(x, y);
+                if (p.A >= 160)
+                {
+                    result.Add((0.2126 * p.R) + (0.7152 * p.G) + (0.0722 * p.B));
+                }
+            }
+        }
+
+        return result;
+    }
 }
