@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using EnviousWispr.Core.Input;
 
 namespace EnviousWispr.Core.Settings;
@@ -7,6 +9,64 @@ public enum FinalAsrEngine
     Automatic,
     Parakeet,
     Whisper,
+}
+
+/// <summary>Which local engine produces the display-only live preview while speaking (#127).</summary>
+[JsonConverter(typeof(LivePreviewEngineChoiceJsonConverter))]
+public enum LivePreviewEngineChoice
+{
+    Parakeet = 0,
+    Whisper = 1,
+}
+
+public static class LivePreviewEngineChoices
+{
+    public const string ParakeetPersistedValue = "Parakeet";
+    public const string WhisperPersistedValue = "Whisper";
+
+    public static string ToPersistedValue(LivePreviewEngineChoice choice) => choice switch
+    {
+        LivePreviewEngineChoice.Whisper => WhisperPersistedValue,
+        _ => ParakeetPersistedValue,
+    };
+
+    public static LivePreviewEngineChoice ParseOrDefault(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return LivePreviewEngineChoice.Parakeet;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "whisper" or "universal" or "multilingual" => LivePreviewEngineChoice.Whisper,
+            _ => LivePreviewEngineChoice.Parakeet,
+        };
+    }
+}
+
+public sealed class LivePreviewEngineChoiceJsonConverter : JsonConverter<LivePreviewEngineChoice>
+{
+    public override LivePreviewEngineChoice Read(
+        ref Utf8JsonReader reader,
+        Type typeToConvert,
+        JsonSerializerOptions options) =>
+        reader.TokenType switch
+        {
+            JsonTokenType.String => LivePreviewEngineChoices.ParseOrDefault(reader.GetString()),
+            JsonTokenType.Number when reader.TryGetInt32(out var number) && number == (int)LivePreviewEngineChoice.Whisper =>
+                LivePreviewEngineChoice.Whisper,
+            _ => LivePreviewEngineChoice.Parakeet,
+        };
+
+    public override void Write(
+        Utf8JsonWriter writer,
+        LivePreviewEngineChoice value,
+        JsonSerializerOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        writer.WriteStringValue(LivePreviewEngineChoices.ToPersistedValue(value));
+    }
 }
 
 public enum DictationRecordingMode
@@ -234,7 +294,9 @@ public sealed record UserPreferences(
     RecordingPillDesign PillDesignWithWords = RecordingPillDesign.ReadingWell,
     bool PlayRecordingSounds = false,
     RecordingSoundPairing RecordingSoundPairing = RecordingSoundPairing.WhisperTick,
-    bool CopyInsteadOfPaste = false)
+    bool CopyInsteadOfPaste = false,
+    [property: JsonConverter(typeof(LivePreviewEngineChoiceJsonConverter))]
+    LivePreviewEngineChoice LivePreviewEngine = LivePreviewEngineChoice.Parakeet)
 {
     public static UserPreferences Default { get; } = new(
         DictationPreferences.Default,
@@ -246,5 +308,7 @@ public sealed record UserPreferences(
         PillDesignWithoutWords: RecordingPillDesign.Classic,
         PillDesignWithWords: RecordingPillDesign.ReadingWell,
         PlayRecordingSounds: false,
-        RecordingSoundPairing: RecordingSoundPairing.WhisperTick);
+        RecordingSoundPairing: RecordingSoundPairing.WhisperTick,
+        CopyInsteadOfPaste: false,
+        LivePreviewEngine: LivePreviewEngineChoice.Parakeet);
 }

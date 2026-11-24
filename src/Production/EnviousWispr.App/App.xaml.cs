@@ -194,7 +194,8 @@ public partial class App : Application, IAsyncDisposable
                 RecordingSessionId: () => _sessionController?.CurrentSession?.Id,
                 Coordinator: () => _sessionCoordinator,
                 Leaving: () => _exitRequested || _disposed,
-                ClipboardText: WindowsClipboardText.TryReadAsync),
+                ClipboardText: WindowsClipboardText.TryReadAsync,
+                Dictation: () => _settings.Preferences.Dictation),
             TimeProvider.System));
         _sessionPersistence = _runtime.Persistence;
         _livePreview = _runtime.Preview;
@@ -362,6 +363,8 @@ public partial class App : Application, IAsyncDisposable
         _window.LoadStartupRegistration = () => _startupRegistration.GetStatusAsync(_startupCancellation.Token);
         _window.ModelDownloadRequested += OnModelDownloadRequested;
         _window.ModelDownloadCancelRequested += OnModelDownloadCancelRequested;
+        _window.PreviewModelDownloadRequested += OnPreviewModelDownloadRequested;
+        _window.PreviewModelRemoveRequested += OnPreviewModelRemoveRequested;
         _window.TranscriptionRetryRequested += OnTranscriptionRetryRequested;
         _window.GraphicsRuntimeDownloadRequested += OnGraphicsRuntimeDownloadRequested;
         _window.GraphicsRuntimeDownloadCancelRequested += OnGraphicsRuntimeDownloadCancelRequested;
@@ -603,6 +606,8 @@ public partial class App : Application, IAsyncDisposable
             window.LoadStartupRegistration = null;
             window.ModelDownloadRequested -= OnModelDownloadRequested;
             window.ModelDownloadCancelRequested -= OnModelDownloadCancelRequested;
+            window.PreviewModelDownloadRequested -= OnPreviewModelDownloadRequested;
+            window.PreviewModelRemoveRequested -= OnPreviewModelRemoveRequested;
             window.TranscriptionRetryRequested -= OnTranscriptionRetryRequested;
             window.GraphicsRuntimeDownloadRequested -= OnGraphicsRuntimeDownloadRequested;
             window.GraphicsRuntimeDownloadCancelRequested -= OnGraphicsRuntimeDownloadCancelRequested;
@@ -911,6 +916,8 @@ public partial class App : Application, IAsyncDisposable
     private void OnSettingsChanged(AppSettings settings)
     {
         var previousSharing = _settings.Observability?.ShareAnonymousTelemetry == true;
+        var previousPreviewEnabled = _settings.Preferences.LivePreviewEnabled;
+        var previousPreviewEngine = _settings.Preferences.LivePreviewEngine;
         _settings = settings;
         _customWords = settings.UserData.CustomWords;
         _snippetVocabulary = SnippetVocabulary.From(settings.UserData);
@@ -924,6 +931,14 @@ public partial class App : Application, IAsyncDisposable
                 observability.ShareAnonymousTelemetry
                     ? AppEventCode.TelemetryConsentEnabled
                     : AppEventCode.TelemetryConsentDisabled));
+        }
+
+        if ((previousPreviewEnabled != settings.Preferences.LivePreviewEnabled ||
+             previousPreviewEngine != settings.Preferences.LivePreviewEngine) &&
+            _modelDelivery is not { IsCompleted: false } &&
+            !Leaving)
+        {
+            _modelDelivery = RefreshLivePreviewAfterSettingsChangeAsync();
         }
     }
 
@@ -1889,6 +1904,9 @@ public partial class App : Application, IAsyncDisposable
             .ConfigureAwait(true);
         _configuredTranscription = new ConfiguredTranscription(engine, modelDirectory, hardware);
         var workerExecutable = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
+        var parakeetPreviewDirectory = engine == FinalAsrEngine.Whisper
+            ? await ResolveModelDirectoryAsync(ParakeetTranscriptionEngine.ModelId).ConfigureAwait(true)
+            : modelDirectory;
         var previewModelDirectory = await ResolveModelDirectoryAsync(
             WhisperTranscriptionEngine.PreviewModelId,
             "ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY").ConfigureAwait(true);
@@ -1961,7 +1979,7 @@ public partial class App : Application, IAsyncDisposable
                 return;
             }
 
-            ConfigureLivePreview(workerExecutable, hardware, whisperLanguage, previewModelDirectory, forceCpu: true);
+            ConfigureLivePreview(workerExecutable, hardware, whisperLanguage, parakeetPreviewDirectory, previewModelDirectory, forceCpu: true);
             // THE MEMBER NO SELECTOR CAN PRODUCE. Getting here means the selection SUCCEEDED and the
             // runtime then refused to start, which the selector cannot see and therefore cannot
             // report. Measured on the development machine: the graphics libraries were missing, the
@@ -1994,7 +2012,7 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        ConfigureLivePreview(workerExecutable, hardware, whisperLanguage, previewModelDirectory);
+        ConfigureLivePreview(workerExecutable, hardware, whisperLanguage, parakeetPreviewDirectory, previewModelDirectory);
         _window?.SetSessionStatus(
             DictationStatus.Quiet("Local transcription ready").AboutTheTranscriptionEngine());
         _window?.SetTranscriptionReadiness(SpeechEngineReadiness.Ready);
@@ -2005,34 +2023,39 @@ public partial class App : Application, IAsyncDisposable
         string workerExecutable,
         HardwareSnapshot hardware,
         string language,
+        string? parakeetModelDirectory,
         string? modelDirectory,
         bool forceCpu = false)
     {
-        if (modelDirectory is null ||
-            !new LocalWhisperModelProbe().Probe(modelDirectory).PreviewSmallComplete)
+        var parakeetInt8Complete = parakeetModelDirectory is not null &&
+            new LocalParakeetModelProbe().Probe(parakeetModelDirectory).Int8Complete;
+        var whisperPreviewComplete = modelDirectory is not null &&
+            new LocalWhisperModelProbe().Probe(modelDirectory).PreviewSmallComplete;
+        var provider = WhisperPreviewRuntime.Select(hardware, forceCpu);
+        var plan = LivePreviewRuntimeResolver.Resolve(
+            _settings.Preferences.LivePreviewEngine,
+            workerExecutable,
+            hardware,
+            parakeetModelDirectory,
+            parakeetInt8Complete,
+            modelDirectory,
+            whisperPreviewComplete,
+            provider,
+            language,
+            CurrentWhisperLanguage,
+            _cudaRuntimeDirectory);
+        if (!plan.Succeeded || plan.EffectiveEngine is null)
         {
-            _previewUnavailableReason = AppErrorCode.ModelPackUnavailable;
+            _previewUnavailableReason = plan.UnavailableReason ?? AppErrorCode.ModelPackUnavailable;
             return;
         }
 
-        // ASKS ABOUT whisper.cpp NOW, WHICH IS WHAT LIVE PREVIEW ACTUALLY RUNS. This used to require
-        // onnxruntime's CUDA dependency set as well - a probe about the library PARAKEET uses - so a
-        // machine whose card works for whisper.cpp was put on the processor because a different
-        // library's files were absent. The rule lives beside the engine it describes and is tested
-        // there. And only when whisper.cpp's OWN CUDA files are present: a card without them cannot load
-        // the backend, so the preview would start on the card and fail. Ref: #99, #163.
-        var provider = WhisperPreviewRuntime.Select(hardware, forceCpu);
-        var threads = Math.Clamp(
-            hardware.PhysicalCoreCount > 0
-                ? hardware.PhysicalCoreCount
-                : Math.Max(1, hardware.LogicalProcessorCount / 2),
-            2,
-            8);
+        var threads = LivePreviewRuntimeResolver.ChoosePreviewThreads(hardware);
         _previewUnavailableReason = null;
-        _previewEngine = new RuntimeWorkerLivePreviewEngine(
-            new RuntimeWorkerTranscriptionOptions(
+        var options = plan.EffectiveEngine == LivePreviewEngineChoice.Whisper
+            ? new RuntimeWorkerTranscriptionOptions(
                 workerExecutable,
-                modelDirectory,
+                modelDirectory!,
                 provider,
                 ParakeetModelPack.Quantized,
                 threads,
@@ -2043,7 +2066,13 @@ public partial class App : Application, IAsyncDisposable
                 WhisperPack: WhisperModelPack.PreviewSmall,
                 Language: language,
                 CurrentLanguage: CurrentWhisperLanguage,
-                CudaRuntimeDirectory: _cudaRuntimeDirectory),
+                CudaRuntimeDirectory: _cudaRuntimeDirectory)
+            : LivePreviewRuntimeResolver.CreateParakeetPreviewOptions(
+                workerExecutable,
+                parakeetModelDirectory!,
+                hardware);
+        _previewEngine = new RuntimeWorkerLivePreviewEngine(
+            options,
             _resourceArbiter);
     }
 

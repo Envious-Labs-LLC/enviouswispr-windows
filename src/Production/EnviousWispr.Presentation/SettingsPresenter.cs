@@ -105,7 +105,8 @@ public sealed record GeneralSettingsInput(
     string? MicrophoneId,
     string PasteLastShortcut,
     string CopyLastShortcut,
-    bool CasualMode = false);
+    bool CasualMode = false,
+    int LivePreviewEngineIndex = 0);
 
 /// <summary>Which shortcut field a General save found wanting, for the window to put the focus in.</summary>
 public enum GeneralShortcutField
@@ -343,7 +344,8 @@ public sealed class SettingsPresenter : IDisposable
             RecordingPillDesign.ReadingWell,
             input.PlayRecordingSounds,
             input.RecordingSoundPairing ?? RecordingSoundPairing.WhisperTick,
-            input.CopyInsteadOfPaste);
+            input.CopyInsteadOfPaste,
+            LivePreviewEngineFromIndex(Chosen(input.LivePreviewEngineIndex)));
 
         // THE VALUES WERE READ ON THE UI THREAD AND ARE APPLIED INSIDE THE GATE: the record above is
         // built now, from what was read; the transform below touches the three fields it replaces and
@@ -405,6 +407,12 @@ public sealed class SettingsPresenter : IDisposable
 
     public static int OverlayPositionIndex(OverlayPillPosition position) =>
         position == OverlayPillPosition.Bottom ? 1 : 0;
+
+    public static LivePreviewEngineChoice LivePreviewEngineFromIndex(int index) =>
+        index == 1 ? LivePreviewEngineChoice.Whisper : LivePreviewEngineChoice.Parakeet;
+
+    public static int LivePreviewEngineIndex(LivePreviewEngineChoice choice) =>
+        choice == LivePreviewEngineChoice.Whisper ? 1 : 0;
 
     public static PolishProvider PolishProviderFromIndex(int index) => index switch
     {

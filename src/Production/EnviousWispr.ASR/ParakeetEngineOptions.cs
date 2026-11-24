@@ -10,4 +10,5 @@ public sealed record ParakeetEngineOptions(
     int InterOpThreads = 1,
     int MaximumTokensPerStep = 10,
     int CudaDeviceId = 0,
-    string? CudaRuntimeDirectory = null);
+    string? CudaRuntimeDirectory = null,
+    bool AllowFullPrecisionFallback = true);

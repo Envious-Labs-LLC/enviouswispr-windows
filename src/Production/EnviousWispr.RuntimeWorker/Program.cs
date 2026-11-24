@@ -220,6 +220,7 @@ static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments
             CanRetry: true));
     }
 
+    var allowFullPrecisionFallback = !arguments.Contains("--asr-disable-fp32-fallback", StringComparer.Ordinal);
     var primary = new ParakeetEngineOptions(
         modelDirectory,
         provider,
@@ -227,7 +228,8 @@ static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments
         intraOpThreads,
         interOpThreads,
         maximumTokensPerStep,
-        CudaRuntimeDirectory: cudaRuntimeDirectory);
+        CudaRuntimeDirectory: cudaRuntimeDirectory,
+        AllowFullPrecisionFallback: allowFullPrecisionFallback);
     var fallback = provider == RuntimeProviderKind.Cpu
         ? null
         : new ParakeetEngineOptions(
@@ -238,7 +240,8 @@ static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments
                 : modelPack,
             fallbackThreads,
             InterOpThreads: 1,
-            maximumTokensPerStep);
+            maximumTokensPerStep,
+            AllowFullPrecisionFallback: allowFullPrecisionFallback);
     if (cardUnreachable)
     {
         return OnTheProcessor(new ParakeetEngineFactory().Create(fallback!).Engine);

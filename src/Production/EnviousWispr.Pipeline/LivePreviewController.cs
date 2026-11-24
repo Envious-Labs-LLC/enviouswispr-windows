@@ -5,6 +5,7 @@ using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Preview;
 using EnviousWispr.Core.Runtime;
+using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Pipeline;
 
@@ -31,6 +32,15 @@ public interface ILivePreviewEffects
 
     /// <summary>The dictation being recorded right now, or null; the stop path joins its lines to it.</summary>
     DictationSessionId? RecordingSessionId { get; }
+
+    /// <summary>Whether Custom Words correction is enabled for display-only preview text (#127).</summary>
+    bool WordCorrectionEnabled => false;
+
+    /// <summary>The user's Custom Words vocabulary for display-only preview text (#127).</summary>
+    IReadOnlyList<CustomWordEntry> CustomWords => [];
+
+    /// <summary>The user's English spelling preference for display-only preview text (#127).</summary>
+    EnglishSpelling EnglishSpelling => EnglishSpelling.American;
 
     /// <summary>Words for the screen, tagged with the dictation they belong to and with whether their screen is still open.</summary>
     /// <remarks>
@@ -192,7 +202,18 @@ public sealed class LivePreviewController : IAsyncDisposable
                 cancellation.Cancel();
             }
 
-            _work = RunAsync(sessionId, engine, audio, closure, cancellation.Token);
+            var wordCorrectionEnabled = _effects.WordCorrectionEnabled;
+            var customWords = _effects.CustomWords;
+            var englishSpelling = _effects.EnglishSpelling;
+            _work = RunAsync(
+                sessionId,
+                engine,
+                audio,
+                wordCorrectionEnabled,
+                customWords,
+                englishSpelling,
+                closure,
+                cancellation.Token);
         }
         finally
         {
@@ -204,6 +225,9 @@ public sealed class LivePreviewController : IAsyncDisposable
         DictationSessionId sessionId,
         ILivePreviewEngine engine,
         IAudioSnapshotSource audio,
+        bool wordCorrectionEnabled,
+        IReadOnlyList<CustomWordEntry> customWords,
+        EnglishSpelling englishSpelling,
         int closure,
         CancellationToken cancellationToken)
     {
@@ -278,9 +302,17 @@ public sealed class LivePreviewController : IAsyncDisposable
                 // last, the screen this was for has been closed, and its words must not reach it.
                 if (update.SessionId == sessionId.Value && Volatile.Read(ref _closure) == closure)
                 {
+                    var displayText = LivePreviewTextFormatter.Format(
+                        update.Text,
+                        wordCorrectionEnabled,
+                        customWords,
+                        englishSpelling,
+                        update.DetectedLanguage,
+                        update.RecognitionLanguage,
+                        engine.EngineId);
                     _effects.ShowPreview(new LivePreviewFrame(
                         sessionId,
-                        update.Text,
+                        displayText,
                         () => Volatile.Read(ref _closure) == closure));
                 }
 

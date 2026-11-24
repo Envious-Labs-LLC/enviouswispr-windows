@@ -98,6 +98,10 @@ public partial class App
             : whisper.QuantizedComplete || whisper.FullPrecisionComplete;
     }
 
+    /// <summary>Which model pack ID the chosen Live Preview engine requires (#127).</summary>
+    internal static string RequiredPreviewModelId(LivePreviewEngineChoice engine) =>
+        EnviousWispr.Services.Runtime.LivePreviewRuntimeResolver.RequiredModelId(engine);
+
     /// <summary>The models this configuration needs and does not have, final engine first.</summary>
     private async Task<IReadOnlyList<string>> MissingModelIdsAsync(UserPreferences preferences)
     {
@@ -109,7 +113,11 @@ public partial class App
         };
         if (preferences.LivePreviewEnabled)
         {
-            wanted.Add(WhisperTranscriptionEngine.PreviewModelId);
+            var previewModelId = RequiredPreviewModelId(preferences.LivePreviewEngine);
+            if (!wanted.Contains(previewModelId, StringComparer.Ordinal))
+            {
+                wanted.Add(previewModelId);
+            }
         }
 
         var missing = new List<string>();
@@ -127,6 +135,23 @@ public partial class App
         return missing;
     }
 
+    private async Task RefreshLivePreviewModelInventoryAsync()
+    {
+        var parakeetDirectory = await ResolveModelDirectoryAsync(ParakeetTranscriptionEngine.ModelId).ConfigureAwait(true);
+        var parakeetInstalled = parakeetDirectory is not null &&
+            new LocalParakeetModelProbe().Probe(parakeetDirectory).Int8Complete;
+        var whisperPreviewDirectory = await ResolveModelDirectoryAsync(
+            WhisperTranscriptionEngine.PreviewModelId,
+            "ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY").ConfigureAwait(true);
+        var whisperPreviewInstalled = whisperPreviewDirectory is not null &&
+            new LocalWhisperModelProbe().Probe(whisperPreviewDirectory).PreviewSmallComplete;
+        var storeInstalled = whisperPreviewInstalled &&
+            (await CreateModelStore().ListInstalledAsync(WhisperTranscriptionEngine.PreviewModelId).ConfigureAwait(true)).Count > 0;
+        var legacyWhisperRoot = Path.Combine(ModelStoreRoot, WhisperTranscriptionEngine.PreviewModelId);
+        var canRemoveWhisper = storeInstalled || (whisperPreviewInstalled && Directory.Exists(legacyWhisperRoot));
+        _window?.SetLivePreviewModelInventory(parakeetInstalled, whisperPreviewInstalled, canRemoveWhisper);
+    }
+
     /// <summary>Tells the window what the speech model situation is, after transcription was configured.</summary>
     private async Task PresentModelDeliveryAsync()
     {
@@ -135,6 +160,7 @@ public partial class App
             return;
         }
 
+        await RefreshLivePreviewModelInventoryAsync().ConfigureAwait(true);
         _missingModelIds = await MissingModelIdsAsync(_settings.Preferences).ConfigureAwait(true);
         if (_missingModelIds.Count == 0)
         {
@@ -264,6 +290,103 @@ public partial class App
     }
 
     private void OnModelDownloadCancelRequested() => _modelDownload?.Cancel();
+
+    private void OnPreviewModelDownloadRequested()
+    {
+        if (_modelDelivery is { IsCompleted: false } || Leaving)
+        {
+            return;
+        }
+
+        if (!_missingModelIds.Contains(WhisperTranscriptionEngine.PreviewModelId, StringComparer.Ordinal))
+        {
+            _missingModelIds = [.. _missingModelIds, WhisperTranscriptionEngine.PreviewModelId];
+        }
+
+        _modelDelivery = DeliverModelsAsync();
+    }
+
+    private void OnPreviewModelRemoveRequested()
+    {
+        if (_modelDelivery is { IsCompleted: false } || Leaving)
+        {
+            return;
+        }
+
+        _modelDelivery = RemovePreviewModelAsync();
+    }
+
+    private async Task RemovePreviewModelAsync()
+    {
+        if (_sessionController?.CurrentSession is not null || _sessionCoordinator?.IsProcessing == true)
+        {
+            return;
+        }
+
+        if (_previewEngine is not null)
+        {
+            await _previewEngine.DisposeAsync().ConfigureAwait(true);
+            _previewEngine = null;
+        }
+
+        var store = CreateModelStore();
+        var installedVersions = await store.ListInstalledAsync(WhisperTranscriptionEngine.PreviewModelId).ConfigureAwait(true);
+        foreach (var installed in installedVersions)
+        {
+            await store.RemoveVersionAsync(installed.ModelId, installed.Version).ConfigureAwait(true);
+        }
+
+        await store.CleanupAsync(WhisperTranscriptionEngine.PreviewModelId, inactiveVersionsToKeep: 0).ConfigureAwait(true);
+        var legacyDirectory = Path.Combine(ModelStoreRoot, WhisperTranscriptionEngine.PreviewModelId);
+        if (Directory.Exists(legacyDirectory))
+        {
+            try
+            {
+                Directory.Delete(legacyDirectory, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+
+        if (Leaving)
+        {
+            return;
+        }
+
+        if (_configuredTranscription is not null)
+        {
+            await ReconfigureTranscriptionAsync().ConfigureAwait(true);
+            if (Leaving)
+            {
+                return;
+            }
+        }
+
+        await PresentModelDeliveryAsync().ConfigureAwait(true);
+    }
+
+    private async Task RefreshLivePreviewAfterSettingsChangeAsync()
+    {
+        if (_sessionController?.CurrentSession is not null || _sessionCoordinator?.IsProcessing == true || Leaving)
+        {
+            return;
+        }
+
+        if (_configuredTranscription is not null)
+        {
+            await ReconfigureTranscriptionAsync().ConfigureAwait(true);
+            if (Leaving)
+            {
+                return;
+            }
+        }
+
+        await PresentModelDeliveryAsync().ConfigureAwait(true);
+    }
 
     /// <summary>The person asked for local transcription to be started again, from the first-run checklist or warm-up.</summary>
     /// <remarks>

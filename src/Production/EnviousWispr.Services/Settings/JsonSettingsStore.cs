@@ -74,6 +74,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 16 => MigrateFromV16(json),
                 17 => MigrateFromV17(json),
                 18 => MigrateFromV18(json),
+                19 => MigrateFromV19(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -491,6 +492,18 @@ public sealed class JsonSettingsStore : ISettingsStore
     /// Absent CasualModeEnabled deserializes to false, matching the default.
     /// </remarks>
     private static AppSettings? MigrateFromV18(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+    }
+
+    /// <summary>Takes a settings file written before the two-engine Live Preview choice existed.</summary>
+    /// <remarks>
+    /// Absent LivePreviewEngine deserializes to Parakeet, matching the workhorse default (#127).
+    /// </remarks>
+    private static AppSettings? MigrateFromV19(string json)
     {
         var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
         return legacy is null

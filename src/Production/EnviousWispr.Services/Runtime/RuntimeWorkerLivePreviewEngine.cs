@@ -151,7 +151,7 @@ public sealed class RuntimeWorkerLivePreviewEngine : IAbortableLivePreviewEngine
                 snapshot.SessionId.Value,
                 sequence,
                 Succeeded: true,
-                transcript.Text,
+                LivePreviewTextBound.Apply(transcript.Text),
                 transcript.DetectedLanguage,
                 RecognitionLanguage: transcript.RecognitionLanguage);
         }
@@ -254,21 +254,49 @@ public sealed class RuntimeWorkerLivePreviewEngine : IAbortableLivePreviewEngine
         Error: new AppError(code, AppErrorStage.RuntimeResource, CanRetry: true));
 
     private static RuntimeWorkerTranscriptionEngine CreateRuntime(
+        RuntimeWorkerTranscriptionOptions options) =>
+        new(NormalizePreviewOptions(options));
+
+    internal static RuntimeWorkerTranscriptionOptions NormalizePreviewOptions(
         RuntimeWorkerTranscriptionOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        if (options.Engine != Core.Settings.FinalAsrEngine.Whisper ||
-            options.WhisperPack != WhisperModelPack.PreviewSmall)
+        if (options.Engine == Core.Settings.FinalAsrEngine.Whisper)
         {
-            throw new ArgumentException(
-                "Live preview requires the dedicated small Whisper model pack.",
-                nameof(options));
+            if (options.WhisperPack != WhisperModelPack.PreviewSmall)
+            {
+                throw new ArgumentException(
+                    "Whisper live preview requires the dedicated small Whisper model pack.",
+                    nameof(options));
+            }
+
+            return options with
+            {
+                WorkerPriority = ProcessPriorityClass.BelowNormal,
+                MaximumWorkerRestarts = 0,
+            };
         }
 
-        return new RuntimeWorkerTranscriptionEngine(options with
+        if (options.Engine == Core.Settings.FinalAsrEngine.Parakeet)
         {
-            WorkerPriority = ProcessPriorityClass.BelowNormal,
-            MaximumWorkerRestarts = 0,
-        });
+            if (options.Provider != RuntimeProviderKind.Cpu ||
+                options.ModelPack != ParakeetModelPack.Quantized)
+            {
+                throw new ArgumentException(
+                    "Parakeet live preview requires the quantized INT8 model pack on the CPU.",
+                    nameof(options));
+            }
+
+            return options with
+            {
+                WorkerPriority = ProcessPriorityClass.BelowNormal,
+                MaximumWorkerRestarts = 0,
+                AllowFullPrecisionFallback = false,
+            };
+        }
+
+        throw new ArgumentException(
+            "Live preview requires either the Parakeet quantized CPU model pack or the small Whisper model pack.",
+            nameof(options));
     }
 }

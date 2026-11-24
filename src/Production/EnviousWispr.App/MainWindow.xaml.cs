@@ -500,6 +500,19 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>The person asked for the running download to stop.</summary>
     public event Action? ModelDownloadCancelRequested;
 
+    /// <summary>The person asked for the 190 MB Whisper Live Preview model to be downloaded (#127).</summary>
+    public event Action? PreviewModelDownloadRequested;
+
+    /// <summary>The person asked for the downloaded Whisper Live Preview model to be removed (#127).</summary>
+    public event Action? PreviewModelRemoveRequested;
+
+    private bool _livePreviewParakeetInstalled = true;
+    private bool _livePreviewWhisperInstalled;
+    private bool _livePreviewCanRemoveWhisper;
+    private SpeechModelDelivery _livePreviewWhisperDeliveryStage = SpeechModelDelivery.Unknown;
+    private double? _livePreviewWhisperDownloadPercent;
+    private string? _livePreviewWhisperDeliveryDetail;
+
     /// <summary>The person asked for the NVIDIA graphics runtime to be downloaded.</summary>
     public event Action? GraphicsRuntimeDownloadRequested;
 
@@ -1547,7 +1560,8 @@ public sealed partial class MainWindow : Window, IDisposable
             (MicrophoneComboBox.SelectedItem as MicrophoneChoice)?.Id,
             PasteLastHotkeyTextBox.Text,
             CopyLastHotkeyTextBox.Text,
-            CasualModeToggle?.IsOn == true);
+            CasualModeToggle?.IsOn == true,
+            SelectedLivePreviewEngineIndex());
 
         var outcome = await _session.Settings.SaveGeneralAsync(input).ConfigureAwait(true);
         switch (outcome.Status)
@@ -1710,7 +1724,109 @@ public sealed partial class MainWindow : Window, IDisposable
         if (!_isApplyingSettings)
         {
             UpdatePillDesignControls();
+            RefreshLivePreviewSectionPresentation();
         }
+    }
+
+    private async void LivePreviewEngineCard_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_isApplyingSettings)
+        {
+            return;
+        }
+
+        RefreshLivePreviewSectionPresentation();
+        await TriggerAutoSaveAsync().ConfigureAwait(true);
+    }
+
+    private void DownloadLivePreviewWhisperButton_Click(object sender, RoutedEventArgs e) =>
+        PreviewModelDownloadRequested?.Invoke();
+
+    private void CancelLivePreviewWhisperDownloadButton_Click(object sender, RoutedEventArgs e) =>
+        ModelDownloadCancelRequested?.Invoke();
+
+    private void RemoveLivePreviewWhisperButton_Click(object sender, RoutedEventArgs e) =>
+        PreviewModelRemoveRequested?.Invoke();
+
+    private int SelectedLivePreviewEngineIndex() =>
+        LivePreviewWhisperEngineCard?.IsChecked == true
+            ? 1
+            : LivePreviewParakeetEngineCard?.IsChecked == true
+                ? 0
+                : -1;
+
+    public void SetLivePreviewModelInventory(
+        bool parakeetInstalled,
+        bool whisperPreviewInstalled,
+        bool canRemoveWhisperModel)
+    {
+        _livePreviewParakeetInstalled = parakeetInstalled;
+        _livePreviewWhisperInstalled = whisperPreviewInstalled;
+        _livePreviewCanRemoveWhisper = canRemoveWhisperModel;
+        if (whisperPreviewInstalled)
+        {
+            _livePreviewWhisperDeliveryStage = SpeechModelDelivery.Installed;
+            _livePreviewWhisperDownloadPercent = null;
+            _livePreviewWhisperDeliveryDetail = null;
+        }
+        else if (_livePreviewWhisperDeliveryStage == SpeechModelDelivery.Installed)
+        {
+            _livePreviewWhisperDeliveryStage = SpeechModelDelivery.Missing;
+        }
+
+        RefreshLivePreviewSectionPresentation();
+    }
+
+    private void RefreshLivePreviewSectionPresentation()
+    {
+        if (LivePreviewToggle is null || LivePreviewParakeetEngineCard is null || LivePreviewWhisperEngineCard is null)
+        {
+            return;
+        }
+
+        var selectedEngine = LivePreviewWhisperEngineCard.IsChecked == true
+            ? LivePreviewEngineChoice.Whisper
+            : LivePreviewEngineChoice.Parakeet;
+        var presentation = LivePreviewSettingsPresentation.Present(
+            LivePreviewToggle.IsOn,
+            selectedEngine,
+            _livePreviewParakeetInstalled,
+            _livePreviewWhisperInstalled,
+            _livePreviewWhisperDeliveryStage,
+            _livePreviewWhisperDownloadPercent,
+            _livePreviewWhisperDeliveryDetail,
+            _livePreviewCanRemoveWhisper);
+
+        LivePreviewReadyBadgeText.Text = presentation.StatusBadgeText;
+        LivePreviewWarningBadgeText.Text = presentation.StatusBadgeText;
+        LivePreviewErrorBadgeText.Text = presentation.StatusBadgeText;
+        LivePreviewOffBadgeText.Text = presentation.StatusBadgeText;
+
+        LivePreviewReadyBadge.Visibility = presentation.StatusTone == LivePreviewStatusTone.Ready ? Visibility.Visible : Visibility.Collapsed;
+        LivePreviewWarningBadge.Visibility = presentation.StatusTone == LivePreviewStatusTone.Warning ? Visibility.Visible : Visibility.Collapsed;
+        LivePreviewErrorBadge.Visibility = presentation.StatusTone == LivePreviewStatusTone.Error ? Visibility.Visible : Visibility.Collapsed;
+        LivePreviewOffBadge.Visibility = presentation.StatusTone == LivePreviewStatusTone.Off ? Visibility.Visible : Visibility.Collapsed;
+
+        SetLiveText(LivePreviewStatusDetailText, presentation.StatusDetailText);
+        LivePreviewPrivacyText.Text = presentation.PrivacyReassuranceText;
+        LivePreviewParakeetStatusText.Text = presentation.ParakeetCard.StatusText;
+        LivePreviewWhisperStatusText.Text = presentation.WhisperCard.StatusText;
+
+        LivePreviewWhisperDownloadProgress.Visibility = presentation.WhisperCard.ProgressPercent is null
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        LivePreviewWhisperDownloadProgress.Value = presentation.WhisperCard.ProgressPercent ?? 0;
+
+        DownloadLivePreviewWhisperButton.Content = presentation.WhisperCard.DownloadButtonText;
+        DownloadLivePreviewWhisperButton.Visibility = presentation.WhisperCard.CanDownload
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        CancelLivePreviewWhisperDownloadButton.Visibility = presentation.WhisperCard.CanCancel
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        RemoveLivePreviewWhisperButton.Visibility = presentation.WhisperCard.CanRemove
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     private void InitializeChimeCards()
@@ -3732,6 +3848,18 @@ public sealed partial class MainWindow : Window, IDisposable
         DownloadModelButton.Visibility = presentation.CanDownload ? Visibility.Visible : Visibility.Collapsed;
         CancelModelDownloadButton.Visibility = presentation.CanCancel ? Visibility.Visible : Visibility.Collapsed;
         ObserveModelForOnboarding(presentation);
+
+        if (!_livePreviewWhisperInstalled &&
+            presentation.Stage is SpeechModelDelivery.Downloading
+                or SpeechModelDelivery.Activating
+                or SpeechModelDelivery.Failed
+                or SpeechModelDelivery.Cancelled)
+        {
+            _livePreviewWhisperDeliveryStage = presentation.Stage;
+            _livePreviewWhisperDownloadPercent = presentation.Percent;
+            _livePreviewWhisperDeliveryDetail = presentation.Text;
+            RefreshLivePreviewSectionPresentation();
+        }
     }
 
     private async void ImportProfileButton_Click(object sender, RoutedEventArgs e)
@@ -4918,6 +5046,9 @@ public sealed partial class MainWindow : Window, IDisposable
             RetentionDaysBox.Value = preferences.History.RetentionDays;
             SelectChoice(ThemeChoices, ThemeIndex(preferences.Theme));
             LivePreviewToggle.IsOn = preferences.LivePreviewEnabled;
+            LivePreviewParakeetEngineCard.IsChecked = preferences.LivePreviewEngine == LivePreviewEngineChoice.Parakeet;
+            LivePreviewWhisperEngineCard.IsChecked = preferences.LivePreviewEngine == LivePreviewEngineChoice.Whisper;
+            RefreshLivePreviewSectionPresentation();
             SelectChoice(OverlayPositionChoices, OverlayPositionIndex(preferences.OverlayPosition));
             CapsulePillButton.IsChecked =
                 preferences.PillDesignWithoutWords == RecordingPillDesign.Classic;
