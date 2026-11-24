@@ -117,8 +117,23 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Run the self-contained Store MSIX publish and payload check when packaging, manifest,
-      # dependency, or CI inputs change.
+      # dependency, or CI inputs change. Hosted runners do not carry gitignored local llama.cpp
+      # binaries, so stage a minimal runtime fixture to exercise AddLlamaRuntimeToStorePackage
+      # and the full emitting MSIX verification path.
       - name: Build and check the Store package
         if: steps.changes.outputs.needs_build == 'true' && steps.changes.outputs.needs_store_package == 'true'
         shell: powershell
-        run: powershell -ExecutionPolicy Bypass -File scripts/package-store.ps1 -OutputDirectory "$env:RUNNER_TEMP\store-package"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixtureDir = Join-Path $env:RUNNER_TEMP 'llama-runtime-fixture'
+          New-Item -ItemType Directory -Force -Path $fixtureDir | Out-Null
+          $fixtureExe = Join-Path $fixtureDir 'llama-server.exe'
+          Add-Type -OutputAssembly $fixtureExe -OutputType ConsoleApplication -TypeDefinition 'public static class Program { public static int Main(string[] args) { return 0; } }'
+          foreach ($dll in @('llama-server-impl.dll', 'llama-common.dll', 'llama.dll', 'mtmd.dll', 'ggml.dll', 'ggml-base.dll', 'libomp.dll')) {
+            [IO.File]::WriteAllBytes((Join-Path $fixtureDir $dll), [byte[]]@(0x4D, 0x5A))
+          }
+          foreach ($licenseFile in @('LICENSE-llama.cpp', 'LICENSE-LLVM-OpenMP')) {
+            Set-Content -LiteralPath (Join-Path $fixtureDir $licenseFile) -Encoding UTF8 -Value 'CI fixture notice'
+          }
+          powershell -ExecutionPolicy Bypass -File scripts/package-store.ps1 -LlamaRuntimeDirectory $fixtureDir -OutputDirectory "$env:RUNNER_TEMP\store-package"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

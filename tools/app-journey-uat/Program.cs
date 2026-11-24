@@ -119,6 +119,18 @@ var quickAdd = args.Any(argument => string.Equals(
     argument,
     "--quick-add",
     StringComparison.OrdinalIgnoreCase));
+var packaged = args.Any(argument => string.Equals(
+    argument,
+    "--packaged",
+    StringComparison.OrdinalIgnoreCase));
+var cleanUser = args.Any(argument => string.Equals(
+    argument,
+    "--clean-user",
+    StringComparison.OrdinalIgnoreCase));
+if (cleanUser && !packaged)
+{
+    throw new JourneyExpectationException("--clean-user requires --packaged.");
+}
 var deterministicProfileArgument = ArgumentValue(args, "--deterministic-profile");
 var deterministicProfile = deterministicProfileArgument?.ToLowerInvariant() switch
 {
@@ -323,12 +335,33 @@ if (syntheticHotkey &&
             + "accepted only with --quick-tap, where the question is what a key-up does to a preview "
             + "worker that is still starting.");
 }
+if (cleanUser &&
+    (!englishParakeet || polishProvider != PolishProvider.None ||
+     liveMicrophone || livePreview || escapeRecovery || syntheticHotkey || quickTap ||
+     onboardingPractice || quickAdd || languageChange || failureMode != JourneyFailureMode.None ||
+     deterministicProfile != DeterministicJourneyProfile.None))
+{
+    throw new JourneyExpectationException(
+        "--clean-user exercises a fresh install with default settings (Automatic/Parakeet, no polish, no preloaded settings.json) and requires --english-parakeet without mode or polish overrides.");
+}
 if (polishProvider == PolishProvider.EgOne)
 {
-    RequireAbsoluteFileArgument(
-        egOneServerExecutable,
-        "--eg1-server must identify an existing fully qualified llama-server.exe.",
-        expectedFileName: "llama-server.exe");
+    if (packaged)
+    {
+        if (egOneServerExecutable is not null)
+        {
+            throw new JourneyExpectationException(
+                "--packaged --polish eg-1 always tests the package's bundled runtime\\llama-server.exe and rejects --eg1-server.");
+        }
+    }
+    else
+    {
+        RequireAbsoluteFileArgument(
+            egOneServerExecutable,
+            "--eg1-server must identify an existing fully qualified llama-server.exe.",
+            expectedFileName: "llama-server.exe");
+    }
+
     RequireAbsoluteFileArgument(
         egOneModelFile,
         "--eg1-model must identify an existing fully qualified GGUF model.",
@@ -362,22 +395,33 @@ if (appExecutableArgument is not null &&
         "--app-executable must be a fully qualified EnviousWispr.App.exe path.");
 }
 var repositoryRoot = FindRepositoryRoot(AppContext.BaseDirectory);
+if (packaged && failureMode == JourneyFailureMode.WorkerStartup)
+{
+    throw new JourneyExpectationException(
+        "--packaged cannot be combined with --failure worker-startup because copying the payload outside its registered package layout strips MSIX package identity.");
+}
 var appExecutable = appExecutableArgument is null
-    ? Path.Combine(
-        repositoryRoot,
-        "src",
-        "Production",
-        "EnviousWispr.App",
-        "bin",
-        "x64",
-        "Release",
-        "net10.0-windows10.0.26100.0",
-        "win-x64",
-        "EnviousWispr.App.exe")
+    ? packaged
+        ? ResolveRegisteredPackagedAppExecutable(repositoryRoot)
+        : Path.Combine(
+            repositoryRoot,
+            "src",
+            "Production",
+            "EnviousWispr.App",
+            "bin",
+            "x64",
+            "Release",
+            "net10.0-windows10.0.26100.0",
+            "win-x64",
+            "EnviousWispr.App.exe")
     : Path.GetFullPath(appExecutableArgument);
-var appSource = appExecutableArgument is null
-    ? "RepositoryReleaseBuild"
-    : "ExplicitCandidateExecutable";
+var appSource = packaged
+    ? appExecutableArgument is null
+        ? "RegisteredMsixPackage"
+        : "ExplicitPackagedExecutable"
+    : appExecutableArgument is null
+        ? "RepositoryReleaseBuild"
+        : "ExplicitCandidateExecutable";
 var targetExecutable = Path.Combine(
     repositoryRoot,
     "tools",
@@ -415,12 +459,17 @@ var fixtureIdentity = manualMicrophone
         : englishParakeet
             ? "PolyAI-minds14-en-US-row0"
             : "PolyAI-minds14-fr-FR-row0";
+var unvirtualizedProductRoot = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+    "Envious Labs",
+    "EnviousWispr");
+var modelRootDirectory = cleanUser ? unvirtualizedProductRoot : repositoryRoot;
 var modelDirectory = Path.Combine(
-    repositoryRoot,
+    modelRootDirectory,
     "models",
     englishParakeet ? ParakeetTranscriptionEngine.ModelId : WhisperTranscriptionEngine.ModelId);
 var previewModelDirectory = Path.Combine(
-    repositoryRoot,
+    modelRootDirectory,
     "models",
     WhisperTranscriptionEngine.PreviewModelId);
 var fixturePath = Path.Combine(
@@ -439,20 +488,25 @@ RequireFile(fixturePath, "The reviewed public fixture is missing.");
 RequireReviewedFixture(fixturePath, fixtureHash);
 var appVersion = FileVersionInfo.GetVersionInfo(appExecutable).ProductVersion ?? "Unknown";
 var appSha256 = Sha256Hex(appExecutable);
-if (englishParakeet && !new LocalParakeetModelProbe().Probe(modelDirectory).Int8Complete)
+if (!cleanUser)
 {
-    throw new JourneyExpectationException(
-        "The gitignored Parakeet quantized model is required for English journey UAT.");
-}
-if (!englishParakeet && !new LocalWhisperModelProbe().Probe(modelDirectory).QuantizedComplete)
-{
-    throw new JourneyExpectationException(
-        "The gitignored Whisper large-v3-turbo quantized model is required for journey UAT.");
-}
-if (livePreview && !new LocalWhisperModelProbe().Probe(previewModelDirectory).PreviewSmallComplete)
-{
-    throw new JourneyExpectationException(
-        "The gitignored Whisper small preview model is required for live-preview journey UAT.");
+    if (englishParakeet && !new LocalParakeetModelProbe().Probe(modelDirectory).Int8Complete)
+    {
+        throw new JourneyExpectationException(
+            "The gitignored Parakeet quantized model is required for English journey UAT.");
+    }
+
+    if (!englishParakeet && !new LocalWhisperModelProbe().Probe(modelDirectory).QuantizedComplete)
+    {
+        throw new JourneyExpectationException(
+            "The gitignored Whisper large-v3-turbo quantized model is required for journey UAT.");
+    }
+
+    if (livePreview && !new LocalWhisperModelProbe().Probe(previewModelDirectory).PreviewSmallComplete)
+    {
+        throw new JourneyExpectationException(
+            "The gitignored Whisper small preview model is required for live-preview journey UAT.");
+    }
 }
 
 EnsureNoUnownedProcesses("EnviousWispr.App", "EnviousWispr.Delivery.Target.Uat");
@@ -486,7 +540,19 @@ if (failureMode == JourneyFailureMode.WorkerStartup)
     RequireFile(appExecutable, "The isolated worker-failure app copy is incomplete.");
 }
 Directory.CreateDirectory(Path.Combine(uatDirectory, "no-preview-model"));
-var profileDirectory = Path.Combine(uatDirectory, "profile");
+if (packaged)
+{
+    RequirePackagedLayoutManifest(appExecutable, repositoryRoot);
+    if (cleanUser)
+    {
+        RequireCleanUserProfile(unvirtualizedProductRoot);
+    }
+}
+var profileDirectory = packaged
+    ? cleanUser
+        ? unvirtualizedProductRoot
+        : Path.Combine(unvirtualizedProductRoot, $"EnviousWispr-AppJourney-PackagedUat-{runId}")
+    : Path.Combine(uatDirectory, "profile");
 Directory.CreateDirectory(profileDirectory);
 // THE HARNESS CHOOSES ITS OWN RECORDING KEY, AND IT IS F8, whatever a fresh install starts on. It presses the key
 // itself - SendKey, the synthetic hook, and the words a person is told to follow - and an ordinary key is the one it can
@@ -626,6 +692,7 @@ string? clipboardSentinel = null;
 bool? clipboardRestored = null;
 SyntheticHotkeyEvidence? syntheticHotkeyEvidence = null;
 EscapeActionEvidence? escapeActionEvidence = null;
+PackagedJourneyEvidence? packagedEvidence = null;
 var usesPublicFixtureJourney = !liveMicrophone &&
     failureMode is JourneyFailureMode.None or JourneyFailureMode.TargetUnavailable;
 
@@ -665,28 +732,46 @@ try
         "The controlled delivery target did not start.");
     WaitForWindow(target, TimeSpan.FromSeconds(10));
 
-    var appStart = new ProcessStartInfo(appExecutable)
+    var launchExecutable = packaged
+        ? ResolvePackagedAppExecutionAlias(appExecutable, repositoryRoot)
+        : appExecutable;
+    var appStart = new ProcessStartInfo(launchExecutable)
     {
         UseShellExecute = false,
         WorkingDirectory = Path.GetDirectoryName(appExecutable)!,
     };
-    appStart.Environment["ENVIOUSWISPR_DATA_DIRECTORY"] = profileDirectory;
     appStart.Environment["ENVIOUSWISPR_UAT_CREDENTIAL_SUFFIX"] = $"journey-{runId}";
     appStart.Environment["ENVIOUSWISPR_UAT_READY_EVENT"] = readyEventName;
     appStart.Environment["ENVIOUSWISPR_UAT_RUNTIME_READY_EVENT"] = runtimeEventName;
-    appStart.Environment["ENVIOUSWISPR_ASR_ENGINE"] = engineName;
-    if (languageChange)
+    if (cleanUser)
     {
+        // Clean-user packaged validation runs in a separate clean Windows account or VM without data,
+        // model, engine, language, or runtime path overrides (.claude/knowledge/distribution.md:39-41, 50-51).
+        appStart.Environment.Remove("ENVIOUSWISPR_DATA_DIRECTORY");
+        appStart.Environment.Remove("ENVIOUSWISPR_MODEL_DIRECTORY");
+        appStart.Environment.Remove("ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY");
+        appStart.Environment.Remove("ENVIOUSWISPR_ASR_ENGINE");
         appStart.Environment.Remove("ENVIOUSWISPR_ASR_LANGUAGE");
+        appStart.Environment.Remove("ENVIOUSWISPR_POLISH_PROVIDER");
     }
     else
     {
-        appStart.Environment["ENVIOUSWISPR_ASR_LANGUAGE"] = language;
+        appStart.Environment["ENVIOUSWISPR_DATA_DIRECTORY"] = profileDirectory;
+        appStart.Environment["ENVIOUSWISPR_ASR_ENGINE"] = engineName;
+        if (languageChange)
+        {
+            appStart.Environment.Remove("ENVIOUSWISPR_ASR_LANGUAGE");
+        }
+        else
+        {
+            appStart.Environment["ENVIOUSWISPR_ASR_LANGUAGE"] = language;
+        }
+        appStart.Environment["ENVIOUSWISPR_MODEL_DIRECTORY"] = modelDirectory;
+        appStart.Environment["ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY"] = livePreview
+            ? previewModelDirectory
+            : Path.Combine(uatDirectory, "no-preview-model");
+        appStart.Environment["ENVIOUSWISPR_POLISH_PROVIDER"] = polishProvider.ToString();
     }
-    appStart.Environment["ENVIOUSWISPR_MODEL_DIRECTORY"] = modelDirectory;
-    appStart.Environment["ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY"] = livePreview
-        ? previewModelDirectory
-        : Path.Combine(uatDirectory, "no-preview-model");
     if (livePreview)
     {
         appStart.Environment["ENVIOUSWISPR_UAT_LIVE_PREVIEW"] = "1";
@@ -695,10 +780,17 @@ try
     {
         appStart.Environment["ENVIOUSWISPR_UAT_JOURNEY_CANCEL"] = "1";
     }
-    appStart.Environment["ENVIOUSWISPR_POLISH_PROVIDER"] = polishProvider.ToString();
     if (polishProvider == PolishProvider.EgOne)
     {
-        appStart.Environment["ENVIOUSWISPR_EG1_SERVER_EXE"] = egOneServerExecutable!;
+        if (packaged)
+        {
+            appStart.Environment.Remove("ENVIOUSWISPR_EG1_SERVER_EXE");
+        }
+        else
+        {
+            appStart.Environment["ENVIOUSWISPR_EG1_SERVER_EXE"] = egOneServerExecutable!;
+        }
+
         appStart.Environment["ENVIOUSWISPR_EG1_MODEL_PATH"] = egOneModelFile!;
         appStart.Environment.Remove("ENVIOUSWISPR_EG1_GPU_LAYERS");
     }
@@ -775,10 +867,34 @@ try
         "The production WinUI app did not start.");
 
     shellReady = readyEvent.WaitOne(TimeSpan.FromSeconds(30));
-    runtimeReady = runtimeEvent.WaitOne(
-        failureMode == JourneyFailureMode.WorkerStartup
-            ? TimeSpan.FromMilliseconds(500)
-            : TimeSpan.FromSeconds(30));
+    if (cleanUser)
+    {
+        if (runtimeEvent.WaitOne(TimeSpan.FromMilliseconds(500)))
+        {
+            throw new JourneyExpectationException(
+                "--clean-user started with a pre-existing model instead of exercising first-run model delivery.");
+        }
+
+        if (shellReady && !app.HasExited)
+        {
+            // On a fresh clean-user install with no pre-downloaded model in the Store model directory,
+            // pressing Get Started on the Welcome onboarding screen triggers the app's model delivery
+            // download and subsequent ReconfigureTranscriptionAsync worker startup.
+            TriggerOnboardingModelDeliveryIfPresent(app.Id);
+            if (!target.HasExited && target.MainWindowHandle != 0)
+            {
+                BringToForeground(target.MainWindowHandle);
+            }
+            runtimeReady = WaitForCleanUserRuntimeWorker(app, runtimeEvent, diagnosticPath, TimeSpan.FromMinutes(10));
+        }
+    }
+    else
+    {
+        runtimeReady = runtimeEvent.WaitOne(
+            failureMode == JourneyFailureMode.WorkerStartup
+                ? TimeSpan.FromMilliseconds(500)
+                : TimeSpan.FromSeconds(30));
+    }
     var expectedRuntimeReady = failureMode != JourneyFailureMode.WorkerStartup;
     if (!shellReady || runtimeReady != expectedRuntimeReady ||
         app.HasExited && failureMode != JourneyFailureMode.WorkerStartup)
@@ -823,6 +939,14 @@ try
                 $"The production journey started {ownedPolishWorkerIds.Length} owned local-polish workers; " +
                 $"expected {expectedPolishWorkerCount}.");
         }
+    }
+
+    if (packaged)
+    {
+        packagedEvidence = VerifyPackagedProcessesAndStorage(
+            app,
+            [.. ownedWorkerIds, .. ownedPolishWorkerIds],
+            profileDirectory);
     }
 
     if (quickAdd)
@@ -1231,13 +1355,18 @@ try
     }
 
     var hardware = await new WindowsHardwareDiscovery(CudaRuntimeDirectory.ForTooling()).ProbeAsync();
+    var probedModelDirectory = cleanUser
+        ? await ResolveCleanUserActivatedModelDirectoryAsync(
+            Path.Combine(unvirtualizedProductRoot, "models"),
+            englishParakeet ? ParakeetTranscriptionEngine.ModelId : WhisperTranscriptionEngine.ModelId) ?? modelDirectory
+        : modelDirectory;
     string provider;
     string modelPack;
     if (englishParakeet)
     {
         var selection = ParakeetRuntimeSelector.Select(
             hardware,
-            new LocalParakeetModelProbe().Probe(modelDirectory));
+            new LocalParakeetModelProbe().Probe(probedModelDirectory));
         provider = selection.Provider?.ToString() ?? "Unavailable";
         modelPack = selection.ModelPack?.ToString() ?? "Unavailable";
     }
@@ -1245,7 +1374,7 @@ try
     {
         var selection = WhisperRuntimeSelector.Select(
             hardware,
-            new LocalWhisperModelProbe().Probe(modelDirectory));
+            new LocalWhisperModelProbe().Probe(probedModelDirectory));
         provider = selection.Provider?.ToString() ?? "Unavailable";
         modelPack = selection.ModelPack?.ToString() ?? "Unavailable";
     }
@@ -1324,6 +1453,7 @@ try
             ? liveMicrophone ? "MachineDefaultEndpoints" : null
             : $"VirtualCable: {audioRoute.RenderName} -> {audioRoute.CaptureName}",
         syntheticHotkey = syntheticHotkeyEvidence,
+        packagedIdentity = packagedEvidence,
         polish = PolishProviderName(polishProvider),
         polishCompleted = polishEvidence.Completed,
         polishDegraded = polishEvidence.Degraded,
@@ -1409,6 +1539,17 @@ finally
 
         try
         {
+            if (packaged)
+            {
+                if (cleanUser)
+                {
+                    RemoveCleanUserArtifacts(unvirtualizedProductRoot);
+                }
+                else
+                {
+                    RemovePackagedUatProfileDirectory(profileDirectory, unvirtualizedProductRoot);
+                }
+            }
             RemoveUatDirectory(uatDirectory);
         }
         catch (Exception removalFailure) when (removalFailure is IOException
@@ -3497,6 +3638,561 @@ static void RemoveUatDirectory(string path)
     }
 }
 
+static void RequireCleanUserProfile(string productRoot)
+{
+    if (!Directory.Exists(productRoot))
+    {
+        return;
+    }
+
+    var existingEntry = Directory.EnumerateFileSystemEntries(productRoot).FirstOrDefault();
+    if (existingEntry is not null)
+    {
+        throw JourneyExpectationException.Instrument(
+            $"--clean-user must run in a separate clean Windows account or VM with no existing EnviousWispr user data or cached models under {productRoot} (found {Path.GetFileName(existingEntry)}).");
+    }
+}
+
+static void RemoveCleanUserArtifacts(string productRoot)
+{
+    if (!Directory.Exists(productRoot))
+    {
+        return;
+    }
+
+    DeleteRegularFileIfPresent(Path.Combine(productRoot, "settings.json"));
+    DeleteRegularFileIfPresent(Path.Combine(productRoot, "history.json"));
+    DeleteRegularFileIfPresent(Path.Combine(productRoot, "run-state.json"));
+    DeleteRegularFileIfPresent(Path.Combine(productRoot, "recovery.json"));
+    DeleteRegularFileIfPresent(Path.Combine(productRoot, "diagnostics", "app.jsonl"));
+    DeleteDirectoryIfEmptyAndNotReparse(Path.Combine(productRoot, "diagnostics"));
+
+    var modelsRoot = Path.Combine(productRoot, "models");
+    if (Directory.Exists(modelsRoot) && !IsReparsePoint(modelsRoot))
+    {
+        string[] allowedModelIds =
+        [
+            ParakeetTranscriptionEngine.ModelId,
+            WhisperTranscriptionEngine.ModelId,
+            WhisperTranscriptionEngine.PreviewModelId,
+        ];
+        foreach (var modelId in allowedModelIds)
+        {
+            RemoveOwnedModelStoreEntries(Path.Combine(modelsRoot, modelId));
+        }
+
+        DeleteDirectoryIfEmptyAndNotReparse(modelsRoot);
+    }
+
+    var remaining = Directory.EnumerateFileSystemEntries(productRoot).FirstOrDefault();
+    if (remaining is not null)
+    {
+        throw new JourneyExpectationException(
+            $"Clean-user cleanup left unexpected entries under {productRoot} (found {Path.GetFileName(remaining)}).");
+    }
+}
+
+static void RemoveOwnedModelStoreEntries(string modelDirectory)
+{
+    if (!Directory.Exists(modelDirectory) || IsReparsePoint(modelDirectory))
+    {
+        return;
+    }
+
+    DeleteRegularFileIfPresent(Path.Combine(modelDirectory, "active.json"));
+    DeleteRegularFileIfPresent(Path.Combine(modelDirectory, "active.json.tmp"));
+
+    foreach (var subtreeName in new[] { "versions", ".staging" })
+    {
+        var subtree = Path.Combine(modelDirectory, subtreeName);
+        if (!Directory.Exists(subtree) || IsReparsePoint(subtree))
+        {
+            continue;
+        }
+
+        RemoveRegularFilesBottomUp(subtree);
+    }
+
+    DeleteDirectoryIfEmptyAndNotReparse(modelDirectory);
+}
+
+static void RemoveRegularFilesBottomUp(string directory)
+{
+    if (!Directory.Exists(directory) || IsReparsePoint(directory))
+    {
+        return;
+    }
+
+    foreach (var childDirectory in Directory.GetDirectories(directory))
+    {
+        if (!IsReparsePoint(childDirectory))
+        {
+            RemoveRegularFilesBottomUp(childDirectory);
+        }
+    }
+
+    foreach (var file in Directory.GetFiles(directory))
+    {
+        DeleteRegularFileIfPresent(file);
+    }
+
+    DeleteDirectoryIfEmptyAndNotReparse(directory);
+}
+
+static void RemovePackagedUatProfileDirectory(string path, string unvirtualizedRoot)
+{
+    var fullPath = Path.GetFullPath(path);
+    var expectedRoot = Path.TrimEndingDirectorySeparator(
+        Path.GetFullPath(unvirtualizedRoot)) + Path.DirectorySeparatorChar;
+    if (!fullPath.StartsWith(expectedRoot, StringComparison.OrdinalIgnoreCase) ||
+        !Path.GetFileName(fullPath).StartsWith(
+            "EnviousWispr-AppJourney-PackagedUat-",
+            StringComparison.Ordinal))
+    {
+        throw new JourneyExpectationException("Refusing to remove an unexpected packaged UAT profile directory.");
+    }
+
+    if (!Directory.Exists(fullPath))
+    {
+        return;
+    }
+
+    if (IsReparsePoint(fullPath))
+    {
+        throw new JourneyExpectationException($"Refusing to remove a reparse-point packaged UAT profile directory: {fullPath}");
+    }
+
+    DeleteRegularFileIfPresent(Path.Combine(fullPath, "settings.json"));
+    DeleteRegularFileIfPresent(Path.Combine(fullPath, "history.json"));
+    DeleteRegularFileIfPresent(Path.Combine(fullPath, "run-state.json"));
+    DeleteRegularFileIfPresent(Path.Combine(fullPath, "recovery.json"));
+    DeleteRegularFileIfPresent(Path.Combine(fullPath, "diagnostics", "app.jsonl"));
+    DeleteDirectoryIfEmptyAndNotReparse(Path.Combine(fullPath, "diagnostics"));
+    DeleteDirectoryIfEmptyAndNotReparse(fullPath);
+
+    if (Directory.Exists(fullPath))
+    {
+        throw new JourneyExpectationException($"Packaged UAT profile directory was not empty after removing run-owned files: {fullPath}");
+    }
+}
+
+static bool IsReparsePoint(string path) =>
+    (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+
+static void DeleteRegularFileIfPresent(string filePath)
+{
+    if (File.Exists(filePath) && !IsReparsePoint(filePath))
+    {
+        File.Delete(filePath);
+    }
+}
+
+static void DeleteDirectoryIfEmptyAndNotReparse(string directoryPath)
+{
+    if (Directory.Exists(directoryPath) &&
+        !IsReparsePoint(directoryPath) &&
+        !Directory.EnumerateFileSystemEntries(directoryPath).Any())
+    {
+        Directory.Delete(directoryPath, recursive: false);
+    }
+}
+
+static string ResolveRegisteredPackagedAppExecutable(string repoRoot)
+{
+    var (expectedName, expectedPublisher, expectedVersion) = ReadManifestIdentity(repoRoot);
+    var matches = new List<(string FullName, string ExecutablePath)>();
+    var conflictingByName = new List<string>();
+    try
+    {
+        var packageManager = new Windows.Management.Deployment.PackageManager();
+        foreach (var package in packageManager.FindPackagesForUser(string.Empty))
+        {
+            var nameMatches = string.Equals(package.Id.Name, expectedName, StringComparison.OrdinalIgnoreCase);
+            if (!nameMatches)
+            {
+                continue;
+            }
+
+            var publisherMatches = string.Equals(package.Id.Publisher, expectedPublisher, StringComparison.Ordinal);
+            var packageVersion = $"{package.Id.Version.Major}.{package.Id.Version.Minor}.{package.Id.Version.Build}.{package.Id.Version.Revision}";
+            var versionMatches = MatchesManifestVersion(packageVersion, expectedVersion);
+            if (!publisherMatches || !versionMatches)
+            {
+                conflictingByName.Add($"{package.Id.FullName} ({package.Id.Publisher})");
+                continue;
+            }
+
+            var candidate = Path.Combine(package.InstalledLocation.Path, "EnviousWispr.App.exe");
+            if (File.Exists(candidate))
+            {
+                matches.Add((package.Id.FullName, candidate));
+            }
+        }
+    }
+    catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+    {
+        throw JourneyExpectationException.Instrument(
+            $"--packaged could not query Windows PackageManager for {expectedName} ({exception.Message}).");
+    }
+
+    if (conflictingByName.Count > 0)
+    {
+        throw new JourneyExpectationException(
+            $"Conflicting MSIX packages are registered for {expectedName} that do not match the repository manifest's publisher/version ({expectedPublisher}, {expectedVersion}): {string.Join(", ", conflictingByName)}. Remove stale registrations first.");
+    }
+
+    if (matches.Count > 1)
+    {
+        throw new JourneyExpectationException(
+            $"Multiple MSIX packages matched {expectedName} ({expectedPublisher}, {expectedVersion}): {string.Join(", ", matches.Select(item => item.FullName))}. Remove duplicate registrations first.");
+    }
+
+    if (matches.Count == 1)
+    {
+        return matches[0].ExecutablePath;
+    }
+
+    throw JourneyExpectationException.Instrument(
+        $"--packaged requires the EnviousWispr MSIX package ({expectedName} {expectedVersion}, {expectedPublisher}) to be registered on this PC, or --app-executable pointing to a registered layout.");
+}
+
+static string ResolvePackagedAppExecutionAlias(string appExecutablePath, string repoRoot)
+{
+    var expectedLayoutDir = Path.TrimEndingDirectorySeparator(
+        Path.GetFullPath(Path.GetDirectoryName(appExecutablePath)!));
+    var (expectedName, expectedPublisher, expectedVersion) = ReadManifestIdentity(repoRoot);
+    string? matchedFamilyName = null;
+    try
+    {
+        var packageManager = new Windows.Management.Deployment.PackageManager();
+        foreach (var package in packageManager.FindPackagesForUser(string.Empty))
+        {
+            if (!string.Equals(package.Id.Name, expectedName, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(package.Id.Publisher, expectedPublisher, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var packageVersion = $"{package.Id.Version.Major}.{package.Id.Version.Minor}.{package.Id.Version.Build}.{package.Id.Version.Revision}";
+            if (!MatchesManifestVersion(packageVersion, expectedVersion))
+            {
+                continue;
+            }
+
+            var installedDir = Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(package.InstalledLocation.Path));
+            if (string.Equals(installedDir, expectedLayoutDir, StringComparison.OrdinalIgnoreCase))
+            {
+                matchedFamilyName = package.Id.FamilyName;
+                break;
+            }
+        }
+    }
+    catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+    {
+        throw JourneyExpectationException.Instrument(
+            $"--packaged could not query Windows PackageManager for {expectedName} ({exception.Message}).");
+    }
+
+    if (string.IsNullOrWhiteSpace(matchedFamilyName))
+    {
+        throw JourneyExpectationException.Instrument(
+            $"--packaged requires {appExecutablePath} to belong to the registered MSIX package for {expectedName} ({expectedPublisher}, {expectedVersion}).");
+    }
+
+    // Launching a Windows.FullTrustApplication executable directly from InstalledLocation.Path via CreateProcessW
+    // creates an unpackaged Win32 process (APPMODEL_ERROR_NO_PACKAGE). Launching the package's WindowsApps
+    // AppExecutionAlias reparse point activates the process with full MSIX package identity while preserving
+    // ProcessStartInfo.Environment and returning the direct process handle.
+    var aliasPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Microsoft",
+        "WindowsApps",
+        matchedFamilyName,
+        "EnviousWispr.exe");
+    if (!File.Exists(aliasPath))
+    {
+        throw JourneyExpectationException.Instrument(
+            $"--packaged requires the registered MSIX AppExecutionAlias at {aliasPath}.");
+    }
+
+    return aliasPath;
+}
+
+static (string Name, string Publisher, string Version) ReadManifestIdentity(string repoRoot)
+{
+    var manifestPath = Path.Combine(
+        repoRoot,
+        "src",
+        "Production",
+        "EnviousWispr.App",
+        "Package.appxmanifest");
+    if (!File.Exists(manifestPath))
+    {
+        throw new JourneyExpectationException(
+            $"Could not find Package.appxmanifest at {manifestPath}.");
+    }
+
+    var content = File.ReadAllText(manifestPath);
+    var name = ReadXmlAttribute(content, "<Identity", "Name");
+    var publisher = ReadXmlAttribute(content, "<Identity", "Publisher");
+    var version = ReadXmlAttribute(content, "<Identity", "Version");
+    if (string.IsNullOrWhiteSpace(name) ||
+        string.IsNullOrWhiteSpace(publisher) ||
+        string.IsNullOrWhiteSpace(version))
+    {
+        throw new JourneyExpectationException(
+            "Package.appxmanifest is missing Identity Name, Publisher, or Version.");
+    }
+
+    return (name, publisher, version);
+}
+
+static string? ReadXmlAttribute(string xml, string elementPrefix, string attributeName)
+{
+    var elementStart = xml.IndexOf(elementPrefix, StringComparison.Ordinal);
+    if (elementStart < 0)
+    {
+        return null;
+    }
+
+    var elementEnd = xml.IndexOf('>', elementStart);
+    if (elementEnd < 0)
+    {
+        return null;
+    }
+
+    var element = xml[elementStart..elementEnd];
+    var marker = $"{attributeName}=\"";
+    var start = element.IndexOf(marker, StringComparison.Ordinal);
+    if (start < 0)
+    {
+        return null;
+    }
+
+    start += marker.Length;
+    var end = element.IndexOf('"', start);
+    return end > start ? element[start..end] : null;
+}
+
+static bool MatchesManifestVersion(string? actualVersion, string expectedVersion)
+{
+    if (!Version.TryParse(actualVersion, out var actual) ||
+        !Version.TryParse(expectedVersion, out var expected))
+    {
+        return false;
+    }
+
+    // The repository manifest always commits a revision of 0 (X.Y.Z.0), while the Microsoft Store
+    // assigns the fourth component (revision) when signing/delivering a flight or release package.
+    return actual.Major == expected.Major &&
+        actual.Minor == expected.Minor &&
+        actual.Build == expected.Build &&
+        actual.Revision >= 0;
+}
+
+static void TriggerOnboardingModelDeliveryIfPresent(int processId)
+{
+    var window = JourneyUi.FindMainWindow(processId, TimeSpan.FromSeconds(15));
+    var button = JourneyUi.WaitForEnabled(window, "FinishOnboardingButton", TimeSpan.FromSeconds(10));
+    if (button is not null &&
+        string.Equals(button.Current.Name, "Get Started", StringComparison.Ordinal))
+    {
+        ((InvokePattern)button.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+    }
+}
+
+static bool WaitForCleanUserRuntimeWorker(
+    Process app,
+    EventWaitHandle runtimeEvent,
+    string diagnosticPath,
+    TimeSpan timeout)
+{
+    var timer = Stopwatch.StartNew();
+    while (timer.Elapsed < timeout && !app.HasExited)
+    {
+        if (runtimeEvent.WaitOne(0))
+        {
+            var events = ReadDiagnosticEvents(diagnosticPath);
+            if (ChildProcessIds(app.Id, "EnviousWispr.RuntimeWorker").Any() &&
+                events.Any(value => value.StartsWith("SettingsCreated/", StringComparison.Ordinal)) &&
+                events.Any(value => value.StartsWith("ModelDeliveryStarted/", StringComparison.Ordinal)) &&
+                events.Any(value => value.StartsWith("ModelDeliveryCompleted/", StringComparison.Ordinal)))
+            {
+                return true;
+            }
+        }
+
+        Thread.Sleep(250);
+    }
+
+    return false;
+}
+
+static async Task<string?> ResolveCleanUserActivatedModelDirectoryAsync(string modelsRoot, string modelId)
+{
+    using var httpClient = new HttpClient();
+    var store = new ModelStore(
+        modelsRoot,
+        httpClient,
+        new ModelManifestVerifier(new Dictionary<string, string>()),
+        new Version(99, 0, 0));
+    var active = await store.OpenActiveOfflineAsync(modelId);
+    return active.Succeeded ? active.Installed?.DirectoryPath : null;
+}
+
+static void RequirePackagedLayoutManifest(string appExecutablePath, string repoRoot)
+{
+    var directory = Path.GetDirectoryName(appExecutablePath)!;
+    var manifestPath = Path.Combine(directory, "AppxManifest.xml");
+    if (!File.Exists(manifestPath))
+    {
+        throw JourneyExpectationException.Instrument(
+            "--packaged requires AppxManifest.xml beside EnviousWispr.App.exe in the registered package layout.");
+    }
+
+    var xml = File.ReadAllText(manifestPath);
+    var (expectedName, expectedPublisher, expectedVersion) = ReadManifestIdentity(repoRoot);
+    var layoutName = ReadXmlAttribute(xml, "<Identity", "Name");
+    var layoutPublisher = ReadXmlAttribute(xml, "<Identity", "Publisher");
+    var layoutVersion = ReadXmlAttribute(xml, "<Identity", "Version");
+    if (!string.Equals(layoutName, expectedName, StringComparison.OrdinalIgnoreCase) ||
+        !string.Equals(layoutPublisher, expectedPublisher, StringComparison.Ordinal) ||
+        !MatchesManifestVersion(layoutVersion, expectedVersion))
+    {
+        throw new JourneyExpectationException(
+            $"The packaged AppxManifest.xml identity ({layoutName} {layoutVersion}, {layoutPublisher}) does not match the repository Package.appxmanifest ({expectedName} {expectedVersion}, {expectedPublisher}).");
+    }
+
+    if (!xml.Contains("TaskId=\"EnviousWisprStartup\"", StringComparison.Ordinal) ||
+        !xml.Contains("Enabled=\"false\"", StringComparison.Ordinal))
+    {
+        throw new JourneyExpectationException(
+            "The packaged AppxManifest.xml does not declare EnviousWisprStartup with Enabled=\"false\".");
+    }
+
+    if (!xml.Contains("Alias=\"EnviousWispr.exe\"", StringComparison.Ordinal))
+    {
+        throw new JourneyExpectationException(
+            "The packaged AppxManifest.xml does not declare the EnviousWispr.exe AppExecutionAlias.");
+    }
+
+    if (!xml.Contains(@"$(KnownFolder:LocalAppData)\Envious Labs\EnviousWispr", StringComparison.Ordinal) ||
+        !xml.Contains("unvirtualizedResources", StringComparison.Ordinal))
+    {
+        throw new JourneyExpectationException(
+            "The packaged AppxManifest.xml does not declare the unvirtualizedResources exclusion for $(KnownFolder:LocalAppData)\\Envious Labs\\EnviousWispr.");
+    }
+
+    var bundledLlamaServer = Path.Combine(directory, "runtime", "llama-server.exe");
+    if (!File.Exists(bundledLlamaServer))
+    {
+        throw new JourneyExpectationException(
+            "--packaged requires runtime\\llama-server.exe inside the registered package layout (Store policy 10.2.2).");
+    }
+}
+
+static PackagedJourneyEvidence VerifyPackagedProcessesAndStorage(
+    Process shellProcess,
+    IReadOnlyList<int> workerIds,
+    string profileDirectoryPath)
+{
+    var (shellFullName, shellFamilyName) = ReadProcessPackageIdentity(shellProcess.Handle);
+    if (string.IsNullOrWhiteSpace(shellFullName) || string.IsNullOrWhiteSpace(shellFamilyName))
+    {
+        throw new JourneyExpectationException(
+            "--packaged requires the running EnviousWispr.App.exe process to hold MSIX package identity, but Windows reported APPMODEL_ERROR_NO_PACKAGE.");
+    }
+
+    var workerMatches = workerIds.Count > 0;
+    foreach (var workerId in workerIds)
+    {
+        using var worker = Process.GetProcessById(workerId);
+        var (workerFullName, workerFamilyName) = ReadProcessPackageIdentity(worker.Handle);
+        if (!string.Equals(workerFullName, shellFullName, StringComparison.Ordinal) ||
+            !string.Equals(workerFamilyName, shellFamilyName, StringComparison.Ordinal))
+        {
+            workerMatches = false;
+            throw new JourneyExpectationException(
+                $"The child RuntimeWorker process ({workerId}) did not inherit matching MSIX package identity " +
+                $"(shell='{shellFullName}', worker='{workerFullName}').");
+        }
+    }
+
+    var physicalDiagnosticFile = Path.Combine(profileDirectoryPath, "diagnostics", "app.jsonl");
+    var physicalRunStateFile = Path.Combine(profileDirectoryPath, "run-state.json");
+    var physicalObserved = File.Exists(physicalDiagnosticFile) && File.Exists(physicalRunStateFile);
+    if (!physicalObserved)
+    {
+        throw new JourneyExpectationException(
+            "The packaged app did not write its diagnostics and run-state physically into the excluded unvirtualized LocalAppData directory.");
+    }
+
+    var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+    var relativeFromLocalAppData = Path.GetRelativePath(localAppData, profileDirectoryPath);
+    var virtualizedShadowDirectory = Path.Combine(
+        localAppData,
+        "Packages",
+        shellFamilyName,
+        "LocalCache",
+        "Local",
+        relativeFromLocalAppData);
+    var virtualizedAbsent = !Directory.Exists(virtualizedShadowDirectory) &&
+        !File.Exists(Path.Combine(virtualizedShadowDirectory, "run-state.json")) &&
+        !File.Exists(Path.Combine(virtualizedShadowDirectory, "diagnostics", "app.jsonl"));
+    if (!virtualizedAbsent)
+    {
+        throw new JourneyExpectationException(
+            "The packaged app's writes under %LocalAppData%\\Envious Labs\\EnviousWispr were redirected into Packages LocalCache instead of honouring the folder virtualization exclusion.");
+    }
+
+    return new PackagedJourneyEvidence(
+        shellFullName,
+        shellFamilyName,
+        ShellHasPackageIdentity: true,
+        WorkerHasMatchingPackageIdentity: workerMatches,
+        StartupTaskDeclaredDisabledByDefault: true,
+        UnvirtualizedDirectoryExcludedInManifest: true,
+        PhysicalDataDirectoryObserved: physicalObserved,
+        VirtualizedLocalCacheAbsent: virtualizedAbsent);
+}
+
+static (string? FullName, string? FamilyName) ReadProcessPackageIdentity(nint processHandle)
+{
+    const int ErrorInsufficientBuffer = 122;
+    const int AppModelErrorNoPackage = 15700;
+
+    uint fullLength = 0;
+    var fullStatus = NativeMethods.GetPackageFullName(processHandle, ref fullLength, null);
+    if (fullStatus == AppModelErrorNoPackage || fullStatus != ErrorInsufficientBuffer || fullLength == 0)
+    {
+        return (null, null);
+    }
+
+    var fullChars = new char[fullLength];
+    if (NativeMethods.GetPackageFullName(processHandle, ref fullLength, fullChars) != 0)
+    {
+        return (null, null);
+    }
+
+    uint familyLength = 0;
+    var familyStatus = NativeMethods.GetPackageFamilyName(processHandle, ref familyLength, null);
+    if (familyStatus != ErrorInsufficientBuffer || familyLength == 0)
+    {
+        return (null, null);
+    }
+
+    var familyChars = new char[familyLength];
+    if (NativeMethods.GetPackageFamilyName(processHandle, ref familyLength, familyChars) != 0)
+    {
+        return (null, null);
+    }
+
+    return (
+        new string(fullChars, 0, (int)fullLength - 1),
+        new string(familyChars, 0, (int)familyLength - 1));
+}
+
 static string FindRepositoryRoot(string startDirectory)
 {
     var directory = new DirectoryInfo(startDirectory);
@@ -3558,6 +4254,7 @@ static void RequireKnownArguments(string[] arguments)
         "--live-microphone", "--manual-microphone", "--english-parakeet", "--live-preview",
         "--head-start", "--escape-recovery", "--synthesized-acoustic", "--synthetic-hotkey",
         "--quick-tap", "--virtual-cable", "--language-change", "--onboarding-practice", "--quick-add",
+        "--packaged", "--clean-user",
     ];
     string[] valuedFlags =
     [
@@ -3869,6 +4566,18 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetWindowRect(nint window, out NativeRect rect);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    internal static extern int GetPackageFullName(
+        nint hProcess,
+        ref uint packageFullNameLength,
+        [Out] char[]? packageFullName);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    internal static extern int GetPackageFamilyName(
+        nint hProcess,
+        ref uint packageFamilyNameLength,
+        [Out] char[]? packageFamilyName);
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -3902,6 +4611,16 @@ internal sealed record QuickAddRound(
 }
 
 internal sealed record QuickAddEvidence(QuickAddRound OverSentinel, QuickAddRound OverEmptyClipboard, bool WordStoredInProfile);
+
+internal sealed record PackagedJourneyEvidence(
+    string PackageFullName,
+    string PackageFamilyName,
+    bool ShellHasPackageIdentity,
+    bool WorkerHasMatchingPackageIdentity,
+    bool StartupTaskDeclaredDisabledByDefault,
+    bool UnvirtualizedDirectoryExcludedInManifest,
+    bool PhysicalDataDirectoryObserved,
+    bool VirtualizedLocalCacheAbsent);
 
 internal sealed record EscapeActionEvidence(
     string Action,

@@ -368,3 +368,32 @@ carries a `quickAdd` object per round, including `TargetCopyWriteMilliseconds`, 
 clipboard write took: a write that took hundreds of milliseconds was held up by the app, not the target.
 
 This mode needs `--english-parakeet` (the runtime must become ready) and nothing else.
+
+## Packaged MSIX identity and unvirtualized storage assertions
+
+Add `--packaged` to run against the registered MSIX package matching `Package.appxmanifest` (or an explicit
+registered layout via `--app-executable`). In `--packaged` mode the harness:
+
+1. Verifies the package layout's `AppxManifest.xml` matches `Package.appxmanifest` (`Identity Name`, `Publisher`,
+   `Version`), declares `<desktop:StartupTask TaskId="EnviousWisprStartup" Enabled="false"`, declares the
+   `unvirtualizedResources` exclusion for `$(KnownFolder:LocalAppData)\Envious Labs\EnviousWispr`, and bundles
+   `runtime\llama-server.exe`.
+2. Places the isolated journey profile under `%LocalAppData%\Envious Labs\EnviousWispr\EnviousWispr-AppJourney-PackagedUat-<runId>`
+   and removes only that subdirectory on exit (never touching existing user files).
+3. Queries Windows AppModel (`GetPackageFullName` / `GetPackageFamilyName`) on the running `EnviousWispr.App.exe`
+   and child worker process handles (`EnviousWispr.RuntimeWorker.exe` and `llama-server.exe`), requiring matching MSIX package identity.
+4. Requires diagnostics and run-state files to exist physically in the excluded `LocalAppData` path with zero
+   redirected shadow directory under `%LocalAppData%\Packages\<PackageFamilyName>\LocalCache`.
+
+Add `--clean-user` with `--packaged --english-parakeet` in a separate clean Windows account or VM (with no existing
+EnviousWispr user files or cached models under `%LocalAppData%\Envious Labs\EnviousWispr`) to run without pre-seeding
+`settings.json` and without `ENVIOUSWISPR_DATA_DIRECTORY`, `ENVIOUSWISPR_MODEL_DIRECTORY`,
+`ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY`, `ENVIOUSWISPR_ASR_ENGINE`, `ENVIOUSWISPR_ASR_LANGUAGE`,
+`ENVIOUSWISPR_POLISH_PROVIDER`, `ENVIOUSWISPR_EG1_SERVER_EXE`, or `ENVIOUSWISPR_EG1_MODEL_PATH` overrides.
+
+```powershell
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --synthetic-hotkey --packaged
+dotnet run --no-build --project .\tools\app-journey-uat\EnviousWispr.AppJourney.Uat.csproj `
+  -c Release -- --english-parakeet --packaged --clean-user
+```

@@ -512,6 +512,14 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public event Action? UpdateApplyRequested;
 
+    public event Action<bool>? StartupToggleRequested;
+
+    public Func<Task<StartupRegistrationResult>>? LoadStartupRegistration { get; set; }
+
+    private bool _isUpdatingStartupRegistration;
+    private bool _startupOperationInProgress;
+    private int _startupOperationGeneration;
+
     /// <summary>Raised when the user asks for a speed check.</summary>
     public event Action? SpeedCheckRequested;
 
@@ -658,10 +666,14 @@ public sealed partial class MainWindow : Window, IDisposable
         if (args.WindowActivationState == WindowActivationState.Deactivated)
         {
             ForgetKeybindChord();
+            return;
         }
 
-        if (_initialFocusAssigned || args.WindowActivationState == WindowActivationState.Deactivated)
+        if (_initialFocusAssigned)
         {
+            // When the user returns from Windows Settings (ms-settings:startupapps) or Task Manager, re-read the
+            // startup registration so a DisabledByUser toggle turned back on outside the app refreshes immediately.
+            _ = LoadStartupRegistrationAsync();
             return;
         }
 
@@ -673,6 +685,24 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         await LoadMicrophonesAsync().ConfigureAwait(true);
         await ReloadHistoryAsync().ConfigureAwait(true);
+        await LoadStartupRegistrationAsync().ConfigureAwait(true);
+    }
+
+    private async Task LoadStartupRegistrationAsync()
+    {
+        if (_startupOperationInProgress || LoadStartupRegistration is not { } loadStartup)
+        {
+            return;
+        }
+
+        var generation = _startupOperationGeneration;
+        var startup = await loadStartup().ConfigureAwait(true);
+        if (_session.Closing || _startupOperationInProgress || generation != _startupOperationGeneration)
+        {
+            return;
+        }
+
+        SetStartupRegistration(startup);
     }
 
     public void SetHotkeyReady(string gesture, DictationRecordingMode recordingMode)
@@ -3571,6 +3601,84 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void ApplyUpdateButton_Click(object sender, RoutedEventArgs e) =>
         UpdateApplyRequested?.Invoke();
+
+    public void SetStartupRegistrationInProgress()
+    {
+        _startupOperationGeneration++;
+        _startupOperationInProgress = true;
+        StartAtLoginToggle.IsEnabled = false;
+        SetLiveText(StartAtLoginStatusText, "Updating Windows startup settings…");
+    }
+
+    public void SetStartupRegistration(StartupRegistrationResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        _startupOperationGeneration++;
+        _startupOperationInProgress = false;
+        _isUpdatingStartupRegistration = true;
+        try
+        {
+            StartAtLoginToggle.IsOn = result.IsEnabled;
+        }
+        finally
+        {
+            _isUpdatingStartupRegistration = false;
+        }
+
+        StartAtLoginToggle.IsEnabled = result.CanToggle;
+        OpenStartupSettingsButton.Visibility = result.NeedsWindowsStartupSettings
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        SetLiveText(
+            StartAtLoginStatusText,
+            result.Status switch
+            {
+                StartupRegistrationStatus.Enabled =>
+                    "EnviousWispr starts when you sign in to Windows.",
+                StartupRegistrationStatus.Disabled =>
+                    "EnviousWispr starts only when you open it.",
+                StartupRegistrationStatus.DisabledByUser =>
+                    "Turned off in Windows Settings or Task Manager. Turn EnviousWispr on under Startup Apps in Windows Settings to start when you sign in.",
+                StartupRegistrationStatus.DisabledByPolicy =>
+                    "Turned off by a Windows policy on this PC.",
+                StartupRegistrationStatus.EnabledByPolicy =>
+                    "Turned on by a Windows policy on this PC.",
+                _ => "Windows could not change the startup setting. Try again, or check Startup Apps in Windows Settings.",
+            });
+    }
+
+    private void StartAtLoginToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_isApplyingSettings || _isUpdatingStartupRegistration)
+        {
+            return;
+        }
+
+        StartupToggleRequested?.Invoke(StartAtLoginToggle.IsOn);
+    }
+
+    private async void OpenStartupSettingsButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var opened = await Windows.System.Launcher.LaunchUriAsync(
+                new Uri("ms-settings:startupapps"));
+            if (!opened)
+            {
+                ShowMessage(
+                    "Windows startup settings did not open",
+                    "Open Windows Settings, then choose Apps > Startup.",
+                    InfoBarSeverity.Warning);
+            }
+        }
+        catch
+        {
+            ShowMessage(
+                "Windows startup settings did not open",
+                "Open Windows Settings, then choose Apps > Startup.",
+                InfoBarSeverity.Warning);
+        }
+    }
 
     private void DownloadModelButton_Click(object sender, RoutedEventArgs e) =>
         ModelDownloadRequested?.Invoke();

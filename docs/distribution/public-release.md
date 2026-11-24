@@ -45,9 +45,14 @@ Build the self-contained Microsoft Store MSIX package for submission:
 powershell -ExecutionPolicy Bypass -File .\scripts\package-store.ps1 -ForStoreUpload -OutputDirectory dist\windows\store
 ```
 
-The script publishes the self-contained app, verifies that `Package.appxmanifest` carries the assigned Partner Center
-identity (rejecting placeholder identities), validates required payload contents inside the MSIX package archive,
-and ensures the extracted `EnviousWispr.RuntimeWorker.exe` launches self-contained.
+The script publishes the self-contained app, verifies the pinned Store packaging toolchain (`.NET 10 SDK 10.0.4xx`,
+`net10.0-windows10.0.26100.0`, `Microsoft.WindowsAppSDK 2.4.0`, `Microsoft.Windows.SDK.BuildTools 10.0.28000.2526`,
+`Microsoft.Windows.SDK.BuildTools.MSIX 1.7.251221100`, `msstore` CLI `0.4.4.3+`), verifies that `Package.appxmanifest`
+carries the assigned Partner Center identity (rejecting placeholder identities), stages and verifies
+`runtime\llama-server.exe` plus its native dependencies inside the MSIX archive under Microsoft Store policy 10.2.2,
+rejects bundled CUDA/cuDNN libraries (delivered separately on demand via `models/manifests/cuda-runtime.json`), and
+ensures both the extracted `EnviousWispr.RuntimeWorker.exe` and `runtime\llama-server.exe` launch from the extracted
+MSIX payload.
 
 ## Microsoft Store release acceptance checklist
 
