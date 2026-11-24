@@ -285,6 +285,7 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
     private readonly StreamingTranscriptionController _streaming;
     private readonly ISessionFinalizationEffects _effects;
     private readonly TimeProvider _clock;
+    private readonly UatRuntimePhaseJournal? _phaseJournal;
 
     public SessionFinalizationRunner(
         PushToTalkSessionController controller,
@@ -292,7 +293,8 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
         SessionPersistence persistence,
         StreamingTranscriptionController streaming,
         ISessionFinalizationEffects effects,
-        TimeProvider clock)
+        TimeProvider clock,
+        UatRuntimePhaseJournal? phaseJournal = null)
     {
         ArgumentNullException.ThrowIfNull(controller);
         ArgumentNullException.ThrowIfNull(finalizer);
@@ -306,6 +308,7 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
         _streaming = streaming;
         _effects = effects;
         _clock = clock;
+        _phaseJournal = phaseJournal ?? UatRuntimePhaseJournal.FromEnvironment();
     }
 
     public async Task<FinalizationReport> RunAsync(
@@ -380,6 +383,7 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                 {
                     _effects.ShowDelivering();
                     _effects.RecordDeliveryStarted();
+                    _phaseJournal?.Record(UatRuntimePhase.DeliveryEntered, sessionId.Value);
                     var deliveryTimer = Stopwatch.StartNew();
                     var language = DeliveryLanguagePolicy.For(transcript);
                     var result = await delivery.DeliverAsync(
@@ -391,6 +395,7 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                             SnippetExpanded: finalized.SnippetsExpanded > 0),
                         cancellationToken).ConfigureAwait(false);
                     deliveryTimer.Stop();
+                    _phaseJournal?.Record(UatRuntimePhase.DeliveryReturned, sessionId.Value);
                     _effects.RecordDelivery(result, deliveryTimer.ElapsedMilliseconds);
                     if (result.Delivered || result.ClipboardFallback)
                     {

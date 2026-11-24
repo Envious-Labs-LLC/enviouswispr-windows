@@ -206,4 +206,20 @@ public sealed class SpeechSegmenterTests
         Assert.False(segments[0].IsSpeech);
         Assert.Equal(64, segments[0].EndSample);
     }
+
+    [Fact]
+    public void MeasureCoverageAccountsForEverySampleInRequestedRange()
+    {
+        var audio = Build((false, 200), (true, 1000), (false, 600));
+        var segmenter = Segmenter();
+
+        var full = segmenter.MeasureCoverage(audio, 0, audio.Length);
+        var tail = segmenter.MeasureCoverage(audio, SampleRate * 1200 / 1000, audio.Length);
+
+        Assert.Equal(audio.Length, full.TotalSamples);
+        Assert.True(full.SpeechSamples > 0);
+        Assert.True(full.SilenceSamples > 0);
+        Assert.Equal(0, tail.SpeechSamples);
+        Assert.Equal(SampleRate * 600 / 1000, tail.SilenceSamples);
+    }
 }

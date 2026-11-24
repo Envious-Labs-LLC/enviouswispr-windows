@@ -81,6 +81,8 @@ public sealed class StreamingTranscriptionController
     private DictationSessionId? _sessionId;
     private Transcript? _lastCommittedTranscript;
     private int _streamedThroughSample;
+    private int _lastSnapshotSamples;
+    private bool _hadEmptySegment;
     private bool _usable;
 
     public StreamingTranscriptionController(
@@ -141,6 +143,8 @@ public sealed class StreamingTranscriptionController
             _streamed.Clear();
             _lastCommittedTranscript = null;
             _streamedThroughSample = 0;
+            _lastSnapshotSamples = 0;
+            _hadEmptySegment = false;
             _sessionId = sessionId;
             _usable = false;
             if (_effects.LivePreviewEnabled ||
@@ -184,6 +188,13 @@ public sealed class StreamingTranscriptionController
             while (!cancellationToken.IsCancellationRequested)
             {
                 await Task.Delay(PollInterval, _clock, cancellationToken).ConfigureAwait(false);
+                lock (_ownership)
+                {
+                    if (work.AdmissionClosed)
+                    {
+                        break;
+                    }
+                }
 
                 // The WHOLE recording so far, not a window: a commit is a range measured from the
                 // start, and a rolling window would make those indices mean something different on
@@ -211,6 +222,13 @@ public sealed class StreamingTranscriptionController
                 var slice = snapshot.Samples.Slice(
                     range.StartSample,
                     range.EndSample - range.StartSample);
+                var coverage = _phaseJournal is not null
+                    ? segmenter.MeasureCoverage(snapshot.Samples.Span, range.StartSample, range.EndSample)
+                    : default;
+                var remainingInSnapshot = Math.Max(0, snapshot.Samples.Length - range.EndSample);
+                var sampleRate = snapshot.SampleRate > 0 ? (int?)snapshot.SampleRate : null;
+                var segmentStarted = _clock.GetTimestamp();
+                using var correlation = UatRuntimePhaseJournal.BeginRequestCorrelation(out var requestId);
                 Task<Transcript> request;
                 lock (_ownership)
                 {
@@ -220,16 +238,67 @@ public sealed class StreamingTranscriptionController
                         break;
                     }
 
+                    _phaseJournal?.Record(
+                        UatRuntimePhase.StreamingSegmentAdmitted,
+                        sessionId.Value,
+                        requestId: requestId,
+                        startSample: range.StartSample,
+                        endSample: range.EndSample,
+                        coveredSamples: _streamedThroughSample,
+                        remainingSamples: remainingInSnapshot,
+                        speechSamples: coverage.SpeechSamples,
+                        silenceSamples: coverage.SilenceSamples,
+                        sampleRate: sampleRate);
                     request = engine.TranscribeAsync(
                         new CapturedAudio(sessionId, slice, snapshot.SampleRate, snapshot.Channels),
                         work.Request.Token);
                 }
 
-                var transcript = await request.ConfigureAwait(false);
-                work.Request.Token.ThrowIfCancellationRequested();
+                Transcript transcript;
+                try
+                {
+                    transcript = await request.ConfigureAwait(false);
+                    work.Request.Token.ThrowIfCancellationRequested();
+                }
+                catch (OperationCanceledException)
+                {
+                    _phaseJournal?.Record(
+                        UatRuntimePhase.StreamingSegmentCancelled,
+                        sessionId.Value,
+                        requestId: correlation.RequestId,
+                        startSample: range.StartSample,
+                        endSample: range.EndSample,
+                        coveredSamples: _streamedThroughSample,
+                        remainingSamples: remainingInSnapshot,
+                        speechSamples: coverage.SpeechSamples,
+                        silenceSamples: coverage.SilenceSamples,
+                        sampleRate: sampleRate);
+                    throw;
+                }
+                catch (Exception exception) when (
+                    exception is not (StackOverflowException or OutOfMemoryException))
+                {
+                    _phaseJournal?.Record(
+                        UatRuntimePhase.StreamingSegmentFailed,
+                        sessionId.Value,
+                        requestId: correlation.RequestId,
+                        startSample: range.StartSample,
+                        endSample: range.EndSample,
+                        coveredSamples: _streamedThroughSample,
+                        remainingSamples: remainingInSnapshot,
+                        speechSamples: coverage.SpeechSamples,
+                        silenceSamples: coverage.SilenceSamples,
+                        sampleRate: sampleRate);
+                    throw;
+                }
 
+                var segmentElapsedMs = (long)_clock.GetElapsedTime(segmentStarted).TotalMilliseconds;
                 var isSegmentEmpty = string.IsNullOrWhiteSpace(transcript.Text);
-                if (!isSegmentEmpty)
+                if (isSegmentEmpty)
+                {
+                    _hadEmptySegment = true;
+                }
+                else
                 {
                     _streamed.Append(transcript.Text);
                     _lastCommittedTranscript = _lastCommittedTranscript is { UsedFallback: true } prior && !transcript.UsedFallback
@@ -238,11 +307,24 @@ public sealed class StreamingTranscriptionController
                 }
 
                 _streamedThroughSample = range.EndSample;
+                _lastSnapshotSamples = snapshot.Samples.Length;
+                _phaseJournal?.Record(
+                    UatRuntimePhase.StreamingSegmentReturned,
+                    sessionId.Value,
+                    requestId: correlation.RequestId,
+                    startSample: range.StartSample,
+                    endSample: range.EndSample,
+                    coveredSamples: _streamedThroughSample,
+                    remainingSamples: remainingInSnapshot,
+                    speechSamples: coverage.SpeechSamples,
+                    silenceSamples: coverage.SilenceSamples,
+                    sampleRate: sampleRate);
                 _logger.Write(new AppLogEntry(
                     _clock.GetUtcNow(),
                     isSegmentEmpty
                         ? AppEventCode.StreamingSegmentEmpty
-                        : AppEventCode.StreamingSegmentCommitted));
+                        : AppEventCode.StreamingSegmentCommitted,
+                    ElapsedMilliseconds: segmentElapsedMs));
             }
         }
         catch (OperationCanceledException)
@@ -271,6 +353,23 @@ public sealed class StreamingTranscriptionController
                 // the typed case.
                 error is null ? AppFailureCategory.Unknown : AppFailureCategories.For(error),
                 ErrorCode: error?.Code));
+        }
+    }
+
+    /// <summary>
+    /// Closes admission for new streaming polls or segment requests while leaving any already-issued
+    /// segment request running until ordinary completion or stop joins it.
+    /// </summary>
+    public void CloseAdmission()
+    {
+        lock (_ownership)
+        {
+            if (_work is not { } work || work.CleanupClosed)
+            {
+                return;
+            }
+
+            work.AdmissionClosed = true;
         }
     }
 
@@ -304,13 +403,14 @@ public sealed class StreamingTranscriptionController
             ArgumentOutOfRangeException.ThrowIfLessThan(limit, TimeSpan.Zero);
         }
 
-        _phaseJournal?.Record(UatRuntimePhase.StopEntered, DictationScope.Current);
+        _phaseJournal?.Record(UatRuntimePhase.StopEntered, DictationScope.Current, coveredSamples: _streamedThroughSample);
         StreamingWork work;
         Task stop;
         lock (_ownership)
         {
             if (_work is not { } current)
             {
+                _phaseJournal?.Record(UatRuntimePhase.StopCompleted, DictationScope.Current, coveredSamples: _streamedThroughSample);
                 return StopOutcome.Completed;
             }
 
@@ -365,6 +465,7 @@ public sealed class StreamingTranscriptionController
                 }
                 finally
                 {
+                    var completedOwnedWork = false;
                     lock (_ownership)
                     {
                         if (ReferenceEquals(_work, work))
@@ -372,7 +473,13 @@ public sealed class StreamingTranscriptionController
                             _work = null;
                             work.Scheduling.Dispose();
                             work.Request.Dispose();
+                            completedOwnedWork = true;
                         }
+                    }
+
+                    if (completedOwnedWork)
+                    {
+                        _phaseJournal?.Record(UatRuntimePhase.StopCompleted, DictationScope.Current, coveredSamples: _streamedThroughSample);
                     }
                 }
             }
@@ -408,6 +515,7 @@ public sealed class StreamingTranscriptionController
         {
             if (stop.IsCompleted)
             {
+                var completedOwnedWork = false;
                 lock (_ownership)
                 {
                     if (ReferenceEquals(_work, work))
@@ -415,7 +523,13 @@ public sealed class StreamingTranscriptionController
                         _work = null;
                         work.Scheduling.Dispose();
                         work.Request.Dispose();
+                        completedOwnedWork = true;
                     }
+                }
+
+                if (completedOwnedWork)
+                {
+                    _phaseJournal?.Record(UatRuntimePhase.StopCompleted, DictationScope.Current, coveredSamples: _streamedThroughSample);
                 }
             }
         }
@@ -532,17 +646,30 @@ public sealed class StreamingTranscriptionController
         using var dictation = DictationScope.Begin(audio.SessionId.Value);
         var sameSession = _sessionId == audio.SessionId;
         var headStart = sameSession ? _streamed.ToString() : string.Empty;
+        var segmenter = _phaseJournal is not null && audio.SampleRate > 0
+            ? new SpeechSegmenter(audio.SampleRate, SegmentPause)
+            : null;
         var usable = _usable &&
+            !_hadEmptySegment &&
             sameSession &&
             _streamedThroughSample > 0 &&
-            _streamedThroughSample < audio.Samples.Length &&
+            (_streamedThroughSample < audio.Samples.Length ||
+             (_streamedThroughSample == audio.Samples.Length &&
+              audio.Outcome == AudioCaptureOutcome.Completed)) &&
+            audio.Samples.Length >= _lastSnapshotSamples &&
             !string.IsNullOrWhiteSpace(headStart);
 
         if (!usable)
         {
             try
             {
-                return await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+                return await TranscribeWholeAudioAsync(
+                        engine,
+                        audio,
+                        segmenter,
+                        sameSession ? _streamedThroughSample : 0,
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
             catch (Exception) when (cancellationToken.IsCancellationRequested)
             {
@@ -556,14 +683,69 @@ public sealed class StreamingTranscriptionController
             }
         }
 
+        var remainingSamples = audio.Samples.Length - _streamedThroughSample;
+        if (remainingSamples == 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _phaseJournal?.Record(
+                UatRuntimePhase.FinalTailSkipped,
+                audio.SessionId.Value,
+                startSample: _streamedThroughSample,
+                endSample: audio.Samples.Length,
+                coveredSamples: _streamedThroughSample,
+                remainingSamples: 0,
+                speechSamples: 0,
+                silenceSamples: 0,
+                sampleRate: audio.SampleRate > 0 ? audio.SampleRate : null);
+            _logger.Write(new AppLogEntry(
+                _clock.GetUtcNow(),
+                AppEventCode.StreamingHeadStartUsed,
+                ElapsedMilliseconds: 0));
+            return new Transcript(
+                audio.SessionId,
+                headStart,
+                _lastCommittedTranscript?.EngineId ?? engine.EngineId,
+                TokenTimings: _lastCommittedTranscript?.TokenTimings ?? [],
+                UsedFallback: _lastCommittedTranscript?.UsedFallback ?? false,
+                DegradedError: _lastCommittedTranscript?.DegradedError,
+                DetectedLanguage: _lastCommittedTranscript?.DetectedLanguage,
+                RecognitionLanguage: _lastCommittedTranscript?.RecognitionLanguage);
+        }
+
+        var tailCoverage = segmenter?.MeasureCoverage(audio.Samples.Span, _streamedThroughSample, audio.Samples.Length)
+            ?? default;
         var tailAudio = audio with
         {
             Samples = audio.Samples[_streamedThroughSample..],
         };
+        var tailStarted = _clock.GetTimestamp();
         Transcript tail;
         try
         {
+            using var tailCorrelation = UatRuntimePhaseJournal.BeginRequestCorrelation(out var tailRequestId);
+            _phaseJournal?.Record(
+                UatRuntimePhase.FinalTailDispatched,
+                audio.SessionId.Value,
+                requestId: tailRequestId,
+                startSample: _streamedThroughSample,
+                endSample: audio.Samples.Length,
+                coveredSamples: _streamedThroughSample,
+                remainingSamples: remainingSamples,
+                speechSamples: tailCoverage.SpeechSamples,
+                silenceSamples: tailCoverage.SilenceSamples,
+                sampleRate: audio.SampleRate > 0 ? audio.SampleRate : null);
             tail = await engine.TranscribeAsync(tailAudio, cancellationToken).ConfigureAwait(false);
+            _phaseJournal?.Record(
+                UatRuntimePhase.FinalTailReturned,
+                audio.SessionId.Value,
+                requestId: tailCorrelation.RequestId,
+                startSample: _streamedThroughSample,
+                endSample: audio.Samples.Length,
+                coveredSamples: audio.Samples.Length,
+                remainingSamples: 0,
+                speechSamples: tailCoverage.SpeechSamples,
+                silenceSamples: tailCoverage.SilenceSamples,
+                sampleRate: audio.SampleRate > 0 ? audio.SampleRate : null);
         }
         catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
@@ -592,7 +774,13 @@ public sealed class StreamingTranscriptionController
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                return await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+                return await TranscribeWholeAudioAsync(
+                        engine,
+                        audio,
+                        segmenter,
+                        _streamedThroughSample,
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
             catch (Exception) when (cancellationToken.IsCancellationRequested)
             {
@@ -611,13 +799,15 @@ public sealed class StreamingTranscriptionController
             return PreserveCommittedHeadStart(audio.SessionId, headStart, engine.EngineId, exception);
         }
 
+        var tailElapsedMs = (long)_clock.GetElapsedTime(tailStarted).TotalMilliseconds;
         var joined = new StreamingTranscriptAccumulator();
         joined.Append(headStart);
         joined.Append(tail.Text);
 
         _logger.Write(new AppLogEntry(
             _clock.GetUtcNow(),
-            AppEventCode.StreamingHeadStartUsed));
+            AppEventCode.StreamingHeadStartUsed,
+            ElapsedMilliseconds: tailElapsedMs));
 
         var usedFallback = tail.UsedFallback || (_lastCommittedTranscript?.UsedFallback ?? false);
         var degradedError = tail.DegradedError ?? _lastCommittedTranscript?.DegradedError;
@@ -627,6 +817,43 @@ public sealed class StreamingTranscriptionController
             UsedFallback = usedFallback,
             DegradedError = degradedError,
         };
+    }
+
+    private async Task<Transcript> TranscribeWholeAudioAsync(
+        ITranscriptionEngine engine,
+        CapturedAudio audio,
+        SpeechSegmenter? segmenter,
+        int coveredSamples,
+        CancellationToken cancellationToken)
+    {
+        using var dictation = DictationScope.Begin(audio.SessionId.Value);
+        var wholeCoverage = segmenter?.MeasureCoverage(audio.Samples.Span, 0, audio.Samples.Length)
+            ?? default;
+        using var wholeCorrelation = UatRuntimePhaseJournal.BeginRequestCorrelation(out var wholeRequestId);
+        _phaseJournal?.Record(
+            UatRuntimePhase.FinalWholeAudioDispatched,
+            audio.SessionId.Value,
+            requestId: wholeRequestId,
+            startSample: 0,
+            endSample: audio.Samples.Length,
+            coveredSamples: Math.Clamp(coveredSamples, 0, audio.Samples.Length),
+            remainingSamples: audio.Samples.Length,
+            speechSamples: wholeCoverage.SpeechSamples,
+            silenceSamples: wholeCoverage.SilenceSamples,
+            sampleRate: audio.SampleRate > 0 ? audio.SampleRate : null);
+        var transcript = await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+        _phaseJournal?.Record(
+            UatRuntimePhase.FinalWholeAudioReturned,
+            audio.SessionId.Value,
+            requestId: wholeCorrelation.RequestId,
+            startSample: 0,
+            endSample: audio.Samples.Length,
+            coveredSamples: audio.Samples.Length,
+            remainingSamples: 0,
+            speechSamples: wholeCoverage.SpeechSamples,
+            silenceSamples: wholeCoverage.SilenceSamples,
+            sampleRate: audio.SampleRate > 0 ? audio.SampleRate : null);
+        return transcript;
     }
 
     private bool CanPreserveCommittedHeadStart(

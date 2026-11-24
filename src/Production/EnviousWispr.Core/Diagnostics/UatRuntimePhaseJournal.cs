@@ -8,7 +8,23 @@ namespace EnviousWispr.Core.Diagnostics;
 public enum UatRuntimePhase
 {
     OrdinaryReleaseEntered,
+    CaptureStopEntered,
+    CaptureStopReturned,
     StopEntered,
+    StopCompleted,
+    BackgroundCleanupEntered,
+    BackgroundCleanupCompleted,
+    StreamingSegmentAdmitted,
+    StreamingSegmentReturned,
+    StreamingSegmentCancelled,
+    StreamingSegmentFailed,
+    FinalTailSkipped,
+    FinalTailDispatched,
+    FinalTailReturned,
+    FinalWholeAudioDispatched,
+    FinalWholeAudioReturned,
+    DeliveryEntered,
+    DeliveryReturned,
     ParentRequestIssued,
     RealRequestAdmitted,
     PreprocessorEntered,
@@ -60,6 +76,7 @@ public sealed class UatRuntimePhaseJournal
     private const long MaximumFileBytes = 16 * 1024 * 1024;
     private static readonly object WriteGate = new();
     private static readonly AsyncLocal<RequestContext?> Ambient = new();
+    private static readonly AsyncLocal<CorrelatedRequestBox?> AmbientParentRequest = new();
     private static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -233,20 +250,56 @@ public sealed class UatRuntimePhaseJournal
     public static void RecordSession(UatRuntimePhase phase, Guid? sessionId = null) =>
         FromEnvironment()?.Record(phase, sessionId ?? DictationScope.Current);
 
+    public static RequestCorrelationScope BeginRequestCorrelation(out Guid requestId)
+    {
+        requestId = Guid.NewGuid();
+        var previous = AmbientParentRequest.Value;
+        var box = new CorrelatedRequestBox(requestId);
+        AmbientParentRequest.Value = box;
+        return new RequestCorrelationScope(box, previous);
+    }
+
+    public static bool TryTakeCorrelatedRequestId(out Guid requestId)
+    {
+        if (AmbientParentRequest.Value is { } box)
+        {
+            requestId = box.NextOrAllocate();
+            return true;
+        }
+
+        requestId = Guid.Empty;
+        return false;
+    }
+
     public void Record(
         UatRuntimePhase phase,
         Guid? sessionId = null,
         Guid? requestId = null,
         Guid? generation = null,
         int? workerProcessId = null,
-        int? exitCode = null)
+        int? exitCode = null,
+        int? startSample = null,
+        int? endSample = null,
+        int? coveredSamples = null,
+        int? remainingSamples = null,
+        int? speechSamples = null,
+        int? silenceSamples = null,
+        int? sampleRate = null)
     {
         if (!Enum.IsDefined(phase) ||
             sessionId == Guid.Empty ||
             requestId == Guid.Empty ||
             generation == Guid.Empty ||
             workerProcessId is <= 0 ||
-            (exitCode is not null && phase != UatRuntimePhase.WorkerExitObserved))
+            (exitCode is not null && phase != UatRuntimePhase.WorkerExitObserved) ||
+            startSample is < 0 ||
+            endSample is < 0 ||
+            (startSample is not null && endSample is not null && endSample < startSample) ||
+            coveredSamples is < 0 ||
+            remainingSamples is < 0 ||
+            speechSamples is < 0 ||
+            silenceSamples is < 0 ||
+            sampleRate is <= 0)
         {
             return;
         }
@@ -264,7 +317,14 @@ public sealed class UatRuntimePhaseJournal
                 phase,
                 Stopwatch.GetTimestamp(),
                 Stopwatch.Frequency,
-                exitCode);
+                exitCode,
+                startSample,
+                endSample,
+                coveredSamples,
+                remainingSamples,
+                speechSamples,
+                silenceSamples,
+                sampleRate);
             var line = JsonSerializer.Serialize(record, Json) + "\n";
             lock (WriteGate)
             {
@@ -314,7 +374,73 @@ public sealed class UatRuntimePhaseJournal
         UatRuntimePhase Phase,
         long Timestamp,
         long Frequency,
-        int? ExitCode);
+        int? ExitCode,
+        int? StartSample = null,
+        int? EndSample = null,
+        int? CoveredSamples = null,
+        int? RemainingSamples = null,
+        int? SpeechSamples = null,
+        int? SilenceSamples = null,
+        int? SampleRate = null);
+
+    internal sealed class CorrelatedRequestBox(Guid initialRequestId)
+    {
+        private readonly object _gate = new();
+        private Guid _current = initialRequestId;
+        private bool _firstTaken;
+
+        public Guid Current
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _current;
+                }
+            }
+        }
+
+        public Guid NextOrAllocate()
+        {
+            lock (_gate)
+            {
+                if (!_firstTaken)
+                {
+                    _firstTaken = true;
+                    return _current;
+                }
+
+                _current = Guid.NewGuid();
+                return _current;
+            }
+        }
+    }
+
+    public sealed class RequestCorrelationScope : IDisposable
+    {
+        private readonly CorrelatedRequestBox _box;
+        private readonly CorrelatedRequestBox? _previous;
+        private bool _disposed;
+
+        internal RequestCorrelationScope(CorrelatedRequestBox box, CorrelatedRequestBox? previous)
+        {
+            _box = box;
+            _previous = previous;
+        }
+
+        public Guid RequestId => _box.Current;
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            AmbientParentRequest.Value = _previous;
+        }
+    }
 
     internal sealed record RequestContext(
         UatRuntimePhaseJournal Journal,

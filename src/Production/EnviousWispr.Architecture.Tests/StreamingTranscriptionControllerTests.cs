@@ -297,6 +297,88 @@ public sealed class StreamingTranscriptionControllerTests
     }
 
     [Fact]
+    public async Task ACommitThatCoversTheEntireCaptureSkipsRedundantFinalTranscription()
+    {
+        var world = World.Build();
+        var snapshotAudio = Build((false, 200), (true, 3000), (false, 1200));
+        world.Audio.Samples = snapshotAudio;
+        world.Engine.NextText = "complete sentence without tail";
+        world.Controller.Start(world.Session);
+        world.Clock.Advance(Poll);
+        await world.Clock.WhenRegistered(2).WaitAsync(Patience);
+        await world.Controller.StopAsync();
+
+        world.Engine.NextText = "should never be called";
+        var transcript = await world.Controller.TranscribeUsingAnyHeadStartAsync(
+            world.Engine,
+            new CapturedAudio(world.Session, snapshotAudio, SampleRate, 1),
+            CancellationToken.None);
+
+        Assert.Single(world.Engine.Requests);
+        Assert.Equal("complete sentence without tail", transcript.Text);
+        Assert.Equal([AppEventCode.StreamingSegmentCommitted, AppEventCode.StreamingHeadStartUsed], world.Log.Codes);
+        Assert.Equal(0, world.Log.Entries.Last().ElapsedMilliseconds);
+    }
+
+    [Fact]
+    public async Task AnEmptySecondSegmentAtEndOfCaptureFallsBackToWholeRecordingRatherThanSkipping()
+    {
+        var world = World.Build();
+        world.Audio.Samples = Build((false, 200), (true, 3000), (false, 1200));
+        world.Engine.NextText = "first sentence";
+        world.Controller.Start(world.Session);
+        world.Clock.Advance(Poll);
+        await world.Clock.WhenRegistered(2).WaitAsync(Patience);
+
+        // Second segment commits through the end of the recording, but its streaming pass returns empty.
+        var fullAudio = Build((false, 200), (true, 3000), (false, 1200), (true, 2000), (false, 1200));
+        world.Audio.Samples = fullAudio;
+        world.Engine.NextText = "";
+        world.Clock.Advance(Poll);
+        await world.Clock.WhenRegistered(3).WaitAsync(Patience);
+        await world.Controller.StopAsync();
+
+        world.Engine.NextText = "first sentence second sentence";
+        var transcript = await world.Controller.TranscribeUsingAnyHeadStartAsync(
+            world.Engine,
+            new CapturedAudio(world.Session, fullAudio, SampleRate, 1),
+            CancellationToken.None);
+
+        Assert.Equal(3, world.Engine.Requests.Length);
+        Assert.Equal((0, fullAudio.Length), world.Engine.Requests.Last());
+        Assert.Equal("first sentence second sentence", transcript.Text);
+        Assert.DoesNotContain(AppEventCode.StreamingHeadStartUsed, world.Log.Codes);
+    }
+
+    [Fact]
+    public async Task CloseAdmissionPreventsNewPollFromIssuingWhilePreservingAlreadyCommittedHeadStart()
+    {
+        var world = World.Build();
+        world.Audio.Samples = Build((false, 200), (true, 3000), (false, 1200), (true, 500));
+        world.Engine.NextText = "first segment";
+        world.Controller.Start(world.Session);
+        world.Clock.Advance(Poll);
+        await world.Clock.WhenRegistered(2).WaitAsync(Patience);
+        Assert.Single(world.Engine.Requests);
+
+        // More speech and pause arrive right as release begins and closes admission.
+        world.Audio.Samples = Build((false, 200), (true, 3000), (false, 1200), (true, 3000), (false, 1200));
+        world.Controller.CloseAdmission();
+        world.Clock.Advance(Poll);
+        Assert.Equal(StopOutcome.Completed, await world.Controller.CompleteOrdinaryAsync(CleanupAllowance(world.Clock), CancellationToken.None));
+        Assert.Single(world.Engine.Requests);
+
+        world.Engine.NextText = "second segment at release";
+        var transcript = await world.Controller.TranscribeUsingAnyHeadStartAsync(
+            world.Engine,
+            new CapturedAudio(world.Session, world.Audio.Samples, SampleRate, 1),
+            CancellationToken.None);
+
+        Assert.Equal(2, world.Engine.Requests.Length);
+        Assert.Equal("first segment second segment at release", transcript.Text);
+    }
+
+    [Fact]
     public async Task ANewTakeForgetsTheLastOne()
     {
         var world = World.Build();

@@ -14,15 +14,22 @@ public sealed class UatRuntimePhaseJournalTests
 {
     private static readonly string[] SchemaFields =
     [
+        "coveredSamples",
+        "endSample",
         "exitCode",
         "frequency",
         "generationId",
         "parentProcessId",
         "phase",
         "processId",
+        "remainingSamples",
         "requestId",
+        "sampleRate",
         "schemaVersion",
         "sessionId",
+        "silenceSamples",
+        "speechSamples",
+        "startSample",
         "timestamp",
         "workerProcessId",
     ];
@@ -248,6 +255,131 @@ public sealed class UatRuntimePhaseJournalTests
                 false);
         var response = new RuntimeWorkerResponse(1, Guid.NewGuid(), kind == "failed" ? "failed" : "complete", transcript);
         Assert.Equal(expected, RuntimeWorkerSupervisor.ConsumptionPhase(response, session));
+    }
+
+    [Fact]
+    public void InvalidSampleBoundaryOrCoverageFieldsAreRefused()
+    {
+        using var run = new Run();
+        var journal = run.Journal();
+        var session = Guid.NewGuid();
+        journal.Record(UatRuntimePhase.StreamingSegmentAdmitted, session, startSample: -1);
+        journal.Record(UatRuntimePhase.StreamingSegmentAdmitted, session, endSample: -1);
+        journal.Record(UatRuntimePhase.StreamingSegmentAdmitted, session, startSample: 320, endSample: 160);
+        journal.Record(UatRuntimePhase.StreamingSegmentAdmitted, session, coveredSamples: -1);
+        journal.Record(UatRuntimePhase.StreamingSegmentAdmitted, session, remainingSamples: -1);
+        journal.Record(UatRuntimePhase.StreamingSegmentAdmitted, session, speechSamples: -1);
+        journal.Record(UatRuntimePhase.StreamingSegmentAdmitted, session, silenceSamples: -1);
+        journal.Record(UatRuntimePhase.StreamingSegmentAdmitted, session, sampleRate: 0);
+        journal.Record(UatRuntimePhase.StreamingSegmentAdmitted, session, sampleRate: -16_000);
+
+        Assert.Empty(run.Read());
+    }
+
+    [Fact]
+    public async Task StreamingPhasesCorrelateRequestIdsAndRecordSampleCoverageAcrossSegmentAndTail()
+    {
+        using var run = new Run();
+        var journal = run.Journal();
+        var session = DictationSessionId.Create();
+        var clock = new Deterministic.ManualClock();
+        var prefix = FakeAudioCapture.Script((false, 200), (true, 3000), (false, 1200));
+        var whole = FakeAudioCapture.Script((false, 200), (true, 3000), (false, 1200), (true, 800));
+        var correlatedIds = new List<Guid>();
+        var engine = new CorrelatingEngine(correlatedIds);
+        var controller = new StreamingTranscriptionController(
+            new StaticSnapshotEffects(engine, new AudioSnapshot(session, prefix, 16_000, 1)),
+            new QuietLogger(),
+            clock,
+            journal);
+
+        controller.Start(session);
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        await clock.WhenRegistered(2).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(StopOutcome.Completed, await controller.CompleteOrdinaryAsync(() => TimeSpan.FromSeconds(5), CancellationToken.None));
+
+        var transcript = await controller.TranscribeUsingAnyHeadStartAsync(
+            engine,
+            new CapturedAudio(session, whole, 16_000, 1),
+            CancellationToken.None);
+
+        Assert.Equal("part-1 part-2", transcript.Text);
+        Assert.Equal(2, correlatedIds.Count);
+
+        var rows = run.Read();
+        var segAdmitted = Assert.Single(rows, r => r.GetProperty("phase").GetString() == "streamingSegmentAdmitted");
+        var segReturned = Assert.Single(rows, r => r.GetProperty("phase").GetString() == "streamingSegmentReturned");
+        var stopEntered = Assert.Single(rows, r => r.GetProperty("phase").GetString() == "stopEntered");
+        var stopCompleted = Assert.Single(rows, r => r.GetProperty("phase").GetString() == "stopCompleted");
+        var tailDispatched = Assert.Single(rows, r => r.GetProperty("phase").GetString() == "finalTailDispatched");
+        var tailReturned = Assert.Single(rows, r => r.GetProperty("phase").GetString() == "finalTailReturned");
+
+        Assert.Equal(correlatedIds[0], segAdmitted.GetProperty("requestId").GetGuid());
+        Assert.Equal(correlatedIds[0], segReturned.GetProperty("requestId").GetGuid());
+        Assert.Equal(0, segAdmitted.GetProperty("startSample").GetInt32());
+        Assert.Equal(prefix.Length, segAdmitted.GetProperty("endSample").GetInt32());
+        Assert.Equal(0, segAdmitted.GetProperty("coveredSamples").GetInt32());
+        Assert.Equal(prefix.Length, segReturned.GetProperty("coveredSamples").GetInt32());
+        Assert.True(segAdmitted.GetProperty("speechSamples").GetInt32() > 0);
+        Assert.True(segAdmitted.GetProperty("silenceSamples").GetInt32() > 0);
+        Assert.Equal(16_000, segAdmitted.GetProperty("sampleRate").GetInt32());
+
+        Assert.Equal(prefix.Length, stopEntered.GetProperty("coveredSamples").GetInt32());
+        Assert.Equal(prefix.Length, stopCompleted.GetProperty("coveredSamples").GetInt32());
+
+        Assert.Equal(correlatedIds[1], tailDispatched.GetProperty("requestId").GetGuid());
+        Assert.Equal(correlatedIds[1], tailReturned.GetProperty("requestId").GetGuid());
+        Assert.Equal(prefix.Length, tailDispatched.GetProperty("startSample").GetInt32());
+        Assert.Equal(whole.Length, tailDispatched.GetProperty("endSample").GetInt32());
+        Assert.Equal(prefix.Length, tailDispatched.GetProperty("coveredSamples").GetInt32());
+        Assert.Equal(whole.Length - prefix.Length, tailDispatched.GetProperty("remainingSamples").GetInt32());
+        Assert.Equal(whole.Length, tailReturned.GetProperty("coveredSamples").GetInt32());
+        Assert.Equal(0, tailReturned.GetProperty("remainingSamples").GetInt32());
+    }
+
+    [Fact]
+    public void RequestCorrelationScopeUpdatesRequestIdAcrossRetryAttempts()
+    {
+        using var correlation = UatRuntimePhaseJournal.BeginRequestCorrelation(out var initialId);
+        Assert.NotEqual(Guid.Empty, initialId);
+        Assert.Equal(initialId, correlation.RequestId);
+
+        Assert.True(UatRuntimePhaseJournal.TryTakeCorrelatedRequestId(out var firstAttemptId));
+        Assert.Equal(initialId, firstAttemptId);
+        Assert.Equal(initialId, correlation.RequestId);
+
+        Assert.True(UatRuntimePhaseJournal.TryTakeCorrelatedRequestId(out var retryAttemptId));
+        Assert.NotEqual(Guid.Empty, retryAttemptId);
+        Assert.NotEqual(initialId, retryAttemptId);
+        Assert.Equal(retryAttemptId, correlation.RequestId);
+    }
+
+    private sealed class StaticSnapshotEffects(ITranscriptionEngine engine, AudioSnapshot snapshot) : IStreamingTranscriptionEffects
+    {
+        public bool LivePreviewEnabled => false;
+        public ITranscriptionEngine? Engine => engine;
+        public IAudioSnapshotSource? Audio { get; } = new SingleSnapshotSource(snapshot);
+    }
+
+    private sealed class SingleSnapshotSource(AudioSnapshot snapshot) : IAudioSnapshotSource
+    {
+        public AudioSnapshot? GetSnapshot(TimeSpan maximumDuration) => snapshot;
+    }
+
+    private sealed class CorrelatingEngine(List<Guid> correlatedIds) : ITranscriptionEngine
+    {
+        private int _calls;
+
+        public string EngineId => "correlating";
+
+        public Task<Transcript> TranscribeAsync(CapturedAudio audio, CancellationToken cancellationToken = default)
+        {
+            Assert.True(UatRuntimePhaseJournal.TryTakeCorrelatedRequestId(out var id));
+            Assert.NotEqual(Guid.Empty, id);
+            correlatedIds.Add(id);
+            _calls++;
+            return Task.FromResult(new Transcript(audio.SessionId, $"part-{_calls}", EngineId, []));
+        }
     }
 
     private sealed class EmptyEffects : IStreamingTranscriptionEffects

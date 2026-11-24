@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO.MemoryMappedFiles;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using EnviousWispr.ASR;
 using EnviousWispr.Core.Diagnostics;
@@ -323,11 +324,11 @@ static async Task<RuntimeWorkerResponse> TranscribeAsync(
         using var map = MemoryMappedFile.OpenExisting(
             transcription.MemoryMapName,
             MemoryMappedFileRights.Read);
-        using var view = map.CreateViewAccessor(
+        using var view = map.CreateViewStream(
             0,
             checked((long)transcription.SampleCount * sizeof(float)),
             MemoryMappedFileAccess.Read);
-        view.ReadArray(0, samples, 0, samples.Length);
+        view.ReadExactly(MemoryMarshal.AsBytes(samples.AsSpan()));
         var sessionId = new DictationSessionId(transcription.SessionId);
         using var requestPhase = phaseJournal?.BeginRequest(sessionId.Value, request.RequestId);
         phaseJournal?.Record(UatRuntimePhase.RealRequestAdmitted, sessionId.Value, request.RequestId);

@@ -605,6 +605,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
 
             if (_controller.CurrentSession.State == DictationSessionState.Recording)
             {
+                _background.CloseStreamingAdmission();
                 _ = CleanupRemaining;
                 await ObserveOwnedStopAsync(_background.StopWatchdogAsync).ConfigureAwait(false);
                 var result = await _controller.ReleaseAsync(CancellationToken.None).ConfigureAwait(false);
@@ -825,6 +826,7 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             }
             else
             {
+                _background.CloseStreamingAdmission();
                 _finalization.ResetTranscriptionComplete();
                 var escapeCancel = new CancellationTokenSource();
                 Volatile.Write(ref _escapeCancel, escapeCancel);

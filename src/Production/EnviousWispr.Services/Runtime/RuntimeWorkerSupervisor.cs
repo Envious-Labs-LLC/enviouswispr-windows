@@ -542,7 +542,9 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
             return null;
         }
 
-        var requestId = Guid.NewGuid();
+        var requestId = transcription is not null && UatRuntimePhaseJournal.TryTakeCorrelatedRequestId(out var correlatedRequestId)
+            ? correlatedRequestId
+            : Guid.NewGuid();
         var request = new RuntimeWorkerRequest(ProtocolVersion, requestId, command, transcription);
         var observedGeneration = Volatile.Read(ref _generation);
         if (!ReferenceEquals(observedGeneration?.Process, process))
