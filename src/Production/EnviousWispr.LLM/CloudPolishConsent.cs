@@ -24,4 +24,13 @@ public sealed record CloudPolishConsent(
             $"{name} polish sends your transcribed text directly to {name} using your API key. " +
             "Audio never leaves this PC, and Envious Labs never receives the request.");
     }
+
+    public static CloudPolishConsent ForOllamaHosted(string? modelId = null) =>
+        new(
+            PolishProvider.Ollama,
+            "Ollama Cloud",
+            "ollama.com",
+            string.IsNullOrWhiteSpace(modelId)
+                ? "Hosted Ollama polish sends your transcribed text to Ollama's servers. Audio never leaves this PC, and Envious Labs never receives the request."
+                : $"Hosted Ollama polish ({modelId.Trim()}) sends your transcribed text to Ollama's servers. Audio never leaves this PC, and Envious Labs never receives the request.");
 }

@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Polish;
 
 namespace EnviousWispr.LLM;
 
@@ -27,11 +28,13 @@ public enum OllamaModelReadiness
 
 /// <param name="SizeBytes">What Ollama reports the model occupies, when it says.</param>
 /// <param name="ParameterSize">Ollama's own label ("3.1B"), when it says.</param>
+/// <param name="IsRemote">True when Ollama reports a non-empty <c>remote_host</c> and proxies the model to its own servers.</param>
 public sealed record OllamaModelInfo(
     string Id,
     bool? SupportsThinking,
     long? SizeBytes = null,
-    string? ParameterSize = null);
+    string? ParameterSize = null,
+    bool IsRemote = false);
 
 /// <param name="ConnectionRefused">
 /// Nothing is listening at the endpoint - as opposed to a server that is slow or answering wrongly. Only this one is
@@ -42,7 +45,15 @@ public sealed record OllamaDiscoveryResult(
     IReadOnlyList<OllamaModelInfo> LocalModels,
     IReadOnlyList<string> RemoteModelIds,
     AppError? Error = null,
-    bool ConnectionRefused = false);
+    bool ConnectionRefused = false,
+    IReadOnlyList<OllamaModelInfo>? RemoteModels = null)
+{
+    public IReadOnlyList<OllamaModelInfo> HostedModels =>
+        RemoteModels ?? RemoteModelIds.Select(id => new OllamaModelInfo(id, null, IsRemote: true)).ToArray();
+
+    public IReadOnlyList<OllamaModelInfo> AllModels =>
+        [.. LocalModels, .. HostedModels];
+}
 
 public sealed record OllamaModelReadinessResult(
     OllamaModelReadiness Readiness,
@@ -80,7 +91,7 @@ public sealed partial class OllamaApiClient : IModelCatalog, IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         var discovery = await DiscoverAsync(cancellationToken).ConfigureAwait(false);
-        return discovery.LocalModels.Select(model => model.Id).ToArray();
+        return discovery.AllModels.Select(model => model.Id).ToArray();
     }
 
     public async Task<OllamaDiscoveryResult> DiscoverAsync(
@@ -126,7 +137,7 @@ public sealed partial class OllamaApiClient : IModelCatalog, IAsyncDisposable
             }
 
             var local = new List<OllamaModelInfo>();
-            var remote = new List<string>();
+            var remoteModels = new List<OllamaModelInfo>();
             foreach (var row in rows.EnumerateArray())
             {
                 if (!TryReadModel(
@@ -142,7 +153,7 @@ public sealed partial class OllamaApiClient : IModelCatalog, IAsyncDisposable
 
                 if (isRemote)
                 {
-                    remote.Add(model.Id);
+                    remoteModels.Add(model);
                 }
                 else
                 {
@@ -155,14 +166,19 @@ public sealed partial class OllamaApiClient : IModelCatalog, IAsyncDisposable
                 .Select(group => group.First())
                 .OrderBy(model => model.Id, StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            remote = remote
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+            remoteModels = remoteModels
+                .GroupBy(model => CanonicalModelId(model.Id), StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .OrderBy(model => model.Id, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var remote = remoteModels
+                .Select(model => model.Id)
                 .ToList();
             return new OllamaDiscoveryResult(
-                local.Count == 0 ? OllamaHealth.NoLocalModels : OllamaHealth.Ready,
+                local.Count == 0 && remoteModels.Count == 0 ? OllamaHealth.NoLocalModels : OllamaHealth.Ready,
                 local,
-                remote);
+                remote,
+                RemoteModels: remoteModels);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -229,14 +245,14 @@ public sealed partial class OllamaApiClient : IModelCatalog, IAsyncDisposable
             return new OllamaModelReadinessResult(OllamaModelReadiness.Ready, local);
         }
 
-        if (discovery.RemoteModelIds.Any(id => string.Equals(
-                CanonicalModelId(id),
+        var remote = discovery.HostedModels.FirstOrDefault(
+            model => string.Equals(
+                CanonicalModelId(model.Id),
                 canonical,
-                StringComparison.OrdinalIgnoreCase)))
+                StringComparison.OrdinalIgnoreCase));
+        if (remote is not null)
         {
-            return new OllamaModelReadinessResult(
-                OllamaModelReadiness.RemoteModelDisallowed,
-                Error: LocalError(AppErrorCode.PolishRemoteModelDisallowed, canRetry: false));
+            return new OllamaModelReadinessResult(OllamaModelReadiness.Ready, remote);
         }
 
         return new OllamaModelReadinessResult(
@@ -306,7 +322,7 @@ public sealed partial class OllamaApiClient : IModelCatalog, IAsyncDisposable
             parameterValue.ValueKind == JsonValueKind.String
                 ? parameterValue.GetString()
                 : null;
-        model = new OllamaModelInfo(nameValue.GetString()!, thinks, size, parameters);
+        model = new OllamaModelInfo(nameValue.GetString()!, thinks, size, parameters, isRemote);
         return true;
     }
 

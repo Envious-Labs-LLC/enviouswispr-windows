@@ -4,6 +4,8 @@ using System.Text;
 using System.Text.Json;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Polish;
+using EnviousWispr.Core.Settings;
 using EnviousWispr.LLM;
 
 namespace EnviousWispr.Architecture.Tests;
@@ -67,10 +69,17 @@ public sealed class OllamaPolishProviderTests
         Assert.Equal(OllamaHealth.Ready, discovery.Health);
         Assert.Equal(["legacy:latest", "llama3.2:latest", "qwen3:4b"],
             discovery.LocalModels.Select(model => model.Id));
+        Assert.All(discovery.LocalModels, model => Assert.False(model.IsRemote));
         Assert.Null(discovery.LocalModels[0].SupportsThinking);
         Assert.False(discovery.LocalModels[1].SupportsThinking);
         Assert.True(discovery.LocalModels[2].SupportsThinking);
         Assert.Equal(["gpt-oss:20b-cloud"], discovery.RemoteModelIds);
+        var remoteModel = Assert.Single(discovery.HostedModels);
+        Assert.Equal("gpt-oss:20b-cloud", remoteModel.Id);
+        Assert.True(remoteModel.IsRemote);
+        Assert.True(remoteModel.SupportsThinking);
+        Assert.Equal(["legacy:latest", "llama3.2:latest", "qwen3:4b", "gpt-oss:20b-cloud"],
+            discovery.AllModels.Select(model => model.Id));
         Assert.All(handler.Exchanges, exchange => Assert.True(exchange.Uri.IsLoopback));
     }
 
@@ -123,21 +132,78 @@ public sealed class OllamaPolishProviderTests
     }
 
     [Fact]
-    public async Task RemoteModelIsRefusedBeforeChatRequest()
+    public async Task RemoteModelExecutesPolishWithCloudPromptAndCarriesIsRemoteMetadata()
     {
-        var handler = new ScriptedHandler(_ => JsonResponse(Tags(
-            """{"name":"gpt-oss:20b-cloud","remote_host":"https://ollama.com"}""")));
+        var handler = new ScriptedHandler(request => request.Method == HttpMethod.Get
+            ? JsonResponse(Tags(
+                """{"name":"gpt-oss:20b-cloud","remote_host":"https://ollama.com","capabilities":["completion","thinking"]}"""))
+            : JsonResponse(Chat("Move the meeting to Friday.")));
         await using var provider = new OllamaPolishProvider(
             new OllamaPolishOptions(null, "gpt-oss:20b-cloud"),
             handler);
 
-        var result = await provider.TryPolishAsync(new PolishRequest(Input));
+        var probe = await provider.ProbeModelAsync();
+        Assert.Equal(OllamaModelReadiness.Ready, probe.Readiness);
+        Assert.NotNull(probe.Model);
+        Assert.True(probe.Model!.IsRemote);
+        Assert.Equal("gpt-oss:20b-cloud", probe.Model.Id);
 
-        Assert.Equal(Input, result.Output);
-        Assert.Equal(PolishAttemptStatus.Unavailable, result.Status);
-        Assert.Equal(AppErrorCode.PolishRemoteModelDisallowed, result.Error?.Code);
+        var result = await provider.TryPolishAsync(
+            new PolishRequest(Input, "en", Vocabulary: ["PrivateCustomTerm"]));
+
+        Assert.Equal(PolishAttemptStatus.Polished, result.Status);
+        Assert.Equal("Move the meeting to Friday.", result.Output.Text);
+        var chat = Assert.Single(
+            handler.Exchanges,
+            exchange => exchange.Uri.AbsolutePath == "/api/chat");
+        using var document = JsonDocument.Parse(chat.Body);
+        var root = document.RootElement;
+        Assert.Equal("gpt-oss:20b-cloud", root.GetProperty("model").GetString());
+        Assert.Equal("low", root.GetProperty("think").GetString());
+        var messages = root.GetProperty("messages");
+        var systemContent = messages[0].GetProperty("content").GetString();
+        var userContent = messages[1].GetProperty("content").GetString();
+        Assert.Contains(CloudPolishPrompt.SystemPrompt, systemContent, StringComparison.Ordinal);
+        Assert.Contains("Transcript to clean:", userContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("PrivateCustomTerm", chat.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RemoteModelSkipsMishearingSuggestionsSoPrivateVocabularyStaysLocal()
+    {
+        var handler = new ScriptedHandler(_ => JsonResponse(Tags(
+            """{"name":"gpt-oss:20b-cloud","remote_host":"https://ollama.com","capabilities":["completion"]}""")));
+        await using var provider = new OllamaPolishProvider(
+            new OllamaPolishOptions(null, "gpt-oss:20b-cloud"),
+            handler);
+
+        var advice = await provider.SuggestAsync(
+            "EnviousWispr",
+            ["envious whisper"]);
+
+        Assert.Equal(MishearingAdviceStatus.NotSupported, advice.Status);
+        Assert.Empty(advice.Suggestions);
         Assert.Single(handler.Exchanges);
         Assert.Equal("/api/tags", handler.Exchanges[0].Uri.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task LocalModelSelectionNeverFallsBackToHostedCloudModelWhenLocalModelIsMissing()
+    {
+        var handler = new ScriptedHandler(_ => JsonResponse(Tags(
+            """{"name":"gpt-oss:20b-cloud","remote_host":"https://ollama.com","capabilities":["completion"]}""")));
+        await using var provider = new OllamaPolishProvider(
+            new OllamaPolishOptions(null, "gpt-oss:20b"),
+            handler);
+
+        var probe = await provider.ProbeModelAsync();
+        Assert.Equal(OllamaModelReadiness.ModelMissing, probe.Readiness);
+
+        var result = await provider.TryPolishAsync(new PolishRequest(Input));
+        Assert.Equal(PolishAttemptStatus.Unavailable, result.Status);
+        Assert.Equal(AppErrorCode.PolishModelUnavailable, result.Error?.Code);
+        Assert.Equal(2, handler.Exchanges.Count);
+        Assert.All(handler.Exchanges, exchange => Assert.Equal("/api/tags", exchange.Uri.AbsolutePath));
     }
 
     [Fact]

@@ -1749,11 +1749,15 @@ public partial class App : Application, IAsyncDisposable
                 model = preferences.ModelId ?? string.Empty;
             }
 
+            var isHostedModel = EnviousWispr.Core.Polish.OllamaModelCatalog.LooksLikeHostedCloudModel(model);
             _ollamaActiveModel = string.IsNullOrWhiteSpace(model) ? null : model;
             _polishProvider = new OllamaPolishProvider(new OllamaPolishOptions(endpoint, model));
-            _polishUsesLocalRuntime = true;
+            _polishUsesLocalRuntime = !isHostedModel;
+            _cloudPolishConsent = isHostedModel ? CloudPolishConsent.ForOllamaHosted(model) : null;
             _localPolishNotice = OllamaEndpointPolicy.TryNormalize(endpoint, out var normalized)
-                ? $"Ollama polish uses {normalized}. Dictated text stays on this PC; hosted Ollama models are refused."
+                ? isHostedModel
+                    ? $"Ollama polish uses {normalized} with hosted model {model.Trim()} on Ollama's servers."
+                    : $"Ollama polish uses {normalized}. Local models stay on this PC; hosted models run on Ollama's servers."
                 : "Ollama polish is disabled until its endpoint is a loopback HTTP or HTTPS address.";
             return;
         }
@@ -1807,7 +1811,17 @@ public partial class App : Application, IAsyncDisposable
             Provider: DiagnosticProviderIds.FromProviderId(provider.ProviderId)));
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var health = await provider.ProbeHealthAsync(cancellationToken).ConfigureAwait(false);
+        var modelProbe = health.Health == OllamaHealth.Ready
+            ? await provider.ProbeModelAsync(cancellationToken).ConfigureAwait(false)
+            : null;
         timer.Stop();
+        if (modelProbe?.Model is { } probedModel)
+        {
+            _polishUsesLocalRuntime = !probedModel.IsRemote;
+            _cloudPolishConsent = probedModel.IsRemote
+                ? CloudPolishConsent.ForOllamaHosted(probedModel.Id)
+                : null;
+        }
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
             health.Health == OllamaHealth.Ready
@@ -1821,11 +1835,16 @@ public partial class App : Application, IAsyncDisposable
             health.Error?.Code));
         PostToLiveWindow(window =>
         {
+            window.SetCloudPolishNotice(_cloudPolishConsent?.Notice);
             if (health.Health != OllamaHealth.Ready)
             {
                 window.SetSessionStatus(OllamaHealthStatus(health.Health));
             }
         });
+        if (health.Health == OllamaHealth.Ready)
+        {
+            _ = await provider.WarmUpAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async Task WarmPolishRuntimeAsync(

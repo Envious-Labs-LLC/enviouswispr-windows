@@ -173,6 +173,24 @@ public sealed class ProviderSettingsPresenterTests
         Assert.Empty(down!.Models);
         Assert.Null(down.ModelToApply);
         Assert.Equal(PolishModelDiscoveryStatus.OllamaNotReady, down.Discovery!.Status);
+
+        // Hosted models must never become the automatic default when the field is empty; only local models qualify.
+        models.Answer = new PolishModelDiscovery(
+            PolishModelDiscoveryStatus.Ready,
+            ["gpt-oss:120b-cloud", "custom-remote:latest"],
+            RemoteModelIds: ["gpt-oss:120b-cloud", "custom-remote:latest"]);
+        var hostedOnly = await RefreshAsync(presenter, PolishProvider.Ollama, null, string.Empty, chooseDefault: true).WaitAsync(Patience);
+        Assert.Null(hostedOnly!.ModelToApply);
+        Assert.Equal(-1, hostedOnly.SelectedIndex);
+
+        // When both hosted and local models are present, automatic defaulting skips the hosted model and selects the first local one.
+        models.Answer = new PolishModelDiscovery(
+            PolishModelDiscoveryStatus.Ready,
+            ["gpt-oss:120b-cloud", "qwen2.5:3b"],
+            RemoteModelIds: ["gpt-oss:120b-cloud"]);
+        var mixed = await RefreshAsync(presenter, PolishProvider.Ollama, null, string.Empty, chooseDefault: true).WaitAsync(Patience);
+        Assert.Equal("qwen2.5:3b", mixed!.ModelToApply);
+        Assert.Equal(1, mixed.SelectedIndex);
     }
 
     /// <summary>Ollama treats foo and foo:latest as one model; so does the picker, or a valid choice is "repaired" away. Ref: #213.</summary>

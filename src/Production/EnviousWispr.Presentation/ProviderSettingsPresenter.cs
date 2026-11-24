@@ -48,7 +48,10 @@ public enum PolishModelDiscoveryStatus
     InvalidResponse,
 }
 
-public sealed record PolishModelDiscovery(PolishModelDiscoveryStatus Status, IReadOnlyList<string> ModelIds);
+public sealed record PolishModelDiscovery(
+    PolishModelDiscoveryStatus Status,
+    IReadOnlyList<string> ModelIds,
+    IReadOnlyList<string>? RemoteModelIds = null);
 
 /// <summary>Where the presenter's model knowledge comes from; the app adapts the concrete clients behind it.</summary>
 /// <remarks>
@@ -278,8 +281,36 @@ public sealed class ProviderSettingsPresenter
                 : current.Length == 0 || selectedIndex < 0;
             if (shouldChoose)
             {
-                modelToApply = models[0];
-                selectedIndex = 0;
+                if (listing.Provider == PolishProvider.Ollama)
+                {
+                    // HOSTED OLLAMA MODELS NEVER BECOME THE AUTOMATIC DEFAULT. Only a local model on this PC may be
+                    // selected automatically when the field is empty; sending transcript text to Ollama's servers
+                    // requires an explicit hosted model choice by the user.
+                    var remoteIds = listing.Discovery?.RemoteModelIds;
+                    var firstLocalIndex = -1;
+                    for (var i = 0; i < models.Count; i++)
+                    {
+                        var candidate = models[i];
+                        var isRemote = Core.Polish.OllamaModelCatalog.LooksLikeHostedCloudModel(candidate) ||
+                            (remoteIds?.Any(remote => Core.Polish.OllamaModelCatalog.SameModel(remote, candidate)) == true);
+                        if (!isRemote)
+                        {
+                            firstLocalIndex = i;
+                            break;
+                        }
+                    }
+
+                    if (firstLocalIndex >= 0)
+                    {
+                        modelToApply = models[firstLocalIndex];
+                        selectedIndex = firstLocalIndex;
+                    }
+                }
+                else
+                {
+                    modelToApply = models[0];
+                    selectedIndex = 0;
+                }
             }
         }
 
