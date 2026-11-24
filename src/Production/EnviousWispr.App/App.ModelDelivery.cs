@@ -348,7 +348,7 @@ public partial class App
         var clock = System.Diagnostics.Stopwatch.StartNew();
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ModelDeliveryStarted));
         _window?.SetLivePreviewWhisperDelivery(new(
-            $"Downloading {DescribeModels([previewModelId])}…",
+            $"Downloading {ModelDisplayName(previewModelId)}…",
             Percent: 0,
             CanCancel: true,
             Stage: SpeechModelDelivery.Downloading));
