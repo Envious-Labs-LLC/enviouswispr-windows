@@ -92,8 +92,6 @@ public sealed class SelectableChoiceOption : INotifyPropertyChanged
 
 public sealed partial class MainWindow : Window, IDisposable
 {
-    private const int WindowFrameInsetCount = 3;
-
     /// <summary>
     /// The index of the chosen card, or 0 when nothing is chosen yet.
     /// </summary>
@@ -483,7 +481,9 @@ public sealed partial class MainWindow : Window, IDisposable
         WireSettingsAutoSave();
         ShowOnboarding(!settings.HasCompletedOnboarding);
         ProductNavigation.SelectedItem = HistoryNavItem;
-        BuildInfoText.Text = $"{releaseIdentity.DisplayName} {Assembly.GetExecutingAssembly().GetName().Version} · {releaseIdentity.ChannelName}";
+        var assemblyVersion = Assembly.GetExecutingAssembly().GetName().Version;
+        SidebarVersionText.Text = FormatSidebarVersion(installedVersion, assemblyVersion);
+        BuildInfoText.Text = $"{releaseIdentity.DisplayName} {assemblyVersion} · {releaseIdentity.ChannelName}";
         WhatsNewBuildInfoText.Text = BuildInfoText.Text;
 
         // THE MARK IS ON UNTIL THIS BUILD'S NOTES HAVE BEEN OPENED. Comparing the stored string with
@@ -656,18 +656,25 @@ public sealed partial class MainWindow : Window, IDisposable
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(IntPtr hwnd);
 
+    private static string FormatSidebarVersion(string? installedVersion, Version? assemblyVersion)
+    {
+        if (!string.IsNullOrWhiteSpace(installedVersion) &&
+            Version.TryParse(installedVersion, out var packageVersion))
+        {
+            return $"v{packageVersion.Major}.{packageVersion.Minor}.{Math.Max(0, packageVersion.Build)}";
+        }
+
+        if (assemblyVersion is not null)
+        {
+            return $"v{assemblyVersion.Major}.{assemblyVersion.Minor}.{Math.Max(0, assemblyVersion.Build)}";
+        }
+
+        return "v0.0.0";
+    }
+
     private void ConfigureMinimumWindowWidth()
     {
-        var frameInset = ((Thickness)Application.Current.Resources["BrandWindowFrameInset"]).Left;
         var contentCardMinimumWidth = (double)Application.Current.Resources["BrandContentCardMinimumWidth"];
-
-        // NavigationView's content margin is left-only. Build it from the same frame token
-        // before the control template is applied so all three visible gutters stay in sync.
-        ProductNavigation.Resources["NavigationViewContentMargin"] = new Thickness(
-            frameInset,
-            default,
-            default,
-            default);
 
         // Microsoft.UI.Xaml.Window.MinWidth does not exist in the Windows App SDK this project
         // builds against, so the minimum is set on the window's presenter instead. The
@@ -675,15 +682,13 @@ public sealed partial class MainWindow : Window, IDisposable
         // shown full-screen or compact-overlay there is nothing to constrain and nothing to do.
         if (AppWindow.Presenter is OverlappedPresenter presenter)
         {
-            // Scaled for the same reason ResizeToDefault is: the three inputs are layout units
+            // Scaled for the same reason ResizeToDefault is: the inputs are layout units
             // and the presenter's floor is in physical pixels. Unscaled, the minimum shrinks by
             // the display's scale factor - on a 150% display the window could be dragged to two
-            // thirds of the width the frame arithmetic says it needs, which is precisely the
+            // thirds of the width the shell arithmetic says it needs, which is precisely the
             // case this floor exists to prevent.
             presenter.PreferredMinimumWidth = (int)Math.Ceiling(
-                (ProductNavigation.OpenPaneLength
-                    + (WindowFrameInsetCount * frameInset)
-                    + contentCardMinimumWidth)
+                (ProductNavigation.OpenPaneLength + contentCardMinimumWidth)
                 * DisplayScale());
         }
     }
@@ -757,9 +762,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var shortcut = recordingMode == DictationRecordingMode.PushToTalk
             ? $"Hold {gesture}"
             : $"Toggle with {gesture}";
-        HotkeyStatusText.Text = shortcut;
         ObserveRecordingKeyForOnboarding(gesture, recordingMode);
-        SetLiveText(SessionStatusText, "Idle");
         // A full stop rather than a middle dot. The tray tooltip is a SENTENCE - it has no
         // layout to separate, and a screen reader either announces a middle dot literally or
         // drops it. Text that is laid out on screen may still use one; this is not.
@@ -768,9 +771,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public void SetHotkeyUnavailable(string status)
     {
-        HotkeyStatusText.Text = status;
         ObserveRecordingKeyProblemForOnboarding(status);
-        SetLiveText(SessionStatusText, "Unavailable");
         // AN ERROR FOR THE TRAY, WHICH IS THE ONLY PLACE IT SHOWS. The recording key not being
         // available means the app cannot be used at all, and unlike a pill the icon stays. It
         // raises no pill, because SetSessionStatus is not on this path.
@@ -780,7 +781,6 @@ public sealed partial class MainWindow : Window, IDisposable
     public void SetSessionStatus(DictationStatus status)
     {
         var sentence = status.Text;
-        SetLiveText(SessionStatusText, sentence);
         SessionStatusChanged?.Invoke(status);
         var overlayState = status.State;
         HandleRecordingSoundTransition(overlayState);
@@ -816,7 +816,6 @@ public sealed partial class MainWindow : Window, IDisposable
         // phrases. `AboutTheTranscriptionEngine` carries the answer from the call site instead.
         if (status.DescribesTranscriptionEngine)
         {
-            EngineReadinessText.Text = sentence;
             _onboardingEngineSentence = sentence;
         }
 
@@ -904,14 +903,8 @@ public sealed partial class MainWindow : Window, IDisposable
         FoundationInfoBar.Message = notice;
     }
 
-    public void SetLivePreview(string? text)
-    {
-        LivePreviewText.Text = text ?? string.Empty;
-        LivePreviewText.Visibility = string.IsNullOrWhiteSpace(text)
-            ? Visibility.Collapsed
-            : Visibility.Visible;
+    public void SetLivePreview(string? text) =>
         _overlayWindow.SetPreview(text);
-    }
 
     public void SetAudioLevel(AudioLevel level) =>
         _overlayWindow.SetAudioLevel(level.RootMeanSquare);
@@ -1522,18 +1515,10 @@ public sealed partial class MainWindow : Window, IDisposable
         NavigationView sender,
         NavigationViewSelectionChangedEventArgs args)
     {
-        var tag = (args.SelectedItemContainer as NavigationViewItem)?.Tag?.ToString() ?? "home";
+        var tag = (args.SelectedItemContainer as NavigationViewItem)?.Tag?.ToString() ?? "history";
         var tabKey = _pendingTabKey;
         _pendingTabKey = null;
         ShowPage(tag, tabKey);
-    }
-
-    private void OpenHistoryButton_Click(object sender, RoutedEventArgs e)
-    {
-        var historyItem = ProductNavigation.MenuItems
-            .OfType<NavigationViewItem>()
-            .First(item => string.Equals(item.Tag?.ToString(), "history", StringComparison.Ordinal));
-        ProductNavigation.SelectedItem = historyItem;
     }
 
     /// <summary>Fills the recording keybind with the binding that unlocks the four gestures.</summary>
@@ -4317,10 +4302,6 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private void ApplyMicrophoneReadiness(MicrophoneReadiness readiness, MicrophoneConsent consent)
     {
-        SetLiveText(MicrophoneReadinessText, readiness.Sentence);
-        MicrophonePrivacyFixButton.Visibility = readiness.OffersPrivacySettings
-            ? Visibility.Visible
-            : Visibility.Collapsed;
         SetLiveText(PermissionsMicrophoneText, readiness.Sentence);
         var allowed = consent == MicrophoneConsent.Allowed;
         PermissionsMicrophoneAllowedBadge.Visibility = allowed ? Visibility.Visible : Visibility.Collapsed;
@@ -4399,14 +4380,6 @@ public sealed partial class MainWindow : Window, IDisposable
         _history.AddRange(view.Entries);
         _isHistoryLoading = false;
         RefreshHistoryView();
-        HistorySummaryText.Text = view.Summary switch
-        {
-            HistorySummary.Invalid => "History is unavailable because its local file is invalid; the source was preserved for recovery.",
-            HistorySummary.Unavailable => "Windows could not open the private history file.",
-            HistorySummary.Off => "History is off. New dictations will not be saved.",
-            HistorySummary.Empty => "No dictations saved yet.",
-            _ => $"{_history.Count.ToString(CultureInfo.CurrentCulture)} local dictation{(_history.Count == 1 ? string.Empty : "s")} saved.",
-        };
     }
 
     private HistoryKindFilter _historyKindFilter = HistoryKindFilter.All;
@@ -4676,9 +4649,15 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void UpdateAutoStopAvailability()
     {
+        var visibility = AutoStopToggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
+        if (AutoStopSecondsDivider is not null)
+        {
+            AutoStopSecondsDivider.Visibility = visibility;
+        }
+
         if (AutoStopSecondsRow is not null)
         {
-            AutoStopSecondsRow.Visibility = AutoStopToggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
+            AutoStopSecondsRow.Visibility = visibility;
         }
 
         AutoStopSecondsBox.IsEnabled = AutoStopToggle.IsOn;
@@ -5988,7 +5967,6 @@ public sealed partial class MainWindow : Window, IDisposable
 
         var settingsPage = resolvedTag.StartsWith("settings-", StringComparison.Ordinal);
         var helpPage = resolvedTag == "help" || resolvedTag.StartsWith("help-", StringComparison.Ordinal);
-        HomePage.Visibility = resolvedTag == "home" ? Visibility.Visible : Visibility.Collapsed;
         HistoryPage.Visibility = resolvedTag == "history" ? Visibility.Visible : Visibility.Collapsed;
         if (resolvedTag == "history")
         {
@@ -6043,7 +6021,6 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>Every page the sidebar can reach, in the order they are declared.</summary>
     private ScrollViewer[] Pages() =>
     [
-        HomePage,
         HistoryPage,
         WhatsNewPage,
         DictionaryPage,
@@ -6136,9 +6113,6 @@ public sealed partial class MainWindow : Window, IDisposable
 
         SettingsPageTitle.Text = title;
         SettingsPageDescription.Text = description;
-        SettingsPageGlyph.Glyph = NavigationGlyphFor(tag) is { Length: > 0 } settingsGlyph
-            ? settingsGlyph
-            : NavigationGlyphFor("settings-dictation");
 
         var showTranscriptionCompanion = tag == "settings-transcription";
         var showBackupCompanion = tag == "settings-profile";
@@ -6194,7 +6168,6 @@ public sealed partial class MainWindow : Window, IDisposable
 
         SettingsPageTitle.Text = title;
         SettingsPageDescription.Text = description;
-        SettingsPageGlyph.Glyph = NavigationGlyphFor("settings-dictation");
 
         FrozenPerRecordingBanner.Visibility = tabKey is "live-preview" or "clipboard" ? Visibility.Visible : Visibility.Collapsed;
         FrozenPerRecordingText.Text = FrozenPerRecordingCopy;
@@ -6243,7 +6216,6 @@ public sealed partial class MainWindow : Window, IDisposable
 
         SettingsPageTitle.Text = title;
         SettingsPageDescription.Text = description;
-        SettingsPageGlyph.Glyph = NavigationGlyphFor("settings-app");
 
         FrozenPerRecordingBanner.Visibility = Visibility.Collapsed;
 
@@ -6341,9 +6313,6 @@ public sealed partial class MainWindow : Window, IDisposable
 
         HelpPageTitle.Text = title;
         HelpPageDescription.Text = description;
-        HelpPageGlyph.Glyph = NavigationGlyphFor(tag) is { Length: > 0 } helpGlyph
-            ? helpGlyph
-            : NavigationGlyphFor("help");
 
         var section = HelpSectionFor(tag);
         var showAll = section is null;
@@ -6622,10 +6591,15 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         if (!MicaController.IsSupported())
         {
+            SystemBackdrop = null;
             return;
         }
 
-        SystemBackdrop = new MicaBackdrop { Kind = MicaKind.Base };
+        if (SystemBackdrop is not MicaBackdrop)
+        {
+            SystemBackdrop = new MicaBackdrop { Kind = MicaKind.Base };
+        }
+
         WindowRoot.Background = null;
     }
 

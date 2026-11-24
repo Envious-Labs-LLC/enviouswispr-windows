@@ -753,7 +753,8 @@ public sealed class PostHogSentryTelemetryTests
             diagnosticsSection.Descendants().Where(e => e.Name.LocalName == "TextBlock"),
             textBlock => ((string?)textBlock.Attribute("Text"))?.Contains("Takes effect when EnviousWispr restarts", StringComparison.Ordinal) == true);
 
-        // OnboardingView must NOT contain any telemetry or crash-report toggle.
+        // OnboardingView must NOT contain any telemetry or crash-report toggle,
+        // and must accurately describe default-ON opt-out observability.
         var onboardingView = FindNamed(document, "OnboardingView");
         Assert.DoesNotContain(onboardingView.Descendants(), e => e.Name.LocalName == "ToggleSwitch");
         var onboardingText = string.Join(
@@ -761,8 +762,9 @@ public sealed class PostHogSentryTelemetryTests
             onboardingView.Descendants()
                 .Select(e => (string?)e.Attribute("Text") ?? (string?)e.Attribute("Content"))
                 .Where(s => !string.IsNullOrWhiteSpace(s)));
-        Assert.DoesNotContain("usage metrics", onboardingText, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("crash reports", onboardingText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Audio stays on this PC; dictated text stays local unless you turn on cloud polish.", onboardingText, StringComparison.Ordinal);
+        Assert.Contains("on by default", onboardingText, StringComparison.Ordinal);
+        Assert.Contains("can be turned off anytime in Diagnostics", onboardingText, StringComparison.Ordinal);
         Assert.DoesNotContain("PostHog", onboardingText, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Sentry", onboardingText, StringComparison.OrdinalIgnoreCase);
     }
