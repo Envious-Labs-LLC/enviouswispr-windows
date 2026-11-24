@@ -23,6 +23,7 @@ using EnviousWispr.Core.Settings;
 using EnviousWispr.LLM;
 using EnviousWispr.Pipeline;
 using EnviousWispr.Presentation;
+using EnviousWispr.Services.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation.Peers;
@@ -312,7 +313,22 @@ public sealed partial class MainWindow : Window, IDisposable
     // Every modifier held together since the candidate began, so two held at once can be offered as a set
     // (Ctrl+Win). Cleared with the candidate. Ref: #66.
     private HotkeyModifiers _keybindModifierSet;
+    private WindowsKeybindCaptureSession? _keybindCaptureSession;
+    private KeybindCaptureSlot? _capturingSlot;
+    private TextBox? _capturingBox;
+    private Button? _capturingButton;
+    private string _capturingPreviousValue = string.Empty;
+    private bool _isUpdatingCaptureDisplay;
     private CancellationTokenSource? _soundPreviewCancellation;
+
+    private enum KeybindCaptureSlot
+    {
+        Recording,
+        Cancel,
+        QuickAdd,
+        PasteLast,
+        CopyLast,
+    }
     private int _recordingModeIndex;
     private RecordingSoundPairing _selectedRecordingSoundPairing = RecordingSoundPairing.WhisperTick;
     private readonly Dictionary<RecordingSoundPairing, Border> _chimeCards = new();
@@ -391,6 +407,26 @@ public sealed partial class MainWindow : Window, IDisposable
             box.LostFocus += (_, _) =>
             {
                 ForgetKeybindChord();
+                if (_keybindCaptureSession is not null && ReferenceEquals(box, _capturingBox))
+                {
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        if (_keybindCaptureSession is null || _capturingBox is null)
+                        {
+                            return;
+                        }
+
+                        var focused = Content?.XamlRoot is { } root
+                            ? FocusManager.GetFocusedElement(root)
+                            : null;
+                        if (!ReferenceEquals(focused, _capturingBox) && !ReferenceEquals(focused, _capturingButton))
+                        {
+                            CancelKeybindCapture();
+                        }
+                    });
+                    return;
+                }
+
                 KeybindCaptureActiveChanged?.Invoke(false);
                 _ = TriggerAutoSaveAsync();
             };
@@ -447,6 +483,7 @@ public sealed partial class MainWindow : Window, IDisposable
             "Brand",
             "EnviousWispr.ico"));
         Activated += OnWindowActivated;
+        Closed += (_, _) => CancelKeybindCapture();
 
         // BUILT FROM WHAT WAS WRITTEN DOWN, so somebody who has already been asked three times about
         // Spanish is not asked three more times because they restarted the app.
@@ -681,6 +718,7 @@ public sealed partial class MainWindow : Window, IDisposable
         // release goes to another window and would never reach the field. Ref: #66 review.
         if (args.WindowActivationState == WindowActivationState.Deactivated)
         {
+            CancelKeybindCapture();
             ForgetKeybindChord();
             OnWindowActivationChangedForOllama(active: false);
             return;
@@ -756,12 +794,12 @@ public sealed partial class MainWindow : Window, IDisposable
         SessionStatusChanged?.Invoke(status);
         var overlayState = status.State;
         HandleRecordingSoundTransition(overlayState);
-        if (overlayState == DictationOverlayState.Recording)
+        if (overlayState is DictationOverlayState.Recording or DictationOverlayState.Processing)
         {
-            // A DICTATION OUTRANKS A TEST, ALWAYS. Somebody who presses their record key wants to
-            // dictate, and a test still holding the device would either fail their recording or be
-            // failed by it.
+            // A DICTATION OUTRANKS A TEST OR CAPTURE, ALWAYS. Somebody who presses their record key wants to
+            // dictate, and a test or capture hook still active would interfere with their recording.
             CancelMicrophoneTest();
+            CancelKeybindCapture();
         }
 
         _currentOverlayState = overlayState;
@@ -1517,14 +1555,16 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private void HandsFreeGestureButton_Click(object sender, RoutedEventArgs e)
     {
+        CancelKeybindCapture();
         HotkeyTextBox.Focus(FocusState.Programmatic);
         HotkeyTextBox.Text = HandsFreeRecordBinding.Suggested;
+        _ = TriggerAutoSaveAsync();
     }
 
     /// <summary>Auto-saves settings changes quietly whenever a control is updated.</summary>
     private async Task TriggerAutoSaveAsync()
     {
-        if (_isApplyingSettings)
+        if (_isApplyingSettings || _keybindCaptureSession is not null)
         {
             return;
         }
@@ -2174,7 +2214,6 @@ public sealed partial class MainWindow : Window, IDisposable
 
         if (AutoStopToggle is not null)
         {
-            AutoStopToggle.IsEnabled = modeIndex != 0;
             UpdateAutoStopAvailability();
         }
 
@@ -2225,24 +2264,237 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void ChangeHotkeyButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { Tag: string tag })
+        if (sender is not Button { Tag: string tag } ||
+            TryResolveCaptureSlot(tag, out var slot, out var box, out var button) is false)
         {
-            var box = tag switch
-            {
-                "Hotkey" => HotkeyTextBox,
-                "CancelHotkey" => CancelHotkeyTextBox,
-                "QuickAdd" => QuickAddHotkeyTextBox,
-                "PasteLast" => PasteLastHotkeyTextBox,
-                "CopyLast" => CopyLastHotkeyTextBox,
-                _ => null,
-            };
-            if (box is not null)
-            {
-                box.Focus(FocusState.Programmatic);
-                box.SelectAll();
-            }
+            return;
+        }
+
+        if (_capturingSlot == slot)
+        {
+            CancelKeybindCapture();
+            return;
+        }
+
+        StartKeybindCapture(slot, box, button);
+    }
+
+    private void HotkeyBoxTapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (sender is not TextBox box ||
+            TryResolveCaptureSlot(box, out var slot, out var button) is false)
+        {
+            return;
+        }
+
+        if (_capturingSlot == slot)
+        {
+            return;
+        }
+
+        StartKeybindCapture(slot, box, button);
+    }
+
+    private bool TryResolveCaptureSlot(string tag, out KeybindCaptureSlot slot, out TextBox box, out Button button)
+    {
+        switch (tag)
+        {
+            case "Hotkey":
+                slot = KeybindCaptureSlot.Recording;
+                box = HotkeyTextBox;
+                button = ChangeHotkeyButton;
+                return true;
+            case "CancelHotkey":
+                slot = KeybindCaptureSlot.Cancel;
+                box = CancelHotkeyTextBox;
+                button = ChangeCancelHotkeyButton;
+                return true;
+            case "QuickAdd":
+                slot = KeybindCaptureSlot.QuickAdd;
+                box = QuickAddHotkeyTextBox;
+                button = ChangeQuickAddHotkeyButton;
+                return true;
+            case "PasteLast":
+                slot = KeybindCaptureSlot.PasteLast;
+                box = PasteLastHotkeyTextBox;
+                button = ChangePasteLastHotkeyButton;
+                return true;
+            case "CopyLast":
+                slot = KeybindCaptureSlot.CopyLast;
+                box = CopyLastHotkeyTextBox;
+                button = ChangeCopyLastHotkeyButton;
+                return true;
+            default:
+                slot = default;
+                box = null!;
+                button = null!;
+                return false;
         }
     }
+
+    private bool TryResolveCaptureSlot(TextBox box, out KeybindCaptureSlot slot, out Button button)
+    {
+        if (ReferenceEquals(box, HotkeyTextBox))
+        {
+            slot = KeybindCaptureSlot.Recording;
+            button = ChangeHotkeyButton;
+            return true;
+        }
+
+        if (ReferenceEquals(box, CancelHotkeyTextBox))
+        {
+            slot = KeybindCaptureSlot.Cancel;
+            button = ChangeCancelHotkeyButton;
+            return true;
+        }
+
+        if (ReferenceEquals(box, QuickAddHotkeyTextBox))
+        {
+            slot = KeybindCaptureSlot.QuickAdd;
+            button = ChangeQuickAddHotkeyButton;
+            return true;
+        }
+
+        if (ReferenceEquals(box, PasteLastHotkeyTextBox))
+        {
+            slot = KeybindCaptureSlot.PasteLast;
+            button = ChangePasteLastHotkeyButton;
+            return true;
+        }
+
+        if (ReferenceEquals(box, CopyLastHotkeyTextBox))
+        {
+            slot = KeybindCaptureSlot.CopyLast;
+            button = ChangeCopyLastHotkeyButton;
+            return true;
+        }
+
+        slot = default;
+        button = null!;
+        return false;
+    }
+
+    private void StartKeybindCapture(KeybindCaptureSlot slot, TextBox box, Button button)
+    {
+        if (_currentOverlayState is DictationOverlayState.Recording or DictationOverlayState.Processing)
+        {
+            ShowKeybindCaptureHint("Stop the current recording before changing shortcuts.");
+            return;
+        }
+
+        CancelKeybindCapture();
+
+        _capturingSlot = slot;
+        _capturingBox = box;
+        _capturingButton = button;
+        _capturingPreviousValue = box.Text;
+        KeybindCaptureActiveChanged?.Invoke(true);
+
+        _isUpdatingCaptureDisplay = true;
+        try
+        {
+            box.Text = "Listening...";
+            box.SelectionStart = box.Text.Length;
+        }
+        finally
+        {
+            _isUpdatingCaptureDisplay = false;
+        }
+
+        box.BorderBrush = KeybindListeningProbe.Background;
+        box.Background = KeybindListeningProbe.BorderBrush;
+        button.Content = "Cancel";
+        SetLiveRegion(KeybindCaptureHintText, string.Empty, Visibility.Collapsed);
+        box.Focus(FocusState.Programmatic);
+
+        try
+        {
+            _keybindCaptureSession = new WindowsKeybindCaptureSession(
+                allowModifierOnly: slot == KeybindCaptureSlot.Recording,
+                allowEscapeAsBinding: slot == KeybindCaptureSlot.Cancel,
+                allowClear: slot is KeybindCaptureSlot.PasteLast or KeybindCaptureSlot.CopyLast,
+                onCommitted: gestureText => CompleteKeybindCapture(slot, gestureText),
+                onCancelled: CancelKeybindCapture,
+                onInvalidAttempt: ShowKeybindCaptureHint,
+                dispatchToUi: action => DispatcherQueue.TryEnqueue(() => action()));
+        }
+        catch (Win32Exception)
+        {
+            CancelKeybindCapture();
+            ShowKeybindCaptureHint("Could not start keyboard capture. Try again.");
+        }
+    }
+
+    private void CompleteKeybindCapture(KeybindCaptureSlot slot, string gestureText)
+    {
+        if (_capturingSlot != slot || _capturingBox is not { } box)
+        {
+            return;
+        }
+
+        StopKeybindCaptureSession();
+        box.Text = gestureText;
+        box.SelectionStart = box.Text.Length;
+        RefreshKeybindConflicts();
+        KeybindCaptureActiveChanged?.Invoke(false);
+        _ = TriggerAutoSaveAsync();
+    }
+
+    private void CancelKeybindCapture()
+    {
+        var box = _capturingBox;
+        var hasSession = _keybindCaptureSession is not null || box is not null;
+        if (!hasSession)
+        {
+            return;
+        }
+
+        var previous = _capturingPreviousValue;
+        StopKeybindCaptureSession();
+
+        if (box is not null)
+        {
+            _isUpdatingCaptureDisplay = true;
+            try
+            {
+                box.Text = previous;
+                box.SelectionStart = box.Text.Length;
+            }
+            finally
+            {
+                _isUpdatingCaptureDisplay = false;
+            }
+        }
+
+        RefreshKeybindConflicts();
+        KeybindCaptureActiveChanged?.Invoke(false);
+    }
+
+    private void StopKeybindCaptureSession()
+    {
+        _keybindCaptureSession?.Dispose();
+        _keybindCaptureSession = null;
+
+        if (_capturingBox is { } box)
+        {
+            box.ClearValue(Control.BorderBrushProperty);
+            box.Background = KeybindDefaultBgProbe.Background;
+        }
+
+        if (_capturingButton is { } button)
+        {
+            button.Content = "Change";
+        }
+
+        _capturingSlot = null;
+        _capturingBox = null;
+        _capturingButton = null;
+        _capturingPreviousValue = string.Empty;
+        SetLiveRegion(KeybindCaptureHintText, string.Empty, Visibility.Collapsed);
+    }
+
+    private void ShowKeybindCaptureHint(string hint) =>
+        SetLiveRegion(KeybindCaptureHintText, hint, Visibility.Visible);
 
     private void EnableAiPolishToggle_Toggled(object sender, RoutedEventArgs e)
     {
@@ -4350,8 +4602,15 @@ public sealed partial class MainWindow : Window, IDisposable
         _ = TriggerAutoSaveAsync();
     }
 
-    private void UpdateAutoStopAvailability() =>
+    private void UpdateAutoStopAvailability()
+    {
+        if (AutoStopSecondsRow is not null)
+        {
+            AutoStopSecondsRow.Visibility = AutoStopToggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         AutoStopSecondsBox.IsEnabled = AutoStopToggle.IsOn;
+    }
 
     /// <summary>The five shortcut fields with the roles the presenter's Save checks them under: the live warning and the refusal share one detector and one set of names.</summary>
     private (TextBox Box, string Role)[] KeybindFields()
@@ -4384,6 +4643,11 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private void RefreshKeybindConflicts()
     {
+        if (_isUpdatingCaptureDisplay)
+        {
+            return;
+        }
+
         // No existence guard: every field here is built by InitializeComponent, and the only two
         // callers are a change event and the Save button, both of which run after it. Settings
         // load fills the three fields one at a time, which is harmless - a field still holding
@@ -4396,7 +4660,11 @@ public sealed partial class MainWindow : Window, IDisposable
 
         foreach (var field in fields)
         {
-            if (guilty.Contains(field.Role))
+            if (ReferenceEquals(field.Box, _capturingBox))
+            {
+                field.Box.BorderBrush = KeybindListeningProbe.Background;
+            }
+            else if (guilty.Contains(field.Role))
             {
                 // Read off a probe element rather than Application.Current.Resources, because the
                 // error brush lives in a theme dictionary: indexing the app resources for one
@@ -4428,6 +4696,12 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         if (sender is not TextBox box)
         {
+            return;
+        }
+
+        if (_keybindCaptureSession is not null)
+        {
+            e.Handled = true;
             return;
         }
 
@@ -4547,11 +4821,6 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        if (!isSet && e.Key == VirtualKey.Menu)
-        {
-            return;
-        }
-
         // A LONE MODIFIER IS A RECORDING KEY'S SHAPE, not a last-dictation shortcut's: those fire once per press and
         // need an ordinary key, so the tap is not offered to their fields (Save would refuse it). Ref: #206.
         // ONLY THE RECORDING KEY MAY BE A SET: the cancel and Add-a-word keys need a key of their own, and one without
@@ -4631,6 +4900,16 @@ public sealed partial class MainWindow : Window, IDisposable
         if (IsHeld(VirtualKey.RightControl))
         {
             return "RightCtrl";
+        }
+
+        if (IsHeld(VirtualKey.LeftMenu))
+        {
+            return "LeftAlt";
+        }
+
+        if (IsHeld(VirtualKey.RightMenu))
+        {
+            return "RightAlt";
         }
 
         if (IsHeld(VirtualKey.LeftShift))
@@ -5662,6 +5941,11 @@ public sealed partial class MainWindow : Window, IDisposable
         {
             ConfigureHelpPage(resolvedTag);
             ScrollPageToTop(HelpPage);
+        }
+
+        if (SettingsPage.Visibility != Visibility.Visible || KeybindsSection.Visibility != Visibility.Visible)
+        {
+            CancelKeybindCapture();
         }
 
         foreach (var page in Pages())

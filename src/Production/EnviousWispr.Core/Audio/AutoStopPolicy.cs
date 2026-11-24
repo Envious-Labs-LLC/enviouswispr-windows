@@ -18,9 +18,10 @@ public enum AutoStopDecision
 /// product has: dictation works one hundred percent of the time it physically can. Every decision
 /// below is shaped by that, and where the two pull against each other, not stopping wins.
 ///
-/// SO IT ONLY EVER APPLIES IN TOGGLE MODE. In push-to-talk the user is holding the key and the
-/// release IS the signal; ending a recording underneath a held key would take the decision away
-/// from someone who is actively making it.
+/// SO IT ONLY APPLIES TO HANDS-FREE RECORDINGS (Toggle mode, or double-tap hands-free in
+/// Push-to-Talk mode). While the user is holding a key, the release IS their own live decision;
+/// ending a recording underneath a held key would take the decision away from someone actively
+/// making it.
 ///
 /// AND IT NEVER FIRES BEFORE ANYONE HAS SPOKEN. A user who starts a toggle recording and then
 /// thinks for four seconds has not finished - they have not begun. Without this clause the
@@ -48,8 +49,9 @@ public static class AutoStopPolicy
     /// Whether a recording that has run this way should now end.
     /// </summary>
     /// <param name="enabled">The user's setting. Off means this never returns Stop.</param>
-    /// <param name="isToggleMode">
-    /// False in push-to-talk, where the held key is the user's own live decision.
+    /// <param name="isHandsFreeOrToggle">
+    /// True in Toggle mode or a hands-free double-tap recording; false for a held push-to-talk key,
+    /// where the held key is the user's own live decision.
     /// </param>
     /// <param name="hasHeardSpeech">
     /// Whether any speech has been detected at all in this recording so far.
@@ -61,12 +63,12 @@ public static class AutoStopPolicy
     /// </param>
     public static AutoStopDecision Decide(
         bool enabled,
-        bool isToggleMode,
+        bool isHandsFreeOrToggle,
         bool hasHeardSpeech,
         TimeSpan trailingSilence,
         TimeSpan requiredSilence)
     {
-        if (!enabled || !isToggleMode || !hasHeardSpeech)
+        if (!enabled || !isHandsFreeOrToggle || !hasHeardSpeech)
         {
             return AutoStopDecision.KeepRecording;
         }

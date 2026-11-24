@@ -138,6 +138,8 @@
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
         <Border x:Name="ThemeColorProbe" Width="0" Height="0" IsHitTestVisible="False" Background="{ThemeResource BrandTextPrimaryBrush}" />
         <Border x:Name="KeybindErrorProbe" Width="0" Height="0" IsHitTestVisible="False" Background="{ThemeResource BrandErrorBrush}" />
+        <Border x:Name="KeybindListeningProbe" Width="0" Height="0" IsHitTestVisible="False" Background="{ThemeResource BrandAccentBrush}" BorderBrush="{ThemeResource BrandAccentLightBrush}" />
+        <Border x:Name="KeybindDefaultBgProbe" Width="0" Height="0" IsHitTestVisible="False" Background="{ThemeResource BrandPageBgBrush}" />
         <TitleBar x:Name="AppTitleBar" AutomationProperties.Name="EnviousWispr window title" IsTabStop="False" Title="EnviousWispr" Subtitle="Private voice dictation for Windows">
             <TitleBar.LeftHeader>
                 <Image Width="31" Height="24" AutomationProperties.AccessibilityView="Raw" Source="Assets/Brand/EnviousWisprMark.svg" VerticalAlignment="Center" />
@@ -1019,16 +1021,16 @@
                                             </StackPanel>
                                         </Border>
                                     </Grid>
-                                    <!-- Stop recording on silence (Toggle mode only) -->
+                                    <!-- Stop recording on silence -->
                                     <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                         <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE916;" />
                                         <StackPanel Grid.Column="1" Background="{ThemeResource BrandHitTestBrush}" Spacing="{StaticResource BrandSpacingXs}" Tapped="SettingRow_Tapped">
                                             <TextBlock x:Name="AutoStopToggleLabel" AutomationProperties.AccessibilityView="Raw" Style="{StaticResource BrandRowLabelStyle}" Text="Stop recording when I stop speaking" TextWrapping="Wrap" />
-                                            <ToggleSwitch AutomationProperties.LabeledBy="{x:Bind AutoStopToggleLabel, Mode=OneTime}" HorizontalAlignment="Left" x:Name="AutoStopToggle" AutomationProperties.HelpText="Only applies in Toggle mode. EnviousWispr never ends a recording you are holding a key for, and never before you have said anything." Style="{StaticResource BrandToggleSwitchStyle}" Toggled="AutoStopToggle_Toggled" />
+                                            <ToggleSwitch AutomationProperties.LabeledBy="{x:Bind AutoStopToggleLabel, Mode=OneTime}" HorizontalAlignment="Left" x:Name="AutoStopToggle" AutomationProperties.HelpText="Automatically finishes hands-free or toggle recordings after a pause. Never cuts off a key you are holding." Style="{StaticResource BrandToggleSwitchStyle}" Toggled="AutoStopToggle_Toggled" />
                                         </StackPanel>
                                     </Grid>
-                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                    <Grid x:Name="AutoStopSecondsRow" ColumnSpacing="{StaticResource BrandSpacingM}">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                         <FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE823;" />
                                         <NumberBox x:Name="AutoStopSecondsBox" Grid.Column="1" AutomationProperties.HelpText="How long a pause has to last before the recording ends. Shorter than 1.5 seconds is treated as 1.5, because ordinary speech contains longer pauses than that." Header="Seconds of silence before stopping" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" HorizontalAlignment="Stretch" LargeChange="1" Maximum="30" Minimum="1.5" SmallChange="0.5" SpinButtonPlacementMode="Inline" ValidationMode="InvalidInputOverwritten" />
@@ -1048,7 +1050,7 @@
                                             <Button x:Name="HandsFreeGestureButton" Click="HandsFreeGestureButton_Click" Content="Use Right Ctrl" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" AutomationProperties.HelpText="Sets the recording keybind to the right Control key, which unlocks the hands-free gestures." Margin="0,4,0,0" />
                                         </StackPanel>
                                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
-                                            <TextBox x:Name="HotkeyTextBox" IsReadOnly="True" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" TextChanged="HotkeyBoxTextChanged" MaxLength="64" PlaceholderText="Ctrl+Win" Width="100" TextAlignment="Center" CornerRadius="14" Padding="8,4,8,4" FontSize="14" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandControlBorderBrush}" BorderThickness="1" />
+                                            <TextBox x:Name="HotkeyTextBox" IsReadOnly="True" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" Tapped="HotkeyBoxTapped" TextChanged="HotkeyBoxTextChanged" MaxLength="64" PlaceholderText="Ctrl+Win" MinWidth="128" TextAlignment="Center" CornerRadius="14" Padding="14,5,14,5" FontSize="14" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandControlBorderBrush}" BorderThickness="1" />
                                             <Button x:Name="ChangeHotkeyButton" Click="ChangeHotkeyButton_Click" Tag="Hotkey" Content="Change" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
                                         </StackPanel>
                                     </Grid>
@@ -1065,7 +1067,7 @@
                                             <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Cancels the current recording." TextWrapping="Wrap" />
                                         </StackPanel>
                                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
-                                            <TextBox x:Name="CancelHotkeyTextBox" IsReadOnly="True" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" TextChanged="HotkeyBoxTextChanged" MaxLength="64" PlaceholderText="Escape" Width="100" TextAlignment="Center" CornerRadius="14" Padding="8,4,8,4" FontSize="14" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandControlBorderBrush}" BorderThickness="1" />
+                                            <TextBox x:Name="CancelHotkeyTextBox" IsReadOnly="True" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" Tapped="HotkeyBoxTapped" TextChanged="HotkeyBoxTextChanged" MaxLength="64" PlaceholderText="Escape" MinWidth="128" TextAlignment="Center" CornerRadius="14" Padding="14,5,14,5" FontSize="14" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandControlBorderBrush}" BorderThickness="1" />
                                             <Button x:Name="ChangeCancelHotkeyButton" Click="ChangeHotkeyButton_Click" Tag="CancelHotkey" Content="Change" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
                                         </StackPanel>
                                     </Grid>
@@ -1094,7 +1096,7 @@
                                             <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Select a misheard word anywhere, then press these keys." TextWrapping="Wrap" />
                                         </StackPanel>
                                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
-                                            <TextBox x:Name="QuickAddHotkeyTextBox" IsReadOnly="True" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" TextChanged="HotkeyBoxTextChanged" MaxLength="64" PlaceholderText="Ctrl+Alt+W" Width="100" TextAlignment="Center" CornerRadius="14" Padding="8,4,8,4" FontSize="14" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandControlBorderBrush}" BorderThickness="1" />
+                                            <TextBox x:Name="QuickAddHotkeyTextBox" IsReadOnly="True" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" Tapped="HotkeyBoxTapped" TextChanged="HotkeyBoxTextChanged" MaxLength="64" PlaceholderText="Ctrl+Alt+W" MinWidth="128" TextAlignment="Center" CornerRadius="14" Padding="14,5,14,5" FontSize="14" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandControlBorderBrush}" BorderThickness="1" />
                                             <Button x:Name="ChangeQuickAddHotkeyButton" Click="ChangeHotkeyButton_Click" Tag="QuickAdd" Content="Change" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
                                         </StackPanel>
                                     </Grid>
@@ -1111,7 +1113,7 @@
                                             <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Pastes your last dictation." TextWrapping="Wrap" />
                                         </StackPanel>
                                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
-                                            <TextBox x:Name="PasteLastHotkeyTextBox" IsReadOnly="True" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" TextChanged="HotkeyBoxTextChanged" MaxLength="64" PlaceholderText="None" Width="100" TextAlignment="Center" CornerRadius="14" Padding="8,4,8,4" FontSize="14" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandControlBorderBrush}" BorderThickness="1" />
+                                            <TextBox x:Name="PasteLastHotkeyTextBox" IsReadOnly="True" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" Tapped="HotkeyBoxTapped" TextChanged="HotkeyBoxTextChanged" MaxLength="64" PlaceholderText="None" MinWidth="128" TextAlignment="Center" CornerRadius="14" Padding="14,5,14,5" FontSize="14" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandControlBorderBrush}" BorderThickness="1" />
                                             <Button x:Name="ChangePasteLastHotkeyButton" Click="ChangeHotkeyButton_Click" Tag="PasteLast" Content="Change" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
                                         </StackPanel>
                                     </Grid>
@@ -1128,10 +1130,11 @@
                                             <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Copies your last dictation." TextWrapping="Wrap" />
                                         </StackPanel>
                                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
-                                            <TextBox x:Name="CopyLastHotkeyTextBox" IsReadOnly="True" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" TextChanged="HotkeyBoxTextChanged" MaxLength="64" PlaceholderText="None" Width="100" TextAlignment="Center" CornerRadius="14" Padding="8,4,8,4" FontSize="14" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandControlBorderBrush}" BorderThickness="1" />
+                                            <TextBox x:Name="CopyLastHotkeyTextBox" IsReadOnly="True" KeyDown="HotkeyBoxKeyDown" KeyUp="HotkeyBoxKeyUp" Tapped="HotkeyBoxTapped" TextChanged="HotkeyBoxTextChanged" MaxLength="64" PlaceholderText="None" MinWidth="128" TextAlignment="Center" CornerRadius="14" Padding="14,5,14,5" FontSize="14" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandControlBorderBrush}" BorderThickness="1" />
                                             <Button x:Name="ChangeCopyLastHotkeyButton" Click="ChangeHotkeyButton_Click" Tag="CopyLast" Content="Change" Style="{StaticResource BrandQuietButtonStyle}" VerticalAlignment="Center" />
                                         </StackPanel>
                                     </Grid>
+                                    <TextBlock x:Name="KeybindCaptureHintText" AutomationProperties.LiveSetting="Polite" Foreground="{ThemeResource BrandAccentBrush}" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" Visibility="Collapsed" />
                                     <TextBlock x:Name="KeybindConflictText" AutomationProperties.LiveSetting="Assertive" Foreground="{ThemeResource BrandErrorBrush}" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" Visibility="Collapsed" />
                                 </StackPanel>
                             </Border>

@@ -762,15 +762,15 @@ public sealed partial class DesignSystemTokenTests
             DeclarationTextOf(effects, "Post"),
             StringComparison.Ordinal);
         Assert.Contains(
-            "coordinator.SubmitAsync(signal, forSession)",
+            "coordinator.SubmitAsync(signal, forSession, isHandsFree)",
             DeclarationTextOf(composition, "HandAsync"),
             StringComparison.Ordinal);
         Assert.Contains(
-            "_queue.HandAsync(signal, forSession: null)",
+            "_queue.HandAsync(signal, forSession: null, isHandsFree)",
             DeclarationTextOf(composition, "SubmitAsync"),
             StringComparison.Ordinal);
         Assert.Contains(
-            "_runtime.SubmitAsync(args.Signal)",
+            "_runtime.SubmitAsync(args.Signal, args.IsHandsFree)",
             DeclarationTextOf(shell, "OnPushToTalkSignalled"),
             StringComparison.Ordinal);
     }

@@ -70,6 +70,7 @@ public partial class App : Application, IAsyncDisposable
     private readonly DeterministicTextPipeline _deterministicTextPipeline = new();
     private readonly SessionRuntime _runtime;
     private SingleInstanceLock? _singleInstanceLock;
+    private SingleInstanceLock? _globalHotkeyLock;
     private SingleInstanceActivationChannel? _activationChannel;
     private WindowsSystemLifecycleMonitor? _lifecycleMonitor;
     private WindowsPushToTalkHook? _pushToTalkHook;
@@ -225,10 +226,13 @@ public partial class App : Application, IAsyncDisposable
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
-        if (!SingleInstanceLock.TryAcquire(_releaseIdentity.SingleInstanceKey, out _singleInstanceLock))
+        var instanceKey = SingleInstanceLock.ResolveKey(
+            _releaseIdentity.SingleInstanceKey,
+            Environment.GetEnvironmentVariable("ENVIOUSWISPR_DATA_DIRECTORY"));
+        if (!SingleInstanceLock.TryAcquire(instanceKey, out _singleInstanceLock))
         {
             var activated = await SingleInstanceActivationChannel.RequestActivationAsync(
-                _releaseIdentity.SingleInstanceKey,
+                instanceKey,
                 TimeSpan.FromSeconds(2)).ConfigureAwait(true);
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
@@ -239,7 +243,7 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        _activationChannel = new SingleInstanceActivationChannel(_releaseIdentity.SingleInstanceKey);
+        _activationChannel = new SingleInstanceActivationChannel(instanceKey);
         _activationChannel.ActivationRequested += OnDuplicateActivationRequested;
         _activationChannel.Start();
 
@@ -1328,6 +1332,9 @@ public partial class App : Application, IAsyncDisposable
                     _pushToTalkHook = null;
                     await hook.DisposeAsync().ConfigureAwait(true);
                 }
+
+                _globalHotkeyLock?.Dispose();
+                _globalHotkeyLock = null;
             }),
         ],
         ShutDownSession: _sessionCoordinator is { } coordinator ? budget => coordinator.ShutdownAsync(budget) : null,
@@ -1544,7 +1551,47 @@ public partial class App : Application, IAsyncDisposable
 
     private void ConfigurePushToTalk(DictationPreferences preferences)
     {
-        if (!WindowsPushToTalkHook.TryCreate(
+        var disableGlobalHotkey = string.Equals(
+            Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_DISABLE_GLOBAL_HOTKEY"),
+            "1",
+            StringComparison.Ordinal);
+        var customDataDirectory = Environment.GetEnvironmentVariable("ENVIOUSWISPR_DATA_DIRECTORY");
+        var isIsolatedDataDirectory = !string.IsNullOrWhiteSpace(customDataDirectory) &&
+            !string.Equals(
+                SingleInstanceLock.ResolveKey(_releaseIdentity.SingleInstanceKey, customDataDirectory),
+                _releaseIdentity.SingleInstanceKey,
+                StringComparison.Ordinal);
+        var globalHotkeyKey = $"{_releaseIdentity.SingleInstanceKey}.GlobalHotkey";
+
+        var suppressGlobalHook = false;
+        if (disableGlobalHotkey)
+        {
+            suppressGlobalHook = true;
+        }
+        else if (isIsolatedDataDirectory)
+        {
+            // Isolated data-directory instances (such as UI-capture windows) must never claim
+            // .GlobalHotkey ahead of the primary app, and must stand down when a primary instance
+            // already holds either the base lock or the global hotkey lock.
+            suppressGlobalHook =
+                SingleInstanceLock.IsHeld(_releaseIdentity.SingleInstanceKey) ||
+                SingleInstanceLock.IsHeld(globalHotkeyKey);
+        }
+        else
+        {
+            SingleInstanceLock.TryAcquire(globalHotkeyKey, out _globalHotkeyLock);
+        }
+
+        if (suppressGlobalHook)
+        {
+            _pushToTalkHook = null;
+            _window?.SetHotkeyUnavailable("Secondary window: global hotkeys remain owned by the running EnviousWispr instance");
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.HotkeyFailed,
+                AppFailureCategory.HotkeyConflict));
+        }
+        else if (!WindowsPushToTalkHook.TryCreate(
                 preferences.PushToTalkGesture,
                 preferences.RecordingMode,
                 preferences.CancelGesture,
@@ -1555,6 +1602,8 @@ public partial class App : Application, IAsyncDisposable
                 out var error) ||
             _pushToTalkHook is null)
         {
+            _globalHotkeyLock?.Dispose();
+            _globalHotkeyLock = null;
             _window?.SetHotkeyUnavailable(HotkeyFailureStatus(error));
             _logger.Write(new AppLogEntry(
                 DateTimeOffset.UtcNow,
@@ -1650,37 +1699,40 @@ public partial class App : Application, IAsyncDisposable
                 DictationActivityChanged: active =>
                     PostToLiveWindow(window => window.SetDictationActive(active))),
             TimeProvider.System));
-        _pushToTalkHook.Signalled += OnPushToTalkSignalled;
-        // A saved keybind builds a NEW hook, which starts armed and knows nothing about a capture
-        // field that is still focused. Carrying the state across is what stops the hook re-arming
-        // underneath a field the user is still standing in.
-        _pushToTalkHook.SetCapturingKeybind(_keybindCaptureActive);
-        _window?.SetHotkeyReady(
-            _pushToTalkHook.Gesture.ToString(),
-            _pushToTalkHook.RecordingMode);
-        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.HotkeyReady));
-
-        // A LAST-DICTATION SHORTCUT THAT COULD NOT LISTEN SAYS SO, by its own state, and costs nothing else: the
-        // recording key is already listening above. The tray shows the shortcuts that are. Ref: #206.
-        foreach (var state in new[] { _pushToTalkHook.PasteLastState, _pushToTalkHook.CopyLastState })
+        if (_pushToTalkHook is not null)
         {
-            if (state is not (LastDictationShortcutState.Unset or LastDictationShortcutState.Bound))
-            {
-                _logger.Write(new AppLogEntry(
-                    DateTimeOffset.UtcNow,
-                    AppEventCode.LastDictationShortcutUnavailable,
-                    state == LastDictationShortcutState.Unavailable
-                        ? AppFailureCategory.HotkeyConflict
-                        : AppFailureCategory.HotkeyUnavailable,
-                    ErrorCode: state == LastDictationShortcutState.Unavailable
-                        ? AppErrorCode.HotkeyConflict
-                        : AppErrorCode.HotkeyInvalid));
-            }
-        }
+            _pushToTalkHook.Signalled += OnPushToTalkSignalled;
+            // A saved keybind builds a NEW hook, which starts armed and knows nothing about a capture
+            // field that is still focused. Carrying the state across is what stops the hook re-arming
+            // underneath a field the user is still standing in.
+            _pushToTalkHook.SetCapturingKeybind(_keybindCaptureActive);
+            _window?.SetHotkeyReady(
+                _pushToTalkHook.Gesture.ToString(),
+                _pushToTalkHook.RecordingMode);
+            _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.HotkeyReady));
 
-        var pasteShortcut = _pushToTalkHook.PasteLastGesture?.ToString();
-        var copyShortcut = _pushToTalkHook.CopyLastGesture?.ToString();
-        PostToLiveWindow(_ => _trayIcon?.SetLastDictationShortcuts(pasteShortcut, copyShortcut));
+            // A LAST-DICTATION SHORTCUT THAT COULD NOT LISTEN SAYS SO, by its own state, and costs nothing else: the
+            // recording key is already listening above. The tray shows the shortcuts that are. Ref: #206.
+            foreach (var state in new[] { _pushToTalkHook.PasteLastState, _pushToTalkHook.CopyLastState })
+            {
+                if (state is not (LastDictationShortcutState.Unset or LastDictationShortcutState.Bound))
+                {
+                    _logger.Write(new AppLogEntry(
+                        DateTimeOffset.UtcNow,
+                        AppEventCode.LastDictationShortcutUnavailable,
+                        state == LastDictationShortcutState.Unavailable
+                            ? AppFailureCategory.HotkeyConflict
+                            : AppFailureCategory.HotkeyUnavailable,
+                        ErrorCode: state == LastDictationShortcutState.Unavailable
+                            ? AppErrorCode.HotkeyConflict
+                            : AppErrorCode.HotkeyInvalid));
+                }
+            }
+
+            var pasteShortcut = _pushToTalkHook.PasteLastGesture?.ToString();
+            var copyShortcut = _pushToTalkHook.CopyLastGesture?.ToString();
+            PostToLiveWindow(_ => _trayIcon?.SetLastDictationShortcuts(pasteShortcut, copyShortcut));
+        }
     }
 
     /// <summary>Drives the meters from a synthetic ramp, with no microphone in the loop.</summary>
@@ -2296,7 +2348,7 @@ public partial class App : Application, IAsyncDisposable
             return;
         }
 
-        _ = _runtime.SubmitAsync(args.Signal);
+        _ = _runtime.SubmitAsync(args.Signal, args.IsHandsFree);
     }
 
     private async void OnManualDictationToggleRequested()
@@ -2308,7 +2360,7 @@ public partial class App : Application, IAsyncDisposable
             var signal = isRecording ? PushToTalkSignal.Released : PushToTalkSignal.Pressed;
             if (_runtime is not null)
             {
-                await _runtime.SubmitAsync(signal).ConfigureAwait(false);
+                await _runtime.SubmitAsync(signal, isHandsFree: !isRecording).ConfigureAwait(false);
             }
         }
         catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))

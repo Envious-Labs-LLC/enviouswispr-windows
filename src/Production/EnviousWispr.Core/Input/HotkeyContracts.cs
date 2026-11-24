@@ -105,7 +105,7 @@ public static class HotkeyGestureParser
 
     private static bool IsOrdinaryKey(string key) =>
         !string.IsNullOrEmpty(key) &&
-        key is not ("RightCtrl" or "LeftCtrl" or "RightShift" or "LeftShift" or "RightWin" or "LeftWin");
+        key is not ("RightCtrl" or "LeftCtrl" or "RightAlt" or "LeftAlt" or "RightShift" or "LeftShift" or "RightWin" or "LeftWin");
 
     public static HotkeyGestureParseResult Parse(string? value)
     {
@@ -212,13 +212,12 @@ public static class HotkeyGestureParser
             // would accept one and nothing could ever produce it.
             //
             // SIDED ON PURPOSE, not "Ctrl on its own". A binding has to name one physical key, and
-            // it also lets a user keep the left Control they use for shortcuts while giving up the
-            // right one they never press.
-            //
-            // ALT IS ABSENT, matching the engine: a lone Alt tap already opens a window's menu bar,
-            // so binding to it would put this app in a fight with the shell over one gesture.
+            // it also lets a user keep the left Control/Alt they use for shortcuts while giving up
+            // the right one they never press.
             "RCTRL" or "RIGHTCTRL" => "RightCtrl",
             "LCTRL" or "LEFTCTRL" => "LeftCtrl",
+            "RALT" or "RIGHTALT" => "RightAlt",
+            "LALT" or "LEFTALT" => "LeftAlt",
             "RSHIFT" or "RIGHTSHIFT" => "RightShift",
             "LSHIFT" or "LEFTSHIFT" => "LeftShift",
             "RWIN" or "RIGHTWIN" => "RightWin",
@@ -283,7 +282,7 @@ public enum LastDictationShortcutState
     Unavailable,
 }
 
-public sealed record PushToTalkSignalEvent(PushToTalkSignal Signal);
+public sealed record PushToTalkSignalEvent(PushToTalkSignal Signal, bool IsHandsFree = false);
 
 public interface IGlobalPushToTalk : IAsyncDisposable
 {

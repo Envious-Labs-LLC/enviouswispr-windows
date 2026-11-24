@@ -55,6 +55,19 @@ public sealed class HeldModifierKeysTests
         Assert.Equal(HotkeyModifiers.Control, held.Observe(LeftControl, isKeyDown: false, _ => true));
     }
 
+    [Fact]
+    public void LeftAndRightAltAreTrackedPerSideAndCombinedAsAlt()
+    {
+        const uint leftAlt = 0xA4;
+        const uint rightAlt = 0xA5;
+        var held = new HeldModifierKeys();
+
+        Assert.Equal(HotkeyModifiers.Alt, held.Observe(leftAlt, isKeyDown: true, _ => false));
+        Assert.Equal(HotkeyModifiers.Alt, held.Observe(rightAlt, isKeyDown: true, key => key == leftAlt));
+        Assert.Equal(HotkeyModifiers.Alt, held.Observe(leftAlt, isKeyDown: false, _ => true));
+        Assert.Equal(HotkeyModifiers.None, held.Observe(rightAlt, isKeyDown: false, _ => true));
+    }
+
     /// <summary>A Ctrl+Win hold as the hook sees it starts a recording, and letting go ends it.</summary>
     [Fact]
     public void ACtrlWinHoldStartsARecording()

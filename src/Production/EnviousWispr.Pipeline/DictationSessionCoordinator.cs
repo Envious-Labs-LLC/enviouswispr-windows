@@ -109,7 +109,8 @@ public sealed record SessionCommand(
     RecordingStartContext? StartContext = null,
     SystemLifecycleTransition? Transition = null,
     DictationSessionId? TimedOutSession = null,
-    DictationSessionId? ForSession = null)
+    DictationSessionId? ForSession = null,
+    bool IsHandsFree = false)
 {
     public SessionCommand(PushToTalkSignal signal, RecordingStartContext? startContext = null)
         : this(SessionCommandKind.PushToTalk, signal, startContext)
@@ -547,13 +548,19 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
     /// <summary>
     /// Admits the signal synchronously and returns a task that completes once it has run or been refused.
     /// </summary>
-    public Task<SessionCommandResult> SubmitAsync(PushToTalkSignal signal) => SubmitAsync(signal, forSession: null);
+    public Task<SessionCommandResult> SubmitAsync(PushToTalkSignal signal) => SubmitAsync(signal, forSession: null, isHandsFree: false);
 
     /// <summary>
     /// Admits the signal on a recording's behalf: a terminal posted by a loop that was watching that
     /// recording, ignored when it runs if that recording is no longer the one in flight.
     /// </summary>
-    public Task<SessionCommandResult> SubmitAsync(PushToTalkSignal signal, DictationSessionId? forSession)
+    public Task<SessionCommandResult> SubmitAsync(PushToTalkSignal signal, DictationSessionId? forSession) =>
+        SubmitAsync(signal, forSession, isHandsFree: false);
+
+    public Task<SessionCommandResult> SubmitAsync(
+        PushToTalkSignal signal,
+        DictationSessionId? forSession,
+        bool isHandsFree)
     {
         if (signal is PushToTalkSignal.QuickAdd or PushToTalkSignal.PasteLast or PushToTalkSignal.CopyLast)
         {
@@ -563,7 +570,7 @@ public sealed class DictationSessionCoordinator : IAsyncDisposable
                 "Quick add and the last-dictation shortcuts are not dictation session commands.");
         }
 
-        return Submit(new SessionCommand(signal) with { ForSession = forSession });
+        return Submit(new SessionCommand(signal) with { ForSession = forSession, IsHandsFree = isHandsFree });
     }
 
     private Task<SessionCommandResult> Submit(SessionCommand command)

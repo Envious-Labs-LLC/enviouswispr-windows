@@ -215,12 +215,13 @@ public sealed class AutoStopMonitor : IAsyncDisposable
     /// <summary>The loop, so a test can wait for one that ends on its own rather than poll for it.</summary>
     internal Task? Loop => _loop;
 
-    /// <summary>Starts watching, unless the user has not asked or the capture cannot be sampled.</summary>
-    public void Start(DictationSessionId sessionId, DictationPreferences dictation)
+    /// <summary>Starts watching, unless the user has not asked, the recording is held, or the capture cannot be sampled.</summary>
+    public void Start(DictationSessionId sessionId, DictationPreferences dictation, bool isHandsFree = false)
     {
         ArgumentNullException.ThrowIfNull(dictation);
+        var isHandsFreeOrToggle = isHandsFree || dictation.RecordingMode == DictationRecordingMode.Toggle;
         if (!dictation.AutoStopEnabled ||
-            dictation.RecordingMode != DictationRecordingMode.Toggle ||
+            !isHandsFreeOrToggle ||
             _effects.Audio is not { } snapshots)
         {
             return;
@@ -287,7 +288,7 @@ public sealed class AutoStopMonitor : IAsyncDisposable
 
                 var decision = AutoStopPolicy.Decide(
                     dictation.AutoStopEnabled,
-                    dictation.RecordingMode == DictationRecordingMode.Toggle,
+                    isHandsFreeOrToggle: true,
                     heardSpeech,
                     segmenter.TrailingSilence(samples),
                     required);
