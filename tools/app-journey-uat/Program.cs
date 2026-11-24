@@ -3192,7 +3192,6 @@ static bool WaitForStoredWhisperLanguage(string profileDirectory, WhisperLanguag
             var loaded = store.LoadAsync().GetAwaiter().GetResult();
             if (loaded.Settings.Preferences.Dictation.WhisperLanguage == expected)
             {
-                Thread.Sleep(100);
                 return true;
             }
         }

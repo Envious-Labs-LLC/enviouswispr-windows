@@ -30,6 +30,26 @@ internal static class TranscriptionPageDriver
         {
             expander.Collapse();
         }
+
+        WaitForAppliedLanguage(picker, languageName, TimeSpan.FromSeconds(10));
+    }
+
+    private static void WaitForAppliedLanguage(AutomationElement picker, string languageName, TimeSpan timeout)
+    {
+        var timer = Stopwatch.StartNew();
+        while (timer.Elapsed < timeout)
+        {
+            if (string.Equals(picker.Current.ItemStatus, languageName, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            Thread.Sleep(100);
+        }
+
+        throw JourneyExpectationException.Instrument(
+            $"The running app did not apply Whisper language \"{languageName}\" within {timeout.TotalSeconds:0} seconds "
+            + $"(itemStatus=\"{picker.Current.ItemStatus}\").");
     }
 
     private static AutomationElement Find(int processId, string name, TimeSpan timeout)

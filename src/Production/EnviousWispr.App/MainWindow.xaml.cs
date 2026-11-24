@@ -4675,6 +4675,17 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         _settings = _session.Settings.Current;
         SettingsChanged?.Invoke(_settings);
+        SyncAppliedWhisperLanguageStatus(_settings.Preferences.Dictation.WhisperLanguage);
+    }
+
+    private void SyncAppliedWhisperLanguageStatus(WhisperLanguagePreference language)
+    {
+        var index = (int)language;
+        var appliedLabel = index >= 0 && index < WhisperLanguageComboBox.Items.Count &&
+            WhisperLanguageComboBox.Items[index] is string label
+                ? label
+                : language.ToString();
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(WhisperLanguageComboBox, appliedLabel);
     }
 
     private void UpdateHistoryListVisibility(string query, int itemCount)
@@ -4874,6 +4885,7 @@ public sealed partial class MainWindow : Window, IDisposable
             var preferences = _settings.Preferences;
             SelectChoice(FinalEngineChoices, (int)preferences.Dictation.FinalEngine);
             WhisperLanguageComboBox.SelectedIndex = (int)preferences.Dictation.WhisperLanguage;
+            SyncAppliedWhisperLanguageStatus(preferences.Dictation.WhisperLanguage);
             EnglishSpellingComboBox.SelectedIndex = (int)preferences.Dictation.EnglishSpelling;
             HotkeyTextBox.Text = preferences.Dictation.PushToTalkGesture;
             SetRecordingMode((int)preferences.Dictation.RecordingMode, triggerSave: false);

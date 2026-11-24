@@ -3552,8 +3552,20 @@ public sealed partial class DesignSystemTokenTests
         Assert.Contains("Whisper language", comboHeaders);
         Assert.Contains("\"Dictation Settings\"", driverSource, StringComparison.Ordinal);
         Assert.Contains("\"Whisper language\"", driverSource, StringComparison.Ordinal);
+        Assert.Contains("WaitForAppliedLanguage", driverSource, StringComparison.Ordinal);
+        Assert.Contains("picker.Current.ItemStatus", driverSource, StringComparison.Ordinal);
         Assert.DoesNotContain("\"Transcription\"", driverSource, StringComparison.Ordinal);
         Assert.DoesNotContain("\"Save settings\"", driverSource, StringComparison.Ordinal);
+
+        var mainWindowCode = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "src",
+            "Production",
+            "EnviousWispr.App",
+            "MainWindow.xaml.cs"));
+        var publishIndex = mainWindowCode.IndexOf("SettingsChanged?.Invoke(_settings);", StringComparison.Ordinal);
+        var syncStatusIndex = mainWindowCode.IndexOf("SyncAppliedWhisperLanguageStatus(_settings.Preferences.Dictation.WhisperLanguage);", StringComparison.Ordinal);
+        Assert.True(publishIndex >= 0 && syncStatusIndex > publishIndex);
     }
 
     [Fact]
