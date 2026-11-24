@@ -10,6 +10,7 @@ using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Credentials;
 using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Distribution;
+using EnviousWispr.Core.Feedback;
 using EnviousWispr.Core.History;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Polish;
@@ -562,6 +563,20 @@ public sealed partial class MainWindow : Window, IDisposable
     public event Action<bool>? StartupToggleRequested;
 
     public Func<Task<StartupRegistrationResult>>? LoadStartupRegistration { get; set; }
+
+    public Func<FeedbackSubmission, CancellationToken, Task<FeedbackSendResult>>? SubmitFeedback { get; set; }
+
+    public Func<FeedbackDiagnosticsSnapshot>? BuildFeedbackDiagnosticsSnapshot { get; set; }
+
+    public FeedbackDraftStore? FeedbackDraftStore { get; set; }
+
+    public string? FeedbackDataDirectory { get; set; }
+
+    public Func<CancellationToken, Task>? FlushFeedbackOutbox { get; set; }
+
+    public Func<CancellationToken, Task<bool>>? CheckUndeliverableFeedback { get; set; }
+
+    private bool _isFeedbackDialogOpen;
 
     private bool _isUpdatingStartupRegistration;
     private bool _startupOperationInProgress;
@@ -1116,13 +1131,86 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private async void FeedbackToolbarButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_isFeedbackDialogOpen || WindowRoot.XamlRoot is null)
+        {
+            return;
+        }
+
+        _isFeedbackDialogOpen = true;
         try
         {
-            await Windows.System.Launcher.LaunchUriAsync(new Uri("https://github.com/Envious-Labs-LLC/enviouswispr-windows/issues"));
+            if (FlushFeedbackOutbox is { } flushOutbox)
+            {
+                _ = FlushFeedbackOutboxBestEffortAsync(flushOutbox);
+            }
+
+            var draftStore = ResolveFeedbackDraftStore();
+            var snapshotBuilder = BuildFeedbackDiagnosticsSnapshot ?? BuildFallbackFeedbackDiagnosticsSnapshot;
+            var submitter = SubmitFeedback ?? ((submission, _) => Task.FromResult(new FeedbackSendResult(
+                FeedbackSendOutcome.Unavailable,
+                submission.SubmissionId,
+                "Feedback delivery is not configured.")));
+
+            var defaultIncludeDiagnostics = _settings.Observability?.ShareAnonymousTelemetry ?? true;
+            using var dialog = new FeedbackDialog(
+                draftStore,
+                snapshotBuilder,
+                submitter,
+                defaultIncludeDiagnostics,
+                CheckUndeliverableFeedback)
+            {
+                XamlRoot = WindowRoot.XamlRoot,
+                RequestedTheme = WindowRoot.RequestedTheme,
+            };
+            await dialog.ShowAsync();
+        }
+        finally
+        {
+            _isFeedbackDialogOpen = false;
+        }
+    }
+
+    private FeedbackDraftStore? ResolveFeedbackDraftStore()
+    {
+        if (FeedbackDraftStore is { } existing)
+        {
+            return existing;
+        }
+
+        var directory = !string.IsNullOrWhiteSpace(FeedbackDataDirectory)
+            ? FeedbackDataDirectory
+            : _dataDirectory;
+        return string.IsNullOrWhiteSpace(directory)
+            ? null
+            : new FeedbackDraftStore(directory);
+    }
+
+    private FeedbackDiagnosticsSnapshot BuildFallbackFeedbackDiagnosticsSnapshot()
+    {
+        var appVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.19.0";
+        var osVersion = $"Windows {Environment.OSVersion.Version}";
+        return new FeedbackDiagnosticsSnapshot(
+            appVersion: appVersion,
+            osVersion: osVersion,
+            finalAsrEngine: _settings.Preferences.Dictation.FinalEngine.ToString(),
+            polishProvider: _settings.Preferences.Polish.Provider.ToString(),
+            livePreviewEnabled: _settings.Preferences.LivePreviewEnabled,
+            livePreviewEngine: _settings.Preferences.LivePreviewEngine.ToString(),
+            recordingMode: _settings.Preferences.Dictation.RecordingMode.ToString(),
+            autoStopEnabled: _settings.Preferences.Dictation.AutoStopEnabled,
+            hardwareClass: DiagnosticHardwareClass.Unknown.ToString(),
+            recentEventCodes: []);
+    }
+
+    private static async Task FlushFeedbackOutboxBestEffortAsync(Func<CancellationToken, Task> flushOutbox)
+    {
+        try
+        {
+            await flushOutbox(CancellationToken.None).ConfigureAwait(false);
         }
         catch
         {
-            // Launcher best-effort
+            // Background outbox flush is best-effort when opening Feedback.
         }
     }
 
