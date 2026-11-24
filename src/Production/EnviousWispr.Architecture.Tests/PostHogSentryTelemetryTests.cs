@@ -235,6 +235,39 @@ public sealed class PostHogSentryTelemetryTests
             Assert.Null(suppressedByUat.PostHogApiKey);
             Assert.Null(suppressedByUat.SentryDsn);
 
+            // Legacy ENVIOUSWISPR_TELEMETRY_ENDPOINT transport also respects suppression and UAT flags.
+            var legacySuppressedByUat = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ENVIOUSWISPR_TELEMETRY_ENDPOINT"] = "https://telemetry.enviouswispr.example/v1/diagnostics",
+                ["ENVIOUSWISPR_UAT_JOURNEY"] = "public-fixture-v1",
+            };
+            Assert.False(TelemetryEndpointPolicy.TryResolveConfiguredEndpoint(
+                out _,
+                getEnvironmentVariable: key => legacySuppressedByUat.GetValueOrDefault(key),
+                allEnvironmentVariables: legacySuppressedByUat));
+
+            var legacyDisabledExplicitly = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ENVIOUSWISPR_TELEMETRY_ENDPOINT"] = "http://127.0.0.1:18080/diagnostics",
+                ["ENVIOUSWISPR_UAT_ALLOW_LOOPBACK_TELEMETRY"] = "1",
+                ["ENVIOUSWISPR_DISABLE_TELEMETRY"] = "1",
+            };
+            Assert.False(TelemetryEndpointPolicy.TryResolveConfiguredEndpoint(
+                out _,
+                getEnvironmentVariable: key => legacyDisabledExplicitly.GetValueOrDefault(key),
+                allEnvironmentVariables: legacyDisabledExplicitly));
+
+            var legacyLoopbackUatAllowed = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ENVIOUSWISPR_TELEMETRY_ENDPOINT"] = "http://127.0.0.1:18080/diagnostics",
+                ["ENVIOUSWISPR_UAT_ALLOW_LOOPBACK_TELEMETRY"] = "1",
+            };
+            Assert.True(TelemetryEndpointPolicy.TryResolveConfiguredEndpoint(
+                out var resolvedLoopbackUri,
+                getEnvironmentVariable: key => legacyLoopbackUatAllowed.GetValueOrDefault(key),
+                allEnvironmentVariables: legacyLoopbackUatAllowed));
+            Assert.Equal(new Uri("http://127.0.0.1:18080/diagnostics"), resolvedLoopbackUri);
+
             // Missing keys cleanly no-op.
             var unconfigured = ObservabilityKeyResolver.Resolve(
                 assemblyMetadataOverride: new Dictionary<string, string?>(),
@@ -603,9 +636,26 @@ public sealed class PostHogSentryTelemetryTests
             var interruptedEventId = await service.CaptureInterruptedDictationNoteAsync(previousRunWasDictating: true);
             Assert.NotNull(interruptedEventId);
 
+            // Synchronous blocking crash capture completes before returning and never sends free-form exception.Message.
+            var blockingException = new InvalidOperationException("short dictated secret phrase");
+            var unhandledEventId = service.CaptureUnhandledExceptionBlocking(
+                blockingException,
+                mechanismType: "winui_unhandled_exception",
+                handled: false,
+                level: "fatal");
+            Assert.NotNull(unhandledEventId);
+
             var flushedCount = await postHog.FlushAsync();
             Assert.Equal(8, flushedCount);
-            Assert.Equal(2, sentryHandler.Requests.Count);
+            Assert.Equal(3, sentryHandler.Requests.Count);
+            Assert.DoesNotContain(
+                "short dictated secret phrase",
+                sentryHandler.Requests[2].Body,
+                StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(
+                $"System.InvalidOperationException#0x{blockingException.HResult:X8}",
+                sentryHandler.Requests[2].Body,
+                StringComparison.Ordinal);
 
             using var postHogDoc = JsonDocument.Parse(postHogHandler.Requests[0].Body);
             var eventNames = postHogDoc.RootElement.GetProperty("batch")
@@ -631,7 +681,8 @@ public sealed class PostHogSentryTelemetryTests
             Assert.True(fresh.Settings.Observability?.ShareAnonymousTelemetry);
             Assert.True(fresh.Settings.Observability?.SendCrashReports);
 
-            // Migrate v20 settings with explicit ShareAnonymousTelemetry = false -> preserves false and defaults SendCrashReports = true.
+            // Migrate v20 settings with explicit ShareAnonymousTelemetry = false (and no sendCrashReports property)
+            // -> preserves the user's remote-sharing opt-out across both ShareAnonymousTelemetry and SendCrashReports.
             var v20OptedOut = JsonSettingsStoreTests.CreatePopulatedSettings() with
             {
                 SchemaVersion = 20,
@@ -649,7 +700,24 @@ public sealed class PostHogSentryTelemetryTests
             Assert.Equal(20, migrated.SourceSchemaVersion);
             Assert.Equal(21, migrated.Settings.SchemaVersion);
             Assert.False(migrated.Settings.Observability?.ShareAnonymousTelemetry);
-            Assert.True(migrated.Settings.Observability?.SendCrashReports);
+            Assert.False(migrated.Settings.Observability?.SendCrashReports);
+
+            // Migrate v20 settings with ShareAnonymousTelemetry = true -> both switches remain true.
+            var v20OptedIn = v20OptedOut with
+            {
+                Observability = new ObservabilityPreferences(
+                    LocalDiagnosticsEnabled: true,
+                    DiagnosticRetentionDays: 14,
+                    ShareAnonymousTelemetry: true),
+            };
+            var optedInRoot = JsonNode.Parse(JsonSerializer.Serialize(v20OptedIn, JsonSettingsStore.SerializerOptions))!.AsObject();
+            optedInRoot["observability"]!.AsObject().Remove("sendCrashReports");
+            await File.WriteAllTextAsync(settingsPath, optedInRoot.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var migratedOptedIn = await store.LoadAsync();
+            Assert.Equal(SettingsLoadStatus.Migrated, migratedOptedIn.Status);
+            Assert.True(migratedOptedIn.Settings.Observability?.ShareAnonymousTelemetry);
+            Assert.True(migratedOptedIn.Settings.Observability?.SendCrashReports);
 
             // Migrate v14 PortableProfile -> v15.
             var profilePath = Path.Combine(directory, "profile.enviouswispr.json");

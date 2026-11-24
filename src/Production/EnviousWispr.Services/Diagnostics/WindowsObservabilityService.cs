@@ -429,6 +429,8 @@ public sealed class WindowsObservabilityService : IAsyncDisposable
             cancellationToken);
     }
 
+    private static readonly TimeSpan DefaultUnhandledFlushTimeout = TimeSpan.FromSeconds(2);
+
     public Task<Guid?> CaptureUnhandledExceptionAsync(
         Exception exception,
         string mechanismType = "unhandled_exception",
@@ -441,6 +443,37 @@ public sealed class WindowsObservabilityService : IAsyncDisposable
             handled: handled,
             level: level,
             cancellationToken: cancellationToken);
+
+    public Guid? CaptureUnhandledExceptionBlocking(
+        Exception exception,
+        string mechanismType = "unhandled_exception",
+        bool handled = false,
+        string level = "fatal",
+        TimeSpan? timeout = null)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        var effectiveTimeout = timeout ?? DefaultUnhandledFlushTimeout;
+        try
+        {
+            using var cts = new CancellationTokenSource(effectiveTimeout);
+            var token = cts.Token;
+            return Task.Run(
+                    () => CaptureUnhandledExceptionAsync(
+                        exception,
+                        mechanismType: mechanismType,
+                        handled: handled,
+                        level: level,
+                        cancellationToken: token),
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+        }
+        catch
+        {
+            // Never throw from a fatal crash handler path.
+            return null;
+        }
+    }
 
     /// <summary>
     /// Bridges typed <see cref="PrivacySafeDiagnosticRecord"/> emissions from <see cref="PrivacySafeObservabilityLogger"/>
@@ -576,7 +609,7 @@ public sealed class WindowsObservabilityService : IAsyncDisposable
     {
         if (e.ExceptionObject is Exception exception)
         {
-            _ = CaptureUnhandledExceptionAsync(
+            _ = CaptureUnhandledExceptionBlocking(
                 exception,
                 mechanismType: "appdomain_unhandled_exception",
                 handled: false,

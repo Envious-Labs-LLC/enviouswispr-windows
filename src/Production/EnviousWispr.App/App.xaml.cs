@@ -154,14 +154,7 @@ public partial class App : Application, IAsyncDisposable
         _dataDirectory = Path.GetFullPath(dataDirectory);
         var diagnosticPath = Path.Combine(_dataDirectory, "diagnostics", "app.jsonl");
         IPrivacySafeTelemetryTransport? telemetryTransport = null;
-        var allowLoopbackTelemetry = string.Equals(
-            Environment.GetEnvironmentVariable("ENVIOUSWISPR_UAT_ALLOW_LOOPBACK_TELEMETRY"),
-            "1",
-            StringComparison.Ordinal);
-        if (TelemetryEndpointPolicy.TryNormalize(
-                Environment.GetEnvironmentVariable("ENVIOUSWISPR_TELEMETRY_ENDPOINT"),
-                allowLoopbackTelemetry,
-                out var telemetryEndpoint))
+        if (TelemetryEndpointPolicy.TryResolveConfiguredEndpoint(out var telemetryEndpoint))
         {
             telemetryTransport = new HttpPrivacySafeTelemetryTransport(telemetryEndpoint!);
         }
@@ -219,7 +212,7 @@ public partial class App : Application, IAsyncDisposable
                 AppFailureCategory.Unknown));
             if (eventArgs.Exception is { } ex)
             {
-                _ = _observabilityService?.CaptureUnhandledExceptionAsync(
+                _ = _observabilityService?.CaptureUnhandledExceptionBlocking(
                     ex,
                     mechanismType: "winui_unhandled_exception",
                     handled: false,
@@ -1949,10 +1942,16 @@ public partial class App : Application, IAsyncDisposable
         var parakeetPreviewDirectory = engine == FinalAsrEngine.Whisper
             ? await ResolveModelDirectoryAsync(ParakeetTranscriptionEngine.ModelId).ConfigureAwait(true)
             : modelDirectory;
+        var whisperFinalDirectory = engine == FinalAsrEngine.Whisper
+            ? modelDirectory
+            : await ResolveModelDirectoryAsync(WhisperTranscriptionEngine.ModelId).ConfigureAwait(true);
         var previewModelDirectory = await ResolveModelDirectoryAsync(
             WhisperTranscriptionEngine.PreviewModelId,
             "ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY").ConfigureAwait(true);
-        RecordAppLaunchedOnce(hardware, parakeetPreviewDirectory is not null, engine == FinalAsrEngine.Whisper || previewModelDirectory is not null);
+        RecordAppLaunchedOnce(
+            hardware,
+            hasParakeet: parakeetPreviewDirectory is not null,
+            hasWhisper: whisperFinalDirectory is not null || previewModelDirectory is not null);
         // THE SELECTION IS MADE BEFORE IT IS OBSERVED. This line used to be written above the two
         // Create calls, so it could only ever report the hardware and never what the hardware was
         // used FOR - which is why a machine transcribing on the processor beside an idle graphics

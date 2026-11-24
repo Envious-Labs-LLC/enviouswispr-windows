@@ -38,6 +38,31 @@ public static class TelemetryEndpointPolicy
         endpoint = parsed;
         return true;
     }
+
+    public static bool TryResolveConfiguredEndpoint(
+        out Uri? endpoint,
+        Func<string, string?>? getEnvironmentVariable = null,
+        IEnumerable<KeyValuePair<string, string?>>? allEnvironmentVariables = null)
+    {
+        var envReader = getEnvironmentVariable ?? Environment.GetEnvironmentVariable;
+        var allowLoopbackTelemetry = string.Equals(
+            envReader("ENVIOUSWISPR_UAT_ALLOW_LOOPBACK_TELEMETRY"),
+            "1",
+            StringComparison.Ordinal);
+        var suppressed = ObservabilityKeyResolver.IsTelemetryExplicitlyDisabled(envReader) ||
+            (!allowLoopbackTelemetry &&
+             ObservabilityKeyResolver.IsTelemetrySuppressed(envReader, allEnvironmentVariables));
+        if (suppressed)
+        {
+            endpoint = null;
+            return false;
+        }
+
+        return TryNormalize(
+            envReader("ENVIOUSWISPR_TELEMETRY_ENDPOINT"),
+            allowLoopbackTelemetry,
+            out endpoint);
+    }
 }
 
 public sealed class HttpPrivacySafeTelemetryTransport : IPrivacySafeTelemetryTransport

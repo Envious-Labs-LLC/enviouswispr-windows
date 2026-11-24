@@ -182,12 +182,19 @@ public static class ObservabilityKeyResolver
             IsTelemetrySuppressed: false);
     }
 
+    public static bool IsTelemetryExplicitlyDisabled(
+        Func<string, string?>? getEnvironmentVariable = null)
+    {
+        var envReader = getEnvironmentVariable ?? Environment.GetEnvironmentVariable;
+        return IsTruthy(envReader(DisableTelemetryEnvVar));
+    }
+
     public static bool IsTelemetrySuppressed(
         Func<string, string?>? getEnvironmentVariable = null,
         IEnumerable<KeyValuePair<string, string?>>? allEnvironmentVariables = null)
     {
         var envReader = getEnvironmentVariable ?? Environment.GetEnvironmentVariable;
-        if (IsTruthy(envReader(DisableTelemetryEnvVar)))
+        if (IsTelemetryExplicitlyDisabled(envReader))
         {
             return true;
         }

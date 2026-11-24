@@ -79,6 +79,25 @@ public sealed class JsonSettingsStore : ISettingsStore
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
+            // A FILE WRITTEN BEFORE SEPARATE USAGE METRICS AND CRASH REPORTS EXISTED stored a single
+            // shareAnonymousTelemetry boolean. When sendCrashReports was not yet present in the file,
+            // carry that prior remote-sharing choice into SendCrashReports so an existing user who
+            // had opted out of remote telemetry stays opted out of crash reports on upgrade (#40).
+            if (settings is { Observability: not null } &&
+                schemaVersion < AppSettings.CurrentSchemaVersion &&
+                document.RootElement.TryGetProperty("observability", out var observabilityElement) &&
+                observabilityElement.ValueKind == JsonValueKind.Object &&
+                !observabilityElement.TryGetProperty("sendCrashReports", out _))
+            {
+                settings = settings with
+                {
+                    Observability = settings.Observability with
+                    {
+                        SendCrashReports = settings.Observability.ShareAnonymousTelemetry,
+                    },
+                };
+            }
+
             // A FILE FROM BEFORE THE LAST-DICTATION SHORTCUTS gains their defaults on load; one that already gave
             // Alt+Shift+Z to another key keeps its own binding rather than being refused and reset. Ref: #206.
             if (settings is { Preferences.Dictation: not null } && schemaVersion < LastDictationShortcutsSchema)

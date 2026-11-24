@@ -268,9 +268,12 @@ public sealed class SentryCrashClient : IDisposable
         ArgumentNullException.ThrowIfNull(exception);
         var frames = ExtractStackFrames(exception);
         var exceptionType = exception.GetType().FullName ?? exception.GetType().Name;
+        // Layer A structural value: never copy free-form exception.Message onto the wire,
+        // because short validation or pipeline messages could otherwise include user text.
+        var structuralValue = $"{exceptionType}#0x{exception.HResult:X8}";
         var item = new SentryExceptionItem(
             Type: exceptionType,
-            Value: exception.Message,
+            Value: structuralValue,
             MechanismType: mechanismType,
             Handled: handled,
             Frames: frames);
@@ -687,7 +690,10 @@ public sealed class SentryCrashClient : IDisposable
                 ? "<unknown>"
                 : $"{method.DeclaringType?.FullName ?? "<global>"}.{method.Name}";
             var moduleName = method?.DeclaringType?.Assembly.GetName().Name;
-            var fileName = frame.GetFileName();
+            var rawFileName = frame.GetFileName();
+            var leafFileName = string.IsNullOrWhiteSpace(rawFileName)
+                ? null
+                : ObservabilitySanitizer.RedactString(Path.GetFileName(rawFileName));
             var lineNo = frame.GetFileLineNumber();
             var ilOffset = frame.GetILOffset();
             var instructionAddr = ilOffset >= 0 ? $"0x{ilOffset:x4}" : null;
@@ -695,8 +701,8 @@ public sealed class SentryCrashClient : IDisposable
             items.Add(new SentryStackFrameItem(
                 Function: ObservabilitySanitizer.RedactUserPath(functionName),
                 Module: ObservabilitySanitizer.RedactUserPath(moduleName),
-                Filename: string.IsNullOrWhiteSpace(fileName) ? null : ObservabilitySanitizer.RedactUserPath(fileName),
-                AbsPath: string.IsNullOrWhiteSpace(fileName) ? null : ObservabilitySanitizer.RedactUserPath(fileName),
+                Filename: leafFileName,
+                AbsPath: leafFileName,
                 Lineno: lineNo > 0 ? lineNo : null,
                 InstructionAddr: instructionAddr,
                 Package: ObservabilitySanitizer.RedactUserPath(moduleName)));
