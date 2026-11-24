@@ -1769,11 +1769,22 @@ public sealed partial class MainWindow : Window, IDisposable
             _livePreviewWhisperDownloadPercent = null;
             _livePreviewWhisperDeliveryDetail = null;
         }
-        else if (_livePreviewWhisperDeliveryStage == SpeechModelDelivery.Installed)
+        else if (_livePreviewWhisperDeliveryStage is SpeechModelDelivery.Installed or SpeechModelDelivery.Activating)
         {
             _livePreviewWhisperDeliveryStage = SpeechModelDelivery.Missing;
+            _livePreviewWhisperDownloadPercent = null;
+            _livePreviewWhisperDeliveryDetail = null;
         }
 
+        RefreshLivePreviewSectionPresentation();
+    }
+
+    public void SetLivePreviewWhisperDelivery(ModelDeliveryPresentation presentation)
+    {
+        ArgumentNullException.ThrowIfNull(presentation);
+        _livePreviewWhisperDeliveryStage = presentation.Stage;
+        _livePreviewWhisperDownloadPercent = presentation.Percent;
+        _livePreviewWhisperDeliveryDetail = presentation.Text;
         RefreshLivePreviewSectionPresentation();
     }
 
@@ -3848,18 +3859,6 @@ public sealed partial class MainWindow : Window, IDisposable
         DownloadModelButton.Visibility = presentation.CanDownload ? Visibility.Visible : Visibility.Collapsed;
         CancelModelDownloadButton.Visibility = presentation.CanCancel ? Visibility.Visible : Visibility.Collapsed;
         ObserveModelForOnboarding(presentation);
-
-        if (!_livePreviewWhisperInstalled &&
-            presentation.Stage is SpeechModelDelivery.Downloading
-                or SpeechModelDelivery.Activating
-                or SpeechModelDelivery.Failed
-                or SpeechModelDelivery.Cancelled)
-        {
-            _livePreviewWhisperDeliveryStage = presentation.Stage;
-            _livePreviewWhisperDownloadPercent = presentation.Percent;
-            _livePreviewWhisperDeliveryDetail = presentation.Text;
-            RefreshLivePreviewSectionPresentation();
-        }
     }
 
     private async void ImportProfileButton_Click(object sender, RoutedEventArgs e)

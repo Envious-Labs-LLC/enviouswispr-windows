@@ -365,6 +365,7 @@ public partial class App : Application, IAsyncDisposable
         _window.ModelDownloadCancelRequested += OnModelDownloadCancelRequested;
         _window.PreviewModelDownloadRequested += OnPreviewModelDownloadRequested;
         _window.PreviewModelRemoveRequested += OnPreviewModelRemoveRequested;
+        _window.DictationEnded += OnDictationEnded;
         _window.TranscriptionRetryRequested += OnTranscriptionRetryRequested;
         _window.GraphicsRuntimeDownloadRequested += OnGraphicsRuntimeDownloadRequested;
         _window.GraphicsRuntimeDownloadCancelRequested += OnGraphicsRuntimeDownloadCancelRequested;
@@ -608,6 +609,7 @@ public partial class App : Application, IAsyncDisposable
             window.ModelDownloadCancelRequested -= OnModelDownloadCancelRequested;
             window.PreviewModelDownloadRequested -= OnPreviewModelDownloadRequested;
             window.PreviewModelRemoveRequested -= OnPreviewModelRemoveRequested;
+            window.DictationEnded -= OnDictationEnded;
             window.TranscriptionRetryRequested -= OnTranscriptionRetryRequested;
             window.GraphicsRuntimeDownloadRequested -= OnGraphicsRuntimeDownloadRequested;
             window.GraphicsRuntimeDownloadCancelRequested -= OnGraphicsRuntimeDownloadCancelRequested;
@@ -933,12 +935,11 @@ public partial class App : Application, IAsyncDisposable
                     : AppEventCode.TelemetryConsentDisabled));
         }
 
-        if ((previousPreviewEnabled != settings.Preferences.LivePreviewEnabled ||
-             previousPreviewEngine != settings.Preferences.LivePreviewEngine) &&
-            _modelDelivery is not { IsCompleted: false } &&
-            !Leaving)
+        if (previousPreviewEnabled != settings.Preferences.LivePreviewEnabled ||
+            previousPreviewEngine != settings.Preferences.LivePreviewEngine)
         {
-            _modelDelivery = RefreshLivePreviewAfterSettingsChangeAsync();
+            _livePreviewReconfigurePending = true;
+            TrySchedulePendingLivePreviewRefresh();
         }
     }
 

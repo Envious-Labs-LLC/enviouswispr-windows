@@ -39,6 +39,8 @@ public partial class App
     private CancellationTokenSource? _modelDownload;
     private Task? _modelDelivery;
     private IReadOnlyList<string> _missingModelIds = [];
+    private string? _activeDownloadModelId;
+    private bool _livePreviewReconfigurePending;
 
     private string ModelStoreRoot => Path.Combine(_dataDirectory, "models");
 
@@ -111,14 +113,6 @@ public partial class App
                 ? WhisperTranscriptionEngine.ModelId
                 : ParakeetTranscriptionEngine.ModelId,
         };
-        if (preferences.LivePreviewEnabled)
-        {
-            var previewModelId = RequiredPreviewModelId(preferences.LivePreviewEngine);
-            if (!wanted.Contains(previewModelId, StringComparer.Ordinal))
-            {
-                wanted.Add(previewModelId);
-            }
-        }
 
         var missing = new List<string>();
         foreach (var modelId in wanted)
@@ -158,6 +152,24 @@ public partial class App
         if (_modelDownload is not null)
         {
             return;
+        }
+
+        while (_livePreviewReconfigurePending)
+        {
+            if (_sessionController?.CurrentSession is not null || _sessionCoordinator?.IsProcessing == true || Leaving)
+            {
+                break;
+            }
+
+            _livePreviewReconfigurePending = false;
+            if (_configuredTranscription is not null)
+            {
+                await ReconfigureTranscriptionAsync().ConfigureAwait(true);
+                if (Leaving)
+                {
+                    return;
+                }
+            }
         }
 
         await RefreshLivePreviewModelInventoryAsync().ConfigureAwait(true);
@@ -298,12 +310,87 @@ public partial class App
             return;
         }
 
-        if (!_missingModelIds.Contains(WhisperTranscriptionEngine.PreviewModelId, StringComparer.Ordinal))
+        _modelDelivery = DeliverPreviewModelAsync();
+    }
+
+    private async Task DeliverPreviewModelAsync()
+    {
+        if (_sessionController?.CurrentSession is not null || _sessionCoordinator?.IsProcessing == true)
         {
-            _missingModelIds = [.. _missingModelIds, WhisperTranscriptionEngine.PreviewModelId];
+            _window?.SetLivePreviewWhisperDelivery(new(
+                "Finish the current dictation, then download.",
+                CanDownload: true,
+                Stage: SpeechModelDelivery.Failed));
+            return;
         }
 
-        _modelDelivery = DeliverModelsAsync();
+        var previewModelId = RequiredPreviewModelId(LivePreviewEngineChoice.Whisper);
+        if (BundledModelManifests.TryRead(previewModelId) is null)
+        {
+            _window?.SetLivePreviewWhisperDelivery(new(
+                "This build cannot download the model it needs. Reinstall EnviousWispr.",
+                Stage: SpeechModelDelivery.CannotDownload));
+            return;
+        }
+
+        using var download = new CancellationTokenSource();
+        _activeDownloadModelId = previewModelId;
+        _modelDownload = download;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ModelDeliveryStarted));
+        _window?.SetLivePreviewWhisperDelivery(new(
+            $"Downloading {DescribeModels([previewModelId])}…",
+            Percent: 0,
+            CanCancel: true,
+            Stage: SpeechModelDelivery.Downloading));
+        try
+        {
+            var verifier = new ModelManifestVerifier(new Dictionary<string, string>());
+            var provisioner = new ModelProvisioner(
+                CreateModelStore(),
+                modelId => BundledModelManifests.Load(modelId, verifier));
+            var result = await provisioner.ProvisionAsync(previewModelId, download.Token).ConfigureAwait(true);
+            if (!result.Succeeded)
+            {
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.ModelDeliveryFailed,
+                    AppFailureCategory.ModelDelivery,
+                    clock.ElapsedMilliseconds));
+                _modelDownload = null;
+                _window?.SetLivePreviewWhisperDelivery(new(
+                    FailureSentence(result),
+                    CanDownload: true,
+                    Stage: result.Failure == ModelDeliveryFailure.Cancelled
+                        ? SpeechModelDelivery.Cancelled
+                        : SpeechModelDelivery.Failed));
+                return;
+            }
+
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.ModelDeliveryCompleted,
+                ElapsedMilliseconds: clock.ElapsedMilliseconds));
+        }
+        finally
+        {
+            _modelDownload = null;
+            _activeDownloadModelId = null;
+        }
+
+        if (Leaving)
+        {
+            return;
+        }
+
+        _window?.SetLivePreviewWhisperDelivery(new("Download verified. Starting Live Preview…", Stage: SpeechModelDelivery.Activating));
+        await ReconfigureTranscriptionAsync().ConfigureAwait(true);
+        if (Leaving)
+        {
+            return;
+        }
+
+        await PresentModelDeliveryAsync().ConfigureAwait(true);
     }
 
     private void OnPreviewModelRemoveRequested()
@@ -369,20 +456,27 @@ public partial class App
         await PresentModelDeliveryAsync().ConfigureAwait(true);
     }
 
+    private void OnDictationEnded() => TrySchedulePendingLivePreviewRefresh();
+
+    private void TrySchedulePendingLivePreviewRefresh()
+    {
+        if (!_livePreviewReconfigurePending ||
+            _modelDelivery is { IsCompleted: false } ||
+            _sessionController?.CurrentSession is not null ||
+            _sessionCoordinator?.IsProcessing == true ||
+            Leaving)
+        {
+            return;
+        }
+
+        _modelDelivery = RefreshLivePreviewAfterSettingsChangeAsync();
+    }
+
     private async Task RefreshLivePreviewAfterSettingsChangeAsync()
     {
         if (_sessionController?.CurrentSession is not null || _sessionCoordinator?.IsProcessing == true || Leaving)
         {
             return;
-        }
-
-        if (_configuredTranscription is not null)
-        {
-            await ReconfigureTranscriptionAsync().ConfigureAwait(true);
-            if (Leaving)
-            {
-                return;
-            }
         }
 
         await PresentModelDeliveryAsync().ConfigureAwait(true);
@@ -465,11 +559,19 @@ public partial class App
             // back over the outcome - and tell the first-run checklist a stopped download is still running.
             if (_modelDownload is not null)
             {
-                window.SetModelDelivery(new(
+                var presentation = new ModelDeliveryPresentation(
                     $"Downloading… {completedMb} of {totalMb} MB, verified as it arrives.",
                     Percent: percent,
                     CanCancel: true,
-                    Stage: SpeechModelDelivery.Downloading));
+                    Stage: SpeechModelDelivery.Downloading);
+                if (string.Equals(_activeDownloadModelId, WhisperTranscriptionEngine.PreviewModelId, StringComparison.Ordinal))
+                {
+                    window.SetLivePreviewWhisperDelivery(presentation);
+                }
+                else
+                {
+                    window.SetModelDelivery(presentation);
+                }
             }
         });
     }
