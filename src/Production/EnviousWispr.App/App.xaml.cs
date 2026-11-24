@@ -256,9 +256,7 @@ public partial class App : Application, IAsyncDisposable
 
         var loadResult = await _settingsStore.LoadAsync().ConfigureAwait(true);
         var observability = loadResult.Settings.Observability ?? ObservabilityPreferences.Default;
-        var appVersion = _updateService.InstalledVersion
-            ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString(3)
-            ?? "0.19.0";
+        var appVersion = CurrentAppVersion();
         var observabilityIdentity = WindowsObservabilityIdentity.CreateDefault(
             _releaseIdentity,
             isPackagedMsix: _updateService.IsStoreInstalled,
@@ -950,6 +948,17 @@ public partial class App : Application, IAsyncDisposable
         _customWords = settings.UserData.CustomWords;
         _snippetVocabulary = SnippetVocabulary.From(settings.UserData);
         _deterministicTextOptions = DeterministicTextOptions.From(settings.Preferences.Dictation);
+        try
+        {
+            _trayIcon?.SetEngineAndPolishSummary(
+                settings.Preferences.Dictation.FinalEngine,
+                settings.Preferences.Polish.Provider);
+            _trayIcon?.SetTheme(settings.Preferences.Theme);
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
         var observability = settings.Observability ?? ObservabilityPreferences.Default;
         _logger.Configure(observability, DateTimeOffset.UtcNow);
         _observabilityService?.ApplySettings(settings, emitSettingsChangedEvent: true);
@@ -1150,6 +1159,11 @@ public partial class App : Application, IAsyncDisposable
         }
     }
 
+    private string CurrentAppVersion() =>
+        _updateService.InstalledVersion
+        ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString(3)
+        ?? "0.19.0";
+
     private void ConfigureTrayIcon()
     {
         _trayIcon = new WindowsTrayIcon(Path.Combine(
@@ -1157,21 +1171,228 @@ public partial class App : Application, IAsyncDisposable
             "Assets",
             "Brand",
             "EnviousWispr.ico"));
+        _trayIcon.SetVersion(CurrentAppVersion());
+        _trayIcon.SetEngineAndPolishSummary(
+            _settings.Preferences.Dictation.FinalEngine,
+            _settings.Preferences.Polish.Provider);
+        _trayIcon.SetTheme(_settings.Preferences.Theme);
         _trayIcon.ShowWindowRequested += () => ShowMainWindow(openSettings: false);
         _trayIcon.OpenSettingsRequested += () => ShowMainWindow(openSettings: true);
         _trayIcon.ExitRequested += ExitFromTray;
         // THE WINDOW BEFORE THE TRAY CLICK. Clicking the notification area makes the taskbar the
         // foreground, so "Paste last dictation" pastes into the last window that was really in use.
         _foregroundHistory = new WindowsForegroundHistory();
+        _trayIcon.ToggleRecordingRequested += () => _ = ToggleRecordingFromTrayAsync();
         _trayIcon.PasteLastRequested += () => _ = ReuseLastDictationAsync(LastDictationAction.Paste);
         _trayIcon.CopyLastRequested += () => _ = ReuseLastDictationAsync(LastDictationAction.Copy);
-        _trayIcon.TranscribeFileRequested += () =>
-        {
-            ShowMainWindow(openSettings: false);
-            _window?.OpenPage("settings-transcribe-file");
-        };
+        _trayIcon.TranscribeFileRequested += () => ShowWindowOnPage("settings-transcribe-file");
+        _trayIcon.AddToDictionaryRequested += () => ShowWindowOnPage("dictionary", "your-words");
+        _trayIcon.HelpCenterRequested += () => ShowWindowOnPage("help");
+        _trayIcon.CheckForUpdatesRequested += () => ShowWindowOnPage("settings-app", "updates-licenses");
         _trayIcon.LastDictationPreviewRequested += RefreshLastDictationPreview;
+        _trayIcon.MicrophoneMenuOpeningRequested += RefreshTrayMicrophones;
+        _trayIcon.MicrophoneSelected += deviceId => _ = SelectMicrophoneFromTrayAsync(deviceId);
+        _trayIcon.AppearanceSelected += theme => _ = SelectAppearanceFromTrayAsync(theme);
         _trayIcon.SetStatus("ready");
+    }
+
+    private void ShowWindowOnPage(string pageTag, string? tabKey = null)
+    {
+        _window?.DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_window is null || Leaving)
+            {
+                return;
+            }
+
+            _window.AppWindow.Show();
+            _window.Activate();
+            _window.OpenPage(pageTag, tabKey);
+            _window.AnnouncePendingHistoryState();
+        });
+    }
+
+    private void RefreshTrayMicrophones()
+    {
+        if (Leaving || _disposed || _trayIcon is not { } tray ||
+            _presentation is not { } presentation || presentation.Closing)
+        {
+            return;
+        }
+
+        try
+        {
+            var devices = presentation.DeviceCatalog()
+                .GetCaptureDevicesAsync()
+                .GetAwaiter()
+                .GetResult();
+            var items = devices
+                .Select(device => new TrayMicrophoneItem(
+                    device.Id.Value,
+                    device.IsDefault ? $"{device.DisplayName} (Windows default)" : device.DisplayName))
+                .ToArray();
+            tray.SetMicrophones(items, _settings.PreferredMicrophoneId);
+        }
+        catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException))
+        {
+            tray.SetMicrophones([], _settings.PreferredMicrophoneId);
+        }
+    }
+
+    private async Task ToggleRecordingFromTrayAsync()
+    {
+        if (Leaving)
+        {
+            return;
+        }
+
+        try
+        {
+            var isRecording = _sessionController?.CurrentSession?.State ==
+                EnviousWispr.Core.Sessions.DictationSessionState.Recording;
+            if (!isRecording && _foregroundHistory?.LastTarget is { IsValid: true } target)
+            {
+                // Clicking the tray moved foreground to the taskbar/menu; reacquire the user's
+                // active window first so dictation targets the original editor rather than the shell.
+                var reacquired = await Task.Run(() => WindowsForegroundTargetProvider.ReacquireAsync(
+                    target,
+                    TimeSpan.FromMilliseconds(500),
+                    CancellationToken.None)).ConfigureAwait(false);
+                if (reacquired is null)
+                {
+                    ShowLastDictationStatus(DictationStatus.Warning(
+                        "Click into the app you want to dictate into, then try again"));
+                    return;
+                }
+            }
+
+            if (Leaving)
+            {
+                return;
+            }
+
+            var signal = isRecording ? PushToTalkSignal.Released : PushToTalkSignal.Pressed;
+            if (_runtime is not null)
+            {
+                await _runtime.SubmitAsync(signal, isHandsFree: !isRecording).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
+        {
+            _logger?.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.UnhandledFailure,
+                Failure: AppFailureCategory.Unknown));
+        }
+    }
+
+    private async Task SelectMicrophoneFromTrayAsync(string? deviceId)
+    {
+        if (Leaving || _presentation is not { } presentation ||
+            !presentation.TryEnter(out var lease))
+        {
+            return;
+        }
+
+        var normalized = string.IsNullOrWhiteSpace(deviceId) ? null : deviceId;
+        SettingsSaveResult result;
+        using (lease)
+        {
+            result = await presentation.Settings
+                .SaveAsync(current => current with { PreferredMicrophoneId = normalized })
+                .ConfigureAwait(false);
+        }
+
+        if (!result.Saved)
+        {
+            if (result.Refusal != SettingsSaveRefusal.Closing)
+            {
+                PostToLiveWindow(window =>
+                {
+                    RefreshTrayMicrophones();
+                    window.SetReliabilityNotice(
+                        "That microphone choice was not kept",
+                        "Your previous microphone remains saved until settings can be written again.",
+                        isError: false);
+                });
+            }
+
+            return;
+        }
+
+        var updated = presentation.Settings.Current;
+        PostToLiveWindow(_ =>
+        {
+            _settings = updated;
+            RefreshTrayMicrophones();
+        });
+    }
+
+    private async Task SelectAppearanceFromTrayAsync(AppTheme theme)
+    {
+        if (Leaving || _presentation is not { } presentation ||
+            !presentation.TryEnter(out var lease))
+        {
+            return;
+        }
+
+        SettingsSaveResult result;
+        using (lease)
+        {
+            result = await presentation.Settings
+                .SaveAsync(current => current with
+                {
+                    Preferences = current.Preferences with { Theme = theme },
+                })
+                .ConfigureAwait(false);
+        }
+
+        if (!result.Saved)
+        {
+            if (result.Refusal != SettingsSaveRefusal.Closing)
+            {
+                PostToLiveWindow(window =>
+                {
+                    try
+                    {
+                        _trayIcon?.SetTheme(_settings.Preferences.Theme);
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                    }
+
+                    window.SetReliabilityNotice(
+                        "That choice was not kept",
+                        "Your previous appearance remains active until settings can be written again.",
+                        isError: false);
+                });
+            }
+
+            return;
+        }
+
+        var updated = presentation.Settings.Current;
+        PostToLiveWindow(window =>
+        {
+            _settings = updated;
+            if (window.Content is FrameworkElement root)
+            {
+                root.RequestedTheme = theme switch
+                {
+                    AppTheme.Light => ElementTheme.Light,
+                    AppTheme.Dark => ElementTheme.Dark,
+                    _ => ElementTheme.Default,
+                };
+            }
+
+            try
+            {
+                _trayIcon?.SetTheme(theme);
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        });
     }
 
     private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
@@ -1729,8 +1950,10 @@ public partial class App : Application, IAsyncDisposable
                 }
             }
 
+            var recordingShortcut = _pushToTalkHook.Gesture.ToString();
             var pasteShortcut = _pushToTalkHook.PasteLastGesture?.ToString();
             var copyShortcut = _pushToTalkHook.CopyLastGesture?.ToString();
+            PostToLiveWindow(_ => _trayIcon?.SetRecordingShortcut(recordingShortcut));
             PostToLiveWindow(_ => _trayIcon?.SetLastDictationShortcuts(pasteShortcut, copyShortcut));
         }
     }

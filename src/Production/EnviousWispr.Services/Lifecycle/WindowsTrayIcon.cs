@@ -2,6 +2,7 @@ using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using EnviousWispr.Core.Presentation;
+using EnviousWispr.Core.Settings;
 using Microsoft.Win32;
 
 namespace EnviousWispr.Services.Lifecycle;
@@ -12,12 +13,24 @@ public sealed class WindowsTrayIcon : IDisposable
     private readonly Icon _icon;
     private readonly SynchronizationContext _ui;
     private readonly System.Threading.Timer _sweepTimer;
+    private readonly Font _menuFont;
+    private readonly ContextMenuStrip _menu;
+    private readonly ToolStripMenuItem _statusHeaderItem;
+    private readonly ToolStripMenuItem _versionItem;
+    private readonly ToolStripMenuItem _recordItem;
     private readonly ToolStripMenuItem _pasteLast;
     private readonly ToolStripMenuItem _copyLast;
     private readonly ToolStripMenuItem _lastPreview;
+    private readonly ToolStripMenuItem _microphoneMenu;
+    private readonly ToolStripMenuItem _appearanceMenu;
+    private readonly ToolStripMenuItem _appearanceSystemItem;
+    private readonly ToolStripMenuItem _appearanceLightItem;
+    private readonly ToolStripMenuItem _appearanceDarkItem;
     private TrayIconState _state = TrayIconState.Idle;
     private Icon? _renderedIcon;
     private TrayIconPalette _palette = TrayIconPalette.Brand;
+    private AppTheme _appTheme = AppTheme.System;
+    private TrayMenuColors _menuColors = TrayMenuColors.Dark;
     private int _iconSize = 16;
     private bool _animationsAllowed;
     private double _sweepAngle;
@@ -35,36 +48,89 @@ public sealed class WindowsTrayIcon : IDisposable
                 "The tray icon must be created on the UI thread: it marshals timer ticks and "
                     + "system-preference callbacks back through that thread's context.");
 
-        var menu = new ContextMenuStrip();
-        // THE LAST DICTATION FIRST, because it is the one item used while working in another app; the
-        // rest open this one. Both are disabled with nothing to reuse, and the grey line under them says
-        // which dictation they mean, so a paste is never a surprise. Ref: #206, macOS #3106.
-        _pasteLast = new ToolStripMenuItem("Paste last dictation", image: null, (_, _) => PasteLastRequested?.Invoke()) { Enabled = false };
-        _copyLast = new ToolStripMenuItem("Copy last dictation", image: null, (_, _) => CopyLastRequested?.Invoke()) { Enabled = false };
-        _lastPreview = new ToolStripMenuItem("No dictation yet") { Enabled = false };
-        menu.Items.Add(_pasteLast);
-        menu.Items.Add(_copyLast);
-        menu.Items.Add(_lastPreview);
-        menu.Items.Add("Transcribe a file...", image: null, (_, _) => TranscribeFileRequested?.Invoke());
-        // READ AGAIN EVERY TIME THE MENU OPENS. History changes from places that never tell the tray - a
-        // deletion, a Keep, a retention expiry - and a preview that outlived its entry would name one dictation
-        // and paste another. The items wait, disabled, for the read.
-        menu.Opening += (_, _) =>
+        // 10.5pt renders at 14px at 96 DPI, matching the design-system 14px typography floor.
+        _menuFont = new Font("Segoe UI", 10.5f, FontStyle.Regular, GraphicsUnit.Point);
+        _menu = new ContextMenuStrip
         {
-            _pasteLast.Enabled = false;
-            _copyLast.Enabled = false;
-            LastDictationPreviewRequested?.Invoke();
+            ShowImageMargin = false,
+            ShowCheckMargin = false,
+            Font = _menuFont,
+            Padding = new Padding(2, 6, 2, 6),
         };
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Open EnviousWispr", image: null, (_, _) => ShowWindowRequested?.Invoke());
-        menu.Items.Add("Settings", image: null, (_, _) => OpenSettingsRequested?.Invoke());
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Exit EnviousWispr", image: null, (_, _) => ExitRequested?.Invoke());
+
+        // 1. Disabled status header: active engine & polish + version.
+        _statusHeaderItem = CreateInfoItem(
+            TrayMenuFormatting.FormatStatusHeader(FinalAsrEngine.Automatic, PolishProvider.None));
+        _versionItem = CreateInfoItem(TrayMenuFormatting.FormatVersionLine(version: null));
+        _menu.Items.Add(_statusHeaderItem);
+        _menu.Items.Add(_versionItem);
+        _menu.Items.Add(new ToolStripSeparator());
+
+        // 2. Dictation controls & last-dictation reuse.
+        _recordItem = CreateActionItem(
+            TrayMenuFormatting.FormatRecordingItemText(_state),
+            () => ToggleRecordingRequested?.Invoke());
+        _pasteLast = CreateActionItem(
+            "Paste last dictation",
+            () => PasteLastRequested?.Invoke(),
+            enabled: false);
+        _copyLast = CreateActionItem(
+            "Copy last dictation",
+            () => CopyLastRequested?.Invoke(),
+            enabled: false);
+        _lastPreview = CreateInfoItem("No dictation yet");
+        var transcribeFile = CreateActionItem(
+            "Transcribe a file...",
+            () => TranscribeFileRequested?.Invoke());
+        var addToDictionary = CreateActionItem(
+            "Add to Dictionary...",
+            () => AddToDictionaryRequested?.Invoke());
+
+        _menu.Items.Add(_recordItem);
+        _menu.Items.Add(_pasteLast);
+        _menu.Items.Add(_copyLast);
+        _menu.Items.Add(_lastPreview);
+        _menu.Items.Add(transcribeFile);
+        _menu.Items.Add(addToDictionary);
+        _menu.Items.Add(new ToolStripSeparator());
+
+        // 3. Microphone & Appearance submenus.
+        _microphoneMenu = CreateSubmenuHost("Microphone");
+        _appearanceMenu = CreateSubmenuHost("Appearance");
+        _appearanceSystemItem = CreateCheckableItem("System", () => AppearanceSelected?.Invoke(AppTheme.System));
+        _appearanceLightItem = CreateCheckableItem("Light", () => AppearanceSelected?.Invoke(AppTheme.Light));
+        _appearanceDarkItem = CreateCheckableItem("Dark", () => AppearanceSelected?.Invoke(AppTheme.Dark));
+        _appearanceMenu.DropDownItems.Add(_appearanceSystemItem);
+        _appearanceMenu.DropDownItems.Add(_appearanceLightItem);
+        _appearanceMenu.DropDownItems.Add(_appearanceDarkItem);
+        UpdateAppearanceChecks();
+
+        SetMicrophones([], selectedDeviceId: null);
+
+        _menu.Items.Add(_microphoneMenu);
+        _menu.Items.Add(_appearanceMenu);
+        _menu.Items.Add(new ToolStripSeparator());
+
+        // 4. App surfaces & exit.
+        _menu.Items.Add(CreateActionItem("Open EnviousWispr", () => ShowWindowRequested?.Invoke()));
+        _menu.Items.Add(CreateActionItem("Settings", () => OpenSettingsRequested?.Invoke()));
+        _menu.Items.Add(CreateActionItem("Help Center", () => HelpCenterRequested?.Invoke()));
+        _menu.Items.Add(CreateActionItem("Check for Updates...", () => CheckForUpdatesRequested?.Invoke()));
+        _menu.Items.Add(new ToolStripSeparator());
+        _menu.Items.Add(CreateActionItem("Exit EnviousWispr", () => ExitRequested?.Invoke()));
+
+        AttachPopupLifecycle(_menu);
+        AttachPopupLifecycle(_microphoneMenu.DropDown);
+        AttachPopupLifecycle(_appearanceMenu.DropDown);
+
+        // READ AGAIN EVERY TIME THE MENU OPENS. History and connected microphones change from places
+        // that never tell the tray, and theme preferences may have drifted.
+        _menu.Opening += (_, _) => HandleMenuOpening();
 
         _icon = LoadIcon(iconPath);
         _notifyIcon = new NotifyIcon
         {
-            ContextMenuStrip = menu,
+            ContextMenuStrip = _menu,
             Icon = _icon,
             Text = "EnviousWispr: starting",
             Visible = true,
@@ -73,12 +139,6 @@ public sealed class WindowsTrayIcon : IDisposable
 
         // 15 frames a second, which is what macOS uses for the same sweep. Faster buys nothing at
         // this size and wakes the machine more often during a transcription.
-        //
-        // A THREADING TIMER RATHER THAN A FORMS ONE, and the marshalling below is why. A Forms timer
-        // needs WM_TIMER pumped on the thread that made it, which is an assumption about a host this
-        // class does not own; a threading timer needs none, and the same captured context that
-        // carries its ticks back to the UI thread also carries the system-settings callbacks, which
-        // arrive on a thread of the operating system's choosing.
         _sweepTimer = new System.Threading.Timer(_ => OnUiThread(AdvanceSweep), null,
             Timeout.Infinite, Timeout.Infinite);
 
@@ -103,6 +163,53 @@ public sealed class WindowsTrayIcon : IDisposable
     /// <summary>The menu is opening; the app reads the history and answers with <see cref="SetLastDictationPreview"/>.</summary>
     public event Action? LastDictationPreviewRequested;
 
+    /// <summary>The user clicked Start Recording or Stop Recording in the tray menu.</summary>
+    public event Action? ToggleRecordingRequested;
+
+    /// <summary>The user clicked Add to Dictionary... in the tray menu.</summary>
+    public event Action? AddToDictionaryRequested;
+
+    /// <summary>The tray menu is opening and wants the latest capture device list via <see cref="SetMicrophones"/>.</summary>
+    public event Action? MicrophoneMenuOpeningRequested;
+
+    /// <summary>The user selected a microphone (or <see langword="null"/> for System Default) from the Microphone submenu.</summary>
+    public event Action<string?>? MicrophoneSelected;
+
+    /// <summary>The user selected an <see cref="AppTheme"/> from the Appearance submenu.</summary>
+    public event Action<AppTheme>? AppearanceSelected;
+
+    /// <summary>The user clicked Help Center in the tray menu.</summary>
+    public event Action? HelpCenterRequested;
+
+    /// <summary>The user clicked Check for Updates... in the tray menu.</summary>
+    public event Action? CheckForUpdatesRequested;
+
+    /// <summary>Updates the active engine and AI polish summary shown at the top of the tray menu.</summary>
+    public void SetEngineAndPolishSummary(FinalAsrEngine engine, PolishProvider polish) =>
+        SetStatusHeader(TrayMenuFormatting.FormatStatusHeader(engine, polish));
+
+    /// <summary>Updates the disabled status header text at the top of the tray menu.</summary>
+    public void SetStatusHeader(string summary)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _statusHeaderItem.Text = TrayMenuFormatting.EscapeMnemonic(summary);
+    }
+
+    /// <summary>Updates the disabled version line under the status header.</summary>
+    public void SetVersion(string? version)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _versionItem.Text = TrayMenuFormatting.EscapeMnemonic(TrayMenuFormatting.FormatVersionLine(version));
+    }
+
+    /// <summary>Shows the active recording shortcut beside Start/Stop Recording.</summary>
+    public void SetRecordingShortcut(string? shortcut)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _recordItem.ShortcutKeyDisplayString = shortcut ?? string.Empty;
+        _recordItem.ShowShortcutKeys = !string.IsNullOrEmpty(shortcut);
+    }
+
     /// <summary>Shows each item's shortcut beside it, or nothing for one that is unset or not listening. Ref: #206.</summary>
     public void SetLastDictationShortcuts(string? pasteShortcut, string? copyShortcut)
     {
@@ -114,38 +221,72 @@ public sealed class WindowsTrayIcon : IDisposable
     }
 
     /// <summary>Names the dictation the two items would reuse, or disables them when there is none.</summary>
-    /// <remarks>
-    /// PUSHED, NOT READ WHEN THE MENU OPENS: the menu opens synchronously and the history is on disk, so
-    /// the app tells the tray whenever the history changes and the menu shows what it was last told.
-    /// </remarks>
     public void SetLastDictationPreview(string? preview)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var available = !string.IsNullOrEmpty(preview);
         _pasteLast.Enabled = available;
         _copyLast.Enabled = available;
-        // "&" marks a mnemonic in a menu item, so "salt & pepper" would draw "salt _pepper".
         _lastPreview.Text = available
-            ? $"“{preview!.Replace("&", "&&", StringComparison.Ordinal)}”"
+            ? $"“{TrayMenuFormatting.EscapeMnemonic(preview!)}”"
             : "No dictation yet";
+    }
+
+    /// <summary>Updates the Appearance submenu checkmark and re-themes the tray popup menu.</summary>
+    public void SetTheme(AppTheme theme)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _appTheme = theme;
+        UpdateAppearanceChecks();
+        ApplyMenuTheme();
+    }
+
+    /// <summary>Rebuilds the Microphone submenu with System Default followed by each capture device.</summary>
+    public void SetMicrophones(IReadOnlyList<TrayMicrophoneItem> devices, string? selectedDeviceId)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(devices);
+
+        var previousItems = _microphoneMenu.DropDownItems.Cast<ToolStripItem>().ToArray();
+        _microphoneMenu.DropDownItems.Clear();
+        foreach (var existing in previousItems)
+        {
+            existing.Dispose();
+        }
+
+        var hasSpecificSelection = !string.IsNullOrWhiteSpace(selectedDeviceId) &&
+            devices.Any(d => string.Equals(d.Id, selectedDeviceId, StringComparison.Ordinal));
+
+        var defaultItem = CreateCheckableItem(
+            "System Default",
+            () => MicrophoneSelected?.Invoke(null));
+        defaultItem.Checked = !hasSpecificSelection;
+        _microphoneMenu.DropDownItems.Add(defaultItem);
+
+        foreach (var device in devices)
+        {
+            if (string.IsNullOrWhiteSpace(device.Id))
+            {
+                continue;
+            }
+
+            var capturedId = device.Id;
+            var item = CreateCheckableItem(
+                TrayMenuFormatting.EscapeMnemonic(device.DisplayName),
+                () => MicrophoneSelected?.Invoke(capturedId));
+            item.Checked = string.Equals(capturedId, selectedDeviceId, StringComparison.Ordinal);
+            _microphoneMenu.DropDownItems.Add(item);
+        }
     }
 
     public void SetStatus(string status)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var text = $"EnviousWispr: {status}";
-        // 127, not 63. NOTIFYICONDATA's tip has been 128 characters since Windows 2000 and the
-        // shorter limit belongs to a struct version this app does not use, so several shipped
-        // sentences were being cut for no reason.
         _notifyIcon.Text = text.Length <= 127 ? text : text[..127];
     }
 
     /// <summary>Puts the tray icon in one state.</summary>
-    /// <remarks>
-    /// THE ICON NEVER CHANGED BEFORE THIS. It was assigned once at construction and the only thing
-    /// that moved was the tooltip, so the one surface the app owns that is always visible said
-    /// nothing about whether the microphone was open.
-    /// </remarks>
     public void SetState(TrayIconState state)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -155,57 +296,195 @@ public sealed class WindowsTrayIcon : IDisposable
         }
 
         _state = state;
+        _recordItem.Text = TrayMenuFormatting.FormatRecordingItemText(_state);
+        _recordItem.Enabled = _state != TrayIconState.Processing;
         _sweepAngle = 0;
         ReconcileSweep();
         PaintState();
     }
 
+    internal string StatusHeaderText => _statusHeaderItem.Text ?? string.Empty;
+
+    internal string VersionText => _versionItem.Text ?? string.Empty;
+
+    internal string RecordItemText => _recordItem.Text ?? string.Empty;
+
+    internal bool RecordItemEnabled => _recordItem.Enabled;
+
+    internal string RecordItemShortcut => _recordItem.ShortcutKeyDisplayString ?? string.Empty;
+
+    internal TrayMenuThemeMode EffectiveMenuThemeMode => _menuColors.Mode;
+
+    internal IReadOnlyList<(string Text, bool Checked)> MicrophoneMenuItems =>
+        _microphoneMenu.DropDownItems
+            .OfType<ToolStripMenuItem>()
+            .Select(item => (item.Text ?? string.Empty, item.Checked))
+            .ToArray();
+
+    internal IReadOnlyList<(string Text, bool Checked)> AppearanceMenuItems =>
+        _appearanceMenu.DropDownItems
+            .OfType<ToolStripMenuItem>()
+            .Select(item => (item.Text ?? string.Empty, item.Checked))
+            .ToArray();
+
+    internal void SimulateMenuOpeningForTest() => HandleMenuOpening();
+
+    private void HandleMenuOpening()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _pasteLast.Enabled = false;
+        _copyLast.Enabled = false;
+        ApplyMenuTheme();
+        LastDictationPreviewRequested?.Invoke();
+        MicrophoneMenuOpeningRequested?.Invoke();
+    }
+
+    private void UpdateAppearanceChecks()
+    {
+        _appearanceSystemItem.Checked = _appTheme == AppTheme.System;
+        _appearanceLightItem.Checked = _appTheme == AppTheme.Light;
+        _appearanceDarkItem.Checked = _appTheme == AppTheme.Dark;
+    }
+
+    private void ApplyMenuTheme()
+    {
+        var (systemUsesLight, appsUseLight) = ReadPersonalizeThemeFlags();
+        var mode = TrayMenuThemeResolver.Resolve(
+            _appTheme,
+            SystemInformation.HighContrast,
+            systemUsesLight,
+            appsUseLight);
+        _menuColors = TrayMenuColors.For(mode);
+
+        var renderer = new FluentTrayMenuRenderer(_menuColors);
+        ApplyThemeToDropDown(_menu, renderer);
+        ApplyThemeToDropDown(_microphoneMenu.DropDown, renderer);
+        ApplyThemeToDropDown(_appearanceMenu.DropDown, renderer);
+    }
+
+    private void ApplyThemeToDropDown(ToolStripDropDown dropDown, FluentTrayMenuRenderer renderer)
+    {
+        dropDown.Renderer = renderer;
+        dropDown.BackColor = _menuColors.Background;
+        dropDown.ForeColor = _menuColors.TextPrimary;
+        if (dropDown.IsHandleCreated)
+        {
+            FluentTrayMenuRenderer.ApplyWindowFrameAttributes(dropDown.Handle, _menuColors);
+        }
+    }
+
+    private void AttachPopupLifecycle(ToolStripDropDown dropDown)
+    {
+        dropDown.HandleCreated += (_, _) =>
+        {
+            if (!_disposed && dropDown.IsHandleCreated)
+            {
+                FluentTrayMenuRenderer.ApplyWindowFrameAttributes(dropDown.Handle, _menuColors);
+            }
+        };
+        dropDown.Opening += (_, _) =>
+        {
+            if (!_disposed && dropDown.IsHandleCreated)
+            {
+                FluentTrayMenuRenderer.ApplyWindowFrameAttributes(dropDown.Handle, _menuColors);
+            }
+        };
+    }
+
+    private static ToolStripMenuItem CreateInfoItem(string text) => new(text)
+    {
+        Enabled = false,
+        Padding = new Padding(8, 5, 8, 5),
+        Margin = new Padding(0, 1, 0, 1),
+    };
+
+    private static ToolStripMenuItem CreateActionItem(string text, Action onClick, bool enabled = true) =>
+        new(text, image: null, (_, _) => onClick())
+        {
+            Enabled = enabled,
+            Padding = new Padding(8, 5, 8, 5),
+            Margin = new Padding(0, 1, 0, 1),
+        };
+
+    private static ToolStripMenuItem CreateCheckableItem(string text, Action onClick) =>
+        new(text, image: null, (_, _) => onClick())
+        {
+            Padding = new Padding(4, 5, 8, 5),
+            Margin = new Padding(0, 1, 0, 1),
+        };
+
+    private ToolStripMenuItem CreateSubmenuHost(string text)
+    {
+        var item = new ToolStripMenuItem(text)
+        {
+            Padding = new Padding(8, 5, 8, 5),
+            Margin = new Padding(0, 1, 0, 1),
+        };
+        if (item.DropDown is ToolStripDropDownMenu dropDownMenu)
+        {
+            dropDownMenu.ShowImageMargin = false;
+            dropDownMenu.ShowCheckMargin = true;
+            dropDownMenu.Font = _menuFont;
+            dropDownMenu.Padding = new Padding(2, 6, 2, 6);
+        }
+
+        return item;
+    }
+
     /// <summary>Re-reads what the user has asked Windows for, and redraws to match.</summary>
-    /// <remarks>
-    /// READ LIVE, NOT ONCE AT STARTUP, AND THE THREE THINGS IT READS FAILED THE SAME WAY. A person
-    /// who turns animations off mid-transcription, plugs in a second display at a different scale,
-    /// or switches High Contrast on has changed what this icon should be - and a value sampled in a
-    /// constructor cannot know. All three arrive through the same two system events, so they are
-    /// answered in one place rather than patched one at a time.
-    /// </remarks>
     private void RefreshSystemPreferences()
     {
         _animationsAllowed = SystemAnimationsAreOn();
+        var (systemUsesLight, _) = ReadPersonalizeThemeFlags();
         _palette = SystemInformation.HighContrast
             ? TrayIconPalette.ForSystem(SystemColors.WindowText)
-            : TrayIconPalette.Brand;
-        // GetSystemMetrics is documented as NOT DPI-aware and must not be used from a per-monitor
-        // aware thread, which this process is. The ForDpi variant answers the question actually
-        // being asked: how big is a small icon at the DPI the shell is drawing at right now.
+            : TrayIconPalette.ForTaskbar(systemUsesLight ?? false);
         _iconSize = Math.Max(16, GetSystemMetricsForDpi(SmallIconWidth, GetDpiForSystem()));
+        ApplyMenuTheme();
         ReconcileSweep();
         PaintState();
     }
 
-    /// <summary>Starts or stops the sweep to match the state and the user's animation setting.</summary>
-    /// <remarks>
-    /// CALLED FROM BOTH PATHS, INCLUDING WHEN THE STATE HAS NOT CHANGED. SetState returns early on a
-    /// repeat, so if this lived only there, turning animations off during a long transcription would
-    /// leave the timer running until the next state change - which on a slow machine is the whole
-    /// point at which somebody would be turning animations off.
-    /// </remarks>
+    internal static (bool? SystemUsesLightTheme, bool? AppsUseLightTheme) ReadPersonalizeThemeFlags()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+                writable: false);
+            if (key is null)
+            {
+                return (null, null);
+            }
+
+            return (
+                ReadDwordBool(key.GetValue("SystemUsesLightTheme")),
+                ReadDwordBool(key.GetValue("AppsUseLightTheme")));
+        }
+        catch
+        {
+            return (null, null);
+        }
+    }
+
+    private static bool? ReadDwordBool(object? raw) => raw switch
+    {
+        int value => value != 0,
+        _ => null,
+    };
+
     private void ReconcileSweep()
     {
         var running = _state == TrayIconState.Processing && _animationsAllowed;
-        // A stopped sweep still shows the ring, held still. The state keeps its own picture.
         _sweepTimer.Change(
             running ? TimeSpan.FromMilliseconds(1000 / 15) : Timeout.InfiniteTimeSpan,
             running ? TimeSpan.FromMilliseconds(1000 / 15) : Timeout.InfiniteTimeSpan);
     }
 
-    /// <summary>Moves the sweep on one frame, if a frame is still wanted.</summary>
-    /// <remarks>
-    /// THE CONDITION IS RECHECKED HERE AND NOT ONLY AT THE TIMER, because stopping a timer does not
-    /// unpost the work it has already queued. A tick that was in flight when the user turned
-    /// animations off would still arrive and still redraw, and if the UI thread had been busy for a
-    /// moment several would arrive together and the ring would visibly jump before settling. The
-    /// timer decides whether to ASK for a frame; this decides whether to draw one.
-    /// </remarks>
     private void AdvanceSweep()
     {
         if (_state != TrayIconState.Processing || !_animationsAllowed)
@@ -223,12 +502,6 @@ public sealed class WindowsTrayIcon : IDisposable
     private void OnDisplaySettingsChanged(object? sender, EventArgs e) =>
         OnUiThread(RefreshSystemPreferences);
 
-    /// <summary>Runs work where the tray icon lives.</summary>
-    /// <remarks>
-    /// SYSTEM EVENT CALLBACKS ARRIVE ON A THREAD OF WINDOWS' CHOOSING, and NotifyIcon is a Windows
-    /// Forms component that expects one thread. The disposed check happens again inside, because a
-    /// post can be delivered after Dispose has run.
-    /// </remarks>
     private void OnUiThread(Action work) => _ui.Post(_ => RunIfAlive(work), state: null);
 
     private void RunIfAlive(Action work)
@@ -241,18 +514,6 @@ public sealed class WindowsTrayIcon : IDisposable
         work();
     }
 
-    /// <summary>Renders the current state and hands the new icon to the tray.</summary>
-    /// <remarks>
-    /// EVERY ICON HANDLE IS DESTROYED, AND THIS IS THE WHOLE REASON THIS METHOD EXISTS SEPARATELY.
-    /// `Bitmap.GetHicon` allocates a handle the garbage collector does not own; `Icon.FromHandle`
-    /// wraps it without taking responsibility for it either. At fifteen frames a second that is
-    /// nine hundred leaked handles a minute, and the process hits the ten-thousand handle ceiling
-    /// in about eleven minutes of one long transcription. The leak is invisible until the app stops
-    /// being able to draw anything at all.
-    ///
-    /// The previous icon is released only AFTER the new one is on the tray, because releasing the
-    /// icon the tray is currently drawing is a flicker at best.
-    /// </remarks>
     private void PaintState()
     {
         using var frame = TrayIconRenderer.Render(_state, _iconSize, _palette, _sweepAngle);
@@ -271,18 +532,9 @@ public sealed class WindowsTrayIcon : IDisposable
         }
     }
 
-    /// <summary>Whether the user has asked Windows to animate things.</summary>
-    /// <remarks>
-    /// macOS HONOURS REDUCE MOTION HERE AND SO DOES THIS. A spinning icon in the corner of the
-    /// screen is exactly the kind of thing somebody turns that setting off to stop. With animation
-    /// off the processing state still gets its own picture, it simply holds still.
-    /// </remarks>
     private static bool SystemAnimationsAreOn()
     {
         var enabled = 0;
-        // FAILS CLOSED. An accessibility preference we cannot read is not a preference to guess in
-        // favour of ourselves: the setting exists so that moving content does not reach people it
-        // harms, and the cost of being wrong in this direction is a ring that holds still.
         return SystemParametersInfo(ClientAreaAnimation, 0, ref enabled, 0) && enabled != 0;
     }
 
@@ -300,13 +552,13 @@ public sealed class WindowsTrayIcon : IDisposable
         }
 
         _disposed = true;
-        // Detached FIRST. A static event holding an instance method keeps this object alive for the
-        // life of the process, and a callback arriving mid-teardown would touch a disposed tray.
         SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         _sweepTimer.Dispose();
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
+        _menu.Dispose();
+        _menuFont.Dispose();
         _renderedIcon?.Dispose();
         _icon.Dispose();
     }
