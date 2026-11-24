@@ -55,13 +55,11 @@ public sealed partial class DesignSystemTokenTests
 {
     private const string XamlNamespace = "http://schemas.microsoft.com/winfx/2006/xaml";
 
-    /// <summary>The four card-based choice lists, by name.</summary>
+    /// <summary>The vertical card-based choice lists, by name.</summary>
     private static readonly string[] ChoiceListNames =
     [
         "EngineComboBox",
         "PolishProviderComboBox",
-        "ThemeComboBox",
-        "OverlayPositionComboBox",
     ];
 
     private static readonly Dictionary<string, ThemePair> ExpectedTokenColors = new(StringComparer.Ordinal)
@@ -1619,9 +1617,14 @@ public sealed partial class DesignSystemTokenTests
             Assert.Null(element.Attribute("Click"));
         }
 
+        var pillGroup = (string?)FindNamedElement(document, "CapsulePillButton").Attribute("GroupName");
+        Assert.Equal("RecordingPillStyle", pillGroup);
         Assert.Equal(
-            (string?)FindNamedElement(document, "CapsulePillButton").Attribute("GroupName"),
+            pillGroup,
             (string?)FindNamedElement(document, "LevelRailPillButton").Attribute("GroupName"));
+        Assert.Equal(
+            pillGroup,
+            (string?)FindNamedElement(document, "ReadingWellPillButton").Attribute("GroupName"));
     }
 
     [Fact]
@@ -3590,6 +3593,46 @@ public sealed partial class DesignSystemTokenTests
         Assert.Equal(
             "PasteHistoryButton",
             pasteButton.Attributes().FirstOrDefault(a => a.Name.LocalName == "AutomationProperties.AutomationId")?.Value);
+    }
+
+    [Fact]
+    public void RecordingPillPreviewsAndOverlayReadingWellMatchBrandContract()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var window = LoadMainWindow();
+
+        var capsule = FindNamedElement(window, "CapsulePillButton");
+        Assert.DoesNotContain(capsule.Descendants(), element => element.Name.LocalName == "Ellipse");
+        Assert.Contains(
+            capsule.Descendants(),
+            element => element.Name.LocalName == "Image"
+                && string.Equals((string?)element.Attribute("Source"), "Assets/Brand/EnviousWisprMark.svg", StringComparison.Ordinal));
+
+        var readingWellCard = FindNamedElement(window, "ReadingWellPillButton");
+        Assert.DoesNotContain(
+            readingWellCard.Descendants(),
+            element => element.Name.LocalName == "Border"
+                && string.Equals((string?)element.Attribute("Background"), "{ThemeResource BrandCardBgBrush}", StringComparison.Ordinal));
+        Assert.Contains(
+            readingWellCard.Descendants(),
+            element => element.Name.LocalName == "TextBlock"
+                && string.Equals((string?)element.Attribute("Text"), "LISTENING", StringComparison.Ordinal));
+
+        foreach (var cardName in new[] { "CapsulePillButton", "LevelRailPillButton", "ReadingWellPillButton" })
+        {
+            var card = FindNamedElement(window, cardName);
+            Assert.Contains(
+                card.Descendants(),
+                element => element.Name.LocalName == "Border"
+                    && string.Equals((string?)element.Attribute("Height"), "2", StringComparison.Ordinal)
+                    && string.Equals((string?)element.Attribute("VerticalAlignment"), "Bottom", StringComparison.Ordinal));
+        }
+
+        var overlay = XDocument.Load(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "DictationOverlayWindow.xaml"));
+        var previewWell = FindNamedElement(overlay, "PreviewWell");
+        Assert.Null(previewWell.Attribute("Background"));
+        Assert.Null(previewWell.Attribute("CornerRadius"));
     }
 
     private readonly record struct DynamicColor(Rgba Light, Rgba Dark);

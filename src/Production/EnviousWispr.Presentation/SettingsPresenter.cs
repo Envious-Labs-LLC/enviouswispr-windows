@@ -246,6 +246,21 @@ public sealed class SettingsPresenter : IDisposable
             },
         });
 
+    /// <summary>Writes the recording pill style choice and its coupled Live Preview toggle atomically.</summary>
+    public Task<SettingsSaveResult> SaveRecordingPillSelectionAsync(
+        bool livePreviewEnabled,
+        RecordingPillDesign pillDesignWithoutWords) =>
+        SaveAsync(current => current with
+        {
+            Preferences = current.Preferences with
+            {
+                LivePreviewEnabled = livePreviewEnabled,
+                PillDesignWithoutWords = pillDesignWithoutWords == RecordingPillDesign.LevelRail
+                    ? RecordingPillDesign.LevelRail
+                    : RecordingPillDesign.Classic,
+            },
+        });
+
     /// <summary>The General page's Save: every value the page holds, checked, normalised and stored as one change.</summary>
     /// <remarks>
     /// THE REPLACEMENT SCOPE IS EXACTLY THREE FIELDS OF THE STORED SETTINGS: the preferred microphone,

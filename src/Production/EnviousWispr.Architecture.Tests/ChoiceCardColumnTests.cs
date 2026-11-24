@@ -19,13 +19,21 @@ public sealed class ChoiceCardColumnTests
 {
     private const string XamlNamespace = "http://schemas.microsoft.com/winfx/2006/xaml";
 
+    private static readonly HashSet<string> RecordingPillHorizontalCards = new(StringComparer.Ordinal)
+    {
+        "CapsulePillButton",
+        "LevelRailPillButton",
+        "ReadingWellPillButton",
+    };
+
     [Fact]
-    public void NoChoiceCardIsPlacedInASecondColumn()
+    public void NoChoiceCardIsPlacedInASecondColumnExceptTheThreeColumnPillSelector()
     {
         var cards = SelectableCards();
         Assert.True(cards.Count >= 4, $"Expected the choice cards, found {cards.Count}.");
 
         var sideBySide = cards
+            .Where(card => !RecordingPillHorizontalCards.Contains((string?)card.Attribute(XName.Get("Name", XamlNamespace)) ?? string.Empty))
             .Where(card => (string?)card.Attribute("Grid.Column") is { } column && column != "0")
             .Select(card => (string?)card.Attribute(XName.Get("Name", XamlNamespace)) ?? "unnamed")
             .ToArray();
@@ -37,15 +45,10 @@ public sealed class ChoiceCardColumnTests
     }
 
     [Fact]
-    public void NoChoiceCardSitsInsideAMultiColumnGrid()
+    public void NoChoiceCardSitsInsideAMultiColumnGridExceptTheThreeColumnPillSelector()
     {
-        // A CARD WITH NO Grid.Column IS STILL IN COLUMN ZERO OF A TWO-COLUMN GRID. Checking only the
-        // attribute would pass a group that had been split by adding definitions around it.
-        // THE CARD'S OWN PARENT, NOT ANY ANCESTOR. Walking up to the first Grid found the settings
-        // page's own layout, which is legitimately two columns and says nothing about how a group of
-        // choices is arranged inside one of them. What matters is the container that lays the cards
-        // out, which is the one they are children of.
         var offenders = SelectableCards()
+            .Where(card => !RecordingPillHorizontalCards.Contains((string?)card.Attribute(XName.Get("Name", XamlNamespace)) ?? string.Empty))
             .Where(card => card.Parent is { } parent &&
                 parent.Name.LocalName == "Grid" &&
                 parent.Elements()
@@ -59,6 +62,35 @@ public sealed class ChoiceCardColumnTests
             offenders.Length == 0,
             "These choice cards are laid out by a multi-column grid, so the group negotiates its "
                 + "column count instead of pinning it: " + string.Join(", ", offenders));
+    }
+
+    [Fact]
+    public void RecordingPillCardsSitTogetherInOneEqualThreeColumnGrid()
+    {
+        var cards = SelectableCards()
+            .Where(card => RecordingPillHorizontalCards.Contains((string?)card.Attribute(XName.Get("Name", XamlNamespace)) ?? string.Empty))
+            .ToArray();
+        Assert.Equal(3, cards.Length);
+
+        var parentGrid = cards[0].Parent;
+        Assert.NotNull(parentGrid);
+        Assert.Equal("Grid", parentGrid!.Name.LocalName);
+        Assert.All(cards, card => Assert.Same(parentGrid, card.Parent));
+
+        var columns = parentGrid.Elements()
+            .FirstOrDefault(child => child.Name.LocalName == "Grid.ColumnDefinitions")?
+            .Elements()
+            .Select(col => (string?)col.Attribute("Width") ?? string.Empty)
+            .ToArray() ?? [];
+        Assert.Equal(["*", "*", "*"], columns);
+        Assert.Equal(["0", "1", "2"], cards.Select(card => (string?)card.Attribute("Grid.Column") ?? string.Empty).ToArray());
+        Assert.Equal("RecordingPillCardsGrid_SizeChanged", (string?)parentGrid.Attribute("SizeChanged"));
+        var rows = parentGrid.Elements()
+            .FirstOrDefault(child => child.Name.LocalName == "Grid.RowDefinitions")?
+            .Elements()
+            .Select(row => (string?)row.Attribute("Height") ?? string.Empty)
+            .ToArray() ?? [];
+        Assert.Equal(["Auto", "Auto", "Auto"], rows);
     }
 
     private static List<XElement> SelectableCards() => Markup()

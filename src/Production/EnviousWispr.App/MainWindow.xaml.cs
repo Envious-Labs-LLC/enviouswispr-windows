@@ -168,19 +168,6 @@ public sealed partial class MainWindow : Window, IDisposable
         new("Gemini", "Sends transcript text directly to your Google Gemini account."),
     ];
 
-    private readonly SelectableChoiceOption[] ThemeChoices =
-    [
-        new("Use Windows setting", "Follows the current Windows light or dark setting."),
-        new("Light", "Uses the light EnviousWispr palette."),
-        new("Dark", "Uses the dark EnviousWispr palette."),
-    ];
-
-    private readonly SelectableChoiceOption[] OverlayPositionChoices =
-    [
-        new("Top", "Shows the recording pill at the top of the active display."),
-        new("Bottom", "Shows the recording pill at the bottom of the active display."),
-    ];
-
     private sealed record SearchableSettingItem(string DisplayName, string PageTag, string? TabKey = null, string? Keywords = null)
     {
         public override string ToString() => DisplayName;
@@ -330,6 +317,9 @@ public sealed partial class MainWindow : Window, IDisposable
         CopyLast,
     }
     private int _recordingModeIndex;
+    private int _selectedThemeIndex;
+    private int _selectedOverlayPositionIndex;
+    private RecordingPillDesign _lastWithoutWordsPillDesign = RecordingPillDesign.Classic;
     private RecordingSoundPairing _selectedRecordingSoundPairing = RecordingSoundPairing.WhisperTick;
     private readonly Dictionary<RecordingSoundPairing, Border> _chimeCards = new();
     private readonly Dictionary<RecordingSoundPairing, Button> _chimeSelectButtons = new();
@@ -367,8 +357,6 @@ public sealed partial class MainWindow : Window, IDisposable
 
         EngineComboBox.ItemsSource = FinalEngineChoices;
         PolishProviderComboBox.ItemsSource = PolishProviderChoices;
-        ThemeComboBox.ItemsSource = ThemeChoices;
-        OverlayPositionComboBox.ItemsSource = OverlayPositionChoices;
 
         // Days are whole days. Without a formatter a NumberBox keeps and DISPLAYS a fraction:
         // measured on the running app, "12.7" was accepted and shown as 12.7, then stored as 12 by
@@ -473,6 +461,8 @@ public sealed partial class MainWindow : Window, IDisposable
             ApplyCaptionButtonColors();
             UpdateChimeCardsVisuals();
             UpdateRecordingModeButtons();
+            UpdateThemeSegmentButtons();
+            UpdateOverlayPositionSegmentButtons();
         };
         TryUseMicaBackdrop();
         ConfigureMinimumWindowWidth();
@@ -1592,10 +1582,10 @@ public sealed partial class MainWindow : Window, IDisposable
             OllamaEndpointTextBox.Text,
             HistoryEnabledToggle.IsOn,
             RetentionDaysBox.Value,
-            RawSelectedIndexOf(ThemeChoices),
+            _selectedThemeIndex,
             LivePreviewToggle.IsOn,
-            RawSelectedIndexOf(OverlayPositionChoices),
-            LevelRailPillButton.IsChecked == true,
+            _selectedOverlayPositionIndex,
+            PillDesignWithoutWordsFromControls() == RecordingPillDesign.LevelRail,
             PlayRecordingSoundsToggle.IsOn,
             SelectedRecordingSoundPairing(),
             CopyInsteadOfPasteToggle.IsOn,
@@ -1706,57 +1696,141 @@ public sealed partial class MainWindow : Window, IDisposable
     /// choosing a theme repainted the window. Nothing connected them, and a gap between two passing
     /// tests is not a failure inside either.
     /// </remarks>
-    private async void ThemeCardChecked(object sender, RoutedEventArgs e)
-    {
-        if (_isApplyingSettings)
-        {
-            return;
-        }
+    private void SystemThemeSegmentButton_Click(object sender, RoutedEventArgs e) =>
+        SetThemeSelection(0, triggerSave: true);
 
-        ApplyTheme(ThemeFromIndex(SelectedIndexOf(ThemeChoices)));
-        await PersistAppearanceChoicesAsync().ConfigureAwait(true);
+    private void LightThemeSegmentButton_Click(object sender, RoutedEventArgs e) =>
+        SetThemeSelection(1, triggerSave: true);
+
+    private void DarkThemeSegmentButton_Click(object sender, RoutedEventArgs e) =>
+        SetThemeSelection(2, triggerSave: true);
+
+    private void SetThemeSelection(int index, bool triggerSave)
+    {
+        var normalized = Math.Clamp(index, 0, 2);
+        _selectedThemeIndex = normalized;
+        UpdateThemeSegmentButtons();
+        ApplyTheme(ThemeFromIndex(normalized));
+
+        if (triggerSave && !_isApplyingSettings && _settings is not null)
+        {
+            _ = PersistAppearanceChoicesAsync();
+        }
     }
 
-    /// <summary>Keeps an Appearance choice that has already taken effect on screen.</summary>
-    private async void AppearanceCardChecked(object sender, RoutedEventArgs e)
+    private void UpdateThemeSegmentButtons()
+    {
+        ApplySegmentButtonState(SystemThemeSegmentButton, _selectedThemeIndex == 0);
+        ApplySegmentButtonState(LightThemeSegmentButton, _selectedThemeIndex == 1);
+        ApplySegmentButtonState(DarkThemeSegmentButton, _selectedThemeIndex == 2);
+    }
+
+    private void TopPositionSegmentButton_Click(object sender, RoutedEventArgs e) =>
+        SetOverlayPositionSelection(0, triggerSave: true);
+
+    private void BottomPositionSegmentButton_Click(object sender, RoutedEventArgs e) =>
+        SetOverlayPositionSelection(1, triggerSave: true);
+
+    private void SetOverlayPositionSelection(int index, bool triggerSave)
+    {
+        var normalized = index == 1 ? 1 : 0;
+        _selectedOverlayPositionIndex = normalized;
+        UpdateOverlayPositionSegmentButtons();
+
+        if (triggerSave && !_isApplyingSettings && _settings is not null)
+        {
+            _ = PersistAppearanceChoicesAsync();
+        }
+    }
+
+    private void UpdateOverlayPositionSegmentButtons()
+    {
+        ApplySegmentButtonState(TopPositionSegmentButton, _selectedOverlayPositionIndex == 0);
+        ApplySegmentButtonState(BottomPositionSegmentButton, _selectedOverlayPositionIndex == 1);
+    }
+
+    private static void ApplySegmentButtonState(Button? button, bool selected)
+    {
+        if (button is null)
+        {
+            return;
+        }
+
+        button.Style = selected
+            ? (Style)Application.Current.Resources["BrandSegmentedActiveButtonStyle"]
+            : (Style)Application.Current.Resources["BrandSegmentedButtonStyle"];
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(
+            button,
+            selected ? "Selected" : string.Empty);
+    }
+
+    /// <summary>Applies and persists a single-selection Recording Pill card choice immediately.</summary>
+    private async void PillStyleCardChecked(object sender, RoutedEventArgs e)
     {
         if (_isApplyingSettings)
         {
             return;
         }
 
-        await PersistAppearanceChoicesAsync().ConfigureAwait(true);
+        var livePreviewEnabled = ReferenceEquals(sender, ReadingWellPillButton);
+        if (ReferenceEquals(sender, LevelRailPillButton))
+        {
+            _lastWithoutWordsPillDesign = RecordingPillDesign.LevelRail;
+        }
+        else if (ReferenceEquals(sender, CapsulePillButton))
+        {
+            _lastWithoutWordsPillDesign = RecordingPillDesign.Classic;
+        }
+
+        _isApplyingSettings = true;
+        try
+        {
+            LivePreviewToggle.IsOn = livePreviewEnabled;
+            RefreshLivePreviewSectionPresentation();
+        }
+        finally
+        {
+            _isApplyingSettings = false;
+        }
+
+        await PersistRecordingPillSelectionAsync(livePreviewEnabled, _lastWithoutWordsPillDesign)
+            .ConfigureAwait(true);
     }
 
     /// <summary>
     /// Writes the Appearance choices, and nothing else.
     /// </summary>
     /// <remarks>
-    /// ONLY THESE TWO FIELDS, DELIBERATELY. The Save button builds a whole settings object out of
+    /// ONLY THESE FIELDS, DELIBERATELY. The Save button builds a whole settings object out of
     /// every control in the window, which is right for a button the user pressed and wrong for a
-    /// side effect of clicking a theme card: it would commit half-finished edits sitting on other
-    /// pages that the user has not chosen to save yet.
-    ///
-    /// SAVED QUIETLY, because the user already has their confirmation - the window changed colour.
-    /// A success banner for something they can plainly see happened is noise. A FAILURE still
-    /// speaks, because that is the case where the screen and the file disagree, which is exactly
-    /// the state this whole change exists to prevent.
-    ///
-    /// Appearance is the only settings page with no Save button, so persisting on selection is what
-    /// makes its settings behave like the other ten pages' rather than an exception. The
-    /// alternative - adding a Save button - would mean asking a user to confirm a change they can
-    /// already see, which reads as the app not trusting its own preview.
+    /// side effect of clicking a theme or position segment: it would commit half-finished edits
+    /// sitting on other pages that the user has not chosen to save yet.
     /// </remarks>
     private async Task PersistAppearanceChoicesAsync()
     {
-        // THE CONTROLS ARE READ HERE, ON THE UI THREAD, AND THE THREE FIELDS ARE APPLIED INSIDE THE
-        // GATE by the presenter - so a click that overlaps another writer builds on what is actually
-        // stored, and no control is read from the thread the wait ends on.
+        // THE CONTROLS ARE READ HERE, ON THE UI THREAD, AND APPLIED INSIDE THE GATE by the
+        // presenter - so a click that overlaps another writer builds on what is actually stored,
+        // and no control is read from the thread the wait ends on.
         var choices = new AppearanceChoices(
-            ThemeFromIndex(SelectedIndexOf(ThemeChoices)),
-            OverlayPositionFromIndex(SelectedIndexOf(OverlayPositionChoices)),
+            ThemeFromIndex(_selectedThemeIndex),
+            OverlayPositionFromIndex(_selectedOverlayPositionIndex),
             PillDesignWithoutWordsFromControls());
         var result = await _session.Settings.SaveAppearanceAsync(choices).ConfigureAwait(true);
+        HandleAppearanceSaveResult(result);
+    }
+
+    private async Task PersistRecordingPillSelectionAsync(
+        bool livePreviewEnabled,
+        RecordingPillDesign withoutWordsDesign)
+    {
+        var result = await _session.Settings
+            .SaveRecordingPillSelectionAsync(livePreviewEnabled, withoutWordsDesign)
+            .ConfigureAwait(true);
+        HandleAppearanceSaveResult(result);
+    }
+
+    private void HandleAppearanceSaveResult(SettingsSaveResult result)
+    {
         if (result.Saved)
         {
             PublishSettings();
@@ -4565,13 +4639,11 @@ public sealed partial class MainWindow : Window, IDisposable
     /// RadioButtons did here before. Left and Right are included because a user reaching for
     /// either is reaching for the same thing.
     /// </remarks>
-    /// <summary>The four card-based choice lists.</summary>
+    /// <summary>The vertical card-based choice lists.</summary>
     private ItemsControl[] ChoiceLists() =>
     [
         EngineComboBox,
         PolishProviderComboBox,
-        ThemeComboBox,
-        OverlayPositionComboBox,
     ];
 
     /// <summary>
@@ -5125,6 +5197,11 @@ public sealed partial class MainWindow : Window, IDisposable
     private void PublishSettings()
     {
         _settings = _session.Settings.Current;
+        _overlayWindow.ApplyPreferences(
+            _settings.Preferences.OverlayPosition,
+            _settings.Preferences.LivePreviewEnabled,
+            _settings.Preferences.PillDesignWithoutWords,
+            _settings.Preferences.PillDesignWithWords);
         SettingsChanged?.Invoke(_settings);
         SyncAppliedWhisperLanguageStatus(_settings.Preferences.Dictation.WhisperLanguage);
     }
@@ -5367,17 +5444,15 @@ public sealed partial class MainWindow : Window, IDisposable
             OllamaEndpointTextBox.Text = preferences.Polish.OllamaEndpoint ?? string.Empty;
             HistoryEnabledToggle.IsOn = preferences.History.IsEnabled;
             RetentionDaysBox.Value = preferences.History.RetentionDays;
-            SelectChoice(ThemeChoices, ThemeIndex(preferences.Theme));
+            SetThemeSelection(ThemeIndex(preferences.Theme), triggerSave: false);
             LivePreviewToggle.IsOn = preferences.LivePreviewEnabled;
             LivePreviewParakeetEngineCard.IsChecked = preferences.LivePreviewEngine == LivePreviewEngineChoice.Parakeet;
             LivePreviewWhisperEngineCard.IsChecked = preferences.LivePreviewEngine == LivePreviewEngineChoice.Whisper;
             RefreshLivePreviewSectionPresentation();
-            SelectChoice(OverlayPositionChoices, OverlayPositionIndex(preferences.OverlayPosition));
-            CapsulePillButton.IsChecked =
-                preferences.PillDesignWithoutWords == RecordingPillDesign.Classic;
-            LevelRailPillButton.IsChecked =
-                preferences.PillDesignWithoutWords == RecordingPillDesign.LevelRail;
-            ReadingWellPillButton.IsChecked = true;
+            SetOverlayPositionSelection(OverlayPositionIndex(preferences.OverlayPosition), triggerSave: false);
+            _lastWithoutWordsPillDesign = preferences.PillDesignWithoutWords == RecordingPillDesign.LevelRail
+                ? RecordingPillDesign.LevelRail
+                : RecordingPillDesign.Classic;
             PlayRecordingSoundsToggle.IsOn = preferences.PlayRecordingSounds;
             CopyInsteadOfPasteToggle.IsOn = preferences.CopyInsteadOfPaste;
             SelectChimePairing(preferences.RecordingSoundPairing, triggerSave: false);
@@ -6111,7 +6186,7 @@ public sealed partial class MainWindow : Window, IDisposable
         {
             "microphone" => ("Microphone", "Choose your input source and readiness behavior.", (FrameworkElement?)MicrophoneSection, (FrameworkElement?)null),
             "live-preview" => ("Live Preview", "See your words on screen while you are still speaking, and choose how the recording pill looks.", (FrameworkElement?)LivePreviewSection, (FrameworkElement?)null),
-            "pill" => ("Recording Pill", "Choose where and how the recording pill appears while you dictate.", (FrameworkElement?)AppearanceSection, (FrameworkElement?)null),
+            "pill" => ("Recording Pill", "Choose where and how the recording pill appears while you dictate.", (FrameworkElement?)RecordingPillSection, (FrameworkElement?)null),
             "sounds" => ("Sounds", "Play a short sound when recording starts and stops.", (FrameworkElement?)SoundSection, (FrameworkElement?)null),
             "clipboard" => ("Clipboard", "How your transcript reaches the clipboard and the app you're in.", (FrameworkElement?)ClipboardSection, (FrameworkElement?)null),
             _ => ("Dictation Settings", "The speech engine that turns your voice into text.", (FrameworkElement?)TranscriptionEngineSection, (FrameworkElement?)DeterministicCleanupSection),
@@ -6163,7 +6238,7 @@ public sealed partial class MainWindow : Window, IDisposable
             "privacy" => ("Dictation history", "Whether your dictations are saved on this PC, and for how long.", (FrameworkElement?)HistorySettingsSection, (FrameworkElement?)null),
             "backup" => ("Backup", "Move your settings, words, and snippets to another PC, or keep a copy of everything and remove it all.", (FrameworkElement?)PortableProfileSection, (FrameworkElement?)YourDataSection),
             "updates-licenses" => ("Updates & Licenses", "App updates and open source notices.", (FrameworkElement?)UpdatesSection, (FrameworkElement?)LicensesSection),
-            _ => ("Appearance", "The theme, and where the recording pill appears while you dictate.", (FrameworkElement?)AppearanceSection, (FrameworkElement?)null),
+            _ => ("Appearance", "Choose how EnviousWispr looks and whether it starts when you sign in.", (FrameworkElement?)AppearanceSection, (FrameworkElement?)null),
         };
 
         SettingsPageTitle.Text = title;
@@ -6301,6 +6376,7 @@ public sealed partial class MainWindow : Window, IDisposable
         TranscribeFileSection,
         AiPolishSection,
         HistorySettingsSection,
+        RecordingPillSection,
         AppearanceSection,
         LivePreviewSection,
         ClipboardSection,
@@ -6635,30 +6711,74 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private static int OverlayPositionIndex(OverlayPillPosition position) => SettingsPresenter.OverlayPositionIndex(position);
 
-    private RecordingPillDesign PillDesignWithoutWordsFromControls() =>
-        LevelRailPillButton.IsChecked == true
+    private void RecordingPillCardsGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var stackVertically = e.NewSize.Width > 0 && e.NewSize.Width < 620;
+        RecordingPillCardsGrid.RowSpacing = stackVertically
+            ? (double)Application.Current.Resources["BrandSpacingM"]
+            : 0;
+        var span = stackVertically ? 3 : 1;
+        RadioButton[] cards = [CapsulePillButton, LevelRailPillButton, ReadingWellPillButton];
+        for (var i = 0; i < cards.Length; i++)
+        {
+            Grid.SetRow(cards[i], stackVertically ? i : 0);
+            Grid.SetColumn(cards[i], stackVertically ? 0 : i);
+            Grid.SetColumnSpan(cards[i], span);
+        }
+    }
+
+    private RecordingPillDesign PillDesignWithoutWordsFromControls()
+    {
+        if (LevelRailPillButton.IsChecked == true)
+        {
+            return RecordingPillDesign.LevelRail;
+        }
+
+        if (CapsulePillButton.IsChecked == true)
+        {
+            return RecordingPillDesign.Classic;
+        }
+
+        return _lastWithoutWordsPillDesign == RecordingPillDesign.LevelRail
             ? RecordingPillDesign.LevelRail
             : RecordingPillDesign.Classic;
+    }
 
     private RecordingSoundPairing SelectedRecordingSoundPairing() => _selectedRecordingSoundPairing;
 
     private void UpdatePillDesignControls()
     {
-        var withWords = LivePreviewToggle.IsOn;
-        CapsulePillButton.IsEnabled = !withWords;
-        LevelRailPillButton.IsEnabled = !withWords;
-        ReadingWellPillButton.IsEnabled = withWords;
-        // The inactive group's cards are disabled, and a disabled card with no stated reason reads
-        // as a control that ignores clicks. Measured on the running app: with Live Preview off,
-        // Reading Well showed a purple selected-style border and greyed text, and nothing on the
-        // page said why it could not be chosen. The heading is the honest place to say it - the
-        // cards are remembered choices for a mode that is not currently on, not broken controls.
-        WithoutWordsPillHeading.Text = withWords
-            ? "Live Preview off · turn Live Preview off to use these"
-            : "Live Preview off · In use";
-        WithWordsPillHeading.Text = withWords
-            ? "Live Preview on · In use"
-            : "Live Preview on · turn Live Preview on to use this";
+        var previous = _isApplyingSettings;
+        _isApplyingSettings = true;
+        try
+        {
+            CapsulePillButton.IsEnabled = true;
+            LevelRailPillButton.IsEnabled = true;
+            ReadingWellPillButton.IsEnabled = true;
+
+            if (LivePreviewToggle.IsOn)
+            {
+                ReadingWellPillButton.IsChecked = true;
+                CapsulePillButton.IsChecked = false;
+                LevelRailPillButton.IsChecked = false;
+            }
+            else if (_lastWithoutWordsPillDesign == RecordingPillDesign.LevelRail)
+            {
+                LevelRailPillButton.IsChecked = true;
+                CapsulePillButton.IsChecked = false;
+                ReadingWellPillButton.IsChecked = false;
+            }
+            else
+            {
+                CapsulePillButton.IsChecked = true;
+                LevelRailPillButton.IsChecked = false;
+                ReadingWellPillButton.IsChecked = false;
+            }
+        }
+        finally
+        {
+            _isApplyingSettings = previous;
+        }
     }
 
     private static PolishProvider PolishProviderFromIndex(int index) => SettingsPresenter.PolishProviderFromIndex(index);

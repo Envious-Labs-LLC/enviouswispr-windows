@@ -109,7 +109,7 @@
                     <TextBlock x:Name="ElapsedText" Grid.Column="2" Foreground="{ThemeResource PillTimerBrush}" FontFamily="Consolas" FontSize="14" Text="00:00" VerticalAlignment="Center" />
                 </Grid>
 
-                <Border x:Name="PreviewWell" Background="{ThemeResource PillSurfaceBrush}" CornerRadius="10" Padding="12,9" Visibility="Collapsed">
+                <Border x:Name="PreviewWell" BorderBrush="{ThemeResource PillDividerBrush}" BorderThickness="0,1,0,0" Padding="0,8,0,0" Visibility="Collapsed">
                     <TextBlock x:Name="PreviewText" AutomationProperties.Name="Live transcription preview" FontSize="14" MaxLines="5" Style="{StaticResource PillDimmedTextStyle}" Text="Listening…" TextAlignment="DetectFromContent" TextWrapping="Wrap" />
                 </Border>
                 <TextBlock x:Name="StateDetail" AutomationProperties.AccessibilityView="Raw" FontSize="14" MaxLines="2" Style="{StaticResource PillNoticeTextStyle}" Text="Release your key to finish" TextWrapping="Wrap" Visibility="Collapsed" />
