@@ -27,7 +27,7 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
     private readonly LowLevelKeyboardProcedure _procedure;
     private readonly HotkeyEdgeTracker _edgeTracker;
     private readonly HeldModifierKeys _heldModifiers = new();
-    private readonly Channel<PushToTalkSignal> _signals = Channel.CreateUnbounded<PushToTalkSignal>(
+    private readonly Channel<PushToTalkSignalEvent> _signals = Channel.CreateUnbounded<PushToTalkSignalEvent>(
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
     private readonly Task _dispatchTask;
     private nint _hook;
@@ -50,10 +50,20 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
 
     private void PumpGesture()
     {
-        var signal = _edgeTracker.Tick();
-        if (signal is not null)
+        var decision = _edgeTracker.TickDecision();
+        if (decision is null)
         {
-            _signals.Writer.TryWrite(signal.Value);
+            return;
+        }
+
+        if (decision.Value.Signal is { } signal)
+        {
+            _signals.Writer.TryWrite(new PushToTalkSignalEvent(signal, decision.Value.IsHandsFree));
+        }
+
+        if (decision.Value.MaskMenuKey)
+        {
+            MenuKeyMask.Send();
         }
     }
 
@@ -309,7 +319,7 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
                 gestureModifiers);
             if (decision.Signal is not null)
             {
-                _signals.Writer.TryWrite(decision.Signal.Value);
+                _signals.Writer.TryWrite(new PushToTalkSignalEvent(decision.Signal.Value, decision.IsHandsFree));
             }
 
             if (decision.MaskMenuKey)
@@ -328,11 +338,11 @@ public sealed class WindowsPushToTalkHook : IGlobalPushToTalk
 
     private async Task DispatchAsync()
     {
-        await foreach (var signal in _signals.Reader.ReadAllAsync().ConfigureAwait(false))
+        await foreach (var signalEvent in _signals.Reader.ReadAllAsync().ConfigureAwait(false))
         {
             try
             {
-                Signalled?.Invoke(this, new PushToTalkSignalEvent(signal));
+                Signalled?.Invoke(this, signalEvent);
             }
             catch
             {
@@ -553,6 +563,8 @@ internal static class WindowsVirtualKeyMap
             // codes and routes them through the tap gesture rather than hold-to-talk.
             "RightCtrl" => 0xA3,
             "LeftCtrl" => 0xA2,
+            "RightAlt" => 0xA5,
+            "LeftAlt" => 0xA4,
             "RightShift" => 0xA1,
             "LeftShift" => 0xA0,
             "RightWin" => 0x5C,

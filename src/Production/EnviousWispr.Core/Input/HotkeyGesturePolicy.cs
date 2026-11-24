@@ -140,6 +140,9 @@ public sealed class HotkeyGesturePolicy
         _toggleRecording = false;
     }
 
+    /// <summary>Clears an active hands-free recording without disturbing any physical key press in progress.</summary>
+    public void EndHandsFree() => _toggleRecording = false;
+
     /// <summary>When the caller should next call <see cref="Elapsed"/>, or null if never.</summary>
     /// <remarks>
     /// A HOLD AND A TAP WINDOW BOTH COMPLETE WITHOUT A KEY EVENT, so the caller has to be told when

@@ -303,25 +303,26 @@ public sealed class HotkeyEdgeTrackerTests
     }
 
     /// <summary>
-    /// Alt is refused as a binding: a lone Alt tap already opens a window's menu bar, so taking it
-    /// would put this app in a fight with the shell over one gesture.
+    /// Sided Alt keys are accepted as modifier bindings alongside Shift, Ctrl, and Win.
     /// </summary>
     [Theory]
     [InlineData(0xA4u)]
     [InlineData(0xA5u)]
-    public void AltIsNotAcceptedAsAModifierBinding(uint alt)
+    public void SidedAltIsAcceptedAsAModifierBinding(uint alt)
     {
-        Assert.False(HotkeyEdgeTracker.IsModifierKey(alt));
+        Assert.True(HotkeyEdgeTracker.IsModifierKey(alt));
     }
 
     /// <summary>
-    /// The control for the refusal above. The keys that ARE accepted must be recognised, or a
+    /// The control for the check above. The keys that ARE accepted must be recognised, or a
     /// method that always returned false would pass it while disabling the feature entirely.
     /// </summary>
     [Theory]
     [InlineData(0xA0u)]
     [InlineData(0xA2u)]
     [InlineData(0xA3u)]
+    [InlineData(0xA4u)]
+    [InlineData(0xA5u)]
     [InlineData(0x5Bu)]
     public void TheModifiersWeDoAcceptAreRecognised(uint key)
     {
@@ -624,5 +625,105 @@ public sealed class SingleModifierFirstPressTests
         Assert.False(control.Consume);
         Assert.False(letter.Consume);
         Assert.Null(letter.Signal);
+    }
+}
+
+public sealed class SidedAltModifierBindingTests
+{
+    private const uint LeftAlt = 0xA4;
+    private const uint RightAlt = 0xA5;
+
+    [Theory]
+    [InlineData(LeftAlt)]
+    [InlineData(RightAlt)]
+    public void HoldingSidedAltStartsAndEndsRecordingWithMenuKeyMask(uint altKey)
+    {
+        var tracker = new HotkeyEdgeTracker(altKey, HotkeyModifiers.None);
+
+        var down = tracker.Process(altKey, isKeyDown: true, HotkeyModifiers.None);
+        Assert.True(down.MaskMenuKey);
+        Assert.False(down.Consume);
+
+        Thread.Sleep(HotkeyGesturePolicy.ModifierHoldThreshold + TimeSpan.FromMilliseconds(60));
+        var started = tracker.TickDecision();
+        Assert.NotNull(started);
+        Assert.Equal(PushToTalkSignal.Pressed, started.Value.Signal);
+        Assert.False(started.Value.IsHandsFree);
+        Assert.True(started.Value.MaskMenuKey);
+
+        tracker.SetRecordingActive(true);
+        var released = tracker.Process(altKey, isKeyDown: false, HotkeyModifiers.None);
+        Assert.Equal(PushToTalkSignal.Released, released.Signal);
+        Assert.True(released.MaskMenuKey);
+        Assert.False(released.Consume);
+    }
+
+    [Theory]
+    [InlineData(LeftAlt)]
+    [InlineData(RightAlt)]
+    public void DoubleTapAndSingleTapStopOnSidedAltMaskMenuBarAndEmitHandsFree(uint altKey)
+    {
+        var tracker = new HotkeyEdgeTracker(altKey, HotkeyModifiers.None);
+
+        for (var i = 0; i < 2; i++)
+        {
+            var tapDown = tracker.Process(altKey, isKeyDown: true, HotkeyModifiers.None);
+            Assert.True(tapDown.MaskMenuKey);
+            tracker.Process(altKey, isKeyDown: false, HotkeyModifiers.None);
+        }
+
+        Thread.Sleep(HotkeyGesturePolicy.MultiTapWindow + TimeSpan.FromMilliseconds(60));
+        var started = tracker.TickDecision();
+        Assert.NotNull(started);
+        Assert.Equal(PushToTalkSignal.Pressed, started.Value.Signal);
+        Assert.True(started.Value.IsHandsFree);
+        Assert.True(started.Value.MaskMenuKey);
+
+        tracker.SetRecordingActive(true);
+        tracker.Process(altKey, isKeyDown: true, HotkeyModifiers.None);
+        tracker.Process(altKey, isKeyDown: false, HotkeyModifiers.None);
+        Thread.Sleep(HotkeyGesturePolicy.MultiTapWindow + TimeSpan.FromMilliseconds(60));
+        var stopped = tracker.TickDecision();
+        Assert.NotNull(stopped);
+        Assert.Equal(PushToTalkSignal.Released, stopped.Value.Signal);
+        Assert.True(stopped.Value.MaskMenuKey);
+    }
+
+    [Fact]
+    public void EndingRecordingExternallyClearsHandsFreeStateSoNextTapDoesNotStop()
+    {
+        var tracker = new HotkeyEdgeTracker(RightAlt, HotkeyModifiers.None);
+
+        for (var i = 0; i < 2; i++)
+        {
+            tracker.Process(RightAlt, isKeyDown: true, HotkeyModifiers.None);
+            tracker.Process(RightAlt, isKeyDown: false, HotkeyModifiers.None);
+        }
+
+        Thread.Sleep(HotkeyGesturePolicy.MultiTapWindow + TimeSpan.FromMilliseconds(60));
+        Assert.Equal(PushToTalkSignal.Pressed, tracker.Tick());
+        tracker.SetRecordingActive(true);
+
+        // Auto-stop or timeout ends the recording without a key tap.
+        tracker.SetRecordingActive(false);
+
+        tracker.Process(RightAlt, isKeyDown: true, HotkeyModifiers.None);
+        tracker.Process(RightAlt, isKeyDown: false, HotkeyModifiers.None);
+        Thread.Sleep(HotkeyGesturePolicy.MultiTapWindow + TimeSpan.FromMilliseconds(60));
+        Assert.Null(tracker.Tick());
+    }
+
+    [Fact]
+    public void EscapeStillCancelsWhileLeftAltIsHeldAndMasksMenuKey()
+    {
+        var tracker = new HotkeyEdgeTracker(LeftAlt, HotkeyModifiers.None);
+        tracker.Process(LeftAlt, isKeyDown: true, HotkeyModifiers.None);
+        Thread.Sleep(HotkeyGesturePolicy.ModifierHoldThreshold + TimeSpan.FromMilliseconds(60));
+        Assert.Equal(PushToTalkSignal.Pressed, tracker.Tick());
+        tracker.SetRecordingActive(true);
+
+        var cancelled = tracker.Process(HotkeyEdgeTracker.EscapeVirtualKey, isKeyDown: true, HotkeyModifiers.Alt);
+        Assert.Equal(PushToTalkSignal.Cancelled, cancelled.Signal);
+        Assert.True(cancelled.MaskMenuKey);
     }
 }

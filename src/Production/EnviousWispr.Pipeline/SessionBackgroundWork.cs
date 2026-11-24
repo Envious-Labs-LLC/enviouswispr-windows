@@ -12,7 +12,10 @@ namespace EnviousWispr.Pipeline;
 /// the observation is handed over as a function so that boundary is kept. Neither is the executor's
 /// to know how to read: the limit can be shortened by a journey harness through the environment.
 /// </remarks>
-public sealed record RecordingBackgroundSettings(TimeSpan WatchdogDuration, Func<DictationPreferences> Dictation);
+public sealed record RecordingBackgroundSettings(
+    TimeSpan WatchdogDuration,
+    Func<DictationPreferences> Dictation,
+    bool IsHandsFree = false);
 
 /// <summary>The four things that run beside a recording, started and stopped in one order.</summary>
 /// <remarks>
@@ -109,7 +112,7 @@ public sealed class SessionBackgroundWork : ISessionBackgroundWork
         using var dictation = DictationScope.Begin(sessionId.Value);
         _watchdog.Start(sessionId, settings.WatchdogDuration);
         await _preview.StartAsync(sessionId).ConfigureAwait(false);
-        _autoStop.Start(sessionId, settings.Dictation());
+        _autoStop.Start(sessionId, settings.Dictation(), settings.IsHandsFree);
         _streaming.Start(sessionId);
     }
 

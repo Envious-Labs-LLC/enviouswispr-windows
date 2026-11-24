@@ -148,12 +148,12 @@ public sealed class HotkeyGestureParserTests
             FindRepositoryRoot(),
             "src", "Production", "EnviousWispr.Services", "Input", "WindowsPushToTalkHook.cs"));
 
-        var sided = Regex.Matches(hookSource, @"""(Left|Right)(Ctrl|Shift|Win)"" => 0x([0-9A-Fa-f]{2}),")
+        var sided = Regex.Matches(hookSource, @"""(Left|Right)(Ctrl|Alt|Shift|Win)"" => 0x([0-9A-Fa-f]{2}),")
             .Select(match => (Name: match.Groups[1].Value + match.Groups[2].Value,
                               Key: Convert.ToUInt32(match.Groups[3].Value, 16)))
             .ToArray();
 
-        Assert.True(sided.Length >= 6, $"Expected the sided modifier keys, found {sided.Length}.");
+        Assert.True(sided.Length >= 8, $"Expected the sided modifier keys, found {sided.Length}.");
 
         var unrouted = sided
             .Where(entry => !HotkeyEdgeTracker.IsModifierKey(entry.Key))
@@ -198,21 +198,20 @@ public sealed class HotkeyGestureParserTests
     [Fact]
     public void TheKeybindFieldCanProduceEveryBindingTheAppAccepts()
     {
-        var window = File.ReadAllText(Path.Combine(
-            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var captureStateMachine = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "Production", "EnviousWispr.Core", "Input", "KeybindCaptureStateMachine.cs"));
         var parserSource = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), "src", "Production", "EnviousWispr.Core", "Input", "HotkeyContracts.cs"));
 
-        // What the field can put in the box, taken from the method that names the sided keys.
-        var offered = Regex.Matches(window, @"return ""(\w+)"";|\? ""(\w+)"" : null")
-            .SelectMany(match => new[] { match.Groups[1].Value, match.Groups[2].Value })
-            .Where(value => value.Length > 0)
+        // What the capture state machine can put in the box, taken from the sided modifier mapping.
+        var offered = Regex.Matches(captureStateMachine, @"=> ""((?:Left|Right)(?:Ctrl|Alt|Shift|Win))"",")
+            .Select(match => match.Groups[1].Value)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 
         Assert.True(
-            offered.Length >= 6,
-            $"Expected the field to offer the sided modifiers, found {offered.Length}.");
+            offered.Length >= 8,
+            $"Expected the capture state machine to offer the sided modifiers, found {offered.Length}.");
 
         // Everything the field can produce must parse, or a user assembles a binding that fails at
         // save with a field that looked perfectly valid.
@@ -227,12 +226,12 @@ public sealed class HotkeyGestureParserTests
 
         // And everything the parser accepts as a standalone modifier must be producible, or the
         // binding exists everywhere except where a person could choose it.
-        var accepted = Regex.Matches(parserSource, @"=> ""((?:Left|Right)(?:Ctrl|Shift|Win))"",")
+        var accepted = Regex.Matches(parserSource, @"=> ""((?:Left|Right)(?:Ctrl|Alt|Shift|Win))"",")
             .Select(match => match.Groups[1].Value)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 
-        Assert.True(accepted.Length >= 6, $"Expected six sided modifiers, found {accepted.Length}.");
+        Assert.True(accepted.Length >= 8, $"Expected eight sided modifiers, found {accepted.Length}.");
 
         var unreachable = accepted.Except(offered, StringComparer.Ordinal).ToArray();
 
@@ -250,6 +249,12 @@ public sealed class HotkeyGestureParserTests
     [Theory]
     [InlineData("RCtrl")]
     [InlineData("rightctrl")]
+    [InlineData("LCtrl")]
+    [InlineData("leftctrl")]
+    [InlineData("RAlt")]
+    [InlineData("rightalt")]
+    [InlineData("LAlt")]
+    [InlineData("leftalt")]
     [InlineData("LShift")]
     [InlineData("RWin")]
     public void AModifierOnItsOwnIsAValidBinding(string typed)
@@ -258,17 +263,8 @@ public sealed class HotkeyGestureParserTests
 
         Assert.True(result.Succeeded, $"{typed} was refused as a binding.");
         Assert.Equal(HotkeyModifiers.None, result.Gesture!.Value.Modifiers);
-    }
-
-    /// <summary>
-    /// Alt stays out, matching the engine: a lone Alt tap already opens a window's menu bar.
-    /// </summary>
-    [Theory]
-    [InlineData("RAlt")]
-    [InlineData("LAlt")]
-    public void AltIsStillNotABindingOnItsOwn(string typed)
-    {
-        Assert.False(HotkeyGestureParser.Parse(typed).Succeeded);
+        Assert.True(HotkeyGestureParser.UnlocksGestures(result.Gesture!.Value));
+        Assert.False(HotkeyGestureParser.ParseOneShot(typed).Succeeded);
     }
 
     /// <summary>Ordinary combinations are untouched by any of this.</summary>
@@ -290,6 +286,7 @@ public sealed class HotkeyGestureParserTests
     /// </remarks>
     [Theory]
     [InlineData("Ctrl")]
+    [InlineData("Alt")]
     [InlineData("Shift")]
     [InlineData("Win")]
     public void OneUnsidedModifierIsStillNotABinding(string typed)
@@ -338,6 +335,9 @@ public sealed class HotkeyGestureParserTests
     [Theory]
     [InlineData("Ctrl+Win")]
     [InlineData("RCtrl")]
+    [InlineData("LCtrl")]
+    [InlineData("RAlt")]
+    [InlineData("LAlt")]
     [InlineData("Ctrl+Shift+D")]
     [InlineData("F8")]
     public void EveryBindingRoundTripsThroughItsOwnText(string typed)

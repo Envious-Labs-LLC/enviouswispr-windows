@@ -181,6 +181,23 @@ public sealed class RecordingTimersTests
     }
 
     [Fact]
+    public async Task AutoStopRunsAndReleasesForHandsFreeDoubleTapInPushToTalkMode()
+    {
+        var world = World.Build();
+        var pushToTalk = Toggle(silenceSeconds: 2.0) with { RecordingMode = DictationRecordingMode.PushToTalk };
+        world.Audio.Samples = Build((true, 1000), (false, 2200));
+
+        world.AutoStop.Start(world.Session, pushToTalk, isHandsFree: true);
+        Assert.True(world.AutoStop.IsRunning);
+
+        world.Clock.Advance(Poll);
+        await world.AutoStop.Loop!.WaitAsync(Patience);
+
+        Assert.Equal([PushToTalkSignal.Released], world.Effects.Posted);
+        Assert.Equal([AppEventCode.AutoStopTriggered], world.Log.Codes);
+    }
+
+    [Fact]
     public async Task AThresholdBelowTheMinimumIsRaisedToIt()
     {
         var world = World.Build();

@@ -9,7 +9,11 @@ namespace EnviousWispr.Services.Input;
 /// modifier's press and release: otherwise releasing Alt opens a menu, Win opens Start, and Alt+Shift switches the
 /// keyboard layout. The hook answers it by sending one unassigned key (VK 0xE8). Ref: #206.
 /// </param>
-internal readonly record struct HotkeyEdgeDecision(bool Consume, PushToTalkSignal? Signal = null, bool MaskMenuKey = false);
+internal readonly record struct HotkeyEdgeDecision(
+    bool Consume,
+    PushToTalkSignal? Signal = null,
+    bool MaskMenuKey = false,
+    bool IsHandsFree = false);
 
 internal readonly record struct HotkeyBinding(uint VirtualKey, HotkeyModifiers Modifiers);
 
@@ -55,6 +59,7 @@ internal sealed class HotkeyEdgeTracker
 
     /// <summary>True while the bound modifier set is fully held.</summary>
     private bool _modifierSetEngaged;
+    private bool _altMaskSentForPress;
 
     private readonly Stopwatch _clock = Stopwatch.StartNew();
 
@@ -122,15 +127,10 @@ internal sealed class HotkeyEdgeTracker
     private const uint ModifierSetSentinel = 0;
 
     /// <summary>The virtual keys that are modifiers, either side.</summary>
-    /// <remarks>
-    /// ALT IS DELIBERATELY ABSENT. A lone Alt tap already opens a window's menu bar in Windows, so
-    /// binding dictation to it would put this app in a fight with the shell over the same gesture -
-    /// and the shell wins in ways nobody can debug. Refusing it costs one binding; taking it costs
-    /// the user their menu key.
-    /// </remarks>
     internal static bool IsModifierKey(uint virtualKey) => virtualKey is
         0xA0 or 0xA1 or   // left and right Shift
         0xA2 or 0xA3 or   // left and right Control
+        0xA4 or 0xA5 or   // left and right Alt
         0x5B or 0x5C;     // left and right Windows
 
     /// <summary>Which modifier flag Windows raises while one sided modifier key is held.</summary>
@@ -138,6 +138,7 @@ internal sealed class HotkeyEdgeTracker
     {
         0xA0 or 0xA1 => HotkeyModifiers.Shift,
         0xA2 or 0xA3 => HotkeyModifiers.Control,
+        0xA4 or 0xA5 => HotkeyModifiers.Alt,
         0x5B or 0x5C => HotkeyModifiers.Windows,
         _ => HotkeyModifiers.None,
     };
@@ -172,7 +173,12 @@ internal sealed class HotkeyEdgeTracker
     {
         lock (_sync)
         {
+            var wasActive = _recordingActive;
             _recordingActive = active;
+            if (wasActive && !active)
+            {
+                _recordGesture?.EndHandsFree();
+            }
         }
     }
 
@@ -247,7 +253,11 @@ internal sealed class HotkeyEdgeTracker
                     _recordGesture is not null && (!_capturingKeybind || IsAnythingInFlight())
                         ? ProcessRecordGesture(virtualKey, isKeyDown, gestureModifiers ?? activeModifiers)
                         : null;
-                return new HotkeyEdgeDecision(Consume: consumedDown, Signal: gestureDecision?.Signal);
+                return new HotkeyEdgeDecision(
+                    Consume: consumedDown,
+                    Signal: gestureDecision?.Signal,
+                    MaskMenuKey: gestureDecision?.MaskMenuKey == true,
+                    IsHandsFree: gestureDecision?.IsHandsFree == true);
             }
 
             var decision = ProcessCore(virtualKey, isKeyDown, activeModifiers, gestureModifiers);
@@ -457,6 +467,8 @@ internal sealed class HotkeyEdgeTracker
     /// and "it stopped being complete" is a release, so the gesture policy sees the same two events
     /// it sees for a single key and there is one implementation of the timing rather than two.
     /// </remarks>
+    private bool RequiresAltMenuMask => _recordSuppliedModifiers.HasFlag(HotkeyModifiers.Alt);
+
     private HotkeyEdgeDecision? ProcessRecordGesture(
         uint virtualKey,
         bool isKeyDown,
@@ -487,12 +499,26 @@ internal sealed class HotkeyEdgeTracker
         }
         else
         {
+            if (RequiresAltMenuMask && virtualKey == _record.VirtualKey && !isKeyDown)
+            {
+                _altMaskSentForPress = false;
+            }
+
             outcome = gesture.Process(virtualKey, isKeyDown, _clock.Elapsed);
         }
 
-        return SignalFor(outcome) is { } signal
-            ? new HotkeyEdgeDecision(Consume: false, signal)
-            : null;
+        if (DecisionFor(outcome) is { } decision)
+        {
+            return decision;
+        }
+
+        if (RequiresAltMenuMask && virtualKey == _record.VirtualKey && isKeyDown && !_altMaskSentForPress)
+        {
+            _altMaskSentForPress = true;
+            return new HotkeyEdgeDecision(Consume: false, MaskMenuKey: true);
+        }
+
+        return null;
     }
 
     /// <summary>Lets a pending hold or tap window complete without a key event.</summary>
@@ -502,11 +528,13 @@ internal sealed class HotkeyEdgeTracker
     /// recording at all - a whole feature that builds, tests green at the policy level, and does
     /// nothing.
     /// </remarks>
-    public PushToTalkSignal? Tick()
+    public PushToTalkSignal? Tick() => TickDecision()?.Signal;
+
+    internal HotkeyEdgeDecision? TickDecision()
     {
         lock (_sync)
         {
-            return _recordGesture is null ? null : SignalFor(_recordGesture.Elapsed(_clock.Elapsed));
+            return _recordGesture is null ? null : DecisionFor(_recordGesture.Elapsed(_clock.Elapsed));
         }
     }
 
@@ -522,21 +550,38 @@ internal sealed class HotkeyEdgeTracker
         }
     }
 
-    private PushToTalkSignal? SignalFor(HotkeyGestureOutcome outcome)
+    private HotkeyEdgeDecision? DecisionFor(HotkeyGestureOutcome outcome)
     {
         switch (outcome)
         {
             case HotkeyGestureOutcome.HoldStarted:
+                _cancelledUntilRecordRelease = false;
+                return new HotkeyEdgeDecision(
+                    Consume: false,
+                    PushToTalkSignal.Pressed,
+                    MaskMenuKey: RequiresAltMenuMask,
+                    IsHandsFree: false);
+
             case HotkeyGestureOutcome.ToggleStarted:
                 _cancelledUntilRecordRelease = false;
-                return PushToTalkSignal.Pressed;
+                return new HotkeyEdgeDecision(
+                    Consume: false,
+                    PushToTalkSignal.Pressed,
+                    MaskMenuKey: RequiresAltMenuMask,
+                    IsHandsFree: true);
 
             case HotkeyGestureOutcome.HoldEnded:
             case HotkeyGestureOutcome.ToggleStopped:
-                return PushToTalkSignal.Released;
+                return new HotkeyEdgeDecision(
+                    Consume: false,
+                    PushToTalkSignal.Released,
+                    MaskMenuKey: RequiresAltMenuMask);
 
             case HotkeyGestureOutcome.Cancelled:
-                return PushToTalkSignal.Cancelled;
+                return new HotkeyEdgeDecision(
+                    Consume: false,
+                    PushToTalkSignal.Cancelled,
+                    MaskMenuKey: RequiresAltMenuMask);
 
             default:
                 return null;
@@ -544,7 +589,14 @@ internal sealed class HotkeyEdgeTracker
     }
 
     /// <summary>Forgets a modifier press in progress.</summary>
-    public void ResetHeldKeys() => _recordGesture?.Reset();
+    public void ResetHeldKeys()
+    {
+        lock (_sync)
+        {
+            _altMaskSentForPress = false;
+            _recordGesture?.Reset();
+        }
+    }
 
     private HotkeyEdgeDecision ProcessRecord(bool isKeyDown, HotkeyModifiers activeModifiers)
     {
@@ -565,7 +617,10 @@ internal sealed class HotkeyEdgeTracker
             var signal = _recordingMode == DictationRecordingMode.Toggle && _recordingActive
                 ? PushToTalkSignal.Released
                 : PushToTalkSignal.Pressed;
-            return new HotkeyEdgeDecision(Consume: true, signal);
+            return new HotkeyEdgeDecision(
+                Consume: true,
+                signal,
+                MaskMenuKey: (_record.Modifiers & (HotkeyModifiers.Alt | HotkeyModifiers.Windows)) != 0);
         }
 
         if (!_recordHeld)
@@ -605,7 +660,10 @@ internal sealed class HotkeyEdgeTracker
             // delivers text the person threw away, and a hands-free recording stays believed-in so
             // the next single tap "stops" something that ended a minute ago.
             _recordGesture?.Abandon();
-            return new HotkeyEdgeDecision(Consume: true, PushToTalkSignal.Cancelled);
+            return new HotkeyEdgeDecision(
+                Consume: true,
+                PushToTalkSignal.Cancelled,
+                MaskMenuKey: ((_cancel.Modifiers | activeModifiers) & (HotkeyModifiers.Alt | HotkeyModifiers.Windows)) != 0);
         }
 
         if (!_cancelHeld)
@@ -632,7 +690,10 @@ internal sealed class HotkeyEdgeTracker
             }
 
             _quickAddHeld = true;
-            return new HotkeyEdgeDecision(Consume: true, PushToTalkSignal.QuickAdd);
+            return new HotkeyEdgeDecision(
+                Consume: true,
+                PushToTalkSignal.QuickAdd,
+                MaskMenuKey: (_quickAdd.Modifiers & (HotkeyModifiers.Alt | HotkeyModifiers.Windows)) != 0);
         }
 
         if (!_quickAddHeld)

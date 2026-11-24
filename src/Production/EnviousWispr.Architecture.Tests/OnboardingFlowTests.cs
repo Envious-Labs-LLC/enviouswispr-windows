@@ -446,6 +446,8 @@ public sealed class OnboardingFlowTests
     [Theory]
     [InlineData("Ctrl+Win", true)]
     [InlineData("RightCtrl", true)]
+    [InlineData("LeftAlt", true)]
+    [InlineData("RightAlt", true)]
     [InlineData("LeftShift", true)]
     [InlineData("F8", false)]
     [InlineData("Ctrl+Alt+W", false)]

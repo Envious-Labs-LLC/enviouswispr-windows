@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+
 namespace EnviousWispr.Services.Lifecycle;
 
 public sealed class SingleInstanceLock : IDisposable
@@ -9,6 +12,39 @@ public sealed class SingleInstanceLock : IDisposable
     {
         _mutex = mutex;
         _ownsMutex = true;
+    }
+
+    public static string ResolveKey(string baseKey, string? customDataDirectory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(baseKey);
+        if (string.IsNullOrWhiteSpace(customDataDirectory))
+        {
+            return baseKey;
+        }
+
+        var normalized = Path.GetFullPath(customDataDirectory).TrimEnd('\\', '/').ToLowerInvariant();
+        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(normalized));
+        var hash = Convert.ToHexString(hashBytes.AsSpan(0, 8)).ToLowerInvariant();
+        return $"{baseKey}-{hash}";
+    }
+
+    public static bool IsHeld(string key)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        try
+        {
+            if (!Mutex.TryOpenExisting($@"Local\{key}", out var existing))
+            {
+                return false;
+            }
+
+            existing.Dispose();
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true;
+        }
     }
 
     public static bool TryAcquire(string key, out SingleInstanceLock? instanceLock)

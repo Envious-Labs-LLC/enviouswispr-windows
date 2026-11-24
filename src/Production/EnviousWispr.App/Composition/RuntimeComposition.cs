@@ -91,7 +91,7 @@ internal sealed class SessionQueue(RuntimeShell shell, IAppLogger logger)
     /// handler always refused it.
     /// </remarks>
     /// <param name="forSession">For a signal a loop posted on a recording's behalf - the auto-stop's release - that recording; the queue ignores the signal if it has ended by the time it runs. Null for a key.</param>
-    public async Task HandAsync(PushToTalkSignal signal, DictationSessionId? forSession)
+    public async Task HandAsync(PushToTalkSignal signal, DictationSessionId? forSession, bool isHandsFree = false)
     {
         if (shell.Leaving() || shell.Coordinator() is not { } coordinator)
         {
@@ -100,7 +100,7 @@ internal sealed class SessionQueue(RuntimeShell shell, IAppLogger logger)
 
         try
         {
-            var result = await coordinator.SubmitAsync(signal, forSession).ConfigureAwait(false);
+            var result = await coordinator.SubmitAsync(signal, forSession, isHandsFree).ConfigureAwait(false);
             // A PRESS REFUSED FOR A HOLDER IS SAID, NOT SWALLOWED. A person who pressed the key during a file
             // transcription saw nothing happen at all; macOS names the job on its pill. A press refused for a
             // dictation's own command stays silent - that dictation's pill is already on screen. Ref: #211.
@@ -176,7 +176,8 @@ public sealed class SessionRuntime
     public SessionBackgroundWork Background() => new(Watchdog, Preview, AutoStop, Streaming, _clock);
 
     /// <summary>A key's signal, on the same queue the timers use.</summary>
-    public Task SubmitAsync(PushToTalkSignal signal) => _queue.HandAsync(signal, forSession: null);
+    public Task SubmitAsync(PushToTalkSignal signal, bool isHandsFree = false) =>
+        _queue.HandAsync(signal, forSession: null, isHandsFree);
 
     /// <summary>The queue itself, for a test that drives the timers' route with a recording's name on the signal.</summary>
     internal SessionQueue Queue => _queue;
