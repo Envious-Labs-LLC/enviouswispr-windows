@@ -903,6 +903,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
             encodedChannelFirst = [];
             encodedLength = 0;
             if (_fp32FallbackUnavailable ||
+                !_options.AllowFullPrecisionFallback ||
                 _options.Provider != RuntimeProviderKind.Cpu ||
                 _options.ModelPack != ParakeetModelPack.Quantized ||
                 !HasFullPrecisionEncoder(_modelDirectory))

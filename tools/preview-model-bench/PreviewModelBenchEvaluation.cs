@@ -528,7 +528,8 @@ internal static class PreviewModelBenchEvaluation
                 Engine: candidate.Engine,
                 WhisperPack: candidate.Pack,
                 Language: requestedLanguage,
-                WorkerPriority: ProcessPriorityClass.BelowNormal);
+                WorkerPriority: ProcessPriorityClass.BelowNormal,
+                AllowFullPrecisionFallback: false);
         }
 
         int intraOpThreads;

@@ -128,5 +128,5 @@ public sealed record PortableProfile(
     UserPreferences Preferences,
     ReusableUserData UserData)
 {
-    public const int CurrentSchemaVersion = 13;
+    public const int CurrentSchemaVersion = 14;
 }

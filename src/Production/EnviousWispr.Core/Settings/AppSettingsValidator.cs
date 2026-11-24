@@ -83,7 +83,8 @@ public static class AppSettingsValidator
         Enum.IsDefined(preferences.PillDesignWithoutWords) &&
         preferences.PillDesignWithoutWords is not RecordingPillDesign.ReadingWell &&
         preferences.PillDesignWithWords is RecordingPillDesign.ReadingWell &&
-        Enum.IsDefined(preferences.RecordingSoundPairing);
+        Enum.IsDefined(preferences.RecordingSoundPairing) &&
+        Enum.IsDefined(preferences.LivePreviewEngine);
 
     private static bool HasDistinctDictationGestures(DictationPreferences preferences)
     {

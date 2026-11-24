@@ -28,7 +28,8 @@ public sealed record RuntimeWorkerTranscriptionOptions(
     WhisperModelPack WhisperPack = WhisperModelPack.Quantized,
     string? Language = null,
     ProcessPriorityClass? WorkerPriority = null,
-    Func<string?>? CurrentLanguage = null);
+    Func<string?>? CurrentLanguage = null,
+    bool AllowFullPrecisionFallback = true);
 
 internal interface IWorkerTranscriptionRuntime : ITranscriptionEngine, IAsyncDisposable
 {
@@ -221,6 +222,10 @@ public sealed class RuntimeWorkerTranscriptionEngine : IWorkerTranscriptionRunti
             arguments.Add(options.WhisperPack.ToString());
             arguments.Add("--asr-whisper-language");
             arguments.Add(string.IsNullOrWhiteSpace(options.Language) ? "auto" : options.Language);
+        }
+        else if (!options.AllowFullPrecisionFallback)
+        {
+            arguments.Add("--asr-disable-fp32-fallback");
         }
         if (!string.IsNullOrWhiteSpace(options.CudaRuntimeDirectory))
         {

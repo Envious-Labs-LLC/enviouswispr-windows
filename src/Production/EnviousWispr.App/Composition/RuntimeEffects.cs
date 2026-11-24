@@ -5,6 +5,7 @@ using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Core.Preview;
 using EnviousWispr.Core.Reliability;
+using EnviousWispr.Core.Settings;
 using EnviousWispr.Pipeline;
 using EnviousWispr.PostProcessing;
 
@@ -42,6 +43,12 @@ internal sealed class LivePreviewEffects(RuntimeShell shell) : ILivePreviewEffec
     public IAudioSnapshotSource? Audio => shell.Audio();
 
     public DictationSessionId? RecordingSessionId => shell.RecordingSessionId();
+
+    public bool WordCorrectionEnabled => shell.Dictation?.Invoke().WordCorrectionEnabled ?? false;
+
+    public IReadOnlyList<CustomWordEntry> CustomWords => shell.CustomWords();
+
+    public EnglishSpelling EnglishSpelling => shell.Dictation?.Invoke().EnglishSpelling ?? EnglishSpelling.American;
 
     public void ShowPreview(LivePreviewFrame frame) => shell.View.ShowPreview(frame);
 

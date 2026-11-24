@@ -66,6 +66,9 @@ public sealed partial class MainWindow
     /// <summary>The person asked for local transcription to be started again, from the checklist or the warm-up.</summary>
     public event Action? TranscriptionRetryRequested;
 
+    /// <summary>A dictation take has completed and the session is idle again.</summary>
+    public event Action? DictationEnded;
+
     /// <summary>Whether local transcription can take a dictation, said by the code that started it.</summary>
     public void SetTranscriptionReadiness(SpeechEngineReadiness readiness)
     {
@@ -88,6 +91,8 @@ public sealed partial class MainWindow
                 // acting on it needs a click nobody was told about (macOS, founder-found in live UAT).
                 OnboardingPracticeBox.Focus(FocusState.Programmatic);
             }
+
+            DictationEnded?.Invoke();
         }
 
         RenderOnboarding();
