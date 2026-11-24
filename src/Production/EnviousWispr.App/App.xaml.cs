@@ -37,6 +37,8 @@ public partial class App : Application, IAsyncDisposable
 {
 
     private readonly PrivacySafeObservabilityLogger _logger;
+    private WindowsObservabilityService? _observabilityService;
+    private bool _appLaunchedTelemetryRecorded;
     private readonly ReleaseIdentity _releaseIdentity;
     private readonly StoreUpdateService _updateService;
     private readonly WindowsStartupRegistration _startupRegistration = new();
@@ -215,6 +217,15 @@ public partial class App : Application, IAsyncDisposable
                 DateTimeOffset.UtcNow,
                 AppEventCode.UnhandledFailure,
                 AppFailureCategory.Unknown));
+            if (eventArgs.Exception is { } ex)
+            {
+                _ = _observabilityService?.CaptureUnhandledExceptionAsync(
+                    ex,
+                    mechanismType: "winui_unhandled_exception",
+                    handled: false,
+                    level: "fatal");
+            }
+
             eventArgs.Handled = false;
         };
     }
@@ -248,6 +259,22 @@ public partial class App : Application, IAsyncDisposable
 
         var loadResult = await _settingsStore.LoadAsync().ConfigureAwait(true);
         var observability = loadResult.Settings.Observability ?? ObservabilityPreferences.Default;
+        var appVersion = _updateService.InstalledVersion
+            ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString(3)
+            ?? "0.19.0";
+        var observabilityIdentity = WindowsObservabilityIdentity.CreateDefault(
+            _releaseIdentity,
+            isPackagedMsix: _updateService.IsStoreInstalled,
+            appVersion: appVersion);
+        _observabilityService = WindowsObservabilityService.CreateFromEnvironment(
+            _dataDirectory,
+            observabilityIdentity,
+            observability);
+        _observabilityService.ApplySettings(loadResult.Settings, emitSettingsChangedEvent: false);
+        _observabilityService.AttachProcessExceptionHandlers();
+        _logger.AttachObserver(_observabilityService.ObserveDiagnosticRecord);
+        RuntimeWorkerSupervisor.AbnormalWorkerExitObserved += OnAbnormalWorkerExitObserved;
+
         _logger.Configure(observability, DateTimeOffset.UtcNow);
         _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ApplicationStarting));
         if (runStart.RecoveredInterruptedRun)
@@ -269,6 +296,7 @@ public partial class App : Application, IAsyncDisposable
                 AppEventCode.ApplicationRunRecovered,
                 AppFailureCategory.Recovery,
                 ErrorCode: AppErrorCode.PreviousRunInterrupted));
+            _ = _observabilityService.CaptureInterruptedDictationNoteAsync(runStart.PreviousRunWasDictating);
         }
 
         _logger.Write(new AppLogEntry(
@@ -343,11 +371,12 @@ public partial class App : Application, IAsyncDisposable
             _presentation,
             new WindowLaunch(
                 loadResult.Status,
-                _logger.TelemetryAvailable,
+                _logger.TelemetryAvailable || (_observabilityService?.PostHog.IsConfigured ?? false),
                 _releaseIdentity,
                 _updateService.IsStoreInstalled,
                 _updateService.InstalledVersion,
-                _dataDirectory));
+                _dataDirectory,
+                observability.SendCrashReports));
         _window.SettingsChanged += OnSettingsChanged;
         _window.SessionStatusChanged += OnSessionStatusChanged;
         _window.AudioDevicesChanged += OnAudioDevicesChanged;
@@ -926,6 +955,7 @@ public partial class App : Application, IAsyncDisposable
         _deterministicTextOptions = DeterministicTextOptions.From(settings.Preferences.Dictation);
         var observability = settings.Observability ?? ObservabilityPreferences.Default;
         _logger.Configure(observability, DateTimeOffset.UtcNow);
+        _observabilityService?.ApplySettings(settings, emitSettingsChangedEvent: true);
         if (previousSharing != observability.ShareAnonymousTelemetry)
         {
             _logger.Write(new AppLogEntry(
@@ -1459,7 +1489,17 @@ public partial class App : Application, IAsyncDisposable
             ? _runStateStore.CompleteRunAsync(runId, DateTimeOffset.UtcNow, fence, cancellation)
             : Task.FromResult(true),
         CloseRunState: _runStateStore.Dispose,
-        DisposeLogger: () => _logger.DisposeAsync().AsTask());
+        DisposeLogger: async () =>
+        {
+            RuntimeWorkerSupervisor.AbnormalWorkerExitObserved -= OnAbnormalWorkerExitObserved;
+            if (_observabilityService is { } observabilityService)
+            {
+                _observabilityService = null;
+                await observabilityService.DisposeAsync().ConfigureAwait(false);
+            }
+
+            await _logger.DisposeAsync().ConfigureAwait(false);
+        });
 
     /// <summary>A tracked task's join for a lifetime step: taken once, its own ending swallowed - the exit only needs it over.</summary>
     private static async Task Join(Task? tracked)
@@ -1886,6 +1926,7 @@ public partial class App : Application, IAsyncDisposable
             : ParakeetTranscriptionEngine.ModelId).ConfigureAwait(true);
         if (modelDirectory is null)
         {
+            RecordAppLaunchedOnce(hardware: null, hasParakeet: false, hasWhisper: false);
             _window?.SetSessionStatus(
                 DictationStatus.Advisory(
                         "Local transcription model is not installed", StatusActions.OpenTranscription)
@@ -1911,6 +1952,7 @@ public partial class App : Application, IAsyncDisposable
         var previewModelDirectory = await ResolveModelDirectoryAsync(
             WhisperTranscriptionEngine.PreviewModelId,
             "ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY").ConfigureAwait(true);
+        RecordAppLaunchedOnce(hardware, parakeetPreviewDirectory is not null, engine == FinalAsrEngine.Whisper || previewModelDirectory is not null);
         // THE SELECTION IS MADE BEFORE IT IS OBSERVED. This line used to be written above the two
         // Create calls, so it could only ever report the hardware and never what the hardware was
         // used FOR - which is why a machine transcribing on the processor beside an idle graphics
@@ -3301,6 +3343,39 @@ public partial class App : Application, IAsyncDisposable
     };
 
     private static AppFailureCategory FailureFor(AppError? error) => AppFailureCategories.For(error);
+
+    private void RecordAppLaunchedOnce(HardwareSnapshot? hardware, bool hasParakeet, bool hasWhisper)
+    {
+        if (_appLaunchedTelemetryRecorded || _observabilityService is null)
+        {
+            return;
+        }
+
+        _appLaunchedTelemetryRecorded = true;
+        var modelsInstalled = (hasParakeet, hasWhisper) switch
+        {
+            (true, true) => "both",
+            (true, false) => "parakeet",
+            (false, true) => "whisper",
+            _ => "none",
+        };
+        var aiEnabled = _settings.Preferences.Polish.Provider != PolishProvider.None;
+        _observabilityService.RecordAppLaunched(
+            hardware: hardware,
+            isFreshInstall: _settings.LaunchCount <= 1,
+            aiCapable: true,
+            aiEnabled: aiEnabled,
+            speechModelsInstalled: modelsInstalled);
+    }
+
+    private void OnAbnormalWorkerExitObserved(int exitCode)
+    {
+        var asrBackend = _settings.Preferences.Dictation.FinalEngine.ToString().ToLowerInvariant();
+        _ = _observabilityService?.RecordRuntimeWorkerFailedAsync(
+            asrBackend: asrBackend,
+            exitCode: exitCode,
+            errorCode: AppErrorCode.RuntimeWorkerFailed);
+    }
 
     private static DiagnosticHardwareClass DiagnosticHardwareClassFor(HardwareSnapshot hardware)
     {

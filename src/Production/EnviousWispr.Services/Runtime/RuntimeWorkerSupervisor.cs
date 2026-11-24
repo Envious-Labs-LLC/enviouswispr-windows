@@ -26,6 +26,9 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
     private int _handlesClosed;
     private RuntimeWorkerState _state = RuntimeWorkerState.Stopped;
 
+    /// <summary>Raised when an owned runtime worker process exits with a non-zero code outside a normal shutdown.</summary>
+    public static event Action<int>? AbnormalWorkerExitObserved;
+
     public RuntimeWorkerSupervisor(
         string workerExecutable,
         IEnumerable<string>? workerArguments = null,
@@ -702,18 +705,34 @@ public sealed class RuntimeWorkerSupervisor : IRuntimeWorkerSupervisor
     /// <summary>The generation's exit was observed: the handle is closed, once, and the end published.</summary>
     private void End(WorkerGeneration generation, Process process)
     {
-        if (_phaseJournal is not null)
+        int? observedExitCode = null;
+        try
+        {
+            if (process.HasExited)
+            {
+                observedExitCode = process.ExitCode;
+                if (_phaseJournal is not null)
+                {
+                    RecordGeneration(UatRuntimePhase.WorkerExitObserved, generation, process, exitCode: observedExitCode);
+                }
+            }
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
+        {
+            // No observed exit facts, no exit marker. Disposal behavior remains the existing owner's.
+        }
+
+        if (observedExitCode is { } exitCode &&
+            exitCode != 0 &&
+            generation.Owner is not "abort")
         {
             try
             {
-                if (process.HasExited)
-                {
-                    RecordGeneration(UatRuntimePhase.WorkerExitObserved, generation, process, exitCode: process.ExitCode);
-                }
+                AbnormalWorkerExitObserved?.Invoke(exitCode);
             }
-            catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
+            catch
             {
-                // No observed exit facts, no exit marker. Disposal behavior remains the existing owner's.
+                // Telemetry limb cannot affect worker teardown.
             }
         }
 

@@ -75,6 +75,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 17 => MigrateFromV17(json),
                 18 => MigrateFromV18(json),
                 19 => MigrateFromV19(json),
+                20 => MigrateFromV20(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -504,6 +505,19 @@ public sealed class JsonSettingsStore : ISettingsStore
     /// Absent LivePreviewEngine deserializes to Parakeet, matching the workhorse default (#127).
     /// </remarks>
     private static AppSettings? MigrateFromV19(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+    }
+
+    /// <summary>Takes a settings file written before separate PostHog usage metrics and Sentry crash reports existed (#40).</summary>
+    /// <remarks>
+    /// Preserves any explicit user preference stored in the existing profile while defaulting the new
+    /// SendCrashReports switch to true, matching macOS PrivacySettingsView.
+    /// </remarks>
+    private static AppSettings? MigrateFromV20(string json)
     {
         var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
         return legacy is null

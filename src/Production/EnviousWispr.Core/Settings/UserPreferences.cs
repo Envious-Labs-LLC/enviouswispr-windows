@@ -275,12 +275,16 @@ public sealed record HistoryPreferences(bool IsEnabled, int RetentionDays)
 public sealed record ObservabilityPreferences(
     bool LocalDiagnosticsEnabled,
     int DiagnosticRetentionDays,
-    bool ShareAnonymousTelemetry)
+    bool ShareAnonymousTelemetry,
+    bool SendCrashReports = true)
 {
     public static ObservabilityPreferences Default { get; } = new(
         LocalDiagnosticsEnabled: true,
         DiagnosticRetentionDays: 14,
-        ShareAnonymousTelemetry: false);
+        ShareAnonymousTelemetry: true,
+        SendCrashReports: true);
+
+    public bool ShareUsageMetrics => ShareAnonymousTelemetry;
 }
 
 public sealed record UserPreferences(

@@ -87,6 +87,7 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 11 => MigrateFromV11(json),
                 12 => MigrateFromV12(json),
                 13 => MigrateFromV13(json),
+                14 => MigrateFromV14(json),
                 PortableProfile.CurrentSchemaVersion => JsonSerializer.Deserialize<PortableProfile>(
                     json,
                     JsonSettingsStore.SerializerOptions),
@@ -297,6 +298,17 @@ public sealed class JsonPortableProfileService : IPortableProfileService
 
     /// <summary>A profile exported before the two-engine Live Preview choice existed.</summary>
     private static PortableProfile? MigrateFromV13(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<PortableProfile>(
+            json,
+            JsonSettingsStore.SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = PortableProfile.CurrentSchemaVersion };
+    }
+
+    /// <summary>A profile exported before schema v15 (#40).</summary>
+    private static PortableProfile? MigrateFromV14(string json)
     {
         var legacy = JsonSerializer.Deserialize<PortableProfile>(
             json,

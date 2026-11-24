@@ -22,7 +22,8 @@ public sealed record WindowLaunch(
     ReleaseIdentity ReleaseIdentity,
     bool StoreInstalled,
     string? InstalledVersion,
-    string DataDirectory);
+    string DataDirectory,
+    bool LaunchedCrashReports = true);
 
 /// <summary>The services the shell hands the window's presentation session: stores it does not own, and the factories for what the session opens itself.</summary>
 /// <param name="SettingsStore">The settings file; the session's one writer sits over it.</param>

@@ -93,6 +93,7 @@ public sealed class PrivacySafeObservabilityLogger : IAppLogger, IAsyncDisposabl
     private readonly CancellationTokenSource _lifetime = new();
     private readonly Task? _sender;
     private volatile bool _shareAnonymousTelemetry;
+    private volatile Action<PrivacySafeDiagnosticRecord>? _recordObserver;
 
     public PrivacySafeObservabilityLogger(
         JsonLineFileLogger localLogger,
@@ -113,6 +114,9 @@ public sealed class PrivacySafeObservabilityLogger : IAppLogger, IAsyncDisposabl
 
     public bool TelemetryAvailable => _transport is not null;
 
+    public void AttachObserver(Action<PrivacySafeDiagnosticRecord>? observer) =>
+        _recordObserver = observer;
+
     public void Configure(ObservabilityPreferences preferences, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(preferences);
@@ -128,6 +132,18 @@ public sealed class PrivacySafeObservabilityLogger : IAppLogger, IAsyncDisposabl
         if (_shareAnonymousTelemetry)
         {
             _telemetryQueue.Writer.TryWrite(record);
+        }
+
+        if (_recordObserver is { } observer)
+        {
+            try
+            {
+                observer(record);
+            }
+            catch
+            {
+                // External telemetry observation is a limb and cannot affect product logging.
+            }
         }
     }
 
