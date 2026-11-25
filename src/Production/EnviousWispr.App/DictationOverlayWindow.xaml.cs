@@ -401,8 +401,7 @@ public sealed partial class DictationOverlayWindow : Window
         // whose title is no longer drawn.
         var spokenName = state switch
         {
-            DictationOverlayState.Recording =>
-                $"{RecordingPillCatalog.DisplayName(_activeDesign)} recording pill. {presentation.Item1}.",
+            DictationOverlayState.Recording => RecordingSpokenName(),
             // THE SENTENCE ALONE, as macOS says it: "Transcribing a file. Please wait."
             DictationOverlayState.Busy => presentation.Item3,
             DictationOverlayState.Processing => presentation.Item1,
@@ -489,9 +488,12 @@ public sealed partial class DictationOverlayWindow : Window
         if (_state == DictationOverlayState.Recording)
         {
             ConfigureRecordingDesign();
-            AnnounceRecording($"{RecordingPillCatalog.DisplayName(_activeDesign)} recording pill. {(handsFree ? "Hands-free." : "Listening.")}");
+            AnnounceRecording(RecordingSpokenName());
         }
     }
+
+    private string RecordingSpokenName() =>
+        $"{RecordingPillCatalog.DisplayName(_activeDesign)} recording pill. {(_handsFree ? "Hands-free." : "Listening.")}";
 
     private void AnnounceRecording(string spokenName)
     {
