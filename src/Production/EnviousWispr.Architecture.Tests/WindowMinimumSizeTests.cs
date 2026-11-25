@@ -39,8 +39,13 @@ public sealed partial class WindowMinimumSizeTests
     public void MinimumWidthIsDerivedFromTheFrameAndNotHardcoded()
     {
         var root = FindRepositoryRoot();
-        var codeBehind = File.ReadAllText(Path.Combine(
-            root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var codeBehind = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                    Path.Combine(root, "src", "Production", "EnviousWispr.App"),
+                    "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
 
         var match = ConfigureMinimumWidthBodyRegex().Match(codeBehind);
         Assert.True(
@@ -161,8 +166,13 @@ public sealed partial class WindowMinimumSizeTests
         Assert.Equal("8,0,0,0", navResources.GetValueOrDefault("NavigationViewContentGridCornerRadius"));
         Assert.Equal("1,1,0,0", navResources.GetValueOrDefault("NavigationViewContentGridBorderThickness"));
 
-        var codeBehind = File.ReadAllText(Path.Combine(
-            root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var codeBehind = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                    Path.Combine(root, "src", "Production", "EnviousWispr.App"),
+                    "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
         var method = ConfigureMinimumWidthBodyRegex().Match(codeBehind);
         Assert.True(
             method.Success,

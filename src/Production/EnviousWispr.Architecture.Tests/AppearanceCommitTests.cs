@@ -110,12 +110,17 @@ public sealed class AppearanceCommitTests
     [Fact]
     public void TheWindowHandsOverASnapshotBuiltFromItsThreeControls()
     {
-        var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(
-            RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs")));
-        var persist = tree.GetRoot().DescendantNodes()
-            .OfType<MethodDeclarationSyntax>()
-            .FirstOrDefault(method => method.Identifier.ValueText == "PersistAppearanceChoicesAsync");
-        Assert.True(persist is not null, "PersistAppearanceChoicesAsync is gone.");
+        var appDir = Path.Combine(RepositoryRoot(), "src", "Production", "EnviousWispr.App");
+        var matches = Directory.EnumerateFiles(appDir, "MainWindow*.cs")
+            .Order()
+            .SelectMany(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path)
+                .GetRoot()
+                .DescendantNodes()
+                .OfType<MethodDeclarationSyntax>()
+                .Where(method => method.Identifier.ValueText == "PersistAppearanceChoicesAsync"))
+            .ToArray();
+        Assert.True(matches.Length > 0, "PersistAppearanceChoicesAsync is gone.");
+        var persist = Assert.Single(matches);
 
         var creation = Assert.Single(
             persist!.DescendantNodes().OfType<BaseObjectCreationExpressionSyntax>(),

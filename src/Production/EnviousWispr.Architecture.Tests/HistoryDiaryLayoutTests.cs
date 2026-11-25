@@ -108,7 +108,11 @@ public sealed class HistoryDiaryLayoutTests
         var mainContentGrid = FindNamed(document, "MainContentGrid");
         Assert.Equal("28,18,28,32", (string?)mainContentGrid.Attribute("Padding"));
 
-        var codeBehind = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var codeBehind = string.Join(
+            "\n",
+            Directory.EnumerateFiles(Path.Combine(root, "src", "Production", "EnviousWispr.App"), "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
         Assert.Contains("MainContentGrid.Padding =", codeBehind, StringComparison.Ordinal);
         Assert.Contains("new Thickness(0)", codeBehind, StringComparison.Ordinal);
         Assert.Contains("new Thickness(28, 18, 28, 32)", codeBehind, StringComparison.Ordinal);

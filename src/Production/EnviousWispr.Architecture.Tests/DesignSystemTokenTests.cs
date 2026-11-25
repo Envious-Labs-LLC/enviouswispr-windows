@@ -875,11 +875,14 @@ public sealed partial class DesignSystemTokenTests
         // this. Reading every case label in the method counts one inside a nested local function or
         // lambda, which the switch never reaches. And a bare "case X: break;" is a label with nothing
         // behind it, which is the default page wearing a name.
-        var handler = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(
-                repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs")))
-            .GetRoot()
-            .DescendantNodes()
-            .OfType<MethodDeclarationSyntax>()
+        var handler = Directory.EnumerateFiles(
+                Path.Combine(repositoryRoot, "src", "Production", "EnviousWispr.App"),
+                "MainWindow*.cs")
+            .Order()
+            .SelectMany(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path)
+                .GetRoot()
+                .DescendantNodes()
+                .OfType<MethodDeclarationSyntax>())
             .FirstOrDefault(method => method.Identifier.ValueText == "OnPillActionInvoked");
         Assert.True(
             handler is not null,
@@ -1547,12 +1550,13 @@ public sealed partial class DesignSystemTokenTests
         Assert.Equal("Collapsed", (string?)FindNamedElement(document, "HistoryUnavailableState").Attribute("Visibility"));
 
         var repositoryRoot = FindRepositoryRoot();
-        var codeBehind = File.ReadAllText(Path.Combine(
-            repositoryRoot,
-            "src",
-            "Production",
-            "EnviousWispr.App",
-            "MainWindow.xaml.cs"));
+        var codeBehind = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                    Path.Combine(repositoryRoot, "src", "Production", "EnviousWispr.App"),
+                    "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
         Assert.Contains("private bool _isHistoryLoading = true;", codeBehind, StringComparison.Ordinal);
         Assert.Contains("_isHistoryLoading = false;", codeBehind, StringComparison.Ordinal);
         // THE LOADING CARD FOLLOWS THE FLAG, HOWEVER THE ASSIGNMENT IS SPELLED. This asserted one
@@ -1568,7 +1572,7 @@ public sealed partial class DesignSystemTokenTests
             RegexOptions.Singleline);
         Assert.True(
             loadingAssignment.Success,
-            "Nothing in MainWindow.xaml.cs makes HistoryLoadingState follow _isHistoryLoading, so a "
+            "Nothing in MainWindow*.cs makes HistoryLoadingState follow _isHistoryLoading, so a "
                 + "person cannot tell a history that is still loading from one that is empty.");
         // BOTH OUTCOMES MUST EXIST, WHEREVER THE MAPPING LIVES. The statement used to spell them
         // inline; it now hands the flag to a helper. Requiring the words in the statement itself
@@ -1878,12 +1882,13 @@ public sealed partial class DesignSystemTokenTests
     public void NoTwoSidebarRowsLeadToTheSameSection()
     {
         var document = LoadMainWindow();
-        var codeBehind = File.ReadAllText(Path.Combine(
-            FindRepositoryRoot(),
-            "src",
-            "Production",
-            "EnviousWispr.App",
-            "MainWindow.xaml.cs"));
+        var codeBehind = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                    Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App"),
+                    "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
 
         var tags = document.Descendants()
             .Where(element => element.Name.LocalName == "NavigationViewItem")
@@ -2391,12 +2396,13 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void ArrowNavigationIsSubscribedSoItStillFiresOnceACardHasFocus()
     {
-        var codeBehind = File.ReadAllText(Path.Combine(
-            FindRepositoryRoot(),
-            "src",
-            "Production",
-            "EnviousWispr.App",
-            "MainWindow.xaml.cs"));
+        var codeBehind = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                    Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App"),
+                    "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
 
         Assert.Contains("new KeyEventHandler(ChoiceListKeyDown)", codeBehind, StringComparison.Ordinal);
         Assert.Contains("handledEventsToo: true", codeBehind, StringComparison.Ordinal);
@@ -2490,7 +2496,7 @@ public sealed partial class DesignSystemTokenTests
         {
             (Path.Combine(root, "src", "Production", "EnviousWispr.Core", "Settings", "ReusableUserData.cs"), "CustomWordEntry"),
             (Path.Combine(root, "src", "Production", "EnviousWispr.Core", "Settings", "ReusableUserData.cs"), "SnippetEntry"),
-            (Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"), "HistoryItemViewModel"),
+            (Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.History.cs"), "HistoryItemViewModel"),
         };
 
         foreach (var (path, type) in sources)
@@ -3200,12 +3206,14 @@ public sealed partial class DesignSystemTokenTests
         const string reset = "ResetMatchStrictness";
         string[] banned = ["SelectedIndex", "ItemsSource", "SelectedValuePath"];
 
-        var window = Path.Combine(
-            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs");
-        var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(window), path: window);
-        var root = tree.GetRoot();
+        var appDir = Path.Combine(
+            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
+        var roots = Directory.EnumerateFiles(appDir, "MainWindow*.cs")
+            .Order()
+            .Select(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path).GetRoot())
+            .ToArray();
 
-        var constructor = root.DescendantNodes().OfType<ConstructorDeclarationSyntax>()
+        var constructor = roots.SelectMany(root => root.DescendantNodes().OfType<ConstructorDeclarationSyntax>())
             .FirstOrDefault(one => one.Body is not null &&
                 Calls(one.Body, "InitializeComponent") is not null);
         Assert.True(constructor is not null, "The window has no constructor that builds its own controls.");
@@ -3223,7 +3231,7 @@ public sealed partial class DesignSystemTokenTests
             $"The window does not call {reset} immediately after building its controls, so what the "
                 + "picker starts on is whatever ran in between.");
 
-        var resetBody = root.DescendantNodes().OfType<MethodDeclarationSyntax>()
+        var resetBody = roots.SelectMany(root => root.DescendantNodes().OfType<MethodDeclarationSyntax>())
             .FirstOrDefault(method => method.Identifier.Text == reset);
         Assert.True(resetBody is not null, $"{reset} is not in the window.");
 
@@ -3238,12 +3246,11 @@ public sealed partial class DesignSystemTokenTests
             StringComparison.Ordinal);
 
         // BARE OR THROUGH "this.", because the same write spelled two ways is one write.
-        var writes = root.DescendantNodes().OfType<AssignmentExpressionSyntax>()
+        var writes = roots.SelectMany(root => root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
             .Select(assignment => assignment.Left as MemberAccessExpressionSyntax)
             .Where(member => member is not null && Receiver(member) == picker)
             .Where(member => banned.Contains(member!.Name.Identifier.Text, StringComparer.Ordinal))
-            .Select(member => $"{member!.Name.Identifier.Text} at line " +
-                $"{member.GetLocation().GetLineSpan().StartLinePosition.Line + 1}")
+            .Select(member => $"{member!.Name.Identifier.Text} at {Where(member)}")
             .ToArray();
         Assert.True(
             writes.Length == 0,
@@ -3252,24 +3259,24 @@ public sealed partial class DesignSystemTokenTests
 
         // AND THE CHOICE IS SET IN ONE PLACE. A second assignment anywhere else runs after the reset
         // and quietly decides what everyone starts on, while the reset above still reads correctly.
-        var chosen = root.DescendantNodes().OfType<AssignmentExpressionSyntax>()
+        var chosen = roots.SelectMany(root => root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
             .Where(assignment => assignment.Left is MemberAccessExpressionSyntax member
                 && Receiver(member) == picker
                 && member.Name.Identifier.Text is "SelectedItem" or "SelectedValue")
             .Where(assignment => assignment.Ancestors().OfType<MethodDeclarationSyntax>()
                 .FirstOrDefault()?.Identifier.Text != reset)
-            .Select(assignment => $"line {assignment.GetLocation().GetLineSpan().StartLinePosition.Line + 1}")
+            .Select(Where)
             .ToArray();
         Assert.True(
             chosen.Length == 0,
             $"{picker} selection is set outside {reset}, so what a person starts on is decided in "
                 + "more than one place: " + string.Join(", ", chosen));
 
-        var bound = root.DescendantNodes().OfType<InvocationExpressionSyntax>()
+        var bound = roots.SelectMany(root => root.DescendantNodes().OfType<InvocationExpressionSyntax>())
             .Select(call => call.Expression as MemberAccessExpressionSyntax)
             .Where(member => member is not null && Receiver(member) == picker)
             .Where(member => member!.Name.Identifier.Text is "SetBinding" or "SetValue")
-            .Select(member => $"line {member!.GetLocation().GetLineSpan().StartLinePosition.Line + 1}")
+            .Select(member => Where(member!))
             .ToArray();
         Assert.True(
             bound.Length == 0,
@@ -3281,12 +3288,12 @@ public sealed partial class DesignSystemTokenTests
         // without changing what happens. Reading Items inside ResetMatchStrictness to match the
         // ComboBoxItem carrying MatchStrictness.Default is allowed; any access outside it or any
         // mutation of Items is refused.
-        var touched = root.DescendantNodes().OfType<MemberAccessExpressionSyntax>()
+        var touched = roots.SelectMany(root => root.DescendantNodes().OfType<MemberAccessExpressionSyntax>())
             .Where(member => Receiver(member) == picker && member.Name.Identifier.Text == "Items")
             .Where(member =>
                 member.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault()?.Identifier.Text != reset ||
                 member.Parent is MemberAccessExpressionSyntax { Name.Identifier.Text: "Add" or "Clear" or "Insert" or "Remove" or "RemoveAt" })
-            .Select(member => $"line {member.GetLocation().GetLineSpan().StartLinePosition.Line + 1}")
+            .Select(Where)
             .ToArray();
         Assert.True(
             touched.Length == 0,
@@ -3478,8 +3485,13 @@ public sealed partial class DesignSystemTokenTests
         var picker = FindNamedElement(mainWindow, "PolishModelPicker");
         Assert.False(string.IsNullOrWhiteSpace((string?)picker.Attribute("PlaceholderText")));
 
-        var codeBehind = File.ReadAllText(Path.Combine(
-            repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var codeBehind = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                    Path.Combine(repositoryRoot, "src", "Production", "EnviousWispr.App"),
+                    "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
         Assert.Contains("PolishModelPickerRow.Visibility", codeBehind, StringComparison.Ordinal);
         Assert.Contains("CloudModelsKeyRequiredRow.Visibility", codeBehind, StringComparison.Ordinal);
         Assert.Contains("ProviderSettingsPresenter.UsesAModel(provider)", codeBehind, StringComparison.Ordinal);
@@ -3495,8 +3507,13 @@ public sealed partial class DesignSystemTokenTests
         Assert.Equal("Border", FindNamedElement(mainWindow, "PermissionsMicrophoneAllowedBadge").Name.LocalName);
         Assert.Equal("Border", FindNamedElement(mainWindow, "PermissionsMicrophoneAttentionBadge").Name.LocalName);
 
-        var codeBehind = File.ReadAllText(Path.Combine(
-            repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var codeBehind = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                    Path.Combine(repositoryRoot, "src", "Production", "EnviousWispr.App"),
+                    "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
         Assert.DoesNotContain("and accessibility access", codeBehind, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("PermissionsMicrophoneAllowedBadge.Visibility", codeBehind, StringComparison.Ordinal);
         Assert.Contains("PermissionsMicrophoneAttentionBadge.Visibility", codeBehind, StringComparison.Ordinal);
@@ -3607,7 +3624,7 @@ public sealed partial class DesignSystemTokenTests
             "src",
             "Production",
             "EnviousWispr.App",
-            "MainWindow.xaml.cs"));
+            "MainWindow.Settings.cs"));
         var publishIndex = mainWindowCode.IndexOf("SettingsChanged?.Invoke(_settings);", StringComparison.Ordinal);
         var syncStatusIndex = mainWindowCode.IndexOf("SyncAppliedWhisperLanguageStatus(_settings.Preferences.Dictation.WhisperLanguage);", StringComparison.Ordinal);
         Assert.True(publishIndex >= 0 && syncStatusIndex > publishIndex);

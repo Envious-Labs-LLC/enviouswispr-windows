@@ -339,7 +339,7 @@ public sealed class SpeechEngineParityTests
     {
         var root = FindRepositoryRoot();
         var xamlPath = Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml");
-        var mainWindowCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var mainWindowCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.SpeechEngine.cs"));
         var appCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
         var deliveryCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.ModelDelivery.cs"));
 

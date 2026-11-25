@@ -162,11 +162,13 @@ public sealed class DictionaryMassEditTests
 
     private static MethodDeclarationSyntax FindMainWindowMethod(string root, string methodName)
     {
-        var codePath = Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs");
-        var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(codePath), path: codePath);
-        return tree.GetRoot()
-            .DescendantNodes()
-            .OfType<MethodDeclarationSyntax>()
+        var appDir = Path.Combine(root, "src", "Production", "EnviousWispr.App");
+        return Directory.EnumerateFiles(appDir, "MainWindow*.cs")
+            .Order()
+            .SelectMany(codePath => CSharpSyntaxTree.ParseText(File.ReadAllText(codePath), path: codePath)
+                .GetRoot()
+                .DescendantNodes()
+                .OfType<MethodDeclarationSyntax>())
             .Single(m => m.Identifier.ValueText == methodName);
     }
 

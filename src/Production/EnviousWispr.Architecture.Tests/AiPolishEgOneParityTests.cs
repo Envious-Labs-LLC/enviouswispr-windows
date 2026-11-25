@@ -285,8 +285,13 @@ public sealed class AiPolishEgOneParityTests
         Assert.NotNull(promptText);
         Assert.Equal("Save your API key to load available models", (string?)promptText!.Attribute("Text"));
 
-        var mainWindowCode = File.ReadAllText(
-            Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var mainWindowCode = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                    Path.Combine(root, "src", "Production", "EnviousWispr.App"),
+                    "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
         var ollamaCode = File.ReadAllText(
             Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.OllamaModels.cs"));
         var deliveryCode = File.ReadAllText(

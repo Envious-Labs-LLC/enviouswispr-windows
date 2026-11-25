@@ -166,10 +166,13 @@ public sealed partial class DesignSystemTokenTests
             Path.Combine(
                 FindRepositoryRoot(),
                 "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
-        var code = File.ReadAllText(
-            Path.Combine(
-                FindRepositoryRoot(),
-                "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var code = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                    Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App"),
+                    "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
 
         var fields = CaptureField()
             .Matches(markup)
@@ -202,10 +205,13 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void TheDayFieldsKeepTheRounderThatMakesThemWholeNumbers()
     {
-        var code = File.ReadAllText(
-            Path.Combine(
-                FindRepositoryRoot(),
-                "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var code = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                    Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App"),
+                    "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
 
         var formatter = DayFieldFormatter().Match(code);
         Assert.True(formatter.Success, "Could not find the day fields' formatter.");
@@ -1067,10 +1073,13 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void EveryAnimationOfALayoutPropertyAsksToBeAllowedToRun()
     {
-        var source = File.ReadAllText(
-            Path.Combine(
-                FindRepositoryRoot(),
-                "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var source = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                    Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App"),
+                    "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
 
         // Properties that change LAYOUT. A transform's X and Y are deliberately absent: those are
         // render transforms, which are independent and run without asking.
@@ -1196,11 +1205,11 @@ public sealed partial class DesignSystemTokenTests
     {
         var root = FindRepositoryRoot();
         var mainWindowSource = File.ReadAllText(
-            Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+            Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.Dictionary.cs"));
         var fromAppsSource = File.ReadAllText(
             Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.WordsFromApps.cs"));
 
-        // File and paste word imports share DescribeImport in MainWindow.xaml.cs, while importing
+        // File and paste word imports share DescribeImport in MainWindow.Dictionary.cs, while importing
         // from another dictation app reports through WordImportMessages.Result in MainWindow.WordsFromApps.cs.
         var fileAndPasteUses = Regex.Count(mainWindowSource, @"DescribeImport\((?!IReadOnly|CustomWordImportPlan)\w+\)");
         Assert.True(fileAndPasteUses >= 1, "File/paste word import path must report DescribeImport.");
@@ -1277,7 +1286,14 @@ public sealed partial class DesignSystemTokenTests
     {
         var root = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
         var document = XDocument.Load(Path.Combine(root, "MainWindow.xaml"));
-        var code = File.ReadAllText(Path.Combine(root, "MainWindow.xaml.cs"));
+        // Exclude pre-existing MainWindow.Onboarding.cs, whose overlaid checklist status icons
+        // toggle mutually inside the same Grid cell rather than sitting beside a row label.
+        var code = string.Join(
+            "\n",
+            Directory.EnumerateFiles(root, "MainWindow*.cs")
+                .Where(path => !Path.GetFileName(path).Equals("MainWindow.Onboarding.cs", StringComparison.OrdinalIgnoreCase))
+                .Order()
+                .Select(File.ReadAllText));
 
         var toggled = ToggledElement().Matches(code)
             .Select(match => match.Groups[1].Value)
@@ -1340,7 +1356,11 @@ public sealed partial class DesignSystemTokenTests
     {
         var root = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
         var markup = File.ReadAllText(Path.Combine(root, "MainWindow.xaml"));
-        var code = File.ReadAllText(Path.Combine(root, "MainWindow.xaml.cs"));
+        var mainWindowSources = Directory.EnumerateFiles(root, "MainWindow*.cs")
+            .Order()
+            .Select(path => (Path: path, Text: File.ReadAllText(path)))
+            .ToArray();
+        var code = string.Join("\n", mainWindowSources.Select(source => source.Text));
 
         var sections = SectionName().Matches(markup)
             .Select(match => match.Groups[1].Value)
@@ -1363,12 +1383,12 @@ public sealed partial class DesignSystemTokenTests
         //
         // So: strip that one array, and ask whether the name survives as a real code identifier
         // anywhere in the file (never merely inside a comment or string literal).
-        var reachableCode = CodeWithoutTheHideList(code);
-        var reachableIdentifiers = CSharpSyntaxTree.ParseText(reachableCode)
-            .GetRoot()
-            .DescendantNodes()
-            .OfType<IdentifierNameSyntax>()
-            .Select(identifier => identifier.Identifier.ValueText)
+        var reachableIdentifiers = StripHideLists(mainWindowSources)
+            .SelectMany(stripped => CSharpSyntaxTree.ParseText(stripped)
+                .GetRoot()
+                .DescendantNodes()
+                .OfType<IdentifierNameSyntax>()
+                .Select(identifier => identifier.Identifier.ValueText))
             .ToHashSet(StringComparer.Ordinal);
 
         var unreachable = sections
@@ -1404,8 +1424,13 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void EveryControlTheWindowGreysOutItCanAlsoHandBack()
     {
-        var code = File.ReadAllText(Path.Combine(
-            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var code = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                    Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App"),
+                    "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
 
         // READ THE VALUE, DO NOT LOOK AHEAD PAST IT. The first version of this asked whether a
         // control had any assignment NOT followed by "false", using a negative lookahead after
@@ -2078,8 +2103,16 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void NoPageHeaderIsMissingItsDescription()
     {
-        var code = File.ReadAllText(Path.Combine(
-            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        // Exclude pre-existing MainWindow.Onboarding.cs, whose DrawFooter switches use 4-tuples
+        // with empty HelpText for hidden buttons rather than page header entries.
+        var code = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                    Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App"),
+                    "MainWindow*.cs")
+                .Where(path => !Path.GetFileName(path).Equals("MainWindow.Onboarding.cs", StringComparison.OrdinalIgnoreCase))
+                .Order()
+                .Select(File.ReadAllText));
 
         var empty = PageHeaderEntry().Matches(code)
             .Where(match => match.Groups["description"].Value.Trim() is "string.Empty" or "\"\"")
@@ -2135,7 +2168,11 @@ public sealed partial class DesignSystemTokenTests
     {
         var root = Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App");
         var markup = File.ReadAllText(Path.Combine(root, "MainWindow.xaml"));
-        var code = File.ReadAllText(Path.Combine(root, "MainWindow.xaml.cs"));
+        var mainWindowSources = Directory.EnumerateFiles(root, "MainWindow*.cs")
+            .Order()
+            .Select(path => (Path: path, Text: File.ReadAllText(path)))
+            .ToArray();
+        var code = string.Join("\n", mainWindowSources.Select(source => source.Text));
 
         foreach (var buttonName in new[]
                  {
@@ -2735,22 +2772,31 @@ public sealed partial class DesignSystemTokenTests
     /// tree walk rather than naming the section fields in C# would contain no section identifiers to
     /// strip, and is outside static source analysis.
     /// </remarks>
-    private static string CodeWithoutTheHideList(string code)
-    {
-        var tree = CSharpSyntaxTree.ParseText(code, path: "HideListLookup.cs");
-        var compilation = CreateSemanticCompilation([tree]);
-        var model = compilation.GetSemanticModel(tree);
-        var root = tree.GetRoot();
+    private static string CodeWithoutTheHideList(string code) =>
+        StripHideLists([("HideListLookup.cs", code)]).Single();
 
-        var classes = root.DescendantNodes()
-            .OfType<ClassDeclarationSyntax>()
-            .Select(declaration => model.GetDeclaredSymbol(declaration))
-            .OfType<INamedTypeSymbol>()
+    private static string[] StripHideLists((string Path, string Text)[] sources)
+    {
+        var trees = sources
+            .Select(source => CSharpSyntaxTree.ParseText(source.Text, path: source.Path))
+            .ToArray();
+        var compilation = CreateSemanticCompilation(trees);
+
+        var allClasses = trees
+            .SelectMany(tree =>
+            {
+                var model = compilation.GetSemanticModel(tree);
+                return tree.GetRoot()
+                    .DescendantNodes()
+                    .OfType<ClassDeclarationSyntax>()
+                    .Select(declaration => model.GetDeclaredSymbol(declaration))
+                    .OfType<INamedTypeSymbol>();
+            })
             .Distinct<INamedTypeSymbol>(SymbolEqualityComparer.Default)
             .ToArray();
 
-        var targetType = classes.FirstOrDefault(type => type.Name == "MainWindow")
-            ?? classes.FirstOrDefault();
+        var targetType = allClasses.FirstOrDefault(type => type.Name == "MainWindow")
+            ?? allClasses.FirstOrDefault();
         Assert.True(targetType is not null, "No class declaration was found to inspect for the hide list.");
 
         var hideSymbols = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
@@ -2765,25 +2811,29 @@ public sealed partial class DesignSystemTokenTests
         // Also detect any member on the target class iterated by a section-hiding foreach loop
         // (`foreach (var candidate in <Member>)` setting `.Visibility` to `Collapsed` via `ReferenceEquals`
         // without a `showAll` flag), so a hide list built under another member name is still removed.
-        foreach (var loop in root.DescendantNodes().OfType<ForEachStatementSyntax>())
+        foreach (var tree in trees)
         {
-            var bodyText = loop.Statement.ToString();
-            if (!bodyText.Contains(".Visibility", StringComparison.Ordinal) ||
-                !bodyText.Contains("Visibility.Collapsed", StringComparison.Ordinal) ||
-                !bodyText.Contains("ReferenceEquals", StringComparison.Ordinal) ||
-                bodyText.Contains("showAll", StringComparison.Ordinal))
+            var model = compilation.GetSemanticModel(tree);
+            foreach (var loop in tree.GetRoot().DescendantNodes().OfType<ForEachStatementSyntax>())
             {
-                continue;
-            }
+                var bodyText = loop.Statement.ToString();
+                if (!bodyText.Contains(".Visibility", StringComparison.Ordinal) ||
+                    !bodyText.Contains("Visibility.Collapsed", StringComparison.Ordinal) ||
+                    !bodyText.Contains("ReferenceEquals", StringComparison.Ordinal) ||
+                    bodyText.Contains("showAll", StringComparison.Ordinal))
+                {
+                    continue;
+                }
 
-            var expression = loop.Expression is InvocationExpressionSyntax invocation
-                ? invocation.Expression
-                : loop.Expression;
-            var symbol = model.GetSymbolInfo(expression).Symbol;
-            if (symbol is (IMethodSymbol or IPropertySymbol or IFieldSymbol) &&
-                SymbolEqualityComparer.Default.Equals(symbol.ContainingType, targetType))
-            {
-                hideSymbols.Add(symbol);
+                var expression = loop.Expression is InvocationExpressionSyntax invocation
+                    ? invocation.Expression
+                    : loop.Expression;
+                var symbol = model.GetSymbolInfo(expression).Symbol;
+                if (symbol is (IMethodSymbol or IPropertySymbol or IFieldSymbol) &&
+                    SymbolEqualityComparer.Default.Equals(symbol.ContainingType, targetType))
+                {
+                    hideSymbols.Add(symbol);
+                }
             }
         }
 
@@ -2793,35 +2843,47 @@ public sealed partial class DesignSystemTokenTests
                 + "test no longer removes the hide list and would call an orphaned section reached - "
                 + "or the hide list is gone and this test should be too.");
 
-        var spans = hideSymbols
-            .SelectMany(symbol => symbol.DeclaringSyntaxReferences)
-            .Where(reference => reference.SyntaxTree == tree)
-            .Select(reference =>
-            {
-                var syntax = reference.GetSyntax();
-                return syntax is VariableDeclaratorSyntax
-                    {
-                        Parent: VariableDeclarationSyntax
-                        {
-                            Variables.Count: 1,
-                            Parent: FieldDeclarationSyntax field,
-                        },
-                    }
-                    ? field.FullSpan
-                    : syntax.FullSpan;
-            })
-            .Distinct()
-            .OrderByDescending(span => span.Start)
-            .ToArray();
-
-        Assert.NotEmpty(spans);
-        var updated = code;
-        foreach (var span in spans)
+        var results = new string[sources.Length];
+        var anyRemoved = false;
+        for (var i = 0; i < sources.Length; i++)
         {
-            updated = updated.Remove(span.Start, span.Length);
+            var tree = trees[i];
+            var spans = hideSymbols
+                .SelectMany(symbol => symbol.DeclaringSyntaxReferences)
+                .Where(reference => reference.SyntaxTree == tree)
+                .Select(reference =>
+                {
+                    var syntax = reference.GetSyntax();
+                    return syntax is VariableDeclaratorSyntax
+                        {
+                            Parent: VariableDeclarationSyntax
+                            {
+                                Variables.Count: 1,
+                                Parent: FieldDeclarationSyntax field,
+                            },
+                        }
+                        ? field.FullSpan
+                        : syntax.FullSpan;
+                })
+                .Distinct()
+                .OrderByDescending(span => span.Start)
+                .ToArray();
+
+            var updated = sources[i].Text;
+            if (spans.Length > 0)
+            {
+                anyRemoved = true;
+                foreach (var span in spans)
+                {
+                    updated = updated.Remove(span.Start, span.Length);
+                }
+            }
+
+            results[i] = updated;
         }
 
-        return updated;
+        Assert.True(anyRemoved, "No hide-list declaration spans were found to remove.");
+        return results;
     }
 
     private static readonly SyntaxTree ImplicitSemanticUsingsTree = CSharpSyntaxTree.ParseText(
