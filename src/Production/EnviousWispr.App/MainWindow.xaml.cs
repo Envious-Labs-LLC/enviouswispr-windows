@@ -290,6 +290,7 @@ public sealed partial class MainWindow : Window, IDisposable
             UpdateRecordingModeButtons();
             UpdateThemeSegmentButtons();
             RenderSpeechEngineCards();
+            RefreshLivePreviewSectionPresentation();
             UpdateOverlayPositionSegmentButtons();
             UpdateHistoryFilterSegmentButtons();
         };
@@ -637,6 +638,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public void OpenPage(string tag, string? tabKey)
     {
+        var wasOnboardingVisible = OnboardingView?.Visibility == Visibility.Visible;
         AppWindow.Show();
         Activate();
         ShowOnboarding(show: false);
@@ -644,41 +646,36 @@ public sealed partial class MainWindow : Window, IDisposable
         var (resolvedTag, resolvedTab) = ResolvePageAndTab(tag);
         var targetTab = tabKey ?? resolvedTab;
 
-        if (resolvedTag == "whats-new")
+        if (resolvedTag != "whats-new")
         {
-            ProductNavigation.SelectedItem = null;
-            ShowPage("whats-new");
+            var row = NavigationRows()
+                .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), resolvedTag, StringComparison.Ordinal));
+            if (row is null && string.Equals(resolvedTag, "history", StringComparison.Ordinal))
+            {
+                row = HistoryNavItem;
+            }
+
+            if (row is null)
+            {
+                // A SILENT RETURN HERE IS A BUTTON THAT DOES NOTHING. The user pressed something,
+                // the pill went away, and the window came forward showing whatever it was showing -
+                // which reads as the app ignoring them. The page name is deliberately not in the
+                // message: it is our vocabulary, not theirs.
+                SetReliabilityNotice(
+                    "That settings page could not be opened",
+                    "Use the sidebar to find it. Nothing about your dictation was affected.",
+                    isError: true);
+                return;
+            }
+        }
+
+        var targetRoute = SettingsRoute.Normalize(resolvedTag, targetTab);
+        if (!wasOnboardingVisible && TryBeginGuardedLeave(targetRoute, revertSidebarSelection: false))
+        {
             return;
         }
 
-        var row = NavigationRows()
-            .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), resolvedTag, StringComparison.Ordinal));
-        if (row is null && string.Equals(resolvedTag, "history", StringComparison.Ordinal))
-        {
-            row = HistoryNavItem;
-        }
-        if (row is null)
-        {
-            // A SILENT RETURN HERE IS A BUTTON THAT DOES NOTHING. The user pressed something,
-            // the pill went away, and the window came forward showing whatever it was showing -
-            // which reads as the app ignoring them. The page name is deliberately not in the
-            // message: it is our vocabulary, not theirs.
-            SetReliabilityNotice(
-                "That settings page could not be opened",
-                "Use the sidebar to find it. Nothing about your dictation was affected.",
-                isError: true);
-            return;
-        }
-
-        _pendingTabKey = targetTab;
-        if (ReferenceEquals(ProductNavigation.SelectedItem, row))
-        {
-            ShowPage(resolvedTag, targetTab);
-        }
-        else
-        {
-            ProductNavigation.SelectedItem = row;
-        }
+        NavigateCommittedRoute(targetRoute);
     }
 
     /// <summary>
@@ -766,7 +763,7 @@ public sealed partial class MainWindow : Window, IDisposable
         NavigationView sender,
         NavigationViewSelectionChangedEventArgs args)
     {
-        if (args.SelectedItem is null && args.SelectedItemContainer is null)
+        if (_isHandlingGuardedNavigation || (args.SelectedItem is null && args.SelectedItemContainer is null))
         {
             return;
         }
@@ -775,7 +772,15 @@ public sealed partial class MainWindow : Window, IDisposable
         var tag = item?.Tag?.ToString() ?? "history";
         var tabKey = _pendingTabKey;
         _pendingTabKey = null;
-        ShowPage(tag, tabKey);
+
+        var targetRoute = SettingsRoute.Normalize(tag, tabKey);
+        if (TryBeginGuardedLeave(targetRoute, revertSidebarSelection: true))
+        {
+            return;
+        }
+
+        CommitNavigationRouteState(targetRoute);
+        ShowPage(targetRoute.PageTag, targetRoute.TabKey);
     }
 
     private static void ApplySegmentButtonState(Button? button, bool selected)
@@ -1392,12 +1397,13 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         if (sender is Button btn && btn.Tag is string tag)
         {
-            SelectDictationTab(tag);
+            NavigateToDictationTab(tag);
         }
     }
 
     private void SelectDictationTab(string tabKey)
     {
+        CommitNavigationRouteState(SettingsRoute.Normalize("settings-dictation", tabKey));
         DictationTabEngine.Style = (Style)Application.Current.Resources[tabKey == "engine" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
         DictationTabMicrophone.Style = (Style)Application.Current.Resources[tabKey == "microphone" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
         DictationTabLivePreview.Style = (Style)Application.Current.Resources[tabKey == "live-preview" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];

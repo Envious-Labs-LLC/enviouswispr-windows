@@ -148,5 +148,5 @@ public sealed partial class MainWindow
 
     /// <summary>The pill page's "Configure Live Preview" link opens the Live Preview tab beside it.</summary>
     private void ConfigureLivePreviewLink_Click(object sender, RoutedEventArgs e) =>
-        SelectDictationTab("live-preview");
+        NavigateToDictationTab("live-preview");
 }

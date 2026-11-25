@@ -115,7 +115,16 @@ public sealed record EgOneCardPresentation(
     bool ShowCancelButton,
     bool ShowRemoveButton,
     bool RemoveButtonEnabled,
-    string AutomationName);
+    string AutomationName,
+    bool CanSelect = true,
+    bool ShowChooseProviderButton = false);
+
+/// <summary>Summary badge and status text for the active AI Polish provider header card.</summary>
+public sealed record ActivePolishProviderBadgePresentation(
+    string BadgeText,
+    string StatusText,
+    string ChipStyleKey,
+    string ChipTextStyleKey);
 
 /// <summary>Confirmation copy shown before removing an installed EG-1 model size.</summary>
 public sealed record EgOneRemovalConfirmation(
@@ -136,6 +145,8 @@ public static class EnginePolishPresentation
     public const string WhisperBundleSizeLabel = "548 MB";
     public const string RemovalBlockedBusyNotice =
         "Finish the current dictation or file transcription before removing a speech model.";
+    public const string SpeechDownloadBlockedBusyNotice =
+        "Finish the current dictation or file transcription, then download.";
     public const string EgOneRemovalBlockedBusyNotice =
         "Finish the current dictation or file transcription before removing an EG-1 model.";
     public const string EgOneDownloadBlockedBusyNotice =
@@ -302,10 +313,100 @@ public static class EnginePolishPresentation
                 DefaultDiskSizeText: "~4.1 GB disk"),
         };
 
-    public static string DescribeEgOneNotPublishedNotice(string? modelId)
+    public static string DescribeEgOneUnavailableNotice(string? modelId)
     {
         var tier = DescribeEgOneTier(modelId);
-        return $"The Windows download package for {tier.Title} is not published in this build yet.";
+        return $"{tier.Title} is not available to download in this version yet. Choose another AI Polish provider, such as OpenAI, Claude, Gemini, or Ollama.";
+    }
+
+    public static ActivePolishProviderBadgePresentation DescribeActivePolishProvider(
+        PolishProvider provider,
+        EgOneModelState? selectedEgOneState,
+        bool egOneServerExists,
+        bool isOllamaHosted)
+    {
+        switch (provider)
+        {
+            case PolishProvider.EgOne:
+                if (selectedEgOneState?.DeliveryStage == SpeechModelDelivery.Downloading)
+                {
+                    return new ActivePolishProviderBadgePresentation(
+                        BadgeText: "Downloading...",
+                        StatusText: "Preparing EG-1 on this PC.",
+                        ChipStyleKey: "BrandAccentChipStyle",
+                        ChipTextStyleKey: "BrandAccentChipTextStyle");
+                }
+
+                if (selectedEgOneState?.DeliveryStage == SpeechModelDelivery.Activating)
+                {
+                    return new ActivePolishProviderBadgePresentation(
+                        BadgeText: "Activating...",
+                        StatusText: "Activating EG-1 on this PC.",
+                        ChipStyleKey: "BrandAccentChipStyle",
+                        ChipTextStyleKey: "BrandAccentChipTextStyle");
+                }
+
+                if (selectedEgOneState?.IsInstalled == true && egOneServerExists)
+                {
+                    return new ActivePolishProviderBadgePresentation(
+                        BadgeText: "On this PC",
+                        StatusText: "Our model for cleaning up dictation on this PC.",
+                        ChipStyleKey: "BrandSuccessChipStyle",
+                        ChipTextStyleKey: "BrandSuccessChipTextStyle");
+                }
+
+                if (selectedEgOneState?.IsInstalled == true)
+                {
+                    return new ActivePolishProviderBadgePresentation(
+                        BadgeText: "Needs setup",
+                        StatusText: "EG-1 model files are present, but the local EG-1 runtime was not found.",
+                        ChipStyleKey: "BrandNeutralChipStyle",
+                        ChipTextStyleKey: "BrandNeutralChipTextStyle");
+                }
+
+                return new ActivePolishProviderBadgePresentation(
+                    BadgeText: "Not installed",
+                    StatusText: selectedEgOneState?.HasBundledManifest == true
+                        ? "Download an EG-1 model size below to run offline dictation polish on this PC."
+                        : "EG-1 is not installed on this PC. Choose another AI Polish provider below.",
+                    ChipStyleKey: "BrandNeutralChipStyle",
+                    ChipTextStyleKey: "BrandNeutralChipTextStyle");
+
+            case PolishProvider.Ollama:
+                return new ActivePolishProviderBadgePresentation(
+                    BadgeText: isOllamaHosted ? "Runs on Ollama's servers" : "On this PC",
+                    StatusText: "Local models on this PC or hosted models on Ollama's servers.",
+                    ChipStyleKey: "BrandAccentChipStyle",
+                    ChipTextStyleKey: "BrandAccentChipTextStyle");
+
+            case PolishProvider.OpenAI:
+                return new ActivePolishProviderBadgePresentation(
+                    BadgeText: "Cloud",
+                    StatusText: "OpenAI GPT models (requires your API key).",
+                    ChipStyleKey: "BrandAccentChipStyle",
+                    ChipTextStyleKey: "BrandAccentChipTextStyle");
+
+            case PolishProvider.Anthropic:
+                return new ActivePolishProviderBadgePresentation(
+                    BadgeText: "Cloud",
+                    StatusText: "Anthropic Claude models (requires your API key).",
+                    ChipStyleKey: "BrandAccentChipStyle",
+                    ChipTextStyleKey: "BrandAccentChipTextStyle");
+
+            case PolishProvider.Gemini:
+                return new ActivePolishProviderBadgePresentation(
+                    BadgeText: "Cloud",
+                    StatusText: "Google Gemini models (requires your API key).",
+                    ChipStyleKey: "BrandAccentChipStyle",
+                    ChipTextStyleKey: "BrandAccentChipTextStyle");
+
+            default:
+                return new ActivePolishProviderBadgePresentation(
+                    BadgeText: "Off",
+                    StatusText: "AI Polish is disabled.",
+                    ChipStyleKey: "BrandNeutralChipStyle",
+                    ChipTextStyleKey: "BrandNeutralChipTextStyle");
+        }
     }
 
     public static EgOneCardPresentation DescribeEgOneCard(
@@ -327,6 +428,8 @@ public static class EnginePolishPresentation
         var isRecommended = string.Equals(normalizedId, recommendedModelId, StringComparison.Ordinal);
         var isDownloading = state.DeliveryStage == SpeechModelDelivery.Downloading;
         var isActivating = state.DeliveryStage == SpeechModelDelivery.Activating;
+        var isDownloadAvailable = state.HasBundledManifest && state.DeliveryStage != SpeechModelDelivery.CannotDownload;
+        var isUnavailable = !state.IsInstalled && !isDownloadAvailable && !isDownloading && !isActivating;
 
         var statusText = state.DeliveryStage switch
         {
@@ -334,33 +437,35 @@ public static class EnginePolishPresentation
             SpeechModelDelivery.Activating => "Activating...",
             SpeechModelDelivery.Failed => "Download failed",
             SpeechModelDelivery.Cancelled => "Download cancelled",
-            SpeechModelDelivery.CannotDownload => "Package not published",
             _ when state.IsInstalled => isSelected && serverExecutableExists ? "Installed · Ready" : "Installed",
+            _ when isUnavailable => "Not available yet",
             _ => "Not installed",
         };
 
         var statusDetail = state.DeliveryStage switch
         {
-            SpeechModelDelivery.Downloading or SpeechModelDelivery.Activating or SpeechModelDelivery.Failed or SpeechModelDelivery.Cancelled or SpeechModelDelivery.CannotDownload
+            SpeechModelDelivery.Downloading or SpeechModelDelivery.Activating or SpeechModelDelivery.Failed or SpeechModelDelivery.Cancelled
                 when !string.IsNullOrWhiteSpace(state.StatusDetail) => state.StatusDetail!,
-            SpeechModelDelivery.CannotDownload => DescribeEgOneNotPublishedNotice(normalizedId),
+            _ when isUnavailable => DescribeEgOneUnavailableNotice(normalizedId),
             _ when state.IsInstalled => serverExecutableExists
                 ? "Verified on this PC for offline dictation polish."
                 : "Local model files found on this PC. EG-1 runtime executable was not found.",
-            _ when state.HasBundledManifest => $"Not downloaded yet ({diskSizeText}).",
-            _ => $"Not downloaded yet ({diskSizeText}). Download package not published in this build yet.",
+            _ => $"Not downloaded yet ({diskSizeText}).",
         };
 
         var showDownloadButton = !state.IsInstalled &&
             !isDownloading &&
             !isActivating &&
-            state.DeliveryStage != SpeechModelDelivery.CannotDownload;
+            isDownloadAvailable;
 
         var downloadButtonText = state.DeliveryStage is SpeechModelDelivery.Failed or SpeechModelDelivery.Cancelled
             ? "Retry download"
             : state.HasBundledManifest && !string.IsNullOrWhiteSpace(state.BundleSizeText)
                 ? $"Download ({state.BundleSizeText})"
                 : "Download";
+
+        var canSelect = state.IsInstalled || isDownloadAvailable || isDownloading || isActivating || isSelected;
+        var showChooseProviderButton = isSelected && isUnavailable;
 
         var specsSummary = $"{facts.QualityText} · {facts.SpeedText} · {facts.MemoryText} · {diskSizeText}";
         var automationName = isRecommended
@@ -390,7 +495,9 @@ public static class EnginePolishPresentation
             ShowCancelButton: isDownloading,
             ShowRemoveButton: state.IsInstalled && state.CanRemove && !isDownloading && !isActivating,
             RemoveButtonEnabled: !otherDownloadInFlight,
-            AutomationName: automationName);
+            AutomationName: automationName,
+            CanSelect: canSelect,
+            ShowChooseProviderButton: showChooseProviderButton);
     }
 
     public static EgOneRemovalConfirmation DescribeEgOneRemovalDialog(

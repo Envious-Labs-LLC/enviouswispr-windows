@@ -913,11 +913,11 @@ public partial class App
 
         if (BundledModelManifests.TryRead(normalizedId) is null)
         {
-            var notPublished = EnginePolishPresentation.DescribeEgOneNotPublishedNotice(normalizedId);
+            var unavailable = EnginePolishPresentation.DescribeEgOneUnavailableNotice(normalizedId);
             _egOneDeliveries[normalizedId] = new(
                 SpeechModelDelivery.CannotDownload,
-                Detail: notPublished);
-            _window?.ShowEgOneNotice(notPublished);
+                Detail: unavailable);
+            _window?.ShowEgOneNotice(unavailable);
             await RefreshEgOneInventoryAsync().ConfigureAwait(true);
             return;
         }

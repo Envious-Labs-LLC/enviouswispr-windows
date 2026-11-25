@@ -1,4 +1,5 @@
 using EnviousWispr.Core.Presentation;
+using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Presentation;
@@ -33,7 +34,21 @@ public sealed record LivePreviewEngineCardPresentation(
     bool CanDownload = false,
     string DownloadButtonText = "Download (190 MB)",
     bool CanCancel = false,
-    bool CanRemove = false);
+    bool CanRemove = false,
+    string BadgeText = "",
+    string Tagline = "",
+    string ModelName = "",
+    string LanguagesText = "",
+    string DownloadSizeText = "",
+    string HardwareNote = "",
+    string StatusHeadline = "");
+
+/// <summary>Confirmation dialog copy shown before removing the downloaded Whisper preview model.</summary>
+public sealed record LivePreviewWhisperRemovalConfirmation(
+    string Title,
+    string Message,
+    string ConfirmButtonText,
+    string CancelButtonText);
 
 public sealed record LivePreviewSectionPresentation(
     LivePreviewReadinessKind ReadinessKind,
@@ -81,12 +96,25 @@ public static class LivePreviewSettingsPresentation
                 ? "Standing in while the Whisper preview model is not downloaded yet."
                 : "Included with the default speech model (0 MB extra download).";
 
+        var parakeetStatusHeadline = !parakeetInstalled
+            ? "Model missing"
+            : whisperSelected && !whisperPreviewInstalled && isEnabled
+                ? "Standing in"
+                : "Included";
+
         var parakeetCard = new LivePreviewEngineCardPresentation(
             LivePreviewEngineChoice.Parakeet,
             ParakeetCardTitle,
             ParakeetCardDescription,
             parakeetCardStatus,
-            IsSelected: parakeetSelected);
+            IsSelected: parakeetSelected,
+            BadgeText: "Recommended",
+            Tagline: "Fast everyday live preview",
+            ModelName: ParakeetModelIds.Final,
+            LanguagesText: "25 languages",
+            DownloadSizeText: "0 MB extra",
+            HardwareNote: "Runs fast on CPU",
+            StatusHeadline: parakeetStatusHeadline);
 
         var whisperCard = BuildWhisperCard(
             isEnabled,
@@ -211,6 +239,30 @@ public static class LivePreviewSettingsPresentation
         return Math.Clamp(value, 0.0, 100.0);
     }
 
+    public static LivePreviewWhisperRemovalConfirmation DescribeWhisperRemovalDialog(
+        bool whisperSelected,
+        bool livePreviewEnabled,
+        bool parakeetInstalled = true)
+    {
+        var message = (whisperSelected && livePreviewEnabled, parakeetInstalled) switch
+        {
+            (true, true) =>
+                "Whisper is currently selected for Live Preview. Removing the 190 MB preview model deletes it from this PC and falls back to Parakeet until you download Whisper again.",
+            (true, false) =>
+                "Whisper is currently selected for Live Preview. Removing the 190 MB preview model deletes it from this PC, and Live Preview will stay unavailable until you download Whisper or Parakeet again.",
+            (false, true) =>
+                "This deletes the 190 MB Whisper preview model from this PC. Parakeet remains available for Live Preview, and you can re-download Whisper here anytime.",
+            (false, false) =>
+                "This deletes the 190 MB Whisper preview model from this PC. No local Live Preview model is installed right now, and you can re-download Whisper or Parakeet anytime.",
+        };
+
+        return new LivePreviewWhisperRemovalConfirmation(
+            Title: "Remove Whisper preview model?",
+            Message: message,
+            ConfirmButtonText: "Remove Whisper model",
+            CancelButtonText: "Keep model");
+    }
+
     private static LivePreviewEngineCardPresentation BuildWhisperCard(
         bool isEnabled,
         bool isSelected,
@@ -221,6 +273,12 @@ public static class LivePreviewSettingsPresentation
         string? deliveryDetail,
         bool canRemove)
     {
+        const string badgeText = "99+ languages";
+        const string tagline = "Multilingual live preview";
+        const string languagesText = "99+ languages";
+        const string downloadSizeText = "190 MB";
+        const string hardwareNote = "Best with NVIDIA GPU";
+
         if (whisperPreviewInstalled)
         {
             return new LivePreviewEngineCardPresentation(
@@ -229,7 +287,14 @@ public static class LivePreviewSettingsPresentation
                 WhisperCardDescription,
                 StatusText: "190 MB preview model installed and verified.",
                 IsSelected: isSelected,
-                CanRemove: canRemove && deliveryStage is not (SpeechModelDelivery.Downloading or SpeechModelDelivery.Activating));
+                CanRemove: canRemove && deliveryStage is not (SpeechModelDelivery.Downloading or SpeechModelDelivery.Activating),
+                BadgeText: badgeText,
+                Tagline: tagline,
+                ModelName: WhisperModelIds.Preview,
+                LanguagesText: languagesText,
+                DownloadSizeText: downloadSizeText,
+                HardwareNote: hardwareNote,
+                StatusHeadline: isSelected ? "Installed · Active" : "Installed");
         }
 
         if (deliveryStage is SpeechModelDelivery.Downloading or SpeechModelDelivery.Activating)
@@ -246,7 +311,14 @@ public static class LivePreviewSettingsPresentation
                 StatusText: progressText,
                 IsSelected: isSelected,
                 ProgressPercent: RenderableProgress(downloadPercent),
-                CanCancel: true);
+                CanCancel: true,
+                BadgeText: badgeText,
+                Tagline: tagline,
+                ModelName: WhisperModelIds.Preview,
+                LanguagesText: languagesText,
+                DownloadSizeText: downloadSizeText,
+                HardwareNote: hardwareNote,
+                StatusHeadline: deliveryStage == SpeechModelDelivery.Activating ? "Activating..." : "Downloading...");
         }
 
         if (deliveryStage == SpeechModelDelivery.Failed)
@@ -261,7 +333,14 @@ public static class LivePreviewSettingsPresentation
                 StatusText: failureText,
                 IsSelected: isSelected,
                 CanDownload: true,
-                DownloadButtonText: "Try again");
+                DownloadButtonText: "Try again",
+                BadgeText: badgeText,
+                Tagline: tagline,
+                ModelName: WhisperModelIds.Preview,
+                LanguagesText: languagesText,
+                DownloadSizeText: downloadSizeText,
+                HardwareNote: hardwareNote,
+                StatusHeadline: "Download failed");
         }
 
         if (deliveryStage == SpeechModelDelivery.Cancelled)
@@ -273,7 +352,14 @@ public static class LivePreviewSettingsPresentation
                 StatusText: "Download paused. It resumes where it stopped when you download again.",
                 IsSelected: isSelected,
                 CanDownload: true,
-                DownloadButtonText: "Resume download");
+                DownloadButtonText: "Resume download",
+                BadgeText: badgeText,
+                Tagline: tagline,
+                ModelName: WhisperModelIds.Preview,
+                LanguagesText: languagesText,
+                DownloadSizeText: downloadSizeText,
+                HardwareNote: hardwareNote,
+                StatusHeadline: "Download paused");
         }
 
         var notDownloadedStatus = isSelected && isEnabled && parakeetInstalled
@@ -286,6 +372,13 @@ public static class LivePreviewSettingsPresentation
             StatusText: notDownloadedStatus,
             IsSelected: isSelected,
             CanDownload: deliveryStage != SpeechModelDelivery.CannotDownload,
-            DownloadButtonText: "Download (190 MB)");
+            DownloadButtonText: "Download (190 MB)",
+            BadgeText: badgeText,
+            Tagline: tagline,
+            ModelName: WhisperModelIds.Preview,
+            LanguagesText: languagesText,
+            DownloadSizeText: downloadSizeText,
+            HardwareNote: hardwareNote,
+            StatusHeadline: "Not installed");
     }
 }

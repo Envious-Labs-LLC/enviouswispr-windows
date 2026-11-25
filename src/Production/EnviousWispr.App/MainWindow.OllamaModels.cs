@@ -172,9 +172,11 @@ public sealed partial class MainWindow
         if (ActivePolishProviderBadgeText is not null &&
             PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)) == PolishProvider.Ollama)
         {
-            ActivePolishProviderBadgeText.Text = IsSelectedOllamaModelHosted()
-                ? "Runs on Ollama's servers"
-                : "On this PC";
+            ApplyActivePolishProviderBadge(EnginePolishPresentation.DescribeActivePolishProvider(
+                PolishProvider.Ollama,
+                selectedEgOneState: null,
+                egOneServerExists: false,
+                isOllamaHosted: IsSelectedOllamaModelHosted()));
         }
 
         if (OllamaSetupText.Text != view.Setup.Sentence)
