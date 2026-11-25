@@ -121,7 +121,7 @@ public sealed class SessionPersistence : ISessionRecoveryState
         _effects = effects;
     }
 
-    /// <summary>Recovered text is waiting; a new recording must not start over it.</summary>
+    /// <summary>Recovered text is waiting on Home; the next press clears it before recording.</summary>
     public bool HasPendingRecovery { get; private set; }
 
     /// <summary>The record behind <see cref="HasPendingRecovery"/>, when one is in memory.</summary>

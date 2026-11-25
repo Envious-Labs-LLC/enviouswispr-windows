@@ -124,13 +124,8 @@ public sealed partial class MainWindow
     }
 
     /// <summary>Where a take's words went, as the delivery reported it.</summary>
-    private void ObserveDeliveryForOnboarding(DictationStatus delivered) =>
-        _onboarding.TakeDelivered(delivered.State switch
-        {
-            DictationOverlayState.Success => OnboardingTakeDelivery.Delivered,
-            DictationOverlayState.Warning => OnboardingTakeDelivery.Clipboard,
-            _ => OnboardingTakeDelivery.Failed,
-        });
+    private void ObserveDeliveryForOnboarding(DeliveryLanding landing) =>
+        _onboarding.TakeDelivered(OnboardingTakeDeliveries.For(landing));
 
     private void ObserveModelForOnboarding(ModelDeliveryPresentation presentation)
     {

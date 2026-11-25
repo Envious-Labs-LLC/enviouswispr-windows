@@ -175,7 +175,7 @@ public sealed class ProductionPathTests
         Assert.Equal(DeliveryStage.Commit, failed.DeliveryStage);
         Assert.Equal(DeliveryFaultKind.NullReference, failed.Fault);
         Assert.DoesNotContain(world.Log.Entries, entry => entry.ErrorCode == AppErrorCode.DeliveryUnsupportedTarget);
-        Assert.Contains(world.View.Deliveries, delivery => delivery.Delivered.Text == "Text delivery failed unexpectedly. Text is held safely in memory");
+        Assert.Contains(world.View.Deliveries, delivery => delivery.Delivered.Status().Text == "Text delivery failed unexpectedly. Text is held safely in memory");
         Assert.Equal(["hello world"], world.RecoveryStore.Saved);
         Assert.Equal(0, world.RecoveryStore.Cleared);
         Assert.True(world.Persistence.HasPendingRecovery, "the words wait on Home");
@@ -222,7 +222,7 @@ public sealed class ProductionPathTests
         Assert.Equal(AppFailureCategory.TextDelivery, ending.Failure);
         Assert.Null(ending.Fault);
         Assert.Null(ending.DeliveryStage);
-        Assert.Equal(expectedSentence, Assert.Single(world.View.Deliveries).Delivered.Text);
+        Assert.Equal(expectedSentence, Assert.Single(world.View.Deliveries).Delivered.Status().Text);
     }
 
     [Fact]
@@ -247,7 +247,7 @@ public sealed class ProductionPathTests
         Assert.Contains(world.Log.Entries, entry => entry.Event == AppEventCode.TextDeliveryCompleted);
         var clipboard = Assert.Single(world.Log.Entries, entry => entry.Event == AppEventCode.TextDeliveryClipboardNotRestored);
         Assert.Equal(AppFailureCategory.TextDelivery, clipboard.Failure);
-        Assert.Equal("Pasted, but your clipboard could not be restored", Assert.Single(world.View.Deliveries).Delivered.Text);
+        Assert.Equal("Pasted, but your clipboard could not be restored", Assert.Single(world.View.Deliveries).Delivered.Status().Text);
     }
 
     [Fact]

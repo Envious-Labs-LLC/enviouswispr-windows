@@ -33,18 +33,24 @@ public sealed class DictationSessionExecutorTests
     }
 
     [Fact]
-    public async Task PendingRecoveryBlocksAPressBeforeAdmissionIsEvenAsked()
+    public async Task PressingRecordWhileRecoveryIsPendingClearsItAndStartsRecording()
     {
-        var (executor, capture, effects, _, world) = BuildWithFinalization();
+        // MACOS NEVER REFUSES A PRESS FOR WAITING WORDS. The new recording supersedes the recovery
+        // copy: it is cleared first, then the machine is asked and the microphone opens as usual.
+        var (executor, capture, effects, controller, world) = BuildWithFinalization();
         world.Persistence.HasPendingRecovery = true;
 
         var result = await executor.ExecuteAsync(Press(), CancellationToken.None);
 
         Assert.Equal(SessionCommandDisposition.Applied, result.Disposition);
-        Assert.Null(result.Session);
-        Assert.Equal(0, capture.StartCount);
-        Assert.True(world.Resources.Probes == 0, "the machine is not even asked");
-        Assert.Equal(["ShowRecoveredTextWaiting", "RecordDictationEdge"], effects.Trace);
+        Assert.False(world.Persistence.HasPendingRecovery, "the waiting recovery is superseded");
+        Assert.Equal(1, capture.StartCount);
+        Assert.Equal(1, world.Resources.Probes);
+        Assert.Equal(DictationSessionState.Recording, controller.CurrentSession?.State);
+        Assert.Same(controller.CurrentSession, result.Session);
+        Assert.Equal(
+            ["ClearRecoveryText", "RecordTransition:Started", "RecordingSettings", "Background:Start", "ShowTransitionStatus:Started", "RecordDictationEdge"],
+            effects.Trace);
     }
 
     [Fact]
@@ -976,6 +982,13 @@ public sealed class DictationSessionExecutorTests
         public bool CanPersistRecovery { get; set; } = true;
 
         public void ShowPendingRecovery() => trace.Add("ShowPendingRecovery");
+
+        public Task ClearRecoveryTextAsync()
+        {
+            trace.Add("ClearRecoveryText");
+            HasPendingRecovery = false;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeResources(SystemResourceSnapshot snapshot) : ISystemResourceProbe
@@ -1004,8 +1017,6 @@ public sealed class DictationSessionExecutorTests
         public bool EscapeRecoveryEnabled { get; set; }
 
         public void RecordResourcePressure(AppError? failure) => Trace.Add($"RecordResourcePressure:{failure?.Code}");
-
-        public void ShowRecoveredTextWaiting() => Trace.Add("ShowRecoveredTextWaiting");
 
         public void ShowMemoryCritical() => Trace.Add("ShowMemoryCritical");
 

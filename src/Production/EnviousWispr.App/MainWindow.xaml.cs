@@ -958,24 +958,26 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>Shows where the words went, and asks about the language if this is the moment to.</summary>
     /// <remarks>
     /// ONE ENTRY POINT SO THE PILL CANNOT BE SET TWICE. The offer takes the pill INSTEAD of the
-    /// delivery sentence rather than after it, and it carries that sentence along, so somebody who
-    /// asked for the clipboard is still told the text went to the clipboard.
+    /// delivery sentence rather than after it, and it carries that sentence along when the sentence
+    /// had a pill of its own, so somebody who asked for the clipboard is still told the text went to
+    /// the clipboard. Onboarding and the offer read where the words went from the delivery, never
+    /// from the pill: a landed paste raises no pill at all.
     /// </remarks>
-    public void ReportDeliveryAndMaybeOfferLanguage(DictationStatus delivered, string? detectedLanguage)
+    public void ReportDeliveryAndMaybeOfferLanguage(DeliveryReport delivered, string? detectedLanguage)
     {
-        ObserveDeliveryForOnboarding(delivered);
-        var offer = delivered.State == DictationOverlayState.Success
+        ObserveDeliveryForOnboarding(delivered.Landing);
+        var offer = delivered.InvitesLanguageOffer
             ? _languageSuggestions.Observe(
                 detectedLanguage,
                 _settings.Preferences.Dictation.WhisperLanguage)
             : null;
         if (offer is null)
         {
-            SetSessionStatus(delivered);
+            SetSessionStatus(delivered.Status());
             return;
         }
 
-        ShowLanguageLockOffer(offer, delivered.Text);
+        ShowLanguageLockOffer(offer, delivered);
 
         // WRITTEN DOWN THE MOMENT IT IS SHOWN, not when it is answered. Most offers are never
         // answered at all - the pill lapses - and that is exactly the case the count exists to
@@ -1004,7 +1006,7 @@ public sealed partial class MainWindow : Window, IDisposable
     /// vocabulary names intents and a language code in it would tie the overlay to the list of
     /// languages the settings page happens to hold.
     /// </remarks>
-    private void ShowLanguageLockOffer(LanguageLockOffer offer, string deliverySentence)
+    private void ShowLanguageLockOffer(LanguageLockOffer offer, DeliveryReport delivered)
     {
         ArgumentNullException.ThrowIfNull(offer);
         _offeredLanguage = offer.Language;
@@ -1023,10 +1025,9 @@ public sealed partial class MainWindow : Window, IDisposable
         // THE OFFER TAKES THE PILL, SO IT HAS TO CARRY WHAT THE PILL WOULD HAVE SAID. Where the
         // words went is not always the same sentence: somebody using the clipboard setting was told
         // "Copied to your clipboard", and replacing that with a question about languages leaves them
-        // believing the text was inserted into the window in front of them.
-        SetSessionStatus(DictationStatus.Suggestion(
-            string.IsNullOrWhiteSpace(deliverySentence) ? question : $"{deliverySentence}. {question}",
-            action));
+        // believing the text was inserted into the window in front of them. A landed paste had no
+        // pill, so the question stands alone.
+        SetSessionStatus(DictationStatus.Suggestion(delivered.SuggestionText(question), action));
     }
 
     /// <summary>Does the one thing a pill button promised.</summary>

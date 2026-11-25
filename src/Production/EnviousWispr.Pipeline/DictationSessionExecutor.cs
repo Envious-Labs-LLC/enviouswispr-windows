@@ -39,8 +39,6 @@ public interface IDictationSessionEffects
     /// <summary>The machine is under memory or disk pressure at admission: the log line.</summary>
     void RecordResourcePressure(AppError? failure);
 
-    void ShowRecoveredTextWaiting();
-
     void ShowMemoryCritical();
 
     void ShowDiskLow();
@@ -115,8 +113,8 @@ public interface IDictationSessionEffects
 /// </summary>
 /// <remarks>
 /// THE DECISIONS ARE HERE AND EVERY EFFECT IS BEHIND THE PORT. The shell renders, logs and translates
-/// native events; this class owns the branching. A press first asks whether recovered text is still
-/// waiting and whether the machine can afford a recording; a release or a cancel first stops the
+/// native events; this class owns the branching. A press first clears any recovered text still
+/// waiting, then asks whether the machine can afford a recording; a release or a cancel first stops the
 /// watchdog; Escape with recovery on releases rather than cancels, so the words are kept without
 /// being delivered.
 ///
@@ -797,10 +795,13 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
 
             if (signal == PushToTalkSignal.Pressed)
             {
+                // A NEW RECORDING SUPERSEDES THE WAITING RECOVERY, as on macOS. The press is never
+                // refused for it: the unfinished words are already in History when History is on, and
+                // the person who pressed the key has chosen to dictate again. The clear hides the
+                // Home card through the persistence owner's own effect, which posts to the window.
                 if (_persistence.HasPendingRecovery)
                 {
-                    _effects.ShowRecoveredTextWaiting();
-                    return new SessionCommandResult(SessionCommandDisposition.Applied);
+                    await _persistence.ClearRecoveryTextAsync().ConfigureAwait(false);
                 }
 
                 // THE MACHINE IS ASKED, AND THE POLICY IS APPLIED, HERE. Memory too low refuses the

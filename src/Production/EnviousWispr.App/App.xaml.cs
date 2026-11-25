@@ -1148,7 +1148,7 @@ public partial class App : Application, IAsyncDisposable
             "recording" =>
                 DictationStatus.Recording("Recording. Release to finish, Escape to cancel"),
             "processing" => DictationStatus.Processing("Transcribing locally..."),
-            "success" => DictationStatus.Success("Inserted safely in the app you started in"),
+            "success" => DictationStatus.Success("Copied to your clipboard"),
             "warning" =>
                 DictationStatus.Warning("Protected field: copied only. Paste manually if intended"),
             // THE TWO NEW SEVERITIES ARE DRIVABLE FROM HERE OR THEY ARE NOT TESTABLE AT ALL. An
@@ -3537,7 +3537,7 @@ public partial class App : Application, IAsyncDisposable
 
         public void ShowMainWindow() => app.ShowMainWindow(openSettings: false);
 
-        public void ReportDelivery(DictationStatus delivered, string? detectedLanguage) =>
+        public void ReportDelivery(DeliveryReport delivered, string? detectedLanguage) =>
             app.PostToLiveWindow(window =>
                 window.ReportDeliveryAndMaybeOfferLanguage(delivered, detectedLanguage));
     }

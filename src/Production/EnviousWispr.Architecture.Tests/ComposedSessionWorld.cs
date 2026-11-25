@@ -421,7 +421,7 @@ internal sealed class FakeView : ISessionView
 
     public List<(string Title, string Message, bool IsError)> Notices { get; } = [];
 
-    public List<(DictationStatus Delivered, string? Language)> Deliveries { get; } = [];
+    public List<(DeliveryReport Delivered, string? Language)> Deliveries { get; } = [];
 
     public int MainWindowShown { get; private set; }
 
@@ -431,7 +431,7 @@ internal sealed class FakeView : ISessionView
 
     public void ShowMainWindow() => MainWindowShown++;
 
-    public void ReportDelivery(DictationStatus delivered, string? detectedLanguage) => Deliveries.Add((delivered, detectedLanguage));
+    public void ReportDelivery(DeliveryReport delivered, string? detectedLanguage) => Deliveries.Add((delivered, detectedLanguage));
 }
 
 internal sealed class FakeRunState : IApplicationRunStateStore

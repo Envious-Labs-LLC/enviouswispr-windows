@@ -29,17 +29,6 @@ internal sealed class SessionEffects(SessionCompositionParts parts, RecordingFla
             AppFailureCategory.ResourcePressure,
             ErrorCode: failure?.Code));
 
-    public void ShowRecoveredTextWaiting()
-    {
-        // The notice and the status first, the window after: the order the window's queue always ran
-        // them in, since showing the window was itself a further dispatch.
-        _view.ShowNotice(
-            "Recovered text is waiting",
-            "Copy or delete the unfinished dictation on Home before starting another recording.");
-        _view.ShowStatus(DictationStatus.Quiet("Review recovered text before recording again"));
-        _view.ShowMainWindow();
-    }
-
     public void ShowMemoryCritical()
     {
         _view.ShowNotice(

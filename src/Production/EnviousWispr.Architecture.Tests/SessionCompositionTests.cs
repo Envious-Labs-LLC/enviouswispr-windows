@@ -54,7 +54,11 @@ public sealed class SessionCompositionTests
         Assert.Contains(world.View.Statuses, status => status.Text == "Transcribing locally...");
         Assert.Contains(world.View.Statuses, status => status.Text == "Delivering to the app you started in...");
         var (delivered, language) = Assert.Single(world.View.Deliveries);
-        Assert.Equal(DictationOverlayState.Success, delivered.State);
+        // THE WORDS LANDED, SO NO PILL: the sentence goes to the status line and the overlay hides,
+        // while the report still says where the words went and invites the language offer.
+        Assert.Equal(DictationOverlayState.Hidden, delivered.Status().State);
+        Assert.Equal(DeliveryLanding.Landed, delivered.Landing);
+        Assert.True(delivered.InvitesLanguageOffer);
         Assert.Equal("en", language);
         Assert.Equal("Delivering to the app you started in...", world.View.Statuses[^1].Text);
         Assert.Single(world.Archived);
