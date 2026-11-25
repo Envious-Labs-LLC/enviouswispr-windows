@@ -277,7 +277,6 @@ public sealed class ProviderSettingsPresenter
     /// PURE, AND READ AT THE MOMENT OF APPLYING. A selection updated while the listing was out is the one
     /// the person wants; deciding against the value as it was when the request left would overwrite it.
     /// </remarks>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822:Mark members as static", Justification = "Instance presenter API consumed through _session.Provider.")]
     public PolishModelChoices Choose(PolishModelListing listing, string currentModelId, bool chooseDefault)
     {
         ArgumentNullException.ThrowIfNull(listing);
@@ -288,7 +287,12 @@ public sealed class ProviderSettingsPresenter
         string? modelToApply = null;
         if (chooseDefault && selectedIndex < 0 && models.Count > 0)
         {
-            var shouldChoose = current.Length == 0 || selectedIndex < 0;
+            // Keep an existing model that still belongs to the selected cloud provider (for example, when
+            // rotating an API key while a custom or deprecated snapshot ID is configured); only pick a
+            // default from the list when unset or from a different provider.
+            var shouldChoose = IsCloudProvider(listing.Provider)
+                ? !_models.ModelIdBelongsTo(current, listing.Provider)
+                : current.Length == 0 || selectedIndex < 0;
             if (shouldChoose)
             {
                 if (listing.Provider == PolishProvider.Ollama)

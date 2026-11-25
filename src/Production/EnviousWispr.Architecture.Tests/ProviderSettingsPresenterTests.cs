@@ -124,8 +124,9 @@ public sealed class ProviderSettingsPresenterTests
         keys.Stored[PolishProvider.OpenAI] = "sk-test";
         models.Answer = new PolishModelDiscovery(PolishModelDiscoveryStatus.Ready, ["gpt-a", "gpt-b"]);
 
-        // With chooseDefault: false, an existing selection missing from the catalog is left alone.
-        var kept = await RefreshAsync(presenter, PolishProvider.OpenAI, null, "gpt-custom", chooseDefault: false).WaitAsync(Patience);
+        // An existing model belonging to this provider (for instance when rotating an API key) is kept
+        // even when omitted from the catalog.
+        var kept = await RefreshAsync(presenter, PolishProvider.OpenAI, null, "gpt-custom", chooseDefault: true).WaitAsync(Patience);
         Assert.Equal(["gpt-a", "gpt-b"], kept!.Models);
         Assert.Null(kept.ModelToApply);
         Assert.Equal(-1, kept.SelectedIndex);

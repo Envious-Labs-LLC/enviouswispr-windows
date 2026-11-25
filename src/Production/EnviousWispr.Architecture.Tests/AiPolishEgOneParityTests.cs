@@ -163,7 +163,8 @@ public sealed class AiPolishEgOneParityTests
         Assert.Equal(PolishModelDiscoveryStatus.Ready, withKey.Discovery!.Status);
         Assert.Equal(1, models.DiscoveryCalls);
 
-        var unlistedChoices = presenter.Choose(withKey, "gpt-custom-legacy", chooseDefault: false);
+        var unlistedChoices = presenter.Choose(withKey, "gpt-custom-legacy", chooseDefault: true);
+        Assert.Null(unlistedChoices.ModelToApply);
         var displayed = ProviderSettingsPresenter.IncludeActiveSelectionIfMissing(unlistedChoices, "gpt-custom-legacy");
         Assert.Equal(["gpt-custom-legacy", "gpt-4o-mini", "gpt-4o"], displayed.Models);
         Assert.Equal(0, displayed.SelectedIndex);
