@@ -3350,13 +3350,19 @@ public sealed partial class MainWindow : Window, IDisposable
             return state;
         }
 
-        var (serverExists, modelExists) = CheckEgOneLocalAssets(normalizedId);
+        var configuredModelId = EnginePolishPresentation.NormalizeEgOneModelId(
+            _selectedEgOneModelId ?? (_settings?.Preferences.Polish.Provider == PolishProvider.EgOne
+                ? _settings.Preferences.Polish.ModelId
+                : null));
+        var (serverExists, modelExists) = CheckEgOneLocalAssets(normalizedId, configuredModelId);
         _egOneServerExecutableExists = serverExists;
         var hasBundledManifest = ModelDelivery.BundledModelManifests.TryRead(normalizedId) is not null;
         return new EgOneModelState(
             ModelId: normalizedId,
             IsInstalled: modelExists,
-            CanRemove: modelExists && Directory.Exists(Path.Combine(_dataDirectory, "models", normalizedId)),
+            CanRemove: modelExists &&
+                EgOneRuntimeLocator.IsModelFileReady(EgOneRuntimeLocator.ResolveModelFile(_dataDirectory, normalizedId)) &&
+                Directory.Exists(Path.Combine(_dataDirectory, "models", normalizedId)),
             HasBundledManifest: hasBundledManifest,
             DeliveryStage: modelExists ? SpeechModelDelivery.Installed : SpeechModelDelivery.Missing);
     }
@@ -3662,7 +3668,7 @@ public sealed partial class MainWindow : Window, IDisposable
         EgOneModelRemoveRequested?.Invoke(normalizedId);
     }
 
-    private (bool ServerExists, bool ModelExists) CheckEgOneLocalAssets(string normalizedModelId)
+    private (bool ServerExists, bool ModelExists) CheckEgOneLocalAssets(string normalizedModelId, string? configuredModelId = null)
     {
         try
         {
@@ -3673,10 +3679,14 @@ public sealed partial class MainWindow : Window, IDisposable
                 Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_SERVER_EXE"));
             var serverExists = File.Exists(serverExecutable);
 
+            var envOverride = configuredModelId is not null &&
+                string.Equals(normalizedModelId, configuredModelId, StringComparison.Ordinal)
+                    ? Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH")
+                    : null;
             var modelFile = EgOneRuntimeLocator.ResolveModelFile(
                 _dataDirectory,
                 normalizedModelId,
-                Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH"));
+                envOverride);
             var modelExists = EgOneRuntimeLocator.IsModelFileReady(modelFile);
 
             return (serverExists, modelExists);
@@ -6840,36 +6850,39 @@ public sealed partial class MainWindow : Window, IDisposable
 
         var providerUsesAModel = ProviderSettingsPresenter.UsesAModel(provider);
         var pickerReady = providerUsesAModel && (!isCloudProvider || _session.Provider.KeyStatus(provider) == ApiKeyReadStatus.Found);
+        var displayedChoices = pickerReady
+            ? ProviderSettingsPresenter.IncludeActiveSelectionIfMissing(choices, _selectedPolishModelId)
+            : choices;
         RefreshPolishModelsButton.IsEnabled = pickerReady;
         _isUpdatingPolishModelPicker = true;
         try
         {
-            PolishModelPicker.ItemsSource = choices.Models;
-            PolishModelPicker.PlaceholderText = choices.Models.Count > 0
+            PolishModelPicker.ItemsSource = displayedChoices.Models;
+            PolishModelPicker.PlaceholderText = displayedChoices.Models.Count > 0
                 ? "Choose an available model"
                 : "No models listed";
-            PolishModelPicker.IsEnabled = pickerReady && choices.Models.Count > 0;
-            if (choices.ModelToApply is { } model)
+            PolishModelPicker.IsEnabled = pickerReady && displayedChoices.Models.Count > 0;
+            if (displayedChoices.ModelToApply is { } model)
             {
                 _selectedPolishModelId = _polishModelSetByApp = model;
             }
 
-            PolishModelPicker.SelectedIndex = choices.SelectedIndex;
+            PolishModelPicker.SelectedIndex = displayedChoices.SelectedIndex;
 
             if (ollamaChange is not null &&
                 !selectedMeanwhile &&
-                choices.Discovery is { Status: PolishModelDiscoveryStatus.Ready } &&
+                displayedChoices.Discovery is { Status: PolishModelDiscoveryStatus.Ready } &&
                 OllamaModelsPresenter.RepairSelection(
-                    choices.Models,
+                    displayedChoices.Models,
                     _selectedPolishModelId,
                     _polishModelSetByApp,
                     ollamaChange) is { } repaired)
             {
                 _selectedPolishModelId = _polishModelSetByApp = repaired;
                 var repairedIndex = -1;
-                for (var i = 0; i < choices.Models.Count && repairedIndex < 0; i++)
+                for (var i = 0; i < displayedChoices.Models.Count && repairedIndex < 0; i++)
                 {
-                    repairedIndex = OllamaModelCatalog.SameModel(choices.Models[i], repaired) ? i : -1;
+                    repairedIndex = OllamaModelCatalog.SameModel(displayedChoices.Models[i], repaired) ? i : -1;
                 }
 
                 PolishModelPicker.SelectedIndex = repairedIndex;

@@ -328,6 +328,39 @@ public sealed class ProviderSettingsPresenter
     }
 
     /// <summary>
+    /// Ensures an active custom/offline model stays visible and selected in the picker when discovery
+    /// omitted it and no fallback replacement was chosen.
+    /// </summary>
+    public static PolishModelChoices IncludeActiveSelectionIfMissing(
+        PolishModelChoices choices,
+        string? activeModelId)
+    {
+        ArgumentNullException.ThrowIfNull(choices);
+        var trimmed = activeModelId?.Trim();
+        if (choices.SelectedIndex >= 0 ||
+            choices.ModelToApply is not null ||
+            string.IsNullOrWhiteSpace(trimmed))
+        {
+            return choices;
+        }
+
+        var existingIndex = IndexOf(choices.Models, trimmed, choices.Provider);
+        if (existingIndex >= 0)
+        {
+            return choices with { SelectedIndex = existingIndex };
+        }
+
+        var updated = new string[choices.Models.Count + 1];
+        updated[0] = trimmed;
+        for (var i = 0; i < choices.Models.Count; i++)
+        {
+            updated[i + 1] = choices.Models[i];
+        }
+
+        return choices with { Models = updated, SelectedIndex = 0 };
+    }
+
+    /// <summary>
     /// Where the field's model sits in the choices. For Ollama, <c>foo</c> and <c>foo:latest</c> are one model, as
     /// Ollama itself treats them: compared literally, a valid choice read as missing and was "repaired". Ref: #213.
     /// </summary>

@@ -287,16 +287,21 @@ public partial class App
     private async Task<EgOneModelState> ProbeEgOneModelAsync(string modelId)
     {
         var normalizedId = EgOneModelCatalog.NormalizeOrDefault(modelId);
-        var active = await CreateModelStore().OpenActiveOfflineAsync(normalizedId).ConfigureAwait(true);
+        var active = await Task.Run(() => CreateModelStore().OpenActiveOfflineAsync(normalizedId)).ConfigureAwait(true);
         var storeInstalled = active.Succeeded && active.Installed is not null;
         var storeFile = storeInstalled
             ? EgOneRuntimeLocator.TryResolveInstalledGgufInDirectory(active.Installed!.DirectoryPath, normalizedId)
             : null;
-        var envOverride = Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH");
+        var configuredModelId = ConfiguredEgOneModelId(_settings.Preferences.Polish);
+        var envOverride = string.Equals(normalizedId, configuredModelId, StringComparison.Ordinal)
+            ? Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH")
+            : null;
         var legacyFile = EgOneRuntimeLocator.ResolveModelFile(_dataDirectory, normalizedId, envOverride);
         var installed = storeFile is not null || EgOneRuntimeLocator.IsModelFileReady(legacyFile);
         var legacyRoot = Path.Combine(ModelStoreRoot, normalizedId);
-        var canRemove = storeInstalled || (installed && Directory.Exists(legacyRoot));
+        var canRemove = storeInstalled ||
+            (EgOneRuntimeLocator.IsModelFileReady(EgOneRuntimeLocator.ResolveModelFile(_dataDirectory, normalizedId)) &&
+             Directory.Exists(legacyRoot));
         var hasBundledManifest = BundledModelManifests.TryRead(normalizedId) is not null;
         var bundleSizeText = EgOneBundleSizeText(normalizedId);
 
@@ -432,6 +437,11 @@ public partial class App
         await RefreshLivePreviewModelInventoryAsync().ConfigureAwait(true);
         await RefreshSpeechEngineInventoryAsync().ConfigureAwait(true);
         await RefreshEgOneInventoryAsync().ConfigureAwait(true);
+        await RefreshEgOneConfiguredProviderFromStoreAsync(_settings.Preferences.Polish).ConfigureAwait(true);
+        if (Leaving)
+        {
+            return;
+        }
         _missingModelIds = await MissingModelIdsAsync(_settings.Preferences).ConfigureAwait(true);
         if (_missingModelIds.Count == 0)
         {
@@ -1277,7 +1287,7 @@ public partial class App
                 return;
             }
 
-            ConfigurePolish(_settings.Preferences.Polish);
+            await ConfigurePolishAsync(_settings.Preferences.Polish).ConfigureAwait(true);
             _window?.SetCloudPolishNotice(_cloudPolishConsent?.Notice);
             _window?.SetOllamaPolishNotice(_localPolishNotice);
             StartPolishWarmup();

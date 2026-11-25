@@ -2105,7 +2105,10 @@ public partial class App : Application, IAsyncDisposable
         }
     }
 
-    private string ResolveEgOneConfiguredModelFile(string modelId, string? environmentOverride)
+    private async Task<string> ResolveEgOneConfiguredModelFileAsync(
+        string modelId,
+        string? environmentOverride,
+        CancellationToken cancellationToken = default)
     {
         if (!string.IsNullOrWhiteSpace(environmentOverride))
         {
@@ -2113,11 +2116,9 @@ public partial class App : Application, IAsyncDisposable
         }
 
         var normalizedId = EnginePolishPresentation.NormalizeEgOneModelId(modelId);
-        var active = CreateModelStore()
-            .OpenActiveOfflineAsync(normalizedId)
-            .ConfigureAwait(false)
-            .GetAwaiter()
-            .GetResult();
+        var active = await Task.Run(
+            () => CreateModelStore().OpenActiveOfflineAsync(normalizedId, cancellationToken),
+            cancellationToken).ConfigureAwait(true);
         if (active.Succeeded &&
             EgOneRuntimeLocator.TryResolveInstalledGgufInDirectory(active.Installed?.DirectoryPath, normalizedId) is { } storeFile)
         {
@@ -2127,7 +2128,79 @@ public partial class App : Application, IAsyncDisposable
         return EgOneRuntimeLocator.ResolveModelFile(_dataDirectory, normalizedId);
     }
 
-    private void ConfigurePolish(PolishPreferences preferences)
+    private async Task RefreshEgOneConfiguredProviderFromStoreAsync(
+        PolishPreferences preferences,
+        CancellationToken cancellationToken = default)
+    {
+        if (preferences.Provider != PolishProvider.EgOne ||
+            !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH")))
+        {
+            return;
+        }
+
+        var store = CreateModelStore();
+        var modelId = ConfiguredEgOneModelId(preferences);
+        var active = await Task.Run(
+            () => store.OpenActiveOfflineAsync(modelId, cancellationToken),
+            cancellationToken).ConfigureAwait(true);
+        if (Leaving ||
+            !active.Succeeded ||
+            EgOneRuntimeLocator.TryResolveInstalledGgufInDirectory(active.Installed?.DirectoryPath, modelId) is not { } storeFile)
+        {
+            return;
+        }
+
+        if (_polishProvider is { } oldProvider)
+        {
+            _polishProvider = null;
+            await oldProvider.DisposeAsync().ConfigureAwait(true);
+        }
+
+        await ConfigurePolishAsync(preferences, modelFileOverride: storeFile, cancellationToken).ConfigureAwait(true);
+    }
+
+    private static string ConfiguredEgOneModelId(PolishPreferences preferences)
+    {
+        var requested = EnginePolishPresentation.IsKnownEgOneModelId(preferences.EgOneModelId)
+            ? preferences.EgOneModelId
+            : preferences.ModelId;
+        return EnginePolishPresentation.NormalizeEgOneModelId(requested);
+    }
+
+    private void ConfigurePolish(PolishPreferences preferences) =>
+        ApplyPolishConfiguration(preferences, resolvedEgOneModelFile: null);
+
+    private async Task ConfigurePolishAsync(
+        PolishPreferences preferences,
+        string? modelFileOverride = null,
+        CancellationToken cancellationToken = default)
+    {
+        string? resolvedEgOneFile = modelFileOverride;
+        if (resolvedEgOneFile is null && EffectivePolishProvider(preferences) == PolishProvider.EgOne)
+        {
+            resolvedEgOneFile = await ResolveEgOneConfiguredModelFileAsync(
+                ConfiguredEgOneModelId(preferences),
+                Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH"),
+                cancellationToken).ConfigureAwait(true);
+        }
+
+        ApplyPolishConfiguration(preferences, resolvedEgOneFile);
+    }
+
+    private static PolishProvider EffectivePolishProvider(PolishPreferences preferences)
+    {
+        var provider = preferences.Provider;
+        var environmentProvider = Environment.GetEnvironmentVariable(
+            "ENVIOUSWISPR_POLISH_PROVIDER");
+        if (Enum.TryParse<PolishProvider>(environmentProvider, ignoreCase: true, out var parsedProvider))
+        {
+            return parsedProvider;
+        }
+
+        return provider;
+    }
+
+    private void ApplyPolishConfiguration(PolishPreferences preferences, string? resolvedEgOneModelFile)
     {
         _cloudPolishConsent = null;
         _localPolishNotice = null;
@@ -2135,13 +2208,7 @@ public partial class App : Application, IAsyncDisposable
         _polishUsesLocalRuntime = false;
         _polishResource = RuntimeResourceKind.Cpu;
 
-        var provider = preferences.Provider;
-        var environmentProvider = Environment.GetEnvironmentVariable(
-            "ENVIOUSWISPR_POLISH_PROVIDER");
-        if (Enum.TryParse<PolishProvider>(environmentProvider, ignoreCase: true, out var parsedProvider))
-        {
-            provider = parsedProvider;
-        }
+        var provider = EffectivePolishProvider(preferences);
 
         if (provider is PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini)
         {
@@ -2200,11 +2267,9 @@ public partial class App : Application, IAsyncDisposable
             _updateService.IsStoreInstalled,
             Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_SERVER_EXE"));
 
-        var requestedEgOneId = EnginePolishPresentation.IsKnownEgOneModelId(preferences.EgOneModelId)
-            ? preferences.EgOneModelId
-            : preferences.ModelId;
-        var modelId = EnginePolishPresentation.NormalizeEgOneModelId(requestedEgOneId);
-        var modelFile = ResolveEgOneConfiguredModelFile(
+        var modelId = ConfiguredEgOneModelId(preferences);
+        var modelFile = resolvedEgOneModelFile ?? EgOneRuntimeLocator.ResolveModelFile(
+            _dataDirectory,
             modelId,
             Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH"));
 
