@@ -209,7 +209,7 @@ public sealed class SettingsPresenterTests
         RecordingShortcut: "F8",
         CancelShortcut: "Escape",
         QuickAddShortcut: "Ctrl+Alt+W",
-        FinalEngineIndex: 1,
+        FinalEngineIndex: 0,
         WordCorrection: true,
         FillerRemoval: false,
         EmojiFormatter: true,
@@ -329,7 +329,7 @@ public sealed class SettingsPresenterTests
     public async Task GeneralSaveReadsAMissingChoiceAsTheFirstSafeOption()
     {
         // NOTHING SELECTED IS -1 (A NULL PAIRING), AND THE PRESENTER DECIDES WHAT THAT MEANS: the
-        // first, safe option of each list - Automatic, the first language, hold-to-talk, no provider,
+        // first, safe option of each list - Parakeet, the first language, hold-to-talk, no provider,
         // the system theme, the top position, the whisper tick - as the window's own fallback used to.
         await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
         {
@@ -352,7 +352,7 @@ public sealed class SettingsPresenterTests
             Assert.True(outcome.Saved);
             Assert.Equal(AppTheme.System, outcome.Theme);
             var stored = (await store.LoadAsync()).Settings;
-            Assert.Equal(FinalAsrEngine.Automatic, stored.Preferences.Dictation.FinalEngine);
+            Assert.Equal(FinalAsrEngine.Parakeet, stored.Preferences.Dictation.FinalEngine);
             Assert.Equal((WhisperLanguagePreference)0, stored.Preferences.Dictation.WhisperLanguage);
             Assert.Equal(EnglishSpelling.American, stored.Preferences.Dictation.EnglishSpelling);
             Assert.Equal((DictationRecordingMode)0, stored.Preferences.Dictation.RecordingMode);

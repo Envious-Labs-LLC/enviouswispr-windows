@@ -58,7 +58,6 @@ public sealed partial class DesignSystemTokenTests
     /// <summary>The vertical card-based choice lists, by name.</summary>
     private static readonly string[] ChoiceListNames =
     [
-        "EngineComboBox",
         "PolishProviderComboBox",
     ];
 

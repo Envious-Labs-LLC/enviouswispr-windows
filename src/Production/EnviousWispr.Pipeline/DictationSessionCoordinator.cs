@@ -54,6 +54,9 @@ public enum SessionHolder
     /// <summary>The speech engine is being restarted onto the NVIDIA card after its runtime was downloaded.</summary>
     GraphicsRuntimeSwitch,
 
+    /// <summary>A final speech engine switch or model removal is tearing down and reconfiguring transcription.</summary>
+    SpeechEngineSwitch,
+
     /// <summary>A saved dictation is being pasted from Home's Undo or History's Paste; it borrows the clipboard and a target.</summary>
     SavedDictationPaste,
 }

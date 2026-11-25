@@ -123,20 +123,18 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void TheHistoryRowNamesEnginesTheWayTheTranscriptionPageDoes()
     {
-        var source = File.ReadAllText(
+        var xaml = File.ReadAllText(
             Path.Combine(
                 FindRepositoryRoot(),
-                "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+                "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
 
-        var offered = ChoiceLabelsOf(source, "FinalEngineChoices");
+        Assert.Contains("Content=\"Parakeet\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Content=\"Whisper\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Text=\"Automatic\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Content=\"Automatic\"", xaml, StringComparison.Ordinal);
 
-        Assert.Equal(3, offered.Length);
-        Assert.Equal("Automatic", offered[0]);
-        Assert.Equal(TranscriptionEngineNames.Parakeet, offered[1]);
-        Assert.Equal(TranscriptionEngineNames.Whisper, offered[2]);
-
-        // "Automatic" is a preference, never an engine, so it is not a name a history row can use.
-        Assert.Equal(3, Enum.GetValues<FinalAsrEngine>().Length);
+        // Only actual engines (Parakeet and Whisper) remain in FinalAsrEngine; legacy "Automatic" maps to Parakeet.
+        Assert.Equal(2, Enum.GetValues<FinalAsrEngine>().Length);
     }
 
     /// <summary>

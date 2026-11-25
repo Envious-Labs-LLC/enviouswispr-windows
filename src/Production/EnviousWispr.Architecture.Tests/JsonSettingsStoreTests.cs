@@ -209,6 +209,7 @@ public sealed class JsonSettingsStoreTests
             Assert.Equal(SettingsLoadStatus.Migrated, result.Status);
             Assert.Equal(4, result.SourceSchemaVersion);
             Assert.Equal(AppSettings.CurrentSchemaVersion, result.Settings.SchemaVersion);
+            Assert.Equal(FinalAsrEngine.Parakeet, result.Settings.Preferences.Dictation.FinalEngine);
             Assert.Null(result.Settings.PreferredMicrophoneId);
         });
     }

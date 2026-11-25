@@ -173,7 +173,7 @@ static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments
     var engineText = ReadStringArgument(arguments, "--asr-engine") ?? "parakeet";
     var providerText = ReadStringArgument(arguments, "--asr-provider") ?? "cpu";
     var modelPackText = ReadStringArgument(arguments, "--asr-model-pack") ?? "quantized";
-    if (!Enum.TryParse<FinalAsrEngine>(engineText, ignoreCase: true, out var engineKind) ||
+    if (!FinalAsrEngineChoices.TryParse(engineText, out var engineKind) ||
         !Enum.TryParse<RuntimeProviderKind>(providerText, ignoreCase: true, out var provider))
     {
         throw new TranscriptionEngineException(new AppError(
@@ -211,7 +211,7 @@ static TranscriptionEngineCreation? CreateTranscriptionEngine(string[] arguments
             cardUnreachable);
     }
 
-    if (engineKind is not (FinalAsrEngine.Parakeet or FinalAsrEngine.Automatic) ||
+    if (engineKind != FinalAsrEngine.Parakeet ||
         !Enum.TryParse<ParakeetModelPack>(modelPackText, ignoreCase: true, out var modelPack))
     {
         throw new TranscriptionEngineException(new AppError(

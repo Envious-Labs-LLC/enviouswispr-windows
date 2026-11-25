@@ -47,14 +47,13 @@ public static class TrayMenuThemeResolver
 /// <summary>Pure formatting helpers shared between the tray menu and its unit tests.</summary>
 public static class TrayMenuFormatting
 {
-    /// <summary>Formats the disabled top status line (e.g. <c>Automatic · AI Polish Off</c> or <c>Parakeet · EG-1</c>).</summary>
+    /// <summary>Formats the disabled top status line (e.g. <c>Parakeet · AI Polish Off</c> or <c>Parakeet · EG-1</c>).</summary>
     public static string FormatStatusHeader(FinalAsrEngine engine, PolishProvider polish)
     {
         var engineLabel = engine switch
         {
-            FinalAsrEngine.Parakeet => "Parakeet",
             FinalAsrEngine.Whisper => "Whisper",
-            _ => "Automatic",
+            _ => "Parakeet",
         };
 
         var polishLabel = polish switch

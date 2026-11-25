@@ -415,12 +415,12 @@ public sealed class TrayIconTests
     }
 
     [Theory]
-    [InlineData(FinalAsrEngine.Automatic, PolishProvider.None, "Automatic · AI Polish Off")]
+    [InlineData(FinalAsrEngine.Parakeet, PolishProvider.None, "Parakeet · AI Polish Off")]
     [InlineData(FinalAsrEngine.Parakeet, PolishProvider.EgOne, "Parakeet · EG-1")]
     [InlineData(FinalAsrEngine.Whisper, PolishProvider.Ollama, "Whisper · Ollama")]
     [InlineData(FinalAsrEngine.Parakeet, PolishProvider.OpenAI, "Parakeet · OpenAI")]
     [InlineData(FinalAsrEngine.Whisper, PolishProvider.Anthropic, "Whisper · Anthropic")]
-    [InlineData(FinalAsrEngine.Automatic, PolishProvider.Gemini, "Automatic · Gemini")]
+    [InlineData(FinalAsrEngine.Parakeet, PolishProvider.Gemini, "Parakeet · Gemini")]
     public void TrayMenuFormatsEngineAndPolishHeader(
         FinalAsrEngine engine,
         PolishProvider polish,
