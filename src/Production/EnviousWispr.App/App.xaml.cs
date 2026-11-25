@@ -1403,15 +1403,7 @@ public partial class App : Application, IAsyncDisposable
         PostToLiveWindow(window =>
         {
             _settings = updated;
-            if (window.Content is FrameworkElement root)
-            {
-                root.RequestedTheme = theme switch
-                {
-                    AppTheme.Light => ElementTheme.Light,
-                    AppTheme.Dark => ElementTheme.Dark,
-                    _ => ElementTheme.Default,
-                };
-            }
+            window.ApplyThemeFromExternal(theme);
 
             try
             {
@@ -2116,16 +2108,11 @@ public partial class App : Application, IAsyncDisposable
             _updateService.IsStoreInstalled,
             Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_SERVER_EXE"));
 
-        var modelFile = Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH");
-        if (string.IsNullOrWhiteSpace(modelFile))
-        {
-            var modelDirectory = Path.Combine(_dataDirectory, "models", "eg-1");
-            var shippingModel = Path.Combine(
-                modelDirectory,
-                "eg-1-v2-q5_k_m-00001-of-00008.gguf");
-            var founderModel = Path.Combine(modelDirectory, "active.gguf");
-            modelFile = File.Exists(shippingModel) ? shippingModel : founderModel;
-        }
+        var modelId = EnginePolishPresentation.NormalizeEgOneModelId(preferences.ModelId);
+        var modelFile = EgOneRuntimeLocator.ResolveModelFile(
+            _dataDirectory,
+            modelId,
+            Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH"));
 
         int? gpuLayers = null;
         if (int.TryParse(
@@ -2140,7 +2127,7 @@ public partial class App : Application, IAsyncDisposable
 
         _polishProvider = new EgOnePolishProvider(new EgOnePolishOptions(
             new EgOneServerOptions(serverExecutable, modelFile, GpuLayers: gpuLayers),
-            preferences.ModelId ?? "eg-1"));
+            modelId));
         _polishUsesLocalRuntime = true;
     }
 
