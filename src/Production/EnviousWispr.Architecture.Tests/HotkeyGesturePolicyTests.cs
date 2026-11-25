@@ -53,8 +53,7 @@ public sealed class HotkeyGesturePolicyTests
     {
         var policy = Modifier();
 
-        policy.Process(RightControl, true, Ms(0));
-        Assert.Equal(HotkeyGestureOutcome.HoldStarted, policy.Elapsed(PastHold));
+        Assert.Equal(HotkeyGestureOutcome.HoldStarted, policy.Process(RightControl, true, Ms(0)));
 
         Assert.Equal(HotkeyGestureOutcome.HoldEnded, policy.Process(RightControl, false, Ms(5_000)));
 
@@ -62,46 +61,69 @@ public sealed class HotkeyGesturePolicyTests
         Assert.Null(policy.NextDeadline);
     }
 
-    // ---- the hold threshold, which is what makes a modifier usable ----
+    // ---- instant start on modifier press + shortcut safety ----
 
     [Fact]
     public void AModifierHeldPastTheThresholdStartsRecording()
     {
         var policy = Modifier();
 
-        Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Process(RightControl, true, Ms(0)));
-        Assert.Equal(HotkeyGestureOutcome.HoldStarted, policy.Elapsed(PastHold));
+        // Starts immediately on key-down with zero 200ms hold wait.
+        Assert.Equal(HotkeyGestureOutcome.HoldStarted, policy.Process(RightControl, true, Ms(0)));
+        Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Elapsed(PastHold));
+        Assert.Equal(HotkeyGestureOutcome.HoldEnded, policy.Process(RightControl, false, Ms(300)));
     }
 
     /// <summary>
-    /// The whole reason the threshold exists. Reaching for Control-C must not arm a recording.
+    /// Pressing another chord key (e.g. Ctrl+C) aborts and discards immediately without committing.
     /// </summary>
     [Fact]
     public void AShortcutNeverStartsARecording()
     {
         var policy = Modifier();
 
-        policy.Process(RightControl, true, Ms(0));
-        policy.Process(LetterC, true, Ms(40));
-        policy.Process(LetterC, false, Ms(90));
+        Assert.Equal(HotkeyGestureOutcome.HoldStarted, policy.Process(RightControl, true, Ms(0)));
+        Assert.Equal(HotkeyGestureOutcome.Discarded, policy.Process(LetterC, true, Ms(40)));
+        Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Process(LetterC, false, Ms(90)));
 
+        Assert.Null(policy.NextDeadline);
         Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Elapsed(PastHold));
         Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Process(RightControl, false, Ms(150)));
         Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Elapsed(Ms(150) + PastTaps));
     }
 
+    [Fact]
+    public void PressingOtherKeyAfterModifierHoldThresholdDoesNotDiscard()
+    {
+        // Deliberate initial hold past ModifierHoldThreshold without calling Elapsed().
+        var policy = Modifier();
+        Assert.Equal(HotkeyGestureOutcome.HoldStarted, policy.Process(RightControl, true, Ms(0)));
+        Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Process(LetterC, true, Ms(250)));
+        Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Process(LetterC, false, Ms(300)));
+        Assert.Equal(HotkeyGestureOutcome.HoldEnded, policy.Process(RightControl, false, Ms(600)));
+
+        // Tap-then-hold settled by Elapsed(): tentative flag clears and stray keys do not abort.
+        var promoted = Modifier();
+        Tap(promoted, Ms(0));
+        Assert.Equal(HotkeyGestureOutcome.Nothing, promoted.Process(RightControl, true, Ms(100)));
+        Assert.Equal(HotkeyGestureOutcome.Nothing, promoted.Elapsed(Ms(100) + PastHold));
+        Assert.False(promoted.HasTentativeRecording);
+        Assert.Equal(HotkeyGestureOutcome.Nothing, promoted.Process(LetterC, true, Ms(400)));
+        Assert.Equal(HotkeyGestureOutcome.Nothing, promoted.Process(LetterC, false, Ms(450)));
+        Assert.Equal(HotkeyGestureOutcome.HoldEnded, promoted.Process(RightControl, false, Ms(700)));
+    }
+
     /// <summary>
-    /// A modifier released before the threshold recorded nothing, so it is a tap rather than a
-    /// failed hold - and one tap on its own is deliberately not a gesture.
+    /// A super-brief single tap opens the tap window briefly and discards quietly if no second tap arrives.
     /// </summary>
     [Fact]
     public void AQuickPressIsATapAndOneTapAloneDoesNothing()
     {
         var policy = Modifier();
 
-        policy.Process(RightControl, true, Ms(0));
+        Assert.Equal(HotkeyGestureOutcome.HoldStarted, policy.Process(RightControl, true, Ms(0)));
         Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Process(RightControl, false, Ms(50)));
-        Assert.Equal(HotkeyGestureOutcome.Nothing, Settle(policy));
+        Assert.Equal(HotkeyGestureOutcome.Discarded, Settle(policy));
     }
 
     [Fact]
@@ -109,29 +131,29 @@ public sealed class HotkeyGesturePolicyTests
     {
         var policy = Modifier();
 
-        policy.Process(RightControl, true, Ms(0));
+        Assert.Equal(HotkeyGestureOutcome.HoldStarted, policy.Process(RightControl, true, Ms(0)));
 
         Assert.Equal(
-            HotkeyGestureOutcome.HoldStarted,
-            policy.Elapsed(HotkeyGesturePolicy.ModifierHoldThreshold));
+            HotkeyGestureOutcome.HoldEnded,
+            policy.Process(RightControl, false, HotkeyGesturePolicy.ModifierHoldThreshold));
+        Assert.Null(policy.NextDeadline);
     }
 
     /// <summary>
-    /// Auto-repeat sends the same key down again while it is held. Taking the LAST press as the
-    /// start would restart the clock forever and the hold would never begin.
+    /// Auto-repeat sends the same key down again while it is held and must not re-fire HoldStarted.
     /// </summary>
     [Fact]
     public void AutoRepeatDoesNotRestartTheHoldClock()
     {
         var policy = Modifier();
 
-        policy.Process(RightControl, true, Ms(0));
+        Assert.Equal(HotkeyGestureOutcome.HoldStarted, policy.Process(RightControl, true, Ms(0)));
         for (var repeat = 20; repeat <= 180; repeat += 20)
         {
             Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Process(RightControl, true, Ms(repeat)));
         }
 
-        Assert.Equal(HotkeyGestureOutcome.HoldStarted, policy.Elapsed(PastHold));
+        Assert.Equal(HotkeyGestureOutcome.HoldEnded, policy.Process(RightControl, false, PastHold));
     }
 
     // ---- hands-free, by double tap ----
@@ -173,8 +195,7 @@ public sealed class HotkeyGesturePolicyTests
     }
 
     /// <summary>
-    /// Three taps with nothing running has nothing to throw away, and must not be mistaken for a
-    /// start - which is what a naive "odd number of taps" reading would do.
+    /// Three quick taps from idle cleanly discard the tentative capture rather than leaving a session stranded.
     /// </summary>
     [Fact]
     public void ThreeTapsWithNothingRunningDoesNothing()
@@ -185,7 +206,7 @@ public sealed class HotkeyGesturePolicyTests
         Tap(policy, Ms(80));
         Tap(policy, Ms(160));
 
-        Assert.Equal(HotkeyGestureOutcome.Nothing, Settle(policy));
+        Assert.Equal(HotkeyGestureOutcome.Discarded, Settle(policy));
         Assert.False(policy.IsRecordingHandsFree);
     }
 
@@ -206,7 +227,7 @@ public sealed class HotkeyGesturePolicyTests
     }
 
     /// <summary>
-    /// Taps too far apart are separate gestures, not one slow double-tap.
+    /// Taps too far apart are separate brief taps that discard instead of locking hands-free.
     /// </summary>
     [Fact]
     public void TapsOutsideTheWindowDoNotCombine()
@@ -214,16 +235,16 @@ public sealed class HotkeyGesturePolicyTests
         var policy = Modifier();
 
         Tap(policy, Ms(0));
-        Assert.Equal(HotkeyGestureOutcome.Nothing, Settle(policy));
+        Assert.Equal(HotkeyGestureOutcome.Discarded, Settle(policy));
 
         Tap(policy, Ms(2_000));
-        Assert.Equal(HotkeyGestureOutcome.Nothing, Settle(policy));
+        Assert.Equal(HotkeyGestureOutcome.Discarded, Settle(policy));
         Assert.False(policy.IsRecordingHandsFree);
     }
 
     /// <summary>
     /// Tapping twice and then holding is one person changing their mind, not a double-tap followed
-    /// by a hold. Without this the hold would also fire a stale hands-free start behind it.
+    /// by a hold. Holding the third press past threshold finalises immediately on release.
     /// </summary>
     [Fact]
     public void TapsBeforeAHoldAreForgotten()
@@ -233,10 +254,11 @@ public sealed class HotkeyGesturePolicyTests
         Tap(policy, Ms(0));
         Tap(policy, Ms(80));
 
-        policy.Process(RightControl, true, Ms(120));
-        Assert.Equal(HotkeyGestureOutcome.HoldStarted, policy.Elapsed(Ms(120) + PastHold));
+        Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Process(RightControl, true, Ms(120)));
+        Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Elapsed(Ms(120) + PastHold));
 
         Assert.Equal(HotkeyGestureOutcome.HoldEnded, policy.Process(RightControl, false, Ms(2_000)));
+        Assert.Null(policy.NextDeadline);
         Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Elapsed(Ms(9_000)));
         Assert.False(policy.IsRecordingHandsFree);
     }
@@ -269,8 +291,8 @@ public sealed class HotkeyGesturePolicyTests
     }
 
     /// <summary>
-    /// The caller has to be told when to look again, because a hold and a tap window both complete
-    /// with no key event. A policy that never asks to be polled can never fire either gesture.
+    /// The caller needs a deadline only for multi-tap resolution and tap-then-hold promotion;
+    /// an initial modifier press fires immediately with no threshold timer pending.
     /// </summary>
     [Fact]
     public void TheCallerIsToldWhenToLookAgain()
@@ -278,11 +300,14 @@ public sealed class HotkeyGesturePolicyTests
         var policy = Modifier();
         Assert.Null(policy.NextDeadline);
 
-        policy.Process(RightControl, true, Ms(0));
-        Assert.Equal(HotkeyGesturePolicy.ModifierHoldThreshold, policy.NextDeadline);
+        Assert.Equal(HotkeyGestureOutcome.HoldStarted, policy.Process(RightControl, true, Ms(0)));
+        Assert.Null(policy.NextDeadline);
 
-        policy.Process(RightControl, false, Ms(50));
+        Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Process(RightControl, false, Ms(50)));
         Assert.Equal(Ms(50) + HotkeyGesturePolicy.MultiTapWindow, policy.NextDeadline);
+
+        Assert.Equal(HotkeyGestureOutcome.Nothing, policy.Process(RightControl, true, Ms(100)));
+        Assert.Equal(Ms(100) + HotkeyGesturePolicy.ModifierHoldThreshold, policy.NextDeadline);
     }
 
     private static void Tap(HotkeyGesturePolicy policy, TimeSpan at)

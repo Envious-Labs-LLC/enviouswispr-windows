@@ -56,13 +56,17 @@ public sealed class RecordingPillGeometryTests
     public void TheLipsAreClosedAtSilenceAndPartAtFullLevel()
     {
         // Centre upper bar (index 4) and centre lower bar (index 13) at 24pt: the 64-grid scaled by
-        // 0.375, heights scaled by 0.55 at silence and by 1.45 at full level.
+        // 0.375, heights scaled by 0.85 for fuller resting lips at silence and by 1.45 at full level.
         var upperQuiet = RecordingPillGeometry.LipsBar(4, 0f, 24);
         var lowerQuiet = RecordingPillGeometry.LipsBar(13, 0f, 24);
-        Assert.Equal(6 * 0.375 * 0.55, upperQuiet.Height, 6);
-        Assert.Equal(17 * 0.375 * 0.55, lowerQuiet.Height, 6);
+        Assert.Equal(6 * 0.375 * 0.85, upperQuiet.Height, 6);
+        Assert.Equal(17 * 0.375 * 0.85, lowerQuiet.Height, 6);
         Assert.Equal(1.6875, upperQuiet.Width, 6);
         Assert.Equal(28 * 0.375, upperQuiet.X, 6);
+
+        // Edge bars stay pill-shaped rather than collapsed dots even when silent.
+        var edgeQuiet = RecordingPillGeometry.LipsBar(0, 0f, 24);
+        Assert.True(edgeQuiet.Height > 1.5, $"Expected full resting edge bar (> 1.5 DIP), got {edgeQuiet.Height}.");
 
         var upperLoud = RecordingPillGeometry.LipsBar(4, 1f, 24);
         var lowerLoud = RecordingPillGeometry.LipsBar(13, 1f, 24);
@@ -81,8 +85,8 @@ public sealed class RecordingPillGeometryTests
         // The lower lip reads its sensitivity mirrored: its first bar answers like the upper lip's last.
         var upperLast = RecordingPillGeometry.LipsBar(8, 1f, 64);
         var lowerFirst = RecordingPillGeometry.LipsBar(9, 1f, 64);
-        Assert.Equal(5 * (0.55 + 0.9 * 0.70), upperLast.Height, 6);
-        Assert.Equal(5 * (0.55 + 0.9 * 0.70), lowerFirst.Height, 6);
+        Assert.Equal(5 * (0.85 + 0.60 * 0.70), upperLast.Height, 6);
+        Assert.Equal(5 * (0.85 + 0.60 * 0.70), lowerFirst.Height, 6);
     }
 
     [Fact]

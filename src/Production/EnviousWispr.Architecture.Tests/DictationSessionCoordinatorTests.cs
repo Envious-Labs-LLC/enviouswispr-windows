@@ -1440,6 +1440,99 @@ public sealed class DictationSessionCoordinatorTests
         Assert.Equal(0, coordinator.PendingCount);
     }
 
+    [Fact]
+    public async Task QueuedHandsFreePromotionCarriesPromotionOnlyAndDropsOnFailedStart()
+    {
+        var firstEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        List<SessionCommand> seen = [];
+        var executor = new InlineAsyncExecutor(async command =>
+        {
+            seen.Add(command);
+            if (!command.PromotionOnly)
+            {
+                firstEntered.TrySetResult();
+                await finishFirst.Task.ConfigureAwait(false);
+                return new SessionCommandResult(SessionCommandDisposition.Failed);
+            }
+
+            return new SessionCommandResult(SessionCommandDisposition.Ignored);
+        });
+        var targetCalls = 0;
+        await using var coordinator = new DictationSessionCoordinator(
+            executor,
+            () => new RecordingStartContext(new TargetWindowId(++targetCalls), TextDeliveryOptions.Default));
+
+        var first = coordinator.SubmitAsync(PushToTalkSignal.Pressed, forSession: null, isHandsFree: false);
+        await firstEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var second = coordinator.SubmitAsync(PushToTalkSignal.Pressed, forSession: null, isHandsFree: true);
+        finishFirst.SetResult();
+
+        var firstResult = await first.WaitAsync(TimeSpan.FromSeconds(10));
+        var secondResult = await second.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(SessionCommandDisposition.Failed, firstResult.Disposition);
+        Assert.Equal(SessionCommandDisposition.Ignored, secondResult.Disposition);
+        Assert.True(secondResult.WasQueued);
+        Assert.Equal(1, targetCalls);
+        Assert.Equal(2, seen.Count);
+        Assert.False(seen[0].PromotionOnly);
+        Assert.True(seen[1].PromotionOnly);
+        Assert.True(seen[1].IsHandsFree);
+        Assert.Null(seen[1].StartContext);
+    }
+
+    [Fact]
+    public async Task HandsFreePromotionPreservesActiveRecordingIdentityForDuplicateTerminalDetection()
+    {
+        var session = DictationSessionSnapshot.Start(DateTimeOffset.UtcNow);
+        var timeoutEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishTimeout = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var executor = new InlineAsyncExecutor(async command =>
+        {
+            if (command.Kind == SessionCommandKind.Timeout)
+            {
+                timeoutEntered.TrySetResult();
+                await finishTimeout.Task.ConfigureAwait(false);
+                return new SessionCommandResult(SessionCommandDisposition.Applied, session);
+            }
+
+            return new SessionCommandResult(SessionCommandDisposition.Applied, session);
+        });
+        await using var coordinator = new DictationSessionCoordinator(executor);
+
+        Assert.Equal(
+            SessionCommandDisposition.Applied,
+            (await coordinator.SubmitAsync(PushToTalkSignal.Pressed, forSession: null, isHandsFree: false)
+                .WaitAsync(TimeSpan.FromSeconds(10))).Disposition);
+        Assert.Equal(
+            SessionCommandDisposition.Applied,
+            (await coordinator.SubmitAsync(PushToTalkSignal.Pressed, forSession: null, isHandsFree: true)
+                .WaitAsync(TimeSpan.FromSeconds(10))).Disposition);
+
+        // Named auto-stop timeout and an unnamed release arriving together must coalesce onto the same recording.
+        var timeoutTask = coordinator.TimeOutAsync(session.Id);
+        await timeoutEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var releaseTask = coordinator.SubmitAsync(PushToTalkSignal.Released);
+        finishTimeout.SetResult();
+
+        Assert.Equal(SessionCommandDisposition.Applied, (await timeoutTask.WaitAsync(TimeSpan.FromSeconds(10))).Disposition);
+        Assert.Equal(SessionCommandDisposition.Ignored, (await releaseTask.WaitAsync(TimeSpan.FromSeconds(10))).Disposition);
+    }
+
+    private sealed class InlineAsyncExecutor(Func<SessionCommand, Task<SessionCommandResult>> handler) : ISessionCommandExecutor
+    {
+        public bool HasRetainedCleanup => false;
+        public object? ProcessingGeneration => null;
+        public void CancelProcessing(object generation) { }
+        public Task<bool> JoinRetainedCleanupAsync() => Task.FromResult(true);
+        public void Close() { }
+        public Task<SessionTeardownReport> TearDownAsync(TimeSpan deadline) => Task.FromResult(SessionTeardownReport.Nothing);
+        public Task ExpireAsync(SessionCommand command) => Task.CompletedTask;
+        public Task<SessionCommandResult> ExecuteAsync(SessionCommand command, CancellationToken stoppingToken) => handler(command);
+    }
+
     /// <summary>The shell's signal switch, without the shell: press, release, cancel onto the real controller.</summary>
     private sealed class ControllerExecutor(PushToTalkSessionController controller) : ISessionCommandExecutor
     {

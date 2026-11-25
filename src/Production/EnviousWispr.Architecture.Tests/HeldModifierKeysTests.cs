@@ -68,22 +68,26 @@ public sealed class HeldModifierKeysTests
         Assert.Equal(HotkeyModifiers.None, held.Observe(rightAlt, isKeyDown: false, _ => true));
     }
 
-    /// <summary>A Ctrl+Win hold as the hook sees it starts a recording, and letting go ends it.</summary>
+    /// <summary>A Ctrl+Win hold as the hook sees it starts a recording immediately, and letting go ends it.</summary>
     [Fact]
     public void ACtrlWinHoldStartsARecording()
     {
         var (tracker, held) = CtrlWinBound();
 
-        Feed(tracker, held, LeftControl, down: true, stateDown: []);
-        Feed(tracker, held, LeftWindows, down: true, stateDown: [LeftControl]);
-        Assert.Equal(PushToTalkSignal.Pressed, TickPast(tracker, HotkeyGesturePolicy.ModifierHoldThreshold));
+        Assert.Null(Feed(tracker, held, LeftControl, down: true, stateDown: []).Signal);
+        var started = Feed(tracker, held, LeftWindows, down: true, stateDown: [LeftControl]);
+        Assert.Equal(PushToTalkSignal.Pressed, started.Signal);
+        Assert.False(started.IsHandsFree);
+        Assert.False(started.Consume);
+
+        Thread.Sleep(HotkeyGesturePolicy.ModifierHoldThreshold + TimeSpan.FromMilliseconds(40));
 
         var released = Feed(tracker, held, LeftWindows, down: false, stateDown: [LeftControl, LeftWindows]);
         Assert.Equal(PushToTalkSignal.Released, released.Signal);
         Assert.False(released.Consume);
     }
 
-    /// <summary>One Ctrl+Win tap, with the shell's echo, is one tap: nothing starts.</summary>
+    /// <summary>One Ctrl+Win tap, with the shell's echo, is still one tap: discards cleanly instead of double-tapping.</summary>
     [Fact]
     public void OneTapWithTheShellsEchoIsOneTap()
     {
@@ -91,7 +95,7 @@ public sealed class HeldModifierKeysTests
 
         Tap(tracker, held);
 
-        Assert.Null(TickPast(tracker, HotkeyGesturePolicy.MultiTapWindow));
+        Assert.Equal(PushToTalkSignal.Discarded, TickPast(tracker, HotkeyGesturePolicy.MultiTapWindow));
     }
 
     /// <summary>Two Ctrl+Win taps, each with the shell's echo, start hands-free.</summary>

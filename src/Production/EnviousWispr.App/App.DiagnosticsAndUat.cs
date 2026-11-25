@@ -132,6 +132,8 @@ public partial class App
         {
             "recording" =>
                 DictationStatus.Recording("Recording. Release to finish, Escape to cancel"),
+            "recording-hands-free" =>
+                DictationStatus.Recording("Hands-free recording. Tap twice to stop, Escape to cancel", isHandsFree: true),
             "processing" => DictationStatus.Processing("Transcribing locally..."),
             "success" => DictationStatus.Success("Copied to your clipboard"),
             "warning" =>
@@ -145,6 +147,8 @@ public partial class App
                 "Ollama is offline. Cleaned text will still be preserved", OpenPolish),
             "distress" => DictationStatus.Distress(
                 "Windows interrupted the active dictation; recovery is still pending"),
+            "escape-recovery" => DictationStatus.EscapeRecovery(
+                "Dictation cancelled", EnviousWispr.App.Composition.StatusActions.UndoEscapeRecovery),
             "error" => DictationStatus.Error("Local transcription failed safely"),
             _ => null,
         };

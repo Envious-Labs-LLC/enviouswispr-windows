@@ -1014,6 +1014,22 @@ public sealed class DictationSessionExecutorTests
         Assert.Equal(TimeSpan.Zero, old());
     }
 
+    [Fact]
+    public async Task PromotionOnlyPressIsIgnoredWhenInitialRecordingIsNotActive()
+    {
+        var (executor, capture, effects, controller, _) = BuildWithFinalization();
+
+        var result = await executor.ExecuteAsync(
+            Press() with { IsHandsFree = true, PromotionOnly = true },
+            CancellationToken.None);
+
+        Assert.Equal(SessionCommandDisposition.Ignored, result.Disposition);
+        Assert.Null(result.Session);
+        Assert.Null(controller.CurrentSession);
+        Assert.Equal(0, capture.StartCount);
+        Assert.Equal(["RecordDictationEdge"], effects.Trace);
+    }
+
     private static SessionCommand Interruption(SystemLifecycleTransition transition) => new(
         SessionCommandKind.Interruption,
         PushToTalkSignal.Cancelled,

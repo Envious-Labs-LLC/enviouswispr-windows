@@ -59,7 +59,9 @@ internal sealed class HotkeyEdgeTracker
 
     /// <summary>True while the bound modifier set is fully held.</summary>
     private bool _modifierSetEngaged;
+    private bool _ownsActiveRecording;
     private bool _altMaskSentForPress;
+    private readonly HashSet<uint> _heldOrdinaryKeys = [];
 
     private readonly Stopwatch _clock = Stopwatch.StartNew();
 
@@ -175,9 +177,13 @@ internal sealed class HotkeyEdgeTracker
         {
             var wasActive = _recordingActive;
             _recordingActive = active;
-            if (wasActive && !active)
+            if (!active)
             {
-                _recordGesture?.EndHandsFree();
+                _ownsActiveRecording = false;
+                if (wasActive)
+                {
+                    _recordGesture?.EndHandsFree();
+                }
             }
         }
     }
@@ -295,9 +301,23 @@ internal sealed class HotkeyEdgeTracker
     {
         lock (_sync)
         {
+            UpdateHeldOrdinaryKeys(virtualKey, isKeyDown);
+
             if (_capturingKeybind && !IsAnythingInFlight())
             {
                 return new HotkeyEdgeDecision(Consume: false);
+            }
+
+            // CANCEL WINS OVER OTHER-KEY SHORTCUT DISMISSAL once cancellation is armed (recording active
+            // or escape recovery), while un-armed Escape falls through to the modifier gesture so a
+            // tentative instant-start capture is still discarded cleanly.
+            if (isKeyDown &&
+                virtualKey == _cancel.VirtualKey &&
+                (_recordingActive || _cancelArmed || _cancelHeld) &&
+                ModifiersMatch(activeModifiers, _cancel.Modifiers) &&
+                !StandsAsideForTyping(virtualKey, activeModifiers, _cancelHeld))
+            {
+                return ProcessCancel(isKeyDown: true, activeModifiers: activeModifiers);
             }
 
             if (_recordGesture is not null)
@@ -448,24 +468,37 @@ internal sealed class HotkeyEdgeTracker
     /// </summary>
     private bool IsAnythingInFlight() =>
         _recordHeld || _cancelHeld || _quickAddHeld || _recordingActive || _cancelArmed ||
+        _recordGesture?.IsHolding == true || _recordGesture?.HasTentativeRecording == true ||
         _pasteLast?.Held == true || _copyLast?.Held == true;
+
+    private void UpdateHeldOrdinaryKeys(uint virtualKey, bool isKeyDown)
+    {
+        if (IsModifierKey(virtualKey))
+        {
+            return;
+        }
+
+        if (isKeyDown)
+        {
+            _heldOrdinaryKeys.Add(virtualKey);
+        }
+        else
+        {
+            _heldOrdinaryKeys.Remove(virtualKey);
+        }
+    }
 
     /// <summary>
     /// The modifier-binding route: every key is offered, and the modifier is never swallowed.
     /// </summary>
     /// <remarks>
-    /// EVERY KEY GOES IN, NOT JUST THE BOUND ONE, because the policy decides a hold by what did NOT
-    /// happen during it. Feeding it only the bound key would leave it unable to tell a deliberate
-    /// hold from the start of a shortcut.
+    /// EVERY KEY GOES IN, NOT JUST THE BOUND ONE, because an instant modifier start must abandon
+    /// the moment any other chord key arrives, and refuse to start while an ordinary key or
+    /// unrelated modifier is already held.
     ///
     /// IT NEVER CONSUMES. A modifier that does not reach Windows breaks copy, paste and every other
-    /// shortcut on the machine - total, immediate, and landing on somebody who has not opened this
-    /// app today. Returning null hands other keys back to the ordinary path, which still owns cancel
-    /// and Quick Add.
-    ///
-    /// A MODIFIER SET IS TRANSLATED INTO ONE SYNTHETIC KEY. "Ctrl+Win became complete" is a press
-    /// and "it stopped being complete" is a release, so the gesture policy sees the same two events
-    /// it sees for a single key and there is one implementation of the timing rather than two.
+    /// shortcut on the machine. Returning null hands other keys back to the ordinary path, which
+    /// still owns cancel and Quick Add.
     /// </remarks>
     private bool RequiresAltMenuMask => _recordSuppliedModifiers.HasFlag(HotkeyModifiers.Alt);
 
@@ -475,7 +508,13 @@ internal sealed class HotkeyEdgeTracker
         HotkeyModifiers activeModifiers)
     {
         var gesture = _recordGesture!;
+        if (_recordingActive && !_ownsActiveRecording)
+        {
+            return null;
+        }
+
         HotkeyGestureOutcome outcome;
+        var nonBoundKeyEvent = false;
 
         if (_recordModifierSet != HotkeyModifiers.None)
         {
@@ -483,13 +522,24 @@ internal sealed class HotkeyEdgeTracker
 
             if (complete != _modifierSetEngaged)
             {
+                if (complete &&
+                    (!isKeyDown ||
+                     !IsModifierKey(virtualKey) ||
+                     (ModifierSuppliedBy(virtualKey) & _recordModifierSet) == 0 ||
+                     _heldOrdinaryKeys.Count > 0 ||
+                     (activeModifiers & ~_recordSuppliedModifiers) != HotkeyModifiers.None) &&
+                    !gesture.IsRecordingHandsFree &&
+                    !gesture.HasTentativeRecording)
+                {
+                    return null;
+                }
+
                 _modifierSetEngaged = complete;
                 outcome = gesture.Process(ModifierSetSentinel, complete, _clock.Elapsed);
             }
-            else if (isKeyDown && !IsModifierKey(virtualKey))
+            else if (isKeyDown && (!IsModifierKey(virtualKey) || (ModifierSuppliedBy(virtualKey) & _recordModifierSet) == 0))
             {
-                // An ordinary key pressed while the set is held is a shortcut - Ctrl+Win+D makes a
-                // new desktop - so the gesture is abandoned rather than becoming a recording.
+                nonBoundKeyEvent = true;
                 outcome = gesture.Process(virtualKey, isKeyDown: true, _clock.Elapsed);
             }
             else
@@ -504,11 +554,25 @@ internal sealed class HotkeyEdgeTracker
                 _altMaskSentForPress = false;
             }
 
+            if (virtualKey == _record.VirtualKey && isKeyDown &&
+                (_heldOrdinaryKeys.Count > 0 || (activeModifiers & ~_recordSuppliedModifiers) != HotkeyModifiers.None) &&
+                !gesture.IsRecordingHandsFree &&
+                !gesture.HasTentativeRecording)
+            {
+                return null;
+            }
+
+            nonBoundKeyEvent = virtualKey != _record.VirtualKey;
             outcome = gesture.Process(virtualKey, isKeyDown, _clock.Elapsed);
         }
 
-        if (DecisionFor(outcome) is { } decision)
+        if (DecisionFor(outcome, nonBoundKeyEvent) is { } decision)
         {
+            if (RequiresAltMenuMask && virtualKey == _record.VirtualKey && isKeyDown && decision.MaskMenuKey)
+            {
+                _altMaskSentForPress = true;
+            }
+
             return decision;
         }
 
@@ -550,38 +614,54 @@ internal sealed class HotkeyEdgeTracker
         }
     }
 
-    private HotkeyEdgeDecision? DecisionFor(HotkeyGestureOutcome outcome)
+    private HotkeyEdgeDecision? DecisionFor(HotkeyGestureOutcome outcome, bool fromOtherKey = false)
     {
         switch (outcome)
         {
             case HotkeyGestureOutcome.HoldStarted:
                 _cancelledUntilRecordRelease = false;
+                _ownsActiveRecording = true;
                 return new HotkeyEdgeDecision(
                     Consume: false,
                     PushToTalkSignal.Pressed,
-                    MaskMenuKey: RequiresAltMenuMask,
+                    MaskMenuKey: RequiresAltMenuMask && !_altMaskSentForPress,
                     IsHandsFree: false);
 
             case HotkeyGestureOutcome.ToggleStarted:
                 _cancelledUntilRecordRelease = false;
+                _ownsActiveRecording = true;
                 return new HotkeyEdgeDecision(
                     Consume: false,
                     PushToTalkSignal.Pressed,
-                    MaskMenuKey: RequiresAltMenuMask,
+                    MaskMenuKey: RequiresAltMenuMask && !_altMaskSentForPress,
                     IsHandsFree: true);
 
             case HotkeyGestureOutcome.HoldEnded:
             case HotkeyGestureOutcome.ToggleStopped:
+                _ownsActiveRecording = false;
                 return new HotkeyEdgeDecision(
                     Consume: false,
                     PushToTalkSignal.Released,
                     MaskMenuKey: RequiresAltMenuMask);
 
             case HotkeyGestureOutcome.Cancelled:
+                _ownsActiveRecording = false;
                 return new HotkeyEdgeDecision(
                     Consume: false,
                     PushToTalkSignal.Cancelled,
                     MaskMenuKey: RequiresAltMenuMask);
+
+            case HotkeyGestureOutcome.Discarded:
+                if (!_ownsActiveRecording)
+                {
+                    return null;
+                }
+
+                _ownsActiveRecording = false;
+                return new HotkeyEdgeDecision(
+                    Consume: false,
+                    PushToTalkSignal.Discarded,
+                    MaskMenuKey: !fromOtherKey && RequiresAltMenuMask && !_altMaskSentForPress);
 
             default:
                 return null;
@@ -594,6 +674,9 @@ internal sealed class HotkeyEdgeTracker
         lock (_sync)
         {
             _altMaskSentForPress = false;
+            _modifierSetEngaged = false;
+            _ownsActiveRecording = false;
+            _heldOrdinaryKeys.Clear();
             _recordGesture?.Reset();
         }
     }
@@ -654,6 +737,7 @@ internal sealed class HotkeyEdgeTracker
 
             _cancelHeld = true;
             _cancelledUntilRecordRelease = _recordHeld;
+            _ownsActiveRecording = false;
 
             // THE GESTURE FORGETS EVERYTHING, INCLUDING A HANDS-FREE RECORDING. Without this,
             // letting go of the record key after a cancel ends a hold that is no longer running and

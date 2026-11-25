@@ -394,6 +394,16 @@
         <Setter Property="Padding" Value="14,6" />
     </Style>
 
+    <!-- Compact single-line inline button for the 44-tall Escape Recovery capsule. -->
+    <Style x:Key="PillInlineActionButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="{ThemeResource PillBadgeFillBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource PillBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{ThemeResource ControlCornerRadius}" />
+        <Setter Property="Foreground" Value="{ThemeResource PillBadgeTextBrush}" />
+        <Setter Property="Padding" Value="12,3" />
+    </Style>
+
     <!--
         ONE STYLE FAMILY PER SEVERITY, AND A STYLE RATHER THAN A BRUSH SET FROM CODE.
         The pill is a separate top-level window whose theme is set on its root, so a brush pulled

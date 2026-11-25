@@ -593,6 +593,10 @@ public sealed partial class MainWindow : Window, IDisposable
                 LockOfferedLanguage();
                 break;
 
+            case PillActionKind.UndoEscapeRecovery:
+                InvokeEscapeRecoveryUndo();
+                break;
+
             // An enum can hold a value nobody declared. Appearance is the harmless page: it changes
             // nothing and shows the person something they can read.
             default:
@@ -600,6 +604,8 @@ public sealed partial class MainWindow : Window, IDisposable
                 break;
         }
     }
+
+    private void InvokeEscapeRecoveryUndo() => RecoveryUndoRequested?.Invoke();
 
     public event Action? ManualDictationToggleRequested;
 

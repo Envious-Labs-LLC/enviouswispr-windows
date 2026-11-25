@@ -28,8 +28,12 @@ public sealed partial class DictationOverlayWindow : Window
     private const double ReadingWellRadius = 16;
     private const double NoticeCapsuleRadius = 26;
     private const double NoticePanelRadius = 18;
-    private const int ClassicWidth = 185;
-    private const int LevelRailWidth = 288;
+    private const int CapsuleHorizontalPadding = 14;
+    private const int CapsuleDefaultWidth = 104;
+    private const double CapsuleHeaderGap = 10;
+    private const double HoldLipsSize = 24;
+    private const double HandsFreeLipsSize = 36;
+    private const double LevelRailBarsWidth = 118;
     private const int ReadingWellWidth = 400;
 
     /// <summary>The Reading Well's header, and the whole pill while it waits for words.</summary>
@@ -102,6 +106,7 @@ public sealed partial class DictationOverlayWindow : Window
     /// the window this maximises over the same window that gets drawn.
     /// </remarks>
     private float _latestLevel;
+    private float _lastDrawnLevel;
 
     private readonly DispatcherTimer _levelTimer = new();
 
@@ -111,7 +116,7 @@ public sealed partial class DictationOverlayWindow : Window
     private DateTimeOffset _recordingStartedAt;
     private PillAction? _action;
     private string? _previewText;
-    private int _overlayWidth = ClassicWidth;
+    private int _overlayWidth = CapsuleDefaultWidth;
     private int _overlayHeight = RecordingCapsuleHeight;
 
     /// <summary>The size the pill last asked for, in the units the layout is written in.</summary>
@@ -121,7 +126,7 @@ public sealed partial class DictationOverlayWindow : Window
     /// originally asked for. Without these two, a monitor change could only be recovered by
     /// re-running whichever state handler happened to have set the size.
     /// </remarks>
-    private int _logicalWidth = ClassicWidth;
+    private int _logicalWidth = CapsuleDefaultWidth;
 
     /// <summary>The pointer currently dragging the pill, if one is.</summary>
     private uint? _dragPointer;
@@ -144,6 +149,16 @@ public sealed partial class DictationOverlayWindow : Window
     /// The pill came out too big or too small, and its clip no longer matched its own corners.
     /// </remarks>
     private double _rasterScale;
+
+    private const uint WmGetMinMaxInfo = 0x0024;
+    private const uint WmNcDestroy = 0x0082;
+    private const nuint OverlaySubclassId = 0x45573335;
+
+    private delegate nint SubclassProc(
+        nint hWnd, uint uMsg, nint wParam, nint lParam, nuint uIdSubclass, nuint dwRefData);
+
+    private SubclassProc? _subclassProc;
+    private nint _subclassedHandle;
 
     private const uint SpiGetClientAreaAnimation = 0x1042;
 
@@ -183,10 +198,11 @@ public sealed partial class DictationOverlayWindow : Window
         _rasterScale = dpi > 0 ? dpi / 96d : 1d;
         _noticeColumnSpacing = HeaderRow.ColumnSpacing;
         _noticeContentSpacing = ContentPanel.Spacing;
-        Resize(ClassicWidth, RecordingCapsuleHeight);
+        var initialWidth = CapsulePillWidth();
+        Resize(initialWidth, RecordingCapsuleHeight);
         DrawLips(0f);
         ApplySpectrumSweep();
-        OverlayRoot.Measure(new Windows.Foundation.Size(ClassicWidth, RecordingCapsuleHeight));
+        OverlayRoot.Measure(new Windows.Foundation.Size(initialWidth, RecordingCapsuleHeight));
         // HIGH CONTRAST REPAINTS THE SPECTRUM, so the blended bars are re-mixed from it.
         OverlayRoot.ActualThemeChanged += (_, _) => ApplySpectrumSweep();
         OverlayRoot.Loaded += (_, _) =>
@@ -229,6 +245,7 @@ public sealed partial class DictationOverlayWindow : Window
         // than the border. The discard is what says that on purpose rather than by omission.
         var borderColour = DwmColorNone;
         _ = DwmSetWindowAttribute(windowHandle, DwmwaBorderColor, ref borderColour, sizeof(uint));
+        InstallMinTrackOverride(windowHandle);
 
         _hideTimer.Tick += (_, _) => HideOverlay();
         _elapsedTimer.Interval = TimeSpan.FromMilliseconds(250);
@@ -368,11 +385,15 @@ public sealed partial class DictationOverlayWindow : Window
             // this repository can see that.
             DictationOverlayState.Distress => ("Dictation interrupted", "\uEA39", detail),
             DictationOverlayState.Error => ("Dictation stopped safely", "\uEA39", detail),
+            DictationOverlayState.EscapeRecovery => (string.IsNullOrWhiteSpace(detail) ? "Dictation cancelled" : detail, string.Empty, string.Empty),
             _ => ("EnviousWispr", "\uE720", detail),
         };
         var previousState = _state;
         _state = state;
         _preWarmed = true;
+
+        StateIcon.Glyph = presentation.Item2;
+        StateDetail.Text = presentation.Item3;
 
         if (state == DictationOverlayState.Recording)
         {
@@ -409,6 +430,7 @@ public sealed partial class DictationOverlayWindow : Window
             _elapsedTimer.Stop();
             _levelTimer.Stop();
             _handsFree = false;
+            StateTitle.Text = presentation.Item1;
             // The action is applied before the notice is sized, because the size depends on whether
             // there is a button. The other order clips it.
             ApplyAction(status.Action);
@@ -430,9 +452,6 @@ public sealed partial class DictationOverlayWindow : Window
                 ? presentation.Item1
                 : $"{presentation.Item1}. {presentation.Item3}",
         };
-        StateTitle.Text = presentation.Item1;
-        StateIcon.Glyph = presentation.Item2;
-        StateDetail.Text = presentation.Item3;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(StateTitle, spokenName);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ProcessingLabel, spokenName);
         PositionOnForegroundMonitor();
@@ -455,7 +474,7 @@ public sealed partial class DictationOverlayWindow : Window
         if (state is DictationOverlayState.Success or DictationOverlayState.Advisory
             or DictationOverlayState.Suggestion or DictationOverlayState.Warning
             or DictationOverlayState.Distress or DictationOverlayState.Error
-            or DictationOverlayState.Busy)
+            or DictationOverlayState.Busy or DictationOverlayState.EscapeRecovery)
         {
             // AN ADVISORY DWELLS LONGEST BECAUSE IT ASKS THE USER TO DO SOMETHING. It names a
             // setting they have to go and change, which is more words than "your text is safe" and
@@ -470,6 +489,8 @@ public sealed partial class DictationOverlayWindow : Window
                 DictationOverlayState.Error or DictationOverlayState.Distress => 5d,
                 // "Copied to clipboard" is three words and needs no decision: macOS's 2.5 seconds.
                 DictationOverlayState.Success => 2.5d,
+                // Escape Recovery matches macOS EscapeRecoveryPillView.dwellSeconds (hover pauses/resets).
+                DictationOverlayState.EscapeRecovery => 3d,
                 _ => 3d,
             });
             ArmDwell();
@@ -651,6 +672,7 @@ public sealed partial class DictationOverlayWindow : Window
     /// <summary>Places the eighteen lips bars for this level.</summary>
     private void DrawLips(float level)
     {
+        _lastDrawnLevel = level;
         var size = LipsMark.Width;
         var count = Math.Min(LipsMark.Children.Count, RecordingPillGeometry.LipsBarCount);
         for (var index = 0; index < count; index++)
@@ -749,6 +771,11 @@ public sealed partial class DictationOverlayWindow : Window
         _hideTimer.Stop();
         _elapsedTimer.Stop();
         _levelTimer.Stop();
+        if (_subclassedHandle != nint.Zero && _subclassProc is not null)
+        {
+            _ = RemoveWindowSubclass(_subclassedHandle, _subclassProc, OverlaySubclassId);
+            _subclassedHandle = nint.Zero;
+        }
         Close();
     }
 
@@ -760,6 +787,9 @@ public sealed partial class DictationOverlayWindow : Window
         StateIcon.Visibility = Visibility.Collapsed;
         StateDetail.Visibility = Visibility.Collapsed;
         ProcessingLabel.Visibility = Visibility.Collapsed;
+        HeaderLeading.Visibility = Visibility.Visible;
+        StateTitle.TextWrapping = TextWrapping.Wrap;
+        StateTitle.MaxLines = 0;
 
         // NO WORD ON ANY RECORDING DESIGN. macOS draws the Capsule as its mark and its clock, the
         // Level Rail as its clock and its rail, and the Reading Well names its state in its own
@@ -771,12 +801,21 @@ public sealed partial class DictationOverlayWindow : Window
         var rail = _activeDesign == RecordingPillDesign.LevelRail;
         var readingWell = _activeDesign == RecordingPillDesign.ReadingWell;
 
-        // HANDS-FREE ON THE CAPSULE IS THE MARK AT TWICE ITS SIZE, AND NO CLOCK. The scale is a
-        // render transform, so the pill does not change size; the mark overflows its own slot.
+        // HANDS-FREE ON THE CAPSULE GROWS THE MARK SYMMETRICALLY IN LAYOUT AND DROPS THE CLOCK.
+        var lipsSize = classic && _handsFree ? HandsFreeLipsSize : HoldLipsSize;
         LipsMark.Visibility = classic ? Visibility.Visible : Visibility.Collapsed;
-        LipsMarkScale.ScaleX = LipsMarkScale.ScaleY = classic && _handsFree ? 2 : 1;
+        LipsMark.Width = lipsSize;
+        LipsMark.Height = lipsSize;
+        LipsMarkScale.ScaleX = 1;
+        LipsMarkScale.ScaleY = 1;
+        if (classic)
+        {
+            DrawLips(_lastDrawnLevel);
+        }
+
         ElapsedText.Visibility = classic && _handsFree ? Visibility.Collapsed : Visibility.Visible;
         ElapsedText.Style = GetPillStyle(readingWell ? "PillWellTimerTextStyle" : "PillCapsuleTimerTextStyle");
+        ElapsedText.Padding = new Thickness(1, 0, 1, 0);
         LevelBars.Visibility = rail ? Visibility.Visible : Visibility.Collapsed;
         RailHandsFreeBadge.Visibility = rail && _handsFree ? Visibility.Visible : Visibility.Collapsed;
         WellMeter.Visibility = readingWell ? Visibility.Visible : Visibility.Collapsed;
@@ -786,12 +825,12 @@ public sealed partial class DictationOverlayWindow : Window
         // THE CAPSULES CENTRE ONE ROW IN A 44-TALL PILL; THE READING WELL IS A RULED 36-TALL HEADER
         // with the clock hard left and the state word hard right, pinned to the top so it does not
         // move when the words arrive beneath it.
-        HeaderLeading.Spacing = readingWell ? 12 : 10;
+        HeaderLeading.Spacing = readingWell ? 12 : CapsuleHeaderGap;
         HeaderRow.ColumnSpacing = readingWell ? 8 : 0;
         HeaderRow.HorizontalAlignment = readingWell ? HorizontalAlignment.Stretch : HorizontalAlignment.Center;
         HeaderRow.Height = readingWell ? ReadingWellHeaderHeight - FrameBorderThickness * 2 : double.NaN;
         HeaderRow.Padding = readingWell ? new Thickness(16, 0, 16, 0) : new Thickness(0);
-        ContentPanel.Margin = readingWell ? new Thickness(0) : new Thickness(14, 0, 14, 0);
+        ContentPanel.Margin = readingWell ? new Thickness(0) : new Thickness(CapsuleHorizontalPadding, 0, CapsuleHorizontalPadding, 0);
         ContentPanel.Spacing = 0;
         ContentPanel.VerticalAlignment = readingWell ? VerticalAlignment.Top : VerticalAlignment.Center;
         PreviewWell.Padding = ReadingWellInsets;
@@ -809,15 +848,19 @@ public sealed partial class DictationOverlayWindow : Window
         {
             case RecordingPillDesign.Classic:
                 PreviewWell.Visibility = Visibility.Collapsed;
-                Resize(ClassicWidth, RecordingCapsuleHeight);
+                OverlayRoot.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+                Resize(CapsulePillWidth(), RecordingCapsuleHeight);
+                OverlayRoot.UpdateLayout();
                 break;
-            // WIDER FOR TWENTY-FOUR BARS.
             case RecordingPillDesign.LevelRail:
-                Resize(288, RecordingCapsuleHeight);
                 PreviewWell.Visibility = Visibility.Collapsed;
+                OverlayRoot.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+                Resize(LevelRailPillWidth(), RecordingCapsuleHeight);
+                OverlayRoot.UpdateLayout();
                 break;
             case RecordingPillDesign.ReadingWell:
                 ResizeReadingWell();
+                OverlayRoot.UpdateLayout();
                 break;
             default:
                 throw new ArgumentOutOfRangeException();
@@ -870,9 +913,25 @@ public sealed partial class DictationOverlayWindow : Window
         {
             ActionButton.Visibility = Visibility.Collapsed;
             ActionButton.Content = null;
+            InlineActionButton.Visibility = Visibility.Collapsed;
+            InlineActionButton.Content = null;
             return;
         }
 
+        if (_state == DictationOverlayState.EscapeRecovery)
+        {
+            ActionButton.Visibility = Visibility.Collapsed;
+            ActionButton.Content = null;
+            InlineActionButton.Content = action.Label;
+            InlineActionButton.Margin = new Thickness(CapsuleHeaderGap, 0, 0, 0);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(InlineActionButton, action.SpokenLabel);
+            InlineActionButton.Visibility = Visibility.Visible;
+            InlineActionButton.ApplyTemplate();
+            return;
+        }
+
+        InlineActionButton.Visibility = Visibility.Collapsed;
+        InlineActionButton.Content = null;
         ActionButton.Content = action.Label;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ActionButton, action.SpokenLabel);
         ActionButton.Visibility = Visibility.Visible;
@@ -885,6 +944,7 @@ public sealed partial class DictationOverlayWindow : Window
             return;
         }
 
+        _action = null;
         HideOverlay();
         ActionInvoked?.Invoke(action.Kind);
     }
@@ -1019,6 +1079,11 @@ public sealed partial class DictationOverlayWindow : Window
         _pointerIsOver = false;
         _handsFree = false;
         _previewText = null;
+        _action = null;
+        ActionButton.Visibility = Visibility.Collapsed;
+        ActionButton.Content = null;
+        InlineActionButton.Visibility = Visibility.Collapsed;
+        InlineActionButton.Content = null;
         // THE DRAG LASTED AS LONG AS THIS PILL DID. The next one returns to where the setting says,
         // which is what stops one nudge quietly becoming a new permanent position.
         _draggedThisPresentation = false;
@@ -1071,7 +1136,7 @@ public sealed partial class DictationOverlayWindow : Window
             // complete reads these names - an unlisted state would be covered by nothing and would
             // render as a plain capsule looking exactly as though somebody meant it.
             DictationOverlayState.Hidden or DictationOverlayState.Recording
-                or DictationOverlayState.Processing =>
+                or DictationOverlayState.Processing or DictationOverlayState.EscapeRecovery =>
                 ("PillNeutralIconStyle", "PillNeutralEdgeStyle", "PillNeutralWashStyle"),
             // An enum can hold a value nobody declared, so this arm has to exist. It takes the
             // neutral look rather than throwing, because a pill is not worth crashing a dictation.
@@ -1083,7 +1148,7 @@ public sealed partial class DictationOverlayWindow : Window
         {
             DictationOverlayState.Recording => GetPillStyle(
                 _activeDesign == RecordingPillDesign.ReadingWell ? "PillWellEdgeStyle" : "PillCapsuleEdgeStyle"),
-            DictationOverlayState.Processing => GetPillStyle("PillCapsuleEdgeStyle"),
+            DictationOverlayState.Processing or DictationOverlayState.EscapeRecovery => GetPillStyle("PillCapsuleEdgeStyle"),
             _ => GetPillStyle(edge),
         };
         SeverityWash.Style = GetPillStyle(wash);
@@ -1138,16 +1203,19 @@ public sealed partial class DictationOverlayWindow : Window
         {
             // PROCESSING IS A CAPSULE THAT HUGS ITS LINE, as PolishingOverlayView.swift sizes it:
             // the wheel, a 10 gap, the label, and 14 either side, 44 tall, with the hairline breathing.
+            HeaderLeading.Visibility = Visibility.Visible;
             StateIcon.Visibility = Visibility.Collapsed;
             SpectrumWheelIcon.Visibility = Visibility.Visible;
             StateDetail.Visibility = Visibility.Collapsed;
+            StateTitle.TextWrapping = TextWrapping.Wrap;
+            StateTitle.MaxLines = 0;
             SetLiveVisibility(StateTitle, Visibility.Collapsed);
             ProcessingLabel.Text = title;
             ProcessingLabel.Visibility = Visibility.Visible;
             HeaderRow.ColumnSpacing = 0;
             HeaderRow.HorizontalAlignment = HorizontalAlignment.Center;
             ContentPanel.Spacing = _noticeContentSpacing;
-            ContentPanel.Margin = new Thickness(14, 0, 14, 0);
+            ContentPanel.Margin = new Thickness(CapsuleHorizontalPadding, 0, CapsuleHorizontalPadding, 0);
             ApplySurface("PillCapsuleSurfaceStyle", RecordingCapsuleRadius);
             ApplyHairline(visible: true, breathes: true);
             Resize(ProcessingPillWidth(), RecordingCapsuleHeight);
@@ -1162,14 +1230,40 @@ public sealed partial class DictationOverlayWindow : Window
                 SpectrumWheelTransform.Rotation = 0;
             }
         }
+        else if (_state == DictationOverlayState.EscapeRecovery && _action is not null)
+        {
+            _spectrumWheelPulse.Stop();
+            SpectrumWheelTransform.Rotation = 0;
+            SpectrumWheelIcon.Visibility = Visibility.Collapsed;
+            ProcessingLabel.Visibility = Visibility.Collapsed;
+            StateIcon.Visibility = Visibility.Collapsed;
+            HeaderLeading.Visibility = Visibility.Collapsed;
+            StateDetail.Visibility = Visibility.Collapsed;
+            StateTitle.Style = GetPillStyle("PillNoticeTextStyle");
+            StateTitle.TextWrapping = TextWrapping.NoWrap;
+            StateTitle.MaxLines = 1;
+            SetLiveVisibility(StateTitle, Visibility.Visible);
+            HeaderRow.ColumnSpacing = 0;
+            HeaderRow.HorizontalAlignment = HorizontalAlignment.Stretch;
+            ContentPanel.Spacing = 0;
+            ContentPanel.Margin = new Thickness(CapsuleHorizontalPadding, 0, CapsuleHorizontalPadding, 0);
+            ApplySurface("PillCapsuleSurfaceStyle", RecordingCapsuleRadius);
+            ApplyHairline(visible: true, breathes: false);
+            OverlayRoot.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+            Resize(EscapeRecoveryPillWidth(), RecordingCapsuleHeight);
+            OverlayRoot.UpdateLayout();
+        }
         else
         {
             _spectrumWheelPulse.Stop();
             SpectrumWheelTransform.Rotation = 0;
             SpectrumWheelIcon.Visibility = Visibility.Collapsed;
             ProcessingLabel.Visibility = Visibility.Collapsed;
+            HeaderLeading.Visibility = Visibility.Visible;
             StateIcon.Visibility = Visibility.Visible;
             StateTitle.Style = GetPillStyle("PillNoticeTextStyle");
+            StateTitle.TextWrapping = TextWrapping.Wrap;
+            StateTitle.MaxLines = 0;
             SetLiveVisibility(StateTitle, Visibility.Visible);
             HeaderRow.ColumnSpacing = _noticeColumnSpacing;
             ContentPanel.Spacing = _noticeContentSpacing;
@@ -1201,6 +1295,66 @@ public sealed partial class DictationOverlayWindow : Window
         }
     }
 
+    private static double MeasureElementWidth(FrameworkElement element, double fallback)
+    {
+        element.InvalidateMeasure();
+        element.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        return element.DesiredSize.Width > 0 ? element.DesiredSize.Width : fallback;
+    }
+
+    private double ElapsedTextFallbackWidth() =>
+        Math.Max(31.0, (string.IsNullOrEmpty(ElapsedText.Text) ? 4 : ElapsedText.Text.Length) * 8.0);
+
+    /// <summary>Hugs the lips mark and optional clock tightly with symmetric horizontal padding.</summary>
+    private int CapsulePillWidth()
+    {
+        var markWidth = LipsMark.Width;
+        var contentWidth = _handsFree
+            ? markWidth
+            : markWidth + CapsuleHeaderGap + MeasureElementWidth(ElapsedText, ElapsedTextFallbackWidth()) + 4.0;
+        return (int)Math.Ceiling(FrameBorderThickness * 2 + CapsuleHorizontalPadding * 2 + contentWidth);
+    }
+
+    /// <summary>Hugs the clock, 24-bar level strip, and optional hands-free badge tightly.</summary>
+    private int LevelRailPillWidth()
+    {
+        var scale = _rasterScale > 0 ? _rasterScale : 1.0;
+        // WinUI layout-rounds each 3 DIP bar and 2 DIP gap to whole pixels (e.g. 5px + 3px at 150% DPI),
+        // making 24 bars wider than the nominal 118 DIP sum when unscaled.
+        var roundedRailWidth = 24.0 * (Math.Ceiling(3.0 * scale) / scale) +
+            23.0 * (Math.Ceiling(2.0 * scale) / scale);
+        var elapsedWidth = Math.Max(
+            ElapsedTextFallbackWidth(),
+            MeasureElementWidth(ElapsedText, ElapsedTextFallbackWidth()));
+        var railWidth = Math.Max(
+            Math.Max(LevelRailBarsWidth, roundedRailWidth),
+            MeasureElementWidth(LevelBars, LevelRailBarsWidth));
+        var computedWidth = elapsedWidth + CapsuleHeaderGap + railWidth;
+        if (_handsFree)
+        {
+            computedWidth += CapsuleHeaderGap + MeasureElementWidth(RailHandsFreeBadge, 76.0);
+        }
+
+        HeaderLeading.InvalidateMeasure();
+        var leadingWidth = MeasureElementWidth(HeaderLeading, computedWidth);
+        var contentWidth = Math.Max(computedWidth, leadingWidth) + 8.0;
+        return (int)Math.Ceiling(FrameBorderThickness * 2 + CapsuleHorizontalPadding * 2 + contentWidth);
+    }
+
+    /// <summary>Hugs the "Dictation cancelled" title and inline Undo pill button on one row.</summary>
+    private int EscapeRecoveryPillWidth()
+    {
+        InlineActionButton.ApplyTemplate();
+        var titleWidth = Math.Max(
+            Math.Max(128.0, StateTitle.Text.Length * 7.2),
+            MeasureElementWidth(StateTitle, Math.Max(128.0, StateTitle.Text.Length * 7.8)));
+        var actionWidth = Math.Max(
+            Math.Max(68.0, CapsuleHeaderGap + (_action?.Label.Length ?? 4) * 8.0 + 28.0),
+            MeasureElementWidth(InlineActionButton, 74.0));
+        return (int)Math.Ceiling(
+            FrameBorderThickness * 2 + CapsuleHorizontalPadding * 2 + titleWidth + actionWidth + 12.0);
+    }
+
     /// <summary>The Processing capsule's width: its chrome plus the label's measured width.</summary>
     /// <remarks>
     /// MEASURED, NOT COUNTED. Only the text engine knows how wide a line is in this face at this
@@ -1209,13 +1363,7 @@ public sealed partial class DictationOverlayWindow : Window
     /// </remarks>
     private int ProcessingPillWidth()
     {
-        ProcessingLabel.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
-        var label = ProcessingLabel.DesiredSize.Width;
-        if (label <= 0)
-        {
-            label = ProcessingLabel.Text.Length * 7.0;
-        }
-
+        var label = MeasureElementWidth(ProcessingLabel, ProcessingLabel.Text.Length * 7.0);
         return (int)Math.Ceiling(ProcessingChromeWidth + label);
     }
 
@@ -1358,6 +1506,12 @@ public sealed partial class DictationOverlayWindow : Window
         _overlayWidth = Math.Max(1, (int)Math.Ceiling((width + WindowBleed * 2) * _rasterScale));
         _overlayHeight = Math.Max(1, (int)Math.Ceiling((height + WindowBleed * 2) * _rasterScale));
         AppWindow.Resize(new SizeInt32(_overlayWidth, _overlayHeight));
+        var actualSize = AppWindow.Size;
+        if (actualSize.Width > 0 && actualSize.Height > 0)
+        {
+            _overlayWidth = actualSize.Width;
+            _overlayHeight = actualSize.Height;
+        }
         ClipToPillShape();
     }
 
@@ -1423,8 +1577,29 @@ public sealed partial class DictationOverlayWindow : Window
         }
     }
 
-    private void UpdateElapsed() =>
-        ElapsedText.Text = RecordingPillGeometry.FormatElapsed(DateTimeOffset.UtcNow - _recordingStartedAt);
+    private void UpdateElapsed()
+    {
+        var formatted = RecordingPillGeometry.FormatElapsed(DateTimeOffset.UtcNow - _recordingStartedAt);
+        if (string.Equals(ElapsedText.Text, formatted, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ElapsedText.Text = formatted;
+        if (_state == DictationOverlayState.Recording &&
+            (_activeDesign == RecordingPillDesign.LevelRail ||
+             (_activeDesign == RecordingPillDesign.Classic && !_handsFree)))
+        {
+            var width = _activeDesign == RecordingPillDesign.Classic
+                ? CapsulePillWidth()
+                : LevelRailPillWidth();
+            if (width != _logicalWidth)
+            {
+                Resize(width, RecordingCapsuleHeight);
+                PositionOnForegroundMonitor();
+            }
+        }
+    }
 
     private void PositionOnForegroundMonitor()
     {
@@ -1492,6 +1667,70 @@ public sealed partial class DictationOverlayWindow : Window
     {
         public int X;
         public int Y;
+    }
+
+    private void InstallMinTrackOverride(nint windowHandle)
+    {
+        if (windowHandle == nint.Zero || _subclassedHandle != nint.Zero)
+        {
+            return;
+        }
+
+        _subclassProc = OnOverlayWindowMessage;
+        if (SetWindowSubclass(windowHandle, _subclassProc, OverlaySubclassId, 0))
+        {
+            _subclassedHandle = windowHandle;
+        }
+        else
+        {
+            _subclassProc = null;
+        }
+    }
+
+    private nint OnOverlayWindowMessage(
+        nint hWnd, uint uMsg, nint wParam, nint lParam, nuint uIdSubclass, nuint dwRefData)
+    {
+        if (uMsg == WmGetMinMaxInfo && lParam != nint.Zero)
+        {
+            var result = DefSubclassProc(hWnd, uMsg, wParam, lParam);
+            var minMax = Marshal.PtrToStructure<MinMaxInfo>(lParam);
+            minMax.PtMinTrackSize.X = 1;
+            minMax.PtMinTrackSize.Y = 1;
+            Marshal.StructureToPtr(minMax, lParam, fDeleteOld: false);
+            return result;
+        }
+
+        if (uMsg == WmNcDestroy && _subclassProc is not null)
+        {
+            _ = RemoveWindowSubclass(hWnd, _subclassProc, uIdSubclass);
+            _subclassedHandle = nint.Zero;
+        }
+
+        return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+    }
+
+    [DllImport("comctl32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowSubclass(
+        nint hWnd, SubclassProc pfnSubclass, nuint uIdSubclass, nuint dwRefData);
+
+    [DllImport("comctl32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RemoveWindowSubclass(
+        nint hWnd, SubclassProc pfnSubclass, nuint uIdSubclass);
+
+    [DllImport("comctl32.dll")]
+    private static extern nint DefSubclassProc(
+        nint hWnd, uint uMsg, nint wParam, nint lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MinMaxInfo
+    {
+        public NativePoint PtReserved;
+        public NativePoint PtMaxSize;
+        public NativePoint PtMaxPosition;
+        public NativePoint PtMinTrackSize;
+        public NativePoint PtMaxTrackSize;
     }
 
     [DllImport("user32.dll")]

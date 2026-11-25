@@ -254,6 +254,8 @@ public enum PushToTalkSignal
     Pressed,
     Released,
     Cancelled,
+    /// <summary>Quietly abort a freshly opened capture (shortcut chord interference or super-brief tap) without recovery.</summary>
+    Discarded,
     QuickAdd,
 
     /// <summary>The Paste Last Dictation shortcut went down. Not a session command. Ref: #206.</summary>

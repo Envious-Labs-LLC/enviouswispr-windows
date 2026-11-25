@@ -54,8 +54,9 @@ public static class RecordingPillGeometry
     /// <summary>Centre bars react most and the edges least, so the mouth opens rather than lifts.</summary>
     private static readonly double[] LipsSensitivity = [0.70, 0.80, 0.90, 0.95, 1.00, 0.95, 0.90, 0.80, 0.70];
 
-    private const double LipsSilenceScale = 0.55;
-    private const double LipsPeakRange = 0.90;
+    // Full curved lips even at silence, opening smoothly when speaking without collapsing into specks.
+    private const double LipsSilenceScale = 0.85;
+    private const double LipsPeakRange = 0.60;
     private const double LipsMaxSeparation = 3.5;
     private const double LipsBarWidth = 4.5;
 

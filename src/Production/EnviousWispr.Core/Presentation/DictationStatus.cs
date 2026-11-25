@@ -56,6 +56,9 @@ public enum DictationOverlayState
     /// in what it calls itself, as Suggestion does beside Advisory. macOS shows the same refusal. Ref: #211.
     /// </remarks>
     Busy,
+
+    /// <summary>An Escape Recovery copy is waiting and the pill offers a one-shot Undo button.</summary>
+    EscapeRecovery,
 }
 
 
@@ -89,6 +92,9 @@ public enum PillActionKind
 
     /// <summary>Show the Transcribe a File page, where the job that has the session can be watched or stopped.</summary>
     OpenFileTranscription,
+
+    /// <summary>Restore the Escape-cancelled dictation straight back into the field it came from.</summary>
+    UndoEscapeRecovery,
 }
 
 /// <summary>The one button a notice may carry.</summary>
@@ -204,6 +210,10 @@ public readonly record struct DictationStatus(
     /// <summary>Something outside the app interrupted a live dictation.</summary>
     public static DictationStatus Distress(string text) =>
         new(text, DictationOverlayState.Distress);
+
+    /// <summary>A cancelled dictation was saved for recovery and offers one-shot Undo.</summary>
+    public static DictationStatus EscapeRecovery(string text, PillAction action) =>
+        new(text, DictationOverlayState.EscapeRecovery, action);
 
     /// <summary>Something failed and the user has to know.</summary>
     public static DictationStatus Error(string text) => new(text, DictationOverlayState.Error);
