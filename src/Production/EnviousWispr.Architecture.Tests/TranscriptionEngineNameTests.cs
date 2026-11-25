@@ -226,7 +226,7 @@ public sealed partial class DesignSystemTokenTests
     [GeneratedRegex(@"foreach \(var box in new\[\] \{([^}]*)\}\)\s*\{\s*box\.GotFocus", RegexOptions.Singleline)]
     private static partial Regex CaptureFocusLoop();
 
-    [GeneratedRegex(@"box\.NumberFormatter = new DecimalFormatter\s*\{(.*?)\};", RegexOptions.Singleline)]
+    [GeneratedRegex(@"(?:box|DiagnosticRetentionDaysBox)\.NumberFormatter = new DecimalFormatter\s*\{(.*?)\};", RegexOptions.Singleline)]
     private static partial Regex DayFieldFormatter();
 
     /// <summary>

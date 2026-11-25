@@ -861,15 +861,6 @@ public sealed partial class MainWindow
         UpdateSelectionDependentButtons();
     }
 
-    private async void DictionaryEnabledToggle_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (_isApplyingSettings || _settings is null || WordCorrectionToggle is null)
-        {
-            return;
-        }
-
-        var isEnabled = DictionaryEnabledToggle.IsOn;
-        WordCorrectionToggle.IsOn = isEnabled;
-        await TriggerAutoSaveAsync().ConfigureAwait(true);
-    }
+    private void DictionaryEnabledToggle_Toggled(object sender, RoutedEventArgs e) =>
+        HandleWordCorrectionToggleChanged(DictionaryEnabledToggle);
 }

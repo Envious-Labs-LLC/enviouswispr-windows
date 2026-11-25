@@ -66,6 +66,15 @@
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
+    <Style x:Key="BrandSuccessChipTextStyle" TargetType="TextBlock" BasedOn="{StaticResource BrandStatusChipTextStyle}">
+        <Setter Property="Foreground" Value="{ThemeResource BrandSuccessBrush}" />
+    </Style>
+    <Style x:Key="BrandAccentChipTextStyle" TargetType="TextBlock" BasedOn="{StaticResource BrandStatusChipTextStyle}">
+        <Setter Property="Foreground" Value="{ThemeResource BrandAccentBrush}" />
+    </Style>
+    <Style x:Key="BrandNeutralChipTextStyle" TargetType="TextBlock" BasedOn="{StaticResource BrandStatusChipTextStyle}">
+        <Setter Property="Foreground" Value="{ThemeResource BrandTextSecondaryBrush}" />
+    </Style>
     <Style x:Key="BrandNavGroupLabelStyle" TargetType="TextBlock">
         <!--
             THE SIDEBAR'S GROUP LABELS, WHICH ARE NOT THE SAME THING AS A SECTION HEADING INSIDE A

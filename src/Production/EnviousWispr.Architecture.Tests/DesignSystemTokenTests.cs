@@ -3700,6 +3700,185 @@ public sealed partial class DesignSystemTokenTests
         Assert.Null(previewWell.Attribute("CornerRadius"));
     }
 
+    [Fact]
+    public void ToggleRowsDisableDoubleTapAndSyncDictionaryCorrectionTogglesWithoutReentrancy()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var window = LoadMainWindow();
+        var rowFaults = new List<string>();
+
+        foreach (var row in window.Descendants().Where(e => (string?)e.Attribute("Tapped") == "SettingRow_Tapped"))
+        {
+            if ((string?)row.Attribute("IsDoubleTapEnabled") != "False")
+            {
+                var toggleName = (string?)row.Descendants()
+                    .FirstOrDefault(child => child.Name.LocalName == "ToggleSwitch")
+                    ?.Attribute(XName.Get("Name", XamlNamespace)) ?? "(unnamed)";
+                rowFaults.Add($"SettingRow_Tapped row around {toggleName} must set IsDoubleTapEnabled=\"False\".");
+            }
+        }
+
+        Assert.True(rowFaults.Count == 0, string.Join(Environment.NewLine, rowFaults));
+
+        var controlsDoc = XDocument.Load(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "Theme", "Controls.xaml"));
+        var toggleStyle = controlsDoc.Descendants()
+            .Single(e => e.Name.LocalName == "Style" && (string?)e.Attribute(XName.Get("Key", XamlNamespace)) == "BrandToggleSwitchStyle");
+        Assert.Contains(toggleStyle.Elements(), setter =>
+            setter.Name.LocalName == "Setter"
+            && (string?)setter.Attribute("Property") == "IsDoubleTapEnabled"
+            && (string?)setter.Attribute("Value") == "False");
+        Assert.Contains(toggleStyle.Elements(), setter =>
+            setter.Name.LocalName == "Setter"
+            && (string?)setter.Attribute("Property") == "ManipulationMode"
+            && (string?)setter.Attribute("Value") == "None");
+
+        var switchThumb = toggleStyle.Descendants()
+            .Single(e => (string?)e.Attribute(XName.Get("Name", XamlNamespace)) == "SwitchThumb");
+        Assert.Equal("False", (string?)switchThumb.Attribute("IsDoubleTapEnabled"));
+        Assert.Equal("None", (string?)switchThumb.Attribute("ManipulationMode"));
+
+        var settingsCode = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.Settings.cs"));
+        var dictionaryCode = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.Dictionary.cs"));
+        Assert.Contains("_isSyncingWordCorrectionToggles", settingsCode, StringComparison.Ordinal);
+        Assert.Contains("HandleWordCorrectionToggleChanged(WordCorrectionToggle)", settingsCode, StringComparison.Ordinal);
+        Assert.Contains("HandleWordCorrectionToggleChanged(DictionaryEnabledToggle)", dictionaryCode, StringComparison.Ordinal);
+        Assert.Contains("IsDescendantOf(e.OriginalSource as DependencyObject, toggle)", settingsCode, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InterruptedDictationRecoveryDoesNotRaisePersistentTopInfoBarBanner()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var historyPath = Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.History.cs");
+        var method = CSharpSyntaxTree.ParseText(File.ReadAllText(historyPath), path: historyPath)
+            .GetRoot()
+            .DescendantNodes()
+            .OfType<MethodDeclarationSyntax>()
+            .Single(m => m.Identifier.ValueText == "SetRecoveredText");
+
+        var body = method.Body!.ToString();
+        Assert.Contains("RecoveryCard.Visibility = Visibility.Visible;", body, StringComparison.Ordinal);
+        Assert.Contains("undoOffered", body, StringComparison.Ordinal);
+
+        var showMessageCalls = method.DescendantNodes()
+            .OfType<InvocationExpressionSyntax>()
+            .Where(call => call.Expression is IdentifierNameSyntax id && id.Identifier.ValueText == "ShowMessage")
+            .Select(call => call.ToString())
+            .ToArray();
+
+        Assert.DoesNotContain(showMessageCalls, text =>
+            text.Contains("Interrupted dictation recovered", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(showMessageCalls, text => text.Contains("Recovery data needs attention", StringComparison.Ordinal));
+        Assert.Contains(showMessageCalls, text => text.Contains("Recovery storage is unavailable", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void HistoryRetentionUsesPresetComboBoxAndRemainingNumberBoxesUseDarkSafeThemeBrushes()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var window = LoadMainWindow();
+        var xaml = XNamespace.Get("http://schemas.microsoft.com/winfx/2006/xaml");
+
+        Assert.DoesNotContain(window.Descendants(), e => (string?)e.Attribute(xaml + "Name") == "RetentionDaysBox");
+        var retentionCombo = FindNamedElement(window, "RetentionDaysComboBox");
+        Assert.Equal("ComboBox", retentionCombo.Name.LocalName);
+        Assert.Equal("{StaticResource BrandTrimmedDisplayNameTemplate}", (string?)retentionCombo.Attribute("ItemTemplate"));
+
+        foreach (var boxName in new[] { "AutoStopSecondsBox", "DiagnosticRetentionDaysBox" })
+        {
+            var box = FindNamedElement(window, boxName);
+            Assert.Equal("NumberBox", box.Name.LocalName);
+            Assert.Equal("{StaticResource BrandNumberBoxStyle}", (string?)box.Attribute("Style"));
+        }
+
+        // WindowRoot TextControl* brushes must live inside ThemeDictionaries so switching or mismatched OS themes update dynamically.
+        var windowRoot = FindNamedElement(window, "WindowRoot");
+        var themeDictionaries = windowRoot
+            .Descendants()
+            .Where(e => e.Name.LocalName == "ResourceDictionary" && e.Attribute(xaml + "Key") is not null)
+            .ToDictionary(e => (string)e.Attribute(xaml + "Key")!, StringComparer.Ordinal);
+        foreach (var theme in new[] { "Light", "Dark", "HighContrast" })
+        {
+            Assert.True(themeDictionaries.ContainsKey(theme), $"WindowRoot missing ThemeDictionary '{theme}'.");
+            var keys = themeDictionaries[theme].Elements()
+                .Select(e => (string?)e.Attribute(xaml + "Key"))
+                .ToHashSet(StringComparer.Ordinal);
+            Assert.Contains("TextControlForeground", keys);
+            Assert.Contains("TextControlForegroundFocused", keys);
+            Assert.Contains("TextControlBackground", keys);
+            Assert.Contains("TextControlBackgroundFocused", keys);
+        }
+
+        var controlsDoc = XDocument.Load(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "Theme", "Controls.xaml"));
+        var numberBoxTextStyle = controlsDoc.Descendants()
+            .Single(e => e.Name.LocalName == "Style" && (string?)e.Attribute(xaml + "Key") == "BrandNumberBoxTextBoxStyle");
+        var numberBoxStyle = controlsDoc.Descendants()
+            .Single(e => e.Name.LocalName == "Style" && (string?)e.Attribute(xaml + "Key") == "BrandNumberBoxStyle");
+        Assert.DoesNotContain("RequestedTheme", numberBoxTextStyle.ToString(), StringComparison.Ordinal);
+        foreach (var templateXml in new[] { numberBoxTextStyle.ToString(), numberBoxStyle.ToString() })
+        {
+            Assert.DoesNotContain("x:Load", templateXml, StringComparison.Ordinal);
+            Assert.DoesNotContain("DeferLoadStrategy", templateXml, StringComparison.Ordinal);
+            Assert.DoesNotContain("{StaticResource NumberBoxSpinButtonStyle}", templateXml, StringComparison.Ordinal);
+            Assert.DoesNotContain("{StaticResource NumberBoxPopupSpinButtonStyle}", templateXml, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void StatusAndFormatBadgesUseFlatBrandChipsInsteadOfOvalPillRadius()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var window = LoadMainWindow();
+
+        Assert.DoesNotContain(window.Descendants(), e =>
+            ((string?)e.Attribute("CornerRadius"))?.Contains("BrandPillRadius", StringComparison.Ordinal) == true
+            || (string?)e.Attribute("CornerRadius") == "100");
+
+        foreach (var badgeName in new[]
+        {
+            "EgOneFullStatusBadge",
+            "EgOneMiniStatusBadge",
+            "EgOneMicroStatusBadge",
+            "ActiveEngineBadge",
+            "ActiveEngineStatusBadge",
+            "ParakeetEngineBadge",
+            "WhisperEngineBadge",
+            "ActivePolishProviderBadge",
+        })
+        {
+            var badge = FindNamedElement(window, badgeName);
+            var style = (string?)badge.Attribute("Style");
+            Assert.True(
+                style is "{StaticResource BrandAccentChipStyle}" or "{StaticResource BrandNeutralChipStyle}",
+                $"{badgeName} must use BrandAccentChipStyle or BrandNeutralChipStyle (CornerRadius=6), got '{style}'.");
+            Assert.Null(badge.Attribute("CornerRadius"));
+            Assert.Null(badge.Attribute("BorderThickness"));
+        }
+
+        var transcribeSection = FindNamedElement(window, "TranscribeFileSection");
+        foreach (var fmt in new[] { "WAV", "MP3", "M4A", "AAC", "WMA", "FLAC" })
+        {
+            var chipText = transcribeSection.Descendants()
+                .Single(e => e.Name.LocalName == "TextBlock" && (string?)e.Attribute("Text") == fmt);
+            Assert.Equal("{StaticResource BrandNeutralChipStyle}", (string?)chipText.Parent?.Attribute("Style"));
+            Assert.Null(chipText.Parent?.Attribute("CornerRadius"));
+        }
+
+        var aiPolishCode = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.AiPolish.cs"));
+        var applyStart = aiPolishCode.IndexOf("private static void ApplyEgOneCardPresentation(", StringComparison.Ordinal);
+        Assert.True(applyStart >= 0);
+        var applyBody = aiPolishCode[applyStart..(applyStart + 1_600)];
+        Assert.DoesNotContain("BrandPageBgBrush", applyBody, StringComparison.Ordinal);
+        Assert.Contains("BrandNeutralChipStyle", applyBody, StringComparison.Ordinal);
+        Assert.Contains("BrandSuccessChipStyle", applyBody, StringComparison.Ordinal);
+    }
+
     private readonly record struct DynamicColor(Rgba Light, Rgba Dark);
 
     private readonly record struct ThemePair(string Light, string Dark);
