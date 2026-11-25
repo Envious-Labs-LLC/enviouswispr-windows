@@ -39,6 +39,9 @@ public interface ILivePreviewEffects
     /// <summary>The user's Custom Words vocabulary for display-only preview text (#127).</summary>
     IReadOnlyList<CustomWordEntry> CustomWords => [];
 
+    /// <summary>The enabled vocabulary pack IDs for display-only preview text.</summary>
+    IReadOnlyList<string> EnabledVocabularyPackIds => [];
+
     /// <summary>The user's English spelling preference for display-only preview text (#127).</summary>
     EnglishSpelling EnglishSpelling => EnglishSpelling.American;
 
@@ -204,6 +207,7 @@ public sealed class LivePreviewController : IAsyncDisposable
 
             var wordCorrectionEnabled = _effects.WordCorrectionEnabled;
             var customWords = _effects.CustomWords;
+            var enabledVocabularyPackIds = _effects.EnabledVocabularyPackIds;
             var englishSpelling = _effects.EnglishSpelling;
             _work = RunAsync(
                 sessionId,
@@ -211,6 +215,7 @@ public sealed class LivePreviewController : IAsyncDisposable
                 audio,
                 wordCorrectionEnabled,
                 customWords,
+                enabledVocabularyPackIds,
                 englishSpelling,
                 closure,
                 cancellation.Token);
@@ -227,6 +232,7 @@ public sealed class LivePreviewController : IAsyncDisposable
         IAudioSnapshotSource audio,
         bool wordCorrectionEnabled,
         IReadOnlyList<CustomWordEntry> customWords,
+        IReadOnlyList<string> enabledVocabularyPackIds,
         EnglishSpelling englishSpelling,
         int closure,
         CancellationToken cancellationToken)
@@ -309,7 +315,8 @@ public sealed class LivePreviewController : IAsyncDisposable
                         englishSpelling,
                         update.DetectedLanguage,
                         update.RecognitionLanguage,
-                        engine.EngineId);
+                        engine.EngineId,
+                        enabledVocabularyPackIds: enabledVocabularyPackIds);
                     _effects.ShowPreview(new LivePreviewFrame(
                         sessionId,
                         displayText,

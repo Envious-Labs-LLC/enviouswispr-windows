@@ -677,7 +677,7 @@ public sealed class PostHogSentryTelemetryTests
             // Fresh install (missing file) defaults both ShareAnonymousTelemetry and SendCrashReports to true.
             var fresh = await store.LoadAsync();
             Assert.Equal(SettingsLoadStatus.Missing, fresh.Status);
-            Assert.Equal(21, fresh.Settings.SchemaVersion);
+            Assert.Equal(AppSettings.CurrentSchemaVersion, fresh.Settings.SchemaVersion);
             Assert.True(fresh.Settings.Observability?.ShareAnonymousTelemetry);
             Assert.True(fresh.Settings.Observability?.SendCrashReports);
 
@@ -698,7 +698,7 @@ public sealed class PostHogSentryTelemetryTests
             var migrated = await store.LoadAsync();
             Assert.Equal(SettingsLoadStatus.Migrated, migrated.Status);
             Assert.Equal(20, migrated.SourceSchemaVersion);
-            Assert.Equal(21, migrated.Settings.SchemaVersion);
+            Assert.Equal(AppSettings.CurrentSchemaVersion, migrated.Settings.SchemaVersion);
             Assert.False(migrated.Settings.Observability?.ShareAnonymousTelemetry);
             Assert.False(migrated.Settings.Observability?.SendCrashReports);
 
@@ -719,14 +719,14 @@ public sealed class PostHogSentryTelemetryTests
             Assert.True(migratedOptedIn.Settings.Observability?.ShareAnonymousTelemetry);
             Assert.True(migratedOptedIn.Settings.Observability?.SendCrashReports);
 
-            // Migrate v14 PortableProfile -> v15.
+            // Migrate v14 PortableProfile -> current.
             var profilePath = Path.Combine(directory, "profile.enviouswispr.json");
             var v14Profile = JsonSettingsStoreTests.CreatePopulatedSettings().ToPortableProfile() with { SchemaVersion = 14 };
             await File.WriteAllTextAsync(profilePath, JsonSerializer.Serialize(v14Profile, JsonSettingsStore.SerializerOptions));
 
             var profileResult = await new JsonPortableProfileService().ImportAsync(profilePath);
             Assert.Equal(PortableProfileImportStatus.Imported, profileResult.Status);
-            Assert.Equal(15, profileResult.Profile?.SchemaVersion);
+            Assert.Equal(PortableProfile.CurrentSchemaVersion, profileResult.Profile?.SchemaVersion);
         });
     }
 

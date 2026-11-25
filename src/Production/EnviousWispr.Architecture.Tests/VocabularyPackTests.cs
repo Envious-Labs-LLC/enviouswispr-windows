@@ -117,4 +117,41 @@ public sealed class VocabularyPackTests
         var ids = VocabularyPacks.All.Select(pack => pack.Id).ToArray();
         Assert.Equal(ids.Length, ids.Distinct(StringComparer.Ordinal).Count());
     }
+
+    [Fact]
+    public void AllFiveMacOsVocabularyPacksLoadWithAccurateCountsTermsAndExamples()
+    {
+        Assert.Equal(["tech", "medical", "legal", "brands", "names"], VocabularyPacks.All.Select(p => p.Id));
+
+        Assert.Equal(76, VocabularyPacks.Tech.FixCount);
+        Assert.Equal(87, VocabularyPacks.Medical.FixCount);
+        Assert.Equal(32, VocabularyPacks.Legal.FixCount);
+        Assert.Equal(106, VocabularyPacks.Brands.FixCount);
+        Assert.Equal(90, VocabularyPacks.Names.FixCount);
+
+        foreach (var pack in VocabularyPacks.All)
+        {
+            Assert.Equal(pack.FixCount, pack.Terms.Count);
+            Assert.Equal(pack.FixCount, pack.Entries.Count);
+            Assert.Equal(3, pack.ExampleTerms.Count);
+            Assert.All(pack.Terms, term =>
+            {
+                Assert.False(string.IsNullOrWhiteSpace(term.Canonical));
+                Assert.NotEmpty(term.Aliases);
+            });
+        }
+
+        Assert.Equal(["AngularJS", "Bazel", "Blazor"], VocabularyPacks.Tech.ExampleTerms);
+        Assert.Equal(["Celexa", "Fosamax", "Humira"], VocabularyPacks.Medical.ExampleTerms);
+        Assert.Equal(["FERPA", "NLRB", "accord"], VocabularyPacks.Legal.ExampleTerms);
+        Assert.Equal(["ASUS", "Adyen", "Aetna"], VocabularyPacks.Brands.ExampleTerms);
+        Assert.Equal(["Acosta", "Adeline", "Aguirre"], VocabularyPacks.Names.ExampleTerms);
+    }
+
+    [Fact]
+    public void ResolveEntriesNormalizesPackIdsAndIgnoresUnknownOnes()
+    {
+        var resolved = VocabularyPacks.ResolveEntries(["TECH", "unknown-pack", "legal", "tech"]);
+        Assert.Equal(VocabularyPacks.Tech.FixCount + VocabularyPacks.Legal.FixCount, resolved.Count);
+    }
 }

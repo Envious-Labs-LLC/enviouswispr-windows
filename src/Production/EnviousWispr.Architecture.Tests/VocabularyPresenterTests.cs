@@ -103,7 +103,7 @@ public sealed class VocabularyPresenterTests
     public void FilterWordsWithAllCategoryReturnsAllWords()
     {
         var custom = new CustomWordEntry("my custom term", "MyCustomTerm");
-        var pack = new CustomWordEntry("kubernetes", "Kubernetes");
+        var pack = new CustomWordEntry("ekipt", "accept");
         var words = new[] { custom, pack };
 
         var result = VocabularyPresenter.FilterWords(words, "all");
@@ -117,7 +117,7 @@ public sealed class VocabularyPresenterTests
     public void FilterWordsWithCustomCategoryReturnsOnlyNonPackWords()
     {
         var custom = new CustomWordEntry("saurabh", "Saurabh");
-        var pack = new CustomWordEntry("postgres", "PostgreSQL");
+        var pack = new CustomWordEntry("ekipt", "accept");
         var words = new[] { custom, pack };
 
         var result = VocabularyPresenter.FilterWords(words, "custom");
@@ -130,8 +130,8 @@ public sealed class VocabularyPresenterTests
     public void FilterWordsWithPacksCategoryReturnsOnlyPackWords()
     {
         var custom = new CustomWordEntry("saurabh", "Saurabh");
-        var pack1 = new CustomWordEntry("kubernetes", "Kubernetes");
-        var pack2 = new CustomWordEntry("parakeet", "Parakeet");
+        var pack1 = new CustomWordEntry("ekipt", "accept");
+        var pack2 = new CustomWordEntry("esync", "async");
         var words = new[] { custom, pack1, pack2 };
 
         var result = VocabularyPresenter.FilterWords(words, "packs");
@@ -146,21 +146,102 @@ public sealed class VocabularyPresenterTests
     public void FilterWordsWithQueryRefinesFilteredResults()
     {
         var custom1 = new CustomWordEntry("alpha key", "Alpha");
-        var custom2 = new CustomWordEntry("beta token", "Beta");
-        var pack = new CustomWordEntry("kubernetes", "Kubernetes");
+        var custom2 = new CustomWordEntry(["beta token", "second beta alias"], "Beta");
+        var pack = new CustomWordEntry("ekipt", "accept");
         var words = new[] { custom1, custom2, pack };
 
-        var result = VocabularyPresenter.FilterWords(words, "custom", query: "token");
+        var result = VocabularyPresenter.FilterWords(words, "custom", query: "second beta");
 
         var single = Assert.Single(result);
         Assert.Same(custom2, single);
     }
 
     [Fact]
+    public void FilterWordsByWordCategoryFiltersCleanlyAcrossAllFiveCategories()
+    {
+        var general = new CustomWordEntry(["foo"], "Foo", category: WordCategory.General);
+        var person = new CustomWordEntry(["john doh"], "John Doe", category: WordCategory.Person);
+        var brand = new CustomWordEntry(["anthro pick"], "Anthropic", category: WordCategory.Brand);
+        var acronym = new CustomWordEntry(["fur pa"], "FERPA", category: WordCategory.Acronym);
+        var domain = new CustomWordEntry(["cube"], "Kubernetes", category: WordCategory.Domain);
+        var words = new[] { general, person, brand, acronym, domain };
+
+        Assert.Equal([person], VocabularyPresenter.FilterWords(words, "person"));
+        Assert.Equal([brand], VocabularyPresenter.FilterWords(words, WordCategory.Brand));
+        Assert.Equal([acronym], VocabularyPresenter.FilterWords(words, "acronym"));
+        Assert.Equal([domain], VocabularyPresenter.FilterWords(words, WordCategory.Domain));
+        Assert.Equal(5, VocabularyPresenter.FilterWords(words, (WordCategory?)null).Count);
+    }
+
+    [Fact]
+    public async Task AddAndUpdateMultiAliasWordPreservesIdAliasesAndCategoryAndDetectsClashes()
+    {
+        var (presenter, store) = Build();
+
+        var add = await presenter.AddMultiAliasWordAsync(
+            ["kube", "q burnett", "k8s"],
+            "Kubernetes",
+            MatchStrictness.Loose,
+            WordCategory.Domain).WaitAsync(Patience);
+
+        Assert.True(add.Saved);
+        Assert.Null(add.Value.Refusal);
+        var created = Assert.Single(store.Saved!.UserData.CustomWords);
+        Assert.Equal(["kube", "q burnett", "k8s"], created.Aliases);
+        Assert.Equal(WordCategory.Domain, created.Category);
+        Assert.Equal(MatchStrictness.Loose, created.Strictness);
+        Assert.False(string.IsNullOrWhiteSpace(created.Id));
+
+        var duplicateAlias = await presenter.AddMultiAliasWordAsync(
+            ["k8s"],
+            "AnotherTarget",
+            MatchStrictness.Default,
+            WordCategory.General).WaitAsync(Patience);
+        Assert.Equal(WordEditRefusal.DuplicateSpokenForm, duplicateAlias.Value.Refusal);
+
+        var updated = await presenter.UpdateMultiAliasWordAsync(
+            created,
+            ["kube", "coobernetes"],
+            "Kubernetes",
+            MatchStrictness.Strict,
+            WordCategory.Brand).WaitAsync(Patience);
+
+        Assert.True(updated.Saved);
+        Assert.Null(updated.Value.Refusal);
+        var stored = Assert.Single(store.Saved!.UserData.CustomWords);
+        Assert.Equal(created.Id, stored.Id);
+        Assert.Equal(["kube", "coobernetes"], stored.Aliases);
+        Assert.Equal(MatchStrictness.Strict, stored.Strictness);
+        Assert.Equal(WordCategory.Brand, stored.Category);
+    }
+
+    [Fact]
+    public async Task SetVocabularyPackEnabledTogglesLayerWithoutMutatingCustomWords()
+    {
+        var custom = new CustomWordEntry("saurabh", "Saurabh");
+        var (presenter, store) = Build(words: [custom]);
+
+        var enable = await presenter.SetVocabularyPackEnabledAsync("tech", true).WaitAsync(Patience);
+        Assert.True(enable.Saved);
+        Assert.Equal(["tech"], store.Saved!.UserData.EnabledVocabularyPackIds);
+        Assert.Equal([custom], store.Saved.UserData.CustomWords);
+
+        var enableMedical = await presenter.SetVocabularyPackEnabledAsync("medical", true).WaitAsync(Patience);
+        Assert.True(enableMedical.Saved);
+        Assert.Equal(["tech", "medical"], store.Saved!.UserData.EnabledVocabularyPackIds);
+        Assert.Equal([custom], store.Saved.UserData.CustomWords);
+
+        var disableTech = await presenter.SetVocabularyPackEnabledAsync("tech", false).WaitAsync(Patience);
+        Assert.True(disableTech.Saved);
+        Assert.Equal(["medical"], store.Saved!.UserData.EnabledVocabularyPackIds);
+        Assert.Equal([custom], store.Saved.UserData.CustomWords);
+    }
+
+    [Fact]
     public void IsPackWordDistinguishesPackFromCustomEntries()
     {
-        Assert.True(VocabularyPresenter.IsPackWord(new CustomWordEntry("kubernetes", "Kubernetes")));
-        Assert.True(VocabularyPresenter.IsPackWord(new CustomWordEntry("envious wispr", "EnviousWispr")));
+        Assert.True(VocabularyPresenter.IsPackWord(new CustomWordEntry("ekipt", "accept")));
+        Assert.True(VocabularyPresenter.IsPackWord(new CustomWordEntry("archord", "accord")));
         Assert.False(VocabularyPresenter.IsPackWord(new CustomWordEntry("random phrase", "RandomPhrase")));
     }
 

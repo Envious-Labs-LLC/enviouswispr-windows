@@ -119,6 +119,7 @@ public partial class App : Application, IAsyncDisposable
     /// <summary>The dictation the tray last named; written on the UI thread, where the tray reads it.</summary>
     private Guid? _lastDictationPreviewEntry;
     private IReadOnlyList<CustomWordEntry> _customWords = [];
+    private IReadOnlyList<string> _enabledVocabularyPackIds = [];
     private SnippetVocabulary _snippetVocabulary = SnippetVocabulary.Empty;
     // VOLATILE BECAUSE THE HOTKEY THREAD READS IT AND THE UI THREAD REPLACES IT. The record itself
     // is immutable and cannot tear, but the REFERENCE can be read stale, and one of its readers is
@@ -189,6 +190,7 @@ public partial class App : Application, IAsyncDisposable
                 LivePreviewEnabled: () => _settings.Preferences.LivePreviewEnabled,
                 History: () => _settings.Preferences.History,
                 CustomWords: () => _settings.UserData.CustomWords,
+                EnabledVocabularyPackIds: () => _settings.UserData.EnabledVocabularyPackIds,
                 Audio: () => _audioCapture as IAudioSnapshotSource,
                 Engine: () => _transcriptionEngine,
                 PreviewEngine: () => _previewEngine,
@@ -322,6 +324,7 @@ public partial class App : Application, IAsyncDisposable
         };
         _settings = settings;
         _customWords = settings.UserData.CustomWords;
+        _enabledVocabularyPackIds = settings.UserData.EnabledVocabularyPackIds;
         _snippetVocabulary = SnippetVocabulary.From(settings.UserData);
         _deterministicTextOptions = DeterministicTextOptions.From(settings.Preferences.Dictation);
         ConfigurePolish(settings.Preferences.Polish);
@@ -797,7 +800,8 @@ public partial class App : Application, IAsyncDisposable
         var request = new DeterministicTextRequest(
             new Transcript(DictationSessionId.Create(), spoken, "speed-check", []),
             _customWords,
-            _deterministicTextOptions);
+            _deterministicTextOptions,
+            EnabledVocabularyPackIds: _enabledVocabularyPackIds);
 
         var timings = new List<double>(SpeedCheckRuns);
         for (var run = 0; run <= SpeedCheckRuns; run++)
@@ -982,6 +986,7 @@ public partial class App : Application, IAsyncDisposable
         var previousPreviewEngine = _settings.Preferences.LivePreviewEngine;
         _settings = settings;
         _customWords = settings.UserData.CustomWords;
+        _enabledVocabularyPackIds = settings.UserData.EnabledVocabularyPackIds;
         _snippetVocabulary = SnippetVocabulary.From(settings.UserData);
         _deterministicTextOptions = DeterministicTextOptions.From(settings.Preferences.Dictation);
         try
@@ -1957,7 +1962,7 @@ public partial class App : Application, IAsyncDisposable
                 Dictation: () => _settings.Preferences.Dictation,
                 Engine: () => _transcriptionEngine,
                 Delivery: () => _textDelivery,
-                Options: () => new FinalizationOptions(_customWords, _deterministicTextOptions, _snippetVocabulary, CurrentPolishSetup()),
+                Options: () => new FinalizationOptions(_customWords, _deterministicTextOptions, _snippetVocabulary, CurrentPolishSetup(), _enabledVocabularyPackIds),
                 CloudPolishProviderName: () => _cloudPolishConsent?.ProviderName,
                 RunId: () => _runId,
                 RecordingActive: active => _pushToTalkHook?.SetRecordingActive(active),
@@ -2718,7 +2723,8 @@ public partial class App : Application, IAsyncDisposable
                                 new DeterministicTextRequest(
                                     transcript,
                                     _settings.UserData.CustomWords,
-                                    _deterministicTextOptions with { CasualModeEnabled = false }),
+                                    _deterministicTextOptions with { CasualModeEnabled = false },
+                                    EnabledVocabularyPackIds: _settings.UserData.EnabledVocabularyPackIds),
                                 token).ConfigureAwait(false)).Output.Text);
                     result = await Task.Run(
                         () => FileTranscriptionJob.RunAsync(source, environment, progress, run.Token),

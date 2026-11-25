@@ -104,7 +104,8 @@ public sealed record FinalizationOptions(
     IReadOnlyList<CustomWordEntry> CustomWords,
     DeterministicTextOptions TextOptions,
     SnippetVocabulary Snippets,
-    PolishSetup? Polish);
+    PolishSetup? Polish,
+    IReadOnlyList<string>? EnabledVocabularyPackIds = null);
 
 /// <summary>
 /// Turns a finished capture into delivered text: the speech engine, the text decisions, delivery,
@@ -359,6 +360,7 @@ public sealed class SessionFinalizationRunner : ISessionFinalization
                     options.Snippets,
                     options.Polish,
                     targetAppName: targetAppName,
+                    enabledVocabularyPackIds: options.EnabledVocabularyPackIds,
                     cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
             var processed = finalized.Processed;

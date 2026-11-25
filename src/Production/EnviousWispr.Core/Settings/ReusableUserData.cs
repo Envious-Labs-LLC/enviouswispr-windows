@@ -1,28 +1,348 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace EnviousWispr.Core.Settings;
 
-public sealed record CustomWordEntry(
-    string SpokenForm,
-    string Replacement,
-    MatchStrictness Strictness = MatchStrictness.Default)
+[JsonConverter(typeof(CustomWordEntryJsonConverter))]
+public sealed record CustomWordEntry
 {
+    public CustomWordEntry(
+        string spokenForm,
+        string replacement,
+        MatchStrictness strictness = MatchStrictness.Default)
+        : this(
+            aliases: string.IsNullOrWhiteSpace(spokenForm) ? [] : [spokenForm],
+            replacement: replacement,
+            strictness: strictness,
+            category: WordCategory.General,
+            id: null)
+    {
+    }
+
+    public CustomWordEntry(
+        IReadOnlyList<string> aliases,
+        string replacement,
+        MatchStrictness strictness = MatchStrictness.Default,
+        WordCategory category = WordCategory.General,
+        string? id = null)
+    {
+        Aliases = NormalizeAliases(aliases);
+        Replacement = replacement?.Trim() ?? string.Empty;
+        Strictness = strictness;
+        Category = category;
+        Id = !string.IsNullOrWhiteSpace(id)
+            ? id.Trim()
+            : CreateDeterministicId(Aliases, Replacement, Strictness, Category);
+    }
+
+    public const int MaximumAliasesPerEntry = 64;
+
+    public string Id { get; init; }
+
+    public IReadOnlyList<string> Aliases { get; init; }
+
+    public string Replacement { get; init; }
+
+    public MatchStrictness Strictness { get; init; }
+
+    public WordCategory Category { get; init; }
+
+    /// <summary>Primary spoken form for legacy 1-to-1 callers; falls back to <see cref="Replacement"/> when no aliases exist.</summary>
+    public string SpokenForm => Aliases.Count > 0 ? Aliases[0] : Replacement;
+
+    public bool Equals(CustomWordEntry? other)
+    {
+        if (ReferenceEquals(this, other))
+        {
+            return true;
+        }
+
+        if (other is null)
+        {
+            return false;
+        }
+
+        return string.Equals(Id, other.Id, StringComparison.Ordinal) &&
+               string.Equals(Replacement, other.Replacement, StringComparison.Ordinal) &&
+               Strictness == other.Strictness &&
+               Category == other.Category &&
+               Aliases.SequenceEqual(other.Aliases, StringComparer.Ordinal);
+    }
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(Id, StringComparer.Ordinal);
+        hash.Add(Replacement, StringComparer.Ordinal);
+        hash.Add(Strictness);
+        hash.Add(Category);
+        foreach (var alias in Aliases)
+        {
+            hash.Add(alias, StringComparer.Ordinal);
+        }
+
+        return hash.ToHashCode();
+    }
+
+    public static IReadOnlyList<string> NormalizeAliases(IEnumerable<string>? aliases)
+    {
+        if (aliases is null)
+        {
+            return [];
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var normalized = new List<string>();
+        foreach (var raw in aliases)
+        {
+            var trimmed = raw?.Trim();
+            if (!string.IsNullOrEmpty(trimmed) && seen.Add(trimmed))
+            {
+                normalized.Add(trimmed);
+            }
+        }
+
+        return normalized.ToArray();
+    }
+
+    /// <summary>
+    /// Merges legacy 1-to-1 entries that share canonical <see cref="Replacement"/> (exact case),
+    /// <see cref="Strictness"/>, and <see cref="Category"/> into multi-alias entries without losing any spoken forms.
+    /// </summary>
+    public static IReadOnlyList<CustomWordEntry> NormalizeLegacyEntries(IReadOnlyList<CustomWordEntry>? entries)
+    {
+        if (entries is null || entries.Count <= 1)
+        {
+            return entries ?? [];
+        }
+
+        var merged = new List<CustomWordEntry>(entries.Count);
+        var activeIndices = new Dictionary<(string Replacement, MatchStrictness Strictness, WordCategory Category), int>();
+        var seenByGroup = new Dictionary<(string Replacement, MatchStrictness Strictness, WordCategory Category), HashSet<string>>();
+        var changed = false;
+
+        foreach (var entry in entries)
+        {
+            if (entry is null)
+            {
+                changed = true;
+                continue;
+            }
+
+            var key = (entry.Replacement, entry.Strictness, entry.Category);
+            if (!seenByGroup.TryGetValue(key, out var groupSeen))
+            {
+                groupSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                seenByGroup[key] = groupSeen;
+                foreach (var alias in entry.Aliases)
+                {
+                    groupSeen.Add(alias);
+                }
+
+                if (entry.Aliases.Count <= MaximumAliasesPerEntry)
+                {
+                    activeIndices[key] = merged.Count;
+                    merged.Add(entry);
+                    continue;
+                }
+
+                changed = true;
+                foreach (var chunk in entry.Aliases.Chunk(MaximumAliasesPerEntry))
+                {
+                    activeIndices[key] = merged.Count;
+                    merged.Add(new CustomWordEntry(
+                        chunk,
+                        entry.Replacement,
+                        entry.Strictness,
+                        entry.Category,
+                        id: null));
+                }
+
+                continue;
+            }
+
+            var newAliases = new List<string>(entry.Aliases.Count);
+            foreach (var alias in entry.Aliases)
+            {
+                if (groupSeen.Add(alias))
+                {
+                    newAliases.Add(alias);
+                }
+            }
+
+            if (newAliases.Count == 0)
+            {
+                changed = true;
+                continue;
+            }
+
+            changed = true;
+            var activeIndex = activeIndices[key];
+            var active = merged[activeIndex];
+            var consumed = 0;
+            var space = MaximumAliasesPerEntry - active.Aliases.Count;
+            if (space > 0)
+            {
+                var take = Math.Min(space, newAliases.Count);
+                var combinedAliases = NormalizeAliases(active.Aliases.Concat(newAliases.Take(take)));
+                merged[activeIndex] = new CustomWordEntry(
+                    combinedAliases,
+                    active.Replacement,
+                    active.Strictness,
+                    active.Category,
+                    id: null);
+                consumed = take;
+            }
+
+            while (consumed < newAliases.Count)
+            {
+                var slice = newAliases.Skip(consumed).Take(MaximumAliasesPerEntry).ToArray();
+                consumed += slice.Length;
+                activeIndices[key] = merged.Count;
+                merged.Add(new CustomWordEntry(
+                    slice,
+                    entry.Replacement,
+                    entry.Strictness,
+                    entry.Category,
+                    id: null));
+            }
+        }
+
+        return changed ? merged.ToArray() : entries;
+    }
+
+    private static string CreateDeterministicId(
+        IReadOnlyList<string> aliases,
+        string replacement,
+        MatchStrictness strictness,
+        WordCategory category)
+    {
+        var input = new StringBuilder();
+        input.Append(replacement).Append('\0')
+            .Append((int)strictness).Append('\0')
+            .Append((int)category);
+        foreach (var alias in aliases)
+        {
+            input.Append('\0').Append(alias);
+        }
+
+        Span<byte> hash = stackalloc byte[32];
+        SHA256.HashData(Encoding.UTF8.GetBytes(input.ToString()), hash);
+        return new Guid(hash[..16]).ToString("D");
+    }
+
     /// <summary>
     /// What a screen reader announces for this row.
     /// </summary>
-    /// <remarks>
-    /// A record's generated ToString emits its type name and brace syntax, and a list row with no
-    /// explicit automation name falls back to exactly that. Measured on the running app, the row
-    /// announced "CustomWordEntry open brace SpokenForm equals zzz test entry comma Replacement
-    /// equals ZZZTestEntry close brace" before reaching anything a user cares about.
-    ///
-    /// The row's child text elements were already clean; only the container was wrong, and only
-    /// once a row was bound - which is why an audit of an EMPTY list found nothing.
-    /// </remarks>
-    public override string ToString() => Strictness switch
+    public override string ToString()
     {
-        MatchStrictness.Loose => $"{SpokenForm} becomes {Replacement}, matched loosely",
-        MatchStrictness.Strict => $"{SpokenForm} becomes {Replacement}, matched strictly",
-        _ => $"{SpokenForm} becomes {Replacement}",
-    };
+        var spoken = Aliases.Count > 0 ? string.Join(", ", Aliases) : Replacement;
+        return Strictness switch
+        {
+            MatchStrictness.Loose => $"{spoken} becomes {Replacement}, matched loosely",
+            MatchStrictness.Strict => $"{spoken} becomes {Replacement}, matched strictly",
+            _ => $"{spoken} becomes {Replacement}",
+        };
+    }
+}
+
+internal sealed class CustomWordEntryJsonConverter : JsonConverter<CustomWordEntry>
+{
+    public override CustomWordEntry? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.Null)
+        {
+            return null;
+        }
+
+        if (reader.TokenType != JsonTokenType.StartObject)
+        {
+            throw new JsonException("Expected object for CustomWordEntry.");
+        }
+
+        string? id = null;
+        List<string>? aliases = null;
+        string? legacySpokenForm = null;
+        string? replacement = null;
+        var strictness = MatchStrictness.Default;
+        var category = WordCategory.General;
+
+        while (reader.Read())
+        {
+            if (reader.TokenType == JsonTokenType.EndObject)
+            {
+                var combined = new List<string>();
+                if (aliases is not null)
+                {
+                    combined.AddRange(aliases);
+                }
+
+                if (!string.IsNullOrWhiteSpace(legacySpokenForm))
+                {
+                    combined.Add(legacySpokenForm);
+                }
+
+                return new CustomWordEntry(
+                    combined,
+                    replacement ?? string.Empty,
+                    strictness,
+                    category,
+                    id);
+            }
+
+            if (reader.TokenType != JsonTokenType.PropertyName)
+            {
+                throw new JsonException("Expected property name in CustomWordEntry.");
+            }
+
+            var propertyName = reader.GetString();
+            reader.Read();
+
+            switch (propertyName)
+            {
+                case "id":
+                    id = reader.TokenType == JsonTokenType.Null ? null : reader.GetString();
+                    break;
+                case "aliases":
+                    aliases = reader.TokenType == JsonTokenType.Null
+                        ? null
+                        : JsonSerializer.Deserialize<List<string>>(ref reader, options);
+                    break;
+                case "spokenForm":
+                    legacySpokenForm = reader.TokenType == JsonTokenType.Null ? null : reader.GetString();
+                    break;
+                case "replacement":
+                    replacement = reader.TokenType == JsonTokenType.Null ? null : reader.GetString();
+                    break;
+                case "strictness":
+                    strictness = JsonSerializer.Deserialize<MatchStrictness>(ref reader, options);
+                    break;
+                case "category":
+                    category = JsonSerializer.Deserialize<WordCategory>(ref reader, options);
+                    break;
+                default:
+                    throw new JsonException($"Unmapped property '{propertyName}' on CustomWordEntry.");
+            }
+        }
+
+        throw new JsonException("Unexpected end of JSON while reading CustomWordEntry.");
+    }
+
+    public override void Write(Utf8JsonWriter writer, CustomWordEntry value, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("id", value.Id);
+        writer.WritePropertyName("aliases");
+        JsonSerializer.Serialize(writer, value.Aliases, options);
+        writer.WriteString("replacement", value.Replacement);
+        writer.WritePropertyName("strictness");
+        JsonSerializer.Serialize(writer, value.Strictness, options);
+        writer.WritePropertyName("category");
+        JsonSerializer.Serialize(writer, value.Category, options);
+        writer.WriteEndObject();
+    }
 }
 
 /// <summary>One saved snippet.</summary>
@@ -63,7 +383,8 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
     public ReusableUserData(
         IReadOnlyList<CustomWordEntry> customWords,
         IReadOnlyList<SnippetEntry> snippets,
-        string? snippetKeyword = null)
+        string? snippetKeyword = null,
+        IReadOnlyList<string>? enabledVocabularyPackIds = null)
     {
         ArgumentNullException.ThrowIfNull(customWords);
         ArgumentNullException.ThrowIfNull(snippets);
@@ -72,6 +393,7 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
         SnippetKeyword = string.IsNullOrWhiteSpace(snippetKeyword)
             ? SnippetVocabulary.DefaultKeyword
             : snippetKeyword;
+        EnabledVocabularyPackIds = NormalizePackIds(enabledVocabularyPackIds);
     }
 
     public IReadOnlyList<CustomWordEntry> CustomWords { get; }
@@ -81,17 +403,24 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
     /// <summary>The word spoken immediately before a snippet's trigger; "backslash" unless the person chose another.</summary>
     public string SnippetKeyword { get; }
 
-    /// <summary>The same data with other words, keeping the snippets and the keyword.</summary>
+    /// <summary>IDs of toggleable vocabulary packs active for deterministic correction.</summary>
+    public IReadOnlyList<string> EnabledVocabularyPackIds { get; }
+
+    /// <summary>The same data with other words, keeping the snippets, keyword, and enabled packs.</summary>
     public ReusableUserData WithCustomWords(IReadOnlyList<CustomWordEntry> customWords) =>
-        new(customWords, Snippets, SnippetKeyword);
+        new(customWords, Snippets, SnippetKeyword, EnabledVocabularyPackIds);
 
-    /// <summary>The same data with other snippets, keeping the words and the keyword.</summary>
+    /// <summary>The same data with other snippets, keeping the words, keyword, and enabled packs.</summary>
     public ReusableUserData WithSnippets(IReadOnlyList<SnippetEntry> snippets) =>
-        new(CustomWords, snippets, SnippetKeyword);
+        new(CustomWords, snippets, SnippetKeyword, EnabledVocabularyPackIds);
 
-    /// <summary>The same data with another keyword, keeping the words and the snippets.</summary>
+    /// <summary>The same data with another keyword, keeping the words, snippets, and enabled packs.</summary>
     public ReusableUserData WithSnippetKeyword(string snippetKeyword) =>
-        new(CustomWords, Snippets, snippetKeyword);
+        new(CustomWords, Snippets, snippetKeyword, EnabledVocabularyPackIds);
+
+    /// <summary>The same data with updated enabled vocabulary packs, leaving CustomWords untouched.</summary>
+    public ReusableUserData WithEnabledVocabularyPackIds(IReadOnlyList<string>? enabledVocabularyPackIds) =>
+        new(CustomWords, Snippets, SnippetKeyword, enabledVocabularyPackIds);
 
     public static ReusableUserData Empty { get; } = new(
         Array.Empty<CustomWordEntry>(),
@@ -101,7 +430,8 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
         other is not null &&
         CustomWords.SequenceEqual(other.CustomWords) &&
         Snippets.SequenceEqual(other.Snippets) &&
-        string.Equals(SnippetKeyword, other.SnippetKeyword, StringComparison.Ordinal);
+        string.Equals(SnippetKeyword, other.SnippetKeyword, StringComparison.Ordinal) &&
+        EnabledVocabularyPackIds.SequenceEqual(other.EnabledVocabularyPackIds, StringComparer.OrdinalIgnoreCase);
 
     public override bool Equals(object? obj) => Equals(obj as ReusableUserData);
 
@@ -119,7 +449,33 @@ public sealed class ReusableUserData : IEquatable<ReusableUserData>
         }
 
         hash.Add(SnippetKeyword, StringComparer.Ordinal);
+        foreach (var packId in EnabledVocabularyPackIds)
+        {
+            hash.Add(packId, StringComparer.OrdinalIgnoreCase);
+        }
+
         return hash.ToHashCode();
+    }
+
+    private static string[] NormalizePackIds(IReadOnlyList<string>? ids)
+    {
+        if (ids is null || ids.Count == 0)
+        {
+            return [];
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var normalized = new List<string>(ids.Count);
+        foreach (var raw in ids)
+        {
+            var trimmed = raw?.Trim();
+            if (!string.IsNullOrEmpty(trimmed) && seen.Add(trimmed))
+            {
+                normalized.Add(trimmed);
+            }
+        }
+
+        return normalized.ToArray();
     }
 }
 
@@ -128,5 +484,5 @@ public sealed record PortableProfile(
     UserPreferences Preferences,
     ReusableUserData UserData)
 {
-    public const int CurrentSchemaVersion = 15;
+    public const int CurrentSchemaVersion = 16;
 }

@@ -88,6 +88,7 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 12 => MigrateFromV12(json),
                 13 => MigrateFromV13(json),
                 14 => MigrateFromV14(json),
+                15 => MigrateFromV15(json),
                 PortableProfile.CurrentSchemaVersion => JsonSerializer.Deserialize<PortableProfile>(
                     json,
                     JsonSettingsStore.SerializerOptions),
@@ -104,6 +105,15 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                         Dictation = profile.Preferences.Dictation.WithoutClashingLastDictationShortcuts(),
                     },
                 };
+            }
+
+            if (profile?.UserData is { CustomWords.Count: > 1 } userData)
+            {
+                var normalized = CustomWordEntry.NormalizeLegacyEntries(userData.CustomWords);
+                if (!ReferenceEquals(normalized, userData.CustomWords))
+                {
+                    profile = profile with { UserData = userData.WithCustomWords(normalized) };
+                }
             }
 
             // A PROFILE CANNOT BRING IN A CANCEL OR ADD-A-WORD KEY WITH NO KEY OF ITS OWN: the hook refuses both, and with
@@ -319,6 +329,16 @@ public sealed class JsonPortableProfileService : IPortableProfileService
     }
 
     private static PortableProfile? MigrateFromV9(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<PortableProfile>(
+            json,
+            JsonSettingsStore.SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = PortableProfile.CurrentSchemaVersion };
+    }
+
+    private static PortableProfile? MigrateFromV15(string json)
     {
         var legacy = JsonSerializer.Deserialize<PortableProfile>(
             json,

@@ -113,10 +113,18 @@ public static class AppSettingsValidator
         userData is not null &&
         userData.CustomWords is not null &&
         userData.Snippets is not null &&
+        userData.EnabledVocabularyPackIds is not null &&
         userData.CustomWords.Count <= MaximumCustomWords &&
         userData.Snippets.Count <= MaximumSnippets &&
+        userData.EnabledVocabularyPackIds.Count <= 32 &&
+        userData.EnabledVocabularyPackIds.All(id => !string.IsNullOrWhiteSpace(id) && id.Length <= 64) &&
         userData.CustomWords.All(entry =>
             entry is not null &&
+            !string.IsNullOrWhiteSpace(entry.Id) &&
+            entry.Id.Length <= 128 &&
+            entry.Aliases is not null &&
+            entry.Aliases.Count <= CustomWordEntry.MaximumAliasesPerEntry &&
+            entry.Aliases.All(alias => !string.IsNullOrWhiteSpace(alias) && alias.Length <= 256) &&
             !string.IsNullOrWhiteSpace(entry.SpokenForm) &&
             entry.SpokenForm.Length <= 256 &&
             !string.IsNullOrWhiteSpace(entry.Replacement) &&
@@ -125,7 +133,8 @@ public static class AppSettingsValidator
             // contains, so "strictness": 99 loads, behaves as the ordinary rule and is exported as
             // "default" - a file that changed meaning on the way through and said nothing. Refusing
             // it makes the file visibly wrong instead.
-            Enum.IsDefined(entry.Strictness)) &&
+            Enum.IsDefined(entry.Strictness) &&
+            Enum.IsDefined(entry.Category)) &&
         // THE KEYWORD IS NOT HELD TO ITS SAVE-TIME RULE HERE. A keyword of two words cannot fire, and
         // the page refuses one, but refusing it at load would reset every setting a person has over
         // one word; it is bounded only so a file cannot carry an arbitrary string.

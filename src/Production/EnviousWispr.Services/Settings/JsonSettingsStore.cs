@@ -80,6 +80,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 18 => MigrateFromV18(json),
                 19 => MigrateFromV19(json),
                 20 => MigrateFromV20(json),
+                21 => MigrateFromV21(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -113,6 +114,15 @@ public sealed class JsonSettingsStore : ISettingsStore
                         Dictation = settings.Preferences.Dictation.WithoutClashingLastDictationShortcuts(),
                     },
                 };
+            }
+
+            if (settings?.UserData is { CustomWords.Count: > 1 } userData)
+            {
+                var normalized = CustomWordEntry.NormalizeLegacyEntries(userData.CustomWords);
+                if (!ReferenceEquals(normalized, userData.CustomWords))
+                {
+                    settings = settings with { UserData = userData.WithCustomWords(normalized) };
+                }
             }
 
             var validationError = AppSettingsValidator.Validate(settings, AppErrorStage.SettingsLoad);
@@ -541,6 +551,15 @@ public sealed class JsonSettingsStore : ISettingsStore
     /// SendCrashReports switch to true, matching macOS PrivacySettingsView.
     /// </remarks>
     private static AppSettings? MigrateFromV20(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+    }
+
+    /// <summary>Takes a settings file written before multi-alias dictionary entries, categories, and isolated vocabulary packs existed.</summary>
+    private static AppSettings? MigrateFromV21(string json)
     {
         var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
         return legacy is null
