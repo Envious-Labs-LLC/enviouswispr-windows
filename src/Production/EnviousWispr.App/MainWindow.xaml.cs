@@ -4297,7 +4297,19 @@ public sealed partial class MainWindow : Window, IDisposable
         var shownCount = DictionaryList.Items.Count;
         if (DictionaryList.SelectionMode != ListViewSelectionMode.Multiple)
         {
-            MassEditWordsToggle_Click(sender, e);
+            if (!_isDictionaryMassEdit)
+            {
+                MassEditWordsToggle_Click(sender, e);
+            }
+            else
+            {
+                DictionaryList.SelectionMode = ListViewSelectionMode.Multiple;
+            }
+        }
+
+        if (DictionaryList.SelectionMode != ListViewSelectionMode.Multiple)
+        {
+            return;
         }
 
         if (DictionaryList.SelectedItems.Count == shownCount && shownCount > 0)
@@ -4321,10 +4333,12 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private async void RemoveWordButton_Click(object sender, RoutedEventArgs e)
     {
-        var selected = DictionaryList.SelectedItems
-            .Select(item => item is DictionaryWordRow row ? row.Entry : item as CustomWordEntry)
-            .OfType<CustomWordEntry>()
-            .ToArray();
+        var selected = DictionaryList.SelectionMode == ListViewSelectionMode.None
+            ? Array.Empty<CustomWordEntry>()
+            : DictionaryList.SelectedItems
+                .Select(item => item is DictionaryWordRow row ? row.Entry : item as CustomWordEntry)
+                .OfType<CustomWordEntry>()
+                .ToArray();
         if (selected.Length == 0)
         {
             ShowMessage("Select a word first", "Choose the dictionary rows you want to remove.", InfoBarSeverity.Informational);
@@ -5794,7 +5808,9 @@ public sealed partial class MainWindow : Window, IDisposable
             }
         }
 
-        var selectedWords = DictionaryList.SelectedItems.Count;
+        var selectedWords = DictionaryList.SelectionMode == ListViewSelectionMode.None
+            ? 0
+            : DictionaryList.SelectedItems.Count;
         RemoveWordButton.IsEnabled = selectedWords > 0;
         SelectAllWordsButton.IsEnabled = (_settings?.UserData.CustomWords.Count ?? 0) > 0;
 
@@ -7602,13 +7618,17 @@ public sealed partial class MainWindow : Window, IDisposable
     private void MassEditWordsToggle_Click(object sender, RoutedEventArgs e)
     {
         _isDictionaryMassEdit = !_isDictionaryMassEdit;
+        if (DictionaryList.SelectionMode != ListViewSelectionMode.None)
+        {
+            DictionaryList.SelectedItems.Clear();
+        }
+
         DictionaryList.SelectionMode = _isDictionaryMassEdit
             ? ListViewSelectionMode.Multiple
             : ListViewSelectionMode.None;
-        DictionaryList.SelectedItems.Clear();
         DictionaryMassEditBar.Visibility = _isDictionaryMassEdit ? Visibility.Visible : Visibility.Collapsed;
         MassEditWordsToggle.Style = (Style)Application.Current.Resources[
-            _isDictionaryMassEdit ? "BrandTabStripActiveButtonStyle" : "BrandQuietButtonStyle"];
+            _isDictionaryMassEdit ? "BrandQuietActiveButtonStyle" : "BrandQuietButtonStyle"];
         UpdateSelectionDependentButtons();
     }
 
