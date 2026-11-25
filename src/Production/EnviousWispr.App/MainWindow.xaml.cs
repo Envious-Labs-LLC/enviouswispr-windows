@@ -255,8 +255,10 @@ public sealed partial class MainWindow : Window, IDisposable
     // person can install once the dictation or the file has finished without checking again.
     private bool _updateOffered;
     private readonly DictationOverlayWindow _overlayWindow;
-    private readonly RecordingSoundCuePlayer _recordingSoundPlayer = new();
+    private readonly RecordingSoundCuePlayer _recordingSoundPlayer;
     private readonly RecordingSoundCueCoordinator _recordingSoundCoordinator;
+    private long _recordingSoundAttempt;
+    private bool _shuttingDownProductWindows;
     private readonly List<DictationHistoryEntry> _history = [];
     private IReadOnlyList<MicrophoneChoice> _microphones = [];
     /// <summary>The session's catalogue, once the microphone list has asked for it; the window subscribes and unsubscribes, the session owns and disposes.</summary>
@@ -436,8 +438,10 @@ public sealed partial class MainWindow : Window, IDisposable
                 new KeyEventHandler(ChoiceListKeyDown),
                 handledEventsToo: true);
         }
-        _recordingSoundCoordinator = new RecordingSoundCueCoordinator(
-            _recordingSoundPlayer.Play);
+        _recordingSoundPlayer = new RecordingSoundCuePlayer(
+            onPlaybackFailed: OnRecordingSoundCueFailed);
+        _recordingSoundCoordinator = new RecordingSoundCueCoordinator(PlayRecordingSoundCue);
+        PreloadRecordingSoundsInBackground(_selectedRecordingSoundPairing);
         InitializeChimeCards();
         SetTranscribeFileStep(1);
         _overlayWindow = new DictationOverlayWindow();
@@ -448,6 +452,15 @@ public sealed partial class MainWindow : Window, IDisposable
             settings.Preferences.LivePreviewEnabled,
             settings.Preferences.PillDesignWithoutWords,
             settings.Preferences.PillDesignWithWords);
+        DispatcherQueue?.TryEnqueue(
+            Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+            () =>
+            {
+                if (!_shuttingDownProductWindows)
+                {
+                    _overlayWindow.PreWarm();
+                }
+            });
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
 
@@ -519,6 +532,8 @@ public sealed partial class MainWindow : Window, IDisposable
     /// rebuilt one surface over.
     /// </remarks>
     public event Action<DictationStatus>? SessionStatusChanged;
+
+    public event Action<RecordingSoundPairing, RecordingSoundMoment>? RecordingSoundPlaybackFailed;
 
     public event Action<AudioDeviceChange>? AudioDevicesChanged;
 
@@ -801,9 +816,10 @@ public sealed partial class MainWindow : Window, IDisposable
     public void SetSessionStatus(DictationStatus status)
     {
         var sentence = status.Text;
-        SessionStatusChanged?.Invoke(status);
         var overlayState = status.State;
+        _overlayWindow.ShowState(status);
         HandleRecordingSoundTransition(overlayState);
+        SessionStatusChanged?.Invoke(status);
         if (overlayState is DictationOverlayState.Recording or DictationOverlayState.Processing)
         {
             // A DICTATION OUTRANKS A TEST OR CAPTURE, ALWAYS. Somebody who presses their record key wants to
@@ -826,7 +842,6 @@ public sealed partial class MainWindow : Window, IDisposable
             button.IsEnabled = overlayState != DictationOverlayState.Recording;
         }
         SetSpeedCheckAvailability(overlayState != DictationOverlayState.Recording);
-        _overlayWindow.ShowState(status);
         // THE STATUS SAYS WHETHER IT BELONGS HERE; THIS NO LONGER GUESSES FROM THE WORDS. What stood
         // here tested the sentence for "ready", "model is not installed", "transcription is
         // unavailable" and "worker could not start", which is the same mistake `OverlayStateFor` was
@@ -842,12 +857,62 @@ public sealed partial class MainWindow : Window, IDisposable
         ObserveStatusForOnboarding(status);
     }
 
+    public void CancelRecordingSoundCue()
+    {
+        Interlocked.Increment(ref _recordingSoundAttempt);
+        _recordingSoundPlayer.CancelPendingStart();
+        _recordingSoundCoordinator.CancelActive();
+    }
+
     private void HandleRecordingSoundTransition(DictationOverlayState nextState)
     {
+        if (nextState != DictationOverlayState.Recording)
+        {
+            Interlocked.Increment(ref _recordingSoundAttempt);
+        }
+
         _recordingSoundCoordinator.Handle(
             isRecording: nextState == DictationOverlayState.Recording,
             _settings.Preferences.PlayRecordingSounds,
             _settings.Preferences.RecordingSoundPairing);
+    }
+
+    private bool PlayRecordingSoundCue(RecordingSoundPairing pairing, RecordingSoundMoment moment)
+    {
+        if (moment == RecordingSoundMoment.Start)
+        {
+            var attempt = Interlocked.Increment(ref _recordingSoundAttempt);
+            return _recordingSoundPlayer.Play(
+                pairing,
+                moment,
+                () =>
+                {
+                    if (Volatile.Read(ref _recordingSoundAttempt) == attempt)
+                    {
+                        _recordingSoundCoordinator.CancelActive();
+                    }
+                });
+        }
+
+        return _recordingSoundPlayer.Play(pairing, moment);
+    }
+
+    private void OnRecordingSoundCueFailed(
+        RecordingSoundPairing pairing,
+        RecordingSoundMoment moment,
+        Exception exception)
+    {
+        RecordingSoundPlaybackFailed?.Invoke(pairing, moment);
+    }
+
+    private void PreloadRecordingSoundsInBackground(RecordingSoundPairing pairing)
+    {
+        if (_shuttingDownProductWindows)
+        {
+            return;
+        }
+
+        _ = Task.Run(() => _recordingSoundPlayer.Preload(pairing));
     }
 
     private const string NotFromStoreSentence =
@@ -1308,6 +1373,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public void ShutdownProductWindows()
     {
+        _shuttingDownProductWindows = true;
         // DETACHED, NOT JUST STOPPED. A timer left attached can still tick during shutdown and raise
         // an announcement for a window that is going away.
         _historyAnnounceDebounce.Stop();
@@ -2229,6 +2295,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private void SelectChimePairing(RecordingSoundPairing pairing, bool triggerSave = true)
     {
         _selectedRecordingSoundPairing = pairing;
+        PreloadRecordingSoundsInBackground(pairing);
         UpdateChimeCardsVisuals();
         if (triggerSave && !_isApplyingSettings && _settings is not null && _chimeSelectButtons.TryGetValue(pairing, out var selectBtn))
         {

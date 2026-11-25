@@ -391,6 +391,7 @@ public partial class App : Application, IAsyncDisposable
                 observability.SendCrashReports));
         _window.SettingsChanged += OnSettingsChanged;
         _window.SessionStatusChanged += OnSessionStatusChanged;
+        _window.RecordingSoundPlaybackFailed += OnRecordingSoundPlaybackFailed;
         _window.AudioDevicesChanged += OnAudioDevicesChanged;
         _window.RecoveryCleared += OnRecoveryCleared;
         _window.RecoveryUndoRequested += OnRecoveryUndoRequested;
@@ -1186,6 +1187,14 @@ public partial class App : Application, IAsyncDisposable
         {
         }
     }
+
+    private void OnRecordingSoundPlaybackFailed(
+        RecordingSoundPairing pairing,
+        EnviousWispr.Audio.RecordingSoundMoment moment) =>
+        _logger.Write(new AppLogEntry(
+            DateTimeOffset.UtcNow,
+            AppEventCode.RecordingSoundCueFailed,
+            AppFailureCategory.AudioUnavailable));
 
     private string CurrentAppVersion() =>
         _updateService.InstalledVersion
@@ -3540,6 +3549,9 @@ public partial class App : Application, IAsyncDisposable
         public void ReportDelivery(DeliveryReport delivered, string? detectedLanguage) =>
             app.PostToLiveWindow(window =>
                 window.ReportDeliveryAndMaybeOfferLanguage(delivered, detectedLanguage));
+
+        public void CancelRecordingCue() =>
+            app.PostToLiveWindow(window => window.CancelRecordingSoundCue());
     }
 
     // THE SHELL'S THREE PARTS OF THE SESSION'S DISPOSAL, one operation each. The executor's teardown

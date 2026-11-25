@@ -131,6 +131,7 @@ public sealed partial class DictationOverlayWindow : Window
 
     /// <summary>True once this pill has been moved by hand, so placement leaves it alone.</summary>
     private bool _draggedThisPresentation;
+    private bool _preWarmed;
     private int _logicalHeight = RecordingCapsuleHeight;
 
     /// <summary>Physical pixels per layout unit on the monitor the pill is currently on.</summary>
@@ -185,6 +186,7 @@ public sealed partial class DictationOverlayWindow : Window
         Resize(ClassicWidth, RecordingCapsuleHeight);
         DrawLips(0f);
         ApplySpectrumSweep();
+        OverlayRoot.Measure(new Windows.Foundation.Size(ClassicWidth, RecordingCapsuleHeight));
         // HIGH CONTRAST REPAINTS THE SPECTRUM, so the blended bars are re-mixed from it.
         OverlayRoot.ActualThemeChanged += (_, _) => ApplySpectrumSweep();
         OverlayRoot.Loaded += (_, _) =>
@@ -307,6 +309,24 @@ public sealed partial class DictationOverlayWindow : Window
     /// </remarks>
     public void ApplyTheme(ElementTheme theme) => OverlayRoot.RequestedTheme = theme;
 
+    /// <summary>
+    /// Pre-warms the overlay visual tree offscreen at startup so the very first recording press
+    /// renders without cold XAML/compositor initialization delay.
+    /// </summary>
+    public void PreWarm()
+    {
+        if (_preWarmed || _state != DictationOverlayState.Hidden)
+        {
+            return;
+        }
+
+        _preWarmed = true;
+        AppWindow.Move(new PointInt32(-32000, -32000));
+        AppWindow.Show(activateWindow: false);
+        OverlayRoot.UpdateLayout();
+        AppWindow.Hide();
+    }
+
     /// <summary>Puts one status on screen.</summary>
     /// <remarks>
     /// TAKES THE STATUS RATHER THAN A STATE AND A SENTENCE, because a status now carries a third
@@ -352,6 +372,7 @@ public sealed partial class DictationOverlayWindow : Window
         };
         var previousState = _state;
         _state = state;
+        _preWarmed = true;
 
         if (state == DictationOverlayState.Recording)
         {

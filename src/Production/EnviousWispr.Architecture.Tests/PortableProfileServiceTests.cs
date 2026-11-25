@@ -319,8 +319,37 @@ public sealed class PortableProfileServiceTests
             Assert.Equal(PortableProfile.CurrentSchemaVersion, result.Profile?.SchemaVersion);
             Assert.Equal(RecordingPillDesign.Classic, result.Profile?.Preferences.PillDesignWithoutWords);
             Assert.Equal(RecordingPillDesign.ReadingWell, result.Profile?.Preferences.PillDesignWithWords);
-            Assert.False(result.Profile?.Preferences.PlayRecordingSounds);
+            Assert.True(result.Profile?.Preferences.PlayRecordingSounds);
             Assert.Equal(RecordingSoundPairing.WhisperTick, result.Profile?.Preferences.RecordingSoundPairing);
+        });
+    }
+
+    [Fact]
+    public async Task ImportDefaultsPlayRecordingSoundsToTrueWhenMissingAndPreservesExplicitFalse()
+    {
+        await JsonSettingsStoreTests.WithTestDirectoryAsync(async directory =>
+        {
+            var service = new JsonPortableProfileService();
+            var missingPath = Path.Combine(directory, "missing-sound.enviouswispr-profile.json");
+            await service.ExportAsync(AppSettings.Default.ToPortableProfile(), missingPath);
+            var root = JsonNode.Parse(await File.ReadAllTextAsync(missingPath))!.AsObject();
+            root["preferences"]!.AsObject().Remove("playRecordingSounds");
+            await File.WriteAllTextAsync(path: missingPath, root.ToJsonString(JsonSettingsStore.SerializerOptions));
+
+            var importedMissing = await service.ImportAsync(missingPath);
+            Assert.Equal(PortableProfileImportStatus.Imported, importedMissing.Status);
+            Assert.True(importedMissing.Profile?.Preferences.PlayRecordingSounds);
+
+            var falsePath = Path.Combine(directory, "false-sound.enviouswispr-profile.json");
+            var falseSettings = AppSettings.Default with
+            {
+                Preferences = AppSettings.Default.Preferences with { PlayRecordingSounds = false },
+            };
+            await service.ExportAsync(falseSettings.ToPortableProfile(), falsePath);
+
+            var importedFalse = await service.ImportAsync(falsePath);
+            Assert.Equal(PortableProfileImportStatus.Imported, importedFalse.Status);
+            Assert.False(importedFalse.Profile?.Preferences.PlayRecordingSounds);
         });
     }
 

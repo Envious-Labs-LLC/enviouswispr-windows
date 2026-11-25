@@ -17,4 +17,6 @@ public interface ISessionView
     void ShowMainWindow();
 
     void ReportDelivery(DeliveryReport delivered, string? detectedLanguage);
+
+    void CancelRecordingCue() { }
 }

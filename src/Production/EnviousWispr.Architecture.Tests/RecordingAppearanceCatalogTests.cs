@@ -1,5 +1,6 @@
 using EnviousWispr.Audio;
 using EnviousWispr.Core.Settings;
+using NAudio.Wave;
 using System.Security.Cryptography;
 
 namespace EnviousWispr.Architecture.Tests;
@@ -137,6 +138,219 @@ public sealed class RecordingAppearanceCatalogTests
         coordinator.Handle(false, enabled: true, RecordingSoundPairing.WhisperTick);
 
         Assert.Equal([RecordingSoundMoment.Start], played);
+    }
+
+    [Fact]
+    public void FinitePcmWaveProviderReadsExactPayloadAndReturnsZeroAtEof()
+    {
+        var format = new WaveFormat(44_100, 16, 1);
+        var payload = Enumerable.Range(0, 256).Select(i => (byte)(i & 0xFF)).ToArray();
+        var provider = new FinitePcmWaveProvider(format, payload);
+
+        var collected = new List<byte>();
+        var buffer = new byte[64];
+        int read;
+        while ((read = provider.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            collected.AddRange(buffer.Take(read));
+        }
+
+        Assert.Equal(payload, collected);
+        Assert.Equal(0, provider.Read(buffer, 0, buffer.Length));
+    }
+
+    [Theory]
+    [InlineData(48_000, 2, WaveFormatEncoding.IeeeFloat, 32)]
+    [InlineData(48_000, 2, WaveFormatEncoding.Pcm, 16)]
+    [InlineData(48_000, 6, WaveFormatEncoding.IeeeFloat, 32)]
+    [InlineData(44_100, 2, WaveFormatEncoding.IeeeFloat, 32)]
+    public void AdaptedProviderResamplesAndExpandsChannelsWithCleanEof(
+        int sampleRate,
+        int channels,
+        WaveFormatEncoding encoding,
+        int bitsPerSample)
+    {
+        var assetDirectory = Path.Combine(
+            AppContext.BaseDirectory,
+            RecordingSoundAssetCatalog.RelativeDirectory);
+        var asset = RecordingSoundAssetCatalog.Load(
+            assetDirectory,
+            RecordingSoundPairing.WhisperTick,
+            RecordingSoundMoment.Start);
+        var targetFormat = encoding == WaveFormatEncoding.IeeeFloat
+            ? WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels)
+            : new WaveFormat(sampleRate, bitsPerSample, channels);
+
+        var adapted = RecordingSoundCuePlayer.BuildAdaptedProvider(asset, targetFormat);
+
+        Assert.Equal(sampleRate, adapted.WaveFormat.SampleRate);
+        Assert.Equal(channels, adapted.WaveFormat.Channels);
+        Assert.Equal(encoding, adapted.WaveFormat.Encoding);
+        Assert.Equal(bitsPerSample, adapted.WaveFormat.BitsPerSample);
+
+        var buffer = new byte[4096];
+        long totalBytes = 0;
+        var iterations = 0;
+        int read;
+        while ((read = adapted.Read(buffer.AsSpan())) > 0)
+        {
+            totalBytes += read;
+            Assert.True(++iterations < 500, "Adapted audio stream did not terminate at EOF.");
+        }
+
+        var expectedFrames = (double)asset.Pcm.Length / asset.Format.BlockAlign
+            * sampleRate / asset.Format.SampleRate;
+        var actualFrames = (double)totalBytes / adapted.WaveFormat.BlockAlign;
+        Assert.InRange(actualFrames, expectedFrames * 0.9, expectedFrames * 1.1 + 128);
+        Assert.Equal(0, adapted.Read(buffer.AsSpan()));
+    }
+
+    [Fact]
+    public async Task PreloadCachesAssetsInMemorySoPlaybackSurvivesDeletedSourceDirectory()
+    {
+        var sourceDir = Path.Combine(
+            AppContext.BaseDirectory,
+            RecordingSoundAssetCatalog.RelativeDirectory);
+        var tempDir = Path.Combine(
+            Path.GetTempPath(),
+            $"enviouswispr-cues-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var startFile = RecordingSoundAssetCatalog.FileNameFor(
+                RecordingSoundPairing.WhisperTick,
+                RecordingSoundMoment.Start);
+            var stopFile = RecordingSoundAssetCatalog.FileNameFor(
+                RecordingSoundPairing.WhisperTick,
+                RecordingSoundMoment.Stop);
+            File.Copy(Path.Combine(sourceDir, startFile), Path.Combine(tempDir, startFile));
+            File.Copy(Path.Combine(sourceDir, stopFile), Path.Combine(tempDir, stopFile));
+
+            var playedMoments = new List<int>();
+            var startCompleted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var failures = new List<Exception>();
+            using var player = new RecordingSoundCuePlayer(
+                tempDir,
+                (_, _, ex) => failures.Add(ex),
+                (asset, _) =>
+                {
+                    playedMoments.Add(asset.Pcm.Length);
+                    startCompleted.TrySetResult(true);
+                    return Task.CompletedTask;
+                });
+
+            player.Preload(RecordingSoundPairing.WhisperTick);
+            Assert.True(player.HasCachedAsset(RecordingSoundPairing.WhisperTick, RecordingSoundMoment.Start));
+            Assert.True(player.HasCachedAsset(RecordingSoundPairing.WhisperTick, RecordingSoundMoment.Stop));
+
+            Directory.Delete(tempDir, recursive: true);
+
+            Assert.True(player.Play(RecordingSoundPairing.WhisperTick, RecordingSoundMoment.Start));
+            await startCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Empty(failures);
+            Assert.Single(playedMoments);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PlayDispatchesOffCallingThreadAndFailureCallbackRollsBackGenerationSafely()
+    {
+        var sourceDir = Path.Combine(
+            AppContext.BaseDirectory,
+            RecordingSoundAssetCatalog.RelativeDirectory);
+        var releasePlayback = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var failureReported = new TaskCompletionSource<(RecordingSoundPairing Pairing, RecordingSoundMoment Moment, Exception Ex)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        RecordingSoundCueCoordinator? coordinator = null;
+        using var player = new RecordingSoundCuePlayer(
+            sourceDir,
+            (pairing, moment, ex) => failureReported.TrySetResult((pairing, moment, ex)),
+            async (_, _) =>
+            {
+                await releasePlayback.Task.ConfigureAwait(false);
+                throw new InvalidOperationException("No output device");
+            });
+
+        var attempted = new List<(RecordingSoundPairing Pairing, RecordingSoundMoment Moment)>();
+        var staleGeneration = 0UL;
+        coordinator = new RecordingSoundCueCoordinator((pairing, moment) =>
+        {
+            attempted.Add((pairing, moment));
+            if (moment == RecordingSoundMoment.Start)
+            {
+                var generation = coordinator!.CurrentGeneration;
+                staleGeneration = generation;
+                return player.Play(pairing, moment, () => coordinator.RollbackStart(pairing, generation));
+            }
+
+            return player.Play(pairing, moment);
+        });
+
+        coordinator.Handle(isRecording: true, enabled: true, RecordingSoundPairing.WhisperTick);
+        Assert.False(failureReported.Task.IsCompleted, "Play returned without waiting for async playback completion.");
+
+        releasePlayback.SetResult(true);
+        var reported = await failureReported.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(RecordingSoundPairing.WhisperTick, reported.Pairing);
+        Assert.Equal(RecordingSoundMoment.Start, reported.Moment);
+        Assert.IsType<InvalidOperationException>(reported.Ex);
+
+        // Once rolled back by the failure callback, Stop no longer fires an orphan cue.
+        coordinator.Handle(isRecording: false, enabled: true, RecordingSoundPairing.WhisperTick);
+        Assert.Single(attempted);
+        Assert.False(coordinator.RollbackStart(RecordingSoundPairing.WhisperTick, staleGeneration));
+    }
+
+    [Fact]
+    public async Task CancelPendingStartCancelsInFlightStartAndSerializesWithStopCue()
+    {
+        var sourceDir = Path.Combine(
+            AppContext.BaseDirectory,
+            RecordingSoundAssetCatalog.RelativeDirectory);
+        var startAsset = RecordingSoundAssetCatalog.Load(
+            sourceDir,
+            RecordingSoundPairing.WhisperTick,
+            RecordingSoundMoment.Start);
+        var startEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stopExecuted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sequence = new List<string>();
+        var failures = new List<Exception>();
+
+        using var player = new RecordingSoundCuePlayer(
+            sourceDir,
+            (_, _, ex) => failures.Add(ex),
+            async (asset, ct) =>
+            {
+                if (asset.Pcm.AsSpan().SequenceEqual(startAsset.Pcm))
+                {
+                    sequence.Add("Start:Entered");
+                    startEntered.TrySetResult(true);
+                    await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false);
+                    return;
+                }
+
+                sequence.Add("Stop:Executed");
+                stopExecuted.TrySetResult(true);
+            });
+
+        Assert.True(player.Play(RecordingSoundPairing.WhisperTick, RecordingSoundMoment.Start));
+        await startEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Queue Stop right before cancelling pending Start to verify FIFO serialization + cancellation.
+        Assert.True(player.Play(RecordingSoundPairing.WhisperTick, RecordingSoundMoment.Stop));
+        player.CancelPendingStart();
+
+        await stopExecuted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(["Start:Entered", "Stop:Executed"], sequence);
+        Assert.Empty(failures);
     }
 
     private static Dictionary<string, string> ApprovedSoundAssetHashes { get; } =
