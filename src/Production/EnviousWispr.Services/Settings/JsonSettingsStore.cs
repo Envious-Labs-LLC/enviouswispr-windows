@@ -2,6 +2,7 @@ using System.Security;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using EnviousWispr.Core.Errors;
+using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Reliability;
 using EnviousWispr.Core.Settings;
 
@@ -81,9 +82,14 @@ public sealed class JsonSettingsStore : ISettingsStore
                 19 => MigrateFromV19(json),
                 20 => MigrateFromV20(json),
                 21 => MigrateFromV21(json),
+                22 => MigrateFromV22(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
+            if (settings is not null && schemaVersion < AppSettings.CurrentSchemaVersion)
+            {
+                settings = SeedEgOneModelIdIfMissing(settings);
+            }
             // A FILE WRITTEN BEFORE SEPARATE USAGE METRICS AND CRASH REPORTS EXISTED stored a single
             // shareAnonymousTelemetry boolean. When sendCrashReports was not yet present in the file,
             // carry that prior remote-sharing choice into SendCrashReports so an existing user who
@@ -555,7 +561,44 @@ public sealed class JsonSettingsStore : ISettingsStore
         var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
         return legacy is null
             ? null
-            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+            : SeedEgOneModelIdIfMissing(legacy) with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+    }
+
+    /// <summary>Takes a settings file written before dedicated EG-1 size persistence existed (schema v23).</summary>
+    /// <remarks>
+    /// Previously EG-1 shared <see cref="PolishPreferences.ModelId"/>, so switching to another AI Polish
+    /// provider cleared or overwrote the selected EG-1 size. When upgrading from v22 with EG-1 active and a
+    /// known EG-1 identifier in <see cref="PolishPreferences.ModelId"/>, seed <see cref="PolishPreferences.EgOneModelId"/>.
+    /// </remarks>
+    private static AppSettings? MigrateFromV22(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : SeedEgOneModelIdIfMissing(legacy) with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+    }
+
+    private static AppSettings SeedEgOneModelIdIfMissing(AppSettings settings) =>
+        SeedEgOneModelIdIfMissing(settings.Preferences) is { } updatedPreferences &&
+        !ReferenceEquals(updatedPreferences, settings.Preferences)
+            ? settings with { Preferences = updatedPreferences }
+            : settings;
+
+    internal static UserPreferences? SeedEgOneModelIdIfMissing(UserPreferences? preferences)
+    {
+        var polish = preferences?.Polish;
+        if (polish is not null &&
+            polish.Provider == PolishProvider.EgOne &&
+            polish.EgOneModelId is null &&
+            EgOneModelCatalog.TryNormalize(polish.ModelId, out var normalized))
+        {
+            return preferences! with
+            {
+                Polish = polish with { EgOneModelId = normalized },
+            };
+        }
+
+        return preferences;
     }
 
     /// <summary>Takes a settings file written before multi-alias dictionary entries, categories, and isolated vocabulary packs existed.</summary>

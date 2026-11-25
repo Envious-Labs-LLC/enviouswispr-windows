@@ -73,8 +73,8 @@ public interface IPolishModelSource
 
 /// <summary>What the model controls should show after a refresh.</summary>
 /// <param name="Models">The picker's choices.</param>
-/// <param name="SelectedIndex">Which of them matches the model id in force, or -1.</param>
-/// <param name="ModelToApply">A model id to write into the free-text field, or null to leave it as typed.</param>
+/// <param name="SelectedIndex">Which of them matches the selected model id, or -1.</param>
+/// <param name="ModelToApply">A model id to apply to the selection, or null to keep the current selection.</param>
 /// <param name="Discovery">What discovery reported, or null when the provider has nothing to discover.</param>
 public sealed record PolishModelChoices(
     PolishProvider Provider,
@@ -103,8 +103,8 @@ public sealed record PolishModelListing(
 /// time it returns is answered with null, and the page asks <see cref="IsCurrent"/> once more on its
 /// own thread right before it applies one, so the page shows the provider chosen last.
 ///
-/// THE FIELD IS READ WHEN THE LISTING IS APPLIED, NOT WHEN IT WAS ASKED FOR. Listing and choosing are
-/// two steps for that reason: a model typed while the listing was out is honoured.
+/// THE SELECTION IS READ WHEN THE LISTING IS APPLIED, NOT WHEN IT WAS ASKED FOR. Listing and choosing are
+/// two steps for that reason: a model chosen while the listing was out is honoured.
 ///
 /// A DISCOVERY RUNS INSIDE THE PRESENTATION'S GATE. The exit disposes the model source once the
 /// presentation has closed; a discovery still out at that moment would lose its client mid-call, so
@@ -224,7 +224,6 @@ public sealed class ProviderSettingsPresenter
         IReadOnlyList<string> models = provider switch
         {
             PolishProvider.EgOne => ["eg-1"],
-            _ when IsCloudProvider(provider) => [_models.RecommendedModel(provider)!],
             _ => [],
         };
 
@@ -236,12 +235,27 @@ public sealed class ProviderSettingsPresenter
         }
         else if (IsCloudProvider(provider))
         {
-            discovery = await _models.DiscoverAsync(provider, null, cancellationToken).ConfigureAwait(false);
-            // THE RECOMMENDATION STAYS WHEN THE ACCOUNT LISTS NOTHING, so the picker is never empty for
-            // a provider that certainly has a model; a refused or failed listing keeps it too.
-            if (discovery.Status == PolishModelDiscoveryStatus.Ready && discovery.ModelIds.Count > 0)
+            var keyStatus = _keys.GetStatus(provider);
+            if (keyStatus == ApiKeyReadStatus.Missing)
             {
-                models = discovery.ModelIds;
+                discovery = new PolishModelDiscovery(PolishModelDiscoveryStatus.MissingCredential, []);
+            }
+            else if (keyStatus == ApiKeyReadStatus.Unavailable)
+            {
+                discovery = new PolishModelDiscovery(PolishModelDiscoveryStatus.CredentialUnavailable, []);
+            }
+            else
+            {
+                models = _models.RecommendedModel(provider) is { } recommended ? [recommended] : [];
+                discovery = await _models.DiscoverAsync(provider, null, cancellationToken).ConfigureAwait(false);
+                if (discovery.Status == PolishModelDiscoveryStatus.Ready && discovery.ModelIds.Count > 0)
+                {
+                    models = discovery.ModelIds;
+                }
+                else if (discovery.Status is PolishModelDiscoveryStatus.MissingCredential or PolishModelDiscoveryStatus.CredentialUnavailable)
+                {
+                    models = [];
+                }
             }
         }
 
@@ -256,12 +270,12 @@ public sealed class ProviderSettingsPresenter
     /// </remarks>
     public bool IsCurrent(int ticket) => ticket == Volatile.Read(ref _discoveryVersion);
 
-    /// <summary>Works out what the model controls should show, from a listing and the field as it stands now.</summary>
-    /// <param name="currentModelId">The model id in the free-text field at the moment of applying - not when the listing was asked for.</param>
-    /// <param name="chooseDefault">Whether a field that names no plausible model should be filled with the first choice.</param>
+    /// <summary>Works out what the model picker should show, from a listing and the active selection.</summary>
+    /// <param name="currentModelId">The selected model id at the moment of applying - not when the listing was asked for.</param>
+    /// <param name="chooseDefault">Whether an unset or unlisted selection should fall back to an available choice.</param>
     /// <remarks>
-    /// PURE, AND READ AT THE MOMENT OF APPLYING. A model typed while the listing was out is the one
-    /// the person wants; deciding against the text as it was when the request left would overwrite it.
+    /// PURE, AND READ AT THE MOMENT OF APPLYING. A selection updated while the listing was out is the one
+    /// the person wants; deciding against the value as it was when the request left would overwrite it.
     /// </remarks>
     public PolishModelChoices Choose(PolishModelListing listing, string currentModelId, bool chooseDefault)
     {
@@ -273,9 +287,9 @@ public sealed class ProviderSettingsPresenter
         string? modelToApply = null;
         if (chooseDefault && selectedIndex < 0 && models.Count > 0)
         {
-            // A CLOUD FIELD THAT ALREADY NAMES ONE OF THAT PROVIDER'S MODELS IS LEFT ALONE, even when
-            // the listing does not include it: somebody typed a model the catalog does not show.
-            // Anything else - blank, or a model from another provider - takes the first choice.
+            // Keep an existing model that still belongs to the selected cloud provider (for example, when
+            // rotating an API key while a custom or deprecated snapshot ID is configured); only pick a
+            // default from the list when unset or from a different provider.
             var shouldChoose = IsCloudProvider(listing.Provider)
                 ? !_models.ModelIdBelongsTo(current, listing.Provider)
                 : current.Length == 0 || selectedIndex < 0;
@@ -284,7 +298,7 @@ public sealed class ProviderSettingsPresenter
                 if (listing.Provider == PolishProvider.Ollama)
                 {
                     // HOSTED OLLAMA MODELS NEVER BECOME THE AUTOMATIC DEFAULT. Only a local model on this PC may be
-                    // selected automatically when the field is empty; sending transcript text to Ollama's servers
+                    // selected automatically when no selection is set; sending transcript text to Ollama's servers
                     // requires an explicit hosted model choice by the user.
                     var remoteIds = listing.Discovery?.RemoteModelIds;
                     var firstLocalIndex = -1;
@@ -315,6 +329,39 @@ public sealed class ProviderSettingsPresenter
         }
 
         return new PolishModelChoices(listing.Provider, models, selectedIndex, modelToApply, listing.Discovery);
+    }
+
+    /// <summary>
+    /// Ensures an active custom/offline model stays visible and selected in the picker when discovery
+    /// omitted it and no fallback replacement was chosen.
+    /// </summary>
+    public static PolishModelChoices IncludeActiveSelectionIfMissing(
+        PolishModelChoices choices,
+        string? activeModelId)
+    {
+        ArgumentNullException.ThrowIfNull(choices);
+        var trimmed = activeModelId?.Trim();
+        if (choices.SelectedIndex >= 0 ||
+            choices.ModelToApply is not null ||
+            string.IsNullOrWhiteSpace(trimmed))
+        {
+            return choices;
+        }
+
+        var existingIndex = IndexOf(choices.Models, trimmed, choices.Provider);
+        if (existingIndex >= 0)
+        {
+            return choices with { SelectedIndex = existingIndex };
+        }
+
+        var updated = new string[choices.Models.Count + 1];
+        updated[0] = trimmed;
+        for (var i = 0; i < choices.Models.Count; i++)
+        {
+            updated[i + 1] = choices.Models[i];
+        }
+
+        return choices with { Models = updated, SelectedIndex = 0 };
     }
 
     /// <summary>

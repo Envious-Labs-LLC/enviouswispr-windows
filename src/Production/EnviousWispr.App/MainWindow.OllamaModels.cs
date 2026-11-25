@@ -142,9 +142,9 @@ public sealed partial class MainWindow
             !_session.Closing)
         {
             RenderOllamaModels(models.View);
-            if (!string.IsNullOrWhiteSpace(PolishModelTextBox.Text))
+            if (!string.IsNullOrWhiteSpace(_selectedPolishModelId))
             {
-                _ = WarmUpSelectedOllamaModelAsync(PolishModelTextBox.Text);
+                _ = WarmUpSelectedOllamaModelAsync(_selectedPolishModelId);
             }
         }
     }

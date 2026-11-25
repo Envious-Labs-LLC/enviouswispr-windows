@@ -105,7 +105,9 @@ public partial class App : Application, IAsyncDisposable
     private CloudPolishConsent? _cloudPolishConsent;
     private string? _localPolishNotice;
     private readonly CancellationTokenSource _polishLifetime = new();
+    private CancellationTokenSource? _polishWarmupCancellation;
     private Task? _polishWarmup;
+    private string? _configuredEgOneModelPath;
     private readonly AutoStopMonitor _autoStop;
     private readonly RecordingWatchdog _watchdog;
     private readonly StreamingTranscriptionController _streaming;
@@ -408,6 +410,9 @@ public partial class App : Application, IAsyncDisposable
         _window.LoadStartupRegistration = () => _startupRegistration.GetStatusAsync(_startupCancellation.Token);
         _window.ModelDownloadRequested += OnModelDownloadRequested;
         _window.ModelDownloadCancelRequested += OnModelDownloadCancelRequested;
+        _window.EgOneModelDownloadRequested += OnEgOneModelDownloadRequested;
+        _window.EgOneModelDownloadCancelRequested += OnModelDownloadCancelRequested;
+        _window.EgOneModelRemoveRequested += OnEgOneModelRemoveRequested;
         _window.SpeechEngineDownloadRequested += OnSpeechEngineDownloadRequested;
         _window.SpeechEngineRemoveRequested += OnSpeechEngineRemoveRequested;
         _window.IsSpeechEngineBusy = () => IsSpeechEngineBusy;
@@ -548,14 +553,7 @@ public partial class App : Application, IAsyncDisposable
         }
 
         ConfigurePushToTalk(settings.Preferences.Dictation);
-        if (_polishProvider is EgOnePolishProvider polishProvider)
-        {
-            _polishWarmup = WarmPolishRuntimeAsync(polishProvider, _polishLifetime.Token);
-        }
-        else if (_polishProvider is OllamaPolishProvider ollamaProvider)
-        {
-            _polishWarmup = ProbeOllamaRuntimeAsync(ollamaProvider, _polishLifetime.Token);
-        }
+        StartPolishWarmup();
 
         ApplyOverlayUatState();
         StartSyntheticLevelRampIfRequested();
@@ -666,6 +664,9 @@ public partial class App : Application, IAsyncDisposable
             window.LoadStartupRegistration = null;
             window.ModelDownloadRequested -= OnModelDownloadRequested;
             window.ModelDownloadCancelRequested -= OnModelDownloadCancelRequested;
+            window.EgOneModelDownloadRequested -= OnEgOneModelDownloadRequested;
+            window.EgOneModelDownloadCancelRequested -= OnModelDownloadCancelRequested;
+            window.EgOneModelRemoveRequested -= OnEgOneModelRemoveRequested;
             window.SpeechEngineDownloadRequested -= OnSpeechEngineDownloadRequested;
             window.SpeechEngineRemoveRequested -= OnSpeechEngineRemoveRequested;
             window.IsSpeechEngineBusy = null;
@@ -984,6 +985,7 @@ public partial class App : Application, IAsyncDisposable
         var previousFinalEngine = _settings.Preferences.Dictation.FinalEngine;
         var previousPreviewEnabled = _settings.Preferences.LivePreviewEnabled;
         var previousPreviewEngine = _settings.Preferences.LivePreviewEngine;
+        var previousPolish = _settings.Preferences.Polish;
         _settings = settings;
         _customWords = settings.UserData.CustomWords;
         _enabledVocabularyPackIds = settings.UserData.EnabledVocabularyPackIds;
@@ -1022,6 +1024,12 @@ public partial class App : Application, IAsyncDisposable
             previousPreviewEngine != settings.Preferences.LivePreviewEngine)
         {
             _livePreviewReconfigurePending = true;
+            TrySchedulePendingModelRefresh();
+        }
+
+        if (previousPolish != settings.Preferences.Polish)
+        {
+            _polishReconfigurePending = true;
             TrySchedulePendingModelRefresh();
         }
     }
@@ -1569,7 +1577,7 @@ public partial class App : Application, IAsyncDisposable
             _window?.ShutdownProductWindows();
             _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ShellClosed));
         },
-        AbortPolishRuntime: () => (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately(),
+        AbortPolishRuntime: AbortPolishRuntime,
         // THE EXIT POLICY: a transcription in flight is cut short rather than waited for, and so is the
         // polish warm-up; the session's shutdown then waits for the cut to land. Cancellation is not
         // quiescence - the shutdown's report says whether it landed.
@@ -1699,6 +1707,12 @@ public partial class App : Application, IAsyncDisposable
                 }
             }),
             LifetimeStep.Of("worker arbiter", _resourceArbiter.Dispose),
+            LifetimeStep.Of("polish warmup cancellation", () =>
+            {
+                _polishWarmupCancellation?.Cancel();
+                _polishWarmupCancellation?.Dispose();
+                _polishWarmupCancellation = null;
+            }),
             LifetimeStep.Of("polish lifetime", _polishLifetime.Dispose),
             new LifetimeStep("live preview", () => _livePreview.DisposeAsync().AsTask()),
             new LifetimeStep("watchdog", () => _watchdog.DisposeAsync().AsTask()),
@@ -2069,15 +2083,175 @@ public partial class App : Application, IAsyncDisposable
         _window?.SetAudioLevel(level);
     }
 
-    private void ConfigurePolish(PolishPreferences preferences)
+    private void AbortPolishRuntime()
+    {
+        _polishWarmupCancellation?.Cancel();
+        (_polishProvider as EgOnePolishProvider)?.TerminateRuntimeImmediately();
+    }
+
+    private void StartPolishWarmup()
+    {
+        _polishWarmupCancellation?.Cancel();
+        _polishWarmupCancellation?.Dispose();
+        _polishWarmupCancellation = null;
+        if (_polishProvider is EgOnePolishProvider polishProvider)
+        {
+            _polishWarmupCancellation = CancellationTokenSource.CreateLinkedTokenSource(_polishLifetime.Token);
+            _polishWarmup = WarmPolishRuntimeAsync(polishProvider, _polishWarmupCancellation.Token);
+        }
+        else if (_polishProvider is OllamaPolishProvider ollamaProvider)
+        {
+            _polishWarmupCancellation = CancellationTokenSource.CreateLinkedTokenSource(_polishLifetime.Token);
+            _polishWarmup = ProbeOllamaRuntimeAsync(ollamaProvider, _polishWarmupCancellation.Token);
+        }
+    }
+
+    private async Task<string> ResolveEgOneConfiguredModelFileAsync(
+        string modelId,
+        string? environmentOverride,
+        CancellationToken cancellationToken = default)
+    {
+        if (!string.IsNullOrWhiteSpace(environmentOverride))
+        {
+            return environmentOverride.Trim();
+        }
+
+        var normalizedId = EnginePolishPresentation.NormalizeEgOneModelId(modelId);
+        var active = await Task.Run(
+            () => CreateModelStore().OpenActiveOfflineAsync(normalizedId, cancellationToken),
+            cancellationToken).ConfigureAwait(true);
+        if (active.Succeeded &&
+            EgOneRuntimeLocator.TryResolveInstalledGgufInDirectory(active.Installed?.DirectoryPath, normalizedId) is { } storeFile)
+        {
+            return storeFile;
+        }
+
+        return EgOneRuntimeLocator.ResolveModelFile(_dataDirectory, normalizedId);
+    }
+
+    private async Task RefreshEgOneConfiguredProviderFromStoreAsync(
+        PolishPreferences preferences,
+        CancellationToken cancellationToken = default)
+    {
+        if (EffectivePolishProvider(preferences) != PolishProvider.EgOne ||
+            !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH")))
+        {
+            return;
+        }
+
+        var store = CreateModelStore();
+        var modelId = ConfiguredEgOneModelId(preferences);
+        var active = await Task.Run(
+            () => store.OpenActiveOfflineAsync(modelId, cancellationToken),
+            cancellationToken).ConfigureAwait(true);
+        if (Leaving ||
+            !active.Succeeded ||
+            EgOneRuntimeLocator.TryResolveInstalledGgufInDirectory(active.Installed?.DirectoryPath, modelId) is not { } storeFile ||
+            string.Equals(storeFile, _configuredEgOneModelPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (IsSpeechEngineBusy)
+        {
+            _polishReconfigurePending = true;
+            return;
+        }
+
+        var attempt = _sessionCoordinator?.TryHold(SessionHolder.SpeechEngineSwitch)
+            ?? new SessionHoldAttempt(NoScope.Instance);
+        if (attempt.Hold is not { } hold)
+        {
+            if (attempt.Refusal != SessionHoldRefusal.Closed)
+            {
+                _polishReconfigurePending = true;
+            }
+
+            return;
+        }
+
+        using (hold)
+        {
+            await _engineReconfiguration.WaitAsync(cancellationToken).ConfigureAwait(true);
+            try
+            {
+                if (Leaving || IsSpeechEngineBusy)
+                {
+                    return;
+                }
+
+                if (string.Equals(storeFile, _configuredEgOneModelPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                await TeardownPolishAsync().ConfigureAwait(true);
+                if (Leaving)
+                {
+                    return;
+                }
+
+                await ConfigurePolishAsync(preferences, modelFileOverride: storeFile, cancellationToken).ConfigureAwait(true);
+                StartPolishWarmup();
+            }
+            finally
+            {
+                _engineReconfiguration.Release();
+            }
+        }
+    }
+
+    private static string ConfiguredEgOneModelId(PolishPreferences preferences)
+    {
+        var requested = EnginePolishPresentation.IsKnownEgOneModelId(preferences.EgOneModelId)
+            ? preferences.EgOneModelId
+            : preferences.ModelId;
+        return EnginePolishPresentation.NormalizeEgOneModelId(requested);
+    }
+
+    private void ConfigurePolish(PolishPreferences preferences) =>
+        ApplyPolishConfiguration(preferences, resolvedEgOneModelFile: null);
+
+    private async Task ConfigurePolishAsync(
+        PolishPreferences preferences,
+        string? modelFileOverride = null,
+        CancellationToken cancellationToken = default)
+    {
+        string? resolvedEgOneFile = modelFileOverride;
+        if (resolvedEgOneFile is null && EffectivePolishProvider(preferences) == PolishProvider.EgOne)
+        {
+            resolvedEgOneFile = await ResolveEgOneConfiguredModelFileAsync(
+                ConfiguredEgOneModelId(preferences),
+                Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH"),
+                cancellationToken).ConfigureAwait(true);
+        }
+
+        ApplyPolishConfiguration(preferences, resolvedEgOneFile);
+    }
+
+    private static PolishProvider EffectivePolishProvider(PolishPreferences preferences)
     {
         var provider = preferences.Provider;
         var environmentProvider = Environment.GetEnvironmentVariable(
             "ENVIOUSWISPR_POLISH_PROVIDER");
         if (Enum.TryParse<PolishProvider>(environmentProvider, ignoreCase: true, out var parsedProvider))
         {
-            provider = parsedProvider;
+            return parsedProvider;
         }
+
+        return provider;
+    }
+
+    private void ApplyPolishConfiguration(PolishPreferences preferences, string? resolvedEgOneModelFile)
+    {
+        _cloudPolishConsent = null;
+        _localPolishNotice = null;
+        _ollamaActiveModel = null;
+        _polishUsesLocalRuntime = false;
+        _polishResource = RuntimeResourceKind.Cpu;
+        _configuredEgOneModelPath = null;
+
+        var provider = EffectivePolishProvider(preferences);
 
         if (provider is PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini)
         {
@@ -2126,6 +2300,7 @@ public partial class App : Application, IAsyncDisposable
 
         if (provider != PolishProvider.EgOne)
         {
+            _polishProvider = null;
             return;
         }
 
@@ -2135,8 +2310,8 @@ public partial class App : Application, IAsyncDisposable
             _updateService.IsStoreInstalled,
             Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_SERVER_EXE"));
 
-        var modelId = EnginePolishPresentation.NormalizeEgOneModelId(preferences.ModelId);
-        var modelFile = EgOneRuntimeLocator.ResolveModelFile(
+        var modelId = ConfiguredEgOneModelId(preferences);
+        var modelFile = resolvedEgOneModelFile ?? EgOneRuntimeLocator.ResolveModelFile(
             _dataDirectory,
             modelId,
             Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH"));
@@ -2152,6 +2327,7 @@ public partial class App : Application, IAsyncDisposable
             _polishResource = RuntimeResourceKind.Accelerator;
         }
 
+        _configuredEgOneModelPath = modelFile;
         _polishProvider = new EgOnePolishProvider(new EgOnePolishOptions(
             new EgOneServerOptions(serverExecutable, modelFile, GpuLayers: gpuLayers),
             modelId));

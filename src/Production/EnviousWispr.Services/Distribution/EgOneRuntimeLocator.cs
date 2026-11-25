@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using EnviousWispr.Core.Polish;
 
 namespace EnviousWispr.Services.Distribution;
 
@@ -58,10 +59,22 @@ public static partial class EgOneRuntimeLocator
             return environmentOverride.Trim();
         }
 
-        var normalizedId = NormalizeModelId(modelId);
+        var normalizedId = EgOneModelCatalog.NormalizeOrDefault(modelId);
         var modelDirectory = Path.Combine(dataDirectory, "models", normalizedId);
+        return ResolveModelFileInDirectory(modelDirectory, normalizedId, fileExists);
+    }
+
+    /// <summary>Resolves the expected GGUF entry file inside a specific EG-1 model directory.</summary>
+    public static string ResolveModelFileInDirectory(
+        string modelDirectory,
+        string? modelId,
+        Func<string, bool>? fileExists = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(modelDirectory);
+
+        var normalizedId = EgOneModelCatalog.NormalizeOrDefault(modelId);
         var founderModel = Path.Combine(modelDirectory, "active.gguf");
-        if (!string.Equals(normalizedId, "eg-1", StringComparison.Ordinal))
+        if (!string.Equals(normalizedId, EgOneModelCatalog.FullId, StringComparison.Ordinal))
         {
             return founderModel;
         }
@@ -71,6 +84,39 @@ public static partial class EgOneRuntimeLocator
             modelDirectory,
             FormatShippingShardName(1));
         return IsModelFileReady(firstShippingShard, exists) ? firstShippingShard : founderModel;
+    }
+
+    /// <summary>Resolves an installed GGUF entry file from an admitted ModelStore version directory.</summary>
+    public static string? TryResolveInstalledGgufInDirectory(string? directory, string? modelId)
+    {
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        {
+            return null;
+        }
+
+        var candidate = ResolveModelFileInDirectory(directory, modelId);
+        if (IsModelFileReady(candidate))
+        {
+            return candidate;
+        }
+
+        try
+        {
+            foreach (var gguf in Directory.EnumerateFiles(directory, "*.gguf", SearchOption.TopDirectoryOnly)
+                         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                if (IsModelFileReady(gguf))
+                {
+                    return gguf;
+                }
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        return null;
     }
 
     public static bool IsModelFileReady(
@@ -116,22 +162,6 @@ public static partial class EgOneRuntimeLocator
         }
 
         return true;
-    }
-
-    private static string NormalizeModelId(string? modelId)
-    {
-        var trimmed = modelId?.Trim();
-        if (string.Equals(trimmed, "eg-1-mini", StringComparison.OrdinalIgnoreCase))
-        {
-            return "eg-1-mini";
-        }
-
-        if (string.Equals(trimmed, "eg-1-micro", StringComparison.OrdinalIgnoreCase))
-        {
-            return "eg-1-micro";
-        }
-
-        return "eg-1";
     }
 
     private static string FormatShippingShardName(int shardIndex) => string.Format(

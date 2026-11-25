@@ -719,7 +719,7 @@ public sealed class PostHogSentryTelemetryTests
             Assert.True(migratedOptedIn.Settings.Observability?.ShareAnonymousTelemetry);
             Assert.True(migratedOptedIn.Settings.Observability?.SendCrashReports);
 
-            // Migrate v14 PortableProfile -> current.
+            // Migrate v14 PortableProfile -> current schema.
             var profilePath = Path.Combine(directory, "profile.enviouswispr.json");
             var v14Profile = JsonSettingsStoreTests.CreatePopulatedSettings().ToPortableProfile() with { SchemaVersion = 14 };
             await File.WriteAllTextAsync(profilePath, JsonSerializer.Serialize(v14Profile, JsonSettingsStore.SerializerOptions));

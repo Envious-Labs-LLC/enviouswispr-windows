@@ -337,12 +337,14 @@ public sealed record DictationPreferences(
 public sealed record PolishPreferences(
     PolishProvider Provider,
     string? ModelId,
-    string? OllamaEndpoint = null)
+    string? OllamaEndpoint = null,
+    string? EgOneModelId = null)
 {
     public static PolishPreferences Default { get; } = new(
         PolishProvider.None,
         ModelId: null,
-        OllamaEndpoint: null);
+        OllamaEndpoint: null,
+        EgOneModelId: null);
 }
 
 public sealed record HistoryPreferences(bool IsEnabled, int RetentionDays)

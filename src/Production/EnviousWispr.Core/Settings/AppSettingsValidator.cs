@@ -71,6 +71,10 @@ public static class AppSettingsValidator
         (preferences.Polish.OllamaEndpoint is null ||
             (!string.IsNullOrWhiteSpace(preferences.Polish.OllamaEndpoint) &&
              preferences.Polish.OllamaEndpoint.Length <= 2_048)) &&
+        (preferences.Polish.EgOneModelId is null ||
+            (!string.IsNullOrWhiteSpace(preferences.Polish.EgOneModelId) &&
+             preferences.Polish.EgOneModelId.Length <= 256 &&
+             Polish.EgOneModelCatalog.IsKnown(preferences.Polish.EgOneModelId))) &&
         // A stored threshold below the policy floor is not invalid - the policy clamps it up, so
         // rejecting the file here would reset every setting a user has over one number. Only a
         // value that cannot be a duration at all is rejected.

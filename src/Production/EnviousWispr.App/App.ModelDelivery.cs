@@ -2,12 +2,15 @@ using System.Globalization;
 using System.Reflection;
 using EnviousWispr.ASR;
 using EnviousWispr.Core.Diagnostics;
+using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.ModelDelivery;
 using EnviousWispr.Pipeline;
 using EnviousWispr.Presentation;
+using EnviousWispr.Services.Diagnostics;
+using EnviousWispr.Services.Distribution;
 
 namespace EnviousWispr.App;
 
@@ -38,6 +41,7 @@ public partial class App
 {
     private static readonly HttpClient ModelDeliveryHttpClient = new() { Timeout = Timeout.InfiniteTimeSpan };
     private readonly Dictionary<string, SpeechEngineTransientDelivery> _speechEngineDeliveries = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, SpeechEngineTransientDelivery> _egOneDeliveries = new(StringComparer.Ordinal);
     private CancellationTokenSource? _modelDownload;
     private Task? _modelDelivery;
     private IReadOnlyList<string> _missingModelIds = [];
@@ -45,6 +49,7 @@ public partial class App
     private bool _activeDeliveryMirrorsSelectedEngine;
     private bool _livePreviewReconfigurePending;
     private bool _transcriptionReconfigurePending;
+    private bool _polishReconfigurePending;
 
     private sealed record SpeechEngineTransientDelivery(
         SpeechModelDelivery Stage,
@@ -262,7 +267,122 @@ public partial class App
         _window?.SetSpeechEngineModels(parakeet, whisper, activeDownloadEngine);
     }
 
-    /// <summary>Tells the window what the speech model situation is, after transcription was configured.</summary>
+    private static string? EgOneBundleSizeText(string modelId)
+    {
+        if (BundledModelManifests.TryRead(modelId) is null)
+        {
+            return null;
+        }
+
+        var manifest = BundledModelManifests.Load(modelId, new ModelManifestVerifier(new Dictionary<string, string>()));
+        if (!manifest.Succeeded || manifest.Manifest is null)
+        {
+            return null;
+        }
+
+        var totalBytes = manifest.Manifest.Payload.Files.Sum(file => file.SizeBytes);
+        return $"{Megabytes(totalBytes)} MB";
+    }
+
+    private async Task<EgOneModelState> ProbeEgOneModelAsync(string modelId)
+    {
+        var normalizedId = EgOneModelCatalog.NormalizeOrDefault(modelId);
+        var active = await Task.Run(() => CreateModelStore().OpenActiveOfflineAsync(normalizedId)).ConfigureAwait(true);
+        var storeInstalled = active.Succeeded && active.Installed is not null;
+        var storeFile = storeInstalled
+            ? EgOneRuntimeLocator.TryResolveInstalledGgufInDirectory(active.Installed!.DirectoryPath, normalizedId)
+            : null;
+        var configuredModelId = ConfiguredEgOneModelId(_settings.Preferences.Polish);
+        var envOverride = string.Equals(normalizedId, configuredModelId, StringComparison.Ordinal)
+            ? Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH")
+            : null;
+        var legacyFile = EgOneRuntimeLocator.ResolveModelFile(_dataDirectory, normalizedId, envOverride);
+        var installed = storeFile is not null || EgOneRuntimeLocator.IsModelFileReady(legacyFile);
+        var legacyRoot = Path.Combine(ModelStoreRoot, normalizedId);
+        var canRemove = storeInstalled ||
+            (EgOneRuntimeLocator.IsModelFileReady(EgOneRuntimeLocator.ResolveModelFile(_dataDirectory, normalizedId)) &&
+             Directory.Exists(legacyRoot));
+        var hasBundledManifest = BundledModelManifests.TryRead(normalizedId) is not null;
+        var bundleSizeText = EgOneBundleSizeText(normalizedId);
+
+        if (installed)
+        {
+            if (_egOneDeliveries.TryGetValue(normalizedId, out var activating) &&
+                activating.Stage == SpeechModelDelivery.Activating)
+            {
+                return new EgOneModelState(
+                    ModelId: normalizedId,
+                    IsInstalled: true,
+                    CanRemove: canRemove,
+                    HasBundledManifest: hasBundledManifest,
+                    DeliveryStage: SpeechModelDelivery.Activating,
+                    StatusDetail: activating.Detail,
+                    BundleSizeText: bundleSizeText);
+            }
+
+            _egOneDeliveries.Remove(normalizedId);
+            return new EgOneModelState(
+                ModelId: normalizedId,
+                IsInstalled: true,
+                CanRemove: canRemove,
+                HasBundledManifest: hasBundledManifest,
+                DeliveryStage: SpeechModelDelivery.Installed,
+                BundleSizeText: bundleSizeText);
+        }
+
+        if (_egOneDeliveries.TryGetValue(normalizedId, out var delivery))
+        {
+            return new EgOneModelState(
+                ModelId: normalizedId,
+                IsInstalled: false,
+                CanRemove: false,
+                HasBundledManifest: hasBundledManifest,
+                DeliveryStage: delivery.Stage,
+                DownloadPercent: delivery.Percent,
+                StatusDetail: delivery.Detail,
+                BundleSizeText: bundleSizeText);
+        }
+
+        return new EgOneModelState(
+            ModelId: normalizedId,
+            IsInstalled: false,
+            CanRemove: false,
+            HasBundledManifest: hasBundledManifest,
+            DeliveryStage: SpeechModelDelivery.Missing,
+            BundleSizeText: bundleSizeText);
+    }
+
+    private bool CheckEgOneServerExecutableExists()
+    {
+        try
+        {
+            var serverExecutable = EgOneRuntimeLocator.ResolveServerExecutable(
+                AppContext.BaseDirectory,
+                _dataDirectory,
+                _updateService.IsStoreInstalled,
+                Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_SERVER_EXE"));
+            return File.Exists(serverExecutable);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private async Task RefreshEgOneInventoryAsync()
+    {
+        var states = new Dictionary<string, EgOneModelState>(StringComparer.Ordinal);
+        foreach (var modelId in EgOneModelCatalog.AllIds)
+        {
+            states[modelId] = await ProbeEgOneModelAsync(modelId).ConfigureAwait(true);
+        }
+
+        var activeDownloadId = _modelDownload is not null && EgOneModelCatalog.IsKnown(_activeDownloadModelId)
+            ? EgOneModelCatalog.NormalizeOrDefault(_activeDownloadModelId)
+            : null;
+        _window?.SetEgOneModels(states, CheckEgOneServerExecutableExists(), activeDownloadId);
+    }
+
     private async Task PresentModelDeliveryAsync()
     {
         if (_modelDownload is not null)
@@ -270,7 +390,7 @@ public partial class App
             return;
         }
 
-        while (_livePreviewReconfigurePending || _transcriptionReconfigurePending)
+        while (_livePreviewReconfigurePending || _transcriptionReconfigurePending || _polishReconfigurePending)
         {
             if (IsSpeechEngineBusy || Leaving)
             {
@@ -287,9 +407,12 @@ public partial class App
             using (hold)
             {
                 var reconfigureFinalEngine = _transcriptionReconfigurePending;
+                var reconfigurePreviewOrTranscription = _livePreviewReconfigurePending || _transcriptionReconfigurePending;
+                var reconfigurePolish = _polishReconfigurePending;
                 _livePreviewReconfigurePending = false;
                 _transcriptionReconfigurePending = false;
-                if (reconfigureFinalEngine || _configuredTranscription is not null)
+                _polishReconfigurePending = false;
+                if (reconfigurePreviewOrTranscription && (reconfigureFinalEngine || _configuredTranscription is not null))
                 {
                     await ReconfigureTranscriptionAsync().ConfigureAwait(true);
                     if (Leaving)
@@ -299,11 +422,26 @@ public partial class App
 
                     PresentGraphicsRuntime();
                 }
+
+                if (reconfigurePolish)
+                {
+                    await ReconfigurePolishRuntimeAsync().ConfigureAwait(true);
+                    if (Leaving)
+                    {
+                        return;
+                    }
+                }
             }
         }
 
         await RefreshLivePreviewModelInventoryAsync().ConfigureAwait(true);
         await RefreshSpeechEngineInventoryAsync().ConfigureAwait(true);
+        await RefreshEgOneInventoryAsync().ConfigureAwait(true);
+        await RefreshEgOneConfiguredProviderFromStoreAsync(_settings.Preferences.Polish).ConfigureAwait(true);
+        if (Leaving)
+        {
+            return;
+        }
         _missingModelIds = await MissingModelIdsAsync(_settings.Preferences).ConfigureAwait(true);
         if (_missingModelIds.Count == 0)
         {
@@ -685,6 +823,215 @@ public partial class App
         await PresentModelDeliveryAsync().ConfigureAwait(true);
     }
 
+    private void OnEgOneModelDownloadRequested(string modelId)
+    {
+        if (_modelDelivery is { IsCompleted: false } || Leaving)
+        {
+            return;
+        }
+
+        _modelDelivery = DeliverEgOneModelAsync(modelId);
+    }
+
+    private async Task DeliverEgOneModelAsync(string modelId)
+    {
+        var normalizedId = EgOneModelCatalog.NormalizeOrDefault(modelId);
+        if (IsSpeechEngineBusy)
+        {
+            _egOneDeliveries[normalizedId] = new(
+                SpeechModelDelivery.Failed,
+                Detail: EnginePolishPresentation.EgOneDownloadBlockedBusyNotice);
+            _window?.ShowEgOneNotice(EnginePolishPresentation.EgOneDownloadBlockedBusyNotice);
+            await RefreshEgOneInventoryAsync().ConfigureAwait(true);
+            return;
+        }
+
+        var existingState = await ProbeEgOneModelAsync(normalizedId).ConfigureAwait(true);
+        if (existingState.IsInstalled)
+        {
+            _egOneDeliveries.Remove(normalizedId);
+            await RefreshEgOneInventoryAsync().ConfigureAwait(true);
+            return;
+        }
+
+        if (BundledModelManifests.TryRead(normalizedId) is null)
+        {
+            var notPublished = EnginePolishPresentation.DescribeEgOneNotPublishedNotice(normalizedId);
+            _egOneDeliveries[normalizedId] = new(
+                SpeechModelDelivery.CannotDownload,
+                Detail: notPublished);
+            _window?.ShowEgOneNotice(notPublished);
+            await RefreshEgOneInventoryAsync().ConfigureAwait(true);
+            return;
+        }
+
+        using var download = new CancellationTokenSource();
+        _modelDownload = download;
+        _activeDownloadModelId = normalizedId;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var tierTitle = EnginePolishPresentation.DescribeEgOneTier(normalizedId).Title;
+        _logger.Write(new AppLogEntry(DateTimeOffset.UtcNow, AppEventCode.ModelDeliveryStarted));
+        _egOneDeliveries[normalizedId] = new(
+            SpeechModelDelivery.Downloading,
+            Percent: 0,
+            Detail: $"Downloading {tierTitle}…");
+        await RefreshEgOneInventoryAsync().ConfigureAwait(true);
+
+        try
+        {
+            var verifier = new ModelManifestVerifier(new Dictionary<string, string>());
+            var provisioner = new ModelProvisioner(
+                CreateModelStore(),
+                id => BundledModelManifests.Load(id, verifier));
+            var result = await provisioner.ProvisionAsync(normalizedId, download.Token).ConfigureAwait(true);
+            if (!result.Succeeded)
+            {
+                _logger.Write(new AppLogEntry(
+                    DateTimeOffset.UtcNow,
+                    AppEventCode.ModelDeliveryFailed,
+                    AppFailureCategory.ModelDelivery,
+                    clock.ElapsedMilliseconds));
+                _modelDownload = null;
+                _activeDownloadModelId = null;
+                var failureStage = result.Failure == ModelDeliveryFailure.Cancelled
+                    ? SpeechModelDelivery.Cancelled
+                    : SpeechModelDelivery.Failed;
+                var failureSentence = FailureSentence(result);
+                _egOneDeliveries[normalizedId] = new(failureStage, Detail: failureSentence);
+                _window?.ShowEgOneNotice(failureSentence);
+                await RefreshEgOneInventoryAsync().ConfigureAwait(true);
+                return;
+            }
+
+            _logger.Write(new AppLogEntry(
+                DateTimeOffset.UtcNow,
+                AppEventCode.ModelDeliveryCompleted,
+                ElapsedMilliseconds: clock.ElapsedMilliseconds));
+        }
+        finally
+        {
+            _modelDownload = null;
+            _activeDownloadModelId = null;
+        }
+
+        if (Leaving)
+        {
+            return;
+        }
+
+        _egOneDeliveries[normalizedId] = new(
+            SpeechModelDelivery.Activating,
+            Detail: "Download verified. Activating EG-1…");
+        await RefreshEgOneInventoryAsync().ConfigureAwait(true);
+
+        var attempt = _sessionCoordinator?.TryHold(SessionHolder.SpeechEngineSwitch)
+            ?? new SessionHoldAttempt(NoScope.Instance);
+        if (attempt.Hold is not { } hold)
+        {
+            if (attempt.Refusal != SessionHoldRefusal.Closed)
+            {
+                _polishReconfigurePending = true;
+                _egOneDeliveries.Remove(normalizedId);
+                await RefreshEgOneInventoryAsync().ConfigureAwait(true);
+            }
+
+            return;
+        }
+
+        using (hold)
+        {
+            _egOneDeliveries.Remove(normalizedId);
+            await ReconfigurePolishRuntimeAsync().ConfigureAwait(true);
+        }
+
+        if (Leaving)
+        {
+            return;
+        }
+
+        await RefreshEgOneInventoryAsync().ConfigureAwait(true);
+    }
+
+    private void OnEgOneModelRemoveRequested(string modelId)
+    {
+        if (IsSpeechEngineBusy)
+        {
+            _window?.ShowEgOneNotice(EnginePolishPresentation.EgOneRemovalBlockedBusyNotice);
+            return;
+        }
+
+        if (_modelDelivery is { IsCompleted: false } || Leaving)
+        {
+            return;
+        }
+
+        _modelDelivery = RemoveEgOneModelAsync(modelId);
+    }
+
+    private async Task RemoveEgOneModelAsync(string modelId)
+    {
+        if (IsSpeechEngineBusy)
+        {
+            _window?.ShowEgOneNotice(EnginePolishPresentation.EgOneRemovalBlockedBusyNotice);
+            return;
+        }
+
+        var attempt = _sessionCoordinator?.TryHold(SessionHolder.SpeechEngineSwitch)
+            ?? new SessionHoldAttempt(NoScope.Instance);
+        if (attempt.Hold is not { } hold)
+        {
+            _window?.ShowEgOneNotice(EnginePolishPresentation.EgOneRemovalBlockedBusyNotice);
+            return;
+        }
+
+        var normalizedId = EgOneModelCatalog.NormalizeOrDefault(modelId);
+        _egOneDeliveries.Remove(normalizedId);
+
+        using (hold)
+        {
+            ModelPackageRemovalOutcome removalOutcome;
+            await _engineReconfiguration.WaitAsync().ConfigureAwait(true);
+            try
+            {
+                if (Leaving)
+                {
+                    return;
+                }
+
+                // Stop llama-server.exe via AbortPolishRuntime before removing ModelStore versions + legacy directory.
+                removalOutcome = await ModelPackageCleaner.RemoveAsync(
+                    CreateModelStore(),
+                    normalizedId,
+                    Path.Combine(ModelStoreRoot, normalizedId),
+                    TeardownPolishAsync).ConfigureAwait(true);
+            }
+            finally
+            {
+                _engineReconfiguration.Release();
+            }
+
+            if (!removalOutcome.Succeeded)
+            {
+                _window?.ShowEgOneNotice(
+                    "Could not remove all files for this EG-1 model because another process is using them. Try again in a moment.");
+            }
+
+            if (Leaving)
+            {
+                return;
+            }
+
+            await ReconfigurePolishRuntimeAsync().ConfigureAwait(true);
+        }
+
+        if (Leaving)
+        {
+            return;
+        }
+
+        await RefreshEgOneInventoryAsync().ConfigureAwait(true);
+    }
+
     private void OnPreviewModelDownloadRequested()
     {
         if (_modelDelivery is { IsCompleted: false } || Leaving)
@@ -836,7 +1183,7 @@ public partial class App
 
     private void TrySchedulePendingModelRefresh()
     {
-        if ((!_livePreviewReconfigurePending && !_transcriptionReconfigurePending) ||
+        if ((!_livePreviewReconfigurePending && !_transcriptionReconfigurePending && !_polishReconfigurePending) ||
             _modelDelivery is { IsCompleted: false } ||
             IsSpeechEngineBusy ||
             Leaving)
@@ -902,6 +1249,55 @@ public partial class App
         await PresentModelDeliveryAsync().ConfigureAwait(true);
     }
 
+    private async Task TeardownPolishAsync()
+    {
+        AbortPolishRuntime();
+        if (_polishWarmup is { } warmup)
+        {
+            _polishWarmup = null;
+            try
+            {
+                await warmup.ConfigureAwait(true);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        if (_polishProvider is { } provider)
+        {
+            _polishProvider = null;
+            await provider.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    private async Task ReconfigurePolishRuntimeAsync()
+    {
+        await _engineReconfiguration.WaitAsync().ConfigureAwait(true);
+        try
+        {
+            if (Leaving)
+            {
+                return;
+            }
+
+            await TeardownPolishAsync().ConfigureAwait(true);
+            if (Leaving)
+            {
+                return;
+            }
+
+            await ConfigurePolishAsync(_settings.Preferences.Polish).ConfigureAwait(true);
+            _window?.SetCloudPolishNotice(_cloudPolishConsent?.Notice);
+            _window?.SetOllamaPolishNotice(_localPolishNotice);
+            StartPolishWarmup();
+        }
+        finally
+        {
+            _engineReconfiguration.Release();
+        }
+    }
+
     private async Task TeardownTranscriptionAsync()
     {
         if (_previewEngine is not null)
@@ -942,6 +1338,15 @@ public partial class App
                 if (string.Equals(_activeDownloadModelId, WhisperTranscriptionEngine.PreviewModelId, StringComparison.Ordinal))
                 {
                     window.SetLivePreviewWhisperDelivery(presentation);
+                }
+                else if (EgOneModelCatalog.IsKnown(_activeDownloadModelId))
+                {
+                    var egOneId = EgOneModelCatalog.NormalizeOrDefault(_activeDownloadModelId);
+                    _egOneDeliveries[egOneId] = new(
+                        SpeechModelDelivery.Downloading,
+                        percent,
+                        presentation.Text);
+                    window.SetEgOneDelivery(egOneId, presentation);
                 }
                 else
                 {
