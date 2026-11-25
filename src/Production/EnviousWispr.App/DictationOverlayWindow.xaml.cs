@@ -33,7 +33,7 @@ public sealed partial class DictationOverlayWindow : Window
     private const int ReadingWellWidth = 400;
 
     /// <summary>The Reading Well's header, and the whole pill while it waits for words.</summary>
-    private const int ReadingWellHeaderHeight = 34;
+    private const int ReadingWellHeaderHeight = 36;
 
     /// <summary>The 1px edge thickness of <c>FrameBorder</c>, subtracted where inner heights or widths are exact.</summary>
     private const double FrameBorderThickness = 1;
@@ -783,7 +783,7 @@ public sealed partial class DictationOverlayWindow : Window
         ModeLabel.Visibility = readingWell && !_handsFree ? Visibility.Visible : Visibility.Collapsed;
         WellHandsFreeBadge.Visibility = readingWell && _handsFree ? Visibility.Visible : Visibility.Collapsed;
 
-        // THE CAPSULES CENTRE ONE ROW IN A 44-TALL PILL; THE READING WELL IS A RULED 34-TALL HEADER
+        // THE CAPSULES CENTRE ONE ROW IN A 44-TALL PILL; THE READING WELL IS A RULED 36-TALL HEADER
         // with the clock hard left and the state word hard right, pinned to the top so it does not
         // move when the words arrive beneath it.
         HeaderLeading.Spacing = readingWell ? 12 : 10;
@@ -828,14 +828,15 @@ public sealed partial class DictationOverlayWindow : Window
 
     /// <summary>Puts the pill on one of its three surfaces, at that surface's corner radius.</summary>
     /// <remarks>
-    /// THE SURFACE LIVES ON THE BLEED-BACKED ROOT, AND THE EDGE LIVES TWO UNITS INSIDE IT, so the
-    /// window clip removes only the outer fringe and never slices off the 1px border or the bottom
+    /// THE SURFACE LIVES ON THE BLEED-BACKED ROOT WITH SQUARE CORNERS, AND THE EDGE LIVES TWO UNITS
+    /// INSIDE IT, so the 2-unit bleed behind FrameBorder stays solid surface color (zero dark corner
+    /// wedges at any DPI or theme) and the window clip never slices off the 1px border or the bottom
     /// hairline.
     /// </remarks>
     private void ApplySurface(string surfaceStyle, double radius)
     {
         OverlayRoot.Style = GetPillStyle(surfaceStyle);
-        OverlayRoot.CornerRadius = new CornerRadius(radius + WindowBleed);
+        OverlayRoot.CornerRadius = new CornerRadius(0);
         var innerCorners = new CornerRadius(radius);
         FrameBorder.CornerRadius = innerCorners;
         SeverityWash.CornerRadius = innerCorners;
@@ -1404,8 +1405,8 @@ public sealed partial class DictationOverlayWindow : Window
         var region = CreateRoundRectRgn(
             fringe,
             fringe,
-            _overlayWidth - fringe + 1,
-            _overlayHeight - fringe + 1,
+            _overlayWidth - fringe,
+            _overlayHeight - fringe,
             radius,
             radius);
         if (region == nint.Zero)
