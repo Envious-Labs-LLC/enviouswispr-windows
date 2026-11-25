@@ -24,6 +24,8 @@ using EnviousWispr.Core.Settings;
 using EnviousWispr.LLM;
 using EnviousWispr.Pipeline;
 using EnviousWispr.Presentation;
+using EnviousWispr.Services.Diagnostics;
+using EnviousWispr.Services.Distribution;
 using EnviousWispr.Services.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -145,16 +147,9 @@ public sealed partial class MainWindow : Window, IDisposable
     // and the second instance would otherwise be a defect nobody wrote.
     private readonly SelectableChoiceOption[] FinalEngineChoices =
     [
-        new("Automatic", "Chooses the best available local engine for this PC."),
-        new("Parakeet", "Fast local English transcription with automatic hardware selection."),
-        // NOT PRESENTED AS PARAKEET'S EQUAL, BECAUSE IT IS NOT YET. Six of six live takes on this rig
-        // pasted sentences nobody said (#101): the engine elaborates room noise into fluent prose,
-        // where Parakeet degrades into a fragment a person can see is wrong. Until that closes, the
-        // card says so, and the sentence names the condition rather than the mechanism.
-        // THE CARD ALSO SAYS WHERE IT IS FAST. Whisper runs on an NVIDIA card or on the processor, and on
-        // the processor a 10-second take measured 11.7 to 32.2 s (#47); founder decision 2026-09-25: say
-        // "NVIDIA recommended" rather than build an AMD and Intel graphics path before launch.
-        new("Whisper", "Multilingual, but not yet recommended: with room noise it can add words that were never spoken. Best with an NVIDIA graphics card; on other PCs it is slow."),
+        new("Automatic", EnginePolishPresentation.DescribeEngine(FinalAsrEngine.Automatic).Description),
+        new("Parakeet", EnginePolishPresentation.DescribeEngine(FinalAsrEngine.Parakeet).Description),
+        new("Whisper", EnginePolishPresentation.DescribeEngine(FinalAsrEngine.Whisper).Description),
     ];
 
     private readonly SelectableChoiceOption[] PolishProviderChoices =
@@ -326,6 +321,9 @@ public sealed partial class MainWindow : Window, IDisposable
     private readonly Dictionary<RecordingSoundPairing, List<Border>> _chimeWaveformBars = new();
     private readonly Dictionary<RecordingSoundPairing, Button> _chimePlayButtons = new();
     private PolishProvider _lastNonNonePolishProvider = PolishProvider.EgOne;
+    private FinalAsrEngine? _lastActiveEngine;
+    private bool _isUpdatingEgOneCards;
+    private HardwareProfile? _hardwareProfile;
     private bool _isRepolishing;
 
     public MainWindow(
@@ -1723,6 +1721,7 @@ public sealed partial class MainWindow : Window, IDisposable
             {
                 if (e.PropertyName == nameof(SelectableChoiceOption.IsSelected) && ((SelectableChoiceOption)s!).IsSelected)
                 {
+                    UpdateActiveEngineDisplay();
                     _ = TriggerAutoSaveAsync();
                     UpdateHistoryStatusCards();
                 }
@@ -2727,9 +2726,25 @@ public sealed partial class MainWindow : Window, IDisposable
             };
         }
 
+        var outputLanguage = EnginePolishPresentation.DescribeDictationOutputLanguage(provider);
+        if (DictationOutputLanguageCard is not null)
+        {
+            DictationOutputLanguageCard.Visibility = outputLanguage.IsVisible
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+        if (DictationOutputLanguageStatusText is not null && outputLanguage.IsVisible)
+        {
+            DictationOutputLanguageStatusText.Text = outputLanguage.StatusText;
+        }
+
         if (EgOneSettingsPanel is not null)
         {
             EgOneSettingsPanel.Visibility = provider == PolishProvider.EgOne ? Visibility.Visible : Visibility.Collapsed;
+        }
+        if (provider == PolishProvider.EgOne)
+        {
+            UpdateEgOneCards();
         }
         if (OllamaSettingsPanel is not null)
         {
@@ -2744,6 +2759,193 @@ public sealed partial class MainWindow : Window, IDisposable
         UpdateOllamaLivePollTimer();
     }
 
+    private FinalAsrEngine SelectedFinalEngine() =>
+        (FinalAsrEngine)Math.Clamp(SelectedIndexOf(FinalEngineChoices), 0, 2);
+
+    private void ChangeEngineButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (EngineChooserPanel is not null)
+        {
+            EngineChooserPanel.Visibility =
+                EngineChooserPanel.Visibility == Visibility.Visible
+                    ? Visibility.Collapsed
+                    : Visibility.Visible;
+        }
+    }
+
+    private void EngineCardChecked(object sender, RoutedEventArgs e)
+    {
+        if (_isApplyingSettings || _settings is null)
+        {
+            return;
+        }
+
+        var selectedEngine = sender is RadioButton { DataContext: SelectableChoiceOption option }
+            && Array.IndexOf(FinalEngineChoices, option) is var idx and >= 0
+                ? (FinalAsrEngine)Math.Clamp(idx, 0, 2)
+                : SelectedFinalEngine();
+
+        if (_lastActiveEngine == selectedEngine)
+        {
+            return;
+        }
+
+        _lastActiveEngine = selectedEngine;
+        UpdateActiveEngineDisplay(selectedEngine);
+        if (EngineChooserPanel is not null)
+        {
+            EngineChooserPanel.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void UpdateActiveEngineDisplay(FinalAsrEngine? engineOverride = null)
+    {
+        var engine = engineOverride ?? SelectedFinalEngine();
+        var summary = EnginePolishPresentation.DescribeEngine(engine);
+
+        if (ActiveEngineNameText is not null)
+        {
+            ActiveEngineNameText.Text = summary.Name;
+        }
+
+        if (ActiveEngineBadgeText is not null)
+        {
+            ActiveEngineBadgeText.Text = summary.BadgeText;
+        }
+
+        if (ActiveEngineDescriptionText is not null)
+        {
+            ActiveEngineDescriptionText.Text = summary.Description;
+        }
+
+        if (ActiveEngineIcon is not null)
+        {
+            ActiveEngineIcon.Glyph = summary.IconGlyph;
+        }
+
+        if (WhisperLanguageRow is not null)
+        {
+            WhisperLanguageRow.Visibility = summary.ShowWhisperLanguage
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+    }
+
+    private void UpdateEgOneCards()
+    {
+        if (_isUpdatingEgOneCards
+            || EgOneSizeFullCard is null
+            || EgOneSizeMiniCard is null
+            || EgOneSizeMicroCard is null)
+        {
+            return;
+        }
+
+        var profile = _hardwareProfile ??= HardwareProfileSummary.GetCurrent();
+        if (EgOneMemoryText is not null)
+        {
+            EgOneMemoryText.Text = profile.SummaryText;
+        }
+
+        if (EgOneFullRecommendedBadge is not null)
+        {
+            EgOneFullRecommendedBadge.Visibility =
+                string.Equals(profile.RecommendedEgOneModelId, EnginePolishPresentation.EgOneFullModelId, StringComparison.Ordinal)
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+        }
+
+        if (EgOneMiniRecommendedBadge is not null)
+        {
+            EgOneMiniRecommendedBadge.Visibility =
+                string.Equals(profile.RecommendedEgOneModelId, EnginePolishPresentation.EgOneMiniModelId, StringComparison.Ordinal)
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+        }
+
+        if (EgOneMicroRecommendedBadge is not null)
+        {
+            EgOneMicroRecommendedBadge.Visibility =
+                string.Equals(profile.RecommendedEgOneModelId, EnginePolishPresentation.EgOneMicroModelId, StringComparison.Ordinal)
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+        }
+
+        var rawModelId = PolishModelTextBox?.Text;
+        if (string.IsNullOrWhiteSpace(rawModelId))
+        {
+            rawModelId = _settings?.Preferences.Polish.ModelId;
+        }
+
+        var normalizedModelId = EnginePolishPresentation.NormalizeEgOneModelId(rawModelId);
+
+        _isUpdatingEgOneCards = true;
+        try
+        {
+            EgOneSizeFullCard.IsChecked = normalizedModelId == EnginePolishPresentation.EgOneFullModelId;
+            EgOneSizeMiniCard.IsChecked = normalizedModelId == EnginePolishPresentation.EgOneMiniModelId;
+            EgOneSizeMicroCard.IsChecked = normalizedModelId == EnginePolishPresentation.EgOneMicroModelId;
+        }
+        finally
+        {
+            _isUpdatingEgOneCards = false;
+        }
+
+        if (EgOneInstallStatusText is not null)
+        {
+            var (serverExists, modelExists) = CheckEgOneLocalAssets(normalizedModelId);
+            EgOneInstallStatusText.Text = EnginePolishPresentation.FormatEgOneInstallStatus(serverExists, modelExists);
+        }
+    }
+
+    private (bool ServerExists, bool ModelExists) CheckEgOneLocalAssets(string normalizedModelId)
+    {
+        try
+        {
+            var serverExecutable = EgOneRuntimeLocator.ResolveServerExecutable(
+                AppContext.BaseDirectory,
+                _dataDirectory,
+                _storeInstalled,
+                Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_SERVER_EXE"));
+            var serverExists = File.Exists(serverExecutable);
+
+            var modelFile = EgOneRuntimeLocator.ResolveModelFile(
+                _dataDirectory,
+                normalizedModelId,
+                Environment.GetEnvironmentVariable("ENVIOUSWISPR_EG1_MODEL_PATH"));
+            var modelExists = EgOneRuntimeLocator.IsModelFileReady(modelFile);
+
+            return (serverExists, modelExists);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return (false, false);
+        }
+    }
+
+    private void EgOneSizeCard_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_isApplyingSettings || _isUpdatingEgOneCards || _settings is null)
+        {
+            return;
+        }
+
+        var modelId = (sender as FrameworkElement)?.Tag as string;
+        if (!EnginePolishPresentation.IsKnownEgOneModelId(modelId))
+        {
+            return;
+        }
+
+        var normalized = EnginePolishPresentation.NormalizeEgOneModelId(modelId);
+        if (!string.Equals(PolishModelTextBox.Text?.Trim(), normalized, StringComparison.Ordinal))
+        {
+            PolishModelTextBox.Text = _polishModelSetByApp = normalized;
+        }
+
+        UpdateEgOneCards();
+        _ = TriggerAutoSaveAsync();
+    }
+
     private async void PolishProviderCardChecked(object sender, RoutedEventArgs e)
     {
         if (_isApplyingSettings || _settings is null)
@@ -2751,12 +2953,23 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
+        var provider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
         UpdateActivePolishProviderDisplay();
         ApiKeyPasswordBox.Password = string.Empty;
         RefreshApiKeyStatus();
+        var chooseDefault = provider != PolishProvider.EgOne ||
+            !EnginePolishPresentation.IsKnownEgOneModelId(PolishModelTextBox.Text);
         await RefreshPolishModelChoicesAsync(
-            PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)),
-            chooseDefault: true).ConfigureAwait(true);
+            provider,
+            chooseDefault: chooseDefault).ConfigureAwait(true);
+        if (provider == PolishProvider.EgOne)
+        {
+            UpdateEgOneCards();
+            if (chooseDefault)
+            {
+                _ = TriggerAutoSaveAsync();
+            }
+        }
     }
 
     private void PolishModelPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -5470,7 +5683,9 @@ public sealed partial class MainWindow : Window, IDisposable
         try
         {
             var preferences = _settings.Preferences;
+            _lastActiveEngine = preferences.Dictation.FinalEngine;
             SelectChoice(FinalEngineChoices, (int)preferences.Dictation.FinalEngine);
+            UpdateActiveEngineDisplay(preferences.Dictation.FinalEngine);
             WhisperLanguageComboBox.SelectedIndex = (int)preferences.Dictation.WhisperLanguage;
             SyncAppliedWhisperLanguageStatus(preferences.Dictation.WhisperLanguage);
             EnglishSpellingComboBox.SelectedIndex = (int)preferences.Dictation.EnglishSpelling;
@@ -5497,9 +5712,9 @@ public sealed partial class MainWindow : Window, IDisposable
             {
                 _lastNonNonePolishProvider = preferences.Polish.Provider;
             }
+            PolishModelTextBox.Text = _polishModelSetByApp = preferences.Polish.ModelId ?? string.Empty;
             SelectChoice(PolishProviderChoices, PolishProviderIndex(preferences.Polish.Provider));
             UpdateActivePolishProviderDisplay();
-            PolishModelTextBox.Text = _polishModelSetByApp = preferences.Polish.ModelId ?? string.Empty;
             OllamaEndpointTextBox.Text = preferences.Polish.OllamaEndpoint ?? string.Empty;
             HistoryEnabledToggle.IsOn = preferences.History.IsEnabled;
             RetentionDaysBox.Value = preferences.History.RetentionDays;
@@ -6752,6 +6967,20 @@ public sealed partial class MainWindow : Window, IDisposable
     /// They listen for that instead. The pill takes the requested theme directly, because it
     /// inherits the same resolution rules once it has it.
     /// </remarks>
+    public void ApplyThemeFromExternal(AppTheme theme)
+    {
+        var previousApplying = _isApplyingSettings;
+        _isApplyingSettings = true;
+        try
+        {
+            SetThemeSelection(ThemeIndex(theme), triggerSave: false);
+        }
+        finally
+        {
+            _isApplyingSettings = previousApplying;
+        }
+    }
+
     private void ApplyTheme(AppTheme theme)
     {
         var requested = theme switch
@@ -6762,7 +6991,7 @@ public sealed partial class MainWindow : Window, IDisposable
         };
 
         WindowRoot.RequestedTheme = requested;
-        _overlayWindow.ApplyTheme(requested);
+        _overlayWindow?.ApplyTheme(requested);
     }
 
     // THE MAPS BETWEEN A CHOICE'S INDEX AND WHAT IT MEANS ARE THE PRESENTER'S (plan-2 step 11): the
