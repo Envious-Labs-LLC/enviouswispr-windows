@@ -39,7 +39,7 @@ public sealed partial class MainWindow
             FillerRemovalToggle.IsOn,
             EmojiFormatterToggle.IsOn,
             SpokenPunctuationToggle.IsOn,
-            WhisperLanguageComboBox.SelectedIndex,
+            _selectedWhisperLanguage,
             EnglishSpellingComboBox.SelectedIndex,
             _recordingModeIndex,
             EscapeRecoveryToggle.IsOn,
@@ -124,8 +124,11 @@ public sealed partial class MainWindow
             _ = TriggerAutoSaveAsync();
         };
 
-        WhisperLanguageComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
-        EnglishSpellingComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
+        EnglishSpellingComboBox.SelectionChanged += (_, _) =>
+        {
+            RefreshLanguageControls();
+            _ = TriggerAutoSaveAsync();
+        };
         MicrophoneComboBox.SelectionChanged += (_, _) => _ = TriggerAutoSaveAsync();
 
         AutoStopSecondsBox.ValueChanged += (_, _) => _ = TriggerAutoSaveAsync();
@@ -419,7 +422,9 @@ public sealed partial class MainWindow
             _settings.Preferences.PillDesignWithoutWords,
             _settings.Preferences.PillDesignWithWords);
         SettingsChanged?.Invoke(_settings);
-        SyncAppliedWhisperLanguageStatus(_settings.Preferences.Dictation.WhisperLanguage);
+        SyncAppliedWhisperLanguageStatus(
+            _settings.Preferences.Dictation.WhisperLanguage,
+            _settings.Preferences.Dictation.EnglishSpelling);
     }
 
     private void RefreshReusableUserDataViews()
@@ -477,10 +482,12 @@ public sealed partial class MainWindow
             var preferences = _settings.Preferences;
             _lastActiveEngine = preferences.Dictation.FinalEngine;
             SetSelectedFinalEngineCards(preferences.Dictation.FinalEngine);
-            UpdateActiveEngineDisplay(preferences.Dictation.FinalEngine);
-            WhisperLanguageComboBox.SelectedIndex = (int)preferences.Dictation.WhisperLanguage;
-            SyncAppliedWhisperLanguageStatus(preferences.Dictation.WhisperLanguage);
+            _selectedWhisperLanguage = LanguageCatalog.NormalizeOrDefault(preferences.Dictation.WhisperLanguage);
             EnglishSpellingComboBox.SelectedIndex = (int)preferences.Dictation.EnglishSpelling;
+            UpdateActiveEngineDisplay(preferences.Dictation.FinalEngine);
+            SyncAppliedWhisperLanguageStatus(
+                preferences.Dictation.WhisperLanguage,
+                preferences.Dictation.EnglishSpelling);
             HotkeyTextBox.Text = preferences.Dictation.PushToTalkGesture;
             SetRecordingMode((int)preferences.Dictation.RecordingMode, triggerSave: false);
             CancelHotkeyTextBox.Text = preferences.Dictation.CancelGesture;

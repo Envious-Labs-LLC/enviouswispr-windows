@@ -1,3 +1,4 @@
+using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Settings;
 
@@ -17,8 +18,8 @@ public sealed class LanguageLockSuggesterTests
     {
         var suggester = new LanguageLockSuggester();
 
-        Assert.Null(suggester.Observe("es", WhisperLanguagePreference.Automatic));
-        Assert.Null(suggester.Observe("es", WhisperLanguagePreference.Automatic));
+        Assert.Null(suggester.Observe("es", LanguageCatalog.AutomaticCode));
+        Assert.Null(suggester.Observe("es", LanguageCatalog.AutomaticCode));
     }
 
     [Fact]
@@ -26,12 +27,12 @@ public sealed class LanguageLockSuggesterTests
     {
         var suggester = new LanguageLockSuggester();
 
-        suggester.Observe("es", WhisperLanguagePreference.Automatic);
-        suggester.Observe("es", WhisperLanguagePreference.Automatic);
-        var offer = suggester.Observe("es", WhisperLanguagePreference.Automatic);
+        suggester.Observe("es", LanguageCatalog.AutomaticCode);
+        suggester.Observe("es", LanguageCatalog.AutomaticCode);
+        var offer = suggester.Observe("es", LanguageCatalog.AutomaticCode);
 
         Assert.NotNull(offer);
-        Assert.Equal(WhisperLanguagePreference.Spanish, offer.Language);
+        Assert.Equal("es", offer.LanguageCode);
         Assert.Equal("Spanish", offer.DisplayName);
         Assert.Equal(LanguageOfferKind.AskToLock, offer.Kind);
     }
@@ -42,11 +43,11 @@ public sealed class LanguageLockSuggesterTests
         // Recognition may answer es-ES one moment and es the next, and those are the same language.
         var suggester = new LanguageLockSuggester();
 
-        suggester.Observe("es-ES", WhisperLanguagePreference.Automatic);
-        suggester.Observe("ES", WhisperLanguagePreference.Automatic);
-        var offer = suggester.Observe("es_419", WhisperLanguagePreference.Automatic);
+        suggester.Observe("es-ES", LanguageCatalog.AutomaticCode);
+        suggester.Observe("ES", LanguageCatalog.AutomaticCode);
+        var offer = suggester.Observe("es_419", LanguageCatalog.AutomaticCode);
 
-        Assert.Equal(WhisperLanguagePreference.Spanish, offer?.Language);
+        Assert.Equal("es", offer?.LanguageCode);
     }
 
     [Fact]
@@ -55,12 +56,12 @@ public sealed class LanguageLockSuggesterTests
         // Somebody working in French who says one English sentence has not stopped working in French.
         var suggester = new LanguageLockSuggester();
 
-        suggester.Observe("fr", WhisperLanguagePreference.Automatic);
-        Assert.Null(suggester.Observe("en", WhisperLanguagePreference.Automatic));
-        suggester.Observe("fr", WhisperLanguagePreference.Automatic);
-        var offer = suggester.Observe("fr", WhisperLanguagePreference.Automatic);
+        suggester.Observe("fr", LanguageCatalog.AutomaticCode);
+        Assert.Null(suggester.Observe("en", LanguageCatalog.AutomaticCode));
+        suggester.Observe("fr", LanguageCatalog.AutomaticCode);
+        var offer = suggester.Observe("fr", LanguageCatalog.AutomaticCode);
 
-        Assert.Equal(WhisperLanguagePreference.French, offer?.Language);
+        Assert.Equal("fr", offer?.LanguageCode);
     }
 
     [Fact]
@@ -68,10 +69,10 @@ public sealed class LanguageLockSuggesterTests
     {
         var suggester = new LanguageLockSuggester();
 
-        suggester.Observe("de", WhisperLanguagePreference.Automatic);
-        suggester.Observe("de", WhisperLanguagePreference.Automatic);
-        suggester.Observe("fr", WhisperLanguagePreference.Automatic);
-        Assert.Null(suggester.Observe("de", WhisperLanguagePreference.Automatic));
+        suggester.Observe("de", LanguageCatalog.AutomaticCode);
+        suggester.Observe("de", LanguageCatalog.AutomaticCode);
+        suggester.Observe("fr", LanguageCatalog.AutomaticCode);
+        Assert.Null(suggester.Observe("de", LanguageCatalog.AutomaticCode));
     }
 
     [Fact]
@@ -81,10 +82,10 @@ public sealed class LanguageLockSuggesterTests
 
         for (var index = 0; index < LanguageLockSuggester.RunLength; index++)
         {
-            suggester.Observe("es", WhisperLanguagePreference.Automatic);
+            suggester.Observe("es", LanguageCatalog.AutomaticCode);
         }
 
-        Assert.Null(suggester.Observe("es", WhisperLanguagePreference.Automatic));
+        Assert.Null(suggester.Observe("es", LanguageCatalog.AutomaticCode));
     }
 
     [Fact]
@@ -122,18 +123,25 @@ public sealed class LanguageLockSuggesterTests
         // Somebody who has chosen a language has answered this question already.
         var suggester = new LanguageLockSuggester();
 
-        Assert.Null(RunToOffer(suggester, "es", WhisperLanguagePreference.French));
+        Assert.Null(RunToOffer(suggester, "es", "fr"));
     }
 
     [Fact]
-    public void NoOfferIsMadeForALanguageTheSettingCannotHold()
+    public void OffersAnySupportedCatalogLanguageForWhisperAndOnlyEuropeanForParakeet()
     {
-        // Recognition can name any language it likes; the setting holds five. A button that would do
-        // nothing is worse than no button.
         var suggester = new LanguageLockSuggester();
 
-        Assert.Null(RunToOffer(suggester, "it"));
-        Assert.Null(RunToOffer(suggester, "ja"));
+        var japanese = RunToOffer(suggester, "ja", activeEngine: FinalAsrEngine.Whisper);
+        Assert.NotNull(japanese);
+        Assert.Equal("ja", japanese.LanguageCode);
+        Assert.Equal("Japanese", japanese.DisplayName);
+
+        var italianOnParakeet = RunToOffer(suggester, "it", activeEngine: FinalAsrEngine.Parakeet);
+        Assert.NotNull(italianOnParakeet);
+        Assert.Equal("it", italianOnParakeet.LanguageCode);
+
+        Assert.Null(RunToOffer(suggester, "ja", activeEngine: FinalAsrEngine.Parakeet));
+        Assert.Null(RunToOffer(suggester, "zz", activeEngine: FinalAsrEngine.Whisper));
     }
 
     [Fact]
@@ -141,8 +149,8 @@ public sealed class LanguageLockSuggesterTests
     {
         var suggester = new LanguageLockSuggester();
 
-        Assert.Null(suggester.Observe(null, WhisperLanguagePreference.Automatic));
-        Assert.Null(suggester.Observe("  ", WhisperLanguagePreference.Automatic));
+        Assert.Null(suggester.Observe(null, LanguageCatalog.AutomaticCode));
+        Assert.Null(suggester.Observe("  ", LanguageCatalog.AutomaticCode));
 
         // A dictation recognition could not name has not moved the count in either direction, so
         // three Spanish sentences after it are still three Spanish sentences.
@@ -158,7 +166,7 @@ public sealed class LanguageLockSuggesterTests
             RunToOffer(suggester, "es");
         }
 
-        suggester.Accepted(WhisperLanguagePreference.Spanish);
+        suggester.Accepted("es");
 
         Assert.Equal(LanguageOfferKind.AskToLock, RunToOffer(suggester, "es")?.Kind);
     }
@@ -196,12 +204,12 @@ public sealed class LanguageLockSuggesterTests
     {
         // Two sentences in Spanish yesterday are not two thirds of a reason to ask today.
         var first = new LanguageLockSuggester();
-        first.Observe("es", WhisperLanguagePreference.Automatic);
-        first.Observe("es", WhisperLanguagePreference.Automatic);
+        first.Observe("es", LanguageCatalog.AutomaticCode);
+        first.Observe("es", LanguageCatalog.AutomaticCode);
 
         var second = new LanguageLockSuggester(first.OfferHistory);
 
-        Assert.Null(second.Observe("es", WhisperLanguagePreference.Automatic));
+        Assert.Null(second.Observe("es", LanguageCatalog.AutomaticCode));
     }
 
     [Fact]
@@ -213,7 +221,7 @@ public sealed class LanguageLockSuggesterTests
             RunToOffer(first, "es");
         }
 
-        first.Accepted(WhisperLanguagePreference.Spanish);
+        first.Accepted("es");
         var second = new LanguageLockSuggester(first.OfferHistory);
 
         Assert.Equal(LanguageOfferKind.AskToLock, RunToOffer(second, "es")?.Kind);
@@ -235,7 +243,8 @@ public sealed class LanguageLockSuggesterTests
     [InlineData("es:3|fr")]
     [InlineData("es:3|")]
     [InlineData("|es:3")]
-    [InlineData("it:2")]
+    [InlineData("zz:2")]
+    [InlineData("auto:2")]
     [InlineData("en:2")]
     [InlineData("es-:2")]
     [InlineData("es-garbage:2")]
@@ -272,12 +281,13 @@ public sealed class LanguageLockSuggesterTests
     private static LanguageLockOffer? RunToOffer(
         LanguageLockSuggester suggester,
         string language,
-        WhisperLanguagePreference current = WhisperLanguagePreference.Automatic)
+        string current = LanguageCatalog.AutomaticCode,
+        FinalAsrEngine activeEngine = FinalAsrEngine.Whisper)
     {
         LanguageLockOffer? last = null;
         for (var index = 0; index < LanguageLockSuggester.RunLength; index++)
         {
-            last = suggester.Observe(language, current);
+            last = suggester.Observe(language, current, activeEngine);
         }
 
         return last;

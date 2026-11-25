@@ -4,6 +4,7 @@ using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
+using EnviousWispr.Pipeline;
 using EnviousWispr.Services.Runtime;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -68,19 +69,20 @@ public sealed class LanguagePerTakeTests
     }
 
     [Fact]
-    public void TheOptionsSendTheCurrentLanguageForWhisperAndNothingForParakeet()
+    public void TheOptionsSendTheCurrentLanguageForBothWhisperAndParakeet()
     {
         var current = "auto";
         var whisper = RuntimeWorkerTranscriptionEngine.LanguageFor(Options(FinalAsrEngine.Whisper, "auto", () => current));
+        var parakeet = RuntimeWorkerTranscriptionEngine.LanguageFor(Options(FinalAsrEngine.Parakeet, "auto", () => current));
         Assert.Equal("auto", whisper());
+        Assert.Equal("auto", parakeet());
         current = "fr";
         Assert.Equal("fr", whisper());
+        Assert.Equal("fr", parakeet());
 
         // NOTHING READS IT: the language the worker loaded with, every take.
         Assert.Equal("es", RuntimeWorkerTranscriptionEngine.LanguageFor(Options(FinalAsrEngine.Whisper, "es", null))());
-
-        // PARAKEET TAKES NO LANGUAGE, whatever the setting says.
-        Assert.Null(RuntimeWorkerTranscriptionEngine.LanguageFor(Options(FinalAsrEngine.Parakeet, "fr", () => "fr"))());
+        Assert.Equal("ru", RuntimeWorkerTranscriptionEngine.LanguageFor(Options(FinalAsrEngine.Parakeet, "ru", null))());
     }
 
     [Fact]
@@ -102,14 +104,15 @@ public sealed class LanguagePerTakeTests
     }
 
     [Theory]
-    [InlineData(WhisperLanguagePreference.Automatic, null, "auto")]
-    [InlineData(WhisperLanguagePreference.French, null, "fr")]
-    [InlineData(WhisperLanguagePreference.French, "", "fr")]
-    [InlineData(WhisperLanguagePreference.French, "xx", "fr")]
-    [InlineData(WhisperLanguagePreference.Spanish, "de-DE", "de")]
-    [InlineData(WhisperLanguagePreference.German, "auto", "auto")]
+    [InlineData("auto", null, "auto")]
+    [InlineData("fr", null, "fr")]
+    [InlineData("fr", "", "fr")]
+    [InlineData("fr", "xx", "fr")]
+    [InlineData("es", "de-DE", "de")]
+    [InlineData("de", "auto", "auto")]
+    [InlineData("ja", "haw", "haw")]
     public void TheCurrentLanguageIsTheSettingUnlessAValidOverridePinsIt(
-        WhisperLanguagePreference setting,
+        string setting,
         string? environmentOverride,
         string expected) =>
         Assert.Equal(expected, WhisperLanguageCodes.Current(setting, environmentOverride));
@@ -151,8 +154,65 @@ public sealed class LanguagePerTakeTests
             argument => argument.NameColon?.Name.Identifier.ValueText == "CurrentLanguage" &&
                 argument.Expression.ToString() == "CurrentWhisperLanguage"));
 
+        var parakeetCreations = Directory.EnumerateFiles(app, "*.cs", SearchOption.AllDirectories)
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal) &&
+                !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .SelectMany(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path)).GetRoot()
+                .DescendantNodes()
+                .OfType<ObjectCreationExpressionSyntax>()
+                .Where(creation => creation.Type.ToString() == "RuntimeWorkerTranscriptionOptions"))
+            .Where(creation => creation.ArgumentList!.Arguments.All(argument =>
+                argument.NameColon?.Name.Identifier.ValueText != "Engine" ||
+                argument.Expression.ToString() == "FinalAsrEngine.Parakeet"))
+            .ToArray();
+
+        Assert.Equal(2, parakeetCreations.Length);
+        Assert.All(parakeetCreations, creation => Assert.Contains(
+            creation.ArgumentList!.Arguments,
+            argument => argument.NameColon?.Name.Identifier.ValueText == "CurrentLanguage" &&
+                argument.Expression.ToString() == "CurrentWhisperLanguage"));
+
         var reader = File.ReadAllText(Path.Combine(app, "App.Language.cs"));
         Assert.Contains("_settings.Preferences.Dictation.WhisperLanguage", reader, StringComparison.Ordinal);
+
+        var transcription = File.ReadAllText(Path.Combine(app, "App.Transcription.cs"));
+        Assert.Contains("CreateParakeetPreviewOptions(", transcription, StringComparison.Ordinal);
+        Assert.Contains("CurrentWhisperLanguage", transcription, StringComparison.Ordinal);
+        var parakeetPreviewCall = CSharpSyntaxTree.ParseText(transcription).GetRoot()
+            .DescendantNodes()
+            .OfType<InvocationExpressionSyntax>()
+            .FirstOrDefault(invocation => invocation.Expression.ToString().Contains("CreateParakeetPreviewOptions", StringComparison.Ordinal));
+        Assert.NotNull(parakeetPreviewCall);
+        Assert.Contains(
+            parakeetPreviewCall!.ArgumentList.Arguments,
+            argument => argument.Expression.ToString() == "CurrentWhisperLanguage");
+    }
+
+    [Fact]
+    public async Task DeterministicCleanupUsesPinnedRecognitionLanguageWhenParakeetReportsNoDetectedLanguage()
+    {
+        var pipeline = new DeterministicTextPipeline();
+        var germanTranscript = new Transcript(
+            DictationSessionId.Create(),
+            "er sagt ja.",
+            ParakeetModelIds.Final + ":cpu",
+            DetectedLanguage: null,
+            RecognitionLanguage: "de");
+        var options = new DeterministicTextOptions(
+            WordCorrectionEnabled: false,
+            FillerRemovalEnabled: true,
+            EmojiFormatterEnabled: false,
+            SpokenPunctuationEnabled: true,
+            EnglishSpelling: EnglishSpelling.British,
+            CasualModeEnabled: false);
+
+        var result = await pipeline.ProcessAsync(
+            new DeterministicTextRequest(
+                germanTranscript,
+                Array.Empty<CustomWordEntry>(),
+                options));
+
+        Assert.Equal("er sagt ja.", result.DeterministicText);
     }
 
     private static RuntimeWorkerTranscriptionOptions Options(

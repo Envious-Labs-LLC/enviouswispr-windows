@@ -371,7 +371,7 @@ public sealed class SpeechEngineParityTests
         }
 
         var whisperLanguageRow = FindNamed(document, "WhisperLanguageRow");
-        Assert.Equal("Collapsed", (string?)whisperLanguageRow.Attribute("Visibility"));
+        Assert.Equal("Visible", (string?)whisperLanguageRow.Attribute("Visibility"));
 
         // Automatic must never be displayed as a transcription engine name in MainWindow markup.
         Assert.DoesNotContain("Text=\"Automatic\"", File.ReadAllText(xamlPath), StringComparison.Ordinal);

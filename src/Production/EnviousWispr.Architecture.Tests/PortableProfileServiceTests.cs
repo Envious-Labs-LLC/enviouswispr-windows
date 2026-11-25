@@ -182,7 +182,7 @@ public sealed class PortableProfileServiceTests
             var result = await new JsonPortableProfileService().ImportAsync(path);
 
             Assert.Equal(PortableProfileImportStatus.Imported, result.Status);
-            Assert.Equal(WhisperLanguagePreference.Automatic, result.Profile?.Preferences.Dictation.WhisperLanguage);
+            Assert.Equal(LanguageCatalog.AutomaticCode, result.Profile?.Preferences.Dictation.WhisperLanguage);
         });
     }
 

@@ -89,7 +89,9 @@ public static class LivePreviewRuntimeResolver
                     Options: CreateParakeetPreviewOptions(
                         workerExecutable,
                         parakeetModelDirectory!,
-                        hardware));
+                        hardware,
+                        whisperLanguage,
+                        currentWhisperLanguage));
             }
 
             return new LivePreviewRuntimePlan(
@@ -108,7 +110,9 @@ public static class LivePreviewRuntimeResolver
                 Options: CreateParakeetPreviewOptions(
                     workerExecutable,
                     parakeetModelDirectory!,
-                    hardware));
+                    hardware,
+                    whisperLanguage,
+                    currentWhisperLanguage));
         }
 
         if (whisperReady)
@@ -137,7 +141,9 @@ public static class LivePreviewRuntimeResolver
     public static RuntimeWorkerTranscriptionOptions CreateParakeetPreviewOptions(
         string workerExecutable,
         string modelDirectory,
-        HardwareSnapshot hardware)
+        HardwareSnapshot hardware,
+        string whisperLanguage = "auto",
+        Func<string?>? currentWhisperLanguage = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workerExecutable);
         ArgumentException.ThrowIfNullOrWhiteSpace(modelDirectory);
@@ -156,6 +162,8 @@ public static class LivePreviewRuntimeResolver
             TranscriptionTimeout: TimeSpan.FromSeconds(15),
             MaximumWorkerRestarts: 0,
             Engine: FinalAsrEngine.Parakeet,
+            Language: string.IsNullOrWhiteSpace(whisperLanguage) ? LanguageCatalog.AutomaticCode : whisperLanguage,
+            CurrentLanguage: currentWhisperLanguage,
             WorkerPriority: ProcessPriorityClass.BelowNormal,
             AllowFullPrecisionFallback: false);
     }

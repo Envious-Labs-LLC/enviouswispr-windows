@@ -109,7 +109,8 @@ public partial class App
         _transcriptionEngine = engine == FinalAsrEngine.Whisper
             ? CreateWhisperEngine(
                 workerExecutable, modelDirectory, hardware, whisperLanguage, out var selectionReason)
-            : CreateParakeetEngine(workerExecutable, modelDirectory, hardware, out selectionReason);
+            : CreateParakeetEngine(
+                workerExecutable, modelDirectory, hardware, whisperLanguage, out selectionReason);
         _logger.Write(new AppLogEntry(
             DateTimeOffset.UtcNow,
             AppEventCode.RuntimeSelectionObserved,
@@ -145,7 +146,7 @@ public partial class App
             await _transcriptionEngine.DisposeAsync().ConfigureAwait(true);
             _transcriptionEngine = engine == FinalAsrEngine.Whisper
                 ? CreateCpuWhisperEngine(workerExecutable, modelDirectory, hardware, whisperLanguage)
-                : CreateCpuParakeetEngine(workerExecutable, modelDirectory, hardware);
+                : CreateCpuParakeetEngine(workerExecutable, modelDirectory, hardware, whisperLanguage);
             started = _transcriptionEngine is null
                 ? new RuntimeWorkerResult(false, RuntimeWorkerState.Faulted)
                 : await _transcriptionEngine.StartAsync().ConfigureAwait(true);
@@ -262,7 +263,9 @@ public partial class App
             : LivePreviewRuntimeResolver.CreateParakeetPreviewOptions(
                 workerExecutable,
                 parakeetModelDirectory!,
-                hardware);
+                hardware,
+                language,
+                CurrentWhisperLanguage);
         _previewEngine = new RuntimeWorkerLivePreviewEngine(
             options,
             _resourceArbiter);
@@ -272,6 +275,7 @@ public partial class App
         string workerExecutable,
         string modelDirectory,
         HardwareSnapshot hardware,
+        string language,
         out DiagnosticRuntimeSelectionReason reason)
     {
         var models = new LocalParakeetModelProbe().Probe(modelDirectory);
@@ -300,13 +304,16 @@ public partial class App
                 selection.IntraOpThreads,
                 selection.InterOpThreads,
                 CpuFallbackThreads: cpuSelection.IntraOpThreads,
+                Language: language,
+                CurrentLanguage: CurrentWhisperLanguage,
                 CudaRuntimeDirectory: _cudaRuntimeDirectory));
     }
 
-    private static RuntimeWorkerTranscriptionEngine? CreateCpuParakeetEngine(
+    private RuntimeWorkerTranscriptionEngine? CreateCpuParakeetEngine(
         string workerExecutable,
         string modelDirectory,
-        HardwareSnapshot hardware)
+        HardwareSnapshot hardware,
+        string language)
     {
         var models = new LocalParakeetModelProbe().Probe(modelDirectory);
         var selection = ParakeetRuntimeSelector.Select(
@@ -328,7 +335,9 @@ public partial class App
                 selection.ModelPack.Value,
                 selection.IntraOpThreads,
                 selection.InterOpThreads,
-                CpuFallbackThreads: selection.IntraOpThreads));
+                CpuFallbackThreads: selection.IntraOpThreads,
+                Language: language,
+                CurrentLanguage: CurrentWhisperLanguage));
     }
 
     private RuntimeWorkerTranscriptionEngine? CreateWhisperEngine(

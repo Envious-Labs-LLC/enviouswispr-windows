@@ -218,7 +218,7 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 {
                     Dictation = legacy.Preferences.Dictation with
                     {
-                        WhisperLanguage = WhisperLanguagePreference.Automatic,
+                        WhisperLanguage = LanguageCatalog.AutomaticCode,
                     },
                 },
             };

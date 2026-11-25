@@ -51,7 +51,7 @@ public sealed class Wave4EnginePolishTests
     }
 
     [Theory]
-    [InlineData(FinalAsrEngine.Parakeet, "Parakeet", "Recommended", false)]
+    [InlineData(FinalAsrEngine.Parakeet, "Parakeet", "Recommended", true)]
     [InlineData(FinalAsrEngine.Whisper, "Whisper", "99+ languages", true)]
     public void EngineSummaryDescribesEachEngineAndWhisperLanguageVisibility(
         FinalAsrEngine engine,
@@ -202,9 +202,11 @@ public sealed class Wave4EnginePolishTests
         Assert.Null(document.Descendants().FirstOrDefault(e =>
             (string?)e.Attribute(XName.Get("Name", "http://schemas.microsoft.com/winfx/2006/xaml")) == "ModelInventoryText"));
 
-        var whisperCombo = FindNamedElement(document, "WhisperLanguageComboBox");
-        var whisperItems = whisperCombo.Elements().Where(e => e.Name.LocalName == "String").Select(e => e.Value).ToArray();
-        Assert.Equal(["Automatic detection", "English", "French", "German", "Spanish"], whisperItems);
+        var languageButton = FindNamedElement(document, "WhisperLanguageButton");
+        Assert.Equal("Button", languageButton.Name.LocalName);
+        Assert.NotNull(FindNamedElement(document, "WhisperLanguageValueText"));
+        Assert.NotNull(FindNamedElement(document, "ParakeetLanguageUnsupportedCard"));
+        Assert.True(File.Exists(Path.Combine(root, "src", "Production", "EnviousWispr.App", "LanguagePickerDialog.xaml")));
 
         foreach (var name in new[] { "EgOneSizeFullCard", "EgOneSizeMiniCard", "EgOneSizeMicroCard" })
         {

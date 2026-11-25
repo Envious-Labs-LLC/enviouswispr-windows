@@ -6,12 +6,13 @@ using EnviousWispr.Core.Diagnostics;
 using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Errors;
 using EnviousWispr.Core.Runtime;
+using EnviousWispr.Core.Settings;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 
 namespace EnviousWispr.ASR;
 
-public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposable
+public sealed class ParakeetTranscriptionEngine : ILanguageSelectableTranscriptionEngine, IDisposable
 {
     public const string ModelId = ParakeetModelIds.Final;
     public const int RequiredSampleRate = 16_000;
@@ -121,9 +122,41 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
         return AllNonEmpty(Path.GetFullPath(modelDirectory), FullPrecisionEncoderRequiredFiles);
     }
 
-    public async Task<Transcript> TranscribeAsync(
+    public Task<Transcript> TranscribeAsync(
         CapturedAudio audio,
+        CancellationToken cancellationToken = default) =>
+        TranscribeWithLanguageAsync(
+            audio,
+            allowedTokenMask: null,
+            recognitionLanguage: null,
+            cancellationToken);
+
+    /// <summary>Transcribes audio while optionally pinning TDT token selection to the requested European writing script.</summary>
+    /// <remarks>
+    /// SCRIPT PINNING WITHOUT LANGUAGE REPORTING. When one of Parakeet's 25 European languages is requested,
+    /// non-blank decoder steps whose top-1 token belongs to a different writing script fall back to the
+    /// highest-logit script-compatible token; unsupported or "auto" requests run unpinned, and DetectedLanguage
+    /// always stays null so a forced hint is never reported as detected speech.
+    /// </remarks>
+    public Task<Transcript> TranscribeAsync(
+        CapturedAudio audio,
+        string? language,
         CancellationToken cancellationToken = default)
+    {
+        var effectiveLanguage = LanguageCatalog.EffectiveRecognitionCode(FinalAsrEngine.Parakeet, language);
+        var script = TokenLanguageFilter.ScriptForLanguage(effectiveLanguage);
+        return TranscribeWithLanguageAsync(
+            audio,
+            _vocabulary.MaskFor(script),
+            effectiveLanguage,
+            cancellationToken);
+    }
+
+    private async Task<Transcript> TranscribeWithLanguageAsync(
+        CapturedAudio audio,
+        bool[]? allowedTokenMask,
+        string? recognitionLanguage,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(audio);
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -139,7 +172,13 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
 
         if (audio.Samples.IsEmpty)
         {
-            return new Transcript(audio.SessionId, string.Empty, EngineId, []);
+            return new Transcript(
+                audio.SessionId,
+                string.Empty,
+                EngineId,
+                [],
+                DetectedLanguage: null,
+                RecognitionLanguage: recognitionLanguage);
         }
 
         ValidateInputLength(audio.Samples.Length, cancellationToken);
@@ -148,7 +187,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             return await Task.Run(
-                () => TranscribeCore(audio, cancellationToken),
+                () => TranscribeCore(audio, allowedTokenMask, recognitionLanguage, cancellationToken),
                 CancellationToken.None).ConfigureAwait(false);
         }
         finally
@@ -275,7 +314,11 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
         return new VoicedSpeechAnalysis(false, 0, samples.Length);
     }
 
-    private Transcript TranscribeCore(CapturedAudio audio, CancellationToken cancellationToken)
+    private Transcript TranscribeCore(
+        CapturedAudio audio,
+        bool[]? allowedTokenMask,
+        string? recognitionLanguage,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var runContext = _backend.CreateRunContext(cancellationToken);
@@ -289,7 +332,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
         var (features, featureLength) = _backend.Preprocess(samples, runContext, cancellationToken);
         var (encodedRaw, encodedLength) = _backend.Encode(features, featureLength, runContext, cancellationToken);
         var encoded = TransposeEncoderOutput(encodedRaw);
-        var decoded = Decode(encoded, encodedLength, runContext, cancellationToken);
+        var decoded = Decode(encoded, encodedLength, allowedTokenMask, runContext, cancellationToken);
 
         var timingStartSample = 0;
         var timingSampleCount = samples.Length;
@@ -322,7 +365,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                         fp32EncodedRaw.Length % _encoderDimension == 0)
                     {
                         var fp32Encoded = TransposeEncoderOutput(fp32EncodedRaw);
-                        var fp32Decoded = Decode(fp32Encoded, fp32EncodedLength, runContext, cancellationToken);
+                        var fp32Decoded = Decode(fp32Encoded, fp32EncodedLength, allowedTokenMask, runContext, cancellationToken);
                         if (fp32Decoded.Count > 0)
                         {
                             decoded = fp32Decoded;
@@ -367,6 +410,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                             var trimmedDecoded = Decode(
                                 trimmedEncoded,
                                 trimmedEncodedLength,
+                                allowedTokenMask,
                                 runContext,
                                 cancellationToken);
                             if (trimmedDecoded.Count > 0)
@@ -400,7 +444,13 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
             fullDuration,
             timingStartSample,
             timingSampleCount);
-        return new Transcript(audio.SessionId, text, EngineId, timings);
+        return new Transcript(
+            audio.SessionId,
+            text,
+            EngineId,
+            timings,
+            DetectedLanguage: null,
+            RecognitionLanguage: recognitionLanguage);
     }
 
     private float[] TransposeEncoderOutput(float[] encoded)
@@ -422,6 +472,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
     private List<DecodedToken> Decode(
         float[] encoded,
         int encodedLength,
+        bool[]? allowedTokenMask,
         IParakeetRunContext runContext,
         CancellationToken cancellationToken)
     {
@@ -448,6 +499,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                 state2,
                 _vocabulary.Size,
                 _vocabulary.BlankIndex,
+                allowedTokenMask,
                 runContext,
                 cancellationToken);
 
@@ -719,6 +771,28 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
             int blankIndex,
             IParakeetRunContext runContext,
             CancellationToken cancellationToken);
+
+        ParakeetDecoderStepResult DecodeStep(
+            float[] encoderFrame,
+            int[] target,
+            int[] targetLength,
+            float[] state1,
+            float[] state2,
+            int vocabularySize,
+            int blankIndex,
+            bool[]? allowedTokenMask,
+            IParakeetRunContext runContext,
+            CancellationToken cancellationToken) =>
+            DecodeStep(
+                encoderFrame,
+                target,
+                targetLength,
+                state1,
+                state2,
+                vocabularySize,
+                blankIndex,
+                runContext,
+                cancellationToken);
     }
 
     private sealed class OnnxParakeetBackend : IParakeetBackend
@@ -984,6 +1058,29 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
             int vocabularySize,
             int blankIndex,
             IParakeetRunContext runContext,
+            CancellationToken cancellationToken) =>
+            DecodeStep(
+                encoderFrame,
+                target,
+                targetLength,
+                state1,
+                state2,
+                vocabularySize,
+                blankIndex,
+                allowedTokenMask: null,
+                runContext,
+                cancellationToken);
+
+        public ParakeetDecoderStepResult DecodeStep(
+            float[] encoderFrame,
+            int[] target,
+            int[] targetLength,
+            float[] state1,
+            float[] state2,
+            int vocabularySize,
+            int blankIndex,
+            bool[]? allowedTokenMask,
+            IParakeetRunContext runContext,
             CancellationToken cancellationToken)
         {
             var options = ((OnnxRunContext)runContext).Options;
@@ -1017,7 +1114,7 @@ public sealed class ParakeetTranscriptionEngine : ITranscriptionEngine, IDisposa
                 decoderPhase.Returned();
 
                 var output = TensorSpan<float>(result[0]);
-                var token = IndexOfMaximum(output[..vocabularySize]);
+                var token = ParakeetVocabulary.SelectToken(output[..vocabularySize], blankIndex, allowedTokenMask);
                 var step = IndexOfMaximum(output[vocabularySize..]);
                 if (token != blankIndex)
                 {

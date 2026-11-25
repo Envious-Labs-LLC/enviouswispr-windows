@@ -7,22 +7,29 @@ namespace EnviousWispr.Architecture.Tests;
 public sealed class InternationalBehaviorTests
 {
     [Theory]
-    [InlineData(WhisperLanguagePreference.Automatic, "auto")]
-    [InlineData(WhisperLanguagePreference.English, "en")]
-    [InlineData(WhisperLanguagePreference.French, "fr")]
-    [InlineData(WhisperLanguagePreference.German, "de")]
-    [InlineData(WhisperLanguagePreference.Spanish, "es")]
-    public void AdvertisedWhisperPreferencesMapToPinnedRuntimeCodes(
-        WhisperLanguagePreference preference,
+    [InlineData("auto", "auto")]
+    [InlineData("en", "en")]
+    [InlineData("en-gb", "en")]
+    [InlineData("fr", "fr")]
+    [InlineData("de", "de")]
+    [InlineData("es", "es")]
+    [InlineData("zh", "zh")]
+    [InlineData("ja", "ja")]
+    [InlineData("haw", "haw")]
+    [InlineData("yue", "yue")]
+    [InlineData("es-419", "es")]
+    public void SupportedWhisperLanguagesNormalizeToPinnedRuntimeCodes(
+        string input,
         string expected)
     {
-        Assert.Equal(expected, WhisperLanguageCodes.For(preference));
-        Assert.True(WhisperLanguageCodes.TryNormalize(expected, out var normalized));
+        Assert.True(WhisperLanguageCodes.TryNormalize(input, out var normalized));
         Assert.Equal(expected, normalized);
+        Assert.Equal(expected, WhisperLanguageCodes.For(normalized));
     }
 
     [Theory]
-    [InlineData("zh")]
+    [InlineData("xx")]
+    [InlineData("english-ish")]
     [InlineData("../../unsafe")]
     [InlineData("")]
     public void UnadvertisedOrUnsafeLanguageOverridesAreRejected(string value)

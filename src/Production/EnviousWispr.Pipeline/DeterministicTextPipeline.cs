@@ -381,7 +381,7 @@ public sealed class DeterministicTextPipeline
             cancellationToken.ThrowIfCancellationRequested();
             return context with
             {
-                Text = FillerWordRemover.Remove(context.Text, context.Transcript.DetectedLanguage),
+                Text = FillerWordRemover.Remove(context.Text, EffectiveDeterministicLanguage(context.Transcript)),
             };
         }
     }
@@ -514,7 +514,7 @@ public sealed class DeterministicTextPipeline
         public DeterministicTextContext Process(DeterministicTextContext context, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var language = context.Transcript.DetectedLanguage;
+            var language = EffectiveDeterministicLanguage(context.Transcript);
             var text = CasualEnding.RemoveFinalFullStop(context.Text, context.SpokenFinalFullStop, language);
             var polished = context.PolishedText is not null
                 ? CasualEnding.RemoveFinalFullStop(context.PolishedText, context.SpokenFinalFullStop, language)
@@ -527,9 +527,28 @@ public sealed class DeterministicTextPipeline
         }
     }
 
+    private static string? EffectiveDeterministicLanguage(Transcript transcript)
+    {
+        var detected = transcript.DetectedLanguage?.Trim();
+        if (!string.IsNullOrEmpty(detected) &&
+            !detected.Equals(EnviousWispr.Core.Settings.LanguageCatalog.AutomaticCode, StringComparison.OrdinalIgnoreCase))
+        {
+            return detected;
+        }
+
+        var requested = transcript.RecognitionLanguage?.Trim();
+        if (!string.IsNullOrEmpty(requested) &&
+            !requested.Equals(EnviousWispr.Core.Settings.LanguageCatalog.AutomaticCode, StringComparison.OrdinalIgnoreCase))
+        {
+            return requested;
+        }
+
+        return null;
+    }
+
     private static bool IsEnglishDeterministicLanguage(Transcript transcript)
     {
-        var language = transcript.DetectedLanguage?.Trim();
+        var language = EffectiveDeterministicLanguage(transcript);
         if (!string.IsNullOrEmpty(language))
         {
             return language.Equals("en", StringComparison.OrdinalIgnoreCase) ||

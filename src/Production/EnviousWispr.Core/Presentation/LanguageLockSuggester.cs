@@ -1,3 +1,4 @@
+using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Core.Presentation;
@@ -18,11 +19,11 @@ public enum LanguageOfferKind
 }
 
 /// <summary>One offer to pin the language the app keeps hearing.</summary>
-/// <param name="Language">The preference that would be saved.</param>
+/// <param name="LanguageCode">The canonical language code that would be saved.</param>
 /// <param name="DisplayName">What that language is called on screen.</param>
 /// <param name="Kind">Whether this offer still asks, or only points.</param>
 public sealed record LanguageLockOffer(
-    WhisperLanguagePreference Language,
+    string LanguageCode,
     string DisplayName,
     LanguageOfferKind Kind);
 
@@ -40,9 +41,9 @@ public sealed record LanguageLockOffer(
 /// of the bar cannot be applied. The run length carries the whole weight instead, which is why it is
 /// the macOS value of three rather than something shorter.
 ///
-/// AND ONE THING IT DELIBERATELY REFUSES: an offer to pin a language the app cannot pin. Recognition
-/// can name any language it likes, while the setting holds five, so a run of Italian reaches the end
-/// of this class and stops there rather than showing a button that would do nothing.
+/// AND ONE THING IT DELIBERATELY REFUSES: an offer to pin a language the active engine cannot lock.
+/// Recognition can name any language it likes; when Whisper is active any lockable catalog code
+/// (excluding English) can be offered, while Parakeet only offers its 25 supported European languages.
 ///
 /// THE RUN IS FORGOTTEN ON RELAUNCH AND THE OFFERS ARE NOT, matching macOS, where the detector's
 /// consecutive count is in memory and the presenter's per-language history is written down. The
@@ -109,7 +110,7 @@ public sealed class LanguageLockSuggester
             // That one turns "es-garbage" into "es", so a string this app could never have written
             // came back as a real Spanish count. What is read has to be what was written.
             var code = entry[..separator];
-            if (!TryPin(code, out _) || !parsed.TryAdd(code, made))
+            if (!TryPin(code, FinalAsrEngine.Whisper, out _) || !parsed.TryAdd(code, made))
             {
                 return;
             }
@@ -136,11 +137,15 @@ public sealed class LanguageLockSuggester
     /// <summary>Takes one finished dictation's detected language and answers with an offer or nothing.</summary>
     /// <param name="detectedLanguage">What recognition said, or null when it said nothing.</param>
     /// <param name="current">The language setting as it stands right now.</param>
-    public LanguageLockOffer? Observe(string? detectedLanguage, WhisperLanguagePreference current)
+    /// <param name="activeEngine">The final ASR engine currently configured.</param>
+    public LanguageLockOffer? Observe(
+        string? detectedLanguage,
+        string? current,
+        FinalAsrEngine activeEngine = FinalAsrEngine.Whisper)
     {
         // ALREADY PINNED MEANS THERE IS NOTHING TO OFFER. Somebody who has chosen a language has
         // answered this question, and asking again would be the app arguing with them.
-        if (current != WhisperLanguagePreference.Automatic)
+        if (LanguageCatalog.NormalizeOrDefault(current) != LanguageCatalog.AutomaticCode)
         {
             return null;
         }
@@ -169,7 +174,7 @@ public sealed class LanguageLockSuggester
         // THE RUN IS SPENT WHETHER OR NOT AN OFFER COMES OF IT. Leaving it at three would fire again
         // on the very next sentence, which is a nag rather than a suggestion.
         _runs[heard] = 0;
-        if (!TryPin(heard, out var language))
+        if (!TryPin(heard, activeEngine, out var languageCode))
         {
             return null;
         }
@@ -182,17 +187,22 @@ public sealed class LanguageLockSuggester
 
         _offers[heard] = made + 1;
         return new LanguageLockOffer(
-            language,
-            DisplayName(language),
+            languageCode,
+            DisplayName(languageCode),
             made + 1 >= OffersPerLanguage
                 ? LanguageOfferKind.PointAtSettings
                 : LanguageOfferKind.AskToLock);
     }
 
     /// <summary>The person pinned a language, so this one starts over with a clean slate.</summary>
-    public void Accepted(WhisperLanguagePreference language)
+    public void Accepted(string? languageCode)
     {
-        var code = WhisperLanguageCodes.For(language);
+        var code = LanguageCatalog.NormalizeOrDefault(languageCode);
+        if (code == LanguageCatalog.AutomaticCode)
+        {
+            return;
+        }
+
         _runs.Remove(code);
         _offers.Remove(code);
     }
@@ -205,25 +215,22 @@ public sealed class LanguageLockSuggester
     }
 
     /// <summary>What a language is called on the pill.</summary>
-    public static string DisplayName(WhisperLanguagePreference language) => language switch
-    {
-        WhisperLanguagePreference.English => "English",
-        WhisperLanguagePreference.French => "French",
-        WhisperLanguagePreference.German => "German",
-        WhisperLanguagePreference.Spanish => "Spanish",
-        _ => "Automatic detection",
-    };
+    public static string DisplayName(string? languageCode) =>
+        LanguageCatalog.EnglishNameFor(languageCode);
 
-    private static bool TryPin(string code, out WhisperLanguagePreference language)
+    private static bool TryPin(string code, FinalAsrEngine activeEngine, out string canonicalCode)
     {
-        language = code switch
+        canonicalCode = string.Empty;
+        if (string.Equals(code, LanguageCatalog.AutomaticCode, StringComparison.Ordinal) ||
+            string.Equals(code, "en", StringComparison.Ordinal) ||
+            !LanguageCatalog.IsCanonicalStoredCode(code) ||
+            !LanguageCatalog.IsSupported(activeEngine, code))
         {
-            "fr" => WhisperLanguagePreference.French,
-            "de" => WhisperLanguagePreference.German,
-            "es" => WhisperLanguagePreference.Spanish,
-            _ => WhisperLanguagePreference.Automatic,
-        };
-        return language != WhisperLanguagePreference.Automatic;
+            return false;
+        }
+
+        canonicalCode = code;
+        return true;
     }
 
     private static string NormalizedBase(string? language)

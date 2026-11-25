@@ -83,6 +83,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 20 => MigrateFromV20(json),
                 21 => MigrateFromV21(json),
                 22 => MigrateFromV22(json),
+                23 => MigrateFromV23(json),
                 AppSettings.CurrentSchemaVersion => JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions),
                 _ => null,
             };
@@ -356,7 +357,7 @@ public sealed class JsonSettingsStore : ISettingsStore
                 {
                     Dictation = legacy.Preferences.Dictation with
                     {
-                        WhisperLanguage = WhisperLanguagePreference.Automatic,
+                        WhisperLanguage = LanguageCatalog.AutomaticCode,
                     },
                 },
             };
@@ -576,6 +577,19 @@ public sealed class JsonSettingsStore : ISettingsStore
         return legacy is null
             ? null
             : SeedEgOneModelIdIfMissing(legacy) with { SchemaVersion = AppSettings.CurrentSchemaVersion };
+    }
+
+    /// <summary>Takes a settings file written before the full 99+ language catalog and recent languages existed (schema v24).</summary>
+    /// <remarks>
+    /// <see cref="WhisperLanguageJsonConverter"/> translates legacy enum names ("Automatic", "English", "French",
+    /// "German", "Spanish") and numbers (0..4) into ISO language codes on load.
+    /// </remarks>
+    private static AppSettings? MigrateFromV23(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = AppSettings.CurrentSchemaVersion };
     }
 
     private static AppSettings SeedEgOneModelIdIfMissing(AppSettings settings) =>

@@ -29,9 +29,12 @@ public sealed record AppSettings(
     ///
     /// NULL MEANS NOBODY HAS BEEN ASKED ANYTHING, which is the truth on a first run.
     /// </remarks>
-    string? LanguageOfferHistory = null)
+    string? LanguageOfferHistory = null,
+
+    /// <summary>Up to five recently selected picker languages (e.g. "ja", "en-gb"), newest first.</summary>
+    IReadOnlyList<string>? RecentLanguages = null)
 {
-    public const int CurrentSchemaVersion = 23;
+    public const int CurrentSchemaVersion = 24;
 
     public static AppSettings Default { get; } = new(
         CurrentSchemaVersion,
