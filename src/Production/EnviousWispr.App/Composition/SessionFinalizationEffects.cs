@@ -113,7 +113,7 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
     }
 
     public void ReportDelivery(DeliveryResult delivery, string? language) =>
-        _view.ReportDelivery(DeliveryStatusReport.For(delivery), language);
+        _view.ReportDelivery(DeliveryReport.For(delivery), language);
 
     // IN macOS's WORDS WHERE IT OFFERS UNDO: the pill's title and the announcement that names both doors
     // back, Undo and History. Without the offer (the History write failed) Home can only offer Copy.
@@ -130,6 +130,10 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
             "The dictation is ready to copy on Home and stays in History for 24 hours unless you Keep it.");
     }
 
+    /// <remarks>
+    /// THE STATUS LINE ONLY, NO PILL. These sentences describe how a take was processed, and macOS
+    /// shows no completion card for them; the person reads them on the status line and the tray.
+    /// </remarks>
     public void ShowHeldStatus(FinalizationReport report)
     {
         var processed = report.Finalized?.Processed;
@@ -142,20 +146,20 @@ internal sealed class SessionFinalizationEffects(SessionCompositionParts parts, 
                 : recoveryOnly
                     ? DictationStatus.Quiet("Escape Recovery finished. Text is ready to copy")
                 : processed.IsDegraded
-                ? DictationStatus.Success("Transcribed and cleaned locally with a safe fallback")
+                ? DictationStatus.Quiet("Transcribed and cleaned locally with a safe fallback")
                 : polishResult is { UsedFallback: true }
-                    ? DictationStatus.Success(PolishFallbackStatus(polishResult))
+                    ? DictationStatus.Quiet(PolishFallbackStatus(polishResult))
                 : polishResult is { UsedFallback: false }
                     ? cloudProvider is null
-                        ? DictationStatus.Success("Transcribed and polished locally")
-                        : DictationStatus.Success(
+                        ? DictationStatus.Quiet("Transcribed and polished locally")
+                        : DictationStatus.Quiet(
                             $"Transcribed and polished directly with {cloudProvider}")
                 : transcript is { UsedFallback: true }
-                    ? DictationStatus.Success(
+                    ? DictationStatus.Quiet(
                         transcript.DegradedError?.Code is AppErrorCode.RuntimeProviderUnavailable or AppErrorCode.RuntimeProviderIncompatible
                             ? "Transcribed and cleaned locally with CPU fallback"
                             : "Transcribed and cleaned locally with a safe fallback")
-                    : DictationStatus.Success("Transcribed and cleaned locally");
+                    : DictationStatus.Quiet("Transcribed and cleaned locally");
         _view.ShowStatus(status);
     }
 

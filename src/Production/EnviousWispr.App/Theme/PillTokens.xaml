@@ -42,6 +42,67 @@
             <SolidColorBrush x:Key="PillAdvisoryWashBrush" Color="#24A78BFA" />
             <Color x:Key="PillDistressWashColor">#4AEF7C89</Color>
             <SolidColorBrush x:Key="PillDistressWashBrush" Color="#4AEF7C89" />
+
+            <!--
+                THE RECORDING CAPSULE IS CHARCOAL IN BOTH THEMES, as macOS draws it: Classic, Level
+                Rail and Processing float over somebody else's document and carry white ink, so they
+                never follow the app's theme. OverlayCapsuleBackground.swift: #14141C at 0.82.
+            -->
+            <Color x:Key="PillCapsuleSurfaceColor">#D114141C</Color>
+            <SolidColorBrush x:Key="PillCapsuleSurfaceBrush" Color="#D114141C" />
+            <Color x:Key="PillCapsuleBorderColor">#1AFFFFFF</Color>
+            <SolidColorBrush x:Key="PillCapsuleBorderBrush" Color="#1AFFFFFF" />
+            <Color x:Key="PillCapsuleTextColor">#FFFFFFFF</Color>
+            <SolidColorBrush x:Key="PillCapsuleTextBrush" Color="#FFFFFFFF" />
+            <Color x:Key="PillCapsuleBadgeFillColor">#21FFFFFF</Color>
+            <SolidColorBrush x:Key="PillCapsuleBadgeFillBrush" Color="#21FFFFFF" />
+            <Color x:Key="PillCapsuleBadgeTextColor">#E0FFFFFF</Color>
+            <SolidColorBrush x:Key="PillCapsuleBadgeTextBrush" Color="#E0FFFFFF" />
+
+            <!--
+                THE READING WELL FOLLOWS THE APP'S THEME, and Light is not an inversion of Dark.
+                PreviewPillPalette.swift, light column: a warm near-white surface with violet-black ink.
+                The quiet ink is 0.60 rather than the 0.45 that would mirror Dark, because 0.45 measured
+                3.10:1 on this surface and 0.60 measures 5.09:1.
+            -->
+            <Color x:Key="PillWellSurfaceColor">#F0FCFAFF</Color>
+            <SolidColorBrush x:Key="PillWellSurfaceBrush" Color="#F0FCFAFF" />
+            <Color x:Key="PillWellSurfaceClearColor">#00FCFAFF</Color>
+            <SolidColorBrush x:Key="PillWellSurfaceClearBrush" Color="#00FCFAFF" />
+            <LinearGradientBrush x:Key="PillWellFadeBrush" StartPoint="0.5,0" EndPoint="0.5,1">
+                <GradientStop Offset="0" Color="#F0FCFAFF" />
+                <GradientStop Offset="1" Color="#00FCFAFF" />
+            </LinearGradientBrush>
+            <Color x:Key="PillWellBorderColor">#240F0A1A</Color>
+            <SolidColorBrush x:Key="PillWellBorderBrush" Color="#240F0A1A" />
+            <Color x:Key="PillWellDividerColor">#1A0F0A1A</Color>
+            <SolidColorBrush x:Key="PillWellDividerBrush" Color="#1A0F0A1A" />
+            <Color x:Key="PillWellTimerColor">#FF221B33</Color>
+            <SolidColorBrush x:Key="PillWellTimerBrush" Color="#FF221B33" />
+            <Color x:Key="PillWellModeQuietColor">#990F0A1A</Color>
+            <SolidColorBrush x:Key="PillWellModeQuietBrush" Color="#990F0A1A" />
+            <Color x:Key="PillWellBadgeFillColor">#170F0A1A</Color>
+            <SolidColorBrush x:Key="PillWellBadgeFillBrush" Color="#170F0A1A" />
+            <Color x:Key="PillWellBadgeTextColor">#B80F0A1A</Color>
+            <SolidColorBrush x:Key="PillWellBadgeTextBrush" Color="#B80F0A1A" />
+            <Color x:Key="PillWellTextColor">#FF0F0A1A</Color>
+            <SolidColorBrush x:Key="PillWellTextBrush" Color="#FF0F0A1A" />
+
+            <!-- The hairline fades out through a TRANSPARENT red and violet, never through transparent white. -->
+            <Color x:Key="PillHairlineFadeStartColor">#00FF2A40</Color>
+            <Color x:Key="PillHairlineFadeEndColor">#008A2BE2</Color>
+
+            <!-- The processing wheel's twelve bars. SpectrumWheelIcon.swift draws these, not the brand spectrum. -->
+            <SolidColorBrush x:Key="PillWheelRedBrush" Color="#FFFF2D55" />
+            <SolidColorBrush x:Key="PillWheelOrangeBrush" Color="#FFFF9F0A" />
+            <SolidColorBrush x:Key="PillWheelYellowBrush" Color="#FFFFD60A" />
+            <SolidColorBrush x:Key="PillWheelGreenBrush" Color="#FF30D158" />
+            <SolidColorBrush x:Key="PillWheelLeafBrush" Color="#FF34C759" />
+            <SolidColorBrush x:Key="PillWheelTealBrush" Color="#FF32D8BE" />
+            <SolidColorBrush x:Key="PillWheelSkyBrush" Color="#FF64D2FF" />
+            <SolidColorBrush x:Key="PillWheelBlueBrush" Color="#FF0A84FF" />
+            <SolidColorBrush x:Key="PillWheelIndigoBrush" Color="#FF5E5CE6" />
+            <SolidColorBrush x:Key="PillWheelPurpleBrush" Color="#FFBF5AF2" />
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="Dark">
@@ -83,6 +144,56 @@
             <SolidColorBrush x:Key="PillAdvisoryWashBrush" Color="#24A78BFA" />
             <Color x:Key="PillDistressWashColor">#4AEF7C89</Color>
             <SolidColorBrush x:Key="PillDistressWashBrush" Color="#4AEF7C89" />
+
+            <!-- Slightly denser than Light: there is no blur behind a Windows pill to carry it on a dark desktop. -->
+            <Color x:Key="PillCapsuleSurfaceColor">#E014141C</Color>
+            <SolidColorBrush x:Key="PillCapsuleSurfaceBrush" Color="#E014141C" />
+            <Color x:Key="PillCapsuleBorderColor">#1AFFFFFF</Color>
+            <SolidColorBrush x:Key="PillCapsuleBorderBrush" Color="#1AFFFFFF" />
+            <Color x:Key="PillCapsuleTextColor">#FFFFFFFF</Color>
+            <SolidColorBrush x:Key="PillCapsuleTextBrush" Color="#FFFFFFFF" />
+            <Color x:Key="PillCapsuleBadgeFillColor">#21FFFFFF</Color>
+            <SolidColorBrush x:Key="PillCapsuleBadgeFillBrush" Color="#21FFFFFF" />
+            <Color x:Key="PillCapsuleBadgeTextColor">#E0FFFFFF</Color>
+            <SolidColorBrush x:Key="PillCapsuleBadgeTextBrush" Color="#E0FFFFFF" />
+
+            <!-- PreviewPillPalette.swift, dark column. -->
+            <Color x:Key="PillWellSurfaceColor">#E6110F18</Color>
+            <SolidColorBrush x:Key="PillWellSurfaceBrush" Color="#E6110F18" />
+            <Color x:Key="PillWellSurfaceClearColor">#00110F18</Color>
+            <SolidColorBrush x:Key="PillWellSurfaceClearBrush" Color="#00110F18" />
+            <LinearGradientBrush x:Key="PillWellFadeBrush" StartPoint="0.5,0" EndPoint="0.5,1">
+                <GradientStop Offset="0" Color="#E6110F18" />
+                <GradientStop Offset="1" Color="#00110F18" />
+            </LinearGradientBrush>
+            <Color x:Key="PillWellBorderColor">#21FFFFFF</Color>
+            <SolidColorBrush x:Key="PillWellBorderBrush" Color="#21FFFFFF" />
+            <Color x:Key="PillWellDividerColor">#17FFFFFF</Color>
+            <SolidColorBrush x:Key="PillWellDividerBrush" Color="#17FFFFFF" />
+            <Color x:Key="PillWellTimerColor">#F0FFFFFF</Color>
+            <SolidColorBrush x:Key="PillWellTimerBrush" Color="#F0FFFFFF" />
+            <Color x:Key="PillWellModeQuietColor">#80FFFFFF</Color>
+            <SolidColorBrush x:Key="PillWellModeQuietBrush" Color="#80FFFFFF" />
+            <Color x:Key="PillWellBadgeFillColor">#21FFFFFF</Color>
+            <SolidColorBrush x:Key="PillWellBadgeFillBrush" Color="#21FFFFFF" />
+            <Color x:Key="PillWellBadgeTextColor">#E0FFFFFF</Color>
+            <SolidColorBrush x:Key="PillWellBadgeTextBrush" Color="#E0FFFFFF" />
+            <Color x:Key="PillWellTextColor">#F7FFFFFF</Color>
+            <SolidColorBrush x:Key="PillWellTextBrush" Color="#F7FFFFFF" />
+
+            <Color x:Key="PillHairlineFadeStartColor">#00FF2A40</Color>
+            <Color x:Key="PillHairlineFadeEndColor">#008A2BE2</Color>
+
+            <SolidColorBrush x:Key="PillWheelRedBrush" Color="#FFFF2D55" />
+            <SolidColorBrush x:Key="PillWheelOrangeBrush" Color="#FFFF9F0A" />
+            <SolidColorBrush x:Key="PillWheelYellowBrush" Color="#FFFFD60A" />
+            <SolidColorBrush x:Key="PillWheelGreenBrush" Color="#FF30D158" />
+            <SolidColorBrush x:Key="PillWheelLeafBrush" Color="#FF34C759" />
+            <SolidColorBrush x:Key="PillWheelTealBrush" Color="#FF32D8BE" />
+            <SolidColorBrush x:Key="PillWheelSkyBrush" Color="#FF64D2FF" />
+            <SolidColorBrush x:Key="PillWheelBlueBrush" Color="#FF0A84FF" />
+            <SolidColorBrush x:Key="PillWheelIndigoBrush" Color="#FF5E5CE6" />
+            <SolidColorBrush x:Key="PillWheelPurpleBrush" Color="#FFBF5AF2" />
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="HighContrast">
@@ -124,6 +235,54 @@
             <SolidColorBrush x:Key="PillAdvisoryWashBrush" Color="Transparent" />
             <Color x:Key="PillDistressWashColor">Transparent</Color>
             <SolidColorBrush x:Key="PillDistressWashBrush" Color="Transparent" />
+
+            <StaticResource x:Key="PillCapsuleSurfaceColor" ResourceKey="SystemColorWindowColor" />
+            <SolidColorBrush x:Key="PillCapsuleSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <StaticResource x:Key="PillCapsuleBorderColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillCapsuleBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillCapsuleTextColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillCapsuleTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillCapsuleBadgeFillColor" ResourceKey="SystemColorHighlightColor" />
+            <SolidColorBrush x:Key="PillCapsuleBadgeFillBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <StaticResource x:Key="PillCapsuleBadgeTextColor" ResourceKey="SystemColorHighlightTextColor" />
+            <SolidColorBrush x:Key="PillCapsuleBadgeTextBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+
+            <StaticResource x:Key="PillWellSurfaceColor" ResourceKey="SystemColorWindowColor" />
+            <SolidColorBrush x:Key="PillWellSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <Color x:Key="PillWellSurfaceClearColor">Transparent</Color>
+            <SolidColorBrush x:Key="PillWellSurfaceClearBrush" Color="Transparent" />
+            <LinearGradientBrush x:Key="PillWellFadeBrush" StartPoint="0.5,0" EndPoint="0.5,1">
+                <GradientStop Offset="0" Color="{ThemeResource SystemColorWindowColor}" />
+                <GradientStop Offset="1" Color="Transparent" />
+            </LinearGradientBrush>
+            <StaticResource x:Key="PillWellBorderColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillWellBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillWellDividerColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillWellDividerBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillWellTimerColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillWellTimerBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillWellModeQuietColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillWellModeQuietBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <StaticResource x:Key="PillWellBadgeFillColor" ResourceKey="SystemColorHighlightColor" />
+            <SolidColorBrush x:Key="PillWellBadgeFillBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <StaticResource x:Key="PillWellBadgeTextColor" ResourceKey="SystemColorHighlightTextColor" />
+            <SolidColorBrush x:Key="PillWellBadgeTextBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <StaticResource x:Key="PillWellTextColor" ResourceKey="SystemColorWindowTextColor" />
+            <SolidColorBrush x:Key="PillWellTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+
+            <Color x:Key="PillHairlineFadeStartColor">Transparent</Color>
+            <Color x:Key="PillHairlineFadeEndColor">Transparent</Color>
+
+            <SolidColorBrush x:Key="PillWheelRedBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="PillWheelOrangeBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="PillWheelYellowBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="PillWheelGreenBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="PillWheelLeafBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="PillWheelTealBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="PillWheelSkyBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="PillWheelBlueBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="PillWheelIndigoBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="PillWheelPurpleBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 
@@ -138,6 +297,71 @@
     </Style>
     <Style x:Key="PillDimmedTextStyle" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{ThemeResource PillTextDimmedBrush}" />
+    </Style>
+
+    <!--
+        macOS overlay-local gaps, kept here rather than in Layout.xaml so the main window's 4px
+        spacing scale stays untouched while the floating pill matches the atlas geometry.
+    -->
+    <x:Double x:Key="PillHeaderSpacing">10</x:Double>
+    <x:Double x:Key="PillRailBarSpacing">2</x:Double>
+    <x:Double x:Key="PillWellMeterSpacing">1.5</x:Double>
+    <x:Double x:Key="PillBadgeDotSpacing">6</x:Double>
+
+    <!--
+        THE RECORDING DESIGNS' LOOKS, AS STYLES FOR THE SAME REASON AS THE SEVERITY SET BELOW. The
+        Reading Well follows the pill's own theme, and a brush read from the application dictionary in
+        code resolves against the machine's theme instead. A style's ThemeResource setters resolve
+        against the element they land on, so a Light pill on a Dark machine still draws Light.
+
+        Surface styles set Background ONLY (applied to OverlayRoot, including its 2px bleed zone);
+        edge styles set BorderBrush ONLY (applied to FrameBorder inside that bleed). Keeping the two
+        separate stops the semi-transparent fill from painting twice over the visible pill.
+    -->
+    <Style x:Key="PillNoticeSurfaceStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource PillSurfaceBrush}" />
+    </Style>
+    <Style x:Key="PillCapsuleSurfaceStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource PillCapsuleSurfaceBrush}" />
+    </Style>
+    <Style x:Key="PillWellSurfaceStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource PillWellSurfaceBrush}" />
+    </Style>
+    <Style x:Key="PillWellFadeStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource PillWellFadeBrush}" />
+    </Style>
+    <Style x:Key="PillCapsuleEdgeStyle" TargetType="Border">
+        <Setter Property="BorderBrush" Value="{ThemeResource PillCapsuleBorderBrush}" />
+    </Style>
+    <Style x:Key="PillWellEdgeStyle" TargetType="Border">
+        <Setter Property="BorderBrush" Value="{ThemeResource PillWellBorderBrush}" />
+    </Style>
+    <Style x:Key="PillCapsuleTimerTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillCapsuleTextBrush}" />
+    </Style>
+    <Style x:Key="PillWellTimerTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillWellTimerBrush}" />
+    </Style>
+    <Style x:Key="PillWellModeTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillWellModeQuietBrush}" />
+    </Style>
+    <Style x:Key="PillWellTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillWellTextBrush}" />
+    </Style>
+    <Style x:Key="PillCapsuleBadgeStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource PillCapsuleBadgeFillBrush}" />
+    </Style>
+    <Style x:Key="PillCapsuleBadgeTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillCapsuleBadgeTextBrush}" />
+    </Style>
+    <Style x:Key="PillWellBadgeStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource PillWellBadgeFillBrush}" />
+    </Style>
+    <Style x:Key="PillWellBadgeTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource PillWellBadgeTextBrush}" />
+    </Style>
+    <Style x:Key="PillWellBadgeDotStyle" TargetType="Ellipse">
+        <Setter Property="Fill" Value="{ThemeResource PillWellBadgeTextBrush}" />
     </Style>
 
     <!--
@@ -190,7 +414,7 @@
         <Setter Property="BorderBrush" Value="{ThemeResource PillBorderBrush}" />
     </Style>
     <Style x:Key="PillNeutralWashStyle" TargetType="Border">
-        <!-- No wash. The neutral pill is the surface itself. -->
+        <Setter Property="Background" Value="Transparent" />
     </Style>
     <Style x:Key="PillSuccessIconStyle" TargetType="FontIcon">
         <Setter Property="Foreground" Value="{ThemeResource PillSuccessInkBrush}" />

@@ -54,10 +54,44 @@ public sealed class SessionCompositionTests
         Assert.Contains(world.View.Statuses, status => status.Text == "Transcribing locally...");
         Assert.Contains(world.View.Statuses, status => status.Text == "Delivering to the app you started in...");
         var (delivered, language) = Assert.Single(world.View.Deliveries);
-        Assert.Equal(DictationOverlayState.Success, delivered.State);
+        // THE WORDS LANDED, SO NO PILL: the sentence goes to the status line and the overlay hides,
+        // while the report still says where the words went and invites the language offer.
+        Assert.Equal(DictationOverlayState.Hidden, delivered.Status().State);
+        Assert.Equal(DeliveryLanding.Landed, delivered.Landing);
+        Assert.True(delivered.InvitesLanguageOffer);
         Assert.Equal("en", language);
         Assert.Equal("Delivering to the app you started in...", world.View.Statuses[^1].Text);
         Assert.Single(world.Archived);
+    }
+
+    [Fact]
+    public async Task HandsFreePressReachesTheRecordingStatusAndThreeLandedTakesStillInviteLanguageLock()
+    {
+        var world = ComposedSessionWorld.Create("bonjour");
+        world.Engine.DetectedLanguage = "fr";
+        var suggester = new LanguageLockSuggester();
+        LanguageLockOffer? offer = null;
+
+        for (var take = 0; take < LanguageLockSuggester.RunLength; take++)
+        {
+            await world.Coordinator.SubmitAsync(PushToTalkSignal.Pressed, forSession: null, isHandsFree: take == 0);
+            await world.Coordinator.SubmitAsync(PushToTalkSignal.Released);
+            var (delivered, language) = world.View.Deliveries[^1];
+            Assert.Equal(DictationOverlayState.Hidden, delivered.Status().State);
+            Assert.Equal(DeliveryLanding.Landed, delivered.Landing);
+            Assert.True(delivered.InvitesLanguageOffer);
+            offer = suggester.Observe(
+                delivered.InvitesLanguageOffer ? language : null,
+                WhisperLanguagePreference.Automatic);
+        }
+
+        Assert.Contains(
+            world.View.Statuses,
+            status => status.State == DictationOverlayState.Recording && status.IsHandsFree);
+        Assert.NotNull(offer);
+        Assert.Equal(LanguageOfferKind.AskToLock, offer!.Kind);
+        var question = $"You keep speaking {offer.DisplayName}. Pin it so recognition stops guessing?";
+        Assert.Equal(question, world.View.Deliveries[^1].Delivered.SuggestionText(question));
     }
 
     [Fact]

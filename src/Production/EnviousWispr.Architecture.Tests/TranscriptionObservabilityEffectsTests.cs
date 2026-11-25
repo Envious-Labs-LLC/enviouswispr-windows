@@ -174,7 +174,7 @@ public sealed class TranscriptionObservabilityEffectsTests
         {
         }
 
-        public void ReportDelivery(DictationStatus delivered, string? detectedLanguage)
+        public void ReportDelivery(DeliveryReport delivered, string? detectedLanguage)
         {
         }
 

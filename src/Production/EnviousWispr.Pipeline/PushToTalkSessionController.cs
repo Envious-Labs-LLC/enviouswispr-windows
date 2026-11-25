@@ -23,7 +23,8 @@ public sealed record SessionTransitionResult(
     SessionTransitionKind Kind,
     DictationSessionSnapshot? Session = null,
     CapturedAudio? Audio = null,
-    AppError? Error = null);
+    AppError? Error = null,
+    bool IsHandsFree = false);
 
 /// <summary>
 /// What a press is about, taken at the instant of the press: the window under the caret and the

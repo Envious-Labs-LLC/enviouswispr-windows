@@ -16,5 +16,5 @@ public interface ISessionView
 
     void ShowMainWindow();
 
-    void ReportDelivery(DictationStatus delivered, string? detectedLanguage);
+    void ReportDelivery(DeliveryReport delivered, string? detectedLanguage);
 }

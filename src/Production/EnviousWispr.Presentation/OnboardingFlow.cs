@@ -1,5 +1,6 @@
 using EnviousWispr.Core.Audio;
 using EnviousWispr.Core.Input;
+using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Settings;
 
 namespace EnviousWispr.Presentation;
@@ -153,6 +154,21 @@ public enum OnboardingTakeDelivery
 
     /// <summary>The delivery itself failed.</summary>
     Failed,
+}
+
+/// <summary>Reads a take's delivery as the practice box needs it.</summary>
+public static class OnboardingTakeDeliveries
+{
+    /// <summary>
+    /// From where the words went. Never from the pill: a landed paste raises none, and reading the
+    /// pill would count every good take as a failure.
+    /// </summary>
+    public static OnboardingTakeDelivery For(DeliveryLanding landing) => landing switch
+    {
+        DeliveryLanding.Landed => OnboardingTakeDelivery.Delivered,
+        DeliveryLanding.Clipboard => OnboardingTakeDelivery.Clipboard,
+        _ => OnboardingTakeDelivery.Failed,
+    };
 }
 
 /// <summary>

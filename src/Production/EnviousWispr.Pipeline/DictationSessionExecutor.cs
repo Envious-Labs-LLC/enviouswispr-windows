@@ -39,8 +39,6 @@ public interface IDictationSessionEffects
     /// <summary>The machine is under memory or disk pressure at admission: the log line.</summary>
     void RecordResourcePressure(AppError? failure);
 
-    void ShowRecoveredTextWaiting();
-
     void ShowMemoryCritical();
 
     void ShowDiskLow();
@@ -115,8 +113,8 @@ public interface IDictationSessionEffects
 /// </summary>
 /// <remarks>
 /// THE DECISIONS ARE HERE AND EVERY EFFECT IS BEHIND THE PORT. The shell renders, logs and translates
-/// native events; this class owns the branching. A press first asks whether recovered text is still
-/// waiting and whether the machine can afford a recording; a release or a cancel first stops the
+/// native events; this class owns the branching. A press first clears any recovered text still
+/// waiting, then asks whether the machine can afford a recording; a release or a cancel first stops the
 /// watchdog; Escape with recovery on releases rather than cancels, so the words are kept without
 /// being delivered.
 ///
@@ -797,12 +795,6 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
 
             if (signal == PushToTalkSignal.Pressed)
             {
-                if (_persistence.HasPendingRecovery)
-                {
-                    _effects.ShowRecoveredTextWaiting();
-                    return new SessionCommandResult(SessionCommandDisposition.Applied);
-                }
-
                 // THE MACHINE IS ASKED, AND THE POLICY IS APPLIED, HERE. Memory too low refuses the
                 // recording; disk too low lets it run but stops the recovery copy being written, and
                 // the persistence owner is told so before the recording starts.
@@ -863,6 +855,16 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             RecordTransition(result);
             if (result.Kind == SessionTransitionKind.Started && result.Session is not null)
             {
+                result = result with { IsHandsFree = command.IsHandsFree };
+                transition = result;
+                // A NEW RECORDING SUPERSEDES THE WAITING RECOVERY ONLY ONCE IT HAS STARTED. Clearing
+                // before admission or capture opened would destroy the last copy when low memory or
+                // a microphone refusal turns the press away with no replacement recording.
+                if (_persistence.HasPendingRecovery)
+                {
+                    await _persistence.ClearRecoveryTextAsync().ConfigureAwait(false);
+                }
+
                 _escapeRecoveryForSession = _effects.EscapeRecoveryEnabled;
                 // THE SETTINGS ARE READ ONCE, HERE, and the background work is told them: a recording
                 // that started under one auto-stop preference finishes under it.

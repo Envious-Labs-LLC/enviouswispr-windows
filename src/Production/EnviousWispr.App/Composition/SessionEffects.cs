@@ -29,17 +29,6 @@ internal sealed class SessionEffects(SessionCompositionParts parts, RecordingFla
             AppFailureCategory.ResourcePressure,
             ErrorCode: failure?.Code));
 
-    public void ShowRecoveredTextWaiting()
-    {
-        // The notice and the status first, the window after: the order the window's queue always ran
-        // them in, since showing the window was itself a further dispatch.
-        _view.ShowNotice(
-            "Recovered text is waiting",
-            "Copy or delete the unfinished dictation on Home before starting another recording.");
-        _view.ShowStatus(DictationStatus.Quiet("Review recovered text before recording again"));
-        _view.ShowMainWindow();
-    }
-
     public void ShowMemoryCritical()
     {
         _view.ShowNotice(
@@ -253,8 +242,11 @@ internal sealed class SessionEffects(SessionCompositionParts parts, RecordingFla
 
     private static DictationStatus SessionStatus(SessionTransitionResult result) => result.Kind switch
     {
-        SessionTransitionKind.Started =>
-            DictationStatus.Recording("Recording. Release to finish, Escape to cancel"),
+        SessionTransitionKind.Started => DictationStatus.Recording(
+            result.IsHandsFree
+                ? "Recording hands-free. Press again to finish, Escape to cancel"
+                : "Recording. Release to finish, Escape to cancel",
+            result.IsHandsFree),
         SessionTransitionKind.FinalizeReady when result.Error is not null =>
             DictationStatus.Quiet("Capture preserved after a microphone interruption"),
         SessionTransitionKind.FinalizeReady =>

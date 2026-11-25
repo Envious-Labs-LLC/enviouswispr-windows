@@ -2,6 +2,7 @@ using EnviousWispr.Core.Dictation;
 using EnviousWispr.Core.Presentation;
 using EnviousWispr.Core.Input;
 using EnviousWispr.Pipeline;
+using EnviousWispr.Presentation;
 
 namespace EnviousWispr.Architecture.Tests;
 
@@ -374,7 +375,82 @@ public sealed class ContextAwareTextDeliveryTests
             TextDeliveryRoute.ClipboardOnly));
 
         Assert.Equal("Copied to your clipboard", copied.Text);
+        // A REQUESTED COPY KEEPS ITS SHORT PILL: nothing visible happened where the person is looking.
         Assert.Equal(DictationOverlayState.Success, copied.State);
+    }
+
+    [Theory]
+    [InlineData(TextDeliveryRoute.UiAutomationValue, false, "Inserted safely in the app you started in")]
+    [InlineData(TextDeliveryRoute.ClipboardPaste, true, "Pasted safely and restored your clipboard")]
+    [InlineData(TextDeliveryRoute.ClipboardPaste, false, "Pasted safely")]
+    public void WordsThatLandedRaiseNoPillButStillReachTheStatusLine(
+        TextDeliveryRoute route,
+        bool restored,
+        string expectedSentence)
+    {
+        // macOS hides the overlay the moment a take lands (PipelineStateChangePlanner.swift, the
+        // `.complete` arm): the words in front of the person say it. The sentence still goes to the
+        // status line and the tray, so it is Quiet rather than absent.
+        var status = DeliveryStatusReport.For(new DeliveryResult(
+            SessionId,
+            Delivered: true,
+            ClipboardFallback: false,
+            route,
+            ClipboardRestored: restored));
+
+        Assert.Equal(expectedSentence, status.Text);
+        Assert.Equal(DictationOverlayState.Hidden, status.State);
+    }
+
+    [Theory]
+    [InlineData(true, TextDeliveryRoute.ClipboardPaste, false, false, DeliveryLanding.Landed, true)]
+    [InlineData(true, TextDeliveryRoute.UiAutomationValue, false, false, DeliveryLanding.Landed, true)]
+    [InlineData(true, TextDeliveryRoute.ClipboardPaste, false, true, DeliveryLanding.Landed, false)]
+    [InlineData(true, TextDeliveryRoute.ClipboardOnly, false, false, DeliveryLanding.Clipboard, true)]
+    [InlineData(false, TextDeliveryRoute.ClipboardOnly, true, false, DeliveryLanding.Clipboard, false)]
+    [InlineData(false, TextDeliveryRoute.None, false, false, DeliveryLanding.Failed, false)]
+    public void WhereTheWordsWentIsReadFromTheDeliveryNotThePill(
+        bool delivered,
+        TextDeliveryRoute route,
+        bool fallback,
+        bool uncertain,
+        DeliveryLanding expectedLanding,
+        bool expectedOffer)
+    {
+        // ONBOARDING AND THE LANGUAGE OFFER USED TO ASK WHETHER THE PILL WAS A SUCCESS. A landed paste
+        // now raises no pill, so that question would read every good take as a failure.
+        var report = DeliveryReport.For(new DeliveryResult(
+            SessionId,
+            Delivered: delivered,
+            ClipboardFallback: fallback,
+            route,
+            ClipboardUncertain: uncertain));
+
+        Assert.Equal(expectedLanding, report.Landing);
+        Assert.Equal(expectedOffer, report.InvitesLanguageOffer);
+        Assert.Equal(
+            expectedLanding switch
+            {
+                DeliveryLanding.Landed => OnboardingTakeDelivery.Delivered,
+                DeliveryLanding.Clipboard => OnboardingTakeDelivery.Clipboard,
+                _ => OnboardingTakeDelivery.Failed,
+            },
+            OnboardingTakeDeliveries.For(report.Landing));
+    }
+
+    [Fact]
+    public void ALanguageSuggestionAfterALandedPasteStandsAlone()
+    {
+        // The paste had no pill to replace, so the question is not opened with "Pasted safely.".
+        // A requested copy did have one, and the suggestion keeps its sentence.
+        const string question = "You keep speaking French. Pin it so recognition stops guessing?";
+        var landed = DeliveryReport.For(new DeliveryResult(
+            SessionId, Delivered: true, ClipboardFallback: false, TextDeliveryRoute.ClipboardPaste, ClipboardRestored: true));
+        var copied = DeliveryReport.For(new DeliveryResult(
+            SessionId, Delivered: true, ClipboardFallback: false, TextDeliveryRoute.ClipboardOnly));
+
+        Assert.Equal(question, landed.SuggestionText(question));
+        Assert.Equal($"Copied to your clipboard. {question}", copied.SuggestionText(question));
     }
 
     [Fact]

@@ -103,8 +103,8 @@ public sealed class RecordingLevelRailTests
         Assert.Equal(DeclaredPillWidth(), DeclaredPreviewWidth());
     }
 
-    /// <summary>The gap between bars, from the token the markup uses.</summary>
-    private const double BarSpacing = 4;
+    /// <summary>The gap between bars, as the markup declares it (RainbowLevelMeter's 2pt rail spacing).</summary>
+    private const double BarSpacing = 2;
 
     /// <summary>The overlay content panel's horizontal margin, both sides.</summary>
     private const double ContentMargin = 32;

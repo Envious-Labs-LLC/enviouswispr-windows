@@ -421,7 +421,7 @@ internal sealed class FakeView : ISessionView
 
     public List<(string Title, string Message, bool IsError)> Notices { get; } = [];
 
-    public List<(DictationStatus Delivered, string? Language)> Deliveries { get; } = [];
+    public List<(DeliveryReport Delivered, string? Language)> Deliveries { get; } = [];
 
     public int MainWindowShown { get; private set; }
 
@@ -431,7 +431,7 @@ internal sealed class FakeView : ISessionView
 
     public void ShowMainWindow() => MainWindowShown++;
 
-    public void ReportDelivery(DictationStatus delivered, string? detectedLanguage) => Deliveries.Add((delivered, detectedLanguage));
+    public void ReportDelivery(DeliveryReport delivered, string? detectedLanguage) => Deliveries.Add((delivered, detectedLanguage));
 }
 
 internal sealed class FakeRunState : IApplicationRunStateStore
@@ -473,6 +473,8 @@ internal sealed class FakeEngine(string spoken) : ITranscriptionEngine
     public List<CapturedAudio> Requests { get; } = [];
     public List<CancellationToken> Tokens { get; } = [];
     public Queue<string> Words { get; } = new();
+
+    public string DetectedLanguage { get; set; } = "en";
 
     public TaskCompletionSource AllowExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -521,7 +523,7 @@ internal sealed class FakeEngine(string spoken) : ITranscriptionEngine
 
         registration.Unregister();
         BeforeReturning?.Invoke();
-        return new Transcript(audio.SessionId, Words.TryDequeue(out var next) ? next : spoken, EngineId, DetectedLanguage: "en");
+        return new Transcript(audio.SessionId, Words.TryDequeue(out var next) ? next : spoken, EngineId, DetectedLanguage: DetectedLanguage);
     }
 }
 

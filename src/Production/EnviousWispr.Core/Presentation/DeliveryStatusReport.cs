@@ -13,10 +13,16 @@ namespace EnviousWispr.Core.Presentation;
 ///
 /// ORDER IS THE WHOLE BEHAVIOUR. A requested copy IS delivered, so it reaches the delivered arms and
 /// has to be answered before the two that talk about pasting.
+///
+/// WORDS THAT LANDED RAISE NO PILL, as on macOS (`PipelineStateChangePlanner.swift`, the `.complete`
+/// arm resolves to the pipeline's hidden overlay): the words appearing in front of the person already
+/// say it, and a "Dictation complete" card over their work after every take is noise. The sentence
+/// still reaches the status line and the tray. A requested copy keeps a short pill because nothing
+/// visible happened where the person is looking; every warning and error keeps its pill.
 /// </remarks>
 public static class DeliveryStatusReport
 {
-    /// <summary>Turns a delivery into the sentence shown on the pill.</summary>
+    /// <summary>Turns a delivery into the sentence shown on the status line, and the pill when one is due.</summary>
     public static DictationStatus For(DeliveryResult result) => result switch
     {
         // A CLIPBOARD THAT COULD NOT BE GIVEN BACK IS SAID FIRST (#242): the paste borrowed it, the restore
@@ -27,15 +33,15 @@ public static class DeliveryStatusReport
         { ClipboardUncertain: true } =>
             DictationStatus.Warning("Clipboard unavailable and could not be restored. Text is held safely in memory"),
         { Delivered: true, Route: TextDeliveryRoute.UiAutomationValue } =>
-            DictationStatus.Success("Inserted safely in the app you started in"),
+            DictationStatus.Quiet("Inserted safely in the app you started in"),
 
         // BEFORE THE TWO PASTE SENTENCES, because a requested copy is delivered and would otherwise
         // fall into them and tell the user it pasted somewhere it never went.
         { Delivered: true, Route: TextDeliveryRoute.ClipboardOnly } =>
             DictationStatus.Success("Copied to your clipboard"),
         { Delivered: true, ClipboardRestored: true } =>
-            DictationStatus.Success("Pasted safely and restored your clipboard"),
-        { Delivered: true } => DictationStatus.Success("Pasted safely"),
+            DictationStatus.Quiet("Pasted safely and restored your clipboard"),
+        { Delivered: true } => DictationStatus.Quiet("Pasted safely"),
         { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.ProtectedField } =>
             DictationStatus.Warning("Protected field: copied only. Paste manually if intended"),
         { ClipboardFallback: true, RefusalReason: TextDeliveryRefusalReason.ElevatedTarget } =>
