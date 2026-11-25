@@ -1882,49 +1882,112 @@
                                                 <TextBlock Style="{StaticResource BrandSubsectionEyebrowStyle}" Text="EG-1 · CHOOSE A SIZE" />
                                                 <TextBlock Grid.Column="1" x:Name="EgOneMemoryText" Style="{StaticResource BrandHelperStyle}" Text="This PC: Local Memory" />
                                             </Grid>
-                                            <RadioButton x:Name="EgOneSizeFullCard" Tag="eg-1" GroupName="EgOneSize" HorizontalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}" Checked="EgOneSizeCard_Checked" AutomationProperties.Name="EG-1. Best quality. The most accurate. Pick it for long dictations, email and languages other than English.">
-                                                <StackPanel Margin="0,0,28,0" Spacing="{StaticResource BrandSpacingXs}">
-                                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="EG-1" />
-                                                        <Border x:Name="EgOneFullRecommendedBadge" CornerRadius="10" Background="{ThemeResource BrandAccentLightBrush}" Padding="8,2,8,2" Visibility="Collapsed">
-                                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Best for this PC" />
-                                                        </Border>
+                                            <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                <RadioButton x:Name="EgOneSizeFullCard" Tag="eg-1" GroupName="EgOneSize" HorizontalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}" Checked="EgOneSizeCard_Checked" AutomationProperties.Name="EG-1. Best quality. The most accurate. Pick it for long dictations, email and languages other than English.">
+                                                    <StackPanel Margin="0,0,28,0" Spacing="{StaticResource BrandSpacingXs}">
+                                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                                            <TextBlock x:Name="EgOneFullTitleText" Style="{StaticResource BrandRowLabelStyle}" Text="EG-1" />
+                                                            <Border x:Name="EgOneFullRecommendedBadge" Style="{StaticResource BrandAccentChipStyle}" Visibility="Collapsed">
+                                                                <TextBlock Style="{StaticResource BrandStatusChipTextStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Best for this PC" />
+                                                            </Border>
+                                                            <Border x:Name="EgOneFullStatusBadge" CornerRadius="{StaticResource BrandPillRadius}" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="10,2,10,2">
+                                                                <TextBlock x:Name="EgOneFullStatusBadgeText" Style="{StaticResource BrandStatusChipTextStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Checking..." />
+                                                            </Border>
+                                                        </StackPanel>
+                                                        <TextBlock x:Name="EgOneFullTaglineText" Style="{StaticResource BrandRowLabelStyle}" Text="Best quality" Foreground="{ThemeResource BrandAccentBrush}" />
+                                                        <TextBlock x:Name="EgOneFullDescriptionText" Style="{StaticResource BrandHelperStyle}" Text="The most accurate. Pick it for long dictations, email and languages other than English." TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="EgOneFullSpecsText" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Best accuracy · Standard speed · ~5.5 GB memory · ~4.1 GB disk" TextWrapping="Wrap" />
                                                     </StackPanel>
-                                                    <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Best quality" Foreground="{ThemeResource BrandAccentBrush}" />
-                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="The most accurate. Pick it for long dictations, email and languages other than English." TextWrapping="Wrap" />
-                                                </StackPanel>
-                                            </RadioButton>
-                                            <RadioButton x:Name="EgOneSizeMiniCard" Tag="eg-1-mini" GroupName="EgOneSize" HorizontalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}" Checked="EgOneSizeCard_Checked" AutomationProperties.Name="EG-1 Mini. Fast all-rounder. Close to EG-1 on short dictation, at about half the memory.">
-                                                <StackPanel Margin="0,0,28,0" Spacing="{StaticResource BrandSpacingXs}">
-                                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="EG-1 Mini" />
-                                                        <Border x:Name="EgOneMiniRecommendedBadge" CornerRadius="10" Background="{ThemeResource BrandAccentLightBrush}" Padding="8,2,8,2" Visibility="Collapsed">
-                                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Best for this PC" />
-                                                        </Border>
+                                                </RadioButton>
+                                                <Border Style="{StaticResource BrandSectionCardStyle}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="14,10">
+                                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                        <StackPanel VerticalAlignment="Center" Spacing="{StaticResource BrandSpacingXs}">
+                                                            <TextBlock x:Name="EgOneFullDetailText" Style="{StaticResource BrandHelperStyle}" Text="Checking installed files..." TextWrapping="Wrap" />
+                                                            <ProgressBar x:Name="EgOneFullProgress" AutomationProperties.Name="EG-1 model download" Background="{ThemeResource BrandDividerBrush}" Foreground="{ThemeResource BrandAccentSolidBrush}" Maximum="100" Minimum="0" Visibility="Collapsed" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                                            <Button x:Name="EgOneFullDownloadButton" AutomationProperties.Name="Download EG-1 model" Click="EgOneDownloadButton_Click" Tag="eg-1" Content="Download" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
+                                                            <Button x:Name="EgOneFullCancelButton" AutomationProperties.Name="Cancel EG-1 download" Click="CancelEgOneDownloadButton_Click" Content="Cancel" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" />
+                                                            <Button x:Name="EgOneFullRemoveButton" AutomationProperties.Name="Remove EG-1 model" Click="EgOneRemoveButton_Click" Tag="eg-1" Content="Remove" Style="{StaticResource BrandDestructiveButtonStyle}" Visibility="Collapsed" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Border>
+                                            </StackPanel>
+                                            <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                <RadioButton x:Name="EgOneSizeMiniCard" Tag="eg-1-mini" GroupName="EgOneSize" HorizontalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}" Checked="EgOneSizeCard_Checked" AutomationProperties.Name="EG-1 Mini. Fast all-rounder. Close to EG-1 on short dictation, at about half the memory.">
+                                                    <StackPanel Margin="0,0,28,0" Spacing="{StaticResource BrandSpacingXs}">
+                                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                                            <TextBlock x:Name="EgOneMiniTitleText" Style="{StaticResource BrandRowLabelStyle}" Text="EG-1 Mini" />
+                                                            <Border x:Name="EgOneMiniRecommendedBadge" Style="{StaticResource BrandAccentChipStyle}" Visibility="Collapsed">
+                                                                <TextBlock Style="{StaticResource BrandStatusChipTextStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Best for this PC" />
+                                                            </Border>
+                                                            <Border x:Name="EgOneMiniStatusBadge" CornerRadius="{StaticResource BrandPillRadius}" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="10,2,10,2">
+                                                                <TextBlock x:Name="EgOneMiniStatusBadgeText" Style="{StaticResource BrandStatusChipTextStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Checking..." />
+                                                            </Border>
+                                                        </StackPanel>
+                                                        <TextBlock x:Name="EgOneMiniTaglineText" Style="{StaticResource BrandRowLabelStyle}" Text="Fast all-rounder" Foreground="{ThemeResource BrandAccentBrush}" />
+                                                        <TextBlock x:Name="EgOneMiniDescriptionText" Style="{StaticResource BrandHelperStyle}" Text="Close to EG-1 on short dictation, at about half the memory. Weaker on long dictations." TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="EgOneMiniSpecsText" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="High on short dictation · Fast · ~2.9 GB memory · ~2.1 GB disk" TextWrapping="Wrap" />
                                                     </StackPanel>
-                                                    <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Fast all-rounder" Foreground="{ThemeResource BrandAccentBrush}" />
-                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="Close to EG-1 on short dictation, at about half the memory." TextWrapping="Wrap" />
-                                                </StackPanel>
-                                            </RadioButton>
-                                            <RadioButton x:Name="EgOneSizeMicroCard" Tag="eg-1-micro" GroupName="EgOneSize" HorizontalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}" Checked="EgOneSizeCard_Checked" AutomationProperties.Name="EG-1 Micro. Smallest and fastest. The lightest. Good for short English dictation on PCs with little memory to spare.">
-                                                <StackPanel Margin="0,0,28,0" Spacing="{StaticResource BrandSpacingXs}">
-                                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
-                                                        <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="EG-1 Micro" />
-                                                        <Border x:Name="EgOneMicroRecommendedBadge" CornerRadius="10" Background="{ThemeResource BrandAccentLightBrush}" Padding="8,2,8,2" Visibility="Collapsed">
-                                                            <TextBlock Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Best for this PC" />
-                                                        </Border>
+                                                </RadioButton>
+                                                <Border Style="{StaticResource BrandSectionCardStyle}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="14,10">
+                                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                        <StackPanel VerticalAlignment="Center" Spacing="{StaticResource BrandSpacingXs}">
+                                                            <TextBlock x:Name="EgOneMiniDetailText" Style="{StaticResource BrandHelperStyle}" Text="Checking installed files..." TextWrapping="Wrap" />
+                                                            <ProgressBar x:Name="EgOneMiniProgress" AutomationProperties.Name="EG-1 Mini model download" Background="{ThemeResource BrandDividerBrush}" Foreground="{ThemeResource BrandAccentSolidBrush}" Maximum="100" Minimum="0" Visibility="Collapsed" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                                            <Button x:Name="EgOneMiniDownloadButton" AutomationProperties.Name="Download EG-1 Mini model" Click="EgOneDownloadButton_Click" Tag="eg-1-mini" Content="Download" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
+                                                            <Button x:Name="EgOneMiniCancelButton" AutomationProperties.Name="Cancel EG-1 Mini download" Click="CancelEgOneDownloadButton_Click" Content="Cancel" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" />
+                                                            <Button x:Name="EgOneMiniRemoveButton" AutomationProperties.Name="Remove EG-1 Mini model" Click="EgOneRemoveButton_Click" Tag="eg-1-mini" Content="Remove" Style="{StaticResource BrandDestructiveButtonStyle}" Visibility="Collapsed" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Border>
+                                            </StackPanel>
+                                            <StackPanel Spacing="{StaticResource BrandSpacingXs}">
+                                                <RadioButton x:Name="EgOneSizeMicroCard" Tag="eg-1-micro" GroupName="EgOneSize" HorizontalAlignment="Stretch" Style="{StaticResource BrandSelectableCardStyle}" Checked="EgOneSizeCard_Checked" AutomationProperties.Name="EG-1 Micro. Smallest and fastest. The lightest. Good for short English dictation on PCs with little memory to spare.">
+                                                    <StackPanel Margin="0,0,28,0" Spacing="{StaticResource BrandSpacingXs}">
+                                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}">
+                                                            <TextBlock x:Name="EgOneMicroTitleText" Style="{StaticResource BrandRowLabelStyle}" Text="EG-1 Micro" />
+                                                            <Border x:Name="EgOneMicroRecommendedBadge" Style="{StaticResource BrandAccentChipStyle}" Visibility="Collapsed">
+                                                                <TextBlock Style="{StaticResource BrandStatusChipTextStyle}" Foreground="{ThemeResource BrandAccentBrush}" Text="Best for this PC" />
+                                                            </Border>
+                                                            <Border x:Name="EgOneMicroStatusBadge" CornerRadius="{StaticResource BrandPillRadius}" Background="{ThemeResource BrandPageBgBrush}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="10,2,10,2">
+                                                                <TextBlock x:Name="EgOneMicroStatusBadgeText" Style="{StaticResource BrandStatusChipTextStyle}" Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="Checking..." />
+                                                            </Border>
+                                                        </StackPanel>
+                                                        <TextBlock x:Name="EgOneMicroTaglineText" Style="{StaticResource BrandRowLabelStyle}" Text="Smallest and fastest" Foreground="{ThemeResource BrandAccentBrush}" />
+                                                        <TextBlock x:Name="EgOneMicroDescriptionText" Style="{StaticResource BrandHelperStyle}" Text="The lightest. Good for short English dictation on PCs with little memory to spare. Weaker in other languages." TextWrapping="Wrap" />
+                                                        <TextBlock x:Name="EgOneMicroSpecsText" Style="{StaticResource BrandHelperStyle}" Foreground="{ThemeResource BrandTextPrimaryBrush}" Text="Short English dictation · Fastest · ~1.6 GB memory · ~1.2 GB disk" TextWrapping="Wrap" />
                                                     </StackPanel>
-                                                    <TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Smallest and fastest" Foreground="{ThemeResource BrandAccentBrush}" />
-                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="The lightest. Good for short English dictation on PCs with little memory to spare." TextWrapping="Wrap" />
-                                                </StackPanel>
-                                            </RadioButton>
+                                                </RadioButton>
+                                                <Border Style="{StaticResource BrandSectionCardStyle}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="14,10">
+                                                    <Grid ColumnSpacing="{StaticResource BrandSpacingM}">
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                        <StackPanel VerticalAlignment="Center" Spacing="{StaticResource BrandSpacingXs}">
+                                                            <TextBlock x:Name="EgOneMicroDetailText" Style="{StaticResource BrandHelperStyle}" Text="Checking installed files..." TextWrapping="Wrap" />
+                                                            <ProgressBar x:Name="EgOneMicroProgress" AutomationProperties.Name="EG-1 Micro model download" Background="{ThemeResource BrandDividerBrush}" Foreground="{ThemeResource BrandAccentSolidBrush}" Maximum="100" Minimum="0" Visibility="Collapsed" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}" VerticalAlignment="Center">
+                                                            <Button x:Name="EgOneMicroDownloadButton" AutomationProperties.Name="Download EG-1 Micro model" Click="EgOneDownloadButton_Click" Tag="eg-1-micro" Content="Download" Style="{StaticResource BrandPrimaryButtonStyle}" Visibility="Collapsed" />
+                                                            <Button x:Name="EgOneMicroCancelButton" AutomationProperties.Name="Cancel EG-1 Micro download" Click="CancelEgOneDownloadButton_Click" Content="Cancel" Style="{StaticResource BrandQuietButtonStyle}" Visibility="Collapsed" />
+                                                            <Button x:Name="EgOneMicroRemoveButton" AutomationProperties.Name="Remove EG-1 Micro model" Click="EgOneRemoveButton_Click" Tag="eg-1-micro" Content="Remove" Style="{StaticResource BrandDestructiveButtonStyle}" Visibility="Collapsed" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Border>
+                                            </StackPanel>
                                             <TextBlock x:Name="EgOneInstallStatusText" Style="{StaticResource BrandHelperStyle}" Text="Not installed yet (local model files required)" TextWrapping="Wrap" />
+                                            <Border x:Name="EgOneNoticeBanner" Style="{StaticResource BrandSectionCardStyle}" BorderBrush="{ThemeResource BrandDividerBrush}" BorderThickness="1" Padding="14,10" Visibility="Collapsed">
+                                                <TextBlock x:Name="EgOneNoticeText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" />
+                                            </Border>
                                             <!-- WHY USE EG-1 Explainer -->
                                             <Border Style="{StaticResource BrandSettingsCardStyle}">
                                                 <StackPanel Spacing="{StaticResource BrandSpacingXs}">
                                                     <TextBlock Style="{StaticResource BrandSubsectionEyebrowStyle}" Text="WHY USE EG-1" />
                                                     <TextBlock Style="{StaticResource BrandBodyStyle}" Text="EG-1 is our own model, built for cleaning up dictation. Its polish runs on this PC and works offline, with no API key and no per-use cost." TextWrapping="Wrap" />
-                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="When to pick something else: For the smallest download and mostly short English dictation, EG-1 Mini is lighter. For long recordings or code, a cloud model is a step up." TextWrapping="Wrap" />
+                                                    <TextBlock Style="{StaticResource BrandHelperStyle}" Text="When to pick something else: For the smallest download and mostly short English dictation, EG-1 Mini or EG-1 Micro are lighter. For long recordings or code, a cloud model is a step up." TextWrapping="Wrap" />
                                                 </StackPanel>
                                             </Border>
                                         </StackPanel>
@@ -1942,9 +2005,9 @@
                                             <Border Style="{StaticResource BrandSettingsCardStyle}">
                                             <StackPanel Spacing="{StaticResource BrandSpacingM}">
                                             <Grid x:Name="ApiKeyPasswordBoxRow" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE72E;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><PasswordBox x:Name="ApiKeyPasswordBox" AutomationProperties.HelpText="Write-only field for the selected direct cloud provider. Existing keys are never displayed." Header="API key for selected cloud provider" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" MaxLength="1280" /><StackPanel x:Name="ApiKeyButtonPanel" Orientation="Horizontal" Spacing="{StaticResource BrandSpacingS}"><Button x:Name="SaveApiKeyButton" Click="SaveApiKeyButton_Click" Content="Save API key" Style="{StaticResource BrandQuietButtonStyle}" /><Button x:Name="RemoveApiKeyButton" Click="RemoveApiKeyButton_Click" Content="Clear" Style="{StaticResource BrandQuietButtonStyle}" /></StackPanel><TextBlock x:Name="ApiKeyStatusText" AutomationProperties.LiveSetting="Polite" Style="{StaticResource BrandHelperStyle}" TextWrapping="Wrap" /></StackPanel></Grid>
-                                            <Grid x:Name="PolishModelPickerRow" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8B7;" /><ComboBox x:Name="PolishModelPicker" Grid.Column="1" AutomationProperties.HelpText="Lists the bundled EG-1 choice, locally installed Ollama chat models, or compatible models discovered from the selected direct-cloud account." Header="Available models" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" HorizontalAlignment="Stretch" PlaceholderText="No models listed" SelectionChanged="PolishModelPicker_SelectionChanged" /></Grid>
+                                            <Grid x:Name="PolishModelPickerRow" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8B7;" /><ComboBox x:Name="PolishModelPicker" Grid.Column="1" AutomationProperties.HelpText="Lists locally installed Ollama chat models or compatible models discovered from the selected direct-cloud account." Header="Available models" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" HorizontalAlignment="Stretch" PlaceholderText="No models listed" SelectionChanged="PolishModelPicker_SelectionChanged" /></Grid>
+                                            <Grid x:Name="CloudModelsKeyRequiredRow" ColumnSpacing="{StaticResource BrandSpacingM}" Visibility="Collapsed"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8B7;" /><StackPanel Grid.Column="1" Spacing="{StaticResource BrandSpacingXs}"><TextBlock Style="{StaticResource BrandRowLabelStyle}" Text="Available models" /><TextBlock x:Name="CloudModelsKeyRequiredText" Style="{StaticResource BrandHelperStyle}" Text="Save your API key to load available models" TextWrapping="Wrap" /></StackPanel></Grid>
                                             <Grid x:Name="RefreshPolishModelsButtonRow" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE72C;" /><Button x:Name="RefreshPolishModelsButton" Grid.Column="1" AutomationProperties.HelpText="Refreshes local Ollama models or fetches the selected provider's model catalog without sending transcript text." Click="RefreshPolishModelsButton_Click" Content="Refresh available models" HorizontalAlignment="Left" Style="{StaticResource BrandQuietButtonStyle}" /></Grid>
-                                            <Grid x:Name="PolishModelTextBoxRow" ColumnSpacing="{StaticResource BrandSpacingM}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon Width="{StaticResource BrandRowIconColumnWidth}" Margin="{StaticResource BrandRowIconInset}" VerticalAlignment="Top" Foreground="{ThemeResource BrandTextSecondaryBrush}" Glyph="&#xE8B7;" /><TextBox x:Name="PolishModelTextBox" Grid.Column="1" Header="Model ID (selected above or enter a custom compatible ID)" HeaderTemplate="{StaticResource BrandControlHeaderTemplate}" MaxLength="256" /></Grid>
                                             <TextBlock Foreground="{ThemeResource BrandTextSecondaryBrush}" Text="API keys are stored separately in Windows Credential Manager and are never written to settings or exports. Model discovery sends only the stored credential to the selected provider; no transcript or generation request is sent. Changes apply to the next recording." TextWrapping="Wrap" />
                                             </StackPanel>
                                             </Border>

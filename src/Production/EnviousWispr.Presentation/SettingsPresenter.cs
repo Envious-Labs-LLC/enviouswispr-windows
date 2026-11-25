@@ -107,7 +107,8 @@ public sealed record GeneralSettingsInput(
     string CopyLastShortcut,
     bool CasualMode = false,
     int LivePreviewEngineIndex = 0,
-    bool SendCrashReports = true);
+    bool SendCrashReports = true,
+    string? EgOneModelId = null);
 
 /// <summary>Which shortcut field a General save found wanting, for the window to put the focus in.</summary>
 public enum GeneralShortcutField
@@ -333,10 +334,23 @@ public sealed class SettingsPresenter : IDisposable
             pasteLast.Gesture?.ToString() ?? string.Empty,
             copyLast.Gesture?.ToString() ?? string.Empty,
             input.CasualMode);
+        var polishProvider = PolishProviderFromIndex(Chosen(input.PolishProviderIndex));
+        var normalizedEgOneModelId = EnginePolishPresentation.NormalizeOptionalEgOneModelId(input.EgOneModelId);
+        if (normalizedEgOneModelId is null &&
+            polishProvider == PolishProvider.EgOne &&
+            EnginePolishPresentation.IsKnownEgOneModelId(input.PolishModel))
+        {
+            normalizedEgOneModelId = EnginePolishPresentation.NormalizeEgOneModelId(input.PolishModel);
+        }
+
+        var polishModelId = polishProvider == PolishProvider.EgOne && normalizedEgOneModelId is not null
+            ? normalizedEgOneModelId
+            : NullIfBlank(input.PolishModel);
         var polish = new PolishPreferences(
-            PolishProviderFromIndex(Chosen(input.PolishProviderIndex)),
-            NullIfBlank(input.PolishModel),
-            NullIfBlank(input.OllamaEndpoint));
+            polishProvider,
+            polishModelId,
+            NullIfBlank(input.OllamaEndpoint),
+            normalizedEgOneModelId);
         var history = new HistoryPreferences(
             input.HistoryEnabled,
             RetentionDays.FromField(input.HistoryRetentionDays, fallback: 30, RetentionDays.HistoryMinimum, RetentionDays.HistoryMaximum));

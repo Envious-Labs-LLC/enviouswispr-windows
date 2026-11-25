@@ -89,6 +89,7 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 13 => MigrateFromV13(json),
                 14 => MigrateFromV14(json),
                 15 => MigrateFromV15(json),
+                16 => MigrateFromV16(json),
                 PortableProfile.CurrentSchemaVersion => JsonSerializer.Deserialize<PortableProfile>(
                     json,
                     JsonSettingsStore.SerializerOptions),
@@ -114,6 +115,14 @@ public sealed class JsonPortableProfileService : IPortableProfileService
                 {
                     profile = profile with { UserData = userData.WithCustomWords(normalized) };
                 }
+            }
+
+            if (profile is { Preferences: not null } && schemaVersion < PortableProfile.CurrentSchemaVersion)
+            {
+                profile = profile with
+                {
+                    Preferences = JsonSettingsStore.SeedEgOneModelIdIfMissing(profile.Preferences)!,
+                };
             }
 
             // A PROFILE CANNOT BRING IN A CANCEL OR ADD-A-WORD KEY WITH NO KEY OF ITS OWN: the hook refuses both, and with
@@ -339,6 +348,17 @@ public sealed class JsonPortableProfileService : IPortableProfileService
     }
 
     private static PortableProfile? MigrateFromV15(string json)
+    {
+        var legacy = JsonSerializer.Deserialize<PortableProfile>(
+            json,
+            JsonSettingsStore.SerializerOptions);
+        return legacy is null
+            ? null
+            : legacy with { SchemaVersion = PortableProfile.CurrentSchemaVersion };
+    }
+
+    /// <summary>Takes a portable profile written before dedicated EG-1 size persistence existed (v17).</summary>
+    private static PortableProfile? MigrateFromV16(string json)
     {
         var legacy = JsonSerializer.Deserialize<PortableProfile>(
             json,

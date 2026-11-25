@@ -1,3 +1,4 @@
+using EnviousWispr.Core.Polish;
 using EnviousWispr.Core.Runtime;
 using EnviousWispr.Core.Settings;
 
@@ -60,6 +61,69 @@ public sealed record SpeechEngineRemovalConfirmation(
     string ConfirmButtonText,
     string CancelButtonText);
 
+/// <summary>Static quality, speed, and footprint metadata for one EG-1 tier.</summary>
+public sealed record EgOneTierFacts(
+    string ModelId,
+    string Title,
+    string Tagline,
+    string Description,
+    string QualityText,
+    string SpeedText,
+    string MemoryText,
+    string DefaultDiskSizeText);
+
+/// <summary>Runtime installation and download state for one EG-1 model size.</summary>
+public sealed record EgOneModelState(
+    string ModelId,
+    bool IsInstalled,
+    bool CanRemove,
+    bool HasBundledManifest,
+    SpeechModelDelivery DeliveryStage = SpeechModelDelivery.Missing,
+    double? DownloadPercent = null,
+    string? StatusDetail = null,
+    string? BundleSizeText = null)
+{
+    public static EgOneModelState Unknown(string modelId) => new(
+        ModelId: EgOneModelCatalog.NormalizeOrDefault(modelId),
+        IsInstalled: false,
+        CanRemove: false,
+        HasBundledManifest: false,
+        DeliveryStage: SpeechModelDelivery.Missing);
+}
+
+/// <summary>Presentation model for one selectable EG-1 size card with inline download/remove actions.</summary>
+public sealed record EgOneCardPresentation(
+    string ModelId,
+    string Title,
+    string Tagline,
+    string Description,
+    string QualityText,
+    string SpeedText,
+    string MemoryText,
+    string DiskSizeText,
+    string SpecsSummary,
+    bool IsRecommended,
+    bool IsSelected,
+    bool IsInstalled,
+    string StatusText,
+    string StatusDetail,
+    bool ShowDownloadButton,
+    string DownloadButtonText,
+    bool DownloadButtonEnabled,
+    bool ShowProgress,
+    double DownloadPercent,
+    bool ShowCancelButton,
+    bool ShowRemoveButton,
+    bool RemoveButtonEnabled,
+    string AutomationName);
+
+/// <summary>Confirmation copy shown before removing an installed EG-1 model size.</summary>
+public sealed record EgOneRemovalConfirmation(
+    string Title,
+    string Message,
+    string ConfirmButtonText,
+    string CancelButtonText);
+
 /// <summary>Visibility and customer-facing copy for the Dictation output language card.</summary>
 public sealed record DictationOutputLanguagePresentation(
     bool IsVisible,
@@ -72,10 +136,14 @@ public static class EnginePolishPresentation
     public const string WhisperBundleSizeLabel = "548 MB";
     public const string RemovalBlockedBusyNotice =
         "Finish the current dictation or file transcription before removing a speech model.";
+    public const string EgOneRemovalBlockedBusyNotice =
+        "Finish the current dictation or file transcription before removing an EG-1 model.";
+    public const string EgOneDownloadBlockedBusyNotice =
+        "Finish the current dictation or file transcription, then download.";
 
-    public const string EgOneFullModelId = "eg-1";
-    public const string EgOneMiniModelId = "eg-1-mini";
-    public const string EgOneMicroModelId = "eg-1-micro";
+    public const string EgOneFullModelId = EgOneModelCatalog.FullId;
+    public const string EgOneMiniModelId = EgOneModelCatalog.MiniId;
+    public const string EgOneMicroModelId = EgOneModelCatalog.MicroId;
 
     public static EngineSummaryPresentation DescribeEngine(FinalAsrEngine engine) => engine switch
     {
@@ -193,28 +261,153 @@ public static class EnginePolishPresentation
             CancelButtonText: "Keep model");
     }
 
-    public static string NormalizeEgOneModelId(string? modelId)
+    public static string NormalizeEgOneModelId(string? modelId) =>
+        EgOneModelCatalog.NormalizeOrDefault(modelId);
+
+    public static string? NormalizeOptionalEgOneModelId(string? modelId) =>
+        EgOneModelCatalog.TryNormalize(modelId, out var normalized) ? normalized : null;
+
+    public static bool IsKnownEgOneModelId(string? modelId) =>
+        EgOneModelCatalog.IsKnown(modelId);
+
+    public static EgOneTierFacts DescribeEgOneTier(string? modelId) =>
+        NormalizeEgOneModelId(modelId) switch
+        {
+            EgOneMiniModelId => new EgOneTierFacts(
+                ModelId: EgOneMiniModelId,
+                Title: "EG-1 Mini",
+                Tagline: "Fast all-rounder",
+                Description: "Close to EG-1 on short dictation, at about half the memory. Weaker on long dictations.",
+                QualityText: "High on short dictation",
+                SpeedText: "Fast",
+                MemoryText: "~2.9 GB memory",
+                DefaultDiskSizeText: "~2.1 GB disk"),
+            EgOneMicroModelId => new EgOneTierFacts(
+                ModelId: EgOneMicroModelId,
+                Title: "EG-1 Micro",
+                Tagline: "Smallest and fastest",
+                Description: "The lightest. Good for short English dictation on PCs with little memory to spare. Weaker in other languages.",
+                QualityText: "Short English dictation",
+                SpeedText: "Fastest",
+                MemoryText: "~1.6 GB memory",
+                DefaultDiskSizeText: "~1.2 GB disk"),
+            _ => new EgOneTierFacts(
+                ModelId: EgOneFullModelId,
+                Title: "EG-1",
+                Tagline: "Best quality",
+                Description: "The most accurate. Pick it for long dictations, email and languages other than English.",
+                QualityText: "Best accuracy",
+                SpeedText: "Standard speed",
+                MemoryText: "~5.5 GB memory",
+                DefaultDiskSizeText: "~4.1 GB disk"),
+        };
+
+    public static string DescribeEgOneNotPublishedNotice(string? modelId)
     {
-        var trimmed = modelId?.Trim();
-        if (string.Equals(trimmed, EgOneMiniModelId, StringComparison.OrdinalIgnoreCase))
-        {
-            return EgOneMiniModelId;
-        }
-
-        if (string.Equals(trimmed, EgOneMicroModelId, StringComparison.OrdinalIgnoreCase))
-        {
-            return EgOneMicroModelId;
-        }
-
-        return EgOneFullModelId;
+        var tier = DescribeEgOneTier(modelId);
+        return $"The Windows download package for {tier.Title} is not published in this build yet.";
     }
 
-    public static bool IsKnownEgOneModelId(string? modelId)
+    public static EgOneCardPresentation DescribeEgOneCard(
+        string modelId,
+        string selectedModelId,
+        string? recommendedModelId,
+        EgOneModelState state,
+        bool otherDownloadInFlight,
+        bool serverExecutableExists)
     {
-        var trimmed = modelId?.Trim();
-        return string.Equals(trimmed, EgOneFullModelId, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(trimmed, EgOneMiniModelId, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(trimmed, EgOneMicroModelId, StringComparison.OrdinalIgnoreCase);
+        ArgumentNullException.ThrowIfNull(state);
+
+        var normalizedId = NormalizeEgOneModelId(modelId);
+        var facts = DescribeEgOneTier(normalizedId);
+        var diskSizeText = string.IsNullOrWhiteSpace(state.BundleSizeText)
+            ? facts.DefaultDiskSizeText
+            : state.BundleSizeText;
+        var isSelected = string.Equals(normalizedId, NormalizeEgOneModelId(selectedModelId), StringComparison.Ordinal);
+        var isRecommended = string.Equals(normalizedId, recommendedModelId, StringComparison.Ordinal);
+        var isDownloading = state.DeliveryStage == SpeechModelDelivery.Downloading;
+        var isActivating = state.DeliveryStage == SpeechModelDelivery.Activating;
+
+        var statusText = state.DeliveryStage switch
+        {
+            SpeechModelDelivery.Downloading => "Downloading...",
+            SpeechModelDelivery.Activating => "Activating...",
+            SpeechModelDelivery.Failed => "Download failed",
+            SpeechModelDelivery.Cancelled => "Download cancelled",
+            SpeechModelDelivery.CannotDownload => "Package not published",
+            _ when state.IsInstalled => isSelected && serverExecutableExists ? "Installed · Ready" : "Installed",
+            _ => "Not installed",
+        };
+
+        var statusDetail = state.DeliveryStage switch
+        {
+            SpeechModelDelivery.Downloading or SpeechModelDelivery.Activating or SpeechModelDelivery.Failed or SpeechModelDelivery.Cancelled or SpeechModelDelivery.CannotDownload
+                when !string.IsNullOrWhiteSpace(state.StatusDetail) => state.StatusDetail!,
+            SpeechModelDelivery.CannotDownload => DescribeEgOneNotPublishedNotice(normalizedId),
+            _ when state.IsInstalled => serverExecutableExists
+                ? "Verified on this PC for offline dictation polish."
+                : "Local model files found on this PC. EG-1 runtime executable was not found.",
+            _ when state.HasBundledManifest => $"Not downloaded yet ({diskSizeText}).",
+            _ => $"Not downloaded yet ({diskSizeText}). Download package not published in this build yet.",
+        };
+
+        var showDownloadButton = !state.IsInstalled &&
+            !isDownloading &&
+            !isActivating &&
+            state.DeliveryStage != SpeechModelDelivery.CannotDownload;
+
+        var downloadButtonText = state.DeliveryStage is SpeechModelDelivery.Failed or SpeechModelDelivery.Cancelled
+            ? "Retry download"
+            : state.HasBundledManifest && !string.IsNullOrWhiteSpace(state.BundleSizeText)
+                ? $"Download ({state.BundleSizeText})"
+                : "Download";
+
+        var specsSummary = $"{facts.QualityText} · {facts.SpeedText} · {facts.MemoryText} · {diskSizeText}";
+        var automationName = isRecommended
+            ? $"{facts.Title}. Best for this PC. {facts.Tagline}. {facts.Description}"
+            : $"{facts.Title}. {facts.Tagline}. {facts.Description}";
+
+        return new EgOneCardPresentation(
+            ModelId: normalizedId,
+            Title: facts.Title,
+            Tagline: facts.Tagline,
+            Description: facts.Description,
+            QualityText: facts.QualityText,
+            SpeedText: facts.SpeedText,
+            MemoryText: facts.MemoryText,
+            DiskSizeText: diskSizeText,
+            SpecsSummary: specsSummary,
+            IsRecommended: isRecommended,
+            IsSelected: isSelected,
+            IsInstalled: state.IsInstalled,
+            StatusText: statusText,
+            StatusDetail: statusDetail,
+            ShowDownloadButton: showDownloadButton,
+            DownloadButtonText: downloadButtonText,
+            DownloadButtonEnabled: !otherDownloadInFlight,
+            ShowProgress: isDownloading && state.DownloadPercent is not null,
+            DownloadPercent: state.DownloadPercent ?? 0,
+            ShowCancelButton: isDownloading,
+            ShowRemoveButton: state.IsInstalled && state.CanRemove && !isDownloading && !isActivating,
+            RemoveButtonEnabled: !otherDownloadInFlight,
+            AutomationName: automationName);
+    }
+
+    public static EgOneRemovalConfirmation DescribeEgOneRemovalDialog(
+        string? modelId,
+        bool isCurrentlySelected,
+        bool egOneActiveProvider)
+    {
+        var tier = DescribeEgOneTier(modelId);
+        var message = isCurrentlySelected && egOneActiveProvider
+            ? $"{tier.Title} is currently selected for AI Polish. Removing it deletes the local model files from this PC and stops offline EG-1 polish until you download a size again or switch providers."
+            : $"{tier.Title} is currently selected as your EG-1 size. Removing it deletes its local model files from this PC until you download it again.";
+
+        return new EgOneRemovalConfirmation(
+            Title: $"Remove {tier.Title}?",
+            Message: message,
+            ConfirmButtonText: "Remove model",
+            CancelButtonText: "Keep model");
     }
 
     public static string FormatEgOneInstallStatus(bool serverExecutableExists, bool modelFileExists) =>

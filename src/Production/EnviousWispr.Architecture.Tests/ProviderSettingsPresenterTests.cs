@@ -103,31 +103,34 @@ public sealed class ProviderSettingsPresenterTests
     }
 
     [Fact]
-    public async Task AMissingCloudKeyKeepsTheRecommendedModelAndSaysWhy()
+    public async Task AMissingCloudKeyHidesModelsAndSaysWhyWithoutDiscovering()
     {
         var (presenter, _, models) = Build();
-        models.Answer = new PolishModelDiscovery(PolishModelDiscoveryStatus.MissingCredential, []);
+        models.Answer = new PolishModelDiscovery(PolishModelDiscoveryStatus.Ready, ["gpt-should-not-load"]);
 
         var choices = await RefreshAsync(presenter, PolishProvider.OpenAI, null, string.Empty, chooseDefault: true).WaitAsync(Patience);
 
-        Assert.Equal(["gpt-recommended"], choices!.Models);
-        Assert.Equal("gpt-recommended", choices.ModelToApply);
+        Assert.Empty(choices!.Models);
+        Assert.Null(choices.ModelToApply);
+        Assert.Equal(-1, choices.SelectedIndex);
         Assert.Equal(PolishModelDiscoveryStatus.MissingCredential, choices.Discovery!.Status);
+        Assert.Equal(0, models.Discoveries);
     }
 
     [Fact]
-    public async Task ACloudListingReplacesTheRecommendationAndLeavesAModelOfThatProviderAlone()
+    public async Task ACloudListingWithSavedKeySelectsFromAvailableModels()
     {
-        var (presenter, _, models) = Build();
+        var (presenter, keys, models) = Build();
+        keys.Stored[PolishProvider.OpenAI] = "sk-test";
         models.Answer = new PolishModelDiscovery(PolishModelDiscoveryStatus.Ready, ["gpt-a", "gpt-b"]);
 
-        // A typed model of this provider that the listing does not show is kept as typed.
-        var kept = await RefreshAsync(presenter, PolishProvider.OpenAI, null, "gpt-custom", chooseDefault: true).WaitAsync(Patience);
+        // With chooseDefault: false, an existing selection missing from the catalog is left alone.
+        var kept = await RefreshAsync(presenter, PolishProvider.OpenAI, null, "gpt-custom", chooseDefault: false).WaitAsync(Patience);
         Assert.Equal(["gpt-a", "gpt-b"], kept!.Models);
         Assert.Null(kept.ModelToApply);
         Assert.Equal(-1, kept.SelectedIndex);
 
-        // A model of another provider is replaced by the first choice.
+        // An unrecognized model or a model from another provider falls back to the first available model.
         var replaced = await RefreshAsync(presenter, PolishProvider.OpenAI, null, "claude-haiku", chooseDefault: true).WaitAsync(Patience);
         Assert.Equal("gpt-a", replaced!.ModelToApply);
         Assert.Equal(0, replaced.SelectedIndex);
@@ -141,7 +144,8 @@ public sealed class ProviderSettingsPresenterTests
     [Fact]
     public async Task ACloudListingWithNothingCompatibleKeepsTheRecommendation()
     {
-        var (presenter, _, models) = Build();
+        var (presenter, keys, models) = Build();
+        keys.Stored[PolishProvider.Gemini] = "sk-gemini";
         models.Answer = new PolishModelDiscovery(PolishModelDiscoveryStatus.Ready, []);
 
         var choices = await RefreshAsync(presenter, PolishProvider.Gemini, null, string.Empty, chooseDefault: false).WaitAsync(Patience);
@@ -207,23 +211,24 @@ public sealed class ProviderSettingsPresenterTests
     }
 
     [Fact]
-    public async Task AModelTypedWhileTheListingWasOutIsHonoured()
+    public async Task AModelSelectedWhileTheListingWasOutIsHonoured()
     {
-        // THE FIELD IS READ WHEN THE LISTING IS APPLIED. The request left with the field holding the
-        // old provider's model; by the time the listing is applied the person has typed one of the
-        // new provider's, and that is what the decision is made against.
-        var (presenter, _, models) = Build();
+        // THE SELECTION IS READ WHEN THE LISTING IS APPLIED. The request left with the previous
+        // provider's model; by the time the listing is applied a listed model is selected, and
+        // that is what the decision is made against.
+        var (presenter, keys, models) = Build();
+        keys.Stored[PolishProvider.OpenAI] = "sk-test";
         models.Hold = true;
         var listing = presenter.ListModelsAsync(PolishProvider.OpenAI, null);
         await models.Entered.Task.WaitAsync(Patience);
-        models.Answer = new PolishModelDiscovery(PolishModelDiscoveryStatus.Ready, ["gpt-a"]);
+        models.Answer = new PolishModelDiscovery(PolishModelDiscoveryStatus.Ready, ["gpt-a", "gpt-b"]);
         models.Release.SetResult();
         var listed = await listing.WaitAsync(Patience);
 
-        var choices = presenter.Choose(listed!, "gpt-typed-meanwhile", chooseDefault: true);
+        var choices = presenter.Choose(listed!, "gpt-b", chooseDefault: true);
 
         Assert.Null(choices.ModelToApply);
-        Assert.Equal(-1, choices.SelectedIndex);
+        Assert.Equal(1, choices.SelectedIndex);
     }
 
     [Fact]
@@ -232,7 +237,8 @@ public sealed class ProviderSettingsPresenterTests
         // THE SECOND QUESTION. Listing A returns current; before the page applies it, the person
         // changes provider and listing B completes. Asked again on the page's thread, A is no longer
         // the latest and is not applied; B is.
-        var (presenter, _, models) = Build();
+        var (presenter, keys, _) = Build();
+        keys.Stored[PolishProvider.OpenAI] = "sk-test";
         var a = await presenter.ListModelsAsync(PolishProvider.OpenAI, null).WaitAsync(Patience);
         Assert.NotNull(a);
         Assert.True(presenter.IsCurrent(a.Ticket));
@@ -249,7 +255,9 @@ public sealed class ProviderSettingsPresenterTests
         // THE PROVIDER CHANGED WHILE THE FIRST LISTING WAS STILL OUT. The second answers first; when
         // the first finally comes back it is answered with nothing, so the page shows the provider
         // chosen last rather than whichever provider's listing happened to arrive last.
-        var (presenter, _, models) = Build();
+        var (presenter, keys, models) = Build();
+        keys.Stored[PolishProvider.OpenAI] = "sk-openai";
+        keys.Stored[PolishProvider.Anthropic] = "sk-anthropic";
         models.Hold = true;
         var first = RefreshAsync(presenter, PolishProvider.OpenAI, null, string.Empty, chooseDefault: true);
         await models.Entered.Task.WaitAsync(Patience);

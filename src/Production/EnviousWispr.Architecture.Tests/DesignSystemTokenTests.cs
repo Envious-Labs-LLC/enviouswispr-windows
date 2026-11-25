@@ -3466,9 +3466,13 @@ public sealed partial class DesignSystemTokenTests
         var repositoryRoot = FindRepositoryRoot();
         var mainWindow = LoadMainWindow();
         var pickerRow = FindNamedElement(mainWindow, "PolishModelPickerRow");
-        var textBoxRow = FindNamedElement(mainWindow, "PolishModelTextBoxRow");
+        var keyRequiredRow = FindNamedElement(mainWindow, "CloudModelsKeyRequiredRow");
         Assert.Equal("Grid", pickerRow.Name.LocalName);
-        Assert.Equal("Grid", textBoxRow.Name.LocalName);
+        Assert.Equal("Grid", keyRequiredRow.Name.LocalName);
+        Assert.Null(mainWindow.Descendants().FirstOrDefault(element =>
+            string.Equals((string?)element.Attribute(XName.Get("Name", XamlNamespace)), "PolishModelTextBoxRow", StringComparison.Ordinal)));
+        Assert.Null(mainWindow.Descendants().FirstOrDefault(element =>
+            string.Equals((string?)element.Attribute(XName.Get("Name", XamlNamespace)), "PolishModelTextBox", StringComparison.Ordinal)));
 
         var picker = FindNamedElement(mainWindow, "PolishModelPicker");
         Assert.False(string.IsNullOrWhiteSpace((string?)picker.Attribute("PlaceholderText")));
@@ -3476,8 +3480,9 @@ public sealed partial class DesignSystemTokenTests
         var codeBehind = File.ReadAllText(Path.Combine(
             repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
         Assert.Contains("PolishModelPickerRow.Visibility", codeBehind, StringComparison.Ordinal);
-        Assert.Contains("PolishModelTextBoxRow.Visibility", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("CloudModelsKeyRequiredRow.Visibility", codeBehind, StringComparison.Ordinal);
         Assert.Contains("ProviderSettingsPresenter.UsesAModel(provider)", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("_session.Provider.KeyStatus(provider) == ApiKeyReadStatus.Found", codeBehind, StringComparison.Ordinal);
     }
 
     [Fact]

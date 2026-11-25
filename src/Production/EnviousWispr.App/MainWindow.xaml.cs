@@ -318,6 +318,9 @@ public sealed partial class MainWindow : Window, IDisposable
     private PolishProvider _lastNonNonePolishProvider = PolishProvider.EgOne;
     private PolishProvider? _lastActivePolishProvider;
     private FinalAsrEngine? _lastActiveEngine;
+    private string _selectedPolishModelId = string.Empty;
+    private string? _selectedEgOneModelId;
+    private bool _isUpdatingPolishModelPicker;
     private bool _isUpdatingEgOneCards;
     private HardwareProfile? _hardwareProfile;
     private bool _isRepolishing;
@@ -553,9 +556,27 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>Returns whether dictation or file transcription currently holds the engine.</summary>
     public Func<bool>? IsSpeechEngineBusy { get; set; }
 
+    /// <summary>The person asked to download an EG-1 model size.</summary>
+    public event Action<string>? EgOneModelDownloadRequested;
+
+    /// <summary>The person asked for the running EG-1 model download to stop.</summary>
+    public event Action? EgOneModelDownloadCancelRequested;
+
+    /// <summary>The person confirmed removing an installed EG-1 model size.</summary>
+    public event Action<string>? EgOneModelRemoveRequested;
+
     private SpeechEngineModelState _parakeetModelState = SpeechEngineModelState.Unknown(EnginePolishPresentation.ParakeetBundleSizeLabel);
     private SpeechEngineModelState _whisperModelState = SpeechEngineModelState.Unknown(EnginePolishPresentation.WhisperBundleSizeLabel);
     private FinalAsrEngine? _activeSpeechDownloadEngine;
+    private readonly Dictionary<string, EgOneModelState> _egOneModelStates = new(StringComparer.Ordinal)
+    {
+        [EnginePolishPresentation.EgOneFullModelId] = EgOneModelState.Unknown(EnginePolishPresentation.EgOneFullModelId),
+        [EnginePolishPresentation.EgOneMiniModelId] = EgOneModelState.Unknown(EnginePolishPresentation.EgOneMiniModelId),
+        [EnginePolishPresentation.EgOneMicroModelId] = EgOneModelState.Unknown(EnginePolishPresentation.EgOneMicroModelId),
+    };
+    private bool _egOneServerExecutableExists;
+    private string? _activeEgOneDownloadModelId;
+    private bool _hasEgOneInventorySnapshot;
 
     /// <summary>The person asked for the 190 MB Whisper Live Preview model to be downloaded (#127).</summary>
     public event Action? PreviewModelDownloadRequested;
@@ -1699,6 +1720,11 @@ public sealed partial class MainWindow : Window, IDisposable
         // RAW, INCLUDING "NOTHING SELECTED": the indices go across as -1 when no choice is selected
         // and the sound pairing as null when none is, so what a missing choice means is the
         // presenter's decision too, not this handler's.
+        var selectedProviderIndex = RawSelectedIndexOf(PolishProviderChoices);
+        var selectedProvider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
+        var selectedPolishModelForSave = selectedProvider == PolishProvider.EgOne
+            ? EnginePolishPresentation.NormalizeEgOneModelId(_selectedEgOneModelId)
+            : _selectedPolishModelId;
         var input = new GeneralSettingsInput(
             HotkeyTextBox.Text,
             CancelHotkeyTextBox.Text,
@@ -1714,8 +1740,8 @@ public sealed partial class MainWindow : Window, IDisposable
             EscapeRecoveryToggle.IsOn,
             AutoStopToggle.IsOn,
             AutoStopSecondsBox.Value,
-            RawSelectedIndexOf(PolishProviderChoices),
-            PolishModelTextBox.Text,
+            selectedProviderIndex,
+            selectedPolishModelForSave,
             OllamaEndpointTextBox.Text,
             HistoryEnabledToggle.IsOn,
             RetentionDaysBox.Value,
@@ -1735,7 +1761,8 @@ public sealed partial class MainWindow : Window, IDisposable
             CopyLastHotkeyTextBox.Text,
             CasualModeToggle?.IsOn == true,
             SelectedLivePreviewEngineIndex(),
-            SendCrashReportsToggle.IsOn);
+            SendCrashReportsToggle.IsOn,
+            EgOneModelId: _selectedEgOneModelId);
 
         var outcome = await _session.Settings.SaveGeneralAsync(input).ConfigureAwait(true);
         switch (outcome.Status)
@@ -3261,6 +3288,79 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
+    public void SetEgOneModels(
+        IReadOnlyDictionary<string, EgOneModelState> states,
+        bool serverExecutableExists,
+        string? downloadingModelId)
+    {
+        ArgumentNullException.ThrowIfNull(states);
+        foreach (var modelId in EgOneModelCatalog.AllIds)
+        {
+            if (states.TryGetValue(modelId, out var state))
+            {
+                _egOneModelStates[modelId] = state;
+            }
+        }
+
+        _egOneServerExecutableExists = serverExecutableExists;
+        _activeEgOneDownloadModelId = downloadingModelId;
+        _hasEgOneInventorySnapshot = true;
+        UpdateEgOneCards();
+    }
+
+    public void SetEgOneDelivery(string modelId, ModelDeliveryPresentation presentation)
+    {
+        ArgumentNullException.ThrowIfNull(presentation);
+        var normalizedId = EnginePolishPresentation.NormalizeEgOneModelId(modelId);
+        var existing = _egOneModelStates.GetValueOrDefault(
+            normalizedId,
+            EgOneModelState.Unknown(normalizedId));
+        _egOneModelStates[normalizedId] = existing with
+        {
+            DeliveryStage = presentation.Stage,
+            DownloadPercent = presentation.Percent,
+            StatusDetail = presentation.Text,
+        };
+        _activeEgOneDownloadModelId = presentation.Stage == SpeechModelDelivery.Downloading
+            ? normalizedId
+            : null;
+        _hasEgOneInventorySnapshot = true;
+        UpdateEgOneCards();
+    }
+
+    public void ShowEgOneNotice(string message)
+    {
+        if (EgOneNoticeText is null || EgOneNoticeBanner is null)
+        {
+            return;
+        }
+
+        var normalized = message ?? string.Empty;
+        SetLiveText(EgOneNoticeText, normalized);
+        EgOneNoticeBanner.Visibility = string.IsNullOrWhiteSpace(normalized)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+    }
+
+    private EgOneModelState ResolveEgOneDisplayState(string modelId)
+    {
+        var normalizedId = EnginePolishPresentation.NormalizeEgOneModelId(modelId);
+        if (_hasEgOneInventorySnapshot && _egOneModelStates.TryGetValue(normalizedId, out var state))
+        {
+            return state;
+        }
+
+        var (serverExists, modelExists) = CheckEgOneLocalAssets(normalizedId);
+        _egOneServerExecutableExists = serverExists;
+        var hasBundledManifest = ModelDelivery.BundledModelManifests.TryRead(normalizedId) is not null;
+        return new EgOneModelState(
+            ModelId: normalizedId,
+            IsInstalled: modelExists,
+            CanRemove: modelExists && Directory.Exists(Path.Combine(_dataDirectory, "models", normalizedId)),
+            HasBundledManifest: hasBundledManifest,
+            DeliveryStage: modelExists ? SpeechModelDelivery.Installed : SpeechModelDelivery.Missing);
+    }
+
     private void UpdateEgOneCards()
     {
         if (_isUpdatingEgOneCards
@@ -3277,34 +3377,11 @@ public sealed partial class MainWindow : Window, IDisposable
             EgOneMemoryText.Text = profile.SummaryText;
         }
 
-        if (EgOneFullRecommendedBadge is not null)
+        var rawModelId = _selectedEgOneModelId;
+        if (string.IsNullOrWhiteSpace(rawModelId) &&
+            _settings?.Preferences.Polish.Provider == PolishProvider.EgOne)
         {
-            EgOneFullRecommendedBadge.Visibility =
-                string.Equals(profile.RecommendedEgOneModelId, EnginePolishPresentation.EgOneFullModelId, StringComparison.Ordinal)
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
-        }
-
-        if (EgOneMiniRecommendedBadge is not null)
-        {
-            EgOneMiniRecommendedBadge.Visibility =
-                string.Equals(profile.RecommendedEgOneModelId, EnginePolishPresentation.EgOneMiniModelId, StringComparison.Ordinal)
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
-        }
-
-        if (EgOneMicroRecommendedBadge is not null)
-        {
-            EgOneMicroRecommendedBadge.Visibility =
-                string.Equals(profile.RecommendedEgOneModelId, EnginePolishPresentation.EgOneMicroModelId, StringComparison.Ordinal)
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
-        }
-
-        var rawModelId = PolishModelTextBox?.Text;
-        if (string.IsNullOrWhiteSpace(rawModelId))
-        {
-            rawModelId = _settings?.Preferences.Polish.ModelId;
+            rawModelId = _settings.Preferences.Polish.ModelId;
         }
 
         var normalizedModelId = EnginePolishPresentation.NormalizeEgOneModelId(rawModelId);
@@ -3321,11 +3398,268 @@ public sealed partial class MainWindow : Window, IDisposable
             _isUpdatingEgOneCards = false;
         }
 
+        var selectedState = ResolveEgOneDisplayState(normalizedModelId);
+        var slots = new[]
+        {
+            (
+                EnginePolishPresentation.EgOneFullModelId,
+                EgOneSizeFullCard,
+                EgOneFullRecommendedBadge,
+                EgOneFullStatusBadge,
+                EgOneFullStatusBadgeText,
+                EgOneFullTaglineText,
+                EgOneFullDescriptionText,
+                EgOneFullSpecsText,
+                EgOneFullDetailText,
+                EgOneFullProgress,
+                EgOneFullDownloadButton,
+                EgOneFullCancelButton,
+                EgOneFullRemoveButton
+            ),
+            (
+                EnginePolishPresentation.EgOneMiniModelId,
+                EgOneSizeMiniCard,
+                EgOneMiniRecommendedBadge,
+                EgOneMiniStatusBadge,
+                EgOneMiniStatusBadgeText,
+                EgOneMiniTaglineText,
+                EgOneMiniDescriptionText,
+                EgOneMiniSpecsText,
+                EgOneMiniDetailText,
+                EgOneMiniProgress,
+                EgOneMiniDownloadButton,
+                EgOneMiniCancelButton,
+                EgOneMiniRemoveButton
+            ),
+            (
+                EnginePolishPresentation.EgOneMicroModelId,
+                EgOneSizeMicroCard,
+                EgOneMicroRecommendedBadge,
+                EgOneMicroStatusBadge,
+                EgOneMicroStatusBadgeText,
+                EgOneMicroTaglineText,
+                EgOneMicroDescriptionText,
+                EgOneMicroSpecsText,
+                EgOneMicroDetailText,
+                EgOneMicroProgress,
+                EgOneMicroDownloadButton,
+                EgOneMicroCancelButton,
+                EgOneMicroRemoveButton
+            ),
+        };
+
+        foreach (var slot in slots)
+        {
+            var state = ResolveEgOneDisplayState(slot.Item1);
+            var otherInFlight = _activeEgOneDownloadModelId is not null &&
+                !string.Equals(_activeEgOneDownloadModelId, slot.Item1, StringComparison.Ordinal);
+            var card = EnginePolishPresentation.DescribeEgOneCard(
+                slot.Item1,
+                normalizedModelId,
+                profile.RecommendedEgOneModelId,
+                state,
+                otherInFlight,
+                _egOneServerExecutableExists);
+            ApplyEgOneCardPresentation(
+                card,
+                slot.Item2,
+                slot.Item3,
+                slot.Item4,
+                slot.Item5,
+                slot.Item6,
+                slot.Item7,
+                slot.Item8,
+                slot.Item9,
+                slot.Item10,
+                slot.Item11,
+                slot.Item12,
+                slot.Item13);
+        }
+
         if (EgOneInstallStatusText is not null)
         {
-            var (serverExists, modelExists) = CheckEgOneLocalAssets(normalizedModelId);
-            EgOneInstallStatusText.Text = EnginePolishPresentation.FormatEgOneInstallStatus(serverExists, modelExists);
+            EgOneInstallStatusText.Text = EnginePolishPresentation.FormatEgOneInstallStatus(
+                _egOneServerExecutableExists,
+                selectedState.IsInstalled);
         }
+    }
+
+    private static void ApplyEgOneCardPresentation(
+        EgOneCardPresentation card,
+        RadioButton? cardButton,
+        Border? recommendedBadge,
+        Border? statusBadge,
+        TextBlock? statusBadgeText,
+        TextBlock? taglineText,
+        TextBlock? descriptionText,
+        TextBlock? specsText,
+        TextBlock? detailText,
+        ProgressBar? progressBar,
+        Button? downloadButton,
+        Button? cancelButton,
+        Button? removeButton)
+    {
+        if (cardButton is not null)
+        {
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(cardButton, card.AutomationName);
+        }
+
+        if (recommendedBadge is not null)
+        {
+            recommendedBadge.Visibility = card.IsRecommended ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (statusBadgeText is not null)
+        {
+            statusBadgeText.Text = card.StatusText;
+            var foregroundKey = card.IsInstalled
+                ? "BrandSuccessBrush"
+                : card.ShowProgress
+                    ? "BrandAccentBrush"
+                    : "BrandTextSecondaryBrush";
+            if (Application.Current.Resources[foregroundKey] is Brush brush)
+            {
+                statusBadgeText.Foreground = brush;
+            }
+        }
+
+        if (statusBadge is not null)
+        {
+            var backgroundKey = card.IsInstalled
+                ? "BrandSuccessSoftBrush"
+                : card.ShowProgress
+                    ? "BrandAccentLightBrush"
+                    : "BrandPageBgBrush";
+            if (Application.Current.Resources[backgroundKey] is Brush backgroundBrush)
+            {
+                statusBadge.Background = backgroundBrush;
+            }
+        }
+
+        if (taglineText is not null)
+        {
+            taglineText.Text = card.Tagline;
+        }
+
+        if (descriptionText is not null)
+        {
+            descriptionText.Text = card.Description;
+        }
+
+        if (specsText is not null)
+        {
+            specsText.Text = card.SpecsSummary;
+        }
+
+        if (detailText is not null)
+        {
+            detailText.Text = card.StatusDetail;
+        }
+
+        if (progressBar is not null)
+        {
+            progressBar.Visibility = card.ShowProgress ? Visibility.Visible : Visibility.Collapsed;
+            progressBar.Value = card.DownloadPercent;
+        }
+
+        if (downloadButton is not null)
+        {
+            downloadButton.Content = card.DownloadButtonText;
+            downloadButton.IsEnabled = card.DownloadButtonEnabled;
+            downloadButton.Visibility = card.ShowDownloadButton ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (cancelButton is not null)
+        {
+            cancelButton.Visibility = card.ShowCancelButton ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (removeButton is not null)
+        {
+            removeButton.IsEnabled = card.RemoveButtonEnabled;
+            removeButton.Visibility = card.ShowRemoveButton ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
+
+    private void EgOneDownloadButton_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is not string modelId ||
+            !EnginePolishPresentation.IsKnownEgOneModelId(modelId))
+        {
+            return;
+        }
+
+        ShowEgOneNotice(string.Empty);
+        EgOneModelDownloadRequested?.Invoke(EnginePolishPresentation.NormalizeEgOneModelId(modelId));
+    }
+
+    private void CancelEgOneDownloadButton_Click(object sender, RoutedEventArgs e) =>
+        EgOneModelDownloadCancelRequested?.Invoke();
+
+    private async void EgOneRemoveButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session.Closing ||
+            (sender as FrameworkElement)?.Tag is not string rawModelId ||
+            !EnginePolishPresentation.IsKnownEgOneModelId(rawModelId))
+        {
+            return;
+        }
+
+        var normalizedId = EnginePolishPresentation.NormalizeEgOneModelId(rawModelId);
+        ShowEgOneNotice(string.Empty);
+        if (IsSpeechEngineBusy?.Invoke() == true)
+        {
+            ShowEgOneNotice(EnginePolishPresentation.EgOneRemovalBlockedBusyNotice);
+            return;
+        }
+
+        var selectedEgOne = EnginePolishPresentation.NormalizeEgOneModelId(
+            _selectedEgOneModelId ?? (_settings?.Preferences.Polish.Provider == PolishProvider.EgOne
+                ? _settings.Preferences.Polish.ModelId
+                : null));
+        var activeProvider = _settings?.Preferences.Polish.Provider
+            ?? PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
+        var isSelected = string.Equals(normalizedId, selectedEgOne, StringComparison.Ordinal);
+        if (isSelected)
+        {
+            if (Content?.XamlRoot is not { } xamlRoot)
+            {
+                return;
+            }
+
+            var confirmation = EnginePolishPresentation.DescribeEgOneRemovalDialog(
+                normalizedId,
+                isCurrentlySelected: true,
+                egOneActiveProvider: activeProvider == PolishProvider.EgOne);
+            var dialog = new ContentDialog
+            {
+                XamlRoot = xamlRoot,
+                RequestedTheme = (Content as FrameworkElement)?.RequestedTheme ?? ElementTheme.Default,
+                Title = confirmation.Title,
+                Content = new TextBlock
+                {
+                    Text = confirmation.Message,
+                    TextWrapping = TextWrapping.Wrap,
+                },
+                PrimaryButtonText = confirmation.ConfirmButtonText,
+                PrimaryButtonStyle = Application.Current.Resources["BrandDestructiveButtonStyle"] as Style,
+                CloseButtonText = confirmation.CancelButtonText,
+                DefaultButton = ContentDialogButton.Close,
+            };
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || _session.Closing)
+            {
+                return;
+            }
+        }
+
+        if (IsSpeechEngineBusy?.Invoke() == true)
+        {
+            ShowEgOneNotice(EnginePolishPresentation.EgOneRemovalBlockedBusyNotice);
+            return;
+        }
+
+        EgOneModelRemoveRequested?.Invoke(normalizedId);
     }
 
     private (bool ServerExists, bool ModelExists) CheckEgOneLocalAssets(string normalizedModelId)
@@ -3367,10 +3701,8 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         var normalized = EnginePolishPresentation.NormalizeEgOneModelId(modelId);
-        if (!string.Equals(PolishModelTextBox.Text?.Trim(), normalized, StringComparison.Ordinal))
-        {
-            PolishModelTextBox.Text = _polishModelSetByApp = normalized;
-        }
+        _selectedEgOneModelId = normalized;
+        _selectedPolishModelId = _polishModelSetByApp = normalized;
 
         UpdateEgOneCards();
         _ = TriggerAutoSaveAsync();
@@ -3389,6 +3721,12 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         SelectChoice(PolishProviderChoices, selectedIndex);
         _lastActivePolishProvider = provider;
+        if (provider == PolishProvider.EgOne)
+        {
+            _selectedEgOneModelId ??= EnginePolishPresentation.EgOneFullModelId;
+            _selectedPolishModelId = _polishModelSetByApp = _selectedEgOneModelId;
+        }
+
         UpdateActivePolishProviderDisplay();
         UpdateHistoryStatusCards();
         if (PolishProviderChooserPanel is not null)
@@ -3398,9 +3736,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
         ApiKeyPasswordBox.Password = string.Empty;
         RefreshApiKeyStatus();
-        var chooseDefault = allowDefaultModel && (
-            provider != PolishProvider.EgOne ||
-            !EnginePolishPresentation.IsKnownEgOneModelId(PolishModelTextBox.Text));
+        var chooseDefault = allowDefaultModel && provider != PolishProvider.EgOne;
         await RefreshPolishModelChoicesAsync(
             provider,
             chooseDefault: chooseDefault).ConfigureAwait(true);
@@ -3453,20 +3789,27 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void PolishModelPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!_isApplyingSettings && PolishModelPicker.SelectedItem is string modelId)
+        if (_isApplyingSettings || _isUpdatingPolishModelPicker || _settings is null)
         {
-            PolishModelTextBox.Text = modelId;
+            return;
+        }
+
+        if (PolishModelPicker.SelectedItem is string modelId &&
+            !string.Equals(_selectedPolishModelId, modelId, StringComparison.Ordinal))
+        {
+            _selectedPolishModelId = _polishModelSetByApp = modelId;
             UpdateActivePolishProviderDisplay();
             _ = WarmUpSelectedOllamaModelAsync(modelId);
+            _ = TriggerAutoSaveAsync();
         }
     }
 
     private bool IsSelectedOllamaModelHosted()
     {
-        var current = PolishModelTextBox?.Text?.Trim();
+        var current = _selectedPolishModelId.Trim();
         if (string.IsNullOrEmpty(current))
         {
-            current = _settings?.Preferences.Polish.ModelId?.Trim();
+            current = _settings?.Preferences.Polish.ModelId?.Trim() ?? string.Empty;
         }
 
         if (string.IsNullOrEmpty(current))
@@ -3508,6 +3851,8 @@ public sealed partial class MainWindow : Window, IDisposable
                     InfoBarSeverity.Success);
                 await RefreshPolishModelChoicesAsync(provider, chooseDefault: true)
                     .ConfigureAwait(true);
+                UpdateActivePolishProviderDisplay();
+                _ = TriggerAutoSaveAsync();
                 return;
             default:
                 ApiKeyPasswordBox.Password = string.Empty;
@@ -6343,7 +6688,16 @@ public sealed partial class MainWindow : Window, IDisposable
             {
                 _lastNonNonePolishProvider = preferences.Polish.Provider;
             }
-            PolishModelTextBox.Text = _polishModelSetByApp = preferences.Polish.ModelId ?? string.Empty;
+            var persistedEgOneId = preferences.Polish.EgOneModelId;
+            if (!EnginePolishPresentation.IsKnownEgOneModelId(persistedEgOneId) &&
+                preferences.Polish.Provider == PolishProvider.EgOne)
+            {
+                persistedEgOneId = preferences.Polish.ModelId;
+            }
+            _selectedEgOneModelId = EnginePolishPresentation.NormalizeOptionalEgOneModelId(persistedEgOneId);
+            _selectedPolishModelId = _polishModelSetByApp = preferences.Polish.Provider == PolishProvider.EgOne
+                ? EnginePolishPresentation.NormalizeEgOneModelId(_selectedEgOneModelId)
+                : preferences.Polish.ModelId ?? string.Empty;
             _lastActivePolishProvider = preferences.Polish.Provider;
             SelectChoice(PolishProviderChoices, PolishProviderIndex(preferences.Polish.Provider));
             UpdateActivePolishProviderDisplay();
@@ -6418,10 +6772,13 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         var isCloudProvider = IsCloudProvider(provider);
+        var hasSavedCloudKey = !isCloudProvider || _session.Provider.KeyStatus(provider) == ApiKeyReadStatus.Found;
         var usesAModel = ProviderSettingsPresenter.UsesAModel(provider);
-        var modelRowsVisibility = usesAModel ? Visibility.Visible : Visibility.Collapsed;
-        PolishModelPickerRow.Visibility = modelRowsVisibility;
-        PolishModelTextBoxRow.Visibility = modelRowsVisibility;
+        var showModelPicker = usesAModel && hasSavedCloudKey;
+        PolishModelPickerRow.Visibility = showModelPicker ? Visibility.Visible : Visibility.Collapsed;
+        CloudModelsKeyRequiredRow.Visibility = isCloudProvider && !hasSavedCloudKey
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         OllamaEndpointTextBoxRow.Visibility = provider == PolishProvider.Ollama
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -6431,19 +6788,33 @@ public sealed partial class MainWindow : Window, IDisposable
         ApiKeyButtonPanel.Visibility = isCloudProvider
             ? Visibility.Visible
             : Visibility.Collapsed;
-        RefreshPolishModelsButtonRow.Visibility = provider is PolishProvider.Ollama or
-            PolishProvider.OpenAI or PolishProvider.Anthropic or PolishProvider.Gemini
+        RefreshPolishModelsButtonRow.Visibility = provider == PolishProvider.Ollama ||
+            (isCloudProvider && hasSavedCloudKey)
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         RefreshPolishModelsButton.IsEnabled = false;
 
-        // THE ENDPOINT IS READ HERE, ON THE UI THREAD, BEFORE THE DISCOVERY; THE MODEL FIELD IS READ
-        // AFTER IT, so a model typed while the listing was out is the one the decision is made
-        // against. A listing overtaken by a later refresh comes back as nothing, and the one that
-        // came back is asked once more, here with no wait in between, whether it is still the
-        // latest - a person can change provider between the answer and this thread.
+        if (isCloudProvider && !hasSavedCloudKey)
+        {
+            _isUpdatingPolishModelPicker = true;
+            try
+            {
+                PolishModelPicker.ItemsSource = Array.Empty<string>();
+                PolishModelPicker.SelectedIndex = -1;
+                PolishModelPicker.PlaceholderText = "No models listed";
+                PolishModelPicker.IsEnabled = false;
+            }
+            finally
+            {
+                _isUpdatingPolishModelPicker = false;
+            }
+        }
+
+        // THE ENDPOINT AND SELECTION ARE READ HERE, ON THE UI THREAD, BEFORE THE DISCOVERY;
+        // if another refresh overtakes this one, or if the person changes provider/selection meanwhile,
+        // no stale listing overwrites what they chose last.
         var endpoint = NullIfBlank(OllamaEndpointTextBox.Text);
-        var fieldBefore = PolishModelTextBox.Text;
+        var selectionBefore = _selectedPolishModelId;
         var listing = await _session.Provider.ListModelsAsync(provider, endpoint)
             .ConfigureAwait(true);
         if (listing is null || _session.Closing || !_session.Provider.IsCurrent(listing.Ticket))
@@ -6451,9 +6822,6 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        // THE LISTING IS APPLIED ONLY IN THE CONTEXT IT WAS ASKED IN. The ticket catches a later listing; it cannot see a
-        // provider chosen or an endpoint edited meanwhile without one, and a field typed into while the listing was out
-        // is the person's - no default and no repair replaces it. Ref: #213 review.
         if (PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices)) != provider ||
             (provider == PolishProvider.Ollama &&
              !string.Equals(NullIfBlank(OllamaEndpointTextBox.Text), endpoint, StringComparison.Ordinal)))
@@ -6461,49 +6829,57 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var editedMeanwhile = !string.Equals(PolishModelTextBox.Text, fieldBefore, StringComparison.Ordinal);
-        var choices = _session.Provider.Choose(listing, PolishModelTextBox.Text, chooseDefault && !editedMeanwhile);
-
-        // All three model controls follow the PROVIDER, not just the two that used to. With the
-        // provider set to None the picker and the refresh button were correctly disabled while
-        // the free-text Model ID stayed live and in the tab order, so a user could type a model
-        // id for a provider that does not exist. One of a pair got the guard and its sibling did
-        // not, which is the shape that survives review because the page looks mostly right.
-        var providerUsesAModel = ProviderSettingsPresenter.UsesAModel(provider);
-        RefreshPolishModelsButton.IsEnabled = providerUsesAModel;
-        PolishModelTextBox.IsEnabled = providerUsesAModel;
-        PolishModelPicker.ItemsSource = choices.Models;
-        PolishModelPicker.PlaceholderText = choices.Models.Count > 0
-            ? "Choose an available model"
-            : "No models listed";
-        PolishModelPicker.IsEnabled = providerUsesAModel && choices.Models.Count > 0;
-        if (choices.ModelToApply is { } model)
+        if (isCloudProvider && _session.Provider.KeyStatus(provider) != ApiKeyReadStatus.Found)
         {
-            PolishModelTextBox.Text = _polishModelSetByApp = model;
+            RefreshApiKeyStatus();
+            return;
         }
 
-        PolishModelPicker.SelectedIndex = choices.SelectedIndex;
+        var selectedMeanwhile = !string.Equals(_selectedPolishModelId, selectionBefore, StringComparison.Ordinal);
+        var choices = _session.Provider.Choose(listing, _selectedPolishModelId, chooseDefault && !selectedMeanwhile);
 
-        // REPAIRED ONLY FROM A LISTING THAT SUCCEEDED, and only where the change left the field naming nothing - an empty
-        // field after a download, or the model just removed. A model the person typed is theirs. Ref: #213.
-        if (ollamaChange is not null &&
-            !editedMeanwhile &&
-            choices.Discovery is { Status: PolishModelDiscoveryStatus.Ready } &&
-            OllamaModelsPresenter.RepairSelection(
-                choices.Models,
-                PolishModelTextBox.Text,
-                _polishModelSetByApp,
-                ollamaChange) is { } repaired)
+        var providerUsesAModel = ProviderSettingsPresenter.UsesAModel(provider);
+        var pickerReady = providerUsesAModel && (!isCloudProvider || _session.Provider.KeyStatus(provider) == ApiKeyReadStatus.Found);
+        RefreshPolishModelsButton.IsEnabled = pickerReady;
+        _isUpdatingPolishModelPicker = true;
+        try
         {
-            PolishModelTextBox.Text = _polishModelSetByApp = repaired;
-            var repairedIndex = -1;
-            for (var i = 0; i < choices.Models.Count && repairedIndex < 0; i++)
+            PolishModelPicker.ItemsSource = choices.Models;
+            PolishModelPicker.PlaceholderText = choices.Models.Count > 0
+                ? "Choose an available model"
+                : "No models listed";
+            PolishModelPicker.IsEnabled = pickerReady && choices.Models.Count > 0;
+            if (choices.ModelToApply is { } model)
             {
-                repairedIndex = OllamaModelCatalog.SameModel(choices.Models[i], repaired) ? i : -1;
+                _selectedPolishModelId = _polishModelSetByApp = model;
             }
 
-            PolishModelPicker.SelectedIndex = repairedIndex;
+            PolishModelPicker.SelectedIndex = choices.SelectedIndex;
+
+            if (ollamaChange is not null &&
+                !selectedMeanwhile &&
+                choices.Discovery is { Status: PolishModelDiscoveryStatus.Ready } &&
+                OllamaModelsPresenter.RepairSelection(
+                    choices.Models,
+                    _selectedPolishModelId,
+                    _polishModelSetByApp,
+                    ollamaChange) is { } repaired)
+            {
+                _selectedPolishModelId = _polishModelSetByApp = repaired;
+                var repairedIndex = -1;
+                for (var i = 0; i < choices.Models.Count && repairedIndex < 0; i++)
+                {
+                    repairedIndex = OllamaModelCatalog.SameModel(choices.Models[i], repaired) ? i : -1;
+                }
+
+                PolishModelPicker.SelectedIndex = repairedIndex;
+            }
         }
+        finally
+        {
+            _isUpdatingPolishModelPicker = false;
+        }
+
         if (choices.Discovery is { } discovery)
         {
             SetLiveText(ApiKeyStatusText, ModelDiscoveryNotice(provider, discovery));
@@ -6524,17 +6900,17 @@ public sealed partial class MainWindow : Window, IDisposable
             PolishModelDiscoveryStatus.Ready when count > 0 =>
                 $"{count.ToString(CultureInfo.CurrentCulture)} compatible {ProviderDisplayName(provider)} model{plural} available to the stored key. No transcript or generation request was sent.",
             PolishModelDiscoveryStatus.Ready =>
-                $"{ProviderDisplayName(provider)} returned no compatible transcript-polish models. The recommended model and custom-ID field remain available.",
+                $"{ProviderDisplayName(provider)} returned no compatible transcript-polish models.",
             PolishModelDiscoveryStatus.MissingCredential =>
-                $"Save a {ProviderDisplayName(provider)} API key to discover the compatible models available to that account. The recommended model and custom-ID field remain available.",
+                "Save your API key to load available models.",
             PolishModelDiscoveryStatus.CredentialUnavailable =>
                 "Windows Credential Manager could not provide the stored key. No provider request was sent.",
             PolishModelDiscoveryStatus.KeyRejected =>
                 $"{ProviderDisplayName(provider)} rejected the stored key while listing models. Replace the key and try again.",
             PolishModelDiscoveryStatus.ProviderUnavailable =>
-                $"{ProviderDisplayName(provider)} model discovery is temporarily unavailable. The recommended model and custom-ID field remain available.",
+                $"{ProviderDisplayName(provider)} model discovery is temporarily unavailable. Check your connection and try again.",
             PolishModelDiscoveryStatus.InvalidResponse =>
-                $"{ProviderDisplayName(provider)} returned an unrecognized model catalog. The recommended model and custom-ID field remain available.",
+                $"{ProviderDisplayName(provider)} returned an unrecognized model catalog. Try refreshing again.",
             _ => throw new ArgumentOutOfRangeException(nameof(discovery), discovery.Status, null),
         };
     }
