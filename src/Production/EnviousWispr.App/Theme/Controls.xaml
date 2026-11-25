@@ -76,6 +76,10 @@
         <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
         <Setter Property="Foreground" Value="{ThemeResource BrandAccentBrush}" />
     </Style>
+    <Style x:Key="BrandQuietActiveButtonStyle" TargetType="Button" BasedOn="{StaticResource BrandQuietButtonStyle}">
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
     <Style x:Key="BrandDestructiveButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
         <Setter Property="Background" Value="{ThemeResource BrandErrorSoftBrush}" />
         <Setter Property="BorderBrush" Value="{ThemeResource BrandErrorBrush}" />
