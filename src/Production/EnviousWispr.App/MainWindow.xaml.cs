@@ -2791,17 +2791,16 @@ public sealed partial class MainWindow : Window, IDisposable
                 ? (FinalAsrEngine)Math.Clamp(idx, 0, 2)
                 : SelectedFinalEngine();
 
-        if (_lastActiveEngine == selectedEngine)
-        {
-            return;
-        }
-
+        SelectChoice(FinalEngineChoices, (int)selectedEngine);
         _lastActiveEngine = selectedEngine;
         UpdateActiveEngineDisplay(selectedEngine);
+        UpdateHistoryStatusCards();
         if (EngineChooserPanel is not null)
         {
             EngineChooserPanel.Visibility = Visibility.Collapsed;
         }
+
+        _ = TriggerAutoSaveAsync();
     }
 
     private void UpdateActiveEngineDisplay(FinalAsrEngine? engineOverride = null)
@@ -2959,8 +2958,20 @@ public sealed partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var provider = PolishProviderFromIndex(SelectedIndexOf(PolishProviderChoices));
+        var selectedIndex = sender is RadioButton { DataContext: SelectableChoiceOption option }
+            && Array.IndexOf(PolishProviderChoices, option) is var idx and >= 0
+                ? idx
+                : SelectedIndexOf(PolishProviderChoices);
+        SelectChoice(PolishProviderChoices, selectedIndex);
+
+        var provider = PolishProviderFromIndex(selectedIndex);
         UpdateActivePolishProviderDisplay();
+        UpdateHistoryStatusCards();
+        if (PolishProviderChooserPanel is not null)
+        {
+            PolishProviderChooserPanel.Visibility = Visibility.Collapsed;
+        }
+
         ApiKeyPasswordBox.Password = string.Empty;
         RefreshApiKeyStatus();
         var chooseDefault = provider != PolishProvider.EgOne ||
@@ -2971,11 +2982,9 @@ public sealed partial class MainWindow : Window, IDisposable
         if (provider == PolishProvider.EgOne)
         {
             UpdateEgOneCards();
-            if (chooseDefault)
-            {
-                _ = TriggerAutoSaveAsync();
-            }
         }
+
+        _ = TriggerAutoSaveAsync();
     }
 
     private void PolishModelPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -7086,6 +7095,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private static string ProviderDisplayName(PolishProvider provider) => provider switch
     {
+        PolishProvider.EgOne => "EG-1",
         PolishProvider.OpenAI => "OpenAI",
         PolishProvider.Anthropic => "Anthropic",
         PolishProvider.Gemini => "Gemini",
