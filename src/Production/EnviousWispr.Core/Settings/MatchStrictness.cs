@@ -22,3 +22,21 @@ public enum MatchStrictness
     /// <summary>Correct this word only when what was heard is nearly the word itself.</summary>
     Strict = 2,
 }
+
+/// <summary>Plain-English display labels for <see cref="MatchStrictness"/> choices.</summary>
+public static class MatchStrictnessFormatting
+{
+    public static readonly IReadOnlyList<(MatchStrictness Value, string Label)> Options =
+    [
+        (MatchStrictness.Default, Label(MatchStrictness.Default)),
+        (MatchStrictness.Loose, Label(MatchStrictness.Loose)),
+        (MatchStrictness.Strict, Label(MatchStrictness.Strict)),
+    ];
+
+    public static string Label(MatchStrictness strictness) => strictness switch
+    {
+        MatchStrictness.Loose => "Loose (match similar-sounding words)",
+        MatchStrictness.Strict => "Strict (exact match only)",
+        _ => "Balanced (recommended)",
+    };
+}

@@ -1584,7 +1584,13 @@ public sealed partial class MainWindow : Window, IDisposable
         NavigationView sender,
         NavigationViewSelectionChangedEventArgs args)
     {
-        var tag = (args.SelectedItemContainer as NavigationViewItem)?.Tag?.ToString() ?? "history";
+        if (args.SelectedItem is null && args.SelectedItemContainer is null)
+        {
+            return;
+        }
+
+        var item = args.SelectedItemContainer as NavigationViewItem ?? args.SelectedItem as NavigationViewItem;
+        var tag = item?.Tag?.ToString() ?? "history";
         var tabKey = _pendingTabKey;
         _pendingTabKey = null;
         ShowPage(tag, tabKey);
@@ -3676,8 +3682,8 @@ public sealed partial class MainWindow : Window, IDisposable
     private void ClearHistorySearchButton_Click(object sender, RoutedEventArgs e) =>
         HistorySearchBox.Text = string.Empty;
 
-    private void FocusAddWordButton_Click(object sender, RoutedEventArgs e) =>
-        SpokenFormBox.Focus(FocusState.Programmatic);
+    private async void FocusAddWordButton_Click(object sender, RoutedEventArgs e) =>
+        await OpenAddWordDialogAsync().ConfigureAwait(true);
 
     private void FocusAddSnippetButton_Click(object sender, RoutedEventArgs e) =>
         SnippetNameBox.Focus(FocusState.Programmatic);
@@ -5622,11 +5628,9 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void RefreshReusableUserDataViews()
     {
-        var customWords = _settings.UserData.CustomWords;
         var snippets = _settings.UserData.Snippets;
-        DictionaryList.ItemsSource = customWords;
+        RefreshDictionaryView();
         RefreshSnippetKeywordViews(force: false);
-        UpdateListAndEmptyStateVisibility(DictionaryList, DictionaryEmptyState, customWords.Count);
         RefreshSnippetList(snippets);
         UpdateSelectionDependentButtons();
     }
@@ -5694,6 +5698,7 @@ public sealed partial class MainWindow : Window, IDisposable
             CancelHotkeyTextBox.Text = preferences.Dictation.CancelGesture;
             EscapeRecoveryToggle.IsOn = preferences.Dictation.EscapeRecoveryEnabled;
             QuickAddHotkeyTextBox.Text = preferences.Dictation.QuickAddGesture;
+            UpdateQuickAddShortcutBadge();
             PasteLastHotkeyTextBox.Text = preferences.Dictation.PasteLastGesture;
             CopyLastHotkeyTextBox.Text = preferences.Dictation.CopyLastGesture;
             WordCorrectionToggle.IsOn = preferences.Dictation.WordCorrectionEnabled;

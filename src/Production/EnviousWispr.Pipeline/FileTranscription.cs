@@ -87,6 +87,23 @@ public enum FileTranscriptionOutcome
 /// <summary>How far a job has got, for the page's bar.</summary>
 public sealed record FileTranscriptionProgress(int PiecesDone, TimeSpan AudioDone, TimeSpan? AudioTotal);
 
+/// <summary>Maps file transcription lifecycle events onto the honest 3-step progress bar.</summary>
+public static class FileTranscriptionStepState
+{
+    public const int ChooseFileStep = 1;
+    public const int TranscribingStep = 2;
+    public const int DoneStep = 3;
+
+    public static int StartStep => TranscribingStep;
+
+    public static int StepForProgress(FileTranscriptionProgress? progress) => TranscribingStep;
+
+    public static int StepForOutcome(FileTranscriptionOutcome outcome) =>
+        outcome == FileTranscriptionOutcome.Completed ? DoneStep : ChooseFileStep;
+
+    public static int ClampStep(int step) => Math.Clamp(step, ChooseFileStep, DoneStep);
+}
+
 /// <param name="Refusal">For <see cref="FileTranscriptionOutcome.Refused"/>: why the session could not be had.</param>
 public sealed record FileTranscriptionResult(
     FileTranscriptionOutcome Outcome,
