@@ -773,7 +773,7 @@ public sealed class DictationSessionCoordinatorTests
     [Fact]
     public void TheLifecycleCallbackLeavesTheCancelToTheInterruption()
     {
-        var shell = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+        var shell = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "App.TrayAndLifecycle.cs"));
         var start = shell.IndexOf("private void OnSystemLifecycleTransitioned(", StringComparison.Ordinal);
         Assert.True(start >= 0, "The lifecycle callback is gone.");
         var body = shell[start..shell.IndexOf("\n    }\n", start, StringComparison.Ordinal)];

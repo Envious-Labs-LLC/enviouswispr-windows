@@ -20,6 +20,7 @@ public sealed class OvernightUatPolishTests
     {
         var root = FindRepositoryRoot();
         var appCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+        var transcriptionCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.Transcription.cs"));
         var deliveryCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.ModelDelivery.cs"));
         var graphicsCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.GraphicsRuntime.cs"));
 
@@ -105,7 +106,7 @@ public sealed class OvernightUatPolishTests
 
         // CPU fallback state from ConfigureTranscriptionAsync flows through ConfiguredTranscription.ForcePreviewCpu.
         Assert.Contains("bool ForcePreviewCpu = false", graphicsCode, StringComparison.Ordinal);
-        Assert.Contains("ForcePreviewCpu = true", appCode, StringComparison.Ordinal);
+        Assert.Contains("ForcePreviewCpu = true", transcriptionCode, StringComparison.Ordinal);
         Assert.Contains("forceCpu: configured.ForcePreviewCpu", previewMethodText, StringComparison.Ordinal);
     }
 

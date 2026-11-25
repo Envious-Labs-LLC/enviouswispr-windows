@@ -44,7 +44,9 @@ public sealed class WindowPresentationSessionTests
     {
         // A SOURCE WIRING CHECK ONLY. Native Windows proof is still required for the WinUI sinks.
         var root = FindRepositoryRoot();
-        var shell = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+        var appDir = Path.Combine(root, "src", "Production", "EnviousWispr.App");
+        var shell = File.ReadAllText(Path.Combine(appDir, "App.xaml.cs"));
+        var dictationRuntime = File.ReadAllText(Path.Combine(appDir, "App.DictationRuntime.cs"));
         var runtime = shell.IndexOf("private sealed class WindowRuntimeView(", StringComparison.Ordinal);
         var session = shell.IndexOf("private sealed class WindowSessionView(", StringComparison.Ordinal);
         var end = shell.IndexOf("private void DetachCaptureObservers()", session, StringComparison.Ordinal);
@@ -54,8 +56,8 @@ public sealed class WindowPresentationSessionTests
         Assert.DoesNotContain("DispatcherQueue", views, StringComparison.Ordinal);
         Assert.Contains("presentation.TryPost(", shell, StringComparison.Ordinal);
         Assert.Contains("ReferenceEquals(_window, window)", shell, StringComparison.Ordinal);
-        Assert.Contains("PostToLiveWindow(window => window.SetDictationActive(active))", shell, StringComparison.Ordinal);
-        Assert.Contains("PostToLiveWindow(_ => _trayIcon?.SetLastDictationShortcuts(", shell, StringComparison.Ordinal);
+        Assert.Contains("PostToLiveWindow(window => window.SetDictationActive(active))", dictationRuntime, StringComparison.Ordinal);
+        Assert.Contains("PostToLiveWindow(_ => _trayIcon?.SetLastDictationShortcuts(", dictationRuntime, StringComparison.Ordinal);
         var syntax = CSharpSyntaxTree.ParseText(shell).GetRoot();
         foreach (var view in syntax.DescendantNodes().OfType<ClassDeclarationSyntax>()
             .Where(type => type.Identifier.ValueText is "WindowRuntimeView" or "WindowSessionView"))
@@ -73,7 +75,14 @@ public sealed class WindowPresentationSessionTests
             }
         }
 
-        var appClass = Assert.Single(syntax.DescendantNodes().OfType<ClassDeclarationSyntax>(), type => type.Identifier.ValueText == "App");
+        var appPartials = Directory.EnumerateFiles(appDir, "App*.cs")
+            .Order()
+            .SelectMany(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path)).GetRoot()
+                .DescendantNodes()
+                .OfType<ClassDeclarationSyntax>()
+                .Where(type => type.Identifier.ValueText == "App"))
+            .ToArray();
+        var appMethods = appPartials.SelectMany(partial => partial.Members.OfType<MethodDeclarationSyntax>()).ToArray();
         foreach (var name in new[]
         {
             "OnSystemLifecycleTransitioned",
@@ -85,7 +94,7 @@ public sealed class WindowPresentationSessionTests
             "RefreshLastDictationPreviewAsync",
         })
         {
-            var method = Assert.Single(appClass.Members.OfType<MethodDeclarationSyntax>(), member => member.Identifier.ValueText == name);
+            var method = Assert.Single(appMethods, member => member.Identifier.ValueText == name);
             Assert.Contains(method.DescendantNodes().OfType<InvocationExpressionSyntax>(), call => call.Expression.ToString() == "PostToLiveWindow");
             Assert.DoesNotContain(method.DescendantNodes().OfType<MemberAccessExpressionSyntax>(), access => access.Name.Identifier.ValueText == "TryEnqueue");
         }
@@ -292,7 +301,11 @@ public sealed class WindowPresentationSessionTests
         Assert.DoesNotContain("new HistoryPresenter(", window, StringComparison.Ordinal);
         Assert.DoesNotContain("new ProviderSettingsPresenter(", window, StringComparison.Ordinal);
         Assert.DoesNotContain("new MicrophoneTestController(", window, StringComparison.Ordinal);
-        var shell = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+        var shell = string.Join(
+            "\n",
+            Directory.EnumerateFiles(Path.Combine(FindRepositoryRoot(), "src", "Production", "EnviousWispr.App"), "App*.cs")
+                .Order()
+                .Select(File.ReadAllText));
         Assert.Contains("WindowComposition.Compose(", shell, StringComparison.Ordinal);
         Assert.Contains("DrainPresentation: () => _presentation?.DrainAsync()", shell, StringComparison.Ordinal);
         Assert.Contains("presentation.DisposeAsync()", shell, StringComparison.Ordinal);

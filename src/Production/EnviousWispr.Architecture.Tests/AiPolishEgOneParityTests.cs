@@ -292,7 +292,7 @@ public sealed class AiPolishEgOneParityTests
         var deliveryCode = File.ReadAllText(
             Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.ModelDelivery.cs"));
         var appCode = File.ReadAllText(
-            Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.xaml.cs"));
+            Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.Polish.cs"));
 
         Assert.DoesNotContain("PolishModelTextBox", mainWindowCode, StringComparison.Ordinal);
         Assert.DoesNotContain("PolishModelTextBox", ollamaCode, StringComparison.Ordinal);
