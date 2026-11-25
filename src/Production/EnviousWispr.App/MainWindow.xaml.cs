@@ -321,6 +321,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private readonly Dictionary<RecordingSoundPairing, List<Border>> _chimeWaveformBars = new();
     private readonly Dictionary<RecordingSoundPairing, Button> _chimePlayButtons = new();
     private PolishProvider _lastNonNonePolishProvider = PolishProvider.EgOne;
+    private PolishProvider? _lastActivePolishProvider;
     private FinalAsrEngine? _lastActiveEngine;
     private bool _isUpdatingEgOneCards;
     private HardwareProfile? _hardwareProfile;
@@ -2631,7 +2632,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private void ShowKeybindCaptureHint(string hint) =>
         SetLiveRegion(KeybindCaptureHintText, hint, Visibility.Visible);
 
-    private void EnableAiPolishToggle_Toggled(object sender, RoutedEventArgs e)
+    private async void EnableAiPolishToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (_isApplyingSettings || _settings is null)
         {
@@ -2644,10 +2645,12 @@ public sealed partial class MainWindow : Window, IDisposable
             AiPolishEnabledContent.Visibility = isEnabled ? Visibility.Visible : Visibility.Collapsed;
         }
 
+        PolishProvider targetProvider;
         if (isEnabled)
         {
-            var provider = _lastNonNonePolishProvider == PolishProvider.None ? PolishProvider.EgOne : _lastNonNonePolishProvider;
-            SelectChoice(PolishProviderChoices, PolishProviderIndex(provider));
+            targetProvider = _lastNonNonePolishProvider == PolishProvider.None
+                ? PolishProvider.EgOne
+                : _lastNonNonePolishProvider;
         }
         else
         {
@@ -2656,12 +2659,15 @@ public sealed partial class MainWindow : Window, IDisposable
             {
                 _lastNonNonePolishProvider = current;
             }
-            SelectChoice(PolishProviderChoices, PolishProviderIndex(PolishProvider.None));
+
+            targetProvider = PolishProvider.None;
         }
 
-        UpdateActivePolishProviderDisplay();
-        _ = TriggerAutoSaveAsync();
-        UpdateHistoryStatusCards();
+        _lastActivePolishProvider = targetProvider;
+        await ApplySelectedPolishProviderCardAsync(
+            PolishProviderIndex(targetProvider),
+            targetProvider,
+            allowDefaultModel: false).ConfigureAwait(true);
     }
 
     private void ChangePolishProviderButton_Click(object sender, RoutedEventArgs e)
@@ -2779,18 +2785,14 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
-    private void EngineCardChecked(object sender, RoutedEventArgs e)
+    private FinalAsrEngine ResolveEngineFromCard(object sender) =>
+        sender is RadioButton { DataContext: SelectableChoiceOption option }
+        && Array.IndexOf(FinalEngineChoices, option) is var idx and >= 0
+            ? (FinalAsrEngine)Math.Clamp(idx, 0, 2)
+            : SelectedFinalEngine();
+
+    private void ApplySelectedEngineCard(FinalAsrEngine selectedEngine)
     {
-        if (_isApplyingSettings || _settings is null)
-        {
-            return;
-        }
-
-        var selectedEngine = sender is RadioButton { DataContext: SelectableChoiceOption option }
-            && Array.IndexOf(FinalEngineChoices, option) is var idx and >= 0
-                ? (FinalAsrEngine)Math.Clamp(idx, 0, 2)
-                : SelectedFinalEngine();
-
         SelectChoice(FinalEngineChoices, (int)selectedEngine);
         _lastActiveEngine = selectedEngine;
         UpdateActiveEngineDisplay(selectedEngine);
@@ -2801,6 +2803,43 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         _ = TriggerAutoSaveAsync();
+    }
+
+    private void EngineCardChecked(object sender, RoutedEventArgs e)
+    {
+        if (_isApplyingSettings || _settings is null)
+        {
+            return;
+        }
+
+        var selectedEngine = ResolveEngineFromCard(sender);
+        if (_lastActiveEngine == selectedEngine)
+        {
+            return;
+        }
+
+        ApplySelectedEngineCard(selectedEngine);
+    }
+
+    private void EngineCardClicked(object sender, RoutedEventArgs e)
+    {
+        if (_isApplyingSettings || _settings is null)
+        {
+            return;
+        }
+
+        var selectedEngine = ResolveEngineFromCard(sender);
+        if (_lastActiveEngine == selectedEngine)
+        {
+            if (EngineChooserPanel is not null)
+            {
+                EngineChooserPanel.Visibility = Visibility.Collapsed;
+            }
+
+            return;
+        }
+
+        ApplySelectedEngineCard(selectedEngine);
     }
 
     private void UpdateActiveEngineDisplay(FinalAsrEngine? engineOverride = null)
@@ -2951,20 +2990,19 @@ public sealed partial class MainWindow : Window, IDisposable
         _ = TriggerAutoSaveAsync();
     }
 
-    private async void PolishProviderCardChecked(object sender, RoutedEventArgs e)
+    private int ResolvePolishProviderIndexFromCard(object sender) =>
+        sender is RadioButton { DataContext: SelectableChoiceOption option }
+        && Array.IndexOf(PolishProviderChoices, option) is var idx and >= 0
+            ? idx
+            : SelectedIndexOf(PolishProviderChoices);
+
+    private async Task ApplySelectedPolishProviderCardAsync(
+        int selectedIndex,
+        PolishProvider provider,
+        bool allowDefaultModel = true)
     {
-        if (_isApplyingSettings || _settings is null)
-        {
-            return;
-        }
-
-        var selectedIndex = sender is RadioButton { DataContext: SelectableChoiceOption option }
-            && Array.IndexOf(PolishProviderChoices, option) is var idx and >= 0
-                ? idx
-                : SelectedIndexOf(PolishProviderChoices);
         SelectChoice(PolishProviderChoices, selectedIndex);
-
-        var provider = PolishProviderFromIndex(selectedIndex);
+        _lastActivePolishProvider = provider;
         UpdateActivePolishProviderDisplay();
         UpdateHistoryStatusCards();
         if (PolishProviderChooserPanel is not null)
@@ -2974,8 +3012,9 @@ public sealed partial class MainWindow : Window, IDisposable
 
         ApiKeyPasswordBox.Password = string.Empty;
         RefreshApiKeyStatus();
-        var chooseDefault = provider != PolishProvider.EgOne ||
-            !EnginePolishPresentation.IsKnownEgOneModelId(PolishModelTextBox.Text);
+        var chooseDefault = allowDefaultModel && (
+            provider != PolishProvider.EgOne ||
+            !EnginePolishPresentation.IsKnownEgOneModelId(PolishModelTextBox.Text));
         await RefreshPolishModelChoicesAsync(
             provider,
             chooseDefault: chooseDefault).ConfigureAwait(true);
@@ -2985,6 +3024,45 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         _ = TriggerAutoSaveAsync();
+    }
+
+    private async void PolishProviderCardChecked(object sender, RoutedEventArgs e)
+    {
+        if (_isApplyingSettings || _settings is null)
+        {
+            return;
+        }
+
+        var selectedIndex = ResolvePolishProviderIndexFromCard(sender);
+        var provider = PolishProviderFromIndex(selectedIndex);
+        if (_lastActivePolishProvider == provider)
+        {
+            return;
+        }
+
+        await ApplySelectedPolishProviderCardAsync(selectedIndex, provider).ConfigureAwait(true);
+    }
+
+    private async void PolishProviderCardClicked(object sender, RoutedEventArgs e)
+    {
+        if (_isApplyingSettings || _settings is null)
+        {
+            return;
+        }
+
+        var selectedIndex = ResolvePolishProviderIndexFromCard(sender);
+        var provider = PolishProviderFromIndex(selectedIndex);
+        if (_lastActivePolishProvider == provider)
+        {
+            if (PolishProviderChooserPanel is not null)
+            {
+                PolishProviderChooserPanel.Visibility = Visibility.Collapsed;
+            }
+
+            return;
+        }
+
+        await ApplySelectedPolishProviderCardAsync(selectedIndex, provider).ConfigureAwait(true);
     }
 
     private void PolishModelPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -5727,6 +5805,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 _lastNonNonePolishProvider = preferences.Polish.Provider;
             }
             PolishModelTextBox.Text = _polishModelSetByApp = preferences.Polish.ModelId ?? string.Empty;
+            _lastActivePolishProvider = preferences.Polish.Provider;
             SelectChoice(PolishProviderChoices, PolishProviderIndex(preferences.Polish.Provider));
             UpdateActivePolishProviderDisplay();
             OllamaEndpointTextBox.Text = preferences.Polish.OllamaEndpoint ?? string.Empty;

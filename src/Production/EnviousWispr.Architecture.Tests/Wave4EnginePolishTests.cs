@@ -234,9 +234,15 @@ public sealed class Wave4EnginePolishTests
     public void EngineAndPolishCardHandlersSyncSelectionCollapseChooserAndPersist()
     {
         var root = FindRepositoryRoot();
+        var mainWindowXaml = File.ReadAllText(
+            Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
         var mainWindowCode = File.ReadAllText(
             Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
 
+        Assert.Contains("Click=\"EngineCardClicked\"", mainWindowXaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"PolishProviderCardClicked\"", mainWindowXaml, StringComparison.Ordinal);
+        Assert.Contains("if (_lastActiveEngine == selectedEngine)", mainWindowCode, StringComparison.Ordinal);
+        Assert.Contains("if (_lastActivePolishProvider == provider)", mainWindowCode, StringComparison.Ordinal);
         Assert.Contains("SelectChoice(FinalEngineChoices, (int)selectedEngine);", mainWindowCode, StringComparison.Ordinal);
         Assert.Contains("SelectChoice(PolishProviderChoices, selectedIndex);", mainWindowCode, StringComparison.Ordinal);
         Assert.Contains("PolishProviderChooserPanel.Visibility = Visibility.Collapsed;", mainWindowCode, StringComparison.Ordinal);
