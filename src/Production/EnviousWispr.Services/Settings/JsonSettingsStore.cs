@@ -14,7 +14,11 @@ public sealed class JsonSettingsStore : ISettingsStore
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = true,
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-        Converters = { new JsonStringEnumConverter() },
+        Converters =
+        {
+            new FinalAsrEngineJsonConverter(),
+            new JsonStringEnumConverter(),
+        },
     };
 
     private readonly string _settingsPath;

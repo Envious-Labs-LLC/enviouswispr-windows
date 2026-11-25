@@ -60,7 +60,7 @@ public sealed class WindowsTrayIcon : IDisposable
 
         // 1. Disabled status header: active engine & polish + version.
         _statusHeaderItem = CreateInfoItem(
-            TrayMenuFormatting.FormatStatusHeader(FinalAsrEngine.Automatic, PolishProvider.None));
+            TrayMenuFormatting.FormatStatusHeader(FinalAsrEngine.Parakeet, PolishProvider.None));
         _versionItem = CreateInfoItem(TrayMenuFormatting.FormatVersionLine(version: null));
         _menu.Items.Add(_statusHeaderItem);
         _menu.Items.Add(_versionItem);

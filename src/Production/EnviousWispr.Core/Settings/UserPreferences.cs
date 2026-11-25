@@ -4,11 +4,89 @@ using EnviousWispr.Core.Input;
 
 namespace EnviousWispr.Core.Settings;
 
+[JsonConverter(typeof(FinalAsrEngineJsonConverter))]
 public enum FinalAsrEngine
 {
-    Automatic,
-    Parakeet,
-    Whisper,
+    Parakeet = 0,
+    Whisper = 1,
+}
+
+/// <summary>Parses and serializes final ASR engine choices, normalizing legacy "Automatic" to Parakeet.</summary>
+public static class FinalAsrEngineChoices
+{
+    public const string ParakeetPersistedValue = "Parakeet";
+    public const string WhisperPersistedValue = "Whisper";
+
+    public static string ToPersistedValue(FinalAsrEngine engine) => engine switch
+    {
+        FinalAsrEngine.Whisper => WhisperPersistedValue,
+        _ => ParakeetPersistedValue,
+    };
+
+    public static bool TryParse(string? value, out FinalAsrEngine engine)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            engine = default;
+            return false;
+        }
+
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "parakeet":
+            case "automatic":
+                engine = FinalAsrEngine.Parakeet;
+                return true;
+            case "whisper":
+                engine = FinalAsrEngine.Whisper;
+                return true;
+            default:
+                engine = default;
+                return false;
+        }
+    }
+}
+
+public sealed class FinalAsrEngineJsonConverter : JsonConverter<FinalAsrEngine>
+{
+    public override FinalAsrEngine Read(
+        ref Utf8JsonReader reader,
+        Type typeToConvert,
+        JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.String)
+        {
+            var value = reader.GetString();
+            if (FinalAsrEngineChoices.TryParse(value, out var parsed))
+            {
+                return parsed;
+            }
+
+            throw new JsonException($"Invalid FinalAsrEngine value '{value}'.");
+        }
+
+        if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out var number))
+        {
+            // Legacy schema numbered Automatic = 0, Parakeet = 1, Whisper = 2.
+            return number switch
+            {
+                0 or 1 => FinalAsrEngine.Parakeet,
+                2 => FinalAsrEngine.Whisper,
+                _ => (FinalAsrEngine)number,
+            };
+        }
+
+        throw new JsonException($"Unexpected token {reader.TokenType} when reading FinalAsrEngine.");
+    }
+
+    public override void Write(
+        Utf8JsonWriter writer,
+        FinalAsrEngine value,
+        JsonSerializerOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        writer.WriteStringValue(FinalAsrEngineChoices.ToPersistedValue(value));
+    }
 }
 
 /// <summary>Which local engine produces the display-only live preview while speaking (#127).</summary>
@@ -240,7 +318,7 @@ public sealed record DictationPreferences(
     /// has, so nobody's F8 changes under them. Verified through the real hook before it became the default (#226, #227).
     /// </remarks>
     public static DictationPreferences Default { get; } = new(
-        FinalAsrEngine.Automatic,
+        FinalAsrEngine.Parakeet,
         "Ctrl+Win",
         WordCorrectionEnabled: true,
         FillerRemovalEnabled: true,

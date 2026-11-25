@@ -68,7 +68,7 @@ public readonly record struct AppearanceChoices(
 /// of that needs a window; all of it needed proving, and a WinUI handler cannot be run under a test.
 /// The window reads the controls into this and gets back what to do; the meaning lives with the
 /// presenter, where SettingsPresenterTests can reach it. A choice with nothing selected comes across
-/// as -1 (a null pairing), and what that means - the first, safe option: Automatic, None, System, Top,
+/// as -1 (a null pairing), and what that means - the first, safe option: Parakeet, None, System, Top,
 /// the whisper tick - is decided here too.
 /// </remarks>
 public sealed record GeneralSettingsInput(
@@ -273,7 +273,7 @@ public sealed class SettingsPresenter : IDisposable
     /// AN EMPTY NUMBER MEANS THE DEFAULT, NOT ZERO. The auto-stop threshold and the two retentions come
     /// off number boxes that read NaN when cleared; a zero stored there would be clamped up by the
     /// policy anyway, but would show a threshold nobody chose. A CHOICE WITH NOTHING SELECTED MEANS
-    /// THE FIRST, SAFE OPTION: an index of -1 becomes Automatic, None, System or Top, and no sound
+    /// THE FIRST, SAFE OPTION: an index of -1 becomes Parakeet, None, System or Top, and no sound
     /// pairing becomes the whisper tick - a -1 fed to a clamp would throw or quietly become a
     /// different setting. Telemetry is shared only when the build can share it at all, whatever the
     /// toggle says.
@@ -316,7 +316,7 @@ public sealed class SettingsPresenter : IDisposable
         }
 
         var dictation = new DictationPreferences(
-            (FinalAsrEngine)Math.Clamp(Chosen(input.FinalEngineIndex), 0, 2),
+            (FinalAsrEngine)Math.Clamp(Chosen(input.FinalEngineIndex), 0, 1),
             recording.Gesture!.Value.ToString(),
             input.WordCorrection,
             input.FillerRemoval,

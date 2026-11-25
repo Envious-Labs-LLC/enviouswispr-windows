@@ -654,7 +654,7 @@ public sealed class SentryCrashClient : IDisposable
             _tags["app.channel"] = ObservabilitySanitizer.RedactString(_identity.ReleaseChannel);
             _tags["app.packaging"] = ObservabilitySanitizer.RedactString(_identity.Packaging);
             _tags["process.role"] = ObservabilitySanitizer.RedactString(_identity.ProcessRole);
-            _tags["runtime.asr_engine"] = "automatic";
+            _tags["runtime.asr_engine"] = "parakeet";
             _tags["runtime.acceleration"] = "unknown";
             _tags["gpu.vendors"] = "unknown";
             _tags["crash.context_schema"] = WindowsObservabilityIdentity.CrashContextSchemaVersion;

@@ -72,7 +72,6 @@ public sealed class GraphicsRuntimeOfferTests
 
     [Theory]
     [InlineData(FinalAsrEngine.Parakeet)]
-    [InlineData(FinalAsrEngine.Automatic)]
     public void ParakeetAsTheStoreDeliversItWouldStayOnTheProcessorSoItIsNotOffered(FinalAsrEngine engine)
     {
         // PARAKEET STAYS ON THE PROCESSOR BY FOUNDER DECISION (2026-09-25): its full-precision model, the only

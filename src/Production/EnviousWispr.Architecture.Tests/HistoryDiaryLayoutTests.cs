@@ -45,7 +45,7 @@ public sealed class HistoryDiaryLayoutTests
         Assert.Null(detailScroller.Attribute("MaxHeight"));
 
         var engineStatus = FindNamed(document, "HistoryEngineStatusText");
-        Assert.Equal("Automatic", (string?)engineStatus.Attribute("Text"));
+        Assert.Equal("Parakeet", (string?)engineStatus.Attribute("Text"));
 
         var polishStatus = FindNamed(document, "HistoryPolishStatusText");
         Assert.Equal("Off", (string?)polishStatus.Attribute("Text"));

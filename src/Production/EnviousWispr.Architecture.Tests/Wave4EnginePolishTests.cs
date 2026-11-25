@@ -51,9 +51,8 @@ public sealed class Wave4EnginePolishTests
     }
 
     [Theory]
-    [InlineData(FinalAsrEngine.Automatic, "Automatic", "Recommended", true)]
-    [InlineData(FinalAsrEngine.Parakeet, "Parakeet", "Fast · English", false)]
-    [InlineData(FinalAsrEngine.Whisper, "Whisper", "Multilingual", true)]
+    [InlineData(FinalAsrEngine.Parakeet, "Parakeet", "Recommended", false)]
+    [InlineData(FinalAsrEngine.Whisper, "Whisper", "99+ languages", true)]
     public void EngineSummaryDescribesEachEngineAndWhisperLanguageVisibility(
         FinalAsrEngine engine,
         string expectedName,
@@ -194,9 +193,11 @@ public sealed class Wave4EnginePolishTests
             StringComparison.Ordinal);
 
         var chooserPanel = FindNamedElement(document, "EngineChooserPanel");
-        Assert.Equal("Collapsed", (string?)chooserPanel.Attribute("Visibility"));
+        Assert.NotEqual("Collapsed", (string?)chooserPanel.Attribute("Visibility"));
         Assert.NotNull(FindNamedElement(document, "ActiveEngineSummaryCard"));
-        Assert.NotNull(FindNamedElement(document, "ChangeEngineButton"));
+        Assert.NotNull(FindNamedElement(document, "EngineCardsGrid"));
+        Assert.NotNull(FindNamedElement(document, "ParakeetEngineCard"));
+        Assert.NotNull(FindNamedElement(document, "WhisperEngineCard"));
         Assert.NotNull(FindNamedElement(document, "WhisperLanguageRow"));
 
         var whisperCombo = FindNamedElement(document, "WhisperLanguageComboBox");
@@ -243,7 +244,7 @@ public sealed class Wave4EnginePolishTests
         Assert.Contains("Click=\"PolishProviderCardClicked\"", mainWindowXaml, StringComparison.Ordinal);
         Assert.Contains("if (_lastActiveEngine == selectedEngine)", mainWindowCode, StringComparison.Ordinal);
         Assert.Contains("if (_lastActivePolishProvider == provider)", mainWindowCode, StringComparison.Ordinal);
-        Assert.Contains("SelectChoice(FinalEngineChoices, (int)selectedEngine);", mainWindowCode, StringComparison.Ordinal);
+        Assert.Contains("SetSelectedFinalEngineCards(selectedEngine);", mainWindowCode, StringComparison.Ordinal);
         Assert.Contains("SelectChoice(PolishProviderChoices, selectedIndex);", mainWindowCode, StringComparison.Ordinal);
         Assert.Contains("PolishProviderChooserPanel.Visibility = Visibility.Collapsed;", mainWindowCode, StringComparison.Ordinal);
         Assert.Contains("PolishProvider.EgOne => \"EG-1\",", mainWindowCode, StringComparison.Ordinal);

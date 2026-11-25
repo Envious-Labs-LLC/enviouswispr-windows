@@ -405,6 +405,9 @@ public partial class App : Application, IAsyncDisposable
         _window.LoadStartupRegistration = () => _startupRegistration.GetStatusAsync(_startupCancellation.Token);
         _window.ModelDownloadRequested += OnModelDownloadRequested;
         _window.ModelDownloadCancelRequested += OnModelDownloadCancelRequested;
+        _window.SpeechEngineDownloadRequested += OnSpeechEngineDownloadRequested;
+        _window.SpeechEngineRemoveRequested += OnSpeechEngineRemoveRequested;
+        _window.IsSpeechEngineBusy = () => IsSpeechEngineBusy;
         _window.PreviewModelDownloadRequested += OnPreviewModelDownloadRequested;
         _window.PreviewModelRemoveRequested += OnPreviewModelRemoveRequested;
         _window.DictationEnded += OnDictationEnded;
@@ -660,6 +663,9 @@ public partial class App : Application, IAsyncDisposable
             window.LoadStartupRegistration = null;
             window.ModelDownloadRequested -= OnModelDownloadRequested;
             window.ModelDownloadCancelRequested -= OnModelDownloadCancelRequested;
+            window.SpeechEngineDownloadRequested -= OnSpeechEngineDownloadRequested;
+            window.SpeechEngineRemoveRequested -= OnSpeechEngineRemoveRequested;
+            window.IsSpeechEngineBusy = null;
             window.PreviewModelDownloadRequested -= OnPreviewModelDownloadRequested;
             window.PreviewModelRemoveRequested -= OnPreviewModelRemoveRequested;
             window.DictationEnded -= OnDictationEnded;
@@ -971,6 +977,7 @@ public partial class App : Application, IAsyncDisposable
     private void OnSettingsChanged(AppSettings settings)
     {
         var previousSharing = _settings.Observability?.ShareAnonymousTelemetry == true;
+        var previousFinalEngine = _settings.Preferences.Dictation.FinalEngine;
         var previousPreviewEnabled = _settings.Preferences.LivePreviewEnabled;
         var previousPreviewEngine = _settings.Preferences.LivePreviewEngine;
         _settings = settings;
@@ -1000,11 +1007,17 @@ public partial class App : Application, IAsyncDisposable
                     : AppEventCode.TelemetryConsentDisabled));
         }
 
+        if (previousFinalEngine != settings.Preferences.Dictation.FinalEngine)
+        {
+            _transcriptionReconfigurePending = true;
+            TrySchedulePendingModelRefresh();
+        }
+
         if (previousPreviewEnabled != settings.Preferences.LivePreviewEnabled ||
             previousPreviewEngine != settings.Preferences.LivePreviewEngine)
         {
             _livePreviewReconfigurePending = true;
-            TrySchedulePendingLivePreviewRefresh();
+            TrySchedulePendingModelRefresh();
         }
     }
 
@@ -2228,14 +2241,12 @@ public partial class App : Application, IAsyncDisposable
         }
 
         var environmentEngine = Environment.GetEnvironmentVariable("ENVIOUSWISPR_ASR_ENGINE");
-        if (Enum.TryParse<FinalAsrEngine>(environmentEngine, ignoreCase: true, out var parsedEngine))
+        if (FinalAsrEngineChoices.TryParse(environmentEngine, out var parsedEngine))
         {
             configuredEngine = parsedEngine;
         }
 
-        var engine = configuredEngine == FinalAsrEngine.Automatic
-            ? FinalAsrEngine.Parakeet
-            : configuredEngine;
+        var engine = configuredEngine;
         // THE LANGUAGE TO LOAD WITH ONLY: every take reads it again (CurrentWhisperLanguage), #241.
         var whisperLanguage = CurrentWhisperLanguage();
 
@@ -2662,7 +2673,10 @@ public partial class App : Application, IAsyncDisposable
                     FileTranscriptionOutcome.Refused, string.Empty, Pieces: 0, TimeSpan.Zero, Refusal: attempt);
             }
 
-            using var hold = attempt.Hold;
+            try
+            {
+                try
+                {
             // THE PAGE HEARS THE JOB HAS STARTED before the file is even opened, so it can clear the last result.
             progress.Report(new FileTranscriptionProgress(0, TimeSpan.Zero, null));
             using var run = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.Closing);
@@ -2733,6 +2747,16 @@ public partial class App : Application, IAsyncDisposable
                 timer.ElapsedMilliseconds,
                 ErrorCode: result.Error?.Code));
             return result;
+                }
+                finally
+                {
+                    attempt.Hold.Dispose();
+                }
+            }
+            finally
+            {
+                TrySchedulePendingModelRefresh();
+            }
         }
     }
 
@@ -2998,6 +3022,7 @@ public partial class App : Application, IAsyncDisposable
         // SAID, BECAUSE THE ENGINE IS DOWN FOR THE SECONDS IT TAKES TO START ON THE CARD, and a press refused in
         // silence for that long reads as a broken key.
         SessionHolder.GraphicsRuntimeSwitch => DictationStatus.Busy("Moving dictation to your graphics card. Please wait."),
+        SessionHolder.SpeechEngineSwitch => DictationStatus.Busy("Updating the local speech engine. Please wait."),
         // SAID LIKE THE LAST-DICTATION PASTE: a press refused while saved words are being pasted back.
         SessionHolder.SavedDictationPaste => DictationStatus.Busy("Pasting your dictation. Please wait."),
         _ => null,

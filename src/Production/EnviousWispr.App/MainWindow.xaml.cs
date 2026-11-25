@@ -101,7 +101,7 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <remarks>
     /// Falls back to 0 rather than -1 deliberately: every caller feeds this straight into an enum
     /// or a clamp, and a -1 would either throw or quietly become a different setting. The first
-    /// option in each of these lists is the safe default - Automatic, None, System, Top.
+    /// option in each of these lists is the safe default - Parakeet, None, System, Top.
     /// </remarks>
     private static int SelectedIndexOf(SelectableChoiceOption[] choices)
     {
@@ -145,13 +145,6 @@ public sealed partial class MainWindow : Window, IDisposable
     // INSTANCE-OWNED, NOT STATIC. A selection is state, and state shared between two windows is a
     // choice made in one appearing in the other. There is one window today; the rule costs nothing
     // and the second instance would otherwise be a defect nobody wrote.
-    private readonly SelectableChoiceOption[] FinalEngineChoices =
-    [
-        new("Automatic", EnginePolishPresentation.DescribeEngine(FinalAsrEngine.Automatic).Description),
-        new("Parakeet", EnginePolishPresentation.DescribeEngine(FinalAsrEngine.Parakeet).Description),
-        new("Whisper", EnginePolishPresentation.DescribeEngine(FinalAsrEngine.Whisper).Description),
-    ];
-
     private readonly SelectableChoiceOption[] PolishProviderChoices =
     [
         new("None", "Leaves the deterministic transcript unchanged."),
@@ -357,7 +350,6 @@ public sealed partial class MainWindow : Window, IDisposable
         UppercaseSectionEyebrows();
         PlaceSidebarResizeHandle();
 
-        EngineComboBox.ItemsSource = FinalEngineChoices;
         PolishProviderComboBox.ItemsSource = PolishProviderChoices;
 
         // Days are whole days. Without a formatter a NumberBox keeps and DISPLAYS a fraction:
@@ -475,6 +467,7 @@ public sealed partial class MainWindow : Window, IDisposable
             UpdateChimeCardsVisuals();
             UpdateRecordingModeButtons();
             UpdateThemeSegmentButtons();
+            RenderSpeechEngineCards();
             UpdateOverlayPositionSegmentButtons();
             UpdateHistoryFilterSegmentButtons();
         };
@@ -550,6 +543,19 @@ public sealed partial class MainWindow : Window, IDisposable
 
     /// <summary>The person asked for the running download to stop.</summary>
     public event Action? ModelDownloadCancelRequested;
+
+    /// <summary>The person asked to download the Parakeet or Whisper final speech model.</summary>
+    public event Action<FinalAsrEngine>? SpeechEngineDownloadRequested;
+
+    /// <summary>The person confirmed removing the Parakeet or Whisper final speech model.</summary>
+    public event Action<FinalAsrEngine>? SpeechEngineRemoveRequested;
+
+    /// <summary>Returns whether dictation or file transcription currently holds the engine.</summary>
+    public Func<bool>? IsSpeechEngineBusy { get; set; }
+
+    private SpeechEngineModelState _parakeetModelState = SpeechEngineModelState.Unknown(EnginePolishPresentation.ParakeetBundleSizeLabel);
+    private SpeechEngineModelState _whisperModelState = SpeechEngineModelState.Unknown(EnginePolishPresentation.WhisperBundleSizeLabel);
+    private FinalAsrEngine? _activeSpeechDownloadEngine;
 
     /// <summary>The person asked for the 190 MB Whisper Live Preview model to be downloaded (#127).</summary>
     public event Action? PreviewModelDownloadRequested;
@@ -1625,6 +1631,7 @@ public sealed partial class MainWindow : Window, IDisposable
         { HeldBy: SessionHolder.FileTranscription } => "A file is being transcribed. Try again when it finishes.",
         { HeldBy: SessionHolder.DataDeletion } => "EnviousWispr is deleting your data and will close.",
         { HeldBy: SessionHolder.GraphicsRuntimeSwitch } => "EnviousWispr is moving dictation to your graphics card. Try again in a moment.",
+        { HeldBy: SessionHolder.SpeechEngineSwitch } => "EnviousWispr is updating its speech engine. Try again in a moment.",
         { HeldBy: SessionHolder.SavedDictationPaste } => "EnviousWispr is pasting your dictation. Try again in a moment.",
         _ => "EnviousWispr is closing.",
     };
@@ -1696,7 +1703,7 @@ public sealed partial class MainWindow : Window, IDisposable
             HotkeyTextBox.Text,
             CancelHotkeyTextBox.Text,
             QuickAddHotkeyTextBox.Text,
-            RawSelectedIndexOf(FinalEngineChoices),
+            SelectedFinalEngineRawIndex(),
             WordCorrectionToggle.IsOn,
             FillerRemovalToggle.IsOn,
             EmojiFormatterToggle.IsOn,
@@ -1790,19 +1797,6 @@ public sealed partial class MainWindow : Window, IDisposable
         AutoStopSecondsBox.ValueChanged += (_, _) => _ = TriggerAutoSaveAsync();
         RetentionDaysBox.ValueChanged += (_, _) => _ = TriggerAutoSaveAsync();
         DiagnosticRetentionDaysBox.ValueChanged += (_, _) => _ = TriggerAutoSaveAsync();
-
-        foreach (var choice in FinalEngineChoices)
-        {
-            choice.PropertyChanged += (s, e) =>
-            {
-                if (e.PropertyName == nameof(SelectableChoiceOption.IsSelected) && ((SelectableChoiceOption)s!).IsSelected)
-                {
-                    UpdateActiveEngineDisplay();
-                    _ = TriggerAutoSaveAsync();
-                    UpdateHistoryStatusCards();
-                }
-            };
-        }
 
         foreach (var choice in PolishProviderChoices)
         {
@@ -2841,37 +2835,47 @@ public sealed partial class MainWindow : Window, IDisposable
         UpdateOllamaLivePollTimer();
     }
 
-    private FinalAsrEngine SelectedFinalEngine() =>
-        (FinalAsrEngine)Math.Clamp(SelectedIndexOf(FinalEngineChoices), 0, 2);
+    private int SelectedFinalEngineRawIndex() =>
+        ParakeetEngineCard?.IsChecked == true
+            ? 0
+            : WhisperEngineCard?.IsChecked == true
+                ? 1
+                : -1;
 
-    private void ChangeEngineButton_Click(object sender, RoutedEventArgs e)
+    private FinalAsrEngine SelectedFinalEngine() =>
+        WhisperEngineCard?.IsChecked == true
+            ? FinalAsrEngine.Whisper
+            : FinalAsrEngine.Parakeet;
+
+    private void SetSelectedFinalEngineCards(FinalAsrEngine selectedEngine)
     {
-        if (EngineChooserPanel is not null)
+        if (ParakeetEngineCard is not null)
         {
-            EngineChooserPanel.Visibility =
-                EngineChooserPanel.Visibility == Visibility.Visible
-                    ? Visibility.Collapsed
-                    : Visibility.Visible;
+            ParakeetEngineCard.IsChecked = selectedEngine == FinalAsrEngine.Parakeet;
         }
+
+        if (WhisperEngineCard is not null)
+        {
+            WhisperEngineCard.IsChecked = selectedEngine == FinalAsrEngine.Whisper;
+        }
+
+        RenderSpeechEngineCards();
     }
 
     private FinalAsrEngine ResolveEngineFromCard(object sender) =>
-        sender is RadioButton { DataContext: SelectableChoiceOption option }
-        && Array.IndexOf(FinalEngineChoices, option) is var idx and >= 0
-            ? (FinalAsrEngine)Math.Clamp(idx, 0, 2)
-            : SelectedFinalEngine();
+        sender is RadioButton radio && ReferenceEquals(radio, WhisperEngineCard)
+            ? FinalAsrEngine.Whisper
+            : ReferenceEquals(sender, ParakeetEngineCard)
+                ? FinalAsrEngine.Parakeet
+                : SelectedFinalEngine();
 
     private void ApplySelectedEngineCard(FinalAsrEngine selectedEngine)
     {
-        SelectChoice(FinalEngineChoices, (int)selectedEngine);
         _lastActiveEngine = selectedEngine;
+        SetSelectedFinalEngineCards(selectedEngine);
         UpdateActiveEngineDisplay(selectedEngine);
         UpdateHistoryStatusCards();
-        if (EngineChooserPanel is not null)
-        {
-            EngineChooserPanel.Visibility = Visibility.Collapsed;
-        }
-
+        ShowSpeechEngineNotice(string.Empty);
         _ = TriggerAutoSaveAsync();
     }
 
@@ -2885,6 +2889,7 @@ public sealed partial class MainWindow : Window, IDisposable
         var selectedEngine = ResolveEngineFromCard(sender);
         if (_lastActiveEngine == selectedEngine)
         {
+            RenderSpeechEngineCards();
             return;
         }
 
@@ -2901,15 +2906,313 @@ public sealed partial class MainWindow : Window, IDisposable
         var selectedEngine = ResolveEngineFromCard(sender);
         if (_lastActiveEngine == selectedEngine)
         {
-            if (EngineChooserPanel is not null)
-            {
-                EngineChooserPanel.Visibility = Visibility.Collapsed;
-            }
-
             return;
         }
 
         ApplySelectedEngineCard(selectedEngine);
+    }
+
+    private static bool IsTapFromNestedActionButton(object? originalSource)
+    {
+        var current = originalSource as DependencyObject;
+        while (current is not null)
+        {
+            if (current is Button)
+            {
+                return true;
+            }
+
+            current = VisualTreeHelper.GetParent(current);
+        }
+
+        return false;
+    }
+
+    private void ParakeetEngineCardContainer_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (IsTapFromNestedActionButton(e.OriginalSource) || _settings is null)
+        {
+            return;
+        }
+
+        if (ParakeetEngineCard is not null && ParakeetEngineCard.IsChecked != true)
+        {
+            ParakeetEngineCard.IsChecked = true;
+        }
+    }
+
+    private void WhisperEngineCardContainer_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (IsTapFromNestedActionButton(e.OriginalSource) || _settings is null)
+        {
+            return;
+        }
+
+        if (WhisperEngineCard is not null && WhisperEngineCard.IsChecked != true)
+        {
+            WhisperEngineCard.IsChecked = true;
+        }
+    }
+
+    private void EngineCardsGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (EngineCardsGrid is null || ParakeetEngineCardContainer is null || WhisperEngineCardContainer is null ||
+            ParakeetCardColumn is null || WhisperCardColumn is null)
+        {
+            return;
+        }
+
+        var stacked = e.NewSize.Width < 540;
+        if (stacked)
+        {
+            WhisperCardColumn.Width = new GridLength(0);
+            Grid.SetRow(WhisperEngineCardContainer, 1);
+            Grid.SetColumn(WhisperEngineCardContainer, 0);
+        }
+        else
+        {
+            WhisperCardColumn.Width = new GridLength(1, GridUnitType.Star);
+            Grid.SetRow(WhisperEngineCardContainer, 0);
+            Grid.SetColumn(WhisperEngineCardContainer, 1);
+        }
+    }
+
+    private void ParakeetDownloadButton_Click(object sender, RoutedEventArgs e)
+    {
+        ShowSpeechEngineNotice(string.Empty);
+        SpeechEngineDownloadRequested?.Invoke(FinalAsrEngine.Parakeet);
+    }
+
+    private void WhisperDownloadButton_Click(object sender, RoutedEventArgs e)
+    {
+        ShowSpeechEngineNotice(string.Empty);
+        SpeechEngineDownloadRequested?.Invoke(FinalAsrEngine.Whisper);
+    }
+
+    private async void ParakeetRemoveButton_Click(object sender, RoutedEventArgs e) =>
+        await HandleSpeechEngineRemoveClickAsync(FinalAsrEngine.Parakeet).ConfigureAwait(true);
+
+    private async void WhisperRemoveButton_Click(object sender, RoutedEventArgs e) =>
+        await HandleSpeechEngineRemoveClickAsync(FinalAsrEngine.Whisper).ConfigureAwait(true);
+
+    private async Task HandleSpeechEngineRemoveClickAsync(FinalAsrEngine engine)
+    {
+        if (_session.Closing)
+        {
+            return;
+        }
+
+        ShowSpeechEngineNotice(string.Empty);
+        if (IsSpeechEngineBusy?.Invoke() == true)
+        {
+            ShowSpeechEngineNotice(EnginePolishPresentation.RemovalBlockedBusyNotice);
+            return;
+        }
+
+        var activeEngine = _settings?.Preferences.Dictation.FinalEngine ?? SelectedFinalEngine();
+        var isSelectedFinalEngine = engine == activeEngine;
+        var livePreviewUsesParakeet = _settings?.Preferences.LivePreviewEnabled == true &&
+            (!_livePreviewWhisperInstalled || _settings.Preferences.LivePreviewEngine == LivePreviewEngineChoice.Parakeet);
+        var requiresConfirm = isSelectedFinalEngine ||
+            (engine == FinalAsrEngine.Parakeet && livePreviewUsesParakeet);
+        if (requiresConfirm)
+        {
+            if (Content?.XamlRoot is not { } xamlRoot)
+            {
+                return;
+            }
+
+            var confirmation = EnginePolishPresentation.DescribeActiveEngineRemovalDialog(
+                engine,
+                livePreviewUsesParakeet,
+                isSelectedFinalEngine);
+            var dialog = new ContentDialog
+            {
+                XamlRoot = xamlRoot,
+                RequestedTheme = (Content as FrameworkElement)?.RequestedTheme ?? ElementTheme.Default,
+                Title = confirmation.Title,
+                Content = new TextBlock
+                {
+                    Text = confirmation.Message,
+                    TextWrapping = TextWrapping.Wrap,
+                },
+                PrimaryButtonText = confirmation.ConfirmButtonText,
+                CloseButtonText = confirmation.CancelButtonText,
+                DefaultButton = ContentDialogButton.Close,
+            };
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || _session.Closing)
+            {
+                return;
+            }
+        }
+
+        if (IsSpeechEngineBusy?.Invoke() == true)
+        {
+            ShowSpeechEngineNotice(EnginePolishPresentation.RemovalBlockedBusyNotice);
+            return;
+        }
+
+        SpeechEngineRemoveRequested?.Invoke(engine);
+    }
+
+    public void SetSpeechEngineModels(
+        SpeechEngineModelState parakeet,
+        SpeechEngineModelState whisper,
+        FinalAsrEngine? downloadingEngine)
+    {
+        ArgumentNullException.ThrowIfNull(parakeet);
+        ArgumentNullException.ThrowIfNull(whisper);
+        _parakeetModelState = parakeet;
+        _whisperModelState = whisper;
+        _activeSpeechDownloadEngine = downloadingEngine;
+        RenderSpeechEngineCards();
+        UpdateActiveEngineDisplay();
+    }
+
+    public void SetSpeechEngineDelivery(FinalAsrEngine engine, ModelDeliveryPresentation presentation)
+    {
+        ArgumentNullException.ThrowIfNull(presentation);
+        if (engine == FinalAsrEngine.Whisper)
+        {
+            _whisperModelState = _whisperModelState with
+            {
+                DeliveryStage = presentation.Stage,
+                DownloadPercent = presentation.Percent,
+                StatusDetail = presentation.Text,
+            };
+        }
+        else
+        {
+            _parakeetModelState = _parakeetModelState with
+            {
+                DeliveryStage = presentation.Stage,
+                DownloadPercent = presentation.Percent,
+                StatusDetail = presentation.Text,
+            };
+        }
+
+        _activeSpeechDownloadEngine = presentation.Stage == SpeechModelDelivery.Downloading
+            ? engine
+            : null;
+        RenderSpeechEngineCards();
+        UpdateActiveEngineDisplay();
+    }
+
+    public void ShowSpeechEngineNotice(string message)
+    {
+        if (SpeechEngineNoticeText is null || SpeechEngineNoticeBanner is null)
+        {
+            return;
+        }
+
+        var normalized = message ?? string.Empty;
+        SetLiveText(SpeechEngineNoticeText, normalized);
+        SpeechEngineNoticeBanner.Visibility = string.IsNullOrWhiteSpace(normalized)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+    }
+
+    private void RenderSpeechEngineCards()
+    {
+        var selectedEngine = SelectedFinalEngine();
+        var parakeetOtherInFlight = _activeSpeechDownloadEngine is not null && _activeSpeechDownloadEngine != FinalAsrEngine.Parakeet;
+        var whisperOtherInFlight = _activeSpeechDownloadEngine is not null && _activeSpeechDownloadEngine != FinalAsrEngine.Whisper;
+        var parakeetCard = EnginePolishPresentation.DescribeEngineCard(
+            FinalAsrEngine.Parakeet,
+            selectedEngine,
+            _parakeetModelState,
+            parakeetOtherInFlight);
+        var whisperCard = EnginePolishPresentation.DescribeEngineCard(
+            FinalAsrEngine.Whisper,
+            selectedEngine,
+            _whisperModelState,
+            whisperOtherInFlight);
+
+        if (ParakeetCardStatusText is not null)
+        {
+            SetLiveText(ParakeetCardStatusText, parakeetCard.StatusText);
+        }
+
+        if (WhisperCardStatusText is not null)
+        {
+            SetLiveText(WhisperCardStatusText, whisperCard.StatusText);
+        }
+
+        ApplySpeechEngineCardPresentation(
+            parakeetCard,
+            ParakeetEngineCardContainer,
+            ParakeetCardSizeText,
+            ParakeetCardDetailText,
+            ParakeetCardProgress,
+            ParakeetDownloadButton,
+            ParakeetCancelButton,
+            ParakeetRemoveButton);
+        ApplySpeechEngineCardPresentation(
+            whisperCard,
+            WhisperEngineCardContainer,
+            WhisperCardSizeText,
+            WhisperCardDetailText,
+            WhisperCardProgress,
+            WhisperDownloadButton,
+            WhisperCancelButton,
+            WhisperRemoveButton);
+    }
+
+    private static void ApplySpeechEngineCardPresentation(
+        SpeechEngineCardPresentation card,
+        Border? container,
+        TextBlock? sizeText,
+        TextBlock? detailText,
+        ProgressBar? progressBar,
+        Button? downloadButton,
+        Button? cancelButton,
+        Button? removeButton)
+    {
+        if (container is not null)
+        {
+            var accentBrush = Application.Current.Resources["BrandAccentBrush"] as Brush;
+            var dividerBrush = Application.Current.Resources["BrandDividerBrush"] as Brush;
+            container.BorderBrush = card.IsSelected ? accentBrush : dividerBrush;
+            container.BorderThickness = new Thickness(card.IsSelected ? 2 : 1);
+        }
+
+        if (sizeText is not null)
+        {
+            sizeText.Text = card.BundleSizeText;
+        }
+
+        if (detailText is not null)
+        {
+            detailText.Text = card.StatusDetail ?? string.Empty;
+            detailText.Visibility = string.IsNullOrWhiteSpace(card.StatusDetail)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+        }
+
+        if (progressBar is not null)
+        {
+            progressBar.Visibility = card.ShowProgress ? Visibility.Visible : Visibility.Collapsed;
+            progressBar.Value = card.DownloadPercent;
+        }
+
+        if (downloadButton is not null)
+        {
+            downloadButton.Content = card.DownloadButtonText;
+            downloadButton.IsEnabled = card.DownloadButtonEnabled;
+            downloadButton.Visibility = card.ShowDownloadButton ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (cancelButton is not null)
+        {
+            cancelButton.Visibility = card.ShowCancelButton ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (removeButton is not null)
+        {
+            removeButton.IsEnabled = card.RemoveButtonEnabled;
+            removeButton.Visibility = card.ShowRemoveButton ? Visibility.Visible : Visibility.Collapsed;
+        }
     }
 
     private void UpdateActiveEngineDisplay(FinalAsrEngine? engineOverride = null)
@@ -2935,6 +3238,19 @@ public sealed partial class MainWindow : Window, IDisposable
         if (ActiveEngineIcon is not null)
         {
             ActiveEngineIcon.Glyph = summary.IconGlyph;
+        }
+
+        if (ActiveEngineStatusText is not null)
+        {
+            var activeState = engine == FinalAsrEngine.Whisper ? _whisperModelState : _parakeetModelState;
+            var activeCard = EnginePolishPresentation.DescribeEngineCard(
+                engine,
+                engine,
+                activeState,
+                otherDownloadInFlight: false);
+            ActiveEngineStatusText.Text = activeState.DeliveryStage == SpeechModelDelivery.Unknown
+                ? "Checking..."
+                : activeCard.StatusText;
         }
 
         if (WhisperLanguageRow is not null)
@@ -4921,10 +5237,9 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         if (HistoryEngineStatusText is not null && _settings is not null)
         {
-            var engineIndex = (int)_settings.Preferences.Dictation.FinalEngine;
-            HistoryEngineStatusText.Text = engineIndex >= 0 && engineIndex < FinalEngineChoices.Length
-                ? FinalEngineChoices[engineIndex].Name
-                : "Automatic";
+            HistoryEngineStatusText.Text = EnginePolishPresentation
+                .DescribeEngine(_settings.Preferences.Dictation.FinalEngine)
+                .Name;
         }
         if (HistoryPolishStatusText is not null && _settings is not null)
         {
@@ -5113,7 +5428,6 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>The vertical card-based choice lists.</summary>
     private ItemsControl[] ChoiceLists() =>
     [
-        EngineComboBox,
         PolishProviderComboBox,
     ];
 
@@ -5887,7 +6201,7 @@ public sealed partial class MainWindow : Window, IDisposable
         {
             var preferences = _settings.Preferences;
             _lastActiveEngine = preferences.Dictation.FinalEngine;
-            SelectChoice(FinalEngineChoices, (int)preferences.Dictation.FinalEngine);
+            SetSelectedFinalEngineCards(preferences.Dictation.FinalEngine);
             UpdateActiveEngineDisplay(preferences.Dictation.FinalEngine);
             WhisperLanguageComboBox.SelectedIndex = (int)preferences.Dictation.WhisperLanguage;
             SyncAppliedWhisperLanguageStatus(preferences.Dictation.WhisperLanguage);

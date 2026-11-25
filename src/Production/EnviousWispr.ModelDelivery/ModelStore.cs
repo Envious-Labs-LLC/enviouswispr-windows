@@ -405,6 +405,16 @@ public sealed class ModelStore
             await using var processLock = await AcquireProcessLockAsync(modelId, cancellationToken)
                 .ConfigureAwait(false);
             var modelRoot = ModelRoot(modelId);
+            var versionRoot = Path.Combine(modelRoot, "versions", version);
+            if (!Directory.Exists(versionRoot))
+            {
+                return Fail(ModelDeliveryFailure.VersionNotInstalled);
+            }
+
+            EnsureDirectoryUnlocked(versionRoot, cancellationToken);
+
+            Directory.Delete(versionRoot, recursive: true);
+
             var activePath = Path.Combine(modelRoot, ActiveFileName);
             if (File.Exists(activePath))
             {
@@ -417,13 +427,6 @@ public sealed class ModelStore
                 }
             }
 
-            var versionRoot = Path.Combine(modelRoot, "versions", version);
-            if (!Directory.Exists(versionRoot))
-            {
-                return Fail(ModelDeliveryFailure.VersionNotInstalled);
-            }
-
-            Directory.Delete(versionRoot, recursive: true);
             _observer.Observe(new(DateTimeOffset.UtcNow, ModelDeliveryEventCode.ModelRemoved));
             return new(true);
         }
@@ -504,6 +507,7 @@ public sealed class ModelStore
                 foreach (var path in inactive)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    EnsureDirectoryUnlocked(path, cancellationToken);
                     Directory.Delete(path, recursive: true);
                 }
 
@@ -828,6 +832,19 @@ public sealed class ModelStore
 
         var partial = final + ".partial";
         return File.Exists(partial) ? new FileInfo(partial).Length : 0;
+    }
+
+    internal static void EnsureDirectoryUnlocked(
+        string directory,
+        CancellationToken cancellationToken)
+    {
+        // Probe every file for an exclusive lock BEFORE deleting anything or clearing pointers
+        // so a locked file leaves the installed model completely intact and discoverable.
+        foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using var probe = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        }
     }
 
     private string LockKey(string modelId) =>
