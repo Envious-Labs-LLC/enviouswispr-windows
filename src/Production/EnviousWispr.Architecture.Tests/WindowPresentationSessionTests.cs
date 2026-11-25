@@ -330,7 +330,7 @@ public sealed class WindowPresentationSessionTests
                 .Order()
                 .Select(File.ReadAllText));
         Assert.Contains("if (view.Summary == HistorySummary.Closing || _session.Closing)", window, StringComparison.Ordinal);
-        Assert.Equal(3, Occurrences(window, "if (result.Closing || _session.Closing)"));
+        Assert.Equal(4, Occurrences(window, "if (result.Closing || _session.Closing)"));
         Assert.Contains("if (listing is null || _session.Closing || !_session.Provider.IsCurrent(listing.Ticket))", window, StringComparison.Ordinal);
         var audioCode = File.ReadAllText(Path.Combine(appDir, "MainWindow.AudioAndChimes.cs"));
         var testHandler = audioCode[audioCode.IndexOf("private async void MicrophoneTestButton_Click(", StringComparison.Ordinal)..];

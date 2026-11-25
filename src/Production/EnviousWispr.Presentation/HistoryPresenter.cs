@@ -164,7 +164,17 @@ public sealed class HistoryPresenter
     public static IReadOnlyList<DictationHistoryEntry> Filter(
         IReadOnlyList<DictationHistoryEntry> entries,
         string query,
-        HistoryKindFilter kind)
+        HistoryKindFilter kind) =>
+        Filter(entries, query, kind, HistoryDateRangeFilter.AnyTime, DateTimeOffset.Now);
+
+    /// <summary>The rows matching the text query, kind filter, and local calendar date range.</summary>
+    public static IReadOnlyList<DictationHistoryEntry> Filter(
+        IReadOnlyList<DictationHistoryEntry> entries,
+        string query,
+        HistoryKindFilter kind,
+        HistoryDateRangeFilter dateRange,
+        DateTimeOffset localNow,
+        TimeZoneInfo? localTimeZone = null)
     {
         ArgumentNullException.ThrowIfNull(entries);
         ArgumentNullException.ThrowIfNull(query);
@@ -175,10 +185,15 @@ public sealed class HistoryPresenter
             _ => entries,
         };
 
+        var matchingDate = dateRange == HistoryDateRangeFilter.AnyTime
+            ? matchingKind
+            : matchingKind.Where(entry =>
+                HistoryDiaryPresentation.MatchesDateRange(entry, dateRange, localNow, localTimeZone));
+
         var trimmed = query.Trim();
         return trimmed.Length == 0
-            ? matchingKind.ToArray()
-            : matchingKind.Where(entry => entry.Text.Contains(trimmed, StringComparison.CurrentCultureIgnoreCase)).ToArray();
+            ? matchingDate.ToArray()
+            : matchingDate.Where(entry => HistoryDiaryPresentation.MatchesSearch(entry, trimmed)).ToArray();
     }
 
     /// <summary>Whether a history entry was produced by Transcribe a File.</summary>
@@ -194,6 +209,13 @@ public sealed class HistoryPresenter
 
     /// <summary>Keeps a temporary recovery entry: its 24-hour expiry is removed.</summary>
     public Task<HistoryCommandResult> KeepAsync(Guid id) => ApplyAsync(token => _history.KeepAsync(id, token));
+
+    /// <summary>Removes every matching dictation ID. The page has already confirmed.</summary>
+    public Task<HistoryCommandResult> DeleteManyAsync(IReadOnlyCollection<Guid> ids)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        return ApplyAsync(token => _history.DeleteManyAsync(ids, token));
+    }
 
     /// <summary>Removes every dictation. The page has already asked; this does not ask again.</summary>
     public Task<HistoryCommandResult> ClearAsync() => ApplyAsync(token => _history.ClearAsync(token));

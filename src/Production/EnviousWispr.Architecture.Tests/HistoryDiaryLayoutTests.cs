@@ -1,152 +1,202 @@
+using System.IO;
+using System.Linq;
 using System.Xml.Linq;
+using Xunit;
 
 namespace EnviousWispr.Architecture.Tests;
 
-/// <summary>
-/// Guards the Wave 3 full-height two-pane History Diary layout (#322).
-/// </summary>
 public sealed class HistoryDiaryLayoutTests
 {
-    private const string XamlNamespace = "http://schemas.microsoft.com/winfx/2006/xaml";
     private const string PresentationNamespace = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+    private const string XamlNamespace = "http://schemas.microsoft.com/winfx/2006/xaml";
 
     [Fact]
-    public void HistoryPageIsFullHeightTwoPaneGridWithoutLegacyBloat()
+    public void HistoryPageIsSingleColumnCardDiaryWithoutLegacySplit()
     {
-        var root = FindRepositoryRoot();
-        var markup = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
-        var document = XDocument.Parse(markup);
+        var repositoryRoot = FindRepositoryRoot();
+        var document = LoadMainWindow(repositoryRoot);
 
         var historyPage = FindNamed(document, "HistoryPage");
         Assert.Equal("Grid", historyPage.Name.LocalName);
         Assert.Equal("1", (string?)historyPage.Attribute("Grid.Row"));
         Assert.Equal("Collapsed", (string?)historyPage.Attribute("Visibility"));
+        Assert.Equal("{ThemeResource BrandPageBgBrush}", (string?)historyPage.Attribute("Background"));
 
-        var columns = historyPage.Element(XName.Get("Grid.ColumnDefinitions", PresentationNamespace))?
-            .Elements(XName.Get("ColumnDefinition", PresentationNamespace))
-            .Select(col => (string?)col.Attribute("Width") ?? string.Empty)
-            .ToArray() ?? [];
-        Assert.Equal(["304", "*"], columns);
-
-        Assert.DoesNotContain("FoundationInfoBar", markup, StringComparison.Ordinal);
-        Assert.DoesNotContain("Parakeet v2", markup, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            historyPage.Descendants(XName.Get("ColumnDefinition", PresentationNamespace)),
+            column => (string?)column.Attribute("Width") == "304");
         Assert.DoesNotContain(
             historyPage.Descendants(),
-            element => (string?)element.Attribute("Style") == "{StaticResource BrandHeaderCardStyle}");
+            element => (string?)element.Attribute(XName.Get("Name", XamlNamespace))
+                is "HistoryDetailContent" or "HistoryDetailEmptyState" or "HistoryDetailTextBox");
+
+        var boundedColumn = historyPage
+            .Elements(XName.Get("Grid", PresentationNamespace))
+            .Single();
+        Assert.Equal("{StaticResource BrandFluentPageMaxWidth}", (string?)boundedColumn.Attribute("MaxWidth"));
 
         var historyList = FindNamed(document, "HistoryList");
         Assert.Null(historyList.Attribute("MaxHeight"));
+        Assert.Equal("Single", (string?)historyList.Attribute("SelectionMode"));
 
-        var detailTextBox = FindNamed(document, "HistoryDetailTextBox");
-        Assert.Null(detailTextBox.Attribute("MaxHeight"));
-        var detailScroller = detailTextBox.Parent;
-        Assert.NotNull(detailScroller);
-        Assert.Equal("ScrollViewer", detailScroller!.Name.LocalName);
-        Assert.Null(detailScroller.Attribute("MaxHeight"));
-
-        var engineStatus = FindNamed(document, "HistoryEngineStatusText");
-        Assert.Equal("Parakeet", (string?)engineStatus.Attribute("Text"));
-
-        var polishStatus = FindNamed(document, "HistoryPolishStatusText");
-        Assert.Equal("Off", (string?)polishStatus.Attribute("Text"));
-    }
-
-    [Fact]
-    public void HistoryLeftRailHasFiveRowsSegmentedFiltersAndLightweightEmptyStates()
-    {
-        var document = LoadMainWindow();
-        var historyPage = FindNamed(document, "HistoryPage");
-        var leftRailBorder = historyPage.Elements(XName.Get("Border", PresentationNamespace))
-            .Single(b => (string?)b.Attribute("Grid.Column") == "0");
-        var leftRailGrid = leftRailBorder.Elements(XName.Get("Grid", PresentationNamespace)).Single();
-
-        var rows = leftRailGrid.Element(XName.Get("Grid.RowDefinitions", PresentationNamespace))?
-            .Elements(XName.Get("RowDefinition", PresentationNamespace))
-            .Select(row => (string?)row.Attribute("Height") ?? string.Empty)
-            .ToArray() ?? [];
-        Assert.Equal(["Auto", "Auto", "Auto", "*", "Auto"], rows);
-
-        Assert.Equal("All", (string?)FindNamed(document, "HistoryFilterAllButton").Attribute("Tag"));
-        Assert.Equal("Dictation", (string?)FindNamed(document, "HistoryFilterDictationButton").Attribute("Tag"));
-        Assert.Equal("TranscribeFile", (string?)FindNamed(document, "HistoryFilterTranscribeButton").Attribute("Tag"));
-
-        foreach (var stateName in new[]
-                 {
-                     "HistoryLoadingState",
-                     "HistoryEmptyState",
-                     "HistorySearchEmptyState",
-                     "HistoryUnavailableState",
-                 })
-        {
-            var state = FindNamed(document, stateName);
-            Assert.NotEqual("Border", state.Name.LocalName);
-            Assert.NotEqual("{StaticResource BrandSectionCardStyle}", (string?)state.Attribute("Style"));
-            Assert.DoesNotContain(
-                state.Descendants(),
-                element => (string?)element.Attribute("Style") == "{StaticResource BrandIconTileStyle}");
-        }
-    }
-
-    [Fact]
-    public void HistoryDetailEmptyStateIsCenteredAndBorderlessAndShowPageTogglesEdgeToEdgePadding()
-    {
-        var root = FindRepositoryRoot();
-        var document = LoadMainWindow();
-
-        var emptyState = FindNamed(document, "HistoryDetailEmptyState");
-        Assert.NotEqual("Border", emptyState.Name.LocalName);
-        Assert.NotEqual("{StaticResource BrandSectionCardStyle}", (string?)emptyState.Attribute("Style"));
-        Assert.Equal("Center", (string?)emptyState.Attribute("HorizontalAlignment"));
-        Assert.Equal("Center", (string?)emptyState.Attribute("VerticalAlignment"));
+        var windowCode = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
         Assert.Contains(
-            emptyState.Descendants(XName.Get("TextBlock", PresentationNamespace)),
-            tb => (string?)tb.Attribute("Text") == "Ready to Transcribe");
+            "var isHistoryPage = resolvedTag == \"history\";",
+            windowCode,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "MainContentGrid.Padding = isHistoryPage",
+            windowCode,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HistoryHeaderHasTabStripSearchDateSelectHelpAndSelectionToolbar()
+    {
+        var document = LoadMainWindow(FindRepositoryRoot());
+        var historyPage = FindNamed(document, "HistoryPage");
+
+        Assert.Equal(
+            "{StaticResource BrandTabStripActiveButtonStyle}",
+            (string?)FindNamed(document, "HistoryFilterAllButton").Attribute("Style"));
+        Assert.Equal(
+            "{StaticResource BrandTabStripButtonStyle}",
+            (string?)FindNamed(document, "HistoryFilterDictationButton").Attribute("Style"));
+        Assert.Equal(
+            "{StaticResource BrandTabStripButtonStyle}",
+            (string?)FindNamed(document, "HistoryFilterTranscribeButton").Attribute("Style"));
+
+        Assert.NotNull(FindNamed(document, "HistoryEngineStatusText"));
+        Assert.NotNull(FindNamed(document, "HistoryPolishStatusText"));
+        Assert.NotNull(FindNamed(document, "HistoryCountText"));
+        Assert.NotNull(FindNamed(document, "HistorySearchBox"));
+        Assert.NotNull(FindNamed(document, "InlineClearHistorySearchButton"));
+
+        var dateFlyout = FindNamed(document, "HistoryDateFilterFlyout");
+        var dateTags = dateFlyout
+            .Descendants(XName.Get("MenuFlyoutItem", PresentationNamespace))
+            .Select(item => (string?)item.Attribute("Tag") ?? string.Empty)
+            .ToArray();
+        Assert.Equal(["AnyTime", "Today", "Yesterday", "Last7Days", "Last30Days"], dateTags);
+
+        Assert.NotNull(FindNamed(document, "HistorySelectToggleButton"));
+        Assert.NotNull(FindNamed(document, "HistoryHelpButton"));
+        Assert.NotNull(FindNamed(document, "HistoryHelpFlyout"));
+        Assert.NotNull(FindNamed(document, "HistoryMoreDeleteAllItem"));
+
+        var selectionToolbar = FindNamed(document, "HistorySelectionToolbar");
+        Assert.Equal("Collapsed", (string?)selectionToolbar.Attribute("Visibility"));
+        Assert.NotNull(FindNamed(document, "HistorySelectionCountText"));
+        Assert.NotNull(FindNamed(document, "HistorySelectAllButton"));
+        Assert.Equal(
+            "{StaticResource BrandDestructiveButtonStyle}",
+            (string?)FindNamed(document, "DeleteSelectedHistoryButton").Attribute("Style"));
+        Assert.Equal(
+            "{StaticResource BrandDestructiveButtonStyle}",
+            (string?)FindNamed(document, "ClearHistoryButton").Attribute("Style"));
+
+        Assert.DoesNotContain(
+            historyPage.Descendants(),
+            element => ((string?)element.Attribute("CornerRadius")) == "100"
+                || ((string?)element.Attribute("CornerRadius"))?.Contains("BrandPillRadius", StringComparison.Ordinal) == true);
+    }
+
+    [Fact]
+    public void HistoryDiaryCardTemplateHasDayHeadersChipsShowMoreEditsComparisonAndActions()
+    {
+        var document = LoadMainWindow(FindRepositoryRoot());
+        var historyList = FindNamed(document, "HistoryList");
+        var templateMarkup = historyList
+            .Descendants(XName.Get("DataTemplate", PresentationNamespace))
+            .Single()
+            .ToString();
+
+        Assert.Contains("DayHeaderVisibility", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("DayHeaderTitle", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("DayCountText", templateMarkup, StringComparison.Ordinal);
+
+        Assert.Contains("SelectionCheckBoxVisibility", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CardSelectCheckBox_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("BrandNeutralChipStyle", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("BrandWarningChipStyle", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("BrandAccentChipStyle", templateMarkup, StringComparison.Ordinal);
+
+        Assert.Contains("TranscriptMaxLines", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CardShowMoreToggle_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CardShowEditsToggle_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CardShowPolished_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CardShowOriginal_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("ComparisonOtherText", templateMarkup, StringComparison.Ordinal);
+
+        Assert.Contains("ProvenanceText", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CardPasteButton_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CardCopyButton_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CardKeepButton_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CardRepolishButton_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CardDeleteButton_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("PasteButtonAutomationId", templateMarkup, StringComparison.Ordinal);
+
+        var loadMoreButton = FindNamed(document, "LoadMoreHistoryButton");
+        Assert.Equal("Show older dictations", (string?)loadMoreButton.Attribute("Content"));
+    }
+
+    [Fact]
+    public void HistoryRecoveryCardAndEmptyStatesArePreserved()
+    {
+        var document = LoadMainWindow(FindRepositoryRoot());
 
         var recoveryCard = FindNamed(document, "RecoveryCard");
         Assert.Equal("Collapsed", (string?)recoveryCard.Attribute("Visibility"));
+        var undoButton = FindNamed(document, "UndoRecoveryButton");
+        Assert.Equal(
+            "UndoRecoveryButton",
+            undoButton.Attributes().FirstOrDefault(a => a.Name.LocalName == "AutomationProperties.AutomationId")?.Value);
 
-        var mainContentGrid = FindNamed(document, "MainContentGrid");
-        Assert.Equal("28,18,28,32", (string?)mainContentGrid.Attribute("Padding"));
-
-        var codeBehind = string.Join(
-            "\n",
-            Directory.EnumerateFiles(Path.Combine(root, "src", "Production", "EnviousWispr.App"), "MainWindow*.cs")
-                .Order()
-                .Select(File.ReadAllText));
-        Assert.Contains("MainContentGrid.Padding =", codeBehind, StringComparison.Ordinal);
-        Assert.Contains("new Thickness(0)", codeBehind, StringComparison.Ordinal);
-        Assert.Contains("new Thickness(28, 18, 28, 32)", codeBehind, StringComparison.Ordinal);
-        Assert.Contains("OperationInfoBar.Margin =", codeBehind, StringComparison.Ordinal);
-        Assert.DoesNotContain("FoundationInfoBar", codeBehind, StringComparison.Ordinal);
-
-        var deletionBar = FindNamed(document, "DeletionLeftoverInfoBar");
-        Assert.Equal("2", (string?)deletionBar.Attribute("Grid.Row"));
-        Assert.Equal("True", (string?)deletionBar.Attribute("IsClosable"));
-
-        var yourDataCode = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.YourData.cs"));
-        Assert.Contains("DeletionLeftoverInfoBar.IsOpen = true;", yourDataCode, StringComparison.Ordinal);
-
-        var detailContent = FindNamed(document, "HistoryDetailContent");
-        var headerBorder = detailContent.Elements(XName.Get("Border", PresentationNamespace))
-            .Single(b => (string?)b.Attribute("Grid.Row") == "0");
-        var headerStack = headerBorder.Elements(XName.Get("StackPanel", PresentationNamespace)).Single();
-        Assert.Contains(headerStack.Descendants(), e => (string?)e.Attribute(XName.Get("Name", XamlNamespace)) == "HistoryDetailTimestampText");
-        var pasteButton = FindNamed(document, "PasteHistoryButton");
-        var actionBarScroller = pasteButton.Parent?.Parent;
-        Assert.NotNull(actionBarScroller);
-        Assert.Equal("ScrollViewer", actionBarScroller!.Name.LocalName);
-        Assert.Equal("Auto", (string?)actionBarScroller.Attribute("HorizontalScrollBarVisibility"));
+        Assert.Null(FindNamed(document, "HistoryLoadingState").Attribute("Visibility"));
+        Assert.Equal("Collapsed", (string?)FindNamed(document, "HistoryEmptyState").Attribute("Visibility"));
+        Assert.Equal("Collapsed", (string?)FindNamed(document, "HistorySearchEmptyState").Attribute("Visibility"));
+        Assert.Equal("Collapsed", (string?)FindNamed(document, "HistoryUnavailableState").Attribute("Visibility"));
+        Assert.NotNull(FindNamed(document, "HistoryDetailReadyHotkeyText"));
+        Assert.NotNull(FindNamed(document, "HistoryEmptyClearSearchButton"));
+        Assert.NotNull(FindNamed(document, "HistoryEmptyClearFiltersButton"));
     }
 
-    private static XDocument LoadMainWindow()
+    [Fact]
+    public void HistoryCardsSeparateProvenanceFromActionsOfferExplicitAlternateCopyAndResetSelectionLabel()
     {
-        var root = FindRepositoryRoot();
-        return XDocument.Load(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
+        var repositoryRoot = FindRepositoryRoot();
+        var document = LoadMainWindow(repositoryRoot);
+        var historyList = FindNamed(document, "HistoryList");
+        var template = historyList.Descendants(XName.Get("DataTemplate", PresentationNamespace)).Single();
+        var templateMarkup = template.ToString();
+
+        Assert.Contains("CardCopyAlternateButton_Click", templateMarkup, StringComparison.Ordinal);
+        Assert.Contains("CopyAlternateButtonLabel", templateMarkup, StringComparison.Ordinal);
+
+        var footerActionButtonCount = template
+            .Descendants(XName.Get("Button", PresentationNamespace))
+            .Count(button => (string?)button.Attribute("Click") is "CardPasteButton_Click"
+                or "CardCopyButton_Click"
+                or "CardKeepButton_Click"
+                or "CardRepolishButton_Click"
+                or "CardDeleteButton_Click");
+        Assert.Equal(5, footerActionButtonCount);
+
+        var historyCode = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.History.cs"));
+        Assert.Contains("package.SetText(card.Text);", historyCode, StringComparison.Ordinal);
+        Assert.Contains("package.SetText(card.ComparisonOtherText);", historyCode, StringComparison.Ordinal);
+        Assert.Contains("SetHistorySelectionMode(false);", historyCode, StringComparison.Ordinal);
+        Assert.Contains("\"Select dictations\"", historyCode, StringComparison.Ordinal);
     }
+
+    private static XDocument LoadMainWindow(string repositoryRoot) =>
+        XDocument.Load(Path.Combine(repositoryRoot, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
 
     private static XElement FindNamed(XDocument document, string name) =>
         document.Descendants().Single(element =>
-            (string?)element.Attribute(XName.Get("Name", XamlNamespace)) == name);
+            string.Equals((string?)element.Attribute(XName.Get("Name", XamlNamespace)), name, StringComparison.Ordinal));
 
     private static string FindRepositoryRoot()
     {
@@ -157,11 +207,9 @@ public sealed class HistoryDiaryLayoutTests
             {
                 return current.FullName;
             }
-
             current = current.Parent;
         }
 
-        throw new InvalidOperationException(
-            $"Could not find the repository root above '{AppContext.BaseDirectory}'.");
+        throw new InvalidOperationException("Could not locate repository root containing EnviousWispr.Windows.slnx.");
     }
 }

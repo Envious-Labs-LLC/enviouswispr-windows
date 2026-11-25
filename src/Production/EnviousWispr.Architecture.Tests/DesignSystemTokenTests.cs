@@ -3629,32 +3629,26 @@ public sealed partial class DesignSystemTokenTests
     }
 
     [Fact]
-    public void HistoryDetailContentUsesFullHeightBorderlessSplitAndKeepsPasteButtonId()
+    public void HistoryDiaryKeepsFluentMaxWidthColumnAndPasteButtonAutomationId()
     {
         var document = LoadMainWindow();
-        var detailContent = FindNamedElement(document, "HistoryDetailContent");
-        Assert.Equal("Grid", detailContent.Name.LocalName);
-        Assert.Null(detailContent.Attribute("VerticalAlignment"));
+        var historyPage = FindNamedElement(document, "HistoryPage");
+        Assert.DoesNotContain(
+            historyPage.Descendants(),
+            element => (string?)element.Attribute(XName.Get("Name", XamlNamespace)) == "HistoryDetailContent");
 
-        var rowHeights = detailContent
+        var boundedColumn = historyPage
             .Elements()
-            .Single(element => element.Name.LocalName == "Grid.RowDefinitions")
-            .Elements()
-            .Where(element => element.Name.LocalName == "RowDefinition")
-            .Select(row => (string?)row.Attribute("Height") ?? string.Empty)
-            .ToArray();
-        Assert.Equal(["Auto", "Auto", "Auto", "*"], rowHeights);
+            .Single(element => element.Name.LocalName == "Grid");
+        Assert.Equal("{StaticResource BrandFluentPageMaxWidth}", (string?)boundedColumn.Attribute("MaxWidth"));
 
-        var detailScroller = detailContent
-            .Elements()
-            .Single(element => element.Name.LocalName == "ScrollViewer");
-        Assert.Equal("3", (string?)detailScroller.Attribute("Grid.Row"));
-        Assert.Null(detailScroller.Attribute("MaxHeight"));
+        var historyList = FindNamedElement(document, "HistoryList");
+        var templateMarkup = historyList.ToString();
+        Assert.Contains("PasteButtonAutomationId", templateMarkup, StringComparison.Ordinal);
 
-        var pasteButton = FindNamedElement(document, "PasteHistoryButton");
-        Assert.Equal(
-            "PasteHistoryButton",
-            pasteButton.Attributes().FirstOrDefault(a => a.Name.LocalName == "AutomationProperties.AutomationId")?.Value);
+        var historyCode = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.History.cs"));
+        Assert.Contains("\"PasteHistoryButton\"", historyCode, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -218,6 +218,22 @@ public sealed class JsonHistoryStore : IHistoryStore, IDisposable
         CancellationToken cancellationToken = default) =>
         MutateAsync(entries => entries.Where(entry => entry.Id != id).ToArray(), cancellationToken);
 
+    public Task<HistoryOperationResult> DeleteManyAsync(
+        IReadOnlyCollection<Guid> ids,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        if (ids.Count == 0)
+        {
+            return Task.FromResult(new HistoryOperationResult(true));
+        }
+
+        var idSet = ids as HashSet<Guid> ?? new HashSet<Guid>(ids);
+        return MutateAsync(
+            entries => entries.Where(entry => !idSet.Contains(entry.Id)).ToArray(),
+            cancellationToken);
+    }
+
     public Task<HistoryOperationResult> KeepAsync(
         Guid id,
         CancellationToken cancellationToken = default) =>

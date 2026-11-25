@@ -12,6 +12,13 @@ namespace EnviousWispr.App;
 /// <remarks>
 /// THE WINDOW ASKS; THE APP DOES. Export reads the stores and deletion takes the session, stops the app and empties
 /// its folder, and all of that is the app's. The window chooses the file, confirms, and draws the answer.
+///
+/// CROSS-PLATFORM BACKUP PARITY DECISION (#360):
+/// Verified against macOS (Settings > App Settings): macOS has no Backup tab and instead provides per-tab export
+/// (Dictionary words, Snippets, and Diagnostics). Windows intentionally retains Settings > App Settings > Backup
+/// (PortableProfileSection JSON export/import plus YourDataSection .zip archive export and Delete all EnviousWispr
+/// data) because Microsoft Store MSIX virtualization preserves local app data across uninstall with no uninstall hook,
+/// and Windows users rely on portable profile backup across PCs.
 /// </remarks>
 public sealed partial class MainWindow
 {

@@ -194,6 +194,24 @@ public interface IHistoryStore
         Guid id,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Deletes all history entries matching <paramref name="ids"/>.</summary>
+    async Task<HistoryOperationResult> DeleteManyAsync(
+        IReadOnlyCollection<Guid> ids,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        foreach (var id in ids)
+        {
+            var result = await DeleteAsync(id, cancellationToken).ConfigureAwait(false);
+            if (!result.Succeeded)
+            {
+                return result;
+            }
+        }
+
+        return new HistoryOperationResult(true);
+    }
+
     Task<HistoryOperationResult> KeepAsync(
         Guid id,
         CancellationToken cancellationToken = default);
