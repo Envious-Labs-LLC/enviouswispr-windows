@@ -1584,7 +1584,13 @@ public sealed partial class MainWindow : Window, IDisposable
         NavigationView sender,
         NavigationViewSelectionChangedEventArgs args)
     {
-        var tag = (args.SelectedItemContainer as NavigationViewItem)?.Tag?.ToString() ?? "history";
+        if (args.SelectedItem is null && args.SelectedItemContainer is null)
+        {
+            return;
+        }
+
+        var item = args.SelectedItemContainer as NavigationViewItem ?? args.SelectedItem as NavigationViewItem;
+        var tag = item?.Tag?.ToString() ?? "history";
         var tabKey = _pendingTabKey;
         _pendingTabKey = null;
         ShowPage(tag, tabKey);

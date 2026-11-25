@@ -2,6 +2,8 @@ using System.Xml.Linq;
 using EnviousWispr.Core.Settings;
 using EnviousWispr.Pipeline;
 using EnviousWispr.Presentation;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace EnviousWispr.Architecture.Tests;
 
@@ -216,6 +218,25 @@ public sealed class Wave4WordsSnippetsFileTests
                 transcribeSection.Descendants(),
                 e => e.Name.LocalName == "TextBlock" && (string?)e.Attribute("Text") == fmt);
         }
+    }
+
+    [Fact]
+    public void ProductNavigationSelectionChangedIgnoresClearedSelectionBeforeHistoryFallback()
+    {
+        var root = FindRepositoryRoot();
+        var codePath = Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs");
+        var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(codePath), path: codePath);
+        var method = tree.GetRoot()
+            .DescendantNodes()
+            .OfType<MethodDeclarationSyntax>()
+            .Single(m => m.Identifier.ValueText == "ProductNavigation_SelectionChanged");
+
+        var statements = method.Body!.Statements;
+        Assert.True(statements.Count >= 2);
+        Assert.IsType<IfStatementSyntax>(statements[0]);
+        var guardText = statements[0].ToString();
+        Assert.Contains("args.SelectedItem is null && args.SelectedItemContainer is null", guardText, StringComparison.Ordinal);
+        Assert.Contains("return;", guardText, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()
