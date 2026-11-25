@@ -795,15 +795,6 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
 
             if (signal == PushToTalkSignal.Pressed)
             {
-                // A NEW RECORDING SUPERSEDES THE WAITING RECOVERY, as on macOS. The press is never
-                // refused for it: the unfinished words are already in History when History is on, and
-                // the person who pressed the key has chosen to dictate again. The clear hides the
-                // Home card through the persistence owner's own effect, which posts to the window.
-                if (_persistence.HasPendingRecovery)
-                {
-                    await _persistence.ClearRecoveryTextAsync().ConfigureAwait(false);
-                }
-
                 // THE MACHINE IS ASKED, AND THE POLICY IS APPLIED, HERE. Memory too low refuses the
                 // recording; disk too low lets it run but stops the recovery copy being written, and
                 // the persistence owner is told so before the recording starts.
@@ -866,6 +857,14 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             {
                 result = result with { IsHandsFree = command.IsHandsFree };
                 transition = result;
+                // A NEW RECORDING SUPERSEDES THE WAITING RECOVERY ONLY ONCE IT HAS STARTED. Clearing
+                // before admission or capture opened would destroy the last copy when low memory or
+                // a microphone refusal turns the press away with no replacement recording.
+                if (_persistence.HasPendingRecovery)
+                {
+                    await _persistence.ClearRecoveryTextAsync().ConfigureAwait(false);
+                }
+
                 _escapeRecoveryForSession = _effects.EscapeRecoveryEnabled;
                 // THE SETTINGS ARE READ ONCE, HERE, and the background work is told them: a recording
                 // that started under one auto-stop preference finishes under it.

@@ -36,7 +36,7 @@ public sealed class DictationSessionExecutorTests
     public async Task PressingRecordWhileRecoveryIsPendingClearsItAndStartsRecording()
     {
         // MACOS NEVER REFUSES A PRESS FOR WAITING WORDS. The new recording supersedes the recovery
-        // copy: it is cleared first, then the machine is asked and the microphone opens as usual.
+        // copy only once the controller confirms the new recording actually started.
         var (executor, capture, effects, controller, world) = BuildWithFinalization();
         world.Persistence.HasPendingRecovery = true;
 
@@ -49,8 +49,28 @@ public sealed class DictationSessionExecutorTests
         Assert.Equal(DictationSessionState.Recording, controller.CurrentSession?.State);
         Assert.Same(controller.CurrentSession, result.Session);
         Assert.Equal(
-            ["ClearRecoveryText", "RecordTransition:Started", "RecordingSettings", "Background:Start", "ShowTransitionStatus:Started", "RecordDictationEdge"],
+            ["RecordTransition:Started", "ClearRecoveryText", "RecordingSettings", "Background:Start", "ShowTransitionStatus:Started", "RecordDictationEdge"],
             effects.Trace);
+    }
+
+    [Fact]
+    public async Task CriticalMemoryOrFailedStartKeepsPendingRecoveryIntact()
+    {
+        // A press that never opens a replacement recording must never delete the waiting copy.
+        var (lowMemExecutor, _, _, _, lowMemWorld) = BuildWithFinalization(resources: LowMemory);
+        lowMemWorld.Persistence.HasPendingRecovery = true;
+
+        await lowMemExecutor.ExecuteAsync(Press(), CancellationToken.None);
+
+        Assert.True(lowMemWorld.Persistence.HasPendingRecovery, "low memory refused the press, so the words stay");
+
+        var (failedStartExecutor, capture, _, _, failedWorld) = BuildWithFinalization();
+        failedWorld.Persistence.HasPendingRecovery = true;
+        capture.StartResultFactory = _ => new AudioOperationResult(Succeeded: false);
+
+        await failedStartExecutor.ExecuteAsync(Press(), CancellationToken.None);
+
+        Assert.True(failedWorld.Persistence.HasPendingRecovery, "a failed microphone start never discards recovery");
     }
 
     [Fact]

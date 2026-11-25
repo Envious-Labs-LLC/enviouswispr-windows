@@ -76,6 +76,22 @@
                 </Border>
 
                 <!--
+                    VISIBLE-TO-UIA LIVE ANNOUNCEMENT TARGET for hands-free Classic recordings, where
+                    the clock is collapsed and only the rainbow lips canvas is visible on screen.
+                -->
+                <TextBlock
+                    x:Name="LiveAnnouncementText"
+                    Width="1"
+                    Height="1"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Top"
+                    AutomationProperties.LiveSetting="Polite"
+                    FontSize="14"
+                    IsHitTestVisible="False"
+                    Opacity="0"
+                    Text=" " />
+
+                <!--
                     CENTRED IN THE PILL. A StackPanel stretches to fill its parent by
                     default and stacks its children from the TOP, so centering vertically
                     ensures compact single-row recording and processing pills sit perfectly balanced.

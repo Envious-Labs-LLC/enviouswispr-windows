@@ -410,20 +410,18 @@ public sealed partial class DictationOverlayWindow : Window
                 ? presentation.Item1
                 : $"{presentation.Item1}. {presentation.Item3}",
         };
-        var wellSpeaks = _activeDesign == RecordingPillDesign.ReadingWell && !_handsFree;
         StateTitle.Text = presentation.Item1;
         StateIcon.Glyph = presentation.Item2;
         StateDetail.Text = presentation.Item3;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(StateTitle, spokenName);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ProcessingLabel, spokenName);
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(wellSpeaks ? ModeLabel : ElapsedText, spokenName);
         PositionOnForegroundMonitor();
         AppWindow.Show(activateWindow: false);
         // AFTER THE WINDOW IS SHOWN. Raising while it is still hidden announces something the user
         // cannot yet see, and the first state of a freshly shown pill is exactly that case.
         if (state == DictationOverlayState.Recording)
         {
-            AnnounceStateChange(wellSpeaks ? ModeLabel : ElapsedText, state);
+            AnnounceRecording(spokenName);
         }
         else if (state == DictationOverlayState.Processing)
         {
@@ -491,6 +489,26 @@ public sealed partial class DictationOverlayWindow : Window
         if (_state == DictationOverlayState.Recording)
         {
             ConfigureRecordingDesign();
+            AnnounceRecording($"{RecordingPillCatalog.DisplayName(_activeDesign)} recording pill. {(handsFree ? "Hands-free." : "Listening.")}");
+        }
+    }
+
+    private void AnnounceRecording(string spokenName)
+    {
+        if (_activeDesign == RecordingPillDesign.ReadingWell && !_handsFree)
+        {
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ModeLabel, spokenName);
+            AnnounceStateChange(ModeLabel, DictationOverlayState.Recording);
+        }
+        else if (_activeDesign == RecordingPillDesign.Classic && _handsFree)
+        {
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(LiveAnnouncementText, spokenName);
+            AnnounceStateChange(LiveAnnouncementText, DictationOverlayState.Recording);
+        }
+        else
+        {
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ElapsedText, spokenName);
+            AnnounceStateChange(ElapsedText, DictationOverlayState.Recording);
         }
     }
 
