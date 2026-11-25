@@ -314,7 +314,7 @@ public sealed partial class MainWindow : Window, IDisposable
         ShowOnboarding(!settings.HasCompletedOnboarding);
         ProductNavigation.SelectedItem = HistoryNavItem;
         var assemblyVersion = Assembly.GetExecutingAssembly().GetName().Version;
-        SidebarVersionText.Text = FormatSidebarVersion(installedVersion, assemblyVersion);
+        TitleBarVersionText.Text = FormatTitleBarVersion(installedVersion, assemblyVersion);
         BuildInfoText.Text = $"{releaseIdentity.DisplayName} {assemblyVersion} · {releaseIdentity.ChannelName}";
         WhatsNewBuildInfoText.Text = BuildInfoText.Text;
 
@@ -417,7 +417,7 @@ public sealed partial class MainWindow : Window, IDisposable
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(IntPtr hwnd);
 
-    private static string FormatSidebarVersion(string? installedVersion, Version? assemblyVersion)
+    private static string FormatTitleBarVersion(string? installedVersion, Version? assemblyVersion)
     {
         if (!string.IsNullOrWhiteSpace(installedVersion) &&
             Version.TryParse(installedVersion, out var packageVersion))

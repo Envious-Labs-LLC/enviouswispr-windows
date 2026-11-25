@@ -63,7 +63,7 @@
     <Style x:Key="BrandPrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
         <Setter Property="Background" Value="{ThemeResource BrandAccentSolidBrush}" />
         <Setter Property="BorderBrush" Value="{ThemeResource BrandAccentSolidBrush}" />
-        <Setter Property="CornerRadius" Value="{ThemeResource BrandSectionRadius}" />
+        <Setter Property="CornerRadius" Value="{ThemeResource BrandButtonRadius}" />
         <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
         <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandOnAccentBrush}" />
         <Setter Property="Foreground" Value="{ThemeResource BrandOnAccentBrush}" />
@@ -71,7 +71,7 @@
     <Style x:Key="BrandQuietButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
         <Setter Property="Background" Value="{ThemeResource BrandAccentLightBrush}" />
         <Setter Property="BorderBrush" Value="{ThemeResource BrandDividerBrush}" />
-        <Setter Property="CornerRadius" Value="{ThemeResource BrandSectionRadius}" />
+        <Setter Property="CornerRadius" Value="{ThemeResource BrandButtonRadius}" />
         <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
         <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
         <Setter Property="Foreground" Value="{ThemeResource BrandAccentBrush}" />
@@ -83,7 +83,7 @@
     <Style x:Key="BrandDestructiveButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
         <Setter Property="Background" Value="{ThemeResource BrandErrorSoftBrush}" />
         <Setter Property="BorderBrush" Value="{ThemeResource BrandErrorBrush}" />
-        <Setter Property="CornerRadius" Value="{ThemeResource BrandSectionRadius}" />
+        <Setter Property="CornerRadius" Value="{ThemeResource BrandButtonRadius}" />
         <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandErrorBrush}" />
         <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
         <Setter Property="Foreground" Value="{ThemeResource BrandErrorBrush}" />
@@ -151,7 +151,7 @@
         <Setter Property="Foreground" Value="{ThemeResource BrandTextSecondaryBrush}" />
         <Setter Property="BorderBrush" Value="Transparent" />
         <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="{ThemeResource BrandSectionRadius}" />
+        <Setter Property="CornerRadius" Value="{ThemeResource BrandButtonRadius}" />
         <Setter Property="Padding" Value="14,6,14,6" />
         <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
         <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
@@ -213,7 +213,7 @@
         <Setter Property="Foreground" Value="{ThemeResource BrandTextSecondaryBrush}" />
         <Setter Property="BorderBrush" Value="Transparent" />
         <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="14" />
+        <Setter Property="CornerRadius" Value="{ThemeResource BrandSegmentRadius}" />
         <Setter Property="Padding" Value="12,4,12,4" />
         <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
         <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
@@ -1289,5 +1289,72 @@
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
+    </Style>
+    <Style x:Key="BrandHelpButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="Background" Value="{ThemeResource BrandHitTestBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandHitTestBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="MinWidth" Value="{StaticResource BrandHelpButtonHitSize}" />
+        <Setter Property="MinHeight" Value="{StaticResource BrandHelpButtonHitSize}" />
+        <Setter Property="CornerRadius" Value="{ThemeResource BrandButtonRadius}" />
+        <Setter Property="Foreground" Value="{ThemeResource BrandTextTertiaryBrush}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource BrandAccentBrush}" />
+        <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource BrandCardBgBrush}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <ContentPresenter
+                        x:Name="ContentPresenter"
+                        Padding="{TemplateBinding Padding}"
+                        HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                        VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                        AutomationProperties.AccessibilityView="Raw"
+                        Background="{TemplateBinding Background}"
+                        BackgroundSizing="{TemplateBinding BackgroundSizing}"
+                        BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="{TemplateBinding BorderThickness}"
+                        Content="{TemplateBinding Content}"
+                        ContentTemplate="{TemplateBinding ContentTemplate}"
+                        ContentTransitions="{TemplateBinding ContentTransitions}"
+                        CornerRadius="{TemplateBinding CornerRadius}"
+                        Foreground="{TemplateBinding Foreground}">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <VisualState.Setters>
+                                        <Setter Target="ContentPresenter.Background" Value="{ThemeResource BrandAccentLightBrush}" />
+                                        <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource BrandAccentBrush}" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <VisualState.Setters>
+                                        <Setter Target="ContentPresenter.Background" Value="{ThemeResource BrandAccentLightBrush}" />
+                                        <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource BrandAccentSolidBrush}" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Disabled">
+                                    <VisualState.Setters>
+                                        <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource BrandTextTertiaryBrush}" />
+                                        <Setter Target="ContentPresenter.Opacity" Value="0.5" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                    </ContentPresenter>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style x:Key="BrandHelpFlyoutPresenterStyle" TargetType="FlyoutPresenter">
+        <Setter Property="Background" Value="{ThemeResource BrandCardBgBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandDividerBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{ThemeResource BrandSectionRadius}" />
+        <Setter Property="Padding" Value="{StaticResource BrandHelpFlyoutPadding}" />
+        <Setter Property="MaxWidth" Value="{StaticResource BrandHelpFlyoutMaxWidth}" />
     </Style>
 </ResourceDictionary>

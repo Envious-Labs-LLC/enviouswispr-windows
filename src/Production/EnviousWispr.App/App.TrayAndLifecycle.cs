@@ -321,7 +321,7 @@ public partial class App
             var items = devices
                 .Select(device => new TrayMicrophoneItem(
                     device.Id.Value,
-                    device.IsDefault ? $"{device.DisplayName} (Windows default)" : device.DisplayName))
+                    EnviousWispr.Core.Audio.InputDeviceResolver.FormatDeviceDisplayName(device)))
                 .ToArray();
             tray.SetMicrophones(items, _settings.PreferredMicrophoneId);
         }

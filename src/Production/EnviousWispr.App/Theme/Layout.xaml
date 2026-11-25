@@ -6,6 +6,8 @@
     <Thickness x:Key="BrandWindowFrameInset">14</Thickness>
     <x:Double x:Key="BrandContentCardMinimumWidth">480</x:Double>
     <CornerRadius x:Key="BrandSectionRadius">14</CornerRadius>
+    <CornerRadius x:Key="BrandButtonRadius">8</CornerRadius>
+    <CornerRadius x:Key="BrandSegmentRadius">7</CornerRadius>
     <!-- Pills and tags: a radius larger than any pill is tall, so the ends are always round. -->
     <CornerRadius x:Key="BrandPillRadius">100</CornerRadius>
     <x:Double x:Key="BrandRowPaddingH">14</x:Double>
@@ -102,4 +104,11 @@
     <x:Double x:Key="BrandOnboardingPracticeBoxHeight">132</x:Double>
     <!-- The Ready screen's keycap: the key's name set in the title style with room around it, as macOS draws it. -->
     <Thickness x:Key="BrandOnboardingKeycapPadding">32,14,32,14</Thickness>
+    <x:Double x:Key="BrandTitleBarLogoSize">20</x:Double>
+    <x:Double x:Key="BrandHelpGlyphSize">15</x:Double>
+    <x:Double x:Key="BrandHelpButtonHitSize">24</x:Double>
+    <x:Double x:Key="BrandHelpFlyoutMaxWidth">300</x:Double>
+    <Thickness x:Key="BrandHelpFlyoutPadding">14</Thickness>
+    <Thickness x:Key="BrandToolbarButtonPadding">8,5,8,5</Thickness>
+    <Thickness x:Key="BrandRecordToolbarButtonPadding">12,5,12,5</Thickness>
 </ResourceDictionary>

@@ -315,6 +315,27 @@ public sealed class PushToTalkSessionControllerTests
         Assert.False(started.Session?.DeliveryOptions.CopyInsteadOfPaste);
     }
 
+    [Fact]
+    public async Task ChangingResolvedAudioDeviceReachesTheVeryNextRecording()
+    {
+        var audio = new FakeAudioCapture();
+        var currentDevice = new AudioDeviceId("usb-1");
+        await using var controller = new PushToTalkSessionController(
+            audio,
+            new FakeTargetProvider(101),
+            resolveAudioDevice: _ => Task.FromResult<AudioDeviceId?>(currentDevice));
+
+        await controller.PressAsync();
+        Assert.Equal(new AudioDeviceId("usb-1"), audio.LastRequest?.DeviceId);
+
+        await controller.CancelAsync();
+        await controller.ResetAsync();
+
+        currentDevice = new AudioDeviceId("builtin-2");
+        await controller.PressAsync();
+        Assert.Equal(new AudioDeviceId("builtin-2"), audio.LastRequest?.DeviceId);
+    }
+
     private sealed class FakeAudioCapture : IAudioCapture
     {
         private DictationSessionId _sessionId;

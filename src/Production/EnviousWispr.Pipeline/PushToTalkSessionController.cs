@@ -40,6 +40,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
     private readonly TimeSpan _minimumHoldDuration;
     private readonly Func<TextDeliveryOptions> _deliveryOptions;
     private readonly AudioDeviceId? _preferredAudioDevice;
+    private readonly Func<CancellationToken, Task<AudioDeviceId?>>? _resolveAudioDevice;
     private readonly UatRuntimePhaseJournal? _phaseJournal;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private bool _disposed;
@@ -51,7 +52,8 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         TimeSpan? minimumHoldDuration = null,
         Func<TextDeliveryOptions>? deliveryOptions = null,
         AudioDeviceId? preferredAudioDevice = null,
-        UatRuntimePhaseJournal? phaseJournal = null)
+        UatRuntimePhaseJournal? phaseJournal = null,
+        Func<CancellationToken, Task<AudioDeviceId?>>? resolveAudioDevice = null)
     {
         ArgumentNullException.ThrowIfNull(audioCapture);
         ArgumentNullException.ThrowIfNull(targetProvider);
@@ -66,6 +68,7 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         // that recording, so a change saved mid-take cannot alter where the words already going.
         _deliveryOptions = deliveryOptions ?? (() => TextDeliveryOptions.Default);
         _preferredAudioDevice = preferredAudioDevice;
+        _resolveAudioDevice = resolveAudioDevice;
         _phaseJournal = phaseJournal ?? UatRuntimePhaseJournal.FromEnvironment();
         ArgumentOutOfRangeException.ThrowIfLessThan(_minimumHoldDuration, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(
@@ -162,12 +165,15 @@ public sealed class PushToTalkSessionController : IAsyncDisposable
         }
 
         var sessionId = DictationSessionId.Create();
+        var targetAudioDevice = _resolveAudioDevice is not null
+            ? await _resolveAudioDevice(cancellationToken).ConfigureAwait(false)
+            : _preferredAudioDevice;
         var started = await _audioCapture
-            .StartAsync(new AudioCaptureRequest(sessionId, _preferredAudioDevice), cancellationToken)
+            .StartAsync(new AudioCaptureRequest(sessionId, targetAudioDevice), cancellationToken)
             .ConfigureAwait(false);
         AppError? fallbackReason = null;
         if (!started.Succeeded &&
-            _preferredAudioDevice is not null &&
+            targetAudioDevice is not null &&
             started.Error?.Code is AppErrorCode.AudioDeviceUnavailable or AppErrorCode.AudioDeviceLost)
         {
             fallbackReason = started.Error;
