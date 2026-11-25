@@ -474,6 +474,8 @@ internal sealed class FakeEngine(string spoken) : ITranscriptionEngine
     public List<CancellationToken> Tokens { get; } = [];
     public Queue<string> Words { get; } = new();
 
+    public string DetectedLanguage { get; set; } = "en";
+
     public TaskCompletionSource AllowExit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -521,7 +523,7 @@ internal sealed class FakeEngine(string spoken) : ITranscriptionEngine
 
         registration.Unregister();
         BeforeReturning?.Invoke();
-        return new Transcript(audio.SessionId, Words.TryDequeue(out var next) ? next : spoken, EngineId, DetectedLanguage: "en");
+        return new Transcript(audio.SessionId, Words.TryDequeue(out var next) ? next : spoken, EngineId, DetectedLanguage: DetectedLanguage);
     }
 }
 

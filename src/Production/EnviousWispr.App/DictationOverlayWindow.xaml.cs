@@ -360,7 +360,11 @@ public sealed partial class DictationOverlayWindow : Window
                 _recordingStartedAt = DateTimeOffset.UtcNow;
                 ElapsedText.Text = RecordingPillGeometry.FormatElapsed(TimeSpan.Zero);
                 _previewText = null;
-                _handsFree = false;
+                _handsFree = status.IsHandsFree;
+            }
+            else if (status.IsHandsFree)
+            {
+                _handsFree = true;
             }
 
             _activeDesign = RecordingPillCatalog.Resolve(
@@ -745,7 +749,7 @@ public sealed partial class DictationOverlayWindow : Window
         HeaderRow.ColumnSpacing = readingWell ? 8 : 0;
         HeaderRow.HorizontalAlignment = readingWell ? HorizontalAlignment.Stretch : HorizontalAlignment.Center;
         HeaderRow.Height = readingWell ? ReadingWellHeaderHeight - FrameBorderThickness * 2 : double.NaN;
-        HeaderRow.Padding = readingWell ? new Thickness(16, 8, 16, 8) : new Thickness(0);
+        HeaderRow.Padding = readingWell ? new Thickness(16, 0, 16, 0) : new Thickness(0);
         ContentPanel.Margin = readingWell ? new Thickness(0) : new Thickness(14, 0, 14, 0);
         ContentPanel.Spacing = 0;
         ContentPanel.VerticalAlignment = readingWell ? VerticalAlignment.Top : VerticalAlignment.Center;

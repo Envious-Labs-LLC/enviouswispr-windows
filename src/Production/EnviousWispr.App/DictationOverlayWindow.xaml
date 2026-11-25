@@ -232,14 +232,14 @@
 
                         <!-- Hands-free on the Level Rail: inline, so the 44-tall pill never grows a row. -->
                         <Border x:Name="RailHandsFreeBadge" Padding="9,3" CornerRadius="9" Style="{StaticResource PillCapsuleBadgeStyle}" VerticalAlignment="Center" Visibility="Collapsed">
-                            <TextBlock x:Name="RailHandsFreeText" FontSize="11" FontWeight="SemiBold" Style="{StaticResource PillCapsuleBadgeTextStyle}" Text="HANDS-FREE" />
+                            <TextBlock x:Name="RailHandsFreeText" FontSize="11" FontWeight="SemiBold" Style="{StaticResource PillCapsuleBadgeTextStyle}" Text="Hands-free" />
                         </Border>
 
                         <!-- Processing's one line, kept inside HeaderLeading so empty columns add no right-side gap. -->
                         <TextBlock x:Name="ProcessingLabel" FontSize="13" FontWeight="Medium" Foreground="{ThemeResource PillCapsuleTextBrush}" MaxLines="1" Text="Transcribing..." VerticalAlignment="Center" Visibility="Collapsed" />
                     </StackPanel>
 
-                    <TextBlock x:Name="StateTitle" AutomationProperties.LiveSetting="Polite" Grid.Column="1" FontSize="14" FontWeight="SemiBold" Style="{StaticResource PillNoticeTextStyle}" Text="Dictation complete" TextWrapping="Wrap" VerticalAlignment="Center" Visibility="Collapsed" />
+                    <TextBlock x:Name="StateTitle" AutomationProperties.LiveSetting="Polite" Grid.Column="1" FontSize="14" FontWeight="SemiBold" Style="{StaticResource PillNoticeTextStyle}" Text="Copied to clipboard" TextWrapping="Wrap" VerticalAlignment="Center" Visibility="Collapsed" />
 
                     <!-- The Reading Well's state word, right-aligned in its header. -->
                     <TextBlock x:Name="ModeLabel" Grid.Column="2" FontSize="11" FontWeight="SemiBold" Style="{StaticResource PillWellModeTextStyle}" Text="LISTENING" VerticalAlignment="Center" Visibility="Collapsed" />
@@ -261,14 +261,7 @@
                     <Canvas x:Name="PreviewViewport" Height="0">
                         <TextBlock x:Name="PreviewText" AutomationProperties.Name="Live transcription preview" FontSize="14" LineHeight="21" LineStackingStrategy="BlockLineHeight" Style="{StaticResource PillWellTextStyle}" TextAlignment="DetectFromContent" TextWrapping="Wrap" />
                         <!-- The top fade, shown only when something has actually scrolled off the top. -->
-                        <Border x:Name="PreviewFade" IsHitTestVisible="False" Visibility="Collapsed">
-                            <Border.Background>
-                                <LinearGradientBrush StartPoint="0.5,0" EndPoint="0.5,1">
-                                    <GradientStop Offset="0" Color="{ThemeResource PillWellSurfaceColor}" />
-                                    <GradientStop Offset="1" Color="{ThemeResource PillWellSurfaceClearColor}" />
-                                </LinearGradientBrush>
-                            </Border.Background>
-                        </Border>
+                        <Border x:Name="PreviewFade" IsHitTestVisible="False" Style="{StaticResource PillWellFadeStyle}" Visibility="Collapsed" />
                     </Canvas>
                 </Border>
                 <TextBlock x:Name="StateDetail" AutomationProperties.AccessibilityView="Raw" FontSize="14" MaxLines="2" Style="{StaticResource PillNoticeTextStyle}" Text="Release your key to finish" TextWrapping="Wrap" Visibility="Collapsed" />

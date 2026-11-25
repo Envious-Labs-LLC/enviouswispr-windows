@@ -69,6 +69,10 @@
             <SolidColorBrush x:Key="PillWellSurfaceBrush" Color="#F0FCFAFF" />
             <Color x:Key="PillWellSurfaceClearColor">#00FCFAFF</Color>
             <SolidColorBrush x:Key="PillWellSurfaceClearBrush" Color="#00FCFAFF" />
+            <LinearGradientBrush x:Key="PillWellFadeBrush" StartPoint="0.5,0" EndPoint="0.5,1">
+                <GradientStop Offset="0" Color="#F0FCFAFF" />
+                <GradientStop Offset="1" Color="#00FCFAFF" />
+            </LinearGradientBrush>
             <Color x:Key="PillWellBorderColor">#240F0A1A</Color>
             <SolidColorBrush x:Key="PillWellBorderBrush" Color="#240F0A1A" />
             <Color x:Key="PillWellDividerColor">#1A0F0A1A</Color>
@@ -158,6 +162,10 @@
             <SolidColorBrush x:Key="PillWellSurfaceBrush" Color="#E6110F18" />
             <Color x:Key="PillWellSurfaceClearColor">#00110F18</Color>
             <SolidColorBrush x:Key="PillWellSurfaceClearBrush" Color="#00110F18" />
+            <LinearGradientBrush x:Key="PillWellFadeBrush" StartPoint="0.5,0" EndPoint="0.5,1">
+                <GradientStop Offset="0" Color="#E6110F18" />
+                <GradientStop Offset="1" Color="#00110F18" />
+            </LinearGradientBrush>
             <Color x:Key="PillWellBorderColor">#21FFFFFF</Color>
             <SolidColorBrush x:Key="PillWellBorderBrush" Color="#21FFFFFF" />
             <Color x:Key="PillWellDividerColor">#17FFFFFF</Color>
@@ -243,6 +251,10 @@
             <SolidColorBrush x:Key="PillWellSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
             <Color x:Key="PillWellSurfaceClearColor">Transparent</Color>
             <SolidColorBrush x:Key="PillWellSurfaceClearBrush" Color="Transparent" />
+            <LinearGradientBrush x:Key="PillWellFadeBrush" StartPoint="0.5,0" EndPoint="0.5,1">
+                <GradientStop Offset="0" Color="{ThemeResource SystemColorWindowColor}" />
+                <GradientStop Offset="1" Color="Transparent" />
+            </LinearGradientBrush>
             <StaticResource x:Key="PillWellBorderColor" ResourceKey="SystemColorWindowTextColor" />
             <SolidColorBrush x:Key="PillWellBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
             <StaticResource x:Key="PillWellDividerColor" ResourceKey="SystemColorWindowTextColor" />
@@ -314,6 +326,9 @@
     </Style>
     <Style x:Key="PillWellSurfaceStyle" TargetType="Border">
         <Setter Property="Background" Value="{ThemeResource PillWellSurfaceBrush}" />
+    </Style>
+    <Style x:Key="PillWellFadeStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource PillWellFadeBrush}" />
     </Style>
     <Style x:Key="PillCapsuleEdgeStyle" TargetType="Border">
         <Setter Property="BorderBrush" Value="{ThemeResource PillCapsuleBorderBrush}" />
@@ -399,7 +414,7 @@
         <Setter Property="BorderBrush" Value="{ThemeResource PillBorderBrush}" />
     </Style>
     <Style x:Key="PillNeutralWashStyle" TargetType="Border">
-        <!-- No wash. The neutral pill is the surface itself. -->
+        <Setter Property="Background" Value="Transparent" />
     </Style>
     <Style x:Key="PillSuccessIconStyle" TargetType="FontIcon">
         <Setter Property="Foreground" Value="{ThemeResource PillSuccessInkBrush}" />

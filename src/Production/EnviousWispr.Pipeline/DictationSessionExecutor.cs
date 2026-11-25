@@ -864,6 +864,8 @@ public sealed class DictationSessionExecutor : ISessionCommandExecutor
             RecordTransition(result);
             if (result.Kind == SessionTransitionKind.Started && result.Session is not null)
             {
+                result = result with { IsHandsFree = command.IsHandsFree };
+                transition = result;
                 _escapeRecoveryForSession = _effects.EscapeRecoveryEnabled;
                 // THE SETTINGS ARE READ ONCE, HERE, and the background work is told them: a recording
                 // that started under one auto-stop preference finishes under it.

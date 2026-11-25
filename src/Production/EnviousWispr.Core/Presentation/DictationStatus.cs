@@ -142,11 +142,13 @@ public sealed record PillAction(string Label, PillActionKind Kind, string? Acces
 /// Whether this sentence is about the speech engine's own readiness, and therefore belongs on the
 /// Transcription card and the onboarding line as well as the status line.
 /// </param>
+/// <param name="IsHandsFree">Whether a live recording is hands-free (locked), so the pill shows its locked look.</param>
 public readonly record struct DictationStatus(
     string Text,
     DictationOverlayState State,
     PillAction? Action = null,
-    bool DescribesTranscriptionEngine = false)
+    bool DescribesTranscriptionEngine = false,
+    bool IsHandsFree = false)
 {
     /// <summary>Marks a status as one the Transcription card should show.</summary>
     /// <remarks>
@@ -163,8 +165,8 @@ public readonly record struct DictationStatus(
     public static DictationStatus Quiet(string text) => new(text, DictationOverlayState.Hidden);
 
     /// <summary>A recording is live.</summary>
-    public static DictationStatus Recording(string text) =>
-        new(text, DictationOverlayState.Recording);
+    public static DictationStatus Recording(string text, bool isHandsFree = false) =>
+        new(text, DictationOverlayState.Recording, IsHandsFree: isHandsFree);
 
     /// <summary>Work is under way and the user is waiting on it.</summary>
     public static DictationStatus Processing(string text) =>

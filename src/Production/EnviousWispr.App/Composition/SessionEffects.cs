@@ -242,8 +242,11 @@ internal sealed class SessionEffects(SessionCompositionParts parts, RecordingFla
 
     private static DictationStatus SessionStatus(SessionTransitionResult result) => result.Kind switch
     {
-        SessionTransitionKind.Started =>
-            DictationStatus.Recording("Recording. Release to finish, Escape to cancel"),
+        SessionTransitionKind.Started => DictationStatus.Recording(
+            result.IsHandsFree
+                ? "Recording hands-free. Press again to finish, Escape to cancel"
+                : "Recording. Release to finish, Escape to cancel",
+            result.IsHandsFree),
         SessionTransitionKind.FinalizeReady when result.Error is not null =>
             DictationStatus.Quiet("Capture preserved after a microphone interruption"),
         SessionTransitionKind.FinalizeReady =>
