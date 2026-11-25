@@ -21,8 +21,8 @@ public sealed class DynamicControlAccessibilityTests
     [Fact]
     public void EveryDynamicChimePlayButtonHasExplicitAutomationName()
     {
-        var root = ParseMainWindowCode();
-        var method = FindMethod(root, "InitializeChimeCards");
+        var roots = ParseMainWindowCode();
+        var method = FindMethod(roots, "InitializeChimeCards");
         Assert.NotNull(method);
 
         var code = method.ToString();
@@ -36,8 +36,8 @@ public sealed class DynamicControlAccessibilityTests
     [Fact]
     public void EveryDynamicChimeCardIsKeyboardOperableAndAccessible()
     {
-        var root = ParseMainWindowCode();
-        var method = FindMethod(root, "InitializeChimeCards");
+        var roots = ParseMainWindowCode();
+        var method = FindMethod(roots, "InitializeChimeCards");
         Assert.NotNull(method);
 
         var code = method.ToString();
@@ -60,10 +60,10 @@ public sealed class DynamicControlAccessibilityTests
     [Fact]
     public void ChimeCardSelectionStateAnnouncedToAutomation()
     {
-        var root = ParseMainWindowCode();
+        var roots = ParseMainWindowCode();
 
         // Visual updater must set ItemStatus on the peer-backed selection button to Selected / Not selected.
-        var updateMethod = FindMethod(root, "UpdateChimeCardsVisuals");
+        var updateMethod = FindMethod(roots, "UpdateChimeCardsVisuals");
         Assert.NotNull(updateMethod);
         var updateCode = updateMethod.ToString();
         Assert.Contains("AutomationProperties.SetItemStatus(", updateCode, StringComparison.Ordinal);
@@ -71,7 +71,7 @@ public sealed class DynamicControlAccessibilityTests
         Assert.Contains("\"Not selected\"", updateCode, StringComparison.Ordinal);
 
         // Selection handler must raise UIA notification for screen readers through the peer-backed selection button.
-        var selectMethod = FindMethod(root, "SelectChimePairing");
+        var selectMethod = FindMethod(roots, "SelectChimePairing");
         Assert.NotNull(selectMethod);
         var selectCode = selectMethod.ToString();
         Assert.Contains("RaiseNotificationEvent(", selectCode, StringComparison.Ordinal);
@@ -115,16 +115,16 @@ public sealed class DynamicControlAccessibilityTests
         }
     }
 
-    private static CompilationUnitSyntax ParseMainWindowCode()
-    {
-        var path = Path.Combine(RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs");
-        var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path);
-        return tree.GetCompilationUnitRoot();
-    }
+    private static CompilationUnitSyntax[] ParseMainWindowCode() =>
+        Directory.EnumerateFiles(
+                Path.Combine(RepositoryRoot(), "src", "Production", "EnviousWispr.App"),
+                "MainWindow*.cs")
+            .Order()
+            .Select(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path).GetCompilationUnitRoot())
+            .ToArray();
 
-    private static MethodDeclarationSyntax? FindMethod(CompilationUnitSyntax root, string name) =>
-        root.DescendantNodes()
-            .OfType<MethodDeclarationSyntax>()
+    private static MethodDeclarationSyntax? FindMethod(CompilationUnitSyntax[] roots, string name) =>
+        roots.SelectMany(root => root.DescendantNodes().OfType<MethodDeclarationSyntax>())
             .FirstOrDefault(m => m.Identifier.ValueText == name);
 
     private static string RepositoryRoot()

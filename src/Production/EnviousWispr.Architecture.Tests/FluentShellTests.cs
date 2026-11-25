@@ -59,7 +59,11 @@ public sealed class FluentShellTests
     {
         var root = FindRepositoryRoot();
         var markup = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
-        var codeBehind = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var codeBehind = string.Join(
+            "\n",
+            Directory.EnumerateFiles(Path.Combine(root, "src", "Production", "EnviousWispr.App"), "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
 
         Assert.DoesNotContain("v2.6.0", markup, StringComparison.Ordinal);
         Assert.DoesNotContain("v2.6.0", codeBehind, StringComparison.Ordinal);
@@ -182,7 +186,11 @@ public sealed class FluentShellTests
     {
         var root = FindRepositoryRoot();
         var markup = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
-        var codeBehind = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var codeBehind = string.Join(
+            "\n",
+            Directory.EnumerateFiles(Path.Combine(root, "src", "Production", "EnviousWispr.App"), "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
 
         foreach (var removed in new[]
                  {

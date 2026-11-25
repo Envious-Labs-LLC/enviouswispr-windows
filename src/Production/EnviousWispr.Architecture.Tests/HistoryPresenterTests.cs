@@ -155,7 +155,7 @@ public sealed class HistoryPresenterTests
     [Fact]
     public void TheRecoveryDeletionHandlerNotifiesTheAppOnlyWhenTheCopyIsGone()
     {
-        var window = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var window = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.History.cs"));
         var start = window.IndexOf("private async void DeleteRecoveryButton_Click(", StringComparison.Ordinal);
         Assert.True(start >= 0, "The recovery deletion handler is gone.");
         var end = window.IndexOf("\n    }\n", start, StringComparison.Ordinal);
@@ -179,7 +179,7 @@ public sealed class HistoryPresenterTests
     [Fact]
     public void TheRecoveryCopyHandlerClearsAndNotifiesOnlyWhenTheCopyIsGone()
     {
-        var window = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var window = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.History.cs"));
         var start = window.IndexOf("private async void CopyRecoveryButton_Click(", StringComparison.Ordinal);
         Assert.True(start >= 0, "The recovery copy handler is gone.");
         var end = window.IndexOf("\n    }\n", start, StringComparison.Ordinal);

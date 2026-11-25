@@ -224,11 +224,14 @@ public sealed class Wave4WordsSnippetsFileTests
     public void ProductNavigationSelectionChangedIgnoresClearedSelectionBeforeHistoryFallback()
     {
         var root = FindRepositoryRoot();
-        var codePath = Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs");
-        var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(codePath), path: codePath);
-        var method = tree.GetRoot()
-            .DescendantNodes()
-            .OfType<MethodDeclarationSyntax>()
+        var method = Directory.EnumerateFiles(
+                Path.Combine(root, "src", "Production", "EnviousWispr.App"),
+                "MainWindow*.cs")
+            .Order()
+            .SelectMany(codePath => CSharpSyntaxTree.ParseText(File.ReadAllText(codePath), path: codePath)
+                .GetRoot()
+                .DescendantNodes()
+                .OfType<MethodDeclarationSyntax>())
             .Single(m => m.Identifier.ValueText == "ProductNavigation_SelectionChanged");
 
         var statements = method.Body!.Statements;

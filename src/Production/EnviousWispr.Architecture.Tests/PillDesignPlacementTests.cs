@@ -54,8 +54,13 @@ public sealed class PillDesignPlacementTests
     [Fact]
     public void RecordingPillAndAppearanceSectionsAreRoutedSeparately()
     {
-        var code = File.ReadAllText(Path.Combine(
-            RepositoryRoot(), "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var code = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                    Path.Combine(RepositoryRoot(), "src", "Production", "EnviousWispr.App"),
+                    "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
 
         var dictationTabMethod = Regex.Match(
             code,

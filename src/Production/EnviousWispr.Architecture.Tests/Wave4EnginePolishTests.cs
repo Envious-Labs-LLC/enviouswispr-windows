@@ -223,7 +223,7 @@ public sealed class Wave4EnginePolishTests
     {
         var root = FindRepositoryRoot();
         var mainWindowCode = File.ReadAllText(
-            Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+            Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.Settings.cs"));
         var appCode = File.ReadAllText(
             Path.Combine(root, "src", "Production", "EnviousWispr.App", "App.TrayAndLifecycle.cs"));
 
@@ -237,8 +237,13 @@ public sealed class Wave4EnginePolishTests
         var root = FindRepositoryRoot();
         var mainWindowXaml = File.ReadAllText(
             Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
-        var mainWindowCode = File.ReadAllText(
-            Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var mainWindowCode = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                    Path.Combine(root, "src", "Production", "EnviousWispr.App"),
+                    "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
 
         Assert.Contains("Click=\"EngineCardClicked\"", mainWindowXaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"PolishProviderCardClicked\"", mainWindowXaml, StringComparison.Ordinal);

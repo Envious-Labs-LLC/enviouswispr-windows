@@ -113,7 +113,11 @@ public sealed class HotkeyConflictDetectorTests
     public void EveryKeybindFieldIsWiredToTheWarningAndSaveAsksTheSameDetector()
     {
         var markup = File.ReadAllText(AppSourcePath("MainWindow.xaml"));
-        var code = File.ReadAllText(AppSourcePath("MainWindow.xaml.cs"));
+        var code = string.Join(
+            "\n",
+            Directory.EnumerateFiles(Path.GetDirectoryName(AppSourcePath("MainWindow.xaml"))!, "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
 
         foreach (var field in new[] { "HotkeyTextBox", "CancelHotkeyTextBox", "QuickAddHotkeyTextBox" })
         {

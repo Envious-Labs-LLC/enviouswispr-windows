@@ -351,7 +351,7 @@ public sealed class MultiAliasAndPackParityTests
         var root = FindRepositoryRoot();
         var xaml = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml"));
         var editorCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.WordsAndSnippets.cs"));
-        var mainCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var mainCs = File.ReadAllText(Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.Dictionary.cs"));
 
         Assert.Contains("Switching from another dictation app?", xaml, StringComparison.Ordinal);
         Assert.Contains("WordFilterAllChip", xaml, StringComparison.Ordinal);

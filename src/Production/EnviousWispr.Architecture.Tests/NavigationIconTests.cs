@@ -131,7 +131,13 @@ public sealed class NavigationIconTests
     /// <summary>The two page dispatches, sliced to the end of their method body.</summary>
     private static (string Name, string Body)[] PageDispatches()
     {
-        var code = File.ReadAllText(AppSourcePath("MainWindow.xaml.cs"));
+        var code = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                    Path.Combine(RepositoryRoot(), "src", "Production", "EnviousWispr.App"),
+                    "MainWindow*.cs")
+                .Order()
+                .Select(File.ReadAllText));
         return PageDispatchNames
             .Select(name =>
             {
