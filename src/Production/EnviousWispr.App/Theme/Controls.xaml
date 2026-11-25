@@ -18,6 +18,48 @@
     <Style x:Key="BrandHeaderCardStyle" TargetType="Border" BasedOn="{StaticResource BrandSectionCardStyle}">
         <Setter Property="Padding" Value="20" />
     </Style>
+    <!--
+        A SETTINGS SECTION IS A HEADING ON THE PAGE WITH ITS CARD BELOW IT, NOT A CARD WITH THE HEADING INSIDE.
+        The section used to be the card, so every card it held (the engine summary, the choice cards, the
+        chime tiles) was a box inside a box. The section is now a bare container named for the page code to
+        show and hide; its eyebrow sits on the page and the rows sit in BrandSettingsCardStyle cards beside
+        any choice cards, all on the same level, the way macOS draws its settings panes.
+    -->
+    <Style x:Key="BrandSettingsSectionStyle" TargetType="Border">
+        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style x:Key="BrandSettingsCardStyle" TargetType="Border" BasedOn="{StaticResource BrandSectionCardStyle}">
+        <Setter Property="Padding" Value="20" />
+        <Setter Property="BorderBrush" Value="{ThemeResource BrandDividerBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <!--
+        A STATUS CHIP, FLAT. The outlined oval with a tick inside read as a button and shouted louder than the
+        setting it described. macOS draws a small rounded rectangle in the soft tint with a coloured dot and
+        the word, and no outline at all. Each chip sets only its tint; the dot and the word take the strong
+        colour of the same family.
+    -->
+    <Style x:Key="BrandStatusChipStyle" TargetType="Border">
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="Padding" Value="10,4" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style x:Key="BrandSuccessChipStyle" TargetType="Border" BasedOn="{StaticResource BrandStatusChipStyle}">
+        <Setter Property="Background" Value="{ThemeResource BrandSuccessSoftBrush}" />
+    </Style>
+    <Style x:Key="BrandWarningChipStyle" TargetType="Border" BasedOn="{StaticResource BrandStatusChipStyle}">
+        <Setter Property="Background" Value="{ThemeResource BrandWarningSoftBrush}" />
+    </Style>
+    <Style x:Key="BrandErrorChipStyle" TargetType="Border" BasedOn="{StaticResource BrandStatusChipStyle}">
+        <Setter Property="Background" Value="{ThemeResource BrandErrorSoftBrush}" />
+    </Style>
+    <Style x:Key="BrandAccentChipStyle" TargetType="Border" BasedOn="{StaticResource BrandStatusChipStyle}">
+        <Setter Property="Background" Value="{ThemeResource BrandAccentLightBrush}" />
+    </Style>
+    <Style x:Key="BrandNeutralChipStyle" TargetType="Border" BasedOn="{StaticResource BrandStatusChipStyle}">
+        <Setter Property="Background" Value="{ThemeResource BrandSidebarBgBrush}" />
+    </Style>
     <Style x:Key="BrandPrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
         <Setter Property="Background" Value="{ThemeResource BrandAccentSolidBrush}" />
         <Setter Property="BorderBrush" Value="{ThemeResource BrandAccentSolidBrush}" />

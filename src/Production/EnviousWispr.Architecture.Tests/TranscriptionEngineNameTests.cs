@@ -459,8 +459,9 @@ public sealed partial class DesignSystemTokenTests
     {
         var document = LoadMainWindow();
 
-        // Redesigned Fluent pages use a centered responsive container (MaxWidth=860 via BrandFluentPageMaxWidth,
-        // HorizontalAlignment="Stretch") so wide monitors have no blank right-hand void.
+        // Fluent pages pin their left edge beside the sidebar and stretch cleanly up to BrandFluentPageMaxWidth
+        // using a single capped star column inside a Grid, so wide windows neither center a narrow column nor
+        // shrink short-copy pages to text width.
         foreach (var name in new[]
                  {
                      "WhatsNewPage",
@@ -471,10 +472,17 @@ public sealed partial class DesignSystemTokenTests
                  })
         {
             var page = FindNamedElement(document, name);
-            var container = page.Elements().Single();
-            Assert.Equal("StackPanel", container.Name.LocalName);
-            Assert.Equal("{StaticResource BrandFluentPageMaxWidth}", (string?)container.Attribute("MaxWidth"));
-            Assert.Equal("Stretch", (string?)container.Attribute("HorizontalAlignment"));
+            var grid = page.Elements().Single();
+            Assert.Equal("Grid", grid.Name.LocalName);
+            var columnDefinitions = grid.Elements()
+                .Single(e => e.Name.LocalName == "Grid.ColumnDefinitions")
+                .Elements()
+                .ToArray();
+            var col = Assert.Single(columnDefinitions);
+            Assert.Equal("*", (string?)col.Attribute("Width"));
+            Assert.Equal("{StaticResource BrandFluentPageMaxWidth}", (string?)col.Attribute("MaxWidth"));
+            var container = grid.Elements().Single(e => e.Name.LocalName == "StackPanel");
+            Assert.Null(container.Attribute("MaxWidth"));
         }
 
         // Wave 3 HistoryPage uses a full-height two-column split instead of a capped content column.
