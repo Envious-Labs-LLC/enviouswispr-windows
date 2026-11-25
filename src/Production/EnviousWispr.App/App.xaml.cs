@@ -2541,6 +2541,7 @@ public partial class App : Application, IAsyncDisposable
                 return;
             }
 
+            _configuredTranscription = _configuredTranscription with { ForcePreviewCpu = true };
             ConfigureLivePreview(workerExecutable, hardware, whisperLanguage, parakeetPreviewDirectory, previewModelDirectory, forceCpu: true);
             // THE MEMBER NO SELECTOR CAN PRODUCE. Getting here means the selection SUCCEEDED and the
             // runtime then refused to start, which the selector cannot see and therefore cannot

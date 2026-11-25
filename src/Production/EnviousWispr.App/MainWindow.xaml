@@ -544,7 +544,7 @@
                     <ScrollViewer Grid.Row="1" x:Name="WhatsNewPage" AutomationProperties.Name="What’s New page" HorizontalScrollMode="Disabled" Visibility="Collapsed">
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" MaxWidth="{StaticResource BrandFluentPageMaxWidth}" /></Grid.ColumnDefinitions>
-                            <StackPanel Spacing="{StaticResource BrandSpacingL}">
+                            <StackPanel Margin="0,0,16,0" Spacing="{StaticResource BrandSpacingL}">
                             <StackPanel Spacing="{StaticResource BrandSpacingXs}" Margin="0,0,0,8">
                                 <TextBlock Style="{StaticResource BrandPageTitleStyle}" Text="What’s New" />
                                 <TextBlock Style="{StaticResource BrandBodyStyle}" Text="The latest improvements and fixes in this release." TextWrapping="Wrap" />
@@ -809,7 +809,7 @@
                     <ScrollViewer Grid.Row="1" x:Name="DictionaryPage" AutomationProperties.Name="Dictionary page" HorizontalScrollMode="Disabled" Visibility="Collapsed">
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" MaxWidth="{StaticResource BrandFluentPageMaxWidth}" /></Grid.ColumnDefinitions>
-                            <StackPanel Spacing="{StaticResource BrandSpacingL}">
+                            <StackPanel Margin="0,0,16,0" Spacing="{StaticResource BrandSpacingL}">
                             <Grid ColumnSpacing="{StaticResource BrandSpacingL}" Margin="0,0,0,8">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
@@ -1099,7 +1099,7 @@
                     <ScrollViewer Grid.Row="1" x:Name="SnippetsPage" AutomationProperties.Name="Snippets page" HorizontalScrollMode="Disabled" Visibility="Collapsed">
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" MaxWidth="{StaticResource BrandFluentPageMaxWidth}" /></Grid.ColumnDefinitions>
-                            <StackPanel Spacing="{StaticResource BrandSpacingL}">
+                            <StackPanel Margin="0,0,16,0" Spacing="{StaticResource BrandSpacingL}">
                             <StackPanel Spacing="{StaticResource BrandSpacingXs}" Margin="0,0,0,8">
                                 <TextBlock Style="{StaticResource BrandPageTitleStyle}" Text="Snippets" />
                                 <TextBlock Style="{StaticResource BrandBodyStyle}" Text="Say your keyword, then a snippet. The saved text lands for you. Snippets stay on this PC and travel in a portable profile export." TextWrapping="Wrap" />
@@ -1136,7 +1136,7 @@
                     <ScrollViewer Grid.Row="1" x:Name="SettingsPage" AutomationProperties.Name="Settings page" HorizontalScrollMode="Disabled" Visibility="Collapsed">
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" MaxWidth="{StaticResource BrandFluentPageMaxWidth}" /></Grid.ColumnDefinitions>
-                            <StackPanel Spacing="{StaticResource BrandSpacingL}">
+                            <StackPanel Margin="0,0,16,0" Spacing="{StaticResource BrandSpacingL}">
                             <StackPanel Spacing="{StaticResource BrandSpacingXs}" Margin="0,0,0,8">
                                 <TextBlock x:Name="SettingsPageTitle" Style="{StaticResource BrandPageTitleStyle}" Text="All Settings" />
                                 <TextBlock x:Name="SettingsPageDescription" Style="{StaticResource BrandBodyStyle}" Text="Choose how EnviousWispr records, transcribes, cleans, and stores your dictation." TextWrapping="Wrap" />
@@ -2449,7 +2449,7 @@
                     <ScrollViewer Grid.Row="1" x:Name="HelpPage" AutomationProperties.Name="Help and privacy page" HorizontalScrollMode="Disabled" Visibility="Collapsed">
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" MaxWidth="{StaticResource BrandFluentPageMaxWidth}" /></Grid.ColumnDefinitions>
-                            <StackPanel Spacing="{StaticResource BrandSpacingL}">
+                            <StackPanel Margin="0,0,16,0" Spacing="{StaticResource BrandSpacingL}">
                             <StackPanel Spacing="{StaticResource BrandSpacingXs}" Margin="0,0,0,8">
                                 <TextBlock x:Name="HelpPageTitle" Style="{StaticResource BrandPageTitleStyle}" Text="Help and privacy" />
                                 <TextBlock x:Name="HelpPageDescription" Style="{StaticResource BrandBodyStyle}" Text="Find keyboard guidance, privacy details, updates, and licenses." TextWrapping="Wrap" />
@@ -2469,7 +2469,7 @@
                 limits; double-click puts it back to its starting width. It follows the navigation's visibility so
                 it never floats over the first-run screens.
             -->
-            <local:SidebarResizeHandle x:Name="SidebarResizeHandle" AutomationProperties.Name="Resize sidebar" AutomationProperties.HelpText="Drag, or press the Left and Right arrow keys, to make the sidebar narrower or wider. Double-click to restore its starting width." Width="{StaticResource BrandSidebarResizeHandleWidth}" HorizontalAlignment="Left" VerticalAlignment="Stretch" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" IsTabStop="True" UseSystemFocusVisuals="True" Visibility="{x:Bind ProductNavigation.Visibility, Mode=OneWay}" Loaded="SidebarResizeHandle_Loaded" PointerEntered="SidebarResizeHandle_PointerEntered" PointerExited="SidebarResizeHandle_PointerExited" PointerPressed="SidebarResizeHandle_PointerPressed" PointerMoved="SidebarResizeHandle_PointerMoved" PointerReleased="SidebarResizeHandle_PointerReleased" PointerCaptureLost="SidebarResizeHandle_PointerCaptureLost" DoubleTapped="SidebarResizeHandle_DoubleTapped" KeyDown="SidebarResizeHandle_KeyDown">
+            <local:SidebarResizeHandle x:Name="SidebarResizeHandle" AutomationProperties.Name="Resize sidebar" AutomationProperties.HelpText="Drag, or press the Left and Right arrow keys, to make the sidebar narrower or wider. Double-click to restore its starting width." Background="{ThemeResource BrandHitTestBrush}" Canvas.ZIndex="10" Width="{StaticResource BrandSidebarResizeHandleWidth}" HorizontalAlignment="Left" VerticalAlignment="Stretch" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" IsTabStop="True" UseSystemFocusVisuals="True" Visibility="{x:Bind ProductNavigation.Visibility, Mode=OneWay}" Loaded="SidebarResizeHandle_Loaded" PointerEntered="SidebarResizeHandle_PointerEntered" PointerExited="SidebarResizeHandle_PointerExited" PointerPressed="SidebarResizeHandle_PointerPressed" PointerMoved="SidebarResizeHandle_PointerMoved" PointerReleased="SidebarResizeHandle_PointerReleased" PointerCaptureLost="SidebarResizeHandle_PointerCaptureLost" DoubleTapped="SidebarResizeHandle_DoubleTapped" KeyDown="SidebarResizeHandle_KeyDown">
                 <Border Background="{ThemeResource BrandHitTestBrush}">
                     <Border x:Name="SidebarResizeGrip" Width="2" HorizontalAlignment="Center" Background="{ThemeResource BrandAccentBrush}" Opacity="0" />
                 </Border>

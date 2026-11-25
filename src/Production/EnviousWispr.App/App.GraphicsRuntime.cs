@@ -32,7 +32,11 @@ public partial class App
     private readonly SemaphoreSlim _engineReconfiguration = new(1, 1);
 
     /// <summary>What the last configuration chose and saw, which is what the offer is asked about.</summary>
-    private sealed record ConfiguredTranscription(FinalAsrEngine Engine, string ModelDirectory, HardwareSnapshot Hardware);
+    private sealed record ConfiguredTranscription(
+        FinalAsrEngine Engine,
+        string ModelDirectory,
+        HardwareSnapshot Hardware,
+        bool ForcePreviewCpu = false);
 
     /// <summary>
     /// The CUDA folder the next worker is given: the environment override, the pack the store verifies,

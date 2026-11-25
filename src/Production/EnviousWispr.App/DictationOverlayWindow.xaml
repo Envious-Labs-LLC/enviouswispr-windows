@@ -13,7 +13,7 @@
         PointerReleased="OverlayRoot_PointerReleased"
         PointerCaptureLost="OverlayRoot_PointerReleased"
         BorderThickness="0"
-        CornerRadius="24"
+        CornerRadius="0"
         Style="{StaticResource PillCapsuleSurfaceStyle}">
         <!--
             A 2-UNIT BLEED AROUND THE TRUE PILL BOUNDS. SetWindowRgn clips 2 units in from the window
@@ -218,7 +218,7 @@
                             <Border Width="3" Height="3.5" Background="{ThemeResource BrandSpectrumVioletBrush}" CornerRadius="1.5" VerticalAlignment="Center" />
                         </StackPanel>
 
-                        <!-- The Reading Well's meter: the same history, smaller, in its 34-tall header. -->
+                        <!-- The Reading Well's meter: the same history, smaller, in its 36-tall header. -->
                         <StackPanel x:Name="WellMeter" Height="16" Orientation="Horizontal" Spacing="{StaticResource PillWellMeterSpacing}" Visibility="Collapsed" VerticalAlignment="Center">
                             <Border Width="2" Height="2.25" Background="{ThemeResource BrandSpectrumRedBrush}" CornerRadius="1" VerticalAlignment="Center" />
                             <Border Width="2" Height="2.25" Background="{ThemeResource BrandSpectrumRedBrush}" CornerRadius="1" VerticalAlignment="Center" />
@@ -259,7 +259,7 @@
 
                     <!-- The Reading Well's state word, right-aligned in its header. -->
                     <TextBlock x:Name="ModeLabel" Grid.Column="2" FontSize="11" FontWeight="SemiBold" Style="{StaticResource PillWellModeTextStyle}" Text="LISTENING" VerticalAlignment="Center" Visibility="Collapsed" />
-                    <Border x:Name="WellHandsFreeBadge" Grid.Column="2" Padding="9,3" CornerRadius="9" Style="{StaticResource PillWellBadgeStyle}" VerticalAlignment="Center" Visibility="Collapsed">
+                    <Border x:Name="WellHandsFreeBadge" Grid.Column="2" Padding="8,2" CornerRadius="9" Style="{StaticResource PillWellBadgeStyle}" VerticalAlignment="Center" Visibility="Collapsed">
                         <StackPanel Orientation="Horizontal" Spacing="{StaticResource PillBadgeDotSpacing}">
                             <Ellipse Width="5" Height="5" Style="{StaticResource PillWellBadgeDotStyle}" VerticalAlignment="Center" />
                             <TextBlock x:Name="WellHandsFreeText" FontSize="11" FontWeight="SemiBold" Style="{StaticResource PillWellBadgeTextStyle}" Text="HANDS-FREE" />

@@ -383,90 +383,147 @@ public partial class App
         _window?.SetEgOneModels(states, CheckEgOneServerExecutableExists(), activeDownloadId);
     }
 
-    private async Task PresentModelDeliveryAsync()
+    private enum PreviewReconfigureOutcome
+    {
+        Applied,
+        Busy,
+        Closed,
+    }
+
+    private Task<bool> PresentModelDeliveryAsync() => PresentModelDeliveryCoreAsync();
+
+    private async Task<bool> PresentModelDeliveryCoreAsync()
     {
         if (_modelDownload is not null)
         {
-            return;
+            return true;
         }
 
-        while (_livePreviewReconfigurePending || _transcriptionReconfigurePending || _polishReconfigurePending)
+        var coordinatorClosed = false;
+        do
         {
-            if (IsSpeechEngineBusy || Leaving)
+            while (_livePreviewReconfigurePending || _transcriptionReconfigurePending || _polishReconfigurePending)
             {
-                break;
-            }
-
-            var attempt = _sessionCoordinator?.TryHold(SessionHolder.SpeechEngineSwitch)
-                ?? new SessionHoldAttempt(NoScope.Instance);
-            if (attempt.Hold is not { } hold)
-            {
-                break;
-            }
-
-            using (hold)
-            {
-                var reconfigureFinalEngine = _transcriptionReconfigurePending;
-                var reconfigurePreviewOrTranscription = _livePreviewReconfigurePending || _transcriptionReconfigurePending;
-                var reconfigurePolish = _polishReconfigurePending;
-                _livePreviewReconfigurePending = false;
-                _transcriptionReconfigurePending = false;
-                _polishReconfigurePending = false;
-                if (reconfigurePreviewOrTranscription && (reconfigureFinalEngine || _configuredTranscription is not null))
+                if (IsSpeechEngineBusy || Leaving)
                 {
-                    await ReconfigureTranscriptionAsync().ConfigureAwait(true);
-                    if (Leaving)
-                    {
-                        return;
-                    }
-
-                    PresentGraphicsRuntime();
+                    break;
                 }
 
-                if (reconfigurePolish)
+                if (_transcriptionReconfigurePending)
                 {
-                    await ReconfigurePolishRuntimeAsync().ConfigureAwait(true);
-                    if (Leaving)
+                    var attempt = _sessionCoordinator?.TryHold(SessionHolder.SpeechEngineSwitch)
+                        ?? new SessionHoldAttempt(NoScope.Instance);
+                    if (attempt.Hold is not { } hold)
                     {
-                        return;
+                        coordinatorClosed = attempt.Refusal == SessionHoldRefusal.Closed;
+                        break;
+                    }
+
+                    using (hold)
+                    {
+                        _transcriptionReconfigurePending = false;
+                        _livePreviewReconfigurePending = false;
+                        await ReconfigureTranscriptionAsync().ConfigureAwait(true);
+                        if (Leaving)
+                        {
+                            return false;
+                        }
+
+                        PresentGraphicsRuntime();
+                    }
+
+                    continue;
+                }
+
+                if (_livePreviewReconfigurePending)
+                {
+                    _livePreviewReconfigurePending = false;
+                    if (_configuredTranscription is not null)
+                    {
+                        var outcome = await ReconfigureLivePreviewOnlyAsync().ConfigureAwait(true);
+                        if (Leaving || outcome == PreviewReconfigureOutcome.Closed)
+                        {
+                            return false;
+                        }
+
+                        if (outcome == PreviewReconfigureOutcome.Busy)
+                        {
+                            _livePreviewReconfigurePending = true;
+                            break;
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (_polishReconfigurePending)
+                {
+                    var attempt = _sessionCoordinator?.TryHold(SessionHolder.SpeechEngineSwitch)
+                        ?? new SessionHoldAttempt(NoScope.Instance);
+                    if (attempt.Hold is not { } hold)
+                    {
+                        coordinatorClosed = attempt.Refusal == SessionHoldRefusal.Closed;
+                        break;
+                    }
+
+                    using (hold)
+                    {
+                        _polishReconfigurePending = false;
+                        await ReconfigurePolishRuntimeAsync().ConfigureAwait(true);
+                        if (Leaving)
+                        {
+                            return false;
+                        }
                     }
                 }
             }
-        }
 
-        await RefreshLivePreviewModelInventoryAsync().ConfigureAwait(true);
-        await RefreshSpeechEngineInventoryAsync().ConfigureAwait(true);
-        await RefreshEgOneInventoryAsync().ConfigureAwait(true);
-        await RefreshEgOneConfiguredProviderFromStoreAsync(_settings.Preferences.Polish).ConfigureAwait(true);
-        if (Leaving)
-        {
-            return;
-        }
-        _missingModelIds = await MissingModelIdsAsync(_settings.Preferences).ConfigureAwait(true);
-        if (_missingModelIds.Count == 0)
-        {
-            _window?.SetModelDelivery(new(
-                "The speech model this build pins is installed and verified.",
-                Stage: SpeechModelDelivery.Installed));
-            return;
-        }
+            if (coordinatorClosed || Leaving)
+            {
+                return false;
+            }
 
-        var installable = _missingModelIds.Where(id => BundledModelManifests.TryRead(id) is not null).ToArray();
-        if (installable.Length == 0)
-        {
-            _window?.SetModelDelivery(new(
-                "This build cannot download the model it needs. Reinstall EnviousWispr.",
-                Stage: SpeechModelDelivery.CannotDownload));
-            return;
+            await RefreshLivePreviewModelInventoryAsync().ConfigureAwait(true);
+            await RefreshSpeechEngineInventoryAsync().ConfigureAwait(true);
+            await RefreshEgOneInventoryAsync().ConfigureAwait(true);
+            await RefreshEgOneConfiguredProviderFromStoreAsync(_settings.Preferences.Polish).ConfigureAwait(true);
+            if (Leaving)
+            {
+                return false;
+            }
+            _missingModelIds = await MissingModelIdsAsync(_settings.Preferences).ConfigureAwait(true);
+            if (_missingModelIds.Count == 0)
+            {
+                _window?.SetModelDelivery(new(
+                    "The speech model this build pins is installed and verified.",
+                    Stage: SpeechModelDelivery.Installed));
+            }
+            else
+            {
+                var installable = _missingModelIds.Where(id => BundledModelManifests.TryRead(id) is not null).ToArray();
+                if (installable.Length == 0)
+                {
+                    _window?.SetModelDelivery(new(
+                        "This build cannot download the model it needs. Reinstall EnviousWispr.",
+                        Stage: SpeechModelDelivery.CannotDownload));
+                }
+                else
+                {
+                    var totalBytes = installable.Sum(id =>
+                        BundledModelManifests.Load(id, new ModelManifestVerifier(new Dictionary<string, string>()))
+                            .Manifest?.Payload.Files.Sum(file => file.SizeBytes) ?? 0);
+                    _window?.SetModelDelivery(new(
+                        $"{SentenceStart(DescribeModels(installable))} {(installable.Length == 1 ? "is" : "are")} not installed on this PC. About {Megabytes(totalBytes)} MB to download, verified file by file.",
+                        CanDownload: true,
+                        Stage: SpeechModelDelivery.Missing));
+                }
+            }
         }
+        while (!Leaving &&
+               !IsSpeechEngineBusy &&
+               (_livePreviewReconfigurePending || _transcriptionReconfigurePending || _polishReconfigurePending));
 
-        var totalBytes = installable.Sum(id =>
-            BundledModelManifests.Load(id, new ModelManifestVerifier(new Dictionary<string, string>()))
-                .Manifest?.Payload.Files.Sum(file => file.SizeBytes) ?? 0);
-        _window?.SetModelDelivery(new(
-            $"{SentenceStart(DescribeModels(installable))} {(installable.Length == 1 ? "is" : "are")} not installed on this PC. About {Megabytes(totalBytes)} MB to download, verified file by file.",
-            CanDownload: true,
-            Stage: SpeechModelDelivery.Missing));
+        return true;
     }
 
     private void OnModelDownloadRequested()
@@ -1196,12 +1253,28 @@ public partial class App
 
     private async Task RefreshAfterSettingsChangeAsync()
     {
-        if (IsSpeechEngineBusy || Leaving)
+        var completedCleanly = false;
+        try
         {
-            return;
-        }
+            if (IsSpeechEngineBusy || Leaving)
+            {
+                return;
+            }
 
-        await PresentModelDeliveryAsync().ConfigureAwait(true);
+            completedCleanly = await PresentModelDeliveryCoreAsync().ConfigureAwait(true);
+        }
+        finally
+        {
+            if (completedCleanly &&
+                !Leaving &&
+                !IsSpeechEngineBusy &&
+                (_livePreviewReconfigurePending || _transcriptionReconfigurePending || _polishReconfigurePending))
+            {
+                // If dictation ended after PresentModelDeliveryCoreAsync checked IsSpeechEngineBusy and before
+                // _modelDelivery completed, OnDictationEnded skipped scheduling; drain on the next UI tick.
+                PostToLiveWindow(_ => TrySchedulePendingModelRefresh());
+            }
+        }
     }
 
     /// <summary>The person asked for local transcription to be started again, from the first-run checklist or warm-up.</summary>
@@ -1247,6 +1320,98 @@ public partial class App
 
         PresentGraphicsRuntime();
         await PresentModelDeliveryAsync().ConfigureAwait(true);
+    }
+
+    private async Task<PreviewReconfigureOutcome> ReconfigureLivePreviewOnlyAsync()
+    {
+        var previewEnabledAtStart = _settings.Preferences.LivePreviewEnabled;
+        string? parakeetPreviewDirectory = null;
+        string? previewModelDirectory = null;
+        if (previewEnabledAtStart)
+        {
+            parakeetPreviewDirectory = await ResolveModelDirectoryAsync(ParakeetTranscriptionEngine.ModelId).ConfigureAwait(true);
+            if (Leaving)
+            {
+                return PreviewReconfigureOutcome.Closed;
+            }
+
+            previewModelDirectory = await ResolveModelDirectoryAsync(
+                WhisperTranscriptionEngine.PreviewModelId,
+                "ENVIOUSWISPR_PREVIEW_MODEL_DIRECTORY").ConfigureAwait(true);
+            if (Leaving)
+            {
+                return PreviewReconfigureOutcome.Closed;
+            }
+        }
+
+        if (IsSpeechEngineBusy)
+        {
+            return PreviewReconfigureOutcome.Busy;
+        }
+
+        var attempt = _sessionCoordinator?.TryHold(SessionHolder.SpeechEngineSwitch)
+            ?? new SessionHoldAttempt(NoScope.Instance);
+        if (attempt.Hold is not { } hold)
+        {
+            return attempt.Refusal == SessionHoldRefusal.Closed
+                ? PreviewReconfigureOutcome.Closed
+                : PreviewReconfigureOutcome.Busy;
+        }
+
+        using (hold)
+        {
+            await _engineReconfiguration.WaitAsync().ConfigureAwait(true);
+            try
+            {
+                if (Leaving)
+                {
+                    return PreviewReconfigureOutcome.Closed;
+                }
+
+                if (_previewEngine is not null)
+                {
+                    await _previewEngine.DisposeAsync().ConfigureAwait(true);
+                    _previewEngine = null;
+                }
+
+                if (Leaving)
+                {
+                    return PreviewReconfigureOutcome.Closed;
+                }
+
+                if (!_settings.Preferences.LivePreviewEnabled)
+                {
+                    _previewUnavailableReason = null;
+                    return PreviewReconfigureOutcome.Applied;
+                }
+
+                if (!previewEnabledAtStart)
+                {
+                    _livePreviewReconfigurePending = true;
+                    return PreviewReconfigureOutcome.Applied;
+                }
+
+                if (_configuredTranscription is not { } configured)
+                {
+                    return PreviewReconfigureOutcome.Applied;
+                }
+
+                var hardware = _lastHardwareSnapshot ?? configured.Hardware;
+                var workerExecutable = Path.Combine(AppContext.BaseDirectory, "EnviousWispr.RuntimeWorker.exe");
+                ConfigureLivePreview(
+                    workerExecutable,
+                    hardware,
+                    CurrentWhisperLanguage(),
+                    parakeetPreviewDirectory,
+                    previewModelDirectory,
+                    forceCpu: configured.ForcePreviewCpu);
+                return PreviewReconfigureOutcome.Applied;
+            }
+            finally
+            {
+                _engineReconfiguration.Release();
+            }
+        }
     }
 
     private async Task TeardownPolishAsync()
