@@ -1176,27 +1176,21 @@ public sealed partial class DesignSystemTokenTests
     [Fact]
     public void AnImportSaysWhatHappenedOnBothPaths()
     {
-        var source = File.ReadAllText(
-            Path.Combine(
-                FindRepositoryRoot(),
-                "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var root = FindRepositoryRoot();
+        var mainWindowSource = File.ReadAllText(
+            Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.xaml.cs"));
+        var fromAppsSource = File.ReadAllText(
+            Path.Combine(root, "src", "Production", "EnviousWispr.App", "MainWindow.WordsFromApps.cs"));
 
-        // COUNTED BY WHAT IT IS PASSED, NOT BY THE NAME OF THE VARIABLE. This counted
-        // "DescribeImport(plan)" exactly, so moving the import decision inside the settings gate -
-        // where the committed plan comes back under a different name - broke a check whose property
-        // had not changed at all. Both import paths still report the itemised description; each now
-        // does it in one message whose title depends on the outcome, rather than two.
-        var uses = Regex.Count(source, @"DescribeImport\((?!IReadOnly|CustomWordImportPlan)\w+\)");
+        // File and paste word imports share DescribeImport in MainWindow.xaml.cs, while importing
+        // from another dictation app reports through WordImportMessages.Result in MainWindow.WordsFromApps.cs.
+        var fileAndPasteUses = Regex.Count(mainWindowSource, @"DescribeImport\((?!IReadOnly|CustomWordImportPlan)\w+\)");
+        Assert.True(fileAndPasteUses >= 1, "File/paste word import path must report DescribeImport.");
+        Assert.Contains("WordImportMessages.Result(", fromAppsSource, StringComparison.Ordinal);
 
-        Assert.True(
-            uses >= 2,
-            $"The import description is used {uses} time(s). Both import paths must report it, or "
-            + "one of them silently drops every problem outcome.");
-
-        // Control: the helper must exist and be more than a stub, or "used twice" would be true of
-        // two calls to something that returns nothing.
-        Assert.Contains("private static string DescribeImport", source, StringComparison.Ordinal);
-        Assert.Contains("could not be read", source, StringComparison.Ordinal);
+        // Control: the helper must exist and be more than a stub.
+        Assert.Contains("private static string DescribeImport", mainWindowSource, StringComparison.Ordinal);
+        Assert.Contains("could not be read", mainWindowSource, StringComparison.Ordinal);
     }
 
     /// <summary>

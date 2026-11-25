@@ -10,6 +10,7 @@ public enum WordEditRefusal
 {
     TargetMissing,
     DuplicateSpokenForm,
+    DuplicateReplacement,
 }
 
 /// <summary>How a word edit went: refused (missing target or spoken-form clash) or stored.</summary>
@@ -46,12 +47,50 @@ public sealed class VocabularyPresenter
     public Task<SettingsSaveResult> AddWordAsync(CustomWordEntry word)
     {
         ArgumentNullException.ThrowIfNull(word);
-        return ChangeAsync(data => data.WithCustomWords(
-            data.CustomWords
-                .Where(entry => !string.Equals(entry.SpokenForm, word.SpokenForm, StringComparison.OrdinalIgnoreCase))
-                .Append(word)
-                .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
-                .ToArray()));
+        var claimedAliases = (word.Aliases.Count > 0 ? word.Aliases : [word.SpokenForm])
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return ChangeAsync(data =>
+        {
+            var next = new List<CustomWordEntry>(data.CustomWords.Count + 1);
+            foreach (var entry in data.CustomWords)
+            {
+                if (entry.Aliases.Count == 0)
+                {
+                    if (!claimedAliases.Contains(entry.SpokenForm))
+                    {
+                        next.Add(entry);
+                    }
+
+                    continue;
+                }
+
+                var overlaps = entry.Aliases.Any(claimedAliases.Contains);
+                if (!overlaps)
+                {
+                    next.Add(entry);
+                    continue;
+                }
+
+                var remainingAliases = entry.Aliases
+                    .Where(alias => !claimedAliases.Contains(alias))
+                    .ToArray();
+                if (remainingAliases.Length > 0)
+                {
+                    next.Add(new CustomWordEntry(
+                        remainingAliases,
+                        entry.Replacement,
+                        entry.Strictness,
+                        entry.Category,
+                        entry.Id));
+                }
+            }
+
+            next.Add(word);
+            return data.WithCustomWords(
+                next.OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
+                    .ToArray());
+        });
     }
 
     /// <summary>Adds a word from plain inputs, replacing any word spoken the same way.</summary>
@@ -65,6 +104,44 @@ public sealed class VocabularyPresenter
         return AddWordAsync(new CustomWordEntry(spokenForm.Trim(), replacement.Trim(), strictness));
     }
 
+    /// <summary>Adds a multi-alias categorized word after checking alias and canonical conflicts.</summary>
+    public Task<SettingsSaveResult<WordEditOutcome>> AddMultiAliasWordAsync(
+        IReadOnlyList<string> aliases,
+        string replacement,
+        MatchStrictness strictness,
+        WordCategory category)
+    {
+        ArgumentNullException.ThrowIfNull(aliases);
+        ArgumentException.ThrowIfNullOrWhiteSpace(replacement);
+
+        var normalizedAliases = CustomWordEntry.NormalizeAliases(aliases);
+        var trimmedReplacement = replacement.Trim();
+        return ChangeAsync(data =>
+        {
+            if (FindAliasClash(data.CustomWords, normalizedAliases, excludeIndex: -1) is { } aliasClash)
+            {
+                return (data, new WordEditOutcome(WordEditRefusal.DuplicateSpokenForm, aliasClash));
+            }
+
+            if (FindCanonicalClash(data.CustomWords, trimmedReplacement, strictness, category, excludeIndex: -1) is { } canonicalClash)
+            {
+                return (data, new WordEditOutcome(WordEditRefusal.DuplicateReplacement, canonicalClash));
+            }
+
+            var created = new CustomWordEntry(
+                normalizedAliases,
+                trimmedReplacement,
+                strictness,
+                category,
+                id: Guid.NewGuid().ToString("D"));
+            var next = data.CustomWords
+                .Append(created)
+                .OrderBy(entry => entry.SpokenForm, StringComparer.CurrentCultureIgnoreCase)
+                .ToArray();
+            return (data.WithCustomWords(next), new WordEditOutcome(null, null));
+        });
+    }
+
     /// <summary>Replaces <paramref name="original"/> in place with updated values while preserving all other words.</summary>
     public Task<SettingsSaveResult<WordEditOutcome>> UpdateWordAsync(
         CustomWordEntry original,
@@ -75,8 +152,34 @@ public sealed class VocabularyPresenter
         ArgumentNullException.ThrowIfNull(original);
         ArgumentException.ThrowIfNullOrWhiteSpace(spokenForm);
         ArgumentException.ThrowIfNullOrWhiteSpace(replacement);
+        return UpdateMultiAliasWordAsync(
+            original,
+            [spokenForm.Trim()],
+            replacement.Trim(),
+            strictness,
+            original.Category);
+    }
 
-        var updated = new CustomWordEntry(spokenForm.Trim(), replacement.Trim(), strictness);
+    /// <summary>Replaces <paramref name="original"/> with updated aliases, canonical replacement, category, and strictness.</summary>
+    public Task<SettingsSaveResult<WordEditOutcome>> UpdateMultiAliasWordAsync(
+        CustomWordEntry original,
+        IReadOnlyList<string> aliases,
+        string replacement,
+        MatchStrictness strictness,
+        WordCategory category)
+    {
+        ArgumentNullException.ThrowIfNull(original);
+        ArgumentNullException.ThrowIfNull(aliases);
+        ArgumentException.ThrowIfNullOrWhiteSpace(replacement);
+
+        var normalizedAliases = CustomWordEntry.NormalizeAliases(aliases);
+        var trimmedReplacement = replacement.Trim();
+        var updated = new CustomWordEntry(
+            normalizedAliases,
+            trimmedReplacement,
+            strictness,
+            category,
+            original.Id);
         return ChangeAsync(data =>
         {
             var originalIndex = FindWordIndex(data.CustomWords, original);
@@ -85,22 +188,107 @@ public sealed class VocabularyPresenter
                 return (data, new WordEditOutcome(WordEditRefusal.TargetMissing, null));
             }
 
-            if (!string.Equals(original.SpokenForm, updated.SpokenForm, StringComparison.OrdinalIgnoreCase))
+            if (FindAliasClash(data.CustomWords, normalizedAliases, originalIndex) is { } aliasClash)
             {
-                for (var i = 0; i < data.CustomWords.Count; i++)
-                {
-                    if (i != originalIndex &&
-                        string.Equals(data.CustomWords[i].SpokenForm, updated.SpokenForm, StringComparison.OrdinalIgnoreCase))
-                    {
-                        return (data, new WordEditOutcome(WordEditRefusal.DuplicateSpokenForm, data.CustomWords[i]));
-                    }
-                }
+                return (data, new WordEditOutcome(WordEditRefusal.DuplicateSpokenForm, aliasClash));
+            }
+
+            if (FindCanonicalClash(data.CustomWords, trimmedReplacement, strictness, category, originalIndex) is { } canonicalClash)
+            {
+                return (data, new WordEditOutcome(WordEditRefusal.DuplicateReplacement, canonicalClash));
             }
 
             return (
                 data.WithCustomWords(ReplaceWord(data.CustomWords, original, updated)),
                 new WordEditOutcome(null, null));
         });
+    }
+
+    /// <summary>Enables or disables an isolated vocabulary pack without mutating CustomWords.</summary>
+    public Task<SettingsSaveResult> SetVocabularyPackEnabledAsync(string packId, bool enabled)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(packId);
+        var pack = VocabularyPacks.FindById(packId)
+            ?? throw new ArgumentException($"Unknown vocabulary pack '{packId}'.", nameof(packId));
+
+        return ChangeAsync(data =>
+        {
+            var current = data.EnabledVocabularyPackIds;
+            var hasPack = current.Any(id => string.Equals(id, pack.Id, StringComparison.OrdinalIgnoreCase));
+            if (hasPack == enabled)
+            {
+                return data;
+            }
+
+            IReadOnlyList<string> next = enabled
+                ? [.. current, pack.Id]
+                : current.Where(id => !string.Equals(id, pack.Id, StringComparison.OrdinalIgnoreCase)).ToArray();
+            return data.WithEnabledVocabularyPackIds(VocabularyPacks.NormalizePackIds(next));
+        });
+    }
+
+    /// <summary>Sets the full list of enabled vocabulary pack IDs without mutating CustomWords.</summary>
+    public Task<SettingsSaveResult> SetEnabledVocabularyPacksAsync(IReadOnlyList<string> packIds)
+    {
+        ArgumentNullException.ThrowIfNull(packIds);
+        var normalized = VocabularyPacks.NormalizePackIds(packIds);
+        return ChangeAsync(data => data.WithEnabledVocabularyPackIds(normalized));
+    }
+
+    private static CustomWordEntry? FindAliasClash(
+        IReadOnlyList<CustomWordEntry> words,
+        IReadOnlyList<string> incomingAliases,
+        int excludeIndex)
+    {
+        if (incomingAliases.Count == 0)
+        {
+            return null;
+        }
+
+        for (var i = 0; i < words.Count; i++)
+        {
+            if (i == excludeIndex)
+            {
+                continue;
+            }
+
+            var other = words[i];
+            foreach (var alias in incomingAliases)
+            {
+                if (other.Aliases.Any(existing => string.Equals(existing, alias, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return other;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static CustomWordEntry? FindCanonicalClash(
+        IReadOnlyList<CustomWordEntry> words,
+        string replacement,
+        MatchStrictness strictness,
+        WordCategory category,
+        int excludeIndex)
+    {
+        for (var i = 0; i < words.Count; i++)
+        {
+            if (i == excludeIndex)
+            {
+                continue;
+            }
+
+            var other = words[i];
+            if (string.Equals(other.Replacement, replacement, StringComparison.Ordinal) &&
+                other.Strictness == strictness &&
+                other.Category == category)
+            {
+                return other;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Replaces <paramref name="original"/> with <paramref name="updated"/> and keeps the word list sorted.</summary>
@@ -145,8 +333,26 @@ public sealed class VocabularyPresenter
             }
         }
 
+        if (!string.IsNullOrWhiteSpace(target.Id))
+        {
+            for (var i = 0; i < words.Count; i++)
+            {
+                if (string.Equals(words[i].Id, target.Id, StringComparison.Ordinal) &&
+                    HasSameContent(words[i], target))
+                {
+                    return i;
+                }
+            }
+        }
+
         return -1;
     }
+
+    private static bool HasSameContent(CustomWordEntry left, CustomWordEntry right) =>
+        string.Equals(left.Replacement, right.Replacement, StringComparison.Ordinal) &&
+        left.Strictness == right.Strictness &&
+        left.Category == right.Category &&
+        left.Aliases.SequenceEqual(right.Aliases, StringComparer.Ordinal);
 
     /// <summary>Removes the selected rows and says how many really went.</summary>
     /// <remarks>
@@ -358,8 +564,8 @@ public sealed class VocabularyPresenter
 
     private static readonly Lazy<HashSet<string>> PackWordSignatures = new(() =>
         VocabularyPacks.All
-            .SelectMany(p => CustomWordImport.Read(p.Words, []).Additions)
-            .Select(e => GetSignature(e.SpokenForm, e.Replacement))
+            .SelectMany(p => p.Entries)
+            .SelectMany(e => e.Aliases.Select(alias => GetSignature(alias, e.Replacement)))
             .ToHashSet(StringComparer.OrdinalIgnoreCase));
 
     private static string GetSignature(string spoken, string replacement) =>
@@ -369,10 +575,12 @@ public sealed class VocabularyPresenter
     public static bool IsPackWord(CustomWordEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
-        return PackWordSignatures.Value.Contains(GetSignature(entry.SpokenForm, entry.Replacement));
+        return entry.Aliases.Count > 0
+            ? entry.Aliases.Any(alias => PackWordSignatures.Value.Contains(GetSignature(alias, entry.Replacement)))
+            : PackWordSignatures.Value.Contains(GetSignature(entry.SpokenForm, entry.Replacement));
     }
 
-    /// <summary>Filters custom word entries by category ("all", "custom", "packs") and optional search query.</summary>
+    /// <summary>Filters custom word entries by category key ("all", "custom", "packs", or WordCategory name) and optional search query.</summary>
     public static IReadOnlyList<CustomWordEntry> FilterWords(
         IEnumerable<CustomWordEntry> words,
         string category,
@@ -389,15 +597,44 @@ public sealed class VocabularyPresenter
         {
             filtered = filtered.Where(IsPackWord);
         }
-
-        if (!string.IsNullOrWhiteSpace(query))
+        else if (!string.IsNullOrWhiteSpace(category) &&
+                 !string.Equals(category, "all", StringComparison.OrdinalIgnoreCase) &&
+                 Enum.TryParse<WordCategory>(category, ignoreCase: true, out var parsedCategory))
         {
-            var trimmed = query.Trim();
-            filtered = filtered.Where(w =>
-                w.SpokenForm.Contains(trimmed, StringComparison.OrdinalIgnoreCase)
-                || w.Replacement.Contains(trimmed, StringComparison.OrdinalIgnoreCase));
+            filtered = filtered.Where(w => w.Category == parsedCategory);
         }
 
-        return filtered.ToList();
+        return ApplyQueryFilter(filtered, query);
+    }
+
+    /// <summary>Filters custom word entries by typed <see cref="WordCategory"/> (null = All categories) and optional search query.</summary>
+    public static IReadOnlyList<CustomWordEntry> FilterWords(
+        IEnumerable<CustomWordEntry> words,
+        WordCategory? category,
+        string? query = null)
+    {
+        ArgumentNullException.ThrowIfNull(words);
+        var filtered = category is { } selected
+            ? words.Where(w => w.Category == selected)
+            : words;
+
+        return ApplyQueryFilter(filtered, query);
+    }
+
+    private static List<CustomWordEntry> ApplyQueryFilter(
+        IEnumerable<CustomWordEntry> entries,
+        string? query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return entries.ToList();
+        }
+
+        var trimmed = query.Trim();
+        return entries
+            .Where(w =>
+                w.Replacement.Contains(trimmed, StringComparison.OrdinalIgnoreCase) ||
+                w.Aliases.Any(alias => alias.Contains(trimmed, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
     }
 }

@@ -66,11 +66,17 @@ public static partial class CustomWordCorrector
 
     public static WordCorrectionResult Correct(
         string text,
-        IReadOnlyList<CustomWordEntry> customWords)
+        IReadOnlyList<CustomWordEntry> customWords) =>
+        Correct(text, customWords, packWords: null);
+
+    public static WordCorrectionResult Correct(
+        string text,
+        IReadOnlyList<CustomWordEntry> customWords,
+        IReadOnlyList<CustomWordEntry>? packWords)
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(customWords);
-        if (text.Length == 0 || customWords.Count == 0)
+        if (text.Length == 0 || (customWords.Count == 0 && (packWords is null || packWords.Count == 0)))
         {
             return new WordCorrectionResult(text, 0);
         }
@@ -83,12 +89,15 @@ public static partial class CustomWordCorrector
         // so a person moving between the two would see different text from the same list.
         var usable = customWords.Where(IsUsable).ToArray();
         var owners = new Dictionary<string, Candidate>(StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in usable)
+        RegisterEntries(usable, owners, overwriteExistingAliases: true);
+
+        if (packWords is { Count: > 0 })
         {
-            var surface = CollapseSpaces(entry.SpokenForm);
-            if (!ContainsReservedTrigger(surface))
+            var usablePacks = packWords.Where(IsUsable).ToArray();
+            if (usablePacks.Length > 0)
             {
-                owners[surface] = new Candidate(surface, entry.Replacement, entry.Strictness);
+                // Isolated toggleable pack layer: pack entries never overwrite user-defined entries.
+                RegisterEntries(usablePacks, owners, overwriteExistingAliases: false);
             }
         }
 
@@ -99,17 +108,6 @@ public static partial class CustomWordCorrector
         // space-free only. Adding phrases here let a written form nobody was matching against
         // reserve words and block a rule that was: with "zed" writing "red blue", the phrase
         // "red blue" claimed the front of "red blue sun" and stopped "blue sun" correcting anything.
-        foreach (var entry in usable)
-        {
-            var surface = CollapseSpaces(entry.Replacement);
-            if (WordCount(surface) == 1 &&
-                !ContainsReservedTrigger(surface) &&
-                !owners.ContainsKey(surface))
-            {
-                owners[surface] = new Candidate(surface, entry.Replacement, entry.Strictness);
-            }
-        }
-
         var candidates = owners.Values
             .OrderByDescending(candidate => WordCount(candidate.Surface))
             .ThenByDescending(candidate => candidate.Surface.Length)
@@ -493,6 +491,36 @@ public static partial class CustomWordCorrector
 
     public static double LengthAwareAdjustment(int candidateLength) =>
         Math.Min(0.04, Math.Max(0, candidateLength - 8) * 0.005);
+
+    private static void RegisterEntries(
+        CustomWordEntry[] entries,
+        Dictionary<string, Candidate> owners,
+        bool overwriteExistingAliases)
+    {
+        foreach (var entry in entries)
+        {
+            foreach (var alias in entry.Aliases)
+            {
+                var surface = CollapseSpaces(alias);
+                if (!ContainsReservedTrigger(surface) &&
+                    (overwriteExistingAliases || !owners.ContainsKey(surface)))
+                {
+                    owners[surface] = new Candidate(surface, entry.Replacement, entry.Strictness);
+                }
+            }
+        }
+
+        foreach (var entry in entries)
+        {
+            var surface = CollapseSpaces(entry.Replacement);
+            if ((WordCount(surface) == 1 || entry.Aliases.Count == 0) &&
+                !ContainsReservedTrigger(surface) &&
+                !owners.ContainsKey(surface))
+            {
+                owners[surface] = new Candidate(surface, entry.Replacement, entry.Strictness);
+            }
+        }
+    }
 
     private static bool IsUsable(CustomWordEntry entry) =>
         entry is not null &&

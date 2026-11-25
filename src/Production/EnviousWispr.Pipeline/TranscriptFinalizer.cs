@@ -107,6 +107,24 @@ public sealed class TranscriptFinalizer
             targetAppName: null,
             cancellationToken);
 
+    public Task<FinalizedTranscript> FinalizeAsync(
+        Transcript transcript,
+        IReadOnlyList<CustomWordEntry> customWords,
+        DeterministicTextOptions options,
+        SnippetVocabulary snippets,
+        PolishSetup? polish,
+        string? targetAppName,
+        CancellationToken cancellationToken) =>
+        FinalizeAsync(
+            transcript,
+            customWords,
+            options,
+            snippets,
+            polish,
+            targetAppName,
+            enabledVocabularyPackIds: null,
+            cancellationToken);
+
     public async Task<FinalizedTranscript> FinalizeAsync(
         Transcript transcript,
         IReadOnlyList<CustomWordEntry> customWords,
@@ -114,6 +132,7 @@ public sealed class TranscriptFinalizer
         SnippetVocabulary snippets,
         PolishSetup? polish,
         string? targetAppName,
+        IReadOnlyList<string>? enabledVocabularyPackIds,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(transcript);
@@ -123,7 +142,11 @@ public sealed class TranscriptFinalizer
 
         _effects.RecordDeterministicProcessingStarted();
         var processingTimer = Stopwatch.StartNew();
-        var request = new DeterministicTextRequest(transcript, customWords, options);
+        var request = new DeterministicTextRequest(
+            transcript,
+            customWords,
+            options,
+            EnabledVocabularyPackIds: enabledVocabularyPackIds);
         var expansion = await _snippets.ExpandAsync(transcript.Text, snippets, cancellationToken).ConfigureAwait(false);
         var records = expansion.Outcome.Records;
         var masked = records.Count == 0

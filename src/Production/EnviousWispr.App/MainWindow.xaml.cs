@@ -3795,6 +3795,7 @@ public sealed partial class MainWindow : Window, IDisposable
     public void SetAliasSuggestions(string term, MishearingAdvice advice)
     {
         ArgumentNullException.ThrowIfNull(advice);
+        _activeWordDialogSuggestionSink?.Invoke(term, advice);
         SuggestAliasesButton.IsEnabled = true;
         SuggestedAliasesPanel.Children.Clear();
         // Shown by the SetLiveRegion call below, which sets text and visibility together.
@@ -3938,8 +3939,13 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private void SelectAllWordsButton_Click(object sender, RoutedEventArgs e)
     {
-        var words = _settings.UserData.CustomWords;
-        if (DictionaryList.SelectedItems.Count == words.Count && words.Count > 0)
+        var shownCount = DictionaryList.Items.Count;
+        if (DictionaryList.SelectionMode != ListViewSelectionMode.Multiple)
+        {
+            MassEditWordsToggle_Click(sender, e);
+        }
+
+        if (DictionaryList.SelectedItems.Count == shownCount && shownCount > 0)
         {
             DictionaryList.SelectedItems.Clear();
             return;
@@ -3960,7 +3966,10 @@ public sealed partial class MainWindow : Window, IDisposable
     /// </remarks>
     private async void RemoveWordButton_Click(object sender, RoutedEventArgs e)
     {
-        var selected = DictionaryList.SelectedItems.OfType<CustomWordEntry>().ToArray();
+        var selected = DictionaryList.SelectedItems
+            .Select(item => item is DictionaryWordRow row ? row.Entry : item as CustomWordEntry)
+            .OfType<CustomWordEntry>()
+            .ToArray();
         if (selected.Length == 0)
         {
             ShowMessage("Select a word first", "Choose the dictionary rows you want to remove.", InfoBarSeverity.Informational);
@@ -4478,55 +4487,158 @@ public sealed partial class MainWindow : Window, IDisposable
     /// Each item carries the pack's DESCRIPTION as its help text rather than its name twice, so a
     /// screen reader user hears what the list is for rather than a label they already heard.
     /// </remarks>
-    private void AddPackButton_Click(object sender, RoutedEventArgs e)
+    private bool _syncingVocabularyPacks;
+
+    private void RefreshVocabularyPacksPanel()
     {
-        PackFlyout.Items.Clear();
-        foreach (var pack in VocabularyPacks.All)
+        if (VocabularyPacksList is null || _settings is null)
         {
-            var item = new MenuFlyoutItem { Text = pack.Name, Tag = pack.Id };
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(item, pack.Name);
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(item, pack.Description);
-            item.Click += PackMenuItem_Click;
-            PackFlyout.Items.Add(item);
+            return;
+        }
+
+        var enabledIds = new HashSet<string>(
+            _settings.UserData.EnabledVocabularyPackIds,
+            StringComparer.OrdinalIgnoreCase);
+
+        if (VocabularyPacksList.Children.Count != VocabularyPacks.All.Count)
+        {
+            VocabularyPacksList.Children.Clear();
+            foreach (var pack in VocabularyPacks.All)
+            {
+                VocabularyPacksList.Children.Add(BuildVocabularyPackCard(pack));
+            }
+        }
+
+        _syncingVocabularyPacks = true;
+        try
+        {
+            foreach (var child in VocabularyPacksList.Children.OfType<Border>())
+            {
+                if (child.Tag is ToggleSwitch toggle && toggle.Tag is string packId)
+                {
+                    toggle.IsOn = enabledIds.Contains(packId);
+                }
+            }
+        }
+        finally
+        {
+            _syncingVocabularyPacks = false;
         }
     }
 
-    /// <summary>
-    /// Installs one pack through exactly the path an imported file takes.
-    /// </summary>
-    /// <remarks>
-    /// Same reader, same collision rules, same description. A pack that merged by its own route
-    /// would be a second implementation of adding words, and the two would drift - so a user who
-    /// already corrects one of these words their own way keeps their version and is told, exactly
-    /// as they would be for a file they chose themselves.
-    /// </remarks>
-    private async void PackMenuItem_Click(object sender, RoutedEventArgs e)
+    private Border BuildVocabularyPackCard(VocabularyPack pack)
     {
-        if (sender is not MenuFlyoutItem { Tag: string id })
+        var icon = new FontIcon
         {
-            return;
-        }
-
-        var pack = VocabularyPacks.All.FirstOrDefault(candidate => candidate.Id == id);
-        if (pack is null)
+            Glyph = pack.IconGlyph,
+            FontSize = 16,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BrandAccentBrush"],
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var iconTile = new Border
         {
-            return;
-        }
+            Width = 36,
+            Height = 36,
+            Style = (Style)Application.Current.Resources["BrandIconTileStyle"],
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = icon,
+        };
 
-        // THE PLAN IS THE CONTROLLER'S, COMPUTED INSIDE THE GATE; the message is chosen from what
-        // came back, so "already set up" is said about the list that was actually there.
-        var outcome = await CommitVocabularyAsync(_session.VocabularyImport.ApplyPackAsync(pack)).ConfigureAwait(true);
-        if (!outcome.Saved)
+        var titleText = new TextBlock
         {
-            return;
-        }
+            Text = pack.Name,
+            Style = (Style)Application.Current.Resources["BrandRowLabelStyle"],
+        };
+        var descText = new TextBlock
+        {
+            Text = pack.Description,
+            Style = (Style)Application.Current.Resources["BrandHelperStyle"],
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var summaryText = new TextBlock
+        {
+            Text = $"{pack.FixCount} fixes \u00B7 e.g. {string.Join(", ", pack.ExampleTerms)}",
+            Style = (Style)Application.Current.Resources["BrandHelperStyle"],
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var infoStack = new StackPanel
+        {
+            VerticalAlignment = VerticalAlignment.Center,
+            Spacing = 2,
+            Children = { titleText, descText, summaryText },
+        };
 
-        var committed = outcome.Value;
-        ShowMessage(
-            committed.Additions.Count == 0 ? $"{pack.Name} is already set up" : $"{pack.Name} added",
-            DescribeImport(committed),
-            committed.Additions.Count == 0 ? InfoBarSeverity.Informational : InfoBarSeverity.Success,
-            ReplaceConflictsAction(committed));
+        var seeAllButton = new Button
+        {
+            Content = "See all",
+            Style = (Style)Application.Current.Resources["BrandQuietButtonStyle"],
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(seeAllButton, $"See all words in {pack.Name}");
+        seeAllButton.Click += async (_, _) => await ShowPackDetailDialogAsync(pack).ConfigureAwait(true);
+
+        var toggle = new ToggleSwitch
+        {
+            Style = (Style)Application.Current.Resources["BrandToggleSwitchStyle"],
+            MinWidth = 0,
+            Tag = pack.Id,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetLabeledBy(toggle, titleText);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(toggle, pack.Description);
+        toggle.Toggled += async (_, _) =>
+        {
+            if (_syncingVocabularyPacks || _settings is null)
+            {
+                return;
+            }
+
+            var enabled = toggle.IsOn;
+            var saveResult = await _session.Vocabulary.SetVocabularyPackEnabledAsync(pack.Id, enabled)
+                .ConfigureAwait(true);
+            if (!saveResult.Saved)
+            {
+                _syncingVocabularyPacks = true;
+                toggle.IsOn = !enabled;
+                _syncingVocabularyPacks = false;
+                if (saveResult.Refusal is { } refusal)
+                {
+                    ShowSettingsRefusal(refusal);
+                }
+
+                return;
+            }
+
+            PublishSettings();
+            ApplySettingsToControls();
+        };
+
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 10,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children = { seeAllButton, toggle },
+        };
+
+        var rowGrid = new Grid { ColumnSpacing = 12 };
+        rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        rowGrid.Children.Add(iconTile);
+        Grid.SetColumn(infoStack, 1);
+        rowGrid.Children.Add(infoStack);
+        Grid.SetColumn(actions, 2);
+        rowGrid.Children.Add(actions);
+
+        return new Border
+        {
+            Padding = new Thickness(14, 12, 14, 12),
+            Style = (Style)Application.Current.Resources["BrandSettingsCardStyle"],
+            Child = rowGrid,
+            Tag = toggle,
+        };
     }
 
     private Button BuildOfferButton(ImportConflictOffer offer)
@@ -6143,6 +6255,7 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         var snippets = _settings.UserData.Snippets;
         RefreshDictionaryView();
+        RefreshVocabularyPacksPanel();
         RefreshSnippetKeywordViews(force: false);
         RefreshSnippetList(snippets);
         UpdateSelectionDependentButtons();
@@ -7078,17 +7191,36 @@ public sealed partial class MainWindow : Window, IDisposable
     }
 
     private string _wordFilterCategory = "all";
+    private bool _isDictionaryMassEdit;
 
     private void WordFilterChip_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button btn && btn.Tag is string tag)
         {
             _wordFilterCategory = tag;
-            WordFilterAllChip.Style = (Style)Application.Current.Resources[tag == "all" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
-            WordFilterCustomChip.Style = (Style)Application.Current.Resources[tag == "custom" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
-            WordFilterPacksChip.Style = (Style)Application.Current.Resources[tag == "packs" ? "BrandTabStripActiveButtonStyle" : "BrandTabStripButtonStyle"];
+            var active = (Style)Application.Current.Resources["BrandTabStripActiveButtonStyle"];
+            var normal = (Style)Application.Current.Resources["BrandTabStripButtonStyle"];
+            WordFilterAllChip.Style = tag == "all" ? active : normal;
+            WordFilterGeneralChip.Style = tag == "general" ? active : normal;
+            WordFilterPersonChip.Style = tag == "person" ? active : normal;
+            WordFilterBrandChip.Style = tag == "brand" ? active : normal;
+            WordFilterAcronymChip.Style = tag == "acronym" ? active : normal;
+            WordFilterDomainChip.Style = tag == "domain" ? active : normal;
             RefreshDictionaryView();
         }
+    }
+
+    private void MassEditWordsToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _isDictionaryMassEdit = !_isDictionaryMassEdit;
+        DictionaryList.SelectionMode = _isDictionaryMassEdit
+            ? ListViewSelectionMode.Multiple
+            : ListViewSelectionMode.None;
+        DictionaryList.SelectedItems.Clear();
+        DictionaryMassEditBar.Visibility = _isDictionaryMassEdit ? Visibility.Visible : Visibility.Collapsed;
+        MassEditWordsToggle.Style = (Style)Application.Current.Resources[
+            _isDictionaryMassEdit ? "BrandTabStripActiveButtonStyle" : "BrandQuietButtonStyle"];
+        UpdateSelectionDependentButtons();
     }
 
     private void DictionarySearchBox_TextChanged(object sender, TextChangedEventArgs e) =>
@@ -7098,16 +7230,22 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         var allWords = _settings?.UserData?.CustomWords ?? (IReadOnlyList<CustomWordEntry>)Array.Empty<CustomWordEntry>();
         var query = DictionarySearchBox?.Text?.Trim() ?? string.Empty;
-        var list = VocabularyPresenter.FilterWords(allWords, _wordFilterCategory, query);
+        var list = VocabularyPresenter.FilterWords(allWords, _wordFilterCategory, query)
+            .Select(entry => new DictionaryWordRow(entry))
+            .ToArray();
 
         if (DictionaryList is not null)
         {
             DictionaryList.ItemsSource = list;
-            UpdateListAndEmptyStateVisibility(DictionaryList, DictionaryEmptyState, list.Count);
+            UpdateListAndEmptyStateVisibility(DictionaryList, DictionaryEmptyState, list.Length);
         }
         if (WordCountText is not null)
         {
-            WordCountText.Text = $"{list.Count} word{(list.Count == 1 ? string.Empty : "s")}";
+            var total = allWords.Count;
+            var wordUnit = total == 1 ? "WORD" : "WORDS";
+            WordCountText.Text = list.Length == total
+                ? $"{total} {wordUnit}"
+                : $"Showing {list.Length} of {total} {wordUnit}";
         }
         UpdateSelectionDependentButtons();
     }

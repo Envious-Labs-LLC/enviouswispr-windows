@@ -114,12 +114,12 @@ public static class CustomWordImport
 
         var lines = new List<ImportedWordLine>();
         var raw = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
-        var hasHeader = HasHeader(raw);
+        var headerMode = DetectHeaderMode(raw);
         for (var index = 0; index < raw.Length; index++)
         {
             lines.Add(IsHeader(raw[index])
                 ? new ImportedWordLine(index + 1, raw[index], null, ImportedWordOutcome.Ignored)
-                : ReadLine(raw[index], index + 1, hasHeader, known, claimed));
+                : ReadLine(raw[index], index + 1, headerMode, known, claimed));
         }
 
         return new CustomWordImportPlan(lines);
@@ -136,11 +136,27 @@ public static class CustomWordImport
     public static string Write(IReadOnlyList<CustomWordEntry> entries)
     {
         ArgumentNullException.ThrowIfNull(entries);
-        return string.Join(
-            Environment.NewLine,
-            new[] { Header }.Concat(
-                entries.Select(entry =>
-                    $"{entry.SpokenForm},{entry.Replacement},{Spell(entry.Strictness)}")));
+        var includeCategory = entries.Any(entry => entry.Category != WordCategory.General);
+        var lines = new List<string> { includeCategory ? HeaderWithCategory : Header };
+        foreach (var entry in entries)
+        {
+            var categorySuffix = includeCategory
+                ? $",{WordCategoryFormatting.Label(entry.Category).ToLowerInvariant()}"
+                : string.Empty;
+            if (entry.Aliases.Count > 0)
+            {
+                foreach (var alias in entry.Aliases)
+                {
+                    lines.Add($"{alias},{entry.Replacement},{Spell(entry.Strictness)}{categorySuffix}");
+                }
+            }
+            else
+            {
+                lines.Add($"{entry.SpokenForm},{entry.Replacement},{Spell(entry.Strictness)}{categorySuffix}");
+            }
+        }
+
+        return string.Join(Environment.NewLine, lines);
     }
 
     /// <summary>The line that says this file has a third column, and names all three.</summary>
@@ -152,19 +168,44 @@ public static class CustomWordImport
     /// </remarks>
     public const string Header = "when I say,write,how closely";
 
-    private static bool IsHeader(string line) =>
-        string.Equals(line.Trim(), Header, StringComparison.OrdinalIgnoreCase);
+    public const string HeaderWithCategory = "when I say,write,how closely,category";
+
+    private enum HeaderMode
+    {
+        None,
+        Strictness,
+        StrictnessAndCategory,
+    }
+
+    private static HeaderMode ParseHeader(string line)
+    {
+        var trimmed = line.Trim();
+        if (string.Equals(trimmed, HeaderWithCategory, StringComparison.OrdinalIgnoreCase))
+        {
+            return HeaderMode.StrictnessAndCategory;
+        }
+
+        if (string.Equals(trimmed, Header, StringComparison.OrdinalIgnoreCase))
+        {
+            return HeaderMode.Strictness;
+        }
+
+        return HeaderMode.None;
+    }
+
+    private static bool IsHeader(string line) => ParseHeader(line) != HeaderMode.None;
 
     /// <remarks>
     /// THE FIRST LINE THAT SAYS ANYTHING, not any line anywhere. A header found halfway down would
     /// let a file turn its own earlier lines into three-column lines retrospectively, which is the
     /// exact reinterpretation the header exists to prevent.
     /// </remarks>
-    private static bool HasHeader(string[] lines) =>
+    private static HeaderMode DetectHeaderMode(string[] lines) =>
         lines
             .Select(line => line.Trim())
             .FirstOrDefault(line => line.Length > 0 && !line.StartsWith('#')) is { } first
-        && IsHeader(first);
+            ? ParseHeader(first)
+            : HeaderMode.None;
 
     /// <summary>Takes the imported version of words the user already corrects differently.</summary>
     /// <remarks>
@@ -197,14 +238,75 @@ public static class CustomWordImport
         var incoming = new Dictionary<string, CustomWordEntry>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in replacements)
         {
-            incoming[entry.SpokenForm] = entry;
+            foreach (var alias in entry.Aliases)
+            {
+                incoming[alias] = entry;
+            }
+
+            if (entry.Aliases.Count == 0)
+            {
+                incoming[entry.SpokenForm] = entry;
+            }
         }
 
-        return existing
-            .Select(entry => incoming.TryGetValue(entry.SpokenForm, out var taken)
-                ? entry with { Replacement = taken.Replacement, Strictness = taken.Strictness }
-                : entry)
-            .ToArray();
+        var merged = new List<CustomWordEntry>(existing.Count);
+        foreach (var entry in existing)
+        {
+            if (entry.Aliases.Count == 0)
+            {
+                merged.Add(incoming.TryGetValue(entry.SpokenForm, out var direct)
+                    ? entry with { Replacement = direct.Replacement, Strictness = direct.Strictness, Category = direct.Category }
+                    : entry);
+                continue;
+            }
+
+            var remaining = new List<string>(entry.Aliases.Count);
+            var matched = new List<(string Alias, CustomWordEntry Taken)>();
+            foreach (var alias in entry.Aliases)
+            {
+                if (incoming.TryGetValue(alias, out var taken))
+                {
+                    matched.Add((alias, taken));
+                }
+                else
+                {
+                    remaining.Add(alias);
+                }
+            }
+
+            if (matched.Count == 0)
+            {
+                merged.Add(entry);
+                continue;
+            }
+
+            if (remaining.Count == 0 &&
+                matched.All(m =>
+                    string.Equals(m.Taken.Replacement, matched[0].Taken.Replacement, StringComparison.Ordinal) &&
+                    m.Taken.Strictness == matched[0].Taken.Strictness &&
+                    m.Taken.Category == matched[0].Taken.Category))
+            {
+                var first = matched[0].Taken;
+                merged.Add(entry with { Replacement = first.Replacement, Strictness = first.Strictness, Category = first.Category });
+                continue;
+            }
+
+            if (remaining.Count > 0)
+            {
+                merged.Add(new CustomWordEntry(remaining, entry.Replacement, entry.Strictness, entry.Category));
+            }
+
+            foreach (var group in matched.GroupBy(m => (m.Taken.Replacement, m.Taken.Strictness, m.Taken.Category)))
+            {
+                merged.Add(new CustomWordEntry(
+                    group.Select(m => m.Alias).ToArray(),
+                    group.Key.Replacement,
+                    group.Key.Strictness,
+                    group.Key.Category));
+            }
+        }
+
+        return merged.ToArray();
     }
 
     /// <summary>The word a person reads in the third column, and types back into it.</summary>
@@ -244,10 +346,35 @@ public static class CustomWordImport
         }
     }
 
+    private static bool TryReadCategory(string value, out WordCategory category)
+    {
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "general":
+                category = WordCategory.General;
+                return true;
+            case "person":
+                category = WordCategory.Person;
+                return true;
+            case "brand":
+                category = WordCategory.Brand;
+                return true;
+            case "acronym":
+                category = WordCategory.Acronym;
+                return true;
+            case "domain":
+                category = WordCategory.Domain;
+                return true;
+            default:
+                category = WordCategory.General;
+                return false;
+        }
+    }
+
     private static ImportedWordLine ReadLine(
         string raw,
         int lineNumber,
-        bool hasHeader,
+        HeaderMode headerMode,
         Dictionary<string, CustomWordEntry> known,
         Dictionary<string, CustomWordEntry> claimed)
     {
@@ -257,18 +384,14 @@ public static class CustomWordImport
             return new ImportedWordLine(lineNumber, raw, null, ImportedWordOutcome.Ignored);
         }
 
-        // THE THIRD COLUMN EXISTS ONLY IN A FILE THAT SAYS IT DOES, and that is the whole reason for
-        // the header line. Accepting a third field from any file changes what an OLD line means
-        // rather than adding to it: "say,hello,strict" was refused before, and reading it now as
-        // "hello" matched strictly is a decision made on behalf of somebody who may well have been
-        // writing a replacement with a comma in it. In a file with no header the rule is what it
-        // always was - exactly two fields - so no existing line can change meaning.
-        // A FILE THAT DECLARES THREE COLUMNS HAS THREE COLUMNS ON EVERY LINE. A two-field line under
-        // that header is the blank-third-field case wearing a different hat: the file said it would
-        // say how closely each word must match, and on this line it did not, so reading the ordinary
-        // rule there replaces a choice the person may well have made with one they did not.
+        var expectedColumns = headerMode switch
+        {
+            HeaderMode.StrictnessAndCategory => 4,
+            HeaderMode.Strictness => 3,
+            _ => 2,
+        };
         var parts = trimmed.Split(Separators);
-        if (parts.Length != (hasHeader ? 3 : 2))
+        if (parts.Length != expectedColumns)
         {
             return new ImportedWordLine(lineNumber, raw, null, ImportedWordOutcome.Unreadable);
         }
@@ -283,15 +406,19 @@ public static class CustomWordImport
             return new ImportedWordLine(lineNumber, raw, null, ImportedWordOutcome.Unreadable);
         }
 
-        // A WORD NOBODY RECOGNISES IS REFUSED, NOT QUIETLY TAKEN AS ORDINARY. Reading "strickt" as
-        // default would correct that word more narrowly than the file asked for and say nothing.
         var strictness = MatchStrictness.Default;
-        if (hasHeader && !TryReadStrictness(parts[2], out strictness))
+        if (headerMode != HeaderMode.None && !TryReadStrictness(parts[2], out strictness))
         {
             return new ImportedWordLine(lineNumber, raw, null, ImportedWordOutcome.Unreadable);
         }
 
-        return Classify(new CustomWordEntry(spoken, replacement, strictness), lineNumber, raw, known, claimed);
+        var category = WordCategory.General;
+        if (headerMode == HeaderMode.StrictnessAndCategory && !TryReadCategory(parts[3], out category))
+        {
+            return new ImportedWordLine(lineNumber, raw, null, ImportedWordOutcome.Unreadable);
+        }
+
+        return Classify(new CustomWordEntry([spoken], replacement, strictness, category), lineNumber, raw, known, claimed);
     }
 
     /// <summary>Plans words another app already holds as pairs, by exactly the rules a pasted line meets.</summary>
@@ -319,8 +446,8 @@ public static class CustomWordImport
             var entry = incoming[index];
             var spoken = entry.SpokenForm.Trim();
             var replacement = entry.Replacement.Trim();
-            lines.Add(IsStorableField(spoken) && IsStorableField(replacement) && Enum.IsDefined(entry.Strictness)
-                ? Classify(new CustomWordEntry(spoken, replacement, entry.Strictness), index + 1, spoken, known, claimed)
+            lines.Add(IsStorableField(spoken) && IsStorableField(replacement) && Enum.IsDefined(entry.Strictness) && Enum.IsDefined(entry.Category)
+                ? Classify(new CustomWordEntry([spoken], replacement, entry.Strictness, entry.Category), index + 1, spoken, known, claimed)
                 : new ImportedWordLine(index + 1, spoken, null, ImportedWordOutcome.Unreadable));
         }
 
@@ -338,7 +465,17 @@ public static class CustomWordImport
         var known = new Dictionary<string, CustomWordEntry>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in existing)
         {
-            known[entry.SpokenForm] = entry;
+            if (entry.Aliases.Count > 0)
+            {
+                foreach (var alias in entry.Aliases)
+                {
+                    known[alias] = entry;
+                }
+            }
+            else
+            {
+                known[entry.SpokenForm] = entry;
+            }
         }
 
         return known;
@@ -365,6 +502,7 @@ public static class CustomWordImport
                 entry,
                 string.Equals(current.Replacement, entry.Replacement, StringComparison.Ordinal)
                     && current.Strictness == entry.Strictness
+                    && current.Category == entry.Category
                     ? ImportedWordOutcome.AlreadyPresent
                     : ImportedWordOutcome.Conflict);
         }

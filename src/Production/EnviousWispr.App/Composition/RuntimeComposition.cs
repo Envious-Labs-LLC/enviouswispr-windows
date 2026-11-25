@@ -60,7 +60,8 @@ public sealed record RuntimeShell(
     Func<DictationSessionCoordinator?> Coordinator,
     Func<bool> Leaving,
     Func<CancellationToken, Task<string?>> ClipboardText,
-    Func<DictationPreferences>? Dictation = null);
+    Func<DictationPreferences>? Dictation = null,
+    Func<IReadOnlyList<string>>? EnabledVocabularyPackIds = null);
 
 /// <summary>Everything the long-lived session owners are built from.</summary>
 public sealed record RuntimeCompositionParts(

@@ -48,6 +48,8 @@ internal sealed class LivePreviewEffects(RuntimeShell shell) : ILivePreviewEffec
 
     public IReadOnlyList<CustomWordEntry> CustomWords => shell.CustomWords();
 
+    public IReadOnlyList<string> EnabledVocabularyPackIds => shell.EnabledVocabularyPackIds?.Invoke() ?? [];
+
     public EnglishSpelling EnglishSpelling => shell.Dictation?.Invoke().EnglishSpelling ?? EnglishSpelling.American;
 
     public void ShowPreview(LivePreviewFrame frame) => shell.View.ShowPreview(frame);

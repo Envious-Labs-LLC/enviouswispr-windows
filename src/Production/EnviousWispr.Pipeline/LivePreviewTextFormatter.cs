@@ -23,7 +23,8 @@ public static class LivePreviewTextFormatter
         string? detectedLanguage = null,
         string? recognitionLanguage = null,
         string? engineId = null,
-        BritishSpellingConverter? britishConverter = null)
+        BritishSpellingConverter? britishConverter = null,
+        IReadOnlyList<string>? enabledVocabularyPackIds = null)
     {
         var bounded = LivePreviewTextBound.Apply(rawText);
         if (bounded.Length == 0)
@@ -33,11 +34,14 @@ public static class LivePreviewTextFormatter
 
         var activeCustomWords = wordCorrectionEnabled && customWords is { Count: > 0 }
             ? customWords
-            : null;
-        if (activeCustomWords is not null)
+            : [];
+        var activePackWords = wordCorrectionEnabled
+            ? VocabularyPacks.ResolveEntries(enabledVocabularyPackIds)
+            : [];
+        if (activeCustomWords.Count > 0 || activePackWords.Count > 0)
         {
             bounded = LivePreviewTextBound.Apply(
-                CustomWordCorrector.Correct(bounded, activeCustomWords).Text);
+                CustomWordCorrector.Correct(bounded, activeCustomWords, activePackWords).Text);
         }
 
         if (englishSpelling == EnglishSpelling.British &&
@@ -46,8 +50,10 @@ public static class LivePreviewTextFormatter
             var converter = britishConverter ?? BritishSpellingConverter.Shared;
             if (converter is not null)
             {
-                var protectedWords = activeCustomWords is not null
-                    ? BritishSpellingConverter.ProtectedWords(activeCustomWords.Select(entry => entry.Replacement))
+                var protectedWords = activeCustomWords.Count > 0 || activePackWords.Count > 0
+                    ? BritishSpellingConverter.ProtectedWords(
+                        activeCustomWords.Select(entry => entry.Replacement)
+                            .Concat(activePackWords.Select(entry => entry.Replacement)))
                     : null;
                 bounded = LivePreviewTextBound.Apply(
                     converter.Convert(bounded, protectedWords).Text);

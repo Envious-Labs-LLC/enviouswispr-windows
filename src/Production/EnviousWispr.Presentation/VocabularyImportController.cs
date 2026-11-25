@@ -36,7 +36,8 @@ public sealed class VocabularyImportController
         return _vocabulary.ChangeAsync(data =>
         {
             var plan = CustomWordImport.Read(text, data.CustomWords);
-            return (data.WithCustomWords([.. data.CustomWords, .. plan.Additions]), plan);
+            var normalizedAdditions = CustomWordEntry.NormalizeLegacyEntries(plan.Additions);
+            return (data.WithCustomWords([.. data.CustomWords, .. normalizedAdditions]), plan);
         });
     }
 

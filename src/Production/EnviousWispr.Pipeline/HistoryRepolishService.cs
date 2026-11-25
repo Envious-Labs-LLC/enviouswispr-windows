@@ -18,6 +18,7 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
     private readonly Func<PolishSetup?> _polishSetup;
     private readonly Func<DeterministicTextOptions> _textOptions;
     private readonly Func<IReadOnlyList<CustomWordEntry>> _customWords;
+    private readonly Func<IReadOnlyList<string>> _enabledVocabularyPackIds;
     private readonly ITextTargetAdapter? _targetAdapter;
     private readonly IAppLogger? _logger;
     private readonly TimeProvider _clock;
@@ -31,7 +32,8 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
         Func<IReadOnlyList<CustomWordEntry>>? customWords = null,
         ITextTargetAdapter? targetAdapter = null,
         IAppLogger? logger = null,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        Func<IReadOnlyList<string>>? enabledVocabularyPackIds = null)
     {
         ArgumentNullException.ThrowIfNull(historyStore);
         ArgumentNullException.ThrowIfNull(polishExecutor);
@@ -43,6 +45,7 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
         _polishSetup = polishSetup;
         _textOptions = textOptions ?? (() => new DeterministicTextOptions(true, true, true, true));
         _customWords = customWords ?? (() => Array.Empty<CustomWordEntry>());
+        _enabledVocabularyPackIds = enabledVocabularyPackIds ?? (() => Array.Empty<string>());
         _targetAdapter = targetAdapter;
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
@@ -140,7 +143,12 @@ public sealed class HistoryRepolishService : IHistoryRepolishService
         var transcript = new Transcript(sessionId, startingText, entry.EngineId, DetectedLanguage: entry.LanguageCode);
         var deterministicOptions = _textOptions() with { CasualModeEnabled = false };
         var customWords = _customWords();
-        var request = new DeterministicTextRequest(transcript, customWords, deterministicOptions);
+        var enabledPackIds = _enabledVocabularyPackIds();
+        var request = new DeterministicTextRequest(
+            transcript,
+            customWords,
+            deterministicOptions,
+            EnabledVocabularyPackIds: enabledPackIds);
         var deterministicResult = new DeterministicTextResult(
             input,
             [],

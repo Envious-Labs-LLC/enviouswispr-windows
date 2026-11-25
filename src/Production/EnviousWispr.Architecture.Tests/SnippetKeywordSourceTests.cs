@@ -30,9 +30,13 @@ public sealed class SnippetKeywordSourceTests
 
         Assert.True(offenders.Length == 0, "Rebuilds the saved data and can drop the keyword: " + string.Join(", ", offenders));
 
-        // Control: the sweep reads the production tree, and the owner it exempts does construct one.
+        // Control: the sweep reads the production tree, and the owner it exempts does construct one
+        // while forwarding every preserved ReusableUserData field.
         Assert.Contains(files, path => path.EndsWith("VocabularyPresenter.cs", StringComparison.Ordinal));
-        Assert.Contains("new(CustomWords, snippets, SnippetKeyword)", File.ReadAllText(owner), StringComparison.Ordinal);
+        Assert.Contains(
+            "new(CustomWords, snippets, SnippetKeyword, EnabledVocabularyPackIds)",
+            File.ReadAllText(owner),
+            StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()
